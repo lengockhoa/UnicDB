@@ -485,7 +485,7 @@ export function qualifiedName(p: {
 /**
  * Generate SELECT template theo driver:
  * - postgres: SELECT * FROM [schema.]table LIMIT 100;
- * - mysql:    SELECT * FROM `table` LIMIT 100;  (không schema thông thường)
+ * - mysql:    SELECT * FROM `[schema.]table` LIMIT 100;  (qualify khi schema khác rỗng)
  * - mssql:    SELECT TOP 100 * FROM [schema.]table;
  */
 export function generateSelectForTable(p: {
@@ -498,7 +498,9 @@ export function generateSelectForTable(p: {
     return `SELECT TOP 100 * FROM ${qual};`;
   }
   if (p.driver === "mysql") {
-    return `SELECT * FROM \`${p.table}\` LIMIT 100;`;
+    return p.schema && p.schema.length > 0
+      ? `SELECT * FROM \`${p.schema}\`.\`${p.table}\` LIMIT 100;`
+      : `SELECT * FROM \`${p.table}\` LIMIT 100;`;
   }
   // postgres
   return `SELECT * FROM ${qual} LIMIT 100;`;

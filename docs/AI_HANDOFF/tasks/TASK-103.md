@@ -97,3 +97,45 @@ VERDICT: changes_requested
 REVIEWER_MODEL: unic-smart
 VERIFICATION_RERUN: PASS
 BLOCKING: MySQL Generate SELECT still drops schema for objects selected under non-default schemas.
+
+## Executor Report (fix round 1)
+
+- **EXECUTOR_MODEL**: unic-code
+- **Status**: PASS
+- **Worktree**: `.worktrees/task-103-fix1`
+
+### Blocking finding fixed
+
+Reviewer: "MySQL Generate SELECT still drops schema for objects selected under non-default schemas."
+
+Root cause: `generateSelectForTable` (src/ui/schemaTree.ts) MySQL branch luôn trả `` SELECT * FROM `table` LIMIT 100; `` — bỏ schema kể cả khi object thuộc schema non-default.
+
+Fix: MySQL branch giờ qualify `schema`.`table` khi schema khác rỗng → `SELECT * FROM `qas`.`api_log` LIMIT 100;`. Schema rỗng giữ nguyên behavior cũ (không qualify).
+
+### TDD
+
+- RED: test regression mới `regression — MySQL Generate SELECT giữ schema cho object dưới schema non-default` (schemaTree.test.ts) fail đúng như kỳ vọng: received `SELECT * FROM `api_log` LIMIT 100;` vs expected `SELECT * FROM `qas`.`api_log` LIMIT 100;`.
+- GREEN: fix xong → test pass.
+
+### Verification Output (fix round 1)
+
+```text
+$ npx tsc --noEmit
+(no output — type check pass)
+
+$ npx vitest run src/ui/__tests__/schemaTree.test.ts
+Test Files  1 passed (1)
+     Tests  20 passed (20)
+
+$ npx vitest run
+Test Files  15 passed (15)
+     Tests  157 passed (157)
+
+$ npm run compile
+esbuild: build complete
+```
+
+### Changes
+
+- `src/ui/schemaTree.ts` — `generateSelectForTable`: MySQL branch qualify schema khi non-empty; cập nhật doc comment.
+- `src/ui/__tests__/schemaTree.test.ts` — thêm regression test cho MySQL schema qualification (schema non-empty + schema rỗng).

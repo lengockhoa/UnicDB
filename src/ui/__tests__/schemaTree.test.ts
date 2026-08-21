@@ -440,6 +440,26 @@ describe("SchemaTreeProvider — getChildren", () => {
       }),
     ).toBe("SELECT TOP 100 * FROM dbo.users;");
   });
+  it("regression — MySQL Generate SELECT giữ schema cho object dưới schema non-default", () => {
+    // Trước fix: MySQL bỏ schema → SELECT * FROM `api_log` LIMIT 100;
+    // sai khi object thuộc schema khác default (vd db `qas`).
+    expect(
+      generateSelectForTable({
+        driver: "mysql",
+        table: "api_log",
+        schema: "qas",
+      }),
+    ).toBe("SELECT * FROM `qas`.`api_log` LIMIT 100;");
+    // Schema rỗng: giữ nguyên behavior cũ (không qualify).
+    expect(
+      generateSelectForTable({
+        driver: "mysql",
+        table: "users",
+        schema: "",
+      }),
+    ).toBe("SELECT * FROM `users` LIMIT 100;");
+  });
+
 
   it("qualifiedName() trả schema.name hoặc name nếu schema rỗng", () => {
     expect(qualifiedName({ table: "users", schema: "public" })).toBe("public.users");
