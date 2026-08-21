@@ -1,0 +1,12 @@
+src/**
+webview/**
+tests/**
+docker/**
+docs/**
+.cache/**
+node_modules/**
+**/*.map
+**/.DS_Store
+**/*.vsix
+.esbuild.js.swp
+*.tsbuildinfo

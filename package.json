@@ -1,0 +1,154 @@
+{
+  "name": "vsdb",
+  "displayName": "VSDB — Run SQL from VS Code",
+  "description": "Run SQL against PostgreSQL, MySQL/MariaDB and SQL Server directly from VS Code. Cmd+Enter (macOS) / Ctrl+Enter (Win/Linux) executes the selected statement.",
+  "version": "0.1.0",
+  "publisher": "lengockhoa",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "main": "dist/extension.js",
+  "activationEvents": [
+    "onLanguage:sql",
+    "onCommand:vsdb.addConnection",
+    "onCommand:vsdb.editConnection",
+    "onCommand:vsdb.deleteConnection",
+    "onCommand:vsdb.selectConnection",
+    "onCommand:vsdb.runQuery",
+    "onCommand:vsdb.cancelQuery",
+    "onCommand:vsdb.generateSelect",
+    "onCommand:vsdb.copyQualifiedName",
+    "onCommand:vsdb.refreshSchema",
+    "onCommand:vsdb.runStatement",
+    "onView:vsdb.schemaTree"
+  ],
+  "contributes": {
+    "commands": [
+      { "command": "vsdb.addConnection", "title": "VSDB: Add Connection", "category": "VSDB" },
+      { "command": "vsdb.editConnection", "title": "VSDB: Edit Connection", "category": "VSDB" },
+      { "command": "vsdb.deleteConnection", "title": "VSDB: Delete Connection", "category": "VSDB" },
+      { "command": "vsdb.selectConnection", "title": "VSDB: Select Active Connection", "category": "VSDB" },
+      { "command": "vsdb.runQuery", "title": "VSDB: Run Query", "category": "VSDB" },
+      { "command": "vsdb.cancelQuery", "title": "VSDB: Cancel Query", "category": "VSDB" },
+      { "command": "vsdb.generateSelect", "title": "VSDB: Generate SELECT", "category": "VSDB" },
+      { "command": "vsdb.copyQualifiedName", "title": "VSDB: Copy Qualified Name", "category": "VSDB" },
+      { "command": "vsdb.refreshSchema", "title": "VSDB: Refresh Schema", "category": "VSDB" },
+      { "command": "vsdb.runStatement", "title": "VSDB: Run Statement", "category": "VSDB" }
+    ],
+    "keybindings": [
+      {
+        "command": "vsdb.runQuery",
+        "key": "cmd+enter",
+        "mac": "cmd+enter",
+        "when": "editorTextFocus && resourceLangId == sql"
+      },
+      {
+        "command": "vsdb.runQuery",
+        "key": "ctrl+enter",
+        "win": "ctrl+enter",
+        "linux": "ctrl+enter",
+        "when": "editorTextFocus && resourceLangId == sql"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "vsdb.runQuery",
+          "when": "editorTextFocus && resourceLangId == sql",
+          "group": "navigation"
+        },
+        {
+          "command": "vsdb.cancelQuery",
+          "when": "editorTextFocus && resourceLangId == sql",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "vsdb.generateSelect",
+          "when": "view == vsdb.schemaTree && viewItem == table || viewItem == view",
+          "group": "vsdb"
+        },
+        {
+          "command": "vsdb.copyQualifiedName",
+          "when": "view == vsdb.schemaTree && (viewItem == table || viewItem == view || viewItem == column || viewItem == routine)",
+          "group": "vsdb"
+        },
+        {
+          "command": "vsdb.refreshSchema",
+          "when": "view == vsdb.schemaTree",
+          "group": "vsdb"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "vsdb.addConnection",
+          "when": "view == vsdb.schemaTree",
+          "group": "navigation"
+        },
+        {
+          "command": "vsdb.refreshSchema",
+          "when": "view == vsdb.schemaTree",
+          "group": "navigation"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vsdb",
+          "title": "VSDB",
+          "icon": "media/vsdb.svg"
+        }
+      ]
+    },
+    "views": {
+      "vsdb": [
+        {
+          "id": "vsdb.schemaTree",
+          "name": "Schema Explorer",
+          "when": true
+        }
+      ]
+    },
+    "configuration": {
+      "title": "VSDB",
+      "properties": {
+        "vsdb.showRunLens": {
+          "type": "boolean",
+          "default": true,
+          "description": "Hiển thị CodeLens ▶ Run phía trên mỗi SQL statement trong file .sql."
+        },
+        "vsdb.batchSize": {
+          "type": "number",
+          "default": 500,
+          "minimum": 50,
+          "maximum": 10000,
+          "description": "Số rows tải về mỗi lần (Load 500 more)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "test": "vitest run",
+    "test:integration": "vitest run -c vitest.integration.config.ts",
+    "typecheck": "tsc --noEmit",
+    "package": "vsce package",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/vscode": "1.75.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
+  },
+  "dependencies": {
+    "@types/pg": "^8.11.0",
+    "mysql2": "^3.10.0",
+    "pg": "^8.11.5",
+    "tedious": "^18.6.1"
+  }
+}

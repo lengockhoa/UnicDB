@@ -17,3 +17,9 @@ CLAUDE.md
 .claude/ukit/permission-audit.log
 .codex/settings.local.json
 # /UKit
+
+# VSDB build outputs
+dist/
+*.vsix
+*.tsbuildinfo
+
