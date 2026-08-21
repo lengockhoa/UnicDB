@@ -242,3 +242,105 @@
   margin-top: 4px;
   white-space: pre-wrap;
 }
+
+/* --- Connection Form (vsdb.connectionForm webview) --- */
+.vsdb-form-body {
+  padding: 16px 24px;
+}
+
+.vsdb-form h2 {
+  margin: 0 0 16px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.vsdb-form-grid {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 8px 12px;
+  align-items: center;
+  max-width: 640px;
+}
+
+.vsdb-form-grid label {
+  text-align: right;
+  color: var(--vscode-foreground);
+}
+
+.vsdb-form-grid input,
+.vsdb-form-grid select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 6px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 2px;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.vsdb-form-grid input:focus,
+.vsdb-form-grid select:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+}
+
+.vsdb-form-path {
+  display: flex;
+  gap: 4px;
+}
+
+.vsdb-form-pick {
+  padding: 4px 8px;
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.vsdb-form-status {
+  min-height: 20px;
+  margin-top: 12px;
+  font-size: 12px;
+}
+
+.vsdb-form-status.ok {
+  color: var(--vscode-testing-iconPassed, #73c991);
+}
+
+.vsdb-form-status.err {
+  color: var(--vscode-errorForeground, #f48771);
+}
+
+.vsdb-form-status.busy {
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.8;
+}
+
+.vsdb-form-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 16px;
+  max-width: 640px;
+}
+
+.vsdb-form-actions button {
+  padding: 5px 14px;
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.vsdb-form-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.vsdb-form-actions .vsdb-form-primary {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}

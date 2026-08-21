@@ -21,8 +21,23 @@ export interface ConnectionConfig {
   port: number;
   user: string;
   database: string;
-  ssl?: boolean;
+  /**
+   * SSL mode:
+   * - "disable"  — plaintext (mặc định, như ssl:false cũ).
+   * - "prefer"   — TLS, chấp nhận self-signed (như ssl:true cũ).
+   * - "verify"   — TLS, verify CA trong ssl.caPath (nếu có), ngược lại system CA.
+   * - "verify-full" — TLS + verify CA + client cert (ssl.certPath/keyPath) nếu có.
+   */
+  sslMode?: SslMode;
+  /** Đường dẫn file CA (.pem) để verify server cert. */
+  sslCaPath?: string;
+  /** Đường dẫn client certificate (.pem) cho mutual TLS. */
+  sslCertPath?: string;
+  /** Đường dẫn client private key cho mutual TLS. */
+  sslKeyPath?: string;
 }
+
+export type SslMode = "disable" | "prefer" | "verify" | "verify-full";
 
 /**
  * Một statement SQL đã được parser tách ra.

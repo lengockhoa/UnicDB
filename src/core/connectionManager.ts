@@ -173,6 +173,11 @@ export class ConnectionManager {
     return this.state.connections.slice();
   }
 
+  /** Password đã store cho connection (SecretStorage); undefined nếu lỗi/chưa có. */
+  async getStoredPassword(id: string): Promise<string | undefined> {
+    return this.tryGetPassword(id);
+  }
+
   /** Connection đang active (null nếu chưa chọn). */
   getActive(): ConnectionConfig | null {
     if (!this.state.activeId) return null;

@@ -94,7 +94,6 @@ function makeCfg(overrides: Partial<ConnectionConfig> = {}): ConnectionConfig {
     port: overrides.port ?? 5432,
     user: overrides.user ?? "vsdb",
     database: overrides.database ?? "vsdb",
-    ssl: overrides.ssl ?? false,
     ...overrides,
   };
 }

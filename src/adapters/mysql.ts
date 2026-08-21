@@ -4,6 +4,7 @@ import mysql, {
 } from "mysql2/promise";
 import type { Connection as CoreConnection, Query } from "mysql2";
 import type { ConnectionConfig } from "../config/types";
+import { resolveSslOptions } from "../core/sslOptions";
 import { splitStatements } from "../core/statementParser";
 import type {
   BatchedQuery,
@@ -48,6 +49,7 @@ export class MySqlAdapter implements DbAdapter {
     if (this.pool) return;
     this.closed = false;
 
+    const ssl = resolveSslOptions(this.cfg);
     const pool = mysql.createPool({
       host: this.cfg.host,
       port: this.cfg.port,
@@ -61,7 +63,8 @@ export class MySqlAdapter implements DbAdapter {
       // The adapter splits scripts itself, so server-side multi-statements are
       // intentionally not enabled.
       multipleStatements: false,
-      ...(this.cfg.ssl ? { ssl: {} } : {}),
+      // ssl: { ca, cert, key, rejectUnauthorized } — trùng khớp shape mysql2 SSLOptions.
+      ...(ssl ? { ssl } : {}),
     });
     this.pool = pool;
 

@@ -21,7 +21,6 @@ const extensionConfig = {
   minify,
   logLevel: "info",
 };
-
 /** @type {import('esbuild').BuildOptions} */
 const webviewConfig = {
   entryPoints: ["webview/main.ts"],
@@ -34,6 +33,20 @@ const webviewConfig = {
   minify,
   logLevel: "info",
 };
+
+/** @type {import('esbuild').BuildOptions} */
+const connectionFormConfig = {
+  entryPoints: ["webview/connectionFormMain.ts"],
+  outfile: "dist/connectionForm.js",
+  bundle: true,
+  platform: "browser",
+  format: "iife",
+  target: "es2022",
+  sourcemap: !minify,
+  minify,
+  logLevel: "info",
+};
+
 
 function copyWebviewCss() {
   const src = path.join(__dirname, "webview", "styles.css");
@@ -49,10 +62,15 @@ async function run() {
   if (watch) {
     const ctx1 = await esbuild.context(extensionConfig);
     const ctx2 = await esbuild.context(webviewConfig);
-    await Promise.all([ctx1.watch(), ctx2.watch()]);
+    const ctx3 = await esbuild.context(connectionFormConfig);
+    await Promise.all([ctx1.watch(), ctx2.watch(), ctx3.watch()]);
     console.log("esbuild: watching...");
   } else {
-    await Promise.all([esbuild.build(extensionConfig), esbuild.build(webviewConfig)]);
+    await Promise.all([
+      esbuild.build(extensionConfig),
+      esbuild.build(webviewConfig),
+      esbuild.build(connectionFormConfig),
+    ]);
     console.log("esbuild: build complete");
   }
 }

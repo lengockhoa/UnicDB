@@ -28,6 +28,7 @@
 // Metadata: information_schema + pg_proc.
 import { Client, Pool, PoolClient } from "pg";
 import type { ConnectionConfig } from "../config/types";
+import { resolveSslOptions } from "../core/sslOptions";
 import type {
   BatchedQuery,
   ColumnInfo,
@@ -74,7 +75,7 @@ export class PostgresAdapter implements DbAdapter {
       password: this.password,
       database: this.cfg.database,
       max: 1,
-      ssl: this.cfg.ssl ? { rejectUnauthorized: false } : false,
+      ssl: pgSslOptions(this.cfg),
       connectionTimeoutMillis: 10_000,
     });
     const probe = await this.pool.connect();
@@ -457,7 +458,7 @@ export class PostgresAdapter implements DbAdapter {
       user: this.cfg.user,
       password: this.password,
       database: this.cfg.database,
-      ssl: this.cfg.ssl ? { rejectUnauthorized: false } : false,
+      ssl: pgSslOptions(this.cfg),
       connectionTimeoutMillis: 5_000,
     });
     try {
@@ -473,6 +474,21 @@ export class PostgresAdapter implements DbAdapter {
       }
     }
   }
+}
+
+/**
+ * Map ResolvedSsl → pg ssl option. pg yêu cầu `ssl: false` (không TLS) hoặc
+ * object; "prefer" không verify, verify/verify-full rejectUnauthorized + cert.
+ */
+function pgSslOptions(cfg: ConnectionConfig): false | { [k: string]: unknown } {
+  const ssl = resolveSslOptions(cfg);
+  if (!ssl) return false;
+  return {
+    ...(ssl.ca !== undefined ? { ca: ssl.ca } : {}),
+    ...(ssl.cert !== undefined ? { cert: ssl.cert } : {}),
+    ...(ssl.key !== undefined ? { key: ssl.key } : {}),
+    rejectUnauthorized: ssl.rejectUnauthorized,
+  };
 }
 
 function rowsAsArrays(rows: any[], columns: string[]): any[][] {

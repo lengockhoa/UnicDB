@@ -1,5 +1,6 @@
 import { Connection, Request } from "tedious";
 import type { ConnectionConfig } from "../config/types";
+import { resolveSslOptions } from "../core/sslOptions";
 import { splitStatements } from "../core/statementParser";
 import type {
   BatchedQuery,
@@ -280,6 +281,7 @@ export class MsSqlAdapter implements DbAdapter {
   }
 
   private createConnection(): Connection {
+    const ssl = resolveSslOptions(this.cfg);
     return new Connection({
       server: this.cfg.host,
       authentication: {
@@ -292,8 +294,17 @@ export class MsSqlAdapter implements DbAdapter {
       options: {
         port: this.cfg.port,
         database: this.cfg.database,
-        encrypt: this.cfg.ssl === true,
-        trustServerCertificate: this.cfg.ssl === true,
+        encrypt: ssl !== undefined,
+        trustServerCertificate: ssl?.rejectUnauthorized === false,
+        ...(ssl
+          ? {
+              cryptoCredentialsDetails: {
+                ...(ssl.ca !== undefined ? { ca: [ssl.ca] } : {}),
+                ...(ssl.cert !== undefined ? { cert: ssl.cert } : {}),
+                ...(ssl.key !== undefined ? { key: ssl.key } : {}),
+              },
+            }
+          : {}),
         useColumnNames: true,
         connectTimeout: 10_000,
         // Disable requestTimeout for streaming SELECTs — tedious arms the timer

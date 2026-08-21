@@ -12,6 +12,7 @@ import {
   qualifiedName,
 } from "./ui/schemaTree";
 import { VsdbCodeLensProvider } from "./ui/codeLensProvider";
+import { ConnectionForm } from "./ui/connectionForm";
 import { sqlToRun } from "./core/statementParser";
 import type { ConnectionConfig } from "./config/types";
 import type { ParsedStatement } from "./config/types";
@@ -19,6 +20,8 @@ import type { ParsedStatement } from "./config/types";
 // Track disposables for deactivate().
 let disposables: vscode.Disposable[] = [];
 let state: ExtensionState | null = null;
+/** extensionUri capture ở activate() — dùng cho ConnectionForm webview resources. */
+let extensionUriForForm: vscode.Uri = vscode.Uri.file("/");
 
 interface ExtensionState {
   mgr: ConnectionManager;
@@ -33,6 +36,7 @@ export async function activate(
   context: vscode.ExtensionContext,
 ): Promise<void> {
   disposables = [];
+  extensionUriForForm = context.extensionUri;
 
   // ---- ConnectionManager ----
   const mgr = new ConnectionManager(context, createAdapter);
@@ -283,64 +287,57 @@ async function promptToAddConnectionOrSelect(): Promise<void> {
 }
 
 async function commandAddConnection(mgr: ConnectionManager): Promise<void> {
-  const driver = await vscode.window.showQuickPick(
-    [
-      { label: "postgres", value: "postgres" as const },
-      { label: "mysql", value: "mysql" as const },
-      { label: "mssql", value: "mssql" as const },
-    ],
-    { placeHolder: "Driver" },
-  );
-  if (!driver) return;
+  await openConnectionForm(mgr, null);
+}
 
-  const defaultPort = driver.value === "mysql" ? 3306 : driver.value === "mssql" ? 1433 : 5432;
-
-  const name = await vscode.window.showInputBox({
-    prompt: "Connection name",
-    placeHolder: "Local PG",
+function openConnectionForm(
+  mgr: ConnectionManager,
+  existing: ConnectionConfig | null,
+): void {
+  const form = new ConnectionForm({
+    extensionUri: extensionUriForForm,
+    existing,
+    factory: createAdapter,
+    getStoredPassword: (id) => mgr.getStoredPassword(id),
+    onSave: async (payload, existingId) => {
+      if (existingId === null) {
+        const cfg: ConnectionConfig = {
+          id: `${payload.driver}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          name: payload.name,
+          driver: payload.driver,
+          host: payload.host,
+          port: payload.port,
+          user: payload.user,
+          database: payload.database,
+          sslMode: payload.sslMode,
+          sslCaPath: payload.sslCaPath || undefined,
+          sslCertPath: payload.sslCertPath || undefined,
+          sslKeyPath: payload.sslKeyPath || undefined,
+        };
+        await mgr.addConnection(cfg, payload.password);
+        void vscode.window.showInformationMessage(`VSDB: added "${cfg.name}"`);
+      } else {
+        await mgr.editConnection(
+          existingId,
+          {
+            name: payload.name,
+            driver: payload.driver,
+            host: payload.host,
+            port: payload.port,
+            user: payload.user,
+            database: payload.database,
+            sslMode: payload.sslMode,
+            sslCaPath: payload.sslCaPath || undefined,
+            sslCertPath: payload.sslCertPath || undefined,
+            sslKeyPath: payload.sslKeyPath || undefined,
+          },
+          payload.password.length > 0 ? payload.password : undefined,
+        );
+        void vscode.window.showInformationMessage(`VSDB: updated "${payload.name}"`);
+      }
+    },
   });
-  if (!name) return;
-  const host = await vscode.window.showInputBox({
-    prompt: "Host",
-    value: "127.0.0.1",
-  });
-  if (!host) return;
-  const portStr = await vscode.window.showInputBox({
-    prompt: "Port",
-    value: String(defaultPort),
-    validateInput: (v) => (/^\d+$/.test(v) ? undefined : "Phải là số"),
-  });
-  if (!portStr) return;
-  const user = await vscode.window.showInputBox({ prompt: "User" });
-  if (!user) return;
-  const password = await vscode.window.showInputBox({
-    prompt: "Password",
-    password: true,
-  });
-  if (password === undefined) return;
-  const database = await vscode.window.showInputBox({
-    prompt: "Database",
-  });
-  if (!database) return;
-
-  const cfg: ConnectionConfig = {
-    id: `${driver.value}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    name,
-    driver: driver.value,
-    host,
-    port: parseInt(portStr, 10),
-    user,
-    database,
-    ssl: false,
-  };
-  try {
-    await mgr.addConnection(cfg, password);
-    void vscode.window.showInformationMessage(`VSDB: added "${cfg.name}"`);
-  } catch (err) {
-    void vscode.window.showErrorMessage(
-      `VSDB: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
+  form.show();
 }
 
 async function commandEditConnection(
@@ -363,54 +360,7 @@ async function commandEditConnection(
   }
   const current = mgr.listConnections().find((c) => c.id === id);
   if (!current) return;
-  const newName = await vscode.window.showInputBox({
-    prompt: "Name",
-    value: current.name,
-  });
-  if (newName === undefined) return;
-  const newHost = await vscode.window.showInputBox({
-    prompt: "Host",
-    value: current.host,
-  });
-  if (newHost === undefined) return;
-  const newPortStr = await vscode.window.showInputBox({
-    prompt: "Port",
-    value: String(current.port),
-    validateInput: (v) => (/^\d+$/.test(v) ? undefined : "Phải là số"),
-  });
-  if (newPortStr === undefined) return;
-  const newUser = await vscode.window.showInputBox({
-    prompt: "User",
-    value: current.user,
-  });
-  if (newUser === undefined) return;
-  const newDatabase = await vscode.window.showInputBox({
-    prompt: "Database",
-    value: current.database,
-  });
-  if (newDatabase === undefined) return;
-  const newPassword = await vscode.window.showInputBox({
-    prompt: "Password (để trống để giữ)",
-    password: true,
-  });
-  try {
-    await mgr.editConnection(
-      id!,
-      {
-        name: newName,
-        host: newHost,
-        port: parseInt(newPortStr, 10),
-        user: newUser,
-        database: newDatabase,
-      },
-      newPassword && newPassword.length > 0 ? newPassword : undefined,
-    );
-    void vscode.window.showInformationMessage(`VSDB: updated "${newName}"`);
-  } catch (err) {
-    void vscode.window.showErrorMessage(
-      `VSDB: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
+  openConnectionForm(mgr, current);
 }
 
 async function commandDeleteConnection(
