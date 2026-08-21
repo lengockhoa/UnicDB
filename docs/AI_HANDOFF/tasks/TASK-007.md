@@ -1,7 +1,7 @@
 # TASK-007 — Schema Explorer tree + command wiring + activation
 
-- Status: `ready`
-- Owner: `-`
+- Status: `implemented`
+- Owner: `claude-code`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §3 (design §4, §6)
 
@@ -77,3 +77,97 @@ npm run compile
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: claude-sonnet-4-6
+
+### Files Touched (this worktree)
+
+Created:
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-007/src/ui/schemaTree.ts`
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-007/src/ui/codeLensProvider.ts`
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-007/src/ui/__tests__/schemaTree.test.ts`
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-007/src/ui/__tests__/codeLensProvider.test.ts`
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-007/src/extension.test.ts`
+
+Modified:
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-007/src/extension.ts` (replace stub with full wiring)
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-007/src/core/connectionManager.ts` (added `getAdapterFor(cfg)` for non-active tree expansion)
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-007/src/scaffold.test.ts` (mock vscode so import of extension.ts works)
+
+### RED_OUTPUT
+
+Before implementation, `schemaTree.test.ts` import failed because `src/ui/schemaTree.ts` did not exist:
+
+```
+FAIL  src/ui/__tests__/schemaTree.test.ts [ src/ui/__tests__/schemaTree.test.ts ]
+Error: Failed to load url ../schemaTree (resolved id: ../schemaTree)
+   in /Volumes/.../src/ui/__tests__/schemaTree.test.ts. Does the file exist?
+```
+
+After scaffolding, RED manifested as test-level assertion failures (provider returned only error nodes due to missing `acquireAdapter` / password plumbing):
+```
+- Test #1: expected length 2, got 1; "Connect failed: ..."
+- Test #2: listTables called 0 times
+- Test #3: columns length 0
+```
+
+### GREEN — Verification Output
+
+`npx tsc --noEmit` → exit 0 (no output).
+
+`npx vitest run`:
+```
+ ✓ src/core/__tests__/statementParser.test.ts  (26 tests) 7ms
+ ✓ src/ui/__tests__/codeLensProvider.test.ts  (4 tests) 4ms
+ ✓ src/core/__tests__/resultBatcher.test.ts  (8 tests) 3ms
+ ✓ src/core/__tests__/connectionManager.test.ts  (9 tests) 8ms
+ ✓ src/ui/__tests__/schemaTree.test.ts  (9 tests) 8ms
+ ✓ src/ui/__tests__/statusBar.test.ts  (3 tests) 2ms
+ ✓ src/core/__tests__/queryRunner.test.ts  (9 tests) 73ms
+ ✓ src/scaffold.test.ts  (4 tests) 256ms
+ ✓ src/extension.test.ts  (6 tests) 3ms
+ ✓ src/adapters/__tests__/factory.test.ts  (4 tests) 2ms
+
+ Test Files  10 passed (10)
+      Tests  82 passed (82)
+```
+
+`npm run compile`:
+```
+dist/webview.js      13.5kb
+dist/extension.js    4.5mb
+esbuild: build complete
+```
+
+### Test Coverage Notes
+
+| Spec test | File | Status |
+|---|---|---|
+| #1 connection → 3 category → children | schemaTree.test.ts | PASS |
+| #2 lazy + 60s cache | schemaTree.test.ts | PASS |
+| #3 adapter throw → error node | schemaTree.test.ts | PASS |
+| #4 Generate SELECT template (pg/mysql/mssql) | schemaTree.test.ts | PASS |
+| #5 CodeLens lens position | codeLensProvider.test.ts | PASS |
+| #6 languageId filter + showRunLens=false | codeLensProvider.test.ts | PASS |
+| (bonus) extension wiring smoke (10 commands, tree view, codelens) | extension.test.ts | PASS (6 cases) |
+| (bonus) column children | schemaTree.test.ts | PASS |
+
+### Manual F5 smoke
+
+Skipped: not run in this worktree (no GUI / Extension Development Host available). Containers for postgres/mysql/mssql are up on host (`docker ps` confirms vsdb-postgres healthy on 5433, vsdb-mysql on 3307, vsdb-mssql on 1434) — TASK-008 packaging step can do the F5 smoke.
+
+### Status: COMPLETED
+
+All 6 spec test cases PASS, plus 3 bonus wiring tests, plus full pre-existing suite (82/82). tsc clean. esbuild build succeeds.
+
+### Note
+
+- `package.json` was NOT modified — all 10 command ids, keybindings, menus, views, viewsContainers, configuration were already declared in TASK-001 scaffold and match the spec.
+- Added `getAdapterFor(cfg)` to `ConnectionManager` (new public method) so the schema tree can expand non-active connections without going through `setActive` (which would clobber the currently-active connection). Tree prefers active via `mgr.getAdapter()` (lazy connect + 10-min idle) and falls back to ephemeral `mgr.getAdapterFor(cfg)` otherwise.
+- CodeLens provider (`VsdbCodeLensProvider`) registers for `{ scheme: 'file', language: 'sql' }` and refreshes on `vsdb.showRunLens` config change.
+- `ResultsPanel.setExtensionUri(context.extensionUri)` called in `activate()` per spec.
+
+---

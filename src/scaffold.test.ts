@@ -1,6 +1,63 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
+
+vi.mock("vscode", () => ({
+  EventEmitter: vi.fn().mockImplementation(() => ({
+    event: () => ({ dispose: () => {} }),
+    fire: vi.fn(),
+    dispose: vi.fn(),
+  })),
+  window: {
+    showInformationMessage: vi.fn(),
+    showErrorMessage: vi.fn(),
+    showInputBox: vi.fn(),
+    showQuickPick: vi.fn(),
+    createStatusBarItem: vi.fn(() => ({
+      text: "",
+      tooltip: undefined,
+      command: undefined,
+      show: vi.fn(),
+      hide: vi.fn(),
+      dispose: vi.fn(),
+    })),
+    createWebviewPanel: vi.fn(() => ({
+      webview: { html: "", postMessage: vi.fn(), onDidReceiveMessage: vi.fn(() => ({ dispose: () => {} })), asWebviewUri: vi.fn(), cspSource: "" },
+      onDidDispose: vi.fn(() => ({ dispose: () => {} })),
+      reveal: vi.fn(),
+      dispose: vi.fn(),
+      visible: false,
+    })),
+    createTreeView: vi.fn(() => ({ dispose: vi.fn() })),
+  },
+  workspace: {
+    getConfiguration: vi.fn(() => ({ get: () => undefined })),
+    onDidChangeConfiguration: vi.fn(() => ({ dispose: () => {} })),
+    get workspaceFolders() {
+      return undefined;
+    },
+  },
+  commands: {
+    registerCommand: vi.fn(() => ({ dispose: () => {} })),
+    executeCommand: vi.fn(),
+  },
+  Uri: {
+    file: (p: string) => ({ fsPath: p, path: p, scheme: "file", toString: () => p }),
+    parse: (s: string) => ({ toString: () => s }),
+    joinPath: vi.fn((u: unknown, ...p: string[]) => ({ path: p.join("/"), toString: () => `${String(u)}/${p.join("/")}` })),
+  },
+  CodeLens: vi.fn(),
+  Range: vi.fn(),
+  ViewColumn: { Beside: 2 },
+  StatusBarAlignment: { Left: 1, Right: 2 },
+  TreeDataProvider: class {},
+  TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
+  ThemeIcon: vi.fn(),
+  ThemeColor: vi.fn(),
+  languages: {
+    registerCodeLensProvider: vi.fn(() => ({ dispose: () => {} })),
+  },
+}));
 
 describe("scaffold", () => {
   it("placeholder vitest chạy được", () => {

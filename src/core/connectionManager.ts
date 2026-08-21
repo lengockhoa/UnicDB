@@ -195,6 +195,37 @@ export class ConnectionManager {
   }
 
   /**
+   * Lấy adapter cho connection `cfg` (KHÔNG đổi active). Dùng cho schema tree khi user
+   * expand một connection không phải active. Adapter KHÔNG được cache; caller dispose nếu cần.
+   * Throw nếu không lấy được password từ SecretStorage hoặc testConnection fail.
+   */
+  async getAdapterFor(cfg: ConnectionConfig): Promise<DbAdapter> {
+    let password: string | undefined;
+    try {
+      password = await this.tryGetPassword(cfg.id);
+    } catch {
+      password = undefined;
+    }
+    if (password === undefined || password === null) {
+      throw new Error(
+        `Không tìm được password cho connection "${cfg.name}". Vui lòng nhập lại password (edit connection).`,
+      );
+    }
+    const adapter = this.factory(cfg, password);
+    try {
+      await adapter.testConnection();
+    } catch (err) {
+      try {
+        await adapter.close();
+      } catch {
+        // ignore
+      }
+      throw err;
+    }
+    return adapter;
+  }
+
+  /**
    * Lấy adapter hiện tại (lazy connect). Reset idle timer 10 phút mỗi lần gọi.
    * Throw nếu không có active hoặc password không lấy được từ SecretStorage.
    */
