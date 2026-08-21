@@ -477,8 +477,9 @@ export class PostgresAdapter implements DbAdapter {
 }
 
 /**
- * Map ResolvedSsl → pg ssl option. pg yêu cầu `ssl: false` (không TLS) hoặc
- * object; "prefer" không verify, verify/verify-full rejectUnauthorized + cert.
+ * Map ResolvedSsl → pg ssl option. `ssl: false` = không TLS. verify-ca cần
+ * checkServerIdentity noop vì pg (node tls) kiểm hostname SAN mặc định khi
+ * rejectUnauthorized — cert Cloud SQL/RDS proxy mang DNS instance, host local.
  */
 function pgSslOptions(cfg: ConnectionConfig): false | { [k: string]: unknown } {
   const ssl = resolveSslOptions(cfg);
@@ -488,6 +489,9 @@ function pgSslOptions(cfg: ConnectionConfig): false | { [k: string]: unknown } {
     ...(ssl.cert !== undefined ? { cert: ssl.cert } : {}),
     ...(ssl.key !== undefined ? { key: ssl.key } : {}),
     rejectUnauthorized: ssl.rejectUnauthorized,
+    ...(ssl.checkHostname
+      ? {}
+      : { checkServerIdentity: () => undefined }),
   };
 }
 

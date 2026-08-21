@@ -22,11 +22,16 @@ export interface ConnectionConfig {
   user: string;
   database: string;
   /**
-   * SSL mode:
-   * - "disable"  — plaintext (mặc định, như ssl:false cũ).
-   * - "prefer"   — TLS, chấp nhận self-signed (như ssl:true cũ).
-   * - "verify"   — TLS, verify CA trong ssl.caPath (nếu có), ngược lại system CA.
-   * - "verify-full" — TLS + verify CA + client cert (ssl.certPath/keyPath) nếu có.
+   * SSL mode (semantics giống DataGrip / libpq):
+   * - "disable"     — plaintext (mặc định, như ssl:false cũ).
+   * - "require"     — TLS, KHÔNG verify cert (chấp nhận self-signed — như DataGrip "Require").
+   * - "verify-ca"   — TLS, verify cert chain với CA (file hoặc system store),
+   *                    KHÔNG kiểm tra hostname — cho Cloud SQL proxy/AWS RDS proxy qua localhost.
+   * - "verify-full" — verify chain + hostname + client cert nếu có.
+   *
+   * Client cert/key (sslCertPath/sslKeyPath) NẠP ĐỘC LẬP với mode — Cloud SQL
+   * cần client cert kể cả khi không verify hostname.
+   * Legacy: "prefer" (map require), "verify" (map verify-ca).
    */
   sslMode?: SslMode;
   /** Đường dẫn file CA (.pem) để verify server cert. */
@@ -37,7 +42,7 @@ export interface ConnectionConfig {
   sslKeyPath?: string;
 }
 
-export type SslMode = "disable" | "prefer" | "verify" | "verify-full";
+export type SslMode = "disable" | "require" | "verify-ca" | "verify-full";
 
 /**
  * Một statement SQL đã được parser tách ra.

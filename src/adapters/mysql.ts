@@ -63,8 +63,19 @@ export class MySqlAdapter implements DbAdapter {
       // The adapter splits scripts itself, so server-side multi-statements are
       // intentionally not enabled.
       multipleStatements: false,
-      // ssl: { ca, cert, key, rejectUnauthorized } — trùng khớp shape mysql2 SSLOptions.
-      ...(ssl ? { ssl } : {}),
+      // ssl shape mysql2 SSLOptions: { ca, cert, key, rejectUnauthorized,
+      // checkServerIdentity }. checkHostname là field nội bộ — strip.
+      ...(ssl
+        ? {
+            ssl: {
+              ca: ssl.ca,
+              cert: ssl.cert,
+              key: ssl.key,
+              rejectUnauthorized: ssl.rejectUnauthorized,
+              ...(ssl.checkHostname ? {} : { checkServerIdentity: () => undefined }),
+            },
+          }
+        : {}),
     });
     this.pool = pool;
 

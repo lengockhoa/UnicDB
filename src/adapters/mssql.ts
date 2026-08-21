@@ -294,6 +294,8 @@ export class MsSqlAdapter implements DbAdapter {
       options: {
         port: this.cfg.port,
         database: this.cfg.database,
+        // tedious không expose checkServerIdentity — verify-ca trên SQL Server
+        // hành xử như verify-full (chain + hostname). require → trustServer.
         encrypt: ssl !== undefined,
         trustServerCertificate: ssl?.rejectUnauthorized === false,
         ...(ssl

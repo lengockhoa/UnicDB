@@ -249,26 +249,41 @@
 }
 
 .vsdb-form h2 {
-  margin: 0 0 16px;
+  margin: 0 0 14px;
   font-size: 15px;
   font-weight: 600;
 }
 
-.vsdb-form-grid {
+.vsdb-form .req {
+  color: var(--vscode-errorForeground, #f48771);
+}
+
+.vsdb-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 2px;
+}
+
+.vsdb-field {
   display: grid;
-  grid-template-columns: 140px 1fr;
-  gap: 8px 12px;
-  align-items: center;
-  max-width: 640px;
+  gap: 3px;
+  min-width: 100px;
 }
 
-.vsdb-form-grid label {
-  text-align: right;
-  color: var(--vscode-foreground);
+.vsdb-field.grow {
+  flex: 1;
 }
 
-.vsdb-form-grid input,
-.vsdb-form-grid select {
+.vsdb-field label,
+.vsdb-form-ssl label,
+.vsdb-form-mode {
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  margin-top: 6px;
+}
+
+.vsdb-form input,
+.vsdb-form select {
   width: 100%;
   box-sizing: border-box;
   padding: 4px 6px;
@@ -280,23 +295,53 @@
   font-size: 13px;
 }
 
-.vsdb-form-grid input:focus,
-.vsdb-form-grid select:focus {
+.vsdb-form input:focus,
+.vsdb-form select:focus {
   outline: 1px solid var(--vscode-focusBorder);
 }
 
-.vsdb-form-path {
-  display: flex;
+.vsdb-form-mode {
+  display: grid;
   gap: 4px;
+  margin-top: 8px;
+  max-width: 360px;
+}
+
+.vsdb-form-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  cursor: pointer;
+}
+
+.vsdb-form-check input {
+  width: auto !important;
+}
+
+.vsdb-form-ssl {
+  border-left: 2px solid var(--vscode-input-border, #3c3c3c);
+  padding-left: 12px;
+  margin-top: 6px;
+  max-width: 640px;
+}
+
+.vsdb-file-row {
+  display: grid;
+  grid-template-columns: 140px 1fr auto;
+  gap: 6px;
+  align-items: center;
+  margin-top: 6px;
 }
 
 .vsdb-form-pick {
-  padding: 4px 8px;
+  padding: 4px 10px;
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   border: none;
   border-radius: 2px;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .vsdb-form-status {
@@ -323,11 +368,10 @@
   gap: 8px;
   justify-content: flex-end;
   margin-top: 16px;
-  max-width: 640px;
 }
 
 .vsdb-form-actions button {
-  padding: 5px 14px;
+  padding: 5px 16px;
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   border: none;

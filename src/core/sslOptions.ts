@@ -1,20 +1,22 @@
 // src/core/sslOptions.ts
 // Resolve SSL options từ ConnectionConfig cho 3 driver (pg / mysql2 / tedious).
 //
-// Các driver nhận TLS options khác nhau:
-//   - pg:        ssl: false | { ca, cert, key, rejectUnauthorized, servername }
-//   - mysql2:    ssl: { ca, cert, key, rejectUnauthorized }  (bỏ ssl = plaintext)
-//   - tedious:   cryptoCredentialsDetails: { ca, cert, key } + trustServerCertificate
+// Semantics theo DataGrip / libpq:
+//   disable     — plaintext.
+//   require     — TLS, không verify cert (DataGrip "Require").
+//   verify-ca   — TLS, verify chain với CA file (hoặc system store), KHÔNG
+//                 kiểm hostname. Cho Cloud SQL Auth Proxy / RDS proxy qua
+//                 localhost — cert server mang DNS instance, không phải localhost.
+//   verify-full — verify chain + hostname (+ client cert nếu có).
 //
-// sslMode semantics:
-//   disable       → không TLS (undefined — caller bỏ option).
-//   prefer        → TLS, không verify (self-signed OK). Có CA file thì vẫn load (dùng cho SNI pool).
-//   verify        → TLS, verify server cert với CA file (nếu có), ngược lại system CA store.
-//   verify-full   → verify + client cert/key (mutual TLS) nếu các path được khai báo.
+// Client cert/key nạp ĐỘC LẬP với mode — client authenticate với server bất
+// kể user có verify server cert không (Cloud SQL yêu cầu client cert luôn).
 //
-// File đọc bằng fs.readFileSync tại thời điểm connect (không cache) — user sửa
-// file cert thì lần connect kế tiếp nhận bản mới. Path không tồn tại → throw
-// lỗi rõ ràng để form hiển thị thay vì TLS handshake fail mơ hồ.
+// Legacy mapping: ssl:true → require; sslMode "prefer" → require, "verify" →
+// verify-ca (dữ liệu cũ trong Memento).
+//
+// File đọc bằng fs.readFileSync tại connect (không cache). Path không đọc
+// được → throw lỗi rõ ràng để hiển thị ở form thay vì TLS handshake mơ hồ.
 import * as fs from "fs";
 import type { ConnectionConfig, SslMode } from "../config/types";
 
@@ -26,11 +28,16 @@ export interface ResolvedSsl {
   cert?: string;
   /** Nội dung client key pem. */
   key?: string;
-  /** Verify server cert chain. false cho "prefer", true cho verify/verify-full. */
+  /** Verify server cert chain. false cho require, true cho verify-ca/full. */
   rejectUnauthorized: boolean;
+  /**
+   * Kiểm hostname trong SAN của server cert. true chỉ với verify-full.
+   * verify-ca bỏ qua — driver-level: pg/mysql dùng checkServerIdentity noop.
+   */
+  checkHostname: boolean;
 }
 
-function readFileOptional(label: string, path: string | undefined): string | undefined {
+function readCertFile(label: string, path: string | undefined): string | undefined {
   if (!path || path.trim() === "") return undefined;
   try {
     return fs.readFileSync(path.trim(), "utf8");
@@ -43,18 +50,31 @@ function readFileOptional(label: string, path: string | undefined): string | und
   }
 }
 
-/** True nếu cfg yêu cầu TLS (sslMode legacy `ssl:true` map sang prefer). */
-export function wantsTls(cfg: ConnectionConfig): boolean {
-  return normalizeSslMode(cfg) !== "disable";
-}
-
 /**
- * Normalize: config cũ lưu `ssl: boolean` (không có sslMode) → map
- * true → "prefer", false/undefined → "disable". Config mới ưu tiên sslMode.
+ * Normalize: legacy ssl:boolean (true → require), sslMode cũ "prefer" →
+ * require, "verify" → verify-ca. Config mới ưu tiên sslMode nguyên vẹn.
  */
 export function normalizeSslMode(cfg: ConnectionConfig): SslMode {
-  if (cfg.sslMode) return cfg.sslMode;
-  return (cfg as { ssl?: boolean }).ssl === true ? "prefer" : "disable";
+  const raw: string =
+    cfg.sslMode ?? ((cfg as { ssl?: boolean }).ssl === true ? "prefer" : "disable");
+  switch (raw) {
+    case "disable":
+    case "require":
+    case "verify-ca":
+    case "verify-full":
+      return raw;
+    case "prefer":
+      return "require";
+    case "verify":
+      return "verify-ca";
+    default:
+      return "disable";
+  }
+}
+
+/** True nếu cfg yêu cầu TLS. */
+export function wantsTls(cfg: ConnectionConfig): boolean {
+  return normalizeSslMode(cfg) !== "disable";
 }
 
 /**
@@ -65,20 +85,18 @@ export function resolveSslOptions(cfg: ConnectionConfig): ResolvedSsl | undefine
   const mode = normalizeSslMode(cfg);
   if (mode === "disable") return undefined;
 
-  // CA chỉ có nghĩa khi verify (prefer không check chain — bỏ qua, không đọc file).
-  const ca =
-    mode === "verify" || mode === "verify-full"
-      ? readFileOptional("CA", cfg.sslCaPath)
-      : undefined;
-  const cert =
-    mode === "verify-full" ? readFileOptional("client cert", cfg.sslCertPath) : undefined;
-  const key =
-    mode === "verify-full" ? readFileOptional("client key", cfg.sslKeyPath) : undefined;
+  // CA chỉ dùng khi verify (require không check chain — bỏ qua, không đọc file).
+  const verify = mode === "verify-ca" || mode === "verify-full";
+  const ca = verify ? readCertFile("CA", cfg.sslCaPath) : undefined;
+  // Client cert/key độc lập với mode (Cloud SQL cần client cert cả khi require).
+  const cert = readCertFile("client cert", cfg.sslCertPath);
+  const key = readCertFile("client key", cfg.sslKeyPath);
 
   return {
     ...(ca !== undefined ? { ca } : {}),
     ...(cert !== undefined ? { cert } : {}),
     ...(key !== undefined ? { key } : {}),
-    rejectUnauthorized: mode === "verify" || mode === "verify-full",
+    rejectUnauthorized: verify,
+    checkHostname: mode === "verify-full",
   };
 }
