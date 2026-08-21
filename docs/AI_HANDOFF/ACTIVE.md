@@ -1,14 +1,9 @@
 # Active Handoff Cycle
 
-- Cycle: `2026-08-21-A`
-- Date: 2026-08-21
-- Base: `main`
-- Goal: VSDB v1 — VS Code extension chạy SQL (Postgres/MySQL/SQLServer) với Cmd+Enter, grid kết quả, schema explorer, phân phối vsix qua GitHub Releases
-- Tasks: 8 total
-- Status: `implement_done — pending review`
+- Status: `ready_for_next_cycle`
+- Phase: `cleared`
 - Updated: 2026-08-21
-- Updated by: claude-code (Step I4)
+- Updated by: handoff-fullstack (cycle 2026-08-21-A)
 - Human decision needed: `no`
-- Wave plan: W1:001 | W2:002,003 | W3:004,005 | W4:006 | W5:007 | W6:008
 
-<!-- Snapshot only. Rules in RULES.md. Tasks in tasks/. Plan brainstorm in PLAN.md. -->
+<!-- Cycle 2026-08-21-A: VSDB v1 — 8/8 tasks done, release v1.0.1 https://github.com/lengockhoa/VSDB/releases/tag/v1.0.1 -->
