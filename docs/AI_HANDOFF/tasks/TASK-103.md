@@ -89,3 +89,11 @@ esbuild: build complete
 - `src/ui/schemaTree.ts` — thêm node `schema` (connection → schema → category → object); `getSchemaNodesForConnection` đọc `vsdb.hideSystemSchemas` rồi gọi `adapter.listSchemas(!hideSystemSchemas)`; cache key `schemas|<connId>|includeSystem=<0|1>`; category key `category|<connId>|<schema>|<category>`; `listTables/listViews/listRoutines` truyền schema tường minh; category node cập nhật `description` = count + fire onDidChangeTreeData (DataGrip-style badge); node "No schemas" khi listSchemas rỗng.
 - `src/ui/__tests__/schemaTree.test.ts` — 8 test mới (schema flow + count + objectKey + no-schemas + cache + hideSystemSchemas) + adapt existing tests sang tree 3 cấp.
 - `src/ui/__tests__/statusBar.test.ts`, `src/core/__tests__/connectionManager.test.ts`, `src/core/__tests__/queryRunner.test.ts` — thêm `listSchemas` stub vào fake adapter (`connectionForm.test.ts` đã có sẵn).
+
+## Reviewer Verdict
+
+TASK: TASK-103
+VERDICT: changes_requested
+REVIEWER_MODEL: unic-smart
+VERIFICATION_RERUN: PASS
+BLOCKING: MySQL Generate SELECT still drops schema for objects selected under non-default schemas.

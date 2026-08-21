@@ -1,6 +1,6 @@
 Command: handoff-fullstack
 Goal: Schema Explorer hiển thị mọi schema (không chỉ default) với tables/views/routines trong từng schema theo kiểu DataGrip
 Base: main
-Phase: R1
-Cursor: implementation complete — TASK-101/102/103 pending_review
-Next: run review batch for all pending tasks
+Phase: R4.5
+Cursor: review complete — TASK-103 changes_requested
+Next: fix round 1 for TASK-103
