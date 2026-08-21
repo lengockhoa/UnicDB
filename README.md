@@ -10,12 +10,9 @@ nhảy sang client ngoài. Hỗ trợ **PostgreSQL**, **MySQL / MariaDB** và **
 
 ---
 
-## Cài đặt (1 lệnh, khuyến nghị)
+## Cài đặt
 
-> **Yêu cầu:** script one-liner này chỉ hoạt động sau khi repo đã được push lên
-> nhánh `main` **và** đã có **ít nhất một GitHub Release** đính kèm file
-> `.vsix` (do orchestrator/maintainer tạo). Trước thời điểm đó, dùng cách
-> cài thủ công bên dưới.
+**1 lệnh duy nhất** (cài mới lẫn update — chỉ cần VS Code đã mở qua ít nhất 1 lần):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/lengockhoa/VSDB/main/scripts/install-vsdb.sh | bash
@@ -28,22 +25,17 @@ Script sẽ tự:
 3. Gọi `code --install-extension <vsix> --force`.
 4. In version đã cài. **Idempotent** — chạy lại = update.
 
-### Cài đặt thủ công (không cần release trên GitHub)
+Khi có version mới, team chỉ cần chạy lại đúng lệnh trên là tự lên bản mới.
 
-Nếu bạn đã có file `.vsix` ở local (vd. vừa tải từ CI artifact, hoặc maintainer
-build sẵn), cài trực tiếp mà không cần GitHub release:
+### Cài thủ công bằng file `.vsix` (không cần mạng / không qua GitHub)
+
+Tải `vsdb-<version>.vsix` từ [Releases](https://github.com/lengockhoa/VSDB/releases)
+(hoặc lấy file do maintainer build bằng `scripts/build.sh`), rồi:
 
 ```bash
 bash scripts/install-vsdb.sh --local /đường/dẫn/tới/vsdb-<version>.vsix
-```
-
-Cách này hoạt động ngay từ lần đầu — không phụ thuộc vào GitHub release.
-
-### Cài bằng file `.vsix` local (không cần mạng)
-
-```bash
-# Sau khi maintainer chạy scripts/build.sh
-bash scripts/install-vsdb.sh --local dist/vsdb-0.1.0.vsix
+# hoặc cài thẳng bằng VS Code CLI:
+code --install-extension vsdb-<version>.vsix
 ```
 
 ---
@@ -76,7 +68,7 @@ bash scripts/install-vsdb.sh --local dist/vsdb-0.1.0.vsix
 
 ## Tính năng chính
 
-- **�a driver**: PostgreSQL (pg), MySQL/MariaDB (mysql2), SQL Server (tedious).
+- **3 driver**: PostgreSQL (pg), MySQL/MariaDB (mysql2), SQL Server (tedious).
 - **Schema Explorer** cây: connection → database → schema → table / view / column / routine.
   - Click phải table/view → `Generate SELECT`, `Copy Qualified Name`.
   - Nút refresh trên title bar để reload metadata.
