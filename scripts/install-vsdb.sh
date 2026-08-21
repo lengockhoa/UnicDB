@@ -226,11 +226,15 @@ EOF
     fi
     echo "Latest release: ${release_tag}"
     echo "Asset URL: ${asset_url}"
-    vsix_path="$(mktemp -t vsdb-XXXXXX.vsix)"
+    # Thư mục mktemp + tên file đơn giản: VS Code CLI lowercase toàn bộ path
+    # và fail với template chữ hoa (vsdb-XXXXXX.vsix) trên macOS (/var symlink).
+    local tmp_dir
+    tmp_dir="$(mktemp -d)"
+    vsix_path="${tmp_dir}/vsdb.vsix"
     echo "Downloading to ${vsix_path}"
     if ! curl -fsSL -o "${vsix_path}" "${asset_url}"; then
       echo "ERROR: failed to download ${asset_url}" >&2
-      rm -f "${vsix_path}"
+      rm -f "${vsix_path}"; rmdir "${tmp_dir}" 2>/dev/null
       exit 2
     fi
   fi
