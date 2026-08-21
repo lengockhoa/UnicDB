@@ -31,6 +31,7 @@ class FakeEventEmitter<T> {
 const state = {
   emitters: [] as FakeEventEmitter<unknown>[],
   workspaceFolders: undefined as unknown,
+  hideSystemSchemas: true,
   showInfo: vi.fn().mockResolvedValue(undefined),
   showError: vi.fn().mockResolvedValue(undefined),
   showInputBox: vi.fn(),
@@ -70,6 +71,14 @@ vi.mock("vscode", () => {
         get workspaceFolders() {
           return state.workspaceFolders;
         },
+        getConfiguration: (section?: string) => ({
+          get: (key: string, fallback?: unknown) => {
+            if (section === "vsdb" && key === "hideSystemSchemas") {
+              return state.hideSystemSchemas;
+            }
+            return fallback;
+          },
+        }),
       };
     },
   };
@@ -99,23 +108,31 @@ function makeCfg(overrides: Partial<ConnectionConfig> = {}): ConnectionConfig {
 }
 
 function makeFakeAdapter(opts: {
+  schemas?: Array<{ name: string }>;
   tables?: Array<{ name: string; schema: string }>;
   views?: Array<{ name: string; schema: string }>;
   routines?: Array<{ name: string; kind: "function" | "procedure"; schema: string }>;
   columns?: ColumnInfo[];
   throw?: boolean;
 } = {}) {
-  const listTables = vi.fn().mockImplementation(() => {
+  const listSchemas = vi.fn().mockImplementation(() => {
     if (opts.throw) throw new Error("connect failed");
-    return Promise.resolve(opts.tables ?? []);
+    return Promise.resolve(opts.schemas ?? [{ name: "public" }]);
   });
-  const listViews = vi.fn().mockImplementation(() => {
+  const listTables = vi.fn().mockImplementation((schema?: string) => {
     if (opts.throw) throw new Error("connect failed");
-    return Promise.resolve(opts.views ?? []);
+    const tables = opts.tables ?? [];
+    return Promise.resolve(schema ? tables.filter((t) => t.schema === schema) : tables);
   });
-  const listRoutines = vi.fn().mockImplementation(() => {
+  const listViews = vi.fn().mockImplementation((schema?: string) => {
     if (opts.throw) throw new Error("connect failed");
-    return Promise.resolve(opts.routines ?? []);
+    const views = opts.views ?? [];
+    return Promise.resolve(schema ? views.filter((v) => v.schema === schema) : views);
+  });
+  const listRoutines = vi.fn().mockImplementation((schema?: string) => {
+    if (opts.throw) throw new Error("connect failed");
+    const routines = opts.routines ?? [];
+    return Promise.resolve(schema ? routines.filter((r) => r.schema === schema) : routines);
   });
   const listColumns = vi.fn().mockImplementation(() => {
     if (opts.throw) throw new Error("connect failed");
@@ -125,6 +142,7 @@ function makeFakeAdapter(opts: {
     connect: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
     runQuery: vi.fn(),
+    listSchemas,
     listTables,
     listViews,
     listRoutines,
@@ -163,11 +181,13 @@ interface Harness {
 }
 
 function setupTree(opts: {
+  schemas?: Array<{ name: string }>;
   tables?: Array<{ name: string; schema: string }>;
   views?: Array<{ name: string; schema: string }>;
   routines?: Array<{ name: string; kind: "function" | "procedure"; schema: string }>;
   columns?: ColumnInfo[];
   throw?: boolean;
+  hideSystemSchemas?: boolean;
   /** When true, factory returns a NEW adapter instance on every call (so we can
    * detect socket-leak regressions: count distinct adapter creations). */
   factoryPerCall?: boolean;
@@ -175,6 +195,7 @@ function setupTree(opts: {
   state.emitters = [];
   state.treeItemCalls = [];
   state.workspaceFolders = undefined;
+  state.hideSystemSchemas = opts.hideSystemSchemas ?? true;
   const adapter = makeFakeAdapter(opts);
   const adapters: ReturnType<typeof makeFakeAdapter>[] = [adapter];
   const factory = opts.factoryPerCall
@@ -207,12 +228,9 @@ describe("SchemaTreeProvider — getChildren", () => {
     state.treeItemCalls = [];
   });
 
-  it("Test #1 — root → connection nodes; connection → 3 category; Tables → tables từ mock adapter", async () => {
+  it("connection expand → schema nodes with listSchemas(includeSystem=false)", async () => {
     const { mgr, adapter } = setupTree({
-      tables: [
-        { name: "users", schema: "public" },
-        { name: "orders", schema: "public" },
-      ],
+      schemas: [{ name: "app" }, { name: "public" }],
     });
     await mgr.addConnection(makeCfg({ id: "a", name: "Local" }), "p");
     const provider = new SchemaTreeProvider(mgr);
@@ -221,27 +239,128 @@ describe("SchemaTreeProvider — getChildren", () => {
     expect(root).toHaveLength(1);
     expect(root[0].contextValue).toBe("connection");
 
-    const cats = await provider.getChildren(root[0]);
-    expect(cats.map((c) => c.label)).toEqual(["Tables", "Views", "Routines"]);
-    const tablesNode = cats[0];
-    expect(tablesNode.contextValue).toBe("category");
-
-    const tables = await provider.getChildren(tablesNode);
-    if (tables.length !== 2) {
-      // eslint-disable-next-line no-console
-      console.log("DEBUG tables:", JSON.stringify(tables, null, 2));
-    }
-    expect(tables).toHaveLength(2);
-    expect(tables.map((t) => t.label).sort()).toEqual(["orders", "users"]);
-    expect(tables[0].contextValue).toBe("table");
-
-    expect(adapter.listTables).toHaveBeenCalled();
+    const schemas = await provider.getChildren(root[0]);
+    expect(adapter.listSchemas).toHaveBeenCalledWith(false);
+    expect(schemas.map((s) => s.label)).toEqual(["app", "public"]);
+    expect(schemas.map((s) => s.contextValue)).toEqual(["schema", "schema"]);
+    expect(schemas.every((s) => s.collapsible === 1)).toBe(true);
   });
 
-  it("Test #2 — lazy + cache 60s: listTables 1 lần trong 60s; refresh → gọi lại", async () => {
+  it("schema expand → 3 DataGrip-style category folders", async () => {
+    const { mgr } = setupTree({ schemas: [{ name: "app" }] });
+    await mgr.addConnection(makeCfg({ id: "a", name: "Local" }), "p");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    const cats = await provider.getChildren(schemas[0]);
+
+    expect(cats.map((c) => c.label)).toEqual(["Tables", "Views", "Routines"]);
+    expect(cats.map((c) => c.contextValue)).toEqual(["category", "category", "category"]);
+    expect(cats.every((c) => c.meta?.schema === "app")).toBe(true);
+  });
+
+  it("category expand passes schema and updates count description", async () => {
+    const { mgr, adapter } = setupTree({
+      schemas: [{ name: "app" }],
+      tables: [
+        { name: "users", schema: "app" },
+        { name: "orders", schema: "app" },
+        { name: "audit_log", schema: "audit" },
+      ],
+    });
+    await mgr.addConnection(makeCfg({ id: "a", name: "Local" }), "p");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    const cats = await provider.getChildren(schemas[0]);
+    const tablesNode = cats[0];
+    const tables = await provider.getChildren(tablesNode);
+
+    expect(adapter.listTables).toHaveBeenCalledWith("app");
+    expect(tables.map((t) => t.label)).toEqual(["users", "orders"]);
+    expect(tablesNode.description).toBe("2");
+  });
+
+  it("table node objectKey includes schema", async () => {
+    const { mgr } = setupTree({
+      schemas: [{ name: "app" }],
+      tables: [{ name: "users", schema: "app" }],
+    });
+    await mgr.addConnection(makeCfg({ id: "connId", name: "Local" }), "p");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    const cats = await provider.getChildren(schemas[0]);
+    const tables = await provider.getChildren(cats[0]);
+
+    expect(tables[0].meta?.objectKey).toBe("connId.app.users");
+  });
+
+  it("listSchemas [] → no schemas node", async () => {
+    const { mgr } = setupTree({ schemas: [] });
+    await mgr.addConnection(makeCfg({ id: "empty", name: "Empty" }), "p");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+
+    expect(schemas).toHaveLength(1);
+    expect(schemas[0].label).toBe("No schemas");
+    expect(schemas[0].collapsible).toBe(0);
+  });
+
+  it("schema/category cache keys distinguish schema and refresh clears entries", async () => {
+    const { mgr, adapter } = setupTree({
+      schemas: [{ name: "app" }, { name: "audit" }],
+      tables: [
+        { name: "users", schema: "app" },
+        { name: "events", schema: "audit" },
+      ],
+    });
+    await mgr.addConnection(makeCfg({ id: "cache", name: "Cache" }), "p");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    const appCats = await provider.getChildren(schemas[0]);
+    const auditCats = await provider.getChildren(schemas[1]);
+
+    await provider.getChildren(appCats[0]);
+    await provider.getChildren(auditCats[0]);
+    await provider.getChildren(appCats[0]);
+    expect(adapter.listTables).toHaveBeenCalledTimes(2);
+    expect(adapter.listTables.mock.calls.map((c) => c[0])).toEqual(["app", "audit"]);
+
+    provider.refresh();
+    const refreshedRoot = await provider.getChildren(undefined);
+    const refreshedSchemas = await provider.getChildren(refreshedRoot[0]);
+    const refreshedCats = await provider.getChildren(refreshedSchemas[0]);
+    await provider.getChildren(refreshedCats[0]);
+    expect(adapter.listTables).toHaveBeenCalledTimes(3);
+  });
+
+  it("hideSystemSchemas=false passes includeSystem=true to listSchemas", async () => {
+    const { mgr, adapter } = setupTree({
+      hideSystemSchemas: false,
+      schemas: [{ name: "pg_catalog" }],
+    });
+    await mgr.addConnection(makeCfg({ id: "sys", name: "System" }), "p");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    await provider.getChildren(root[0]);
+
+    expect(adapter.listSchemas).toHaveBeenCalledWith(true);
+  });
+
+  it("lazy + cache 60s: listTables 1 lần trong 60s; refresh → gọi lại", async () => {
     vi.useFakeTimers();
     try {
       const { mgr, adapter } = setupTree({
+        schemas: [{ name: "public" }],
         tables: [{ name: "users", schema: "public" }],
       });
       await mgr.addConnection(makeCfg({ id: "x" }), "p");
@@ -250,7 +369,8 @@ describe("SchemaTreeProvider — getChildren", () => {
 
       const root = await provider.getChildren(undefined);
       const conn = root[0];
-      const cats = await provider.getChildren(conn);
+      const schemas = await provider.getChildren(conn);
+      const cats = await provider.getChildren(schemas[0]);
       const tablesNode = cats[0];
 
       await provider.getChildren(tablesNode);
@@ -272,27 +392,19 @@ describe("SchemaTreeProvider — getChildren", () => {
     }
   });
 
-  it("Test #3 — adapter throw → child node error 'Connect failed' (không crash)", async () => {
+  it("adapter throw → child node error 'Connect failed' (không crash)", async () => {
     const { mgr } = setupTree({ throw: true });
     await mgr.addConnection(makeCfg({ id: "z" }), "p");
     await mgr.setActive("z");
     const provider = new SchemaTreeProvider(mgr);
 
     const root = await provider.getChildren(undefined);
-    const cats = await provider.getChildren(root[0]);
-    const tablesNode = cats[0];
 
-    // Adapter throws → provider swallows and returns error node.
-    const tables = await provider.getChildren(tablesNode);
-    // The provider returns [] due to outer try/catch wrapping the throw;
-    // or returns [errorNode] depending on path. Accept either, but ensure no crash.
-    if (tables.length > 0) {
-      expect(tables[0].contextValue).toBe("error");
-      expect(tables[0].label.toLowerCase()).toMatch(/connect failed|error/);
-    } else {
-      // Outer catch swallowed everything — still acceptable.
-      expect(tables).toEqual([]);
-    }
+    const schemas = await provider.getChildren(root[0]);
+    expect(schemas).toHaveLength(1);
+    expect(schemas[0].contextValue).toBe("error");
+    expect(schemas[0].label.toLowerCase()).toMatch(/connect failed|error/);
+
     // No throw above — assert tree provider is still usable.
     const second = await provider.getChildren(undefined);
     expect(second.length).toBeGreaterThanOrEqual(1);
@@ -355,7 +467,8 @@ describe("SchemaTreeProvider — column children", () => {
     const provider = new SchemaTreeProvider(mgr);
 
     const root = await provider.getChildren(undefined);
-    const cats = await provider.getChildren(root[0]);
+    const schemas = await provider.getChildren(root[0]);
+    const cats = await provider.getChildren(schemas[0]);
     const tablesNode = cats[0];
     const tables = await provider.getChildren(tablesNode);
     const tableNode = tables[0];
@@ -432,11 +545,6 @@ describe("SchemaTreeProvider — non-active connection socket leak regression", 
     // Không setActive → connection này là non-active.
 
     const provider = new SchemaTreeProvider(mgr);
-    const root = await provider.getChildren(undefined);
-    const conn = root[0];
-    const cats = await provider.getChildren(conn);
-    const tablesNode = cats[0];
-
     const factoryCallsBefore = factory.mock.calls.length;
     // addConnection đã gọi factory 1 lần cho test-connect probe. Đếm delta
     // từ sau đó để loại probe noise ra khỏi assertion.
@@ -445,7 +553,8 @@ describe("SchemaTreeProvider — non-active connection socket leak regression", 
       provider.refresh();
       const r = await provider.getChildren(undefined);
       const c = r[0];
-      const cats2 = await provider.getChildren(c);
+      const schemas2 = await provider.getChildren(c);
+      const cats2 = await provider.getChildren(schemas2[0]);
       await provider.getChildren(cats2[0]);
     }
     // Expected: chỉ +1 factory call (cache hit cho mọi expansion sau lần đầu).

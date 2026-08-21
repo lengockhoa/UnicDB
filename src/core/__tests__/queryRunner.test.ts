@@ -63,6 +63,7 @@ function makeAdapter(
     connect: vi.fn(async () => {}),
     close: vi.fn(async () => {}),
     runQuery: runQuerySpy,
+    listSchemas: vi.fn(async () => []),
     listTables: vi.fn(async () => []),
     listViews: vi.fn(async () => []),
     listRoutines: vi.fn(async () => []),

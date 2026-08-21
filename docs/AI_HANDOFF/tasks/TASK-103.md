@@ -56,3 +56,36 @@ Produces: node contextValue `"schema"` mới; category `description` count badge
 
 ### 2026-08-21 · planner · unic-smart
 Node schema dùng icon `$(symbol-namespace)`, label = tên schema. Category nodes giữ contextValue "category" (menu view/item/context khi `viewItem == table/view/...` không đổi — schema node chưa có context menu riêng, chỉ expand).
+
+## Executor Report
+
+- **EXECUTOR_MODEL**: unic-code
+- **Status**: PASS
+
+### RED_OUTPUT
+
+`npx vitest run src/ui/__tests__/schemaTree.test.ts` → 11 failed | 8 passed (19). Tất cả 11 test mới fail đúng lý do mong đợi: connection expand vẫn trả thẳng category (chưa có cấp "schema"), listSchemas chưa được gọi, category key chưa có schema, description count chưa cập nhật.
+
+### Verification Output
+
+```text
+$ npx tsc --noEmit
+(no output — type check pass)
+
+$ npx vitest run src/ui/__tests__/schemaTree.test.ts
+Test Files  1 passed (1)
+     Tests  19 passed (19)
+
+$ npx vitest run
+Test Files  15 passed (15)
+     Tests  156 passed (156)
+
+$ npm run compile
+esbuild: build complete
+```
+
+### Changes
+
+- `src/ui/schemaTree.ts` — thêm node `schema` (connection → schema → category → object); `getSchemaNodesForConnection` đọc `vsdb.hideSystemSchemas` rồi gọi `adapter.listSchemas(!hideSystemSchemas)`; cache key `schemas|<connId>|includeSystem=<0|1>`; category key `category|<connId>|<schema>|<category>`; `listTables/listViews/listRoutines` truyền schema tường minh; category node cập nhật `description` = count + fire onDidChangeTreeData (DataGrip-style badge); node "No schemas" khi listSchemas rỗng.
+- `src/ui/__tests__/schemaTree.test.ts` — 8 test mới (schema flow + count + objectKey + no-schemas + cache + hideSystemSchemas) + adapt existing tests sang tree 3 cấp.
+- `src/ui/__tests__/statusBar.test.ts`, `src/core/__tests__/connectionManager.test.ts`, `src/core/__tests__/queryRunner.test.ts` — thêm `listSchemas` stub vào fake adapter (`connectionForm.test.ts` đã có sẵn).

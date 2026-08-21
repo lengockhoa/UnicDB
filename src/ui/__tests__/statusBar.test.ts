@@ -91,6 +91,7 @@ function makeAdapter() {
     connect: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
     runQuery: vi.fn(),
+    listSchemas: vi.fn(),
     listTables: vi.fn(),
     listViews: vi.fn(),
     listRoutines: vi.fn(),
