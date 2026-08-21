@@ -82,3 +82,100 @@ npm run compile
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Executor Report
+
+- EXECUTOR_TOOL: claude-code
+- EXECUTOR_MODEL: claude-sonnet-4-6
+- TASK: TASK-006 — QueryRunner (batch/cancel) + Results Panel webview (grid)
+- DATE: 2026-08-21
+
+### Files Touched
+
+Created:
+- `src/core/resultBatcher.ts` — `appendBatch`, `batchStats`, `mergeBatchIntoResult` pure helpers.
+- `src/core/queryRunner.ts` — `QueryRunner` class + `StatementResult` interface + `StatementStatus` type.
+- `src/ui/messages.ts` — Shared message protocol (`HostMessage`, `WebviewMessage`).
+- `src/ui/resultsPanel.ts` — `ResultsPanel` class (vscode UI).
+- `src/core/__tests__/resultBatcher.test.ts` — 8 unit tests.
+- `src/core/__tests__/queryRunner.test.ts` — 9 unit tests (sequential, error-stop, cancel, INSERT, batched loadMore, BigInt/Date/Null serialize).
+- `webview/main.ts` — Rewritten: tabs per statement, grid, Messages tab, copy, cancel.
+- `webview/grid.ts` — Rewritten: `VirtualGrid` with windowing, sticky header, NULL/numeric styling, tab-separated copy, load-more trigger.
+- `webview/styles.css` — Full theme using `--vscode-*` CSS vars.
+
+Modified:
+- `esbuild.js` — Added CSS copy step (`dist/webview.css` from `webview/styles.css`).
+
+Untouched (per spec):
+- `src/adapters/*`, `src/core/connectionManager.ts`, `src/ui/statusBar.ts`, `package.json`, `src/extension.ts`, `src/config/*`.
+
+### RED_OUTPUT
+
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-006
+
+ � src/core/__tests__/resultBatcher.test.ts  (0 test)
+ ❯ src/core/__tests__/queryRunner.test.ts  (0 test)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/core/__tests__/queryRunner.test.ts
+Error: Failed to load url ../queryRunner (resolved id: ../queryRunner) in ...
+Does the file exist?
+
+ FAIL  src/core/__tests__/resultBatcher.test.ts
+Error: Failed to load url ../resultBatcher (resolved id: ../resultBatcher) in ...
+Does the file exist?
+
+ Test Files  2 failed (2)
+      Tests  no tests
+```
+
+### Verification Output
+
+**Type check (extension host):** `npx tsc --noEmit` — no errors (silent).
+
+**Type check (webview):** `npx tsc -p tsconfig.webview.json --noEmit` — no errors (silent).
+
+**Full test suite:** `npm test`
+```
+ Test Files  7 passed (7)
+      Tests  63 passed (63)
+```
+- resultBatcher: 8 passed
+- queryRunner: 9 passed (covers spec tests #1, #2, #3, #4, #5, #6 + extras #7, #7b, batched initial, INSERT)
+- All prior tests (parser, connectionManager, statusBar, factory, scaffold): no regression.
+
+**esbuild compile:** `npm run compile`
+```
+esbuild: copied webview/styles.css → dist/webview.css
+  dist/extension.js      1.2kb
+  dist/webview.js        13.5kb
+  dist/webview.css       5.2kb
+esbuild: build complete
+```
+
+### Status
+
+COMPLETE — all 6 required test cases (plus 11 additional edge cases) PASS; tsc clean for both host and webview; esbuild bundles webview cleanly with CSS. Panel reuse, virtual scroll grid with Load-500-more, Messages tab, Cancel, copy tab-separated all implemented per spec.
+
+### Acceptance Criteria
+
+- [x] All required test cases PASS (spec #1–#6 + extras for cancel/loadMore).
+- [x] Webview bundle builds clean (`dist/webview.js`, `dist/webview.css`).
+- [x] Panel reuses single instance (`this.panel ?? createWebviewPanel` in `ResultsPanel.show()`).
+- [x] Grid: tabs per statement, Load 500 more (via scroll trigger in `VirtualGrid.render()`), Messages tab, Cancel button, copy tab-separated (Cmd/Ctrl+C handler in `VirtualGrid.handleKeydown()`).
+- [x] No regression: full `npm test` 63/63 pass.
+- [x] `StatementResult.status = 'cancelled'` cho statements sau statement lỗi (TASK-006 spec §2); earlier tabs keep results.
+- [x] CSP via `<meta http-equiv="Content-Security-Policy">` + `asWebviewUri` for script/style URIs.
+
+### Note
+
+- `dist/extension.js` is small (1.2kb) because TASK-007 (wire-up) is explicitly out of scope for TASK-006 per spec ("Do NOT touch: src/extension.ts").
+- Virtual scroll uses simple windowing (~30 rows via ROW_HEIGHT × viewport + OVERSCAN); DOM-based, no DOM unit tests in v1 (per spec).
+- `ResultsPanel.setExtensionUri()` injection seam added so TASK-007 can wire `ExtensionContext.extensionUri` for `asWebviewUri`.
+- Copy tab-separated uses `vscode.env.clipboard.writeText` on host side after webview builds the string — falls back to `navigator.clipboard` if host unavailable (dev mode).
+- `pickResult()` helper picks non-empty `QueryResult` from a multi-statement `RunResult`; avoids losing the only-with-rows result when batched flag is set.
+- Cancel semantics: when `cancel()` is called mid-`runQuery`, the in-flight statement will be marked `'cancelled'` once the promise settles (either resolves or rejects). Statements after it are also marked `'cancelled'` even on normal completion.
+- 2 unused params (`_batchSize` in `batchStats` — kept for forward-compat) prefixed with `_` to satisfy TS strict.
+

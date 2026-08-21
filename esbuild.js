@@ -1,6 +1,9 @@
 // esbuild.js — VSDB extension + webview bundler.
 // TASK-001 scaffold: builds two entries (extension host + webview).
+// TASK-006 also copies webview/styles.css → dist/webview.css.
 const esbuild = require("esbuild");
+const fs = require("fs");
+const path = require("path");
 
 const watch = process.argv.includes("--watch");
 const minify = process.argv.includes("--minify") || process.env.NODE_ENV === "production";
@@ -32,7 +35,17 @@ const webviewConfig = {
   logLevel: "info",
 };
 
+function copyWebviewCss() {
+  const src = path.join(__dirname, "webview", "styles.css");
+  const dst = path.join(__dirname, "dist", "webview.css");
+  if (!fs.existsSync(src)) return;
+  fs.mkdirSync(path.dirname(dst), { recursive: true });
+  fs.copyFileSync(src, dst);
+  console.log(`esbuild: copied ${path.relative(__dirname, src)} → ${path.relative(__dirname, dst)}`);
+}
+
 async function run() {
+  copyWebviewCss();
   if (watch) {
     const ctx1 = await esbuild.context(extensionConfig);
     const ctx2 = await esbuild.context(webviewConfig);

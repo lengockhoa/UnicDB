@@ -1,2 +1,239 @@
-/* webview/styles.css — placeholder; TASK-006 fills the results grid theme. */
-.vsdb-webview { font-family: var(--vscode-font-family); color: var(--vscode-foreground); }
+/* webview/styles.css — Results Panel webview (TASK-006). */
+
+.vsdb-webview {
+  font-family: var(--vscode-font-family, monospace);
+  font-size: var(--vscode-font-size, 13px);
+  color: var(--vscode-foreground);
+  background: var(--vscode-editor-background);
+  padding: 8px;
+  height: 100vh;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+}
+
+/* --- Header --- */
+.vsdb-header {
+  font-weight: 600;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--vscode-panel-border, #444);
+  margin-bottom: 8px;
+}
+
+/* --- Toolbar --- */
+.vsdb-toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.vsdb-btn {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: 1px solid var(--vscode-button-border, transparent);
+  padding: 4px 10px;
+  border-radius: 2px;
+  cursor: pointer;
+  font-size: inherit;
+  font-family: inherit;
+}
+.vsdb-btn:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground);
+}
+.vsdb-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.vsdb-btn-danger {
+  background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
+  border-color: var(--vscode-inputValidation-errorBorder, #be1100);
+}
+
+/* --- Tabs --- */
+.vsdb-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  border-bottom: 1px solid var(--vscode-panel-border, #444);
+  margin-bottom: 8px;
+}
+.vsdb-tab {
+  background: var(--vscode-tab-inactiveBackground, transparent);
+  color: var(--vscode-tab-inactiveForeground);
+  border: 1px solid transparent;
+  border-bottom: none;
+  padding: 4px 10px;
+  border-radius: 4px 4px 0 0;
+  cursor: pointer;
+  font-size: inherit;
+  font-family: inherit;
+}
+.vsdb-tab-active {
+  background: var(--vscode-tab-activeBackground);
+  color: var(--vscode-tab-activeForeground);
+  border-color: var(--vscode-panel-border, #444);
+}
+.vsdb-tab-error {
+  color: var(--vscode-errorForeground, #f48771);
+}
+.vsdb-tab-cancelled {
+  color: var(--vscode-disabledForeground, #888);
+  text-decoration: line-through;
+}
+
+/* --- Grid container --- */
+.vsdb-grid-host {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.vsdb-grid-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--vscode-panel-border, #444);
+  outline: none;
+}
+
+.vsdb-scroll {
+  flex: 1;
+  overflow: auto;
+  position: relative;
+  min-height: 200px;
+}
+
+.vsdb-viewport {
+  position: relative;
+}
+
+.vsdb-spacer {
+  width: 1px;
+}
+
+.vsdb-grid {
+  border-collapse: collapse;
+  width: 100%;
+  table-layout: fixed;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: var(--vscode-editor-font-size, 13px);
+}
+
+.vsdb-grid thead {
+  position: sticky;
+  top: 0;
+  background: var(--vscode-editorGroupHeaderTabsBackground, #252526);
+  z-index: 2;
+}
+
+.vsdb-grid thead th {
+  text-align: left;
+  padding: 4px 8px;
+  border: 1px solid var(--vscode-panel-border, #444);
+  background: var(--vscode-editorGroupHeaderTabsBackground, #252526);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vsdb-grid tbody tr {
+  height: 22px;
+}
+
+.vsdb-grid tbody td {
+  padding: 2px 8px;
+  border: 1px solid var(--vscode-panel-border, #2d2d2d);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: var(--vscode-editor-background);
+}
+
+.vsdb-grid tbody tr:hover td {
+  background: var(--vscode-list-hoverBackground, #2a2d2e);
+}
+
+.vsdb-null {
+  color: var(--vscode-disabledForeground, #888);
+  font-style: italic;
+}
+
+.vsdb-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Footer --- */
+.vsdb-grid-footer {
+  padding: 4px 8px;
+  border-top: 1px solid var(--vscode-panel-border, #444);
+  background: var(--vscode-statusBarBackground, #007acc);
+  color: var(--vscode-statusBarForeground, #fff);
+  font-size: 0.9em;
+  flex-shrink: 0;
+}
+
+/* --- Empty / error --- */
+.vsdb-empty {
+  padding: 16px;
+  color: var(--vscode-disabledForeground, #888);
+  text-align: center;
+}
+.vsdb-loading {
+  padding: 16px;
+  color: var(--vscode-disabledForeground, #888);
+}
+.vsdb-error {
+  padding: 12px;
+  background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
+  color: var(--vscode-inputValidation-errorForeground, #f48771);
+  border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
+  border-radius: 2px;
+  margin: 8px;
+}
+
+/* --- Messages tab --- */
+.vsdb-messages {
+  flex: 1;
+  overflow: auto;
+  padding: 8px;
+}
+.vsdb-msg-card {
+  border: 1px solid var(--vscode-panel-border, #444);
+  border-radius: 4px;
+  margin-bottom: 8px;
+  padding: 8px;
+  background: var(--vscode-editor-background);
+}
+.vsdb-msg-error {
+  border-color: var(--vscode-inputValidation-errorBorder, #be1100);
+}
+.vsdb-msg-cancelled {
+  opacity: 0.6;
+}
+.vsdb-msg-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.vsdb-msg-sql {
+  font-family: var(--vscode-editor-font-family, monospace);
+  background: var(--vscode-textCodeBlock-background, #1e1e1e);
+  padding: 4px 8px;
+  border-radius: 2px;
+  white-space: pre-wrap;
+  overflow-x: auto;
+  margin: 4px 0;
+}
+.vsdb-msg-meta {
+  color: var(--vscode-descriptionForeground, #888);
+  font-size: 0.9em;
+}
+.vsdb-msg-error-text {
+  color: var(--vscode-errorForeground, #f48771);
+  margin-top: 4px;
+  white-space: pre-wrap;
+}
