@@ -24,16 +24,56 @@
   ],
   "contributes": {
     "commands": [
-      { "command": "vsdb.addConnection", "title": "VSDB: Add Connection", "category": "VSDB" },
-      { "command": "vsdb.editConnection", "title": "VSDB: Edit Connection", "category": "VSDB" },
-      { "command": "vsdb.deleteConnection", "title": "VSDB: Delete Connection", "category": "VSDB" },
-      { "command": "vsdb.selectConnection", "title": "VSDB: Select Active Connection", "category": "VSDB" },
-      { "command": "vsdb.runQuery", "title": "VSDB: Run Query", "category": "VSDB" },
-      { "command": "vsdb.cancelQuery", "title": "VSDB: Cancel Query", "category": "VSDB" },
-      { "command": "vsdb.generateSelect", "title": "VSDB: Generate SELECT", "category": "VSDB" },
-      { "command": "vsdb.copyQualifiedName", "title": "VSDB: Copy Qualified Name", "category": "VSDB" },
-      { "command": "vsdb.refreshSchema", "title": "VSDB: Refresh Schema", "category": "VSDB" },
-      { "command": "vsdb.runStatement", "title": "VSDB: Run Statement", "category": "VSDB" }
+      {
+        "command": "vsdb.addConnection",
+        "title": "VSDB: Add Connection",
+        "category": "VSDB"
+      },
+      {
+        "command": "vsdb.editConnection",
+        "title": "VSDB: Edit Connection",
+        "category": "VSDB"
+      },
+      {
+        "command": "vsdb.deleteConnection",
+        "title": "VSDB: Delete Connection",
+        "category": "VSDB"
+      },
+      {
+        "command": "vsdb.selectConnection",
+        "title": "VSDB: Select Active Connection",
+        "category": "VSDB"
+      },
+      {
+        "command": "vsdb.runQuery",
+        "title": "VSDB: Run Query",
+        "category": "VSDB"
+      },
+      {
+        "command": "vsdb.cancelQuery",
+        "title": "VSDB: Cancel Query",
+        "category": "VSDB"
+      },
+      {
+        "command": "vsdb.generateSelect",
+        "title": "VSDB: Generate SELECT",
+        "category": "VSDB"
+      },
+      {
+        "command": "vsdb.copyQualifiedName",
+        "title": "VSDB: Copy Qualified Name",
+        "category": "VSDB"
+      },
+      {
+        "command": "vsdb.refreshSchema",
+        "title": "VSDB: Refresh Schema",
+        "category": "VSDB"
+      },
+      {
+        "command": "vsdb.runStatement",
+        "title": "VSDB: Run Statement",
+        "category": "VSDB"
+      }
     ],
     "keybindings": [
       {

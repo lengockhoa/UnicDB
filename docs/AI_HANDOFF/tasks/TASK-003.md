@@ -79,3 +79,107 @@ VSDB_IT=1 npm run test:integration
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Executor Report
+
+- EXECUTOR_TOOL: claude-code
+- EXECUTOR_MODEL: claude-sonnet-4-6
+- BRANCH: task-003 (worktree)
+- DATE: 2026-08-21
+
+### Files created
+
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-003/src/adapters/types.ts`
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-003/src/adapters/postgres.ts`
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-003/src/adapters/factory.ts`
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-003/src/adapters/__tests__/factory.test.ts`
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-003/src/adapters/__tests__/postgres.integration.test.ts`
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-003/docker/docker-compose.yml`
+
+### Implementation notes
+
+- **Cursor implementation**: Initial attempt with `pg-cursor` package failed at
+  runtime: `TypeError: con.parse is not a function`. Reason: pg-cursor requires
+  `pg-native` (libpq C bindings). The project uses JS-pure pg. Replaced with
+  manual `BEGIN; DECLARE <name> CURSOR FOR <sql>; FETCH 500 FROM <name>; …;
+  CLOSE <name>; COMMIT;` — same wire protocol, no re-execute. Columns are
+  captured via `FETCH 0` after DECLARE (ParseComplete populates fields before any
+  DataRow).
+- **Pool sizing**: `max=1` per task spec (simplify single-client model for cursor).
+- **Single SELECT detection**: `statements.length === 1 && /^\s*SELECT\b/i.test(text) && !text.includes(";")`. Multi-statement scripts and non-SELECT go through `pool.query` sequentially.
+- **Metadata**: `information_schema.tables/views/columns` + `pg_proc.prokind` (`f`/`p`); column types via `format_type()` with `udt_name || data_type` fallback; PK detection via `pg_index.indisprimary`.
+- **Cancellation**: `BatchedQuery.cancel()` → `SELECT pg_cancel_backend(pid)` + `ROLLBACK` + `client.release(true)` to free the connection.
+- **Wrong-password fast-fail**: `connect()` probes with `SELECT 1` so auth failures surface immediately rather than at first `runQuery`.
+- **Test #1 wording alignment**: spec table says "SELECT 1 AS one trả columns ['one'], rows [[1]]" — under cursor rule, that means caller reads via `batched.fetchBatch()`. Updated test to reflect.
+- **Dependencies**: Tried `pg-cursor` first (didn't work with JS-pure pg), then uninstalled. No new runtime deps; pg was already installed by TASK-001.
+
+### RED_OUTPUT
+
+`npx vitest run src/adapters/__tests__/factory.test.ts` (tests written, no implementation yet):
+
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-003
+
+ ❯ src/adapters/__tests__/factory.test.ts  (0 test)
+
+⎯⎯⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/adapters/__tests__/factory.test.ts [ src/adapters/__tests__/factory.test.ts ]
+Error: Failed to load url ../factory (resolved id: ../factory) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-003/src/adapters/__tests__/factory.test.ts. Does the file exist?
+ ❯ loadAndTransform node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17
+
+ Test Files  1 failed (1)
+      Tests  no tests
+```
+
+### Verification Output
+
+**Typecheck** — `npx tsc --noEmit`:
+```
+EXIT=0
+```
+
+**Unit tests** — `npx vitest run`:
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-003
+
+ ✓ src/scaffold.test.ts  (4 tests) 12ms
+ ✓ src/core/__tests__/statementParser.test.ts  (26 tests) 5ms
+ ✓ src/adapters/__tests__/factory.test.ts  (4 tests) 3ms
+
+ Test Files  3 passed (3)
+      Tests  34 passed (34)
+```
+
+**Integration tests** — after `docker compose -f docker/docker-compose.yml up -d postgres` (postgres:16-alpine healthy on port 5433) and `VSDB_IT=1 npx vitest run -c vitest.integration.config.ts`:
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-003
+
+ ✓ src/adapters/__tests__/postgres.integration.test.ts  (5 tests) 10098ms
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+```
+
+All 5 integration tests PASS:
+- Test #1 Connect + query đơn giản (SELECT 1 qua cursor)
+- Test #2 Batch 500 + Load more (generate_series 1..1200 → 500/500/200/null)
+- Test #3 Sai password → lỗi 28P01
+- Test #4 Cancel giữa query lớn
+- Test #5 Metadata: tables, columns, routines
+
+### Status
+
+`done` — all acceptance criteria met:
+- [x] Unit test factory PASS; integration postgres PASS khi `VSDB_IT=1`.
+- [x] `BatchedQuery` interface đúng chữ ký.
+- [x] docker-compose.yml có đủ 3 services (postgres:16-alpine:5433, mysql:8:3307, mssql:2022-latest:1434).
+- [x] Không regression: `npm test` PASS (34/34).
+- [ ] Reviewer verdict (Phase 4).
+
+### Note
+
+- pg-cursor package was tried then uninstalled — manual DECLARE CURSOR is used instead (matches spec "pg cursor API or DECLARE manually").
+- Test #1 expectation updated to reflect that SELECT always uses cursor — caller reads via `batched.fetchBatch()`.
+- Docker compose: pulled `postgres:16-alpine` took ~3 min on first run due to network. Healthcheck uses `pg_isready`. Subsequent starts are quick.
+- All Postgres passwords (vsdb), MySQL root password (vsdb), MSSQL SA password (VsdbPass123!) are local TEST containers only.
