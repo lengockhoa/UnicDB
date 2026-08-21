@@ -21,6 +21,9 @@ class FakeEventEmitter<T> {
   fire(data: T): void {
     for (const l of this.listeners.slice()) l(data);
   }
+  dispose = (): void => {
+    this.listeners = [];
+  };
 }
 
 // Module-scoped (mutable) state — bound before any test runs.
@@ -157,6 +160,7 @@ interface Harness {
   mgr: ConnectionManager;
   adapter: ReturnType<typeof makeFakeAdapter>;
   factory: ReturnType<typeof vi.fn>;
+  adapters: ReturnType<typeof makeFakeAdapter>[];
 }
 
 function setupTree(opts: {
@@ -165,12 +169,22 @@ function setupTree(opts: {
   routines?: Array<{ name: string; kind: "function" | "procedure"; schema: string }>;
   columns?: ColumnInfo[];
   throw?: boolean;
+  /** When true, factory returns a NEW adapter instance on every call (so we can
+   * detect socket-leak regressions: count distinct adapter creations). */
+  factoryPerCall?: boolean;
 } = {}): Harness {
   state.emitters = [];
   state.treeItemCalls = [];
   state.workspaceFolders = undefined;
   const adapter = makeFakeAdapter(opts);
-  const factory = vi.fn(() => adapter as unknown as DbAdapter);
+  const adapters: ReturnType<typeof makeFakeAdapter>[] = [adapter];
+  const factory = opts.factoryPerCall
+    ? vi.fn(() => {
+        const a = makeFakeAdapter(opts);
+        adapters.push(a);
+        return a as unknown as DbAdapter;
+      })
+    : vi.fn(() => adapter as unknown as DbAdapter);
   const secret = new FakeSecretStorage();
   const ws = new FakeMemento();
   const g = new FakeMemento();
@@ -182,7 +196,7 @@ function setupTree(opts: {
     } as never,
     factory,
   );
-  return { mgr, adapter, factory };
+  return { mgr, adapter, factory, adapters };
 }
 
 // ---- Tests ----------------------------------------------------------------
@@ -392,5 +406,147 @@ describe("SchemaTreeProvider — exports / sanity", () => {
     const root = await provider.getChildren(undefined);
     expect(root).toHaveLength(1);
     expect(root[0].contextValue).toBe("empty-add");
+  });
+});
+
+// =============================================================================
+// Regression: socket leak khi expand NON-active connection trong SchemaTree.
+// Trước fix: mỗi expand → factory() tạo adapter mới → adapter.close() KHÔNG
+// được gọi → socket leak vĩnh viễn. Sau fix: ConnectionManager cache adapter
+// theo connection id → chỉ tạo 1 adapter dù expand N lần, và adapter.close()
+// được gọi khi manager.dispose() (extension deactivate / reload).
+// =============================================================================
+describe("SchemaTreeProvider — non-active connection socket leak regression", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.emitters = [];
+    state.treeItemCalls = [];
+    state.workspaceFolders = undefined;
+  });
+
+  it("expand NON-active connection N lần → factory chỉ tạo 1 adapter (cached)", async () => {
+    const { mgr, factory } = setupTree({
+      tables: [{ name: "users", schema: "public" }],
+      factoryPerCall: true,
+    });
+    await mgr.addConnection(makeCfg({ id: "nonactive", name: "Side" }), "p");
+    // Không setActive → connection này là non-active.
+
+    const provider = new SchemaTreeProvider(mgr);
+    const root = await provider.getChildren(undefined);
+    const conn = root[0];
+    const cats = await provider.getChildren(conn);
+    const tablesNode = cats[0];
+
+    const factoryCallsBefore = factory.mock.calls.length;
+    // addConnection đã gọi factory 1 lần cho test-connect probe. Đếm delta
+    // từ sau đó để loại probe noise ra khỏi assertion.
+    const expansionCount = 5;
+    for (let i = 0; i < expansionCount; i++) {
+      provider.refresh();
+      const r = await provider.getChildren(undefined);
+      const c = r[0];
+      const cats2 = await provider.getChildren(c);
+      await provider.getChildren(cats2[0]);
+    }
+    // Expected: chỉ +1 factory call (cache hit cho mọi expansion sau lần đầu).
+    // Trước fix: +expansionCount = 5 factory calls (mỗi expansion tạo adapter mới).
+    const delta = factory.mock.calls.length - factoryCallsBefore;
+    expect(delta).toBe(1);
+  });
+
+  it("manager.dispose() đóng tất cả passive adapters (không leak socket)", async () => {
+    const { mgr, factory, adapters } = setupTree({
+      tables: [{ name: "users", schema: "public" }],
+      factoryPerCall: true,
+    });
+    await mgr.addConnection(makeCfg({ id: "a", name: "A" }), "p");
+    await mgr.addConnection(makeCfg({ id: "b", name: "B" }), "p");
+
+    // Trigger getAdapterFor cho cả 2 non-active connections.
+    const cfgA = mgr.listConnections().find((c) => c.id === "a")!;
+    const cfgB = mgr.listConnections().find((c) => c.id === "b")!;
+    await mgr.getAdapterFor(cfgA);
+    await mgr.getAdapterFor(cfgB);
+    await mgr.getAdapterFor(cfgA); // cache hit — không tạo mới
+
+    // Sau 2 addConnection + 3 getAdapterFor (2 unique passive + 1 cache hit):
+    // 1 (initial) + 2 (probes) + 2 (passive) = 5 adapter instances.
+    expect(adapters.length).toBe(5);
+    // Chỉ kiểm tra các passive adapters (probe đã close trong addConnection finally).
+    const passiveAdapters = adapters.slice(-2);
+    expect(passiveAdapters).toHaveLength(2);
+    for (const a of passiveAdapters) {
+      expect(a.close).not.toHaveBeenCalled();
+    }
+
+    // Dispose manager.
+    await mgr.dispose();
+
+    // Passive adapters phải được close.
+    for (const a of passiveAdapters) {
+      expect(a.close).toHaveBeenCalled();
+    }
+    // Probes (adapters[1], adapters[2]) cũng đã close trong addConnection finally.
+    expect(adapters[1].close).toHaveBeenCalled();
+    expect(adapters[2].close).toHaveBeenCalled();
+    // Sanity: factory được gọi 4 lần (2 probes + 2 passive). Initial adapter
+    // trong adapters[0] KHÔNG đếm vì nó được tạo trước factory hook.
+    expect(factory.mock.calls.length).toBe(4);
+  });
+
+  it("editConnection / deleteConnection drop cached passive adapter", async () => {
+    const { mgr, factory, adapters } = setupTree({
+      factoryPerCall: true,
+    });
+    await mgr.addConnection(makeCfg({ id: "a", name: "A" }), "p");
+    const cfgA = mgr.listConnections().find((c) => c.id === "a")!;
+
+    // Trigger getAdapterFor → +1 factory call (passive cached).
+    await mgr.getAdapterFor(cfgA);
+    const passiveAdapter = adapters[adapters.length - 1];
+    expect(passiveAdapter.close).not.toHaveBeenCalled();
+
+    // editConnection → drop cached passive adapter.
+    await mgr.editConnection("a", { name: "A-renamed" });
+    expect(passiveAdapter.close).toHaveBeenCalled();
+
+    // Next getAdapterFor → tạo adapter MỚI.
+    const cfgARenamed = mgr.listConnections().find((c) => c.id === "a")!;
+    await mgr.getAdapterFor(cfgARenamed);
+    expect(adapters.length).toBeGreaterThan(2);
+
+    // deleteConnection → close passive mới.
+    const newestAdapter = adapters[adapters.length - 1];
+    await mgr.deleteConnection("a");
+    expect(newestAdapter.close).toHaveBeenCalled();
+  });
+});
+
+// =============================================================================
+// Regression: Generate SELECT theo node connection (không phải active).
+// Trước fix: commandGenerateSelect dùng active.driver → MySQL table dưới
+// Postgres active sinh ra SELECT * FROM `users` LIMIT 100; (sai). Sau fix:
+// dùng meta.connection.driver khi có.
+// =============================================================================
+describe("SchemaTreeProvider — connection node command + dialect per node", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.emitters = [];
+    state.treeItemCalls = [];
+    state.workspaceFolders = undefined;
+  });
+
+  it("connection node có command 'vsdb.selectConnectionFromTree' với arguments=[id]", async () => {
+    const stubMgr = {
+      listConnections: () => [makeCfg({ id: "x", name: "X" })],
+      getActive: () => null,
+      onDidChangeActive: () => ({ dispose: () => {} }),
+    };
+    const provider = new SchemaTreeProvider(stubMgr as never);
+    const root = await provider.getChildren(undefined);
+    expect(root).toHaveLength(1);
+    expect(root[0].command?.command).toBe("vsdb.selectConnectionFromTree");
+    expect(root[0].command?.arguments).toEqual(["x"]);
   });
 });

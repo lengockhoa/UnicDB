@@ -245,10 +245,14 @@ export class MySqlAdapter implements DbAdapter {
       // Query.stream() is part of mysql2's callback/core API, not its promise
       // wrapper. rowsAsArray gives the grid the same array contract as pg.
       const coreConnection = promiseConnection.connection as unknown as CoreConnection;
+      // mysql2's `timeout` arms a query-level timer that aborts the request.
+      // For long-running streaming SELECTs (load-more across 100k+ rows) this
+      // would kill the stream even while data is flowing. Disable the timer;
+      // cancellation goes through stream.destroy() / connection.destroy().
       coreQuery = coreConnection.query({
         sql,
         rowsAsArray: true,
-        timeout: 30_000,
+        timeout: 0,
       });
     } catch (error) {
       promiseConnection.release();
@@ -275,7 +279,7 @@ export class MySqlAdapter implements DbAdapter {
     let paused = false;
     let streamDone = false;
     let released = false;
-    let queue: Promise<any[][] | null> = Promise.resolve(null);
+    let lastError: Error | undefined;
 
     const releaseConnection = (): void => {
       if (released) return;
@@ -317,6 +321,14 @@ export class MySqlAdapter implements DbAdapter {
           waiter.resolve(batch);
           continue;
         }
+        if (buffer.length > 0 && streamDone) {
+          // Final partial batch — deliver the buffered rows BEFORE the eof
+          // signal so callers never lose them. EOF will be handed to the next
+          // fetchBatch() call when buffer is empty and streamDone is true.
+          const batch = buffer.splice(0, buffer.length);
+          waiter.resolve(batch);
+          continue;
+        }
         if (!streamDone) {
           // No data and no EOF yet; put this waiter back and stop.
           waiters.unshift(waiter);
@@ -332,6 +344,7 @@ export class MySqlAdapter implements DbAdapter {
     const fail = (error: Error): void => {
       if (state === "closed" || state === "eof") return;
       state = "error";
+      lastError = error;
       buffer.length = 0;
       while (waiters.length > 0) {
         const waiter = waiters.shift()!;
@@ -363,7 +376,9 @@ export class MySqlAdapter implements DbAdapter {
     const fetchBatch = (): Promise<MySqlRow[] | null> => {
       if (state === "eof" || state === "closed") return Promise.resolve(null);
       if (state === "error") {
-        return Promise.reject(new Error("MySQL query stream failed"));
+        return Promise.reject(
+          lastError ?? new Error("MySQL query stream failed"),
+        );
       }
       if (buffer.length > 0) {
         const batch = buffer.splice(0, Math.min(BATCH_SIZE, buffer.length));

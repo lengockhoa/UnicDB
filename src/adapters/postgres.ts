@@ -20,9 +20,13 @@
 //     trả về QueryResult rỗng + BatchedQuery.
 //   - Ngược lại (multi, non-SELECT, hoặc SELECT có `;`) → pool.query tuần tự.
 //
-// cancel: BatchedQuery.cancel → SELECT pg_cancel_backend(pid) + CLOSE.
+// cancel: BatchedQuery.cancel → SELECT pg_cancel_backend(pid) qua DEDICATED
+//          one-off Client (không qua pool max=1 — tránh queue/wedge), rồi
+//          CLOSE/ROLLBACK/release.
+// close: adapter.close() cleanup mọi BatchedQuery còn open rồi pool.end().
+//
 // Metadata: information_schema + pg_proc.
-import { Pool, PoolClient } from "pg";
+import { Client, Pool, PoolClient } from "pg";
 import type { ConnectionConfig } from "../config/types";
 import type {
   BatchedQuery,
@@ -38,9 +42,23 @@ import { splitStatements } from "../core/statementParser";
 
 const DEFAULT_BATCH_SIZE = 500;
 
+type CursorState = "open" | "eof" | "closed" | "error";
+
+interface OpenCursorRecord {
+  client: PoolClient;
+  cursorName: string;
+  closed: Promise<void>;
+}
+
 export class PostgresAdapter implements DbAdapter {
   private pool: Pool | null = null;
   private closed = false;
+  /**
+   * Track every open BatchedQuery client so adapter.close() can release
+   * them before pool.end() — otherwise pool.end() waits for checked-out
+   * clients forever (CRITICAL #3).
+   */
+  private openCursors: Set<OpenCursorRecord> = new Set();
 
   constructor(
     private readonly cfg: ConnectionConfig,
@@ -70,8 +88,47 @@ export class PostgresAdapter implements DbAdapter {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    // Cleanup mọi cursor còn open (CRITICAL #3 — close() với cursor open
+    // phải resolve < 5s, không treo ở pool.end).
+    if (this.openCursors.size > 0) {
+      const records = Array.from(this.openCursors);
+      this.openCursors.clear();
+      // Race: mỗi cursor ta ROLLBACK + release(true) để giải phóng client
+      // về pool ngay, song song.
+      await Promise.race([
+        Promise.all(
+          records.map(async (rec) => {
+            try {
+              await rec.client.query("ROLLBACK").catch(() => undefined);
+            } finally {
+              try {
+                rec.client.release(true);
+              } catch {
+                // ignore
+              }
+            }
+          }),
+        ),
+        new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
+      ]);
+    }
     if (this.pool) {
-      await this.pool.end();
+      try {
+        // Timeout guard: pg.Pool.end không nhận timeout option cho mọi phiên
+        // bản, nên ta race với setTimeout. Sau khi đã cleanup cursor ở trên,
+        // pool.end() sẽ resolve nhanh.
+        await Promise.race([
+          this.pool.end(),
+          new Promise<void>((_, reject) =>
+            setTimeout(
+              () => reject(new Error("PostgresAdapter.close: pool.end timeout")),
+              3_000,
+            ),
+          ),
+        ]);
+      } catch {
+        // ignore — adapter đã đóng về mặt logic.
+      }
       this.pool = null;
     }
   }
@@ -116,7 +173,8 @@ export class PostgresAdapter implements DbAdapter {
         columns,
         rows: rowsAsArrays(r.rows, columns),
         rowCount: r.rowCount ?? null,
-        commandTag: undefined,
+        // Populate commandTag từ pg result (IMPORTANT #5).
+        commandTag: r.command ?? undefined,
         durationMs,
       });
     }
@@ -247,73 +305,73 @@ export class PostgresAdapter implements DbAdapter {
    * Mở client, BEGIN, DECLARE cursor với unique name, lấy columns (từ FETCH 0)
    * rồi trả BatchedQuery. Cursor KHÔNG bị re-execute — server chỉ stream rows
    * qua FETCH FORWARD n lần.
+   *
+   * CRITICAL #1 fix: toàn bộ lifecycle BEGIN → DECLARE → FETCH 0 wrap trong
+   * try/catch; bất kỳ lỗi nào → ROLLBACK + release(true) rồi rethrow. Pool
+   * max=1 phải luôn trở về trạng thái usable.
    */
   private async openCursorForStatement(sql: string): Promise<BatchedQuery> {
     if (!this.pool) throw new Error("PostgresAdapter: connect() chưa được gọi");
-    const client: PoolClient = await this.pool.connect();
-    // Pool max=1 → lấy client duy nhất. Nếu muốn hỗ trợ nhiều cursor song song,
-    // pool max cần > 1.
-
-    // Tên cursor unique để tránh đụng độ nếu có > 1 statement trong session.
+    const pool = this.pool;
+    const client: PoolClient = await pool.connect();
     const cursorName = `vsdb_c_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
 
-    // Bắt đầu transaction. Cursor chỉ tồn tại trong transaction.
-    await client.query("BEGIN");
+    // Track this cursor so adapter.close() can release it (CRITICAL #3).
+    const record: OpenCursorRecord = {
+      client,
+      cursorName,
+      closed: Promise.resolve(),
+    };
+    this.openCursors.add(record);
 
-    // Lấy columns bằng cách wrap SQL với count(*) giả: ta tách SQL để inject
-    // wrapper trả về cùng shape columns. Đơn giản nhất: dùng FETCH 0 với SQL
-    // gốc được bọc trong subquery → server trả về metadata đầy đủ.
-    // Tuy nhiên cursor API yêu cầu câu lệnh DUY NHẤT — không được có `;`.
-    // Vì vậy ta không dùng DECLARE + EXPLAIN; ta parse SQL đơn giản.
-    //
-    // Cách an toàn: ta DECLARE trực tiếp SQL, sau đó FETCH 0 để lấy column
-    // metadata (Postgres trả fields[] rỗng nếu 0 rows, NHƯNG fields luôn
-    // populated bởi ParseComplete trước khi DataRow). Thực nghiệm: pg JS
-    // trả fields[] kể cả khi 0 rows. Ta dùng FETCH 0 để xác nhận columns.
-    await client.query(`DECLARE "${cursorName}" CURSOR FOR ${sql}`);
+    let state: CursorState = "open";
+    let backendPid: number | null = null;
 
-    const backendPid = (client as unknown as { processID?: number })
-      .processID;
-
-    const colRes = await client.query({
-      text: `FETCH 0 FROM "${cursorName}"`,
-    });
-    const columns = colRes.fields.map((f) => f.name);
-
-    let state: "open" | "eof" | "closed" = "open";
-
-    const cleanup = async (destroyClient: boolean): Promise<void> => {
-      if (state === "closed") return;
-      state = "closed";
-      // Bỏ qua lỗi — transaction có thể đã được commit/rollback.
+    const releaseClient = (destroy: boolean): void => {
       try {
-        await client.query(`CLOSE "${cursorName}"`);
+        client.release(destroy);
       } catch {
         // ignore
       }
-      try {
-        await client.query("COMMIT");
-      } catch {
-        try {
-          await client.query("ROLLBACK");
-        } catch {
-          // ignore
-        }
-      }
-      try {
-        client.release(destroyClient);
-      } catch {
-        // ignore
-      }
+      this.openCursors.delete(record);
     };
 
-    const adapter: BatchedQuery = {
-      columns,
-      fetchBatch: async (): Promise<any[][] | null> => {
+    const finalize = async (destroy: boolean): Promise<void> => {
+      if (state === "closed" || state === "eof") {
+        releaseClient(destroy);
+        return;
+      }
+      state = "closed";
+      try {
+        await client.query(`CLOSE "${cursorName}"`).catch(() => undefined);
+      } catch {
+        // ignore
+      }
+      try {
+        await client.query("COMMIT").catch(async () => {
+          await client.query("ROLLBACK").catch(() => undefined);
+        });
+      } catch {
+        // ignore
+      }
+      releaseClient(destroy);
+    };
+
+    try {
+      await client.query("BEGIN");
+      await client.query(`DECLARE "${cursorName}" CURSOR FOR ${sql}`);
+      const pid = (client as unknown as { processID?: number }).processID;
+      backendPid = typeof pid === "number" ? pid : null;
+
+      const colRes = await client.query({
+        text: `FETCH 0 FROM "${cursorName}"`,
+      });
+      const columns = colRes.fields.map((f) => f.name);
+
+      const fetchBatch = async (): Promise<any[][] | null> => {
         if (state === "eof") return null;
-        if (state === "closed") {
-          throw new Error("PostgresAdapter: cursor đã đóng");
-        }
+        // CRITICAL #4: fetchBatch after cancel/close returns null (not throw).
+        if (state === "closed" || state === "error") return null;
         try {
           const r = await client.query({
             text: `FETCH ${DEFAULT_BATCH_SIZE} FROM "${cursorName}"`,
@@ -322,53 +380,98 @@ export class PostgresAdapter implements DbAdapter {
           const rows = r.rows as any[][];
           if (rows.length === 0) {
             state = "eof";
-            await cleanup(false);
+            await finalize(false);
             return null;
           }
           return rows;
         } catch (err) {
-          state = "closed";
+          state = "error";
           try {
-            await client.query("ROLLBACK");
+            await client.query("ROLLBACK").catch(() => undefined);
           } catch {
             // ignore
           }
-          try {
-            client.release(true);
-          } catch {
-            // ignore
-          }
+          releaseClient(true);
           throw err;
         }
-      },
-      cancel: async (): Promise<void> => {
-        if (state === "closed") return;
-        state = "closed";
-        if (backendPid && this.pool) {
-          try {
-            await this.pool.query("SELECT pg_cancel_backend($1)", [backendPid]);
-          } catch {
-            // ignore — connection có thể đã đóng.
-          }
-        }
-        try {
-          await client.query("ROLLBACK");
-        } catch {
-          // ignore
-        }
-        try {
-          client.release(true);
-        } catch {
-          // ignore
-        }
-      },
-      close: async (): Promise<void> => {
-        if (state === "closed") return;
-        await cleanup(false);
-      },
-    };
+      };
 
-    return adapter;
+      const cancel = async (): Promise<void> => {
+        if (state === "closed" || state === "eof") return;
+        state = "closed";
+
+        // CRITICAL #2 fix: dùng DEDICATED one-off Client để gọi
+        // pg_cancel_backend — KHÔNG dùng pool max=1 (đang bị cursor giữ
+        // → request xếp hàng 10s rồi nuốt exception).
+        if (backendPid !== null) {
+          await this.cancelBackendViaDedicatedClient(backendPid);
+        }
+        try {
+          await client.query("ROLLBACK").catch(() => undefined);
+        } catch {
+          // ignore
+        }
+        releaseClient(true);
+      };
+
+      const close = async (): Promise<void> => {
+        if (state === "closed" || state === "eof") return;
+        await finalize(false);
+      };
+
+      return {
+        columns,
+        fetchBatch,
+        cancel,
+        close,
+      };
+    } catch (err) {
+      // CRITICAL #1: bất kỳ lỗi nào trong BEGIN/DECLARE/FETCH 0 → cleanup
+      // rồi rethrow. Nếu không release ở đây, pool max=1 bị wedge vĩnh
+      // viễn và mọi runQuery sau timeout.
+      state = "error";
+      try {
+        await client.query("ROLLBACK").catch(() => undefined);
+      } catch {
+        // ignore
+      }
+      releaseClient(true);
+      throw err;
+    }
+  }
+
+  /**
+   * CRITICAL #2 fix: gọi pg_cancel_backend(pid) qua một Client riêng (one-off,
+   * dedicated connection) — KHÔNG qua pool.max=1. Lý do: pool đang có client
+   * duy nhất bị cursor giữ; gọi pool.query sẽ xếp hàng 10s rồi timeout
+   * (bị nuốt bởi catch { ignore }). Dedicated Client mở connection mới,
+   * gửi cancel, đóng → server pg_cancel_backend chạy được ngay.
+   *
+   * Nếu dedicated connection cũng fail (server down, network), ignore —
+   * việc release(true) ở caller vẫn giải phóng client về pool.
+   */
+  private async cancelBackendViaDedicatedClient(pid: number): Promise<void> {
+    const dedicated = new Client({
+      host: this.cfg.host,
+      port: this.cfg.port,
+      user: this.cfg.user,
+      password: this.password,
+      database: this.cfg.database,
+      ssl: this.cfg.ssl ? { rejectUnauthorized: false } : false,
+      connectionTimeoutMillis: 5_000,
+    });
+    try {
+      await dedicated.connect();
+      await dedicated.query("SELECT pg_cancel_backend($1)", [pid]);
+    } catch {
+      // ignore — best-effort.
+    } finally {
+      try {
+        await dedicated.end();
+      } catch {
+        // ignore
+      }
+    }
   }
 }
 

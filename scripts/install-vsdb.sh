@@ -112,14 +112,15 @@ parse_json_field() {
 find_vsix_asset_url() {
   local json="$1"
   if command -v python3 >/dev/null 2>&1; then
-    python3 - <<PY 2>/dev/null <<<"${json}" || true
+    # Pipe JSON via stdin; keep script inline with -c (no heredoc/<<<'s STDIN clash).
+    python3 -c '
 import json, sys
 data = json.load(sys.stdin)
 for a in data.get("assets", []):
     if a.get("name", "").endswith(".vsix"):
         print(a.get("browser_download_url", ""))
         break
-PY
+' <<<"${json}" 2>/dev/null || true
     return 0
   fi
   # Fallback: split into "browser_download_url" entries then pick the .vsix one.

@@ -14,13 +14,21 @@ export class VsdbCodeLensProvider implements vscode.CodeLensProvider {
   readonly onDidChangeCodeLenses: vscode.Event<void> =
     this._onDidChangeCodeLenses.event;
 
+  private readonly configSub: vscode.Disposable;
+
   constructor() {
     // Re-emit khi config đổi → VS Code sẽ gọi lại provideCodeLenses.
-    vscode.workspace.onDidChangeConfiguration((e) => {
+    this.configSub = vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("vsdb.showRunLens")) {
         this._onDidChangeCodeLenses.fire();
       }
     });
+  }
+
+  /** Dispose event emitters + config subscription. */
+  dispose(): void {
+    this.configSub.dispose();
+    this._onDidChangeCodeLenses.dispose();
   }
 
   provideCodeLenses(

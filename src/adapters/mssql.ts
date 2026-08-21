@@ -76,7 +76,10 @@ export class MsSqlAdapter implements DbAdapter {
 
         // Tedious emits `connect` after login, before the initial SQL phase has
         // completed. Only the `LoggedIn` state accepts requests, so wait for
-        // that state rather than issuing a request immediately.
+        // that state rather than issuing a request immediately. The poll is
+        // bounded by `connectTimeout` so a stalled handshake cannot hang the
+        // caller forever.
+        const deadline = Date.now() + 10_000;
         const waitForLoggedIn = (): void => {
           if (settled) return;
           const stateName = connection.state.name;
@@ -93,6 +96,14 @@ export class MsSqlAdapter implements DbAdapter {
           }
           if (stateName === "Final") {
             fail(new Error("Tedious connection closed before login completed"));
+            return;
+          }
+          if (Date.now() >= deadline) {
+            fail(
+              new Error(
+                "Tedious connection did not reach LoggedIn state within 10s",
+              ),
+            );
             return;
           }
           setTimeout(waitForLoggedIn, 5);
@@ -212,13 +223,17 @@ export class MsSqlAdapter implements DbAdapter {
   async listRoutines(schema = "dbo"): Promise<RoutineInfo[]> {
     const result = await this.execute(
       `SELECT o.name AS name,
-              CASE WHEN o.type = 'P' THEN 'procedure' ELSE 'function' END AS kind,
+              CASE
+                WHEN o.type = 'P' THEN 'procedure'
+                WHEN o.type IN ('IF', 'TF', 'FN') THEN 'function'
+                ELSE 'function'
+              END AS kind,
               s.name AS [schema]
          FROM sys.objects o
          JOIN sys.schemas s ON s.schema_id = o.schema_id
          JOIN sys.sql_modules m ON m.object_id = o.object_id
         WHERE s.name = ${this.literal(schema)}
-          AND o.type IN ('P', 'IF', 'TF')
+          AND o.type IN ('P', 'IF', 'TF', 'FN')
         ORDER BY o.name`,
     );
     return result.rows.map((row) => ({
@@ -281,7 +296,13 @@ export class MsSqlAdapter implements DbAdapter {
         trustServerCertificate: this.cfg.ssl === true,
         useColumnNames: true,
         connectTimeout: 10_000,
-        requestTimeout: 30_000,
+        // Disable requestTimeout for streaming SELECTs — tedious arms the timer
+        // at execSql and does not pause/resume it with request.pause(). For
+        // load-more across very large result sets this would otherwise kill the
+        // stream while rows are still flowing. Cancellation goes through
+        // request.cancel(). For metadata/short queries callers can still bound
+        // via the surrounding code path.
+        requestTimeout: 0,
         cancelTimeout: 5_000,
         rowCollectionOnRequestCompletion: false,
         rowCollectionOnDone: false,

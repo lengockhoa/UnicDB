@@ -248,18 +248,32 @@ function isIdContinue(ch: string): boolean {
 // ---- splitStatements --------------------------------------------------------
 
 /**
+ * Construct mở bởi từ khoá (case-insensitive) — chỉ `BEGIN` tăng block depth;
+ * `IF`/`CASE`/`LOOP`/`WHILE`/`FOR` mở construct riêng và CHỈ `END` của chúng đóng,
+ * KHÔNG chạm vào block depth của `BEGIN...END`.
+ */
+type ConstructKind = "BLOCK" | "IF" | "CASE" | "LOOP";
+
+/**
  * Tách SQL thành các statement theo boundary `;` (NGOÀI string/comment/dollar-quote).
  * Trả về mảng `ParsedStatement[]`. Thứ tự theo xuất hiện trong SQL.
  *
  * Quy tắc:
  * - Bỏ qua `;` trong string literal `'...'`, identifier `"..."`, dollar-quote.
  * - Bỏ qua `;` trong comment dòng (`--`) và comment khối (`/` `* ... *` `/`).
- * - Khối `BEGIN ... END` (không phân biệt hoa/thường, từ khoá whole-word) là 1 statement.
+ * - Từ khoá SQL không phân biệt hoa/thường (`begin` ≡ `BEGIN`).
+ * - Khối `BEGIN ... END` là 1 statement; `;` bên trong là NỘI DUNG, không phải boundary.
+ * - `END IF` / `END LOOP` / `END CASE` đóng construct đó chứ KHÔNG đóng `BEGIN` cha
+ *   → plpgsql/T-SQL body lồng IF/CASE/LOOP vẫn là 1 statement.
  * - Statement có thể KHÔNG có terminating `;` (vd file thiếu `;` cuối).
  * - Statement rỗng (chỉ whitespace + comment) bị BỎ QUA — không trả về.
  *
  * `start` / `end` là character offset trong SQL gốc, sao cho
  * `sql.substring(start, end) === text`. Text KHÔNG trim — giữ nguyên vị trí.
+ *
+ * Limitation (documented): chuỗi escape PostgreSQL `E'...\'...'`
+ * (backslash escape) KHÔNG được nhận — parser chỉ hiểu `''` escape trong string literal.
+ * Tương tự `U&'...'`. Đây là giới hạn cố ý của TASK-002 (spec chỉ yêu cầu `''`).
  */
 export function splitStatements(sql: string): ParsedStatement[] {
   const out: ParsedStatement[] = [];
@@ -268,22 +282,23 @@ export function splitStatements(sql: string): ParsedStatement[] {
   let i = 0;
   let state: TokenState = { kind: TokenKind.Code, tag: "" };
   let stmtStart = -1; // start của statement hiện tại (đã skip whitespace đầu)
-  let endOfLastToken = 0; // vị trí kết thúc của non-code/non-string token trước đó
 
-  // BEGIN/END depth — khi >0, `;` không phải boundary.
-  let beginDepth = 0;
+  // Stack các construct đang mở (push khi gặp BEGIN/IF/CASE/LOOP/WHILE/FOR,
+  // pop khi gặp END tương ứng). BLOCK depth = số phần tử BLOCK trong stack.
+  const constructStack: ConstructKind[] = [];
 
-  // Buffer lưu từ khoá gần nhất để phát hiện BEGIN / END.
-  // Cách đơn giản: quét riêng để biết từ khoá BEGIN/END có whole-word trong Code hay không.
-  // Để giữ đơn giản nhưng chính xác, ta theo dõi 1 buffer keyword detector.
-  let kwBuffer = ""; // các chữ cái/số/_ hiện tại trong Code
-
-  const resetKeywordBuffer = () => {
-    kwBuffer = "";
-  };
+  // Buffer lưu từ khoá gần nhất để phát hiện BEGIN/END/IF/CASE/LOOP/WHILE/FOR.
+  // So sánh CASE-INSENSITIVE (SQL keyword không phân biệt hoa/thường).
+  let kwBuffer = "";
+  // Cờ: keyword vừa xử lý là `END` — keyword kế tiếp (IF/CASE/LOOP) là phần của
+  // cùng 1 cụm `END IF`/`END CASE`/`END LOOP`, KHÔNG mở construct mới.
+  let prevWasEnd = false;
+  // Cờ: keyword vừa xử lý là `FOR` hoặc `WHILE` — keyword `LOOP` tiếp theo
+  // chỉ là syntactic marker của cú pháp `FOR ... LOOP` / `WHILE ... LOOP`,
+  // KHÔNG mở construct mới.
+  let prevWasLoopStarter = false;
 
   while (i < n) {
-    const before = i;
     const { nextState, nextIndex } = readToken(sql, i, state);
     // Nếu đang trong Code, cập nhật keyword buffer.
     if (state.kind === TokenKind.Code) {
@@ -292,31 +307,42 @@ export function splitStatements(sql: string): ParsedStatement[] {
       if (isIdContinue(ch)) {
         kwBuffer += ch;
       } else {
-        // Kết thúc 1 keyword → check BEGIN/END.
+        // Kết thúc 1 keyword → phân tích.
         if (kwBuffer.length > 0) {
-          if (kwBuffer === "BEGIN") beginDepth += 1;
-          else if (kwBuffer === "END") {
-            // Match `END` hoặc `END IF`, `END LOOP`, ...; đều giảm depth.
-            beginDepth = Math.max(0, beginDepth - 1);
+          const result = handleKeyword(
+            kwBuffer,
+            constructStack,
+            prevWasEnd,
+            prevWasLoopStarter,
+          );
+          // Chỉ cập nhật cờ khi keyword thực sự được nhận (BEGIN/IF/CASE/
+          // LOOP/WHILE/FOR/END). Non-keyword identifier (vd "i", "1") giữ
+          // nguyên cờ trước đó — và `LOOP` sau `FOR`/`WHILE` cũng vậy
+          // (handleKeyword đã trả về wasLoopStarter=false).
+          if (result.matched) {
+            prevWasEnd = result.wasEnd;
+            prevWasLoopStarter = result.wasLoopStarter;
           }
+        } else {
+          // kwBuffer rỗng — ta đang ở giữa 2 identifier. CHỈ reset prevWasEnd
+          // (vì whitespace/special cắt cụm `END ...`); giữ nguyên prevWasLoopStarter
+          // để `FOR i IN 1..3 LOOP` vẫn nhận diện `LOOP` cuối.
+          prevWasEnd = false;
         }
         kwBuffer = "";
       }
     } else {
-      // Trong string/identifier/dollar-quote/comment → bỏ keyword buffer.
+      // Trong string/identifier/dollar-quote/comment → reset keyword buffer.
       kwBuffer = "";
+      prevWasEnd = false;
+      prevWasLoopStarter = false;
     }
 
-    // Nếu vừa thoát khỏi non-code token → cập nhật endOfLastToken để
-    // statement bỏ qua phần whitespace/comment giữa các statement.
-    if (state.kind !== TokenKind.Code && nextState.kind === TokenKind.Code) {
-      endOfLastToken = nextIndex;
-    }
-
-    // Xử lý `;` chỉ khi ở Code và beginDepth === 0.
+    // Xử lý `;` chỉ khi ở Code và KHÔNG có block BEGIN đang mở.
+    const blockDepth = countBlocks(constructStack);
     if (
       state.kind === TokenKind.Code &&
-      beginDepth === 0 &&
+      blockDepth === 0 &&
       sql[i] === ";"
     ) {
       const candidateStart = stmtStart;
@@ -334,47 +360,117 @@ export function splitStatements(sql: string): ParsedStatement[] {
       }
       // Reset cho statement tiếp theo — bắt đầu SAU `;`.
       stmtStart = -1;
-      endOfLastToken = nextIndex;
     } else if (
       state.kind === TokenKind.Code &&
-      beginDepth === 0 &&
-      stmtStart === -1
+      blockDepth === 0 &&
+      stmtStart === -1 &&
+      !isWhitespace(sql[i])
     ) {
-      // Bắt đầu statement mới: tìm ký tự không phải whitespace/comment.
-      // nextIndex là vị trí ngay sau ký tự vừa đọc.
-      const peekIdx = nextIndex;
-      // Nếu vừa đọc qua 1 non-code token, stmtStart lấy sau token đó.
-      // Logic: stmtStart được set khi:
-      //   - ta đang ở Code
-      //   - ký tự hiện tại KHÔNG phải whitespace
-      //   - chưa có stmtStart đang mở
-      if (!isWhitespace(sql[i]) && stmtStart === -1) {
-        stmtStart = i;
-      }
-      // peekIdx chỉ dùng để tránh TS noUnused; không ảnh hưởng logic.
-      void peekIdx;
+      // Bắt đầu statement mới: ký tự không phải whitespace đầu tiên ngoài block.
+      stmtStart = i;
     }
 
     // Advance.
     state = nextState;
     i = nextIndex;
-    void before;
   }
 
-  // EOF: nếu statement đang mở và có nội dung → flush.
-  if (
-    stmtStart !== -1 &&
-    stmtStart < n &&
-    sql.substring(stmtStart, n).trim().length > 0
-  ) {
-    out.push({
-      text: sql.substring(stmtStart, n),
-      start: stmtStart,
-      end: n,
-    });
+  // EOF: nếu statement đang mở và có nội dung thực (sau khi strip comment) → flush.
+  if (stmtStart !== -1 && stmtStart < n) {
+    const tail = sql.substring(stmtStart, n);
+    if (isMeaningful(tail)) {
+      out.push({
+        text: tail,
+        start: stmtStart,
+        end: n,
+      });
+    }
   }
 
   return out;
+}
+
+/**
+ * Xử lý keyword kết thúc: đẩy construct tương ứng vào stack / pop khi gặp END.
+ * So sánh CASE-INSENSITIVE.
+ * Trả về true nếu keyword vừa xử lý là `END` (để keyword tiếp theo như IF/CASE/LOOP
+ * biết rằng nó thuộc cụm `END ...` và KHÔNG push construct mới).
+ */
+function handleKeyword(
+  kw: string,
+  stack: ConstructKind[],
+  prevWasEnd: boolean,
+  prevWasLoopStarter: boolean,
+): { matched: boolean; wasEnd: boolean; wasLoopStarter: boolean } {
+  const upper = kw.toUpperCase();
+  if (upper === "BEGIN") {
+    stack.push("BLOCK");
+    return { matched: true, wasEnd: false, wasLoopStarter: false };
+  }
+  if (upper === "IF" || upper === "CASE" || upper === "LOOP") {
+    // `END IF` / `END CASE` / `END LOOP` — KHÔNG push construct mới.
+    // `FOR ... LOOP` / `WHILE ... LOOP` — `LOOP` là syntactic marker, không push.
+    if (prevWasEnd || (upper === "LOOP" && prevWasLoopStarter)) {
+      return { matched: true, wasEnd: false, wasLoopStarter: false };
+    }
+    if (upper === "IF") stack.push("IF");
+    else if (upper === "CASE") stack.push("CASE");
+    else stack.push("LOOP");
+    return { matched: true, wasEnd: false, wasLoopStarter: false };
+  }
+  if (upper === "WHILE" || upper === "FOR") {
+    stack.push("LOOP");
+    return { matched: true, wasEnd: false, wasLoopStarter: true };
+  }
+  if (upper === "END") {
+    // Pop top construct; CHỈ giảm block depth khi top là BLOCK.
+    // Nếu top là IF/CASE/LOOP → construct đó đóng, block depth giữ nguyên.
+    // Cả `END` alone, `END IF`, `END CASE`, `END LOOP` đều pop 1 phần tử.
+    if (stack.length > 0) {
+      stack.pop();
+    }
+    return { matched: true, wasEnd: true, wasLoopStarter: false };
+  }
+  // Non-keyword identifier (vd `i`, `1`) — không khớp, caller giữ nguyên cờ.
+  return { matched: false, wasEnd: false, wasLoopStarter: false };
+}
+
+function countBlocks(stack: ConstructKind[]): number {
+  let n = 0;
+  for (const k of stack) if (k === "BLOCK") n += 1;
+  return n;
+}
+
+/**
+ * Kiểm tra text có chứa nội dung SQL thực (không chỉ whitespace/comment).
+ * Dùng khi flush EOF và khi filter statement rỗng.
+ */
+function isMeaningful(text: string): boolean {
+  // Tìm bất kỳ ký tự nào không phải whitespace và không thuộc comment.
+  // Đơn giản: nếu sau khi loại bỏ comment-line + comment-block + whitespace
+  // mà còn ký tự → meaningful.
+  let j = 0;
+  while (j < text.length) {
+    const c = text[j];
+    if (c === "-" && j + 1 < text.length && text[j + 1] === "-") {
+      // line comment tới newline
+      j += 2;
+      while (j < text.length && text[j] !== "\n") j += 1;
+      continue;
+    }
+    if (c === "/" && j + 1 < text.length && text[j + 1] === "*") {
+      // block comment
+      j += 2;
+      while (j + 1 < text.length && !(text[j] === "*" && text[j + 1] === "/")) {
+        j += 1;
+      }
+      j = Math.min(j + 2, text.length);
+      continue;
+    }
+    if (!isWhitespace(c)) return true;
+    j += 1;
+  }
+  return false;
 }
 
 // ---- statementAtCursor -------------------------------------------------------

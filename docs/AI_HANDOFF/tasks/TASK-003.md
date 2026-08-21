@@ -222,3 +222,165 @@ MINOR:
 10. **Metadata khác:** `listViews` không bao gồm materialized views (information_schema.views không có; cần pg_matviews nếu muốn). `n.oid <> 11` magic-number pg_catalog — dư vì đã WHERE nspname=$1. `listRoutines` bỏ aggregate ('a')/window ('w') — hợp lý.
 
 NEXT_STATUS_FOR_INDEX: changes_requested
+
+---
+
+## Executor Report (fix round 1)
+
+- EXECUTOR_TOOL: claude-code
+- EXECUTOR_MODEL: claude-sonnet-4-6
+- BRANCH: fix-003 (worktree)
+- DATE: 2026-08-21
+
+### FINDINGS_ADDRESSED
+
+All 5 critical/important fixed:
+
+**CRITICAL #1 — pool wedge on bad SELECT:** Wrapped `openCursorForStatement`
+in a try/catch around the entire BEGIN → DECLARE → FETCH 0 lifecycle. On any
+error: `client.query("ROLLBACK").catch(noop)` then `client.release(true)` then
+rethrow. Pool max=1 always returns to usable state. Verified by Regression #1
+test: bad SELECT → subsequent query succeeds.
+
+**CRITICAL #2 — `pg_cancel_backend` queued on exhausted pool:** Replaced
+`this.pool.query("SELECT pg_cancel_backend($1)", [pid])` with a dedicated
+one-off `new Client(...)` opened on-demand inside
+`cancelBackendViaDedicatedClient(pid)`. The dedicated connection is
+independent of the pool, so `pg_cancel_backend` fires immediately instead of
+waiting 10s on `connectionTimeoutMillis`. Verified by Regression #2 test:
+cancel mid-FETCH → pool recovers, subsequent query succeeds.
+
+**CRITICAL #3 — `adapter.close()` hangs with open cursor:** Introduced
+`openCursors: Set<OpenCursorRecord>` tracking every live cursor (client +
+name). `close()` first iterates the set, sends ROLLBACK + `release(true)`
+on each client in parallel (raced against a 2s guard), then `pool.end()`
+(raced against 3s guard). Even if pg's pool.end has no timeout option,
+the explicit race ensures `<5s` total close time. Verified by
+Regression #4 test: close() with open cursor resolves <5s.
+
+**CRITICAL #4 — `fetchBatch` after cancel threw:** Removed the throw branch.
+`fetchBatch` now returns `null` for any `state === "closed" | "error"`
+(in addition to existing `eof`). Verified by Regression #3 test: cancel →
+fetchBatch returns null.
+
+**CRITICAL #5 — `commandTag` never populated:** Added `commandTag: r.command ?? undefined`
+in the non-cursor loop (`runQuery`). Verified by Regression #5 test:
+INSERT statement returns `commandTag` matching `/INSERT/i`.
+
+### RED_OUTPUT
+
+`VSDB_IT=1 vitest run --config vitest.integration.config.ts src/adapters/__tests__/postgres.integration.test.ts`
+(before fix; 10 tests collected: 5 original + 5 regression):
+
+```
+ ✓ src/adapters/__tests__/postgres.integration.test.ts > Test #1 — Connect + query đơn giản (SELECT 1 qua cursor)
+ ✓ src/adapters/__tests__/postgres.integration.test.ts > Test #2 — Batch 500 + Load more (generate_series 1..1200)
+ ✓ src/adapters/__tests__/postgres.integration.test.ts > Test #3 — Sai password → lỗi chứa 28P01 / password authentication failed
+ ✓ src/adapters/__tests__/postgres.integration.test.ts > Test #4 — Cancel giữa query lớn 10008ms
+ ✓ src/adapters/__tests__/postgres.integration.test.ts > Test #5 — Metadata: tables, columns, routines
+ × src/adapters/__tests__/postgres.integration.test.ts > Regression #1 — bad SELECT inside cursor: pool stays usable 10010ms
+   → timeout exceeded when trying to connect
+ × src/adapters/__tests__/postgres.integration.test.ts > Regression #2 — cancel mid-FETCH: pool recovers 10002ms
+   → timeout exceeded when trying to connect
+ × src/adapters/__tests__/postgres.integration.test.ts > Regression #3 — fetchBatch after cancel returns null 10002ms
+   → timeout exceeded when trying to connect
+ × src/adapters/__tests__/postgres.integration.test.ts > Regression #4 — adapter.close() with open cursor < 5s 30004ms
+   → Test timed out in 30000ms
+ × src/adapters/__tests__/postgres.integration.test.ts > Regression #5 — commandTag populated for non-cursor 10003ms
+   → timeout exceeded when trying to connect
+
+ Test Files  1 failed (1)
+      Tests  5 failed | 5 passed (10)
+   Duration  90.35s (transform 36ms, setup 0ms, collect 45ms, tests 90.12s)
+```
+
+Note Regression #1..5 all hit "timeout exceeded when trying to connect"
+because Regression #1 permanently wedges the pool max=1 (first to fail),
+and the subsequent tests all time out on `pool.connect()` after the wedge.
+The duration (90s) is dominated by 10s × ~5 connection timeouts + 30s test
+timeout on Regression #4.
+
+### Verification Output
+
+**Typecheck** — `npx tsc --noEmit`:
+```
+EXIT=0
+```
+
+**Unit tests** — `npx vitest run`:
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/fix-003
+
+ ✓ src/core/__tests__/statementParser.test.ts  (26 tests) 5ms
+ ✓ src/ui/__tests__/codeLensProvider.test.ts  (4 tests) 3ms
+ ✓ src/ui/__tests__/schemaTree.test.ts  (9 tests) 5ms
+ ✓ src/core/__tests__/connectionManager.test.ts  (9 tests) 8ms
+ ✓ src/ui/__tests__/statusBar.test.ts  (3 tests) 3ms
+ ✓ tests/install-vsdb.test.ts  (5 tests) 51ms
+ ✓ src/core/__tests__/queryRunner.test.ts  (9 tests) 73ms
+ ✓ src/core/__tests__/resultBatcher.test.ts  (8 tests) 2ms
+ ✓ src/scaffold.test.ts  (4 tests) 297ms
+ ✓ src/extension.test.ts  (6 tests) 4ms
+ ✓ src/adapters/__tests__/factory.test.ts  (4 tests) 1ms
+
+ Test Files  11 passed (11)
+      Tests  87 passed (87)
+   Duration  697ms
+```
+
+**Integration tests (postgres only — primary regression target)** — `VSDB_IT=1 vitest run --config vitest.integration.config.ts src/adapters/__tests__/postgres.integration.test.ts`:
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/fix-003
+
+ ✓ src/adapters/__tests__/postgres.integration.test.ts  (10 tests) 108ms
+
+ Test Files  1 passed (1)
+      Tests  10 passed (10)
+   Duration  319ms
+```
+
+**Integration tests (all 3 adapters)** — `VSDB_IT=1 vitest run --config vitest.integration.config.ts`:
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/fix-003
+
+ ✓ src/adapters/__tests__/mysql.integration.test.ts  (4 tests) 65ms
+ ✓ src/adapters/__tests__/postgres.integration.test.ts  (10 tests) 129ms
+ ✓ src/adapters/__tests__/mssql.integration.test.ts  (4 tests) 5175ms
+
+ Test Files  3 passed (3)
+      Tests  18 passed (18)
+   Duration  5.49s
+```
+
+Test #4 (Cancel giữa query lớn) drops from `10008ms` (before fix — the
+reviewer's evidence for CRITICAL #2) to `100ms` (after fix — dedicated
+cancel client returns immediately).
+
+### Status
+
+`done` — all 5 critical/important findings fixed and regression-tested.
+
+### Note
+
+- Files touched:
+  - `src/adapters/postgres.ts` — full rewrite of `openCursorForStatement`,
+    added `openCursors` tracking + `cancelBackendViaDedicatedClient`,
+    rewrote `close()` with parallel cleanup + timeout race, populated
+    `commandTag` in non-cursor path.
+  - `src/adapters/__tests__/postgres.integration.test.ts` — appended 5
+    regression tests (Regression #1..#5).
+- Minor findings #6..#10 from reviewer verdict are out of scope for this
+  fix round (CHANGES_REQUESTED items focused on the 5 critical/important
+  ones); left untouched.
+- Pool max=1 design preserved per task spec; concurrency model unchanged
+  for healthy queries.
+- `release(true)` (destroy) is used on cancel/error paths so the dead
+  connection is not reused; `release(false)` (return to pool) on natural
+  EOF/close so the same connection is recycled for the next query.
+- The dedicated `pg.Client` for cancel opens its own TCP connection,
+  fires `pg_cancel_backend(pid)`, then closes. Cost is ~one TCP handshake
+  per cancel call; acceptable for the explicit "user clicked Cancel"
+  code path (cold operations only, never hot path).
+- Total integration test runtime dropped from ~10s per cancel test to
+  ~100ms — empirical evidence that the cancel no longer waits for the
+  exhausted pool's `connectionTimeoutMillis`.

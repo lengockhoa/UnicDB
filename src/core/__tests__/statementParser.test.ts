@@ -215,6 +215,118 @@ describe("statementParser — sqlToRun", () => {
   });
 });
 
+// ---- Regression tests — fix round 1 (TASK-002 review findings) ----
+
+describe("statementParser — regression (review fix round 1)", () => {
+  // Finding #1: nested END IF inside BEGIN block must NOT decrement BEGIN depth.
+  it("regression: nested END IF inside BEGIN block stays one statement", () => {
+    const sql =
+      "BEGIN\n  IF x THEN SELECT 1; END IF;\n  SELECT 2;\nEND;\nSELECT 3;";
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(2);
+    expect(out[0].text).toBe(
+      "BEGIN\n  IF x THEN SELECT 1; END IF;\n  SELECT 2;\nEND",
+    );
+    expect(out[1].text).toBe("SELECT 3");
+  });
+
+  it("regression: nested END LOOP inside BEGIN block stays one statement", () => {
+    const sql =
+      "BEGIN\n  FOR i IN 1..3 LOOP\n    SELECT i;\n  END LOOP;\nEND;";
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(1);
+    expect(out[0].text).toBe(
+      "BEGIN\n  FOR i IN 1..3 LOOP\n    SELECT i;\n  END LOOP;\nEND",
+    );
+  });
+
+  it("regression: CASE ... END inside BEGIN block stays one statement", () => {
+    const sql =
+      "BEGIN\n  SELECT CASE WHEN x THEN 1 ELSE 2 END AS v FROM t;\nEND;";
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(1);
+    expect(out[0].text).toBe(
+      "BEGIN\n  SELECT CASE WHEN x THEN 1 ELSE 2 END AS v FROM t;\nEND",
+    );
+  });
+
+  it("regression: BEGIN...END with nested IF and CASE — depth=1", () => {
+    const sql =
+      "BEGIN\n  IF x THEN\n    SELECT CASE WHEN y THEN 1 ELSE 2 END;\n  END IF;\nEND;";
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(1);
+    expect(out[0].text).toBe(sql.slice(0, sql.length - 1)); // drop trailing ;
+  });
+
+  // Finding #2: keyword matching must be case-insensitive.
+  it("regression: lowercase begin...end works as one statement", () => {
+    const sql = "begin\n SELECT 1;\nend;\nSELECT 2;";
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(2);
+    expect(out[0].text).toBe("begin\n SELECT 1;\nend");
+    expect(out[1].text).toBe("SELECT 2");
+  });
+
+  it("regression: mixed-case Begin...End works as one statement", () => {
+    const sql = "Begin\n SELECT 1;\nEnd;\nSELECT 2;";
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(2);
+    expect(out[0].text).toBe("Begin\n SELECT 1;\nEnd");
+    expect(out[1].text).toBe("SELECT 2");
+  });
+
+  it("regression: lowercase end if still does NOT close BEGIN block", () => {
+    const sql = "begin\n  if x then select 1; end if;\nend;\nSELECT 2;";
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(2);
+    expect(out[0].text).toBe(
+      "begin\n  if x then select 1; end if;\nend",
+    );
+    expect(out[1].text).toBe("SELECT 2");
+  });
+
+  // Finding #3: trailing comment-only text must NOT produce phantom statement.
+  it("regression: trailing comment-only text produces no extra statement", () => {
+    const sql = "SELECT 1;\n-- note\n";
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(1);
+    expect(out[0].text).toBe("SELECT 1");
+  });
+
+  it("regression: trailing block-comment-only text produces no extra statement", () => {
+    const sql = "SELECT 1;\n/* trailing */";
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(1);
+    expect(out[0].text).toBe("SELECT 1");
+  });
+
+  it("regression: comment-only file → splitStatements returns []", () => {
+    expect(splitStatements("-- foo;\n/* bar */")).toEqual([]);
+  });
+
+  it("regression: comment-only file → statementAtCursor returns null", () => {
+    expect(statementAtCursor("-- foo;\n/* bar */", 0)).toBeNull();
+  });
+
+  it("regression: comment-only file → sqlToRun returns empty statements", () => {
+    const result = sqlToRun("-- foo;\n/* bar */", undefined, 0);
+    expect(result.mode).toBe("cursor");
+    expect(result.statements).toEqual([]);
+  });
+
+  // Sanity: BEGIN...END around nested END IF still works through statementAtCursor.
+  it("regression: statementAtCursor returns full BEGIN block with nested END IF", () => {
+    const sql =
+      "BEGIN\n  IF x THEN SELECT 1; END IF;\n  SELECT 2;\nEND;\nSELECT 3;";
+    // offset 25 nằm giữa khối — phải trả về cả khối
+    const out = statementAtCursor(sql, 25);
+    expect(out).not.toBeNull();
+    expect(out!.text).toBe(
+      "BEGIN\n  IF x THEN SELECT 1; END IF;\n  SELECT 2;\nEND",
+    );
+  });
+});
+
 // Sanity cho types — đảm bảo shape ParsedStatement khớp interface.
 describe("statementParser — ParsedStatement shape", () => {
   it("mỗi statement có text + start + end (start/end là character offset)", () => {

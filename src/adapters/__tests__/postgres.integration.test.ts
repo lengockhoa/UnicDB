@@ -151,4 +151,99 @@ describe.skipIf(!IT)("PostgresAdapter — integration", () => {
     await adapter.runQuery("DROP TABLE IF EXISTS vsdb_it_orders");
     await adapter.runQuery("DROP FUNCTION IF EXISTS vsdb_it_double(integer)");
   });
+
+  // ---- Regression tests (fix round 1) --------------------------------------
+
+  it("Regression #1 — bad SELECT inside cursor: pool stays usable (subsequent query succeeds)", async () => {
+    // Bad SELECT triggers an error inside openCursorForStatement (DECLARE fails).
+    // The adapter must release the client back to the pool so subsequent
+    // runQuery calls still work (no permanent wedge of max=1 pool).
+    let firstErr: unknown = null;
+    try {
+      const { batched } = await adapter.runQuery(
+        "SELECT * FROM no_such_table_for_vsdb_regression",
+      );
+      if (batched) {
+        await batched.fetchBatch().catch((e) => {
+          firstErr = e;
+        });
+      }
+    } catch (e) {
+      firstErr = e;
+    }
+    expect(firstErr).toBeTruthy();
+
+    // Subsequent query must succeed (no wedge).
+    const { results, batched } = await adapter.runQuery("SELECT 7 AS seven");
+    expect(results).toHaveLength(0);
+    expect(batched).toBeDefined();
+    const rows = await batched!.fetchBatch();
+    expect(rows).not.toBeNull();
+    expect(rows!).toEqual([[7]]);
+    await batched!.close();
+  });
+
+  it("Regression #2 — cancel mid-FETCH: pool recovers and subsequent query succeeds", async () => {
+    const { batched } = await adapter.runQuery(
+      "SELECT generate_series(1, 5000000) AS n",
+    );
+    expect(batched).toBeDefined();
+    const bq = batched!;
+    const first = await bq.fetchBatch();
+    expect(first).not.toBeNull();
+    await bq.cancel();
+    await bq.close();
+
+    // Pool must still work after cancel.
+    const after = await adapter.runQuery("SELECT 42 AS forty_two");
+    expect(after.batched).toBeDefined();
+    const r = await after.batched!.fetchBatch();
+    expect(r).toEqual([[42]]);
+    await after.batched!.close();
+  });
+
+  it("Regression #3 — fetchBatch after cancel returns null (not throw)", async () => {
+    const { batched } = await adapter.runQuery(
+      "SELECT generate_series(1, 5000000) AS n",
+    );
+    expect(batched).toBeDefined();
+    const bq = batched!;
+    await bq.fetchBatch();
+    await bq.cancel();
+    // After cancel, fetchBatch must return null (per spec Test #4 contract).
+    const after = await bq.fetchBatch();
+    expect(after).toBeNull();
+  });
+
+  it("Regression #4 — adapter.close() with open cursor resolves within 5s", async () => {
+    // Use a fresh adapter (own pool) so we don't disturb the shared one.
+    const a = makeAdapter();
+    await a.connect();
+    const { batched } = await a.runQuery(
+      "SELECT generate_series(1, 5000000) AS n",
+    );
+    expect(batched).toBeDefined();
+    await batched!.fetchBatch();
+    // Intentionally NOT calling cancel/close on the batched query — simulating
+    // user disconnecting while a cursor is still open.
+    const t0 = Date.now();
+    await a.close();
+    const elapsed = Date.now() - t0;
+    expect(elapsed).toBeLessThan(5000);
+  });
+
+  it("Regression #5 — commandTag populated for non-cursor path", async () => {
+    // INSERT is not a SELECT so it goes through the non-cursor path.
+    await adapter.runQuery("DROP TABLE IF EXISTS vsdb_it_tags");
+    await adapter.runQuery("CREATE TABLE vsdb_it_tags (id SERIAL PRIMARY KEY, v INT)");
+    const r = await adapter.runQuery(
+      "INSERT INTO vsdb_it_tags (v) VALUES (1), (2), (3)",
+    );
+    expect(r.batched).toBeUndefined();
+    expect(r.results).toHaveLength(1);
+    expect(r.results[0].commandTag).toBeTruthy();
+    expect(String(r.results[0].commandTag)).toMatch(/INSERT/i);
+    expect(r.results[0].rowCount).toBe(3);
+    await adapter.runQuery("DROP TABLE IF EXISTS vsdb_it_tags");
+  });
 });

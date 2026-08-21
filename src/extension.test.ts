@@ -35,6 +35,12 @@ const state = {
   onDidChangeConfigSubscribers: [] as Array<(e: { affectsConfiguration: (s: string) => boolean }) => void>,
   workspaceFolders: undefined as unknown,
   configurationChangeEmitter: new FakeEventEmitter<unknown>(),
+  // Active editor stub (cho runQuery/generateSelect tests).
+  activeEditor: undefined as unknown as {
+    document: { languageId: string; getText(): string; offsetAt(p: unknown): number };
+    selection: { isEmpty: boolean; active: unknown; start: unknown; end: unknown };
+    insertSnippet: (s: unknown) => Promise<void>;
+  },
 };
 
 vi.mock("vscode", () => {
@@ -45,6 +51,7 @@ vi.mock("vscode", () => {
       showErrorMessage: vi.fn().mockResolvedValue(undefined),
       showInputBox: vi.fn().mockResolvedValue(undefined),
       showQuickPick: vi.fn().mockResolvedValue(undefined),
+      setStatusBarMessage: vi.fn().mockResolvedValue(undefined),
       createStatusBarItem: vi.fn().mockImplementation(() => {
         const item = {
           text: "",
@@ -79,6 +86,9 @@ vi.mock("vscode", () => {
         state.createdTreeViews.push(tv);
         return tv;
       }),
+      get activeTextEditor() {
+        return state.activeEditor;
+      },
     },
     workspace: {
       getConfiguration: vi.fn(() => ({
@@ -116,6 +126,7 @@ vi.mock("vscode", () => {
     },
     CodeLens: vi.fn(),
     Range: vi.fn(),
+    SnippetString: vi.fn((text: string) => ({ value: text })),
     ViewColumn: { Beside: 2 },
     StatusBarAlignment: { Left: 1, Right: 2 },
     languages: {
@@ -124,6 +135,21 @@ vi.mock("vscode", () => {
         return { dispose: () => {} };
       }),
     },
+    env: {
+      clipboard: {
+        writeText: vi.fn().mockResolvedValue(undefined),
+      },
+    },
+    Selection: vi.fn().mockImplementation((start: unknown, end: unknown) => ({
+      start,
+      end,
+      active: end,
+      isEmpty: false,
+    })),
+    Position: vi.fn().mockImplementation((line: number, character: number) => ({
+      line,
+      character,
+    })),
   };
 });
 
@@ -166,6 +192,7 @@ describe("extension.activate — wiring smoke", () => {
     state.registeredCodeLensProviders.length = 0;
     state.onDidChangeConfigSubscribers.length = 0;
     state.workspaceFolders = undefined;
+    state.activeEditor = undefined;
   });
 
   it("register đủ 10 command theo package.json", () => {
@@ -225,6 +252,88 @@ describe("extension.activate — wiring smoke", () => {
     const ctx = makeCtx();
     activate(ctx as never);
     expect(() => deactivate()).not.toThrow();
+  });
+});
+
+// =============================================================================
+// Spec test #5: runQuery without connection → showQuickPick called with
+// "Add Connection" option (spy). Manager has no active connection; editor is
+// a .sql file; expect vscode.window.showQuickPick to be invoked and the option
+// list to include the "Add Connection" label.
+// =============================================================================
+import * as vscodeMock from "vscode";
+
+describe("Spec test #5 — runQuery without connection prompts QuickPick with 'Add Connection'", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+    state.registeredTreeDataProviders.clear();
+    state.createdStatusBarItems.length = 0;
+    state.createdWebviewPanels.length = 0;
+    state.createdTreeViews.length = 0;
+    state.registeredCodeLensProviders.length = 0;
+    state.onDidChangeConfigSubscribers.length = 0;
+    state.workspaceFolders = undefined;
+    state.activeEditor = undefined;
+  });
+
+  it("vsdb.runQuery với editor .sql và manager active=null → showQuickPick được gọi với option 'Add Connection'", async () => {
+    const ctx = makeCtx();
+    activate(ctx as never);
+
+    // Stub activeTextEditor (SQL).
+    const doc = {
+      languageId: "sql",
+      getText: () => "SELECT 1;",
+      offsetAt: (_p: unknown) => 0,
+    };
+    const selection = {
+      isEmpty: true,
+      active: { line: 0, character: 0 },
+      start: { line: 0, character: 0 },
+      end: { line: 0, character: 0 },
+    };
+    state.activeEditor = {
+      document: doc,
+      selection,
+      insertSnippet: vi.fn().mockResolvedValue(undefined),
+    };
+
+    // Spy showQuickPick. Trả undefined (user dismissed) để runQuery thoát sớm.
+    const showQuickPickSpy = vi.mocked(vscodeMock.window.showQuickPick);
+    showQuickPickSpy.mockResolvedValueOnce(undefined);
+
+    const runQueryFn = state.registeredCommands.get("vsdb.runQuery");
+    expect(runQueryFn).toBeDefined();
+    await runQueryFn!();
+
+    // showQuickPick được gọi với options chứa "Add Connection".
+    expect(showQuickPickSpy).toHaveBeenCalled();
+    const args = showQuickPickSpy.mock.calls[0][0] as Array<{ label: string }>;
+    const labels = args.map((o) => o.label);
+    expect(labels.some((l) => /Add Connection/i.test(l))).toBe(true);
+  });
+
+  it("vsdb.runQuery với editor .sql và manager active=null → option 'Select existing' cũng có", async () => {
+    const ctx = makeCtx();
+    activate(ctx as never);
+    const doc = {
+      languageId: "sql",
+      getText: () => "SELECT 1;",
+      offsetAt: (_p: unknown) => 0,
+    };
+    state.activeEditor = {
+      document: doc,
+      selection: { isEmpty: true, active: { line: 0, character: 0 }, start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+      insertSnippet: vi.fn().mockResolvedValue(undefined),
+    };
+    const showQuickPickSpy = vi.mocked(vscodeMock.window.showQuickPick);
+    showQuickPickSpy.mockResolvedValueOnce(undefined);
+    const runQueryFn = state.registeredCommands.get("vsdb.runQuery");
+    await runQueryFn!();
+    const args = showQuickPickSpy.mock.calls[0][0] as Array<{ label: string }>;
+    const labels = args.map((o) => o.label);
+    expect(labels.some((l) => /Select existing/i.test(l))).toBe(true);
   });
 });
 

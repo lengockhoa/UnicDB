@@ -12,6 +12,11 @@ nhảy sang client ngoài. Hỗ trợ **PostgreSQL**, **MySQL / MariaDB** và **
 
 ## Cài đặt (1 lệnh, khuyến nghị)
 
+> **Yêu cầu:** script one-liner này chỉ hoạt động sau khi repo đã được push lên
+> nhánh `main` **và** đã có **ít nhất một GitHub Release** đính kèm file
+> `.vsix` (do orchestrator/maintainer tạo). Trước thời điểm đó, dùng cách
+> cài thủ công bên dưới.
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/lengockhoa/VSDB/main/scripts/install-vsdb.sh | bash
 ```
@@ -22,6 +27,17 @@ Script sẽ tự:
 2. Tải `.vsix` mới nhất từ GitHub Releases của repo `lengockhoa/VSDB`.
 3. Gọi `code --install-extension <vsix> --force`.
 4. In version đã cài. **Idempotent** — chạy lại = update.
+
+### Cài đặt thủ công (không cần release trên GitHub)
+
+Nếu bạn đã có file `.vsix` ở local (vd. vừa tải từ CI artifact, hoặc maintainer
+build sẵn), cài trực tiếp mà không cần GitHub release:
+
+```bash
+bash scripts/install-vsdb.sh --local /đường/dẫn/tới/vsdb-<version>.vsix
+```
+
+Cách này hoạt động ngay từ lần đầu — không phụ thuộc vào GitHub release.
 
 ### Cài bằng file `.vsix` local (không cần mạng)
 

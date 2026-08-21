@@ -21,16 +21,35 @@ npm run compile
 echo "==> 4/4 Package vsix"
 # deps are bundled by esbuild → use --no-dependencies to skip registry metadata.
 rm -rf dist/*.vsix
-VSIX_PATH="$(npx @vscode/vsce package --no-dependencies -o dist/ 2>&1 | tee /tmp/vsce-out.log | grep -E '^.*\.vsix$' | tail -n1 || true)"
+VSCE_LOG="$(mktemp -t vsce-out-XXXXXX.log)"
+trap 'rm -f "${VSCE_LOG}"' EXIT
 
-# Fallback: if vsce printed "Created .../foo.vsix", parse that.
-if [[ -z "${VSIX_PATH}" ]]; then
-  VSIX_PATH="$(grep -oE "Successfully packaged: [^ ]+\.vsix" /tmp/vsce-out.log | sed 's/Successfully packaged: //' | tail -n1 || true)"
+# Capture vsce output (stdout+stderr) to a temp file. Don't grep inline — vsce
+# emits progress on stderr; the "Packaged: <path>" line appears on stdout.
+npx @vscode/vsce package --no-dependencies -o dist/ >"${VSCE_LOG}" 2>&1 || {
+  echo "ERROR: vsce package failed" >&2
+  echo "--- vsce output ---" >&2
+  cat "${VSCE_LOG}" >&2 || true
+  exit 1
+}
+
+# vsce prints: " DONE  Packaged: dist/vsdb-<version>.vsix (<n> files, <size>)"
+# Parse "<path>" after the literal "Packaged: " prefix.
+VSIX_PATH="$(grep -oE 'Packaged: [^ ]+\.vsix' "${VSCE_LOG}" | head -n1 | sed -E 's/^Packaged:[[:space:]]+//' || true)"
+
+# Belt-and-braces fallback: construct expected path from package.json version.
+if [[ -z "${VSIX_PATH}" || ! -f "${VSIX_PATH}" ]]; then
+  PKG_VERSION="$(node -p "require('./package.json').version" 2>/dev/null || echo 0.0.0)"
+  CANDIDATE="dist/vsdb-${PKG_VERSION}.vsix"
+  if [[ -f "${CANDIDATE}" ]]; then
+    VSIX_PATH="${CANDIDATE}"
+  fi
 fi
+
 if [[ -z "${VSIX_PATH}" || ! -f "${VSIX_PATH}" ]]; then
   echo "ERROR: vsce did not produce a .vsix file" >&2
   echo "--- vsce output ---" >&2
-  cat /tmp/vsce-out.log >&2 || true
+  cat "${VSCE_LOG}" >&2 || true
   exit 1
 fi
 

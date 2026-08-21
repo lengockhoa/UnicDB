@@ -1,3 +1,5 @@
+.vscode/**
+.vscode-test/**
 src/**
 webview/**
 tests/**
@@ -5,8 +7,36 @@ docker/**
 docs/**
 .cache/**
 node_modules/**
-**/*.map
-**/.DS_Store
-**/*.vsix
 .esbuild.js.swp
 *.tsbuildinfo
+
+# UKit / agent artifacts (vsce does NOT read .gitignore)
+.claude/**
+.codex/**
+.ukit/**
+.antigravity/**
+
+# Repo-level tool files
+.git/**
+.gitignore
+.gitattributes
+.vscodeignore
+Makefile
+esbuild.js
+tsconfig.json
+tsconfig.webview.json
+vitest.config.ts
+vitest.integration.config.ts
+
+# Build / packaging scripts
+scripts/**
+
+# Source maps
+**/*.map
+
+# OS junk
+**/.DS_Store
+Thumbs.db
+
+# Don't ship vsix files inside vsix
+**/*.vsix

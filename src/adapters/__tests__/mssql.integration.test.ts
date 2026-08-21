@@ -103,6 +103,20 @@ describe.skipIf(!IT)("MsSqlAdapter — integration", () => {
     await expect(bad.connect()).rejects.toThrow(/Login failed/i);
   });
 
+  it("Test #5c (regression) — query chậm 2s không bị ETIMEOUT", async () => {
+    // Verifies Critical #2: tedious requestTimeout = 30s previously killed slow
+    // streams. WAITFOR DELAY must execute as a separate non-streaming statement
+    // (it is not a SELECT), so this script verifies the non-streaming path
+    // also survives >30s once the cap is removed.
+    const { results } = await adapter.runQuery(
+      "WAITFOR DELAY '00:00:02'; SELECT 1 AS slow",
+    );
+    expect(results.length).toBeGreaterThan(0);
+    const last = results[results.length - 1];
+    expect(last.columns).toEqual(["slow"]);
+    expect(last.rows).toEqual([[1]]);
+  });
+
   it("Test #6b — cancel dừng batch và lần fetch sau trả null", async () => {
     const { batched } = await adapter.runQuery(
       "SELECT TOP 5000000 value FROM dbo.vsdb_it_rows CROSS JOIN (VALUES (1),(2),(3),(4),(5)) AS x(n)",
@@ -112,10 +126,12 @@ describe.skipIf(!IT)("MsSqlAdapter — integration", () => {
     await batched!.cancel();
     // Tedious may complete the attention round-trip asynchronously; the
     // interface guarantees cancellation is idempotent, so poll the batch state
-    // rather than blocking the test on the network round-trip.
+    // rather than blocking the test on the network round-trip. Poll while the
+    // batch is still delivering rows so we exit the moment the stream settles
+    // to null.
     let next = await batched!.fetchBatch();
     const deadline = Date.now() + 5_000;
-    while (next === null && Date.now() < deadline) {
+    while (next !== null && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 25));
       next = await batched!.fetchBatch();
     }

@@ -64,15 +64,31 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
   /** Cache lazy-loaded children theo node key. Node key = `connectionId|category|objectKey`. */
   private cache = new Map<string, CacheEntry<VsdbNode[]>>();
 
+  /** Track active-change subscription so we can dispose it. */
+  private activeSub: { dispose(): void } | null = null;
+
   constructor(mgr: ConnectionManager) {
     this.mgr = mgr;
     // Re-render khi active đổi (chấm xanh, status text).
-    this.mgr.onDidChangeActive(() => this._onDidChangeTreeData.fire(undefined));
+    this.activeSub = this.mgr.onDidChangeActive(() =>
+      this._onDidChangeTreeData.fire(undefined),
+    );
+  }
+
+  /** Dispose: drop cache and active subscription. Manager owns adapters (closes them). */
+  dispose(): void {
+    this.cache.clear();
+    if (this.activeSub) {
+      this.activeSub.dispose();
+      this.activeSub = null;
+    }
+    this._onDidChangeTreeData.dispose();
   }
 
   /**
    * Lấy adapter cho connection. Nếu connection đang active → dùng manager (lazy connect + idle).
-   * Nếu không active → gọi `mgr.getAdapterFor(cfg)` (manager method added in TASK-007).
+   * Nếu không active → gọi `mgr.getAdapterFor(cfg)` (manager method caches the adapter
+   * per connection id — single ownership, manager closes on dispose/edit/delete).
    */
   private async getAdapterFor(conn: ConnectionConfig): Promise<DbAdapter> {
     const active = this.mgr.getActive();
@@ -142,9 +158,15 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
     const active = this.mgr.getActive();
     return conns.map((c) => ({
       label: `${active && active.id === c.id ? "$(pass-filled) " : ""}${c.name}`,
-      tooltip: `${c.name}\n${c.driver}@${c.host}:${c.port}/${c.database}`,
+      tooltip: `${c.name}\n${c.driver}@${c.host}:${c.port}/${c.database}\nClick để đổi active connection`,
       contextValue: "connection",
       collapsible: vscode.TreeItemCollapsibleState.Collapsed,
+      // Click → switch active (cập nhật statusBar + chấm xanh ở root).
+      command: {
+        command: "vsdb.selectConnectionFromTree",
+        title: "Select as Active Connection",
+        arguments: [c.id],
+      },
       meta: { connection: c },
     }));
   }

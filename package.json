@@ -118,7 +118,7 @@
       "view/item/context": [
         {
           "command": "vsdb.generateSelect",
-          "when": "view == vsdb.schemaTree && viewItem == table || viewItem == view",
+          "when": "view == vsdb.schemaTree && (viewItem == table || viewItem == view)",
           "group": "vsdb"
         },
         {

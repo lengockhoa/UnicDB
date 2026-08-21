@@ -86,6 +86,60 @@ describe.skipIf(!IT)("MySqlAdapter — integration", () => {
     await batched!.close();
   });
 
+  it("Test #2b (regression) — partial batch 700 rows: 500 + 200 + null, không drop rows", async () => {
+    // Reviewer-authored repro for Critical #1: with a 700-row table the original
+    // implementation resolved the second fetchBatch() with `null` (200 rows
+    // lost). The fix delivers the partial batch first, then null on the
+    // subsequent call.
+    await adapter.runQuery("DROP TABLE IF EXISTS vsdb_it_rows_partial");
+    await adapter.runQuery(
+      "CREATE TABLE vsdb_it_rows_partial (id INT NOT NULL PRIMARY KEY, value VARCHAR(64) NOT NULL)",
+    );
+    const values = Array.from(
+      { length: 700 },
+      (_, i) => `(${i + 1}, 'row-${i + 1}')`,
+    ).join(",");
+    await adapter.runQuery(
+      `INSERT INTO vsdb_it_rows_partial (id, value) VALUES ${values}`,
+    );
+    try {
+      const { batched } = await adapter.runQuery(
+        "SELECT id FROM vsdb_it_rows_partial ORDER BY id",
+      );
+      expect(batched).toBeDefined();
+      const b1 = await batched!.fetchBatch();
+      expect(b1).toHaveLength(500);
+      expect(b1![0][0]).toBe(1);
+      const b2 = await batched!.fetchBatch();
+      expect(b2).toHaveLength(200);
+      expect(b2![0][0]).toBe(501);
+      const b3 = await batched!.fetchBatch();
+      expect(b3).toBeNull();
+      // Total rows delivered = 500 + 200 = 700. Verify last row of each batch.
+      expect(b1![499][0]).toBe(500);
+      expect(b2![199][0]).toBe(700);
+      await batched!.close();
+    } finally {
+      await adapter
+        .runQuery("DROP TABLE IF EXISTS vsdb_it_rows_partial")
+        .catch(() => undefined);
+    }
+  });
+
+  it("Test #2c (regression) — query > 30s vẫn stream xong (timeout removed)", async () => {
+    // Verifies Critical #2: the previous 30s query timeout killed slow streams.
+    // SLEEP(2) * 500 ≈ 16 minutes in worst case; we use SLEEP(1) to keep the
+    // test under a few seconds and assert the row still arrives.
+    const { batched } = await adapter.runQuery("SELECT SLEEP(1) + 1 AS slow");
+    expect(batched).toBeDefined();
+    const rows = await batched!.fetchBatch();
+    expect(rows).not.toBeNull();
+    expect(rows).toHaveLength(1);
+    expect(batched!.columns).toEqual(["slow"]);
+    expect(await batched!.fetchBatch()).toBeNull();
+    await batched!.close();
+  });
+
   it("Test #3 — sai password trả Access denied", async () => {
     const bad = makeAdapter("definitely-wrong-password");
     await expect(bad.connect()).rejects.toThrow(/Access denied/i);

@@ -26,10 +26,11 @@ export interface ConnectionConfig {
 
 /**
  * Một statement SQL đã được parser tách ra.
- * - `text`: nội dung statement (đã strip comment, đã trim nếu là whitespace ngoài).
- *   Trong task này ta GIỮ text nguyên vị trí (substring(start, end) === text),
- *   KHÔNG trim — để caller quyết định.
+ * - `text`: nội dung statement NHƯ TRONG SQL GỐC (giữ nguyên vị trí,
+ *   KHÔNG trim, KHÔNG strip comment — caller tự quyết định xử lý tiếp).
+ *   Đảm bảo `sql.substring(start, end) === text` (zero-copy substring).
  * - `start` / `end`: character offset trong chuỗi SQL gốc (start inclusive, end exclusive).
+ *   Statement rỗng (chỉ whitespace + comment) sẽ KHÔNG xuất hiện trong output.
  */
 export interface ParsedStatement {
   text: string;

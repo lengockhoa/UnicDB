@@ -148,6 +148,30 @@ export async function activate(
     vscode.commands.registerCommand("vsdb.refreshSchema", () => tree.refresh()),
   );
 
+  // 11. vsdb.selectConnectionFromTree — click connection node → set active.
+  // (Không thuộc 10 command khai báo trong package.json; command này được trigger
+  // từ TreeItem.command trên connection node. StatusBar + tree badges auto-update
+  // qua mgr.onDidChangeActive.)
+  disposables.push(
+    vscode.commands.registerCommand(
+      "vsdb.selectConnectionFromTree",
+      async (id?: string) => {
+        if (!id) return;
+        try {
+          await mgr.setActive(id);
+        } catch (err) {
+          void vscode.window.showErrorMessage(
+            `VSDB: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      },
+    ),
+  );
+
+  // Dispose schemaTree + codeLens on deactivate to drop subscriptions + cache.
+  context.subscriptions.push({ dispose: () => tree.dispose() });
+  context.subscriptions.push({ dispose: () => codeLens.dispose() });
+
   disposables.forEach((d) => context.subscriptions.push(d));
 }
 
@@ -455,22 +479,35 @@ async function commandGenerateSelect(
   // Resolve the meta from arg, or — most reliably — the package.json view/item/context
   // menu passes the qualified name string directly. Otherwise pick from active
   // connection's tables.
-  const active = mgr.getActive();
-  if (!active) {
-    void vscode.window.showInformationMessage("VSDB: no active connection.");
-    return;
-  }
+  let driver: ConnectionConfig["driver"] | undefined;
   let qualified: string | undefined;
   if (typeof qualifiedOrNode === "string") {
     qualified = qualifiedOrNode;
+    // Không có meta → fallback dialect theo ACTIVE connection (giữ hành vi cũ).
+    const active = mgr.getActive();
+    driver = active?.driver;
   } else if (
     qualifiedOrNode &&
     typeof qualifiedOrNode === "object" &&
     "meta" in qualifiedOrNode
   ) {
-    const meta = (qualifiedOrNode as { meta?: { schema?: string; objectName?: string } }).meta;
+    const meta = (
+      qualifiedOrNode as {
+        meta?: {
+          schema?: string;
+          objectName?: string;
+          connection?: ConnectionConfig;
+        };
+      }
+    ).meta;
     if (meta && meta.objectName) {
       qualified = qualifiedName({ table: meta.objectName, schema: meta.schema ?? "" });
+      // Dialect phải theo NODE's connection (không phải ACTIVE). Đây chính là fix
+      // cho việc right-click bảng MySQL trong khi active là Postgres → template
+      // sai driver trước fix này.
+      if (meta.connection) {
+        driver = meta.connection.driver;
+      }
     }
   }
   if (!qualified) {
@@ -479,8 +516,17 @@ async function commandGenerateSelect(
     );
     return;
   }
+  if (!driver) {
+    // Fallback cuối: nếu không resolve được driver, dùng ACTIVE hoặc refuse.
+    const active = mgr.getActive();
+    if (!active) {
+      void vscode.window.showInformationMessage("VSDB: no active connection.");
+      return;
+    }
+    driver = active.driver;
+  }
   const sql = generateSelectForTable({
-    driver: active.driver,
+    driver,
     table: qualified.includes(".") ? qualified.split(".").slice(-1)[0] : qualified,
     schema: qualified.includes(".")
       ? qualified.split(".").slice(0, -1).join(".")

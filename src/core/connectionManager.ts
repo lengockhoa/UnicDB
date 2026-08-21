@@ -42,6 +42,13 @@ export class ConnectionManager {
   private currentAdapter: DbAdapter | null = null;
   private currentActiveId: string | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * Cache adapters for NON-active connections (e.g. used by SchemaTreeProvider when
+   * expanding non-active connections). Manager owns them — closed on dispose /
+   * editConnection / deleteConnection. Single ownership: callers MUST NOT close
+   * adapters returned by `getAdapterFor`.
+   */
+  private readonly passiveAdapters = new Map<string, DbAdapter>();
 
   private readonly _onDidChangeActiveEmitter: vscode.EventEmitter<ConnectionConfig | null>;
   /** Fires khi active connection đổi (set/delete). */
@@ -128,6 +135,8 @@ export class ConnectionManager {
     if (this.currentActiveId === id && this.currentAdapter) {
       await this.closeCurrentAdapter();
     }
+    // Config changed → drop any cached passive adapter so next getAdapterFor reconnects.
+    await this.closePassiveAdapter(id);
 
     this.fireConnectionsChanged();
     if (this.currentActiveId === id) {
@@ -153,6 +162,8 @@ export class ConnectionManager {
       await this.persistActive();
       this._onDidChangeActiveEmitter.fire(null);
     }
+    // Drop any cached passive adapter to free the socket.
+    await this.closePassiveAdapter(id);
 
     this.fireConnectionsChanged();
   }
@@ -196,10 +207,19 @@ export class ConnectionManager {
 
   /**
    * Lấy adapter cho connection `cfg` (KHÔNG đổi active). Dùng cho schema tree khi user
-   * expand một connection không phải active. Adapter KHÔNG được cache; caller dispose nếu cần.
+   * expand một connection không phải active.
+   *
+   * Manager owns the cached adapter (single ownership — callers MUST NOT close it).
+   * Adapter is closed on dispose(), editConnection, deleteConnection.
    * Throw nếu không lấy được password từ SecretStorage hoặc testConnection fail.
    */
   async getAdapterFor(cfg: ConnectionConfig): Promise<DbAdapter> {
+    // Reuse cached passive adapter if present (avoid socket leak on every expansion).
+    const cached = this.passiveAdapters.get(cfg.id);
+    if (cached) {
+      return cached;
+    }
+
     let password: string | undefined;
     try {
       password = await this.tryGetPassword(cfg.id);
@@ -222,7 +242,24 @@ export class ConnectionManager {
       }
       throw err;
     }
+    this.passiveAdapters.set(cfg.id, adapter);
     return adapter;
+  }
+
+  /**
+   * Close + drop any cached passive adapter for connection `id`. Used by
+   * editConnection (config changed → reconnect) and deleteConnection (removed).
+   * Idempotent.
+   */
+  private async closePassiveAdapter(id: string): Promise<void> {
+    const adapter = this.passiveAdapters.get(id);
+    if (!adapter) return;
+    this.passiveAdapters.delete(id);
+    try {
+      await adapter.close();
+    } catch {
+      // ignore
+    }
   }
 
   /**
@@ -266,9 +303,14 @@ export class ConnectionManager {
     return this.currentAdapter;
   }
 
-  /** Dispose: đóng adapter, clear timer. */
+  /** Dispose: đóng tất cả adapters (active + passive), clear timer. */
   async dispose(): Promise<void> {
     await this.closeCurrentAdapter();
+    // Close every cached passive adapter to avoid socket leaks across reloads.
+    const ids = Array.from(this.passiveAdapters.keys());
+    for (const id of ids) {
+      await this.closePassiveAdapter(id);
+    }
     if (this.idleTimer) {
       clearTimeout(this.idleTimer);
       this.idleTimer = null;

@@ -219,3 +219,77 @@ FINDINGS:
 NEXT_STATUS_FOR_INDEX: changes_requested
 
 ---
+
+## Executor Report (fix round 1)
+
+EXECUTOR_MODEL: claude-sonnet-4-6
+
+### FINDINGS_ADDRESSED
+
+1. **CRITICAL socket leak** — `src/core/connectionManager.ts`: `ConnectionManager` now owns a `Map<connectionId, DbAdapter>` (`passiveAdapters`). `getAdapterFor(cfg)` returns the cached adapter if present (no new socket). New `closePassiveAdapter(id)` is invoked on `editConnection` (config changed → reconnect), `deleteConnection` (removed), and `dispose()` (extension unload). All cached passive adapters are closed on `dispose()`. Single ownership is enforced — callers MUST NOT close adapters returned by `getAdapterFor`. `src/ui/schemaTree.ts` no longer owns adapter lifetimes; it relies on the manager. Regression tests in `schemaTree.test.ts` assert: 5 expansions → exactly 1 new factory call (cache hit), `manager.dispose()` closes all passive adapters, `editConnection`/`deleteConnection` drop the cached passive adapter.
+
+2. **Spec test #5** — added in `src/extension.test.ts` (`Spec test #5 — runQuery without connection prompts QuickPick with 'Add Connection'`). The test activates the extension, stubs `activeTextEditor` (SQL), invokes the registered `vsdb.runQuery` command, and asserts `vscode.window.showQuickPick` was called with an option list containing both "Add Connection" and "Select existing" labels. Two cases (one checks Add Connection; one checks Select existing).
+
+3. **Click connection → switch active** — `src/ui/schemaTree.ts` `getRoot()` now attaches a `command: { command: "vsdb.selectConnectionFromTree", title: "...", arguments: [c.id] }` to each connection node. Clicking the node triggers `mgr.setActive(id)`; `mgr.onDidChangeActive` already re-renders the tree (chấm xanh) and the status bar. The new command is registered in `src/extension.ts activate()`. Also fixed finding 7: `mgr.onDidChangeActive` subscription is now stored and disposed in `SchemaTreeProvider.dispose()` (wired via `context.subscriptions`).
+
+4. **Generate SELECT dialect per node connection** — `commandGenerateSelect` in `src/extension.ts` now reads `meta.connection.driver` when a node arg is supplied (covering both view/item/context menu invocation and click). Falls back to `active.driver` only when no node meta is provided. This means right-clicking a table under a non-active MySQL connection while Postgres is active correctly emits ``SELECT * FROM `users` LIMIT 100;``.
+
+5. **package.json:121 precedence bug** — fixed: `view == vsdb.schemaTree && viewItem == table || viewItem == view` → `view == vsdb.schemaTree && (viewItem == table || viewItem == view)`. Scanned all menus when-clauses — `copyQualifiedName` already parenthesized; the other when-clauses (`editor/title`, `view/title`) use `editorTextFocus && resourceLangId == sql` and `view == vsdb.schemaTree`, which are correctly scoped.
+
+### Minor also-addressed (not in reviewer "important" list but trivial to fix alongside)
+
+- finding 6: `VsdbCodeLensProvider` stores its `onDidChangeConfiguration` subscription and now has a `dispose()` method that closes it + the `_onDidChangeCodeLenses` emitter; wired via `context.subscriptions` in `activate()`.
+
+### RED_OUTPUT
+
+Before fix:
+- Test #1 (1 adapter for N expansions): failed — factory called 5 times (one per expansion).
+- Test #2 (manager.dispose closes all): failed — adapters created but never closed.
+- Test #3 (edit/delete drops cache): failed — edit/delete didn't touch the cache.
+- Spec test #5: missing entirely.
+
+After fix: all 6 new tests + all pre-existing 87 tests PASS.
+
+### Verification Output
+
+`npx tsc --noEmit` → exit 0 (no output).
+
+`npx vitest run`:
+```
+ ✓ src/core/__tests__/connectionManager.test.ts  (9 tests) 8ms
+ ✓ src/core/__tests__/statementParser.test.ts  (26 tests) 6ms
+ ✓ src/ui/__tests__/codeLensProvider.test.ts  (4 tests) 4ms
+ ✓ src/ui/__tests__/statusBar.test.ts  (3 tests) 3ms
+ ✓ src/ui/__tests__/schemaTree.test.ts  (13 tests) 11ms
+ ✓ tests/install-vsdb.test.ts  (5 tests) 54ms
+ ✓ src/core/__tests__/queryRunner.test.ts  (9 tests) 79ms
+ ✓ src/core/__tests__/resultBatcher.test.ts  (8 tests) 5ms
+ ✓ src/scaffold.test.ts  (4 tests) 287ms
+ ✓ src/extension.test.ts  (8 tests) 4ms
+ ✓ src/adapters/__tests__/factory.test.ts  (4 tests) 1ms
+
+ Test Files  11 passed (11)
+      Tests  93 passed (93)
+```
+Delta vs prior: 87 → 93 (added 3 leak regressions + 2 spec #5 cases + 1 connection-node-command + 1 click-on-tree-node = +6 tests; net 6 in schemaTree.test (now 13) and +2 in extension.test (now 8)).
+
+### Files Touched (this fix round)
+
+Modified:
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/fix-007/src/core/connectionManager.ts` — passive adapter cache + close on edit/delete/dispose.
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/fix-007/src/ui/schemaTree.ts` — connection node command + dispose() + no longer tracks adapter lifetimes.
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/fix-007/src/extension.ts` — register `vsdb.selectConnectionFromTree`; `commandGenerateSelect` uses `meta.connection.driver`; wire `tree.dispose()` + `codeLens.dispose()` into `context.subscriptions`.
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/fix-007/src/ui/codeLensProvider.ts` — store config subscription; add `dispose()`.
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/fix-007/package.json` — fix when-clause precedence (line 121).
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/fix-007/src/ui/__tests__/schemaTree.test.ts` — add leak regression tests + connection-node-command test; `setupTree({ factoryPerCall: true })` option; `FakeEventEmitter.dispose()` added.
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/fix-007/src/extension.test.ts` — mock `setStatusBarMessage`, `SnippetString`, `Selection`, `Position`, `env.clipboard`, `window.activeTextEditor`; add Spec test #5 (2 cases).
+
+### Status
+
+COMPLETED — all 5 critical/important reviewer findings addressed with regression tests; 93/93 tests green; tsc clean.
+
+### Note
+
+- The new `vsdb.selectConnectionFromTree` command is intentionally NOT added to `package.json` `contributes.commands` (per the spec's "10 commands"; this is an internal trigger from `TreeItem.command`). If desired, it can be added later.
+- Adapter caching policy is per-connection-id: passive adapters persist until edit/delete/dispose. Idle-close is NOT applied to passive adapters (active only). This trades long-lived idle sockets for correctness; if a connection is unused for hours, the user can delete it to reclaim the socket. (Active adapter still gets the 10-min idle close via existing logic.)
+- `package.json` edits were scoped to the precedence fix on line 121; the when-clauses on lines 109, 114, 126, 131, 137, 142 were inspected and were already correctly scoped (no unscoped-OR found).
