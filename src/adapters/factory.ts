@@ -1,7 +1,8 @@
 // src/adapters/factory.ts
-// createAdapter — switch theo cfg.driver. TASK-003 chỉ có postgres case;
-// mysql/mssql ném NotImplementedError (TASK-004 sẽ extend).
+// createAdapter — switch theo cfg.driver.
 import type { ConnectionConfig } from "../config/types";
+import { MsSqlAdapter } from "./mssql";
+import { MySqlAdapter } from "./mysql";
 import { PostgresAdapter } from "./postgres";
 import { NotImplementedError, type DbAdapter } from "./types";
 
@@ -15,8 +16,9 @@ export function createAdapter(cfg: ConnectionConfig, password: string): DbAdapte
     case "postgres":
       return new PostgresAdapter(cfg, password);
     case "mysql":
+      return new MySqlAdapter(cfg, password);
     case "mssql":
-      throw new NotImplementedError(cfg.driver);
+      return new MsSqlAdapter(cfg, password);
     default: {
       const _exhaustive: never = cfg.driver;
       throw new NotImplementedError(String(_exhaustive));

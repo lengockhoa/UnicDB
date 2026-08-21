@@ -1,8 +1,10 @@
 // src/adapters/__tests__/factory.test.ts
 // Unit tests cho createAdapter — TASK-003 §Test Files.
-// Postgres case phải trả PostgresAdapter; mysql/mssql phải throw.
+// Factory must return the concrete adapter for all three drivers.
 import { describe, it, expect } from "vitest";
 import { createAdapter } from "../factory";
+import { MsSqlAdapter } from "../mssql";
+import { MySqlAdapter } from "../mysql";
 import { PostgresAdapter } from "../postgres";
 import type { ConnectionConfig } from "../../config/types";
 
@@ -24,16 +26,14 @@ describe("createAdapter — factory", () => {
     expect(a).toBeInstanceOf(PostgresAdapter);
   });
 
-  it("mysql → throw NotImplementedError", () => {
-    expect(() => createAdapter(cfg("mysql"), "vsdb")).toThrowError(
-      /NotImplemented|not implemented/i,
-    );
+  it("mysql → trả về MySqlAdapter", () => {
+    const a = createAdapter(cfg("mysql"), "vsdb");
+    expect(a).toBeInstanceOf(MySqlAdapter);
   });
 
-  it("mssql → throw NotImplementedError", () => {
-    expect(() => createAdapter(cfg("mssql"), "VsdbPass123!")).toThrowError(
-      /NotImplemented|not implemented/i,
-    );
+  it("mssql → trả về MsSqlAdapter", () => {
+    const a = createAdapter(cfg("mssql"), "VsdbPass123!");
+    expect(a).toBeInstanceOf(MsSqlAdapter);
   });
 
   it("factory export trả về object implement DbAdapter interface", () => {

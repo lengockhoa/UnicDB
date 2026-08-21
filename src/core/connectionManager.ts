@@ -1,0 +1,340 @@
+// src/core/connectionManager.ts
+// ConnectionManager — CRUD + persistence cho connection (TASK-005).
+//
+// Quy tắc lưu trữ:
+//   - Metadata (name/driver/host/port/user/database/ssl) → Memento
+//     workspaceState nếu có workspace mở, globalState nếu không (design §8).
+//   - Password → SecretStorage với key `vsdb.pass.<id>`.
+//   - Active connection id → Memento `vsdb.activeConnection` (cùng scope với metadata).
+//
+// Test-connect: gọi adapter.testConnection() trước khi lưu (add/edit). Fail → throw, không lưu.
+//
+// Lazy connect: getAdapter() mở socket lần đầu, reset idle timer 10 phút. Mỗi lần gọi
+// reset timer; nếu hết 10 phút không activity → adapter.close(). Query mới reconnect.
+//
+// Fallback (design §8):
+//   - SecretStorage lỗi → KHÔNG lưu, hỏi password mỗi lần connect (ở đây ta KHÔNG crash
+//     add/edit — nếu store fail thì skip, vẫn cho phép ghi metadata).
+//   - Không có workspace → lưu vào globalState thay vì workspaceState.
+import * as vscode from "vscode";
+import type { ConnectionConfig } from "../config/types";
+import type { DbAdapter } from "../adapters/types";
+
+/** Factory tạo adapter từ cfg + password. Inject để test dễ. */
+export type AdapterFactory = (cfg: ConnectionConfig, password: string) => DbAdapter;
+
+const KEY_CONNECTIONS = "vsdb.connections";
+const KEY_ACTIVE = "vsdb.activeConnection";
+const KEY_PASS_PREFIX = "vsdb.pass.";
+
+/** 10 phút idle. */
+const IDLE_TIMEOUT_MS = 10 * 60 * 1000;
+
+interface InternalState {
+  connections: ConnectionConfig[];
+  activeId: string | null;
+}
+
+export class ConnectionManager {
+  private readonly factory: AdapterFactory;
+  private readonly ctx: vscode.ExtensionContext;
+  private state: InternalState = { connections: [], activeId: null };
+  private currentAdapter: DbAdapter | null = null;
+  private currentActiveId: string | null = null;
+  private idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private readonly _onDidChangeActiveEmitter: vscode.EventEmitter<ConnectionConfig | null>;
+  /** Fires khi active connection đổi (set/delete). */
+  readonly onDidChangeActive: vscode.Event<ConnectionConfig | null>;
+
+  constructor(ctx: vscode.ExtensionContext, factory: AdapterFactory) {
+    this.ctx = ctx;
+    this.factory = factory;
+    this._onDidChangeActiveEmitter = new vscode.EventEmitter<ConnectionConfig | null>();
+    this.onDidChangeActive = this._onDidChangeActiveEmitter.event;
+    // Load state khi khởi tạo.
+    this.loadState();
+  }
+
+  // ---- Public API ----------------------------------------------------------
+
+  /**
+   * Thêm connection mới. Test-connect trước; fail → throw, không lưu gì.
+   * Lưu metadata + password; KHÔNG active ngay (user phải gọi setActive riêng).
+   */
+  async addConnection(cfg: ConnectionConfig, password: string): Promise<void> {
+    // Test-connect với adapter tạm. Nếu fail → không lưu.
+    const probe = this.factory(cfg, password);
+    try {
+      await probe.testConnection();
+    } finally {
+      // Đóng probe để tránh leak socket.
+      try {
+        await probe.close();
+      } catch {
+        // ignore
+      }
+    }
+
+    // Lưu metadata vào state Memento đã chọn.
+    this.state.connections.push({ ...cfg });
+    await this.persistConnections();
+
+    // Lưu password vào SecretStorage (try — nếu lỗi vẫn giữ metadata, để caller xử lý).
+    await this.tryStorePassword(cfg.id, password);
+
+    this.fireConnectionsChanged();
+  }
+
+  /**
+   * Sửa connection. Test-connect lại với password mới (nếu đổi); fail → throw, không lưu.
+   * Nếu connection đang active → đóng adapter cũ (sẽ reconnect lazy ở getAdapter kế tiếp).
+   */
+  async editConnection(
+    id: string,
+    patch: Partial<ConnectionConfig>,
+    password?: string,
+  ): Promise<void> {
+    const idx = this.state.connections.findIndex((c) => c.id === id);
+    if (idx < 0) {
+      throw new Error(`Connection "${id}" không tồn tại`);
+    }
+    const old = this.state.connections[idx];
+    const next: ConnectionConfig = { ...old, ...patch, id: old.id };
+
+    // Test-connect lại nếu có đổi password HOẶC đổi bất kỳ trường nào khác (driver/host/...).
+    // An toàn nhất: luôn test-connect.
+    const testPassword = password ?? (await this.tryGetPassword(id)) ?? "";
+    const probe = this.factory(next, testPassword);
+    try {
+      await probe.testConnection();
+    } finally {
+      try {
+        await probe.close();
+      } catch {
+        // ignore
+      }
+    }
+
+    // Commit changes.
+    this.state.connections[idx] = next;
+    await this.persistConnections();
+
+    if (password !== undefined) {
+      await this.tryStorePassword(id, password);
+    }
+
+    // Nếu connection đang active → đóng adapter để reconnect với config mới.
+    if (this.currentActiveId === id && this.currentAdapter) {
+      await this.closeCurrentAdapter();
+    }
+
+    this.fireConnectionsChanged();
+    if (this.currentActiveId === id) {
+      this._onDidChangeActiveEmitter.fire(next);
+    }
+  }
+
+  /**
+   * Xoá connection. Nếu đang active → đóng adapter + clear active.
+   */
+  async deleteConnection(id: string): Promise<void> {
+    const idx = this.state.connections.findIndex((c) => c.id === id);
+    if (idx < 0) return; // idempotent
+    const wasActive = this.currentActiveId === id;
+    this.state.connections.splice(idx, 1);
+    await this.persistConnections();
+    await this.tryDeletePassword(id);
+
+    if (wasActive) {
+      await this.closeCurrentAdapter();
+      this.state.activeId = null;
+      this.currentActiveId = null;
+      await this.persistActive();
+      this._onDidChangeActiveEmitter.fire(null);
+    }
+
+    this.fireConnectionsChanged();
+  }
+
+  /** Danh sách connections hiện tại (copy). */
+  listConnections(): ConnectionConfig[] {
+    return this.state.connections.slice();
+  }
+
+  /** Connection đang active (null nếu chưa chọn). */
+  getActive(): ConnectionConfig | null {
+    if (!this.state.activeId) return null;
+    return this.state.connections.find((c) => c.id === this.state.activeId) ?? null;
+  }
+
+  /**
+   * Chuyển active sang connection `id`. Đóng adapter cũ (nếu có).
+   * Lưu id vào Memento. KHÔNG eagerly mở socket — getAdapter() mới lazy connect.
+   */
+  async setActive(id: string): Promise<void> {
+    const cfg = this.state.connections.find((c) => c.id === id);
+    if (!cfg) {
+      throw new Error(`Connection "${id}" không tồn tại`);
+    }
+    if (this.currentActiveId === id) {
+      // Đã active — chỉ đảm bảo persisted.
+      this.state.activeId = id;
+      await this.persistActive();
+      return;
+    }
+
+    // Đóng adapter cũ trước khi chuyển.
+    await this.closeCurrentAdapter();
+
+    this.state.activeId = id;
+    this.currentActiveId = id;
+    await this.persistActive();
+
+    this._onDidChangeActiveEmitter.fire(cfg);
+  }
+
+  /**
+   * Lấy adapter hiện tại (lazy connect). Reset idle timer 10 phút mỗi lần gọi.
+   * Throw nếu không có active hoặc password không lấy được từ SecretStorage.
+   */
+  async getAdapter(): Promise<DbAdapter> {
+    const active = this.getActive();
+    if (!active) {
+      throw new Error("Chưa chọn connection active");
+    }
+    if (!this.currentAdapter || this.currentActiveId !== active.id) {
+      // Lazy connect: tạo adapter mới.
+      let password: string | undefined;
+      try {
+        password = await this.ctx.secrets.get(KEY_PASS_PREFIX + active.id);
+      } catch {
+        password = undefined;
+      }
+      if (password === undefined || password === null) {
+        throw new Error(
+          `Không tìm được password cho connection "${active.name}". Vui lòng nhập lại password (edit connection).`,
+        );
+      }
+      const adapter = this.factory(active, password);
+      try {
+        await adapter.testConnection();
+      } catch (err) {
+        // Đóng adapter nếu test-connect fail để tránh leak.
+        try {
+          await adapter.close();
+        } catch {
+          // ignore
+        }
+        throw err;
+      }
+      this.currentAdapter = adapter;
+      this.currentActiveId = active.id;
+    }
+    this.resetIdleTimer();
+    return this.currentAdapter;
+  }
+
+  /** Dispose: đóng adapter, clear timer. */
+  async dispose(): Promise<void> {
+    await this.closeCurrentAdapter();
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+    }
+    this._onDidChangeActiveEmitter.dispose();
+  }
+
+  // ---- Private -------------------------------------------------------------
+
+  /** Chọn Memento (workspaceState nếu có folder, globalState nếu không). */
+  private pickMemento(): vscode.Memento {
+    const folders = vscode.workspace.workspaceFolders;
+    if (folders && folders.length > 0) {
+      return this.ctx.workspaceState;
+    }
+    return this.ctx.globalState;
+  }
+
+  private async loadState(): Promise<void> {
+    const m = this.pickMemento();
+    const list = m.get<ConnectionConfig[]>(KEY_CONNECTIONS);
+    if (Array.isArray(list)) {
+      this.state.connections = list.slice();
+    }
+    const active = m.get<string>(KEY_ACTIVE);
+    if (typeof active === "string" && this.state.connections.some((c) => c.id === active)) {
+      this.state.activeId = active;
+      this.currentActiveId = active;
+    }
+  }
+
+  private async persistConnections(): Promise<void> {
+    const m = this.pickMemento();
+    await m.update(KEY_CONNECTIONS, this.state.connections);
+  }
+
+  private async persistActive(): Promise<void> {
+    const m = this.pickMemento();
+    if (this.state.activeId) {
+      await m.update(KEY_ACTIVE, this.state.activeId);
+    } else {
+      await m.update(KEY_ACTIVE, undefined);
+    }
+  }
+
+  private async tryStorePassword(id: string, password: string): Promise<void> {
+    try {
+      await this.ctx.secrets.store(KEY_PASS_PREFIX + id, password);
+    } catch {
+      // design §8 fallback: SecretStorage lỗi → KHÔNG lưu, sẽ hỏi mỗi lần connect.
+      // Metadata vẫn được lưu.
+    }
+  }
+
+  private async tryGetPassword(id: string): Promise<string | undefined> {
+    try {
+      return await this.ctx.secrets.get(KEY_PASS_PREFIX + id);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async tryDeletePassword(id: string): Promise<void> {
+    try {
+      await this.ctx.secrets.delete(KEY_PASS_PREFIX + id);
+    } catch {
+      // ignore
+    }
+  }
+
+  private async closeCurrentAdapter(): Promise<void> {
+    if (this.currentAdapter) {
+      try {
+        await this.currentAdapter.close();
+      } catch {
+        // ignore
+      }
+      this.currentAdapter = null;
+    }
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+    }
+  }
+
+  private resetIdleTimer(): void {
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer);
+    }
+    this.idleTimer = setTimeout(() => {
+      // Idle timeout → đóng adapter. KHÔNG clear currentActiveId để getAdapter biết
+      // connection nào cần reconnect. currentAdapter = null ở đây là đủ.
+      this.closeCurrentAdapter();
+    }, IDLE_TIMEOUT_MS);
+  }
+
+  private fireConnectionsChanged(): void {
+    // Hiện không có event cho connections list; statusbar polling qua getActive.
+  }
+}
