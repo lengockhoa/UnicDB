@@ -46,11 +46,13 @@ positive + negative luồng.
 
 ## 4. Schema Explorer
 
-- [ ] **Tree expand**: connection → database → schema → table → column.
+- [ ] **Tree expand**: connection → schema → Tables / Views / Routines → table → column.
+- [ ] **Mọi schema hiện**: mở connection → thấy mọi schema truy cập được, không chỉ `public` / `dbo` / database mặc định.
+- [ ] **Count badge**: sau khi expand, category hiện số object (vd Tables → `2`).
+- [ ] **Setting `vsdb.hideSystemSchemas`**: bật (default) → ẩn `pg_*` / `information_schema` / `mysql` / `sys`; tắt → hiện lại.
 - [ ] **Tables + views + routines** (nếu DB có) hiển thị đúng loại.
-- [ ] **Right-click table/view → Generate SELECT** → chèn `SELECT * FROM schema.table` vào editor.
+- [ ] **Right-click table/view → Generate SELECT** → chèn `SELECT * FROM schema.table` vào editor (đúng cả schema khác mặc định).
 - [ ] **Right-click → Copy Qualified Name** → clipboard có `schema.table` / `schema.table.column`.
-- [ ] **Refresh button** trên title bar → reload metadata sau khi tạo table mới.
 
 ## 5. Result panel
 

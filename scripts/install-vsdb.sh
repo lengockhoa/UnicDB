@@ -258,6 +258,13 @@ EOF
     echo "Installed ${pubname} ${new_ver:-version unknown}"
   fi
 
+  # Extension updates only load in VS Code after a window reload/restart.
+  # Prevents the "installed but icon missing" confusion.
+  cat <<'EOF'
+NOTE: If VSDB does not show in the Activity Bar, reload the window:
+      Cmd+Shift+P (or Ctrl+Shift+P) -> "Developer: Reload Window"
+EOF
+
   # Cleanup tmp vsix (only if we downloaded it).
   if [[ -z "${local_file}" && -n "${vsix_path}" ]]; then
     rm -f "${vsix_path}" || true

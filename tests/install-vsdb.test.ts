@@ -75,6 +75,29 @@ describe("install-vsdb.sh — CLI detection", () => {
     expect(result.status).toBe(0);
     expect(result.stdout.toLowerCase()).toContain("usage");
   });
+
+  it("Test #3b: --local install prints reload hint", () => {
+    // Fake code CLI + a real tiny .vsix so the script reaches the install-success path.
+    const fakeBin = path.resolve(__dirname, ".fake-bin");
+    fs.mkdirSync(fakeBin, { recursive: true });
+    const fakeCode = path.join(fakeBin, "code");
+    fs.writeFileSync(
+      fakeCode,
+      "#!/bin/sh\nif [[ \"$1\" == \"--install-extension\" ]]; then exit 0; fi\n" +
+        "echo 'lengockhoa.vsdb@9.9.9'\nexit 0\n",
+      { mode: 0o755 }
+    );
+    const tmp = fs.mkdtempSync(path.join(__dirname, ".hint-"));
+    const vsix = path.join(tmp, "vsdb-test.vsix");
+    fs.writeFileSync(vsix, "PK");
+    const result = runScript(["--local", vsix], {
+      PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      VSDB_CODE_PATH: "",
+    });
+    fs.rmSync(tmp, { recursive: true, force: true });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/Developer: Reload Window/);
+  });
 });
 
 describe("install-vsdb.sh — find_vsix_asset_url (python3 branch)", () => {

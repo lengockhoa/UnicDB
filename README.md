@@ -69,15 +69,11 @@ code --install-extension vsdb-<version>.vsix
 ## Tính năng chính
 
 - **3 driver**: PostgreSQL (pg), MySQL/MariaDB (mysql2), SQL Server (tedious).
-- **Schema Explorer** cây: connection → database → schema → table / view / column / routine.
-  - Click phải table/view → `Generate SELECT`, `Copy Qualified Name`.
+- **Schema Explorer** cây: connection → schema → Tables / Views / Routines (có số lượng) → table / view / column / routine.
+  - Hiển thị **mọi schema** bạn truy cập được, không chỉ schema mặc định (`public` / `dbo` / database đang connect).
+  - Setting `vsdb.hideSystemSchemas` (default `true`): ẩn schema hệ thống (`pg_catalog`, `information_schema`, `mysql`, `sys`...); tắt nếu muốn xem hết.
+  - Click phải table/view → `Generate SELECT`, `Copy Qualified Name` (dùng đúng `schema.table`, kể cả schema khác mặc định).
   - Nút refresh trên title bar để reload metadata.
-- **Result batching**: tải theo `vsdb.batchSize` (mặc định 500, tối đa 10 000) — nút **Load 500 more** ở cuối bảng kết quả.
-- **Cancel** an toàn: kill query phía server (pg_cancel_backend / KILL QUERY / MS abort).
-- **Password storage**: lưu trong `VSCode SecretStorage` (mã hóa qua OS keychain). Không ghi plaintext xuống disk.
-- **Tunables**:
-  - `vsdb.showRunLens` (boolean, default `true`): bật/tắt CodeLens ▶ Run.
-  - `vsdb.batchSize` (number, default `500`): số rows tải mỗi lần.
 
 ---
 
