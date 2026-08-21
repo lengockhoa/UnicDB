@@ -1,9 +1,4 @@
-# Active Handoff Cycle
-
-- Status: `ready_for_next_cycle`
-- Phase: `cleared`
-- Updated: 2026-08-21
-- Updated by: handoff-fullstack (cycle 2026-08-21-A)
-- Human decision needed: `no`
-
-<!-- Cycle 2026-08-21-A: VSDB v1 — 8/8 tasks done, release v1.0.1 https://github.com/lengockhoa/VSDB/releases/tag/v1.0.1 -->
+Cycle: 2026-08-21-B   Date: 2026-08-21   Base: main
+Goal: Schema Explorer hiển thị mọi schema (không chỉ default) với tables/views/routines trong từng schema
+Tasks: 3 total
+Status: planning_done — ready for executor

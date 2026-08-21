@@ -1,6 +1,6 @@
 Command: handoff-fullstack
-Goal: VSDB v1 — extension chạy SQL Cmd+Enter + grid + schema explorer + vsix distribution
+Goal: Schema Explorer hiển thị mọi schema (không chỉ default) với tables/views/routines trong từng schema theo kiểu DataGrip
 Base: main
-Phase: done
-Cursor: R5 complete — 8/8 tasks done, v1.0.1 released, installer verified e2e
-Next: cycle finished
+Phase: P3
+Cursor: plan approved after review round 2
+Next: commit plan files
