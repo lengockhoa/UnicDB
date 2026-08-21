@@ -169,3 +169,50 @@ PASS — all acceptance criteria met:
 - vsce warning about `extension.js` size (4.52 MB) is expected: pg + mysql2 + tedious drivers are bundled by esbuild into one file. Could be split later (browserify externals) but out of scope for v1.
 - `package.json` `vscode:prepublish` script already wired to `npm run compile`; `npm run package` invokes `vsce package` which auto-runs `vscode:prepublish`.
 - One pre-existing test gap noticed: `find_vsix_asset_url` python3 path uses heredoc-on-stdin pattern that bash 3.x handles differently — covered by grep/sed fallback; tested manually only in unit-test mode (no live GitHub release during this run, since no release exists yet).
+
+---
+
+## Reviewer Verdict
+
+- VERDICT: **NEEDS_FIX**
+- REVIEWER_MODEL: claude-opus-4-8
+- EXECUTOR_MODEL: claude-sonnet-4-6
+
+### VERIFICATION_RERUN (in main working tree, not worktree)
+
+| Command | Result |
+|---|---|
+| `npx tsc --noEmit` | PASS (exit 0, no errors) |
+| `npx vitest run` | PASS — 11 files / 87 tests |
+| `npx vitest run tests/install-vsdb.test.ts` | PASS — 5/5 |
+| `bash scripts/build.sh` | **FAIL** — vsce exits 1: packages `.claude/` (202 files, 3.89 MB), `.codex/`, `.ukit/`, `.antigravity/` (not in `.vscodeignore`) → secretlint crashes `EISDIR: illegal operation on a directory` → **no .vsix produced**. Executor ran in `.worktrees/task-008` where these gitignored dirs don't exist; not reproducible in main tree. |
+| `bash scripts/install-vsdb.sh --help` | PASS (exit 0) |
+| `bash scripts/install-vsdb.sh --dry-run` | PASS — resolves `/Applications/.../bin/code` |
+| `bash scripts/install-vsdb.sh` (no release yet) | Graceful: exit 2, "no network? rate-limited? repo private?" |
+| `bash scripts/install-vsdb.sh --local /nonexistent.vsix` | PASS — exit 1, clear message |
+| Piped mode `cat install-vsdb.sh \| bash -s -- --help` | PASS — safe when piped (script never reads stdin) |
+
+### FINDINGS
+
+**Critical**
+
+1. `scripts/build.sh` + `.vscodeignore`: vsce packaging fails in the main repo because `.claude/`, `.codex/`, `.ukit/`, `.antigravity/` are only in `.gitignore` (vsce ignores `.gitignore`). Maintainer release flow is broken in the primary tree. Fix: add the dot dirs (plus `Makefile`, `esbuild.js`, `scripts/**`, `tests/**` present) to `.vscodeignore`.
+2. `scripts/build.sh:24-28`: vsix path extraction greps the wrong wording. Actual vsce output is `` DONE  Packaged: dist/vsdb-0.1.0.vsix (20 files, 1.04 MB) `` — neither `grep -E '^.*\.vsix$'` (trailing text on the line) nor `Successfully packaged:` matches, so even a successful package is reported as `ERROR: vsce did not produce a .vsix file` (exit 1). build.sh was never verified end-to-end (executor report shows manual `npx vsce package`, not `bash scripts/build.sh`).
+3. `scripts/install-vsdb.sh:115` `find_vsix_asset_url` python3 branch is dead code: `python3 - <<PY ... <<<"$json"` — heredoc AND herestring both claim stdin; the herestring loses, python receives the script text as JSON, `json.load` throws, `|| true` swallows it → **empty output on every machine with python3**. Verified: returns empty with a realistic release JSON containing both source-zip and `.vsix` assets. The default `curl | bash` install mode (no `--local`) will always fail with "no .vsix asset found" once a release exists. The grep/sed fallback (python3 absent) is correct.
+
+**Important**
+
+4. README one-liner (`raw.githubusercontent.com/lengockhoa/VSDB/main/scripts/install-vsdb.sh`) works only after this pipeline pushes to main, and default mode additionally needs a published GitHub release with a `.vsix` asset. README presents it as ready today with no caveat. Add a note or merge after first release.
+
+**Minor**
+
+5. GitHub API rate-limit handling is a single generic hint; no retry/backoff or `-H "Accept: application/vnd.github+json"`; unauthenticated `/releases/latest` is 60 req/h/IP — fine for a team, note it.
+6. Error messages in the script are English; task asked for Vietnamese-friendly (README covers the Vietnamese part). `--local` path resolution uses `pwd` — fine.
+7. `npm run package` = `vsce package` without `-o dist/` → writes vsix to repo root while README/build.sh use `dist/`; inconsistent.
+8. Script is bash, not POSIX `sh` as the task stated (`[[ ]]`, `local`); acceptable since README pipes to `bash` and shebang is bash.
+9. Security: `curl | bash` from `main` with no version pin / sha256 — acceptable for a team tool; optional improvement. No eval of remote content beyond the script itself — OK. Icon 128×128 PNG valid. LICENSE (MIT) present. `--force` update and PATH-first CLI detection verified good; asset filter excludes source zips correctly on the fallback path.
+10. `docs/testing-checklist.md` complete (8 sections, 35+ items, 3 DBs, cancel/load-more covered).
+
+### NEXT_STATUS_FOR_INDEX
+
+`pending_fix` — TASK-008 must fix `.vscodeignore` + `build.sh` path parsing + `find_vsix_asset_url` python3 branch, then re-run `bash scripts/build.sh` in the MAIN tree to green before release. All other waves' code unaffected.

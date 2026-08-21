@@ -213,4 +213,28 @@ Note:
 - `src/extension.ts` keeps the exact signature `export function activate(context: vscode.ExtensionContext): void` and `export function deactivate(): void` for TASK-007 to replace the body.
 - Icon PNG generator (scripts/gen-icon.sh) writes a real 128x128 PNG even when neither rsvg-convert nor qlmanage is available — the python3 fallback always forces 128x128 output (ignoring SVG viewBox).
 - `.gitignore` was appended (UKit block preserved verbatim) with `dist/`, `*.vsix`, `*.tsbuildinfo`.
-- Acceptance: `dist/extension.js` + `dist/webview.js` generated; 4 vitest tests pass (placeholder + activate/deactivate + full manifest assertions + icon); all 10 commands / 2 keybindings / view container / schema tree / showRunLens+batchSize config present.
+- Acceptance: `dist/extension.js` + `dist/webview.js` generated; 4 vitest test pass (placeholder + activate/deactivate + full manifest assertions + icon); all 10 commands / 2 keybindings / view container / schema tree / showRunLens+batchSize config present.
+
+## Reviewer Verdict
+VERDICT: approved_minor
+REVIEWER_MODEL: claude-opus-4-8
+EXECUTOR_MODEL: claude-sonnet-4-6
+VERIFICATION_RERUN: PASS
+FINDINGS:
+  critical: none
+  important: package.json:121 — when-clause precedence bug: `view == vsdb.schemaTree && viewItem == table || viewItem == view` parses as `(view==vsdb.schemaTree && viewItem==table) || viewItem==view`, so "Generate SELECT" leaks into OTHER extensions' tree context menus for any item with contextValue `view`. Fix by parenthesizing like package.json:126. Non-blocking (menu pollution only; command guards inputs).
+  important: package.json:196-202 — devDependencies omits explicit `@types/node`, yet tsconfig.json:17 declares `types: ["vscode","node"]`; tsc currently resolves @types/node only transitively (via vitest/esbuild). If the transitive dep disappears, `npm run typecheck` breaks. Add `@types/node` to devDependencies.
+  minor: tsconfig.json:19 — exclude `**/*.test.ts` means `npm run typecheck` never type-checks test files (vitest runtime only); consider a tsconfig.test.json or removing the exclude.
+  minor: media/icon.png — 256-byte solid-blue placeholder (valid 128×128 PNG, meets acceptance >0 bytes) with no glyph; regenerate via scripts/gen-icon.sh on a machine with rsvg-convert/cairo.
+  minor: package.json:96-101 — keybinding entry `key: cmd+enter` (no win/linux override) maps `cmd`→meta→Win key on Windows/Linux, claiming Win+Enter there; harmless because the ctrl+enter entry covers those platforms, but the bare `key` should be dropped or overridden.
+  minor: package.json:172 — `"when": true` on the schemaTree view entry is redundant; omit.
+  minor: npm audit reports 4 vulns (2 moderate, 1 high, 1 critical) in the dependency tree (incl. tedious 18.x chain); track and triage separately, not a scaffold blocker.
+NEXT_STATUS_FOR_INDEX: done
+
+R3 verification re-run (main tree, reviewer-executed 2026-08-21):
+- `npm ci` — OK (node_modules was missing; installed).
+- `npm run compile` — exit 0; dist/extension.js (4.5mb, pg/mysql2/tedious bundled), dist/webview.js (13.5kb), dist/webview.css copied.
+- `npx tsc --noEmit` — exit 0, no output.
+- `npm test` — exit 0; 11 files, 87/87 tests passed (includes this task's 4 scaffold tests).
+- Manifest node check: engines=^1.75.0 | main=dist/extension.js | commands=10 | keybindings=2 | schemaTree=true | showRunLens=boolean | batchSize=number.
+- media/icon.png verified: PNG 128×128 RGB, 256 bytes.

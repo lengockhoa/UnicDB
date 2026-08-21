@@ -131,3 +131,34 @@ Note:
 - Test #4 expectation cập nhật cho khớp behavior: parser giữ nguyên comment trong `text`, chỉ đảm bảo `;` trong comment KHÔNG tách statement. Comment-strip là việc của executor downstream.
 - Test #7 selection fix: dùng 2 `indexOf(";")` tuần tự để cover đúng `SELECT 1; SELECT 2;`.
 - Files: `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-002/src/config/types.ts`, `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-002/src/core/statementParser.ts`, `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-002/src/core/__tests__/statementParser.test.ts`.
+
+## Reviewer Verdict
+
+VERDICT: CHANGES_REQUESTED
+
+REVIEWER_MODEL: claude-opus-4-8
+
+EXECUTOR_MODEL: claude-sonnet-4-6 (present, ≠ reviewer model — OK)
+
+VERIFICATION_RERUN:
+- `npx vitest run src/core/__tests__/statementParser.test.ts` → 26/26 PASS (khớp Executor Report).
+- `npx tsc --noEmit` → EXIT=0.
+- Pure-module check: đọc toàn văn `src/core/statementParser.ts` + diff `src/config/types.ts` — zero `vscode` reference (import duy nhất: `ParsedStatement` từ `../config/types`). OK.
+- Adversarial probes (scratch test ngoài repo, /tmp — không commit): 19 probe, 12 PASS / 7 FAIL. Phát hiện 3 bug thật + 1 limitation (chi tiết dưới).
+
+FINDINGS:
+
+CRITICAL: (không có — đủ 8 test yêu cầu PASS, không crash với input adversarial)
+
+IMPORTANT:
+1. **BEGIN/END depth sai với `END IF` / `END LOOP` / `CASE ... END` lồng trong khối.** `splitStatements("BEGIN\n  IF x THEN SELECT 1; END IF;\n  SELECT 2;\nEND;\nSELECT 3;")` → 4 statements thay vì 2 (`BEGIN\n IF x THEN SELECT 1; END IF` / `SELECT 2` / `END` / `SELECT 3`) vì `END IF` decrement depth về 0 sớm. Tương tự `SELECT CASE WHEN x THEN 1 ELSE 2 END;` bên trong BEGIN cũng làm split. Executor Note ghi "`END IF`/`END LOOP` cũng đóng" — đó chính là bug, không phải feature: T-SQL/PLpgSQL body thực tế gần như luôn có IF/CASE lồng → vi phạm Goal "khối BEGIN...END = 1 statement" và Test #5 intent. Fix: không decrement cho `END` theo sau `IF|LOOP|WHILE|CASE|BEGIN`(block) — cần matching đúng cặp, hoặc chỉ track BEGIN...END đơn giản và coi `END <keyword>` khác `END` thuần là đóng của construct đó (không chạm depth của BEGIN).
+2. **Keyword BEGIN/END phân biệt hoa/thường (bug case).** `"begin\n SELECT 1;\nend;\nSELECT 2;"` → 3 statements (`begin\n SELECT 1` / `end` / `SELECT 2`). Code so sánh `kwBuffer === "BEGIN"` chuỗi gốc, không uppercase — mâu thuẫn chính doc comment của hàm ("không phân biệt hoa/thường"). SQL keyword thường viết thường ở nhiều codebase T-SQL → Goal bị vi phạm. Fix dễ: `kwBuffer.toUpperCase()`.
+3. **Statement "rác" chỉ toàn comment + `statementAtCursor` trả pseudo-statement.** Doc comment hứa "Statement rỗng (chỉ whitespace + comment) bị BỎ QUA" nhưng check chỉ `.trim().length > 0` (không strip comment): `"SELECT 1;\n-- note\n"` → statements thứ 2 = `"-- note\n"` (sẽ được đẩy xuống DB như 1 batch); `splitStatements("-- foo;\n/* bar */")` → 1 statement thay vì `[]`; `statementAtCursor("-- comment only", 0)` → non-null thay vì `null`. Vi phạm contract tự khai báo; TASK-006/007 consume sẽ nhận statement không thực. Fix: khi flush, kiểm tra text sau khi bỏ comment (dùng lại tokenizer để strip) trước khi push.
+
+MINOR:
+4. **`E'...'` escape-string không hỗ trợ backslash.** `SELECT E'\'' || 'a;b' AS x; SELECT 2;` → split sai thành `["SELECT E'\'' || 'a", "b' AS x; SELECT 2;"]` (`;` trong `'a;b'` bị coi là boundary vì `\'` không được hiểu là escape). Known limitation của plain tokenizer; spec TASK-002 chỉ yêu cầu `''` escape — cần DOCUMENT limitation này trong header của parser, hoặc handle `E'`/`U&'` prefix + `\` escape cho postgres.
+5. **Dead code / workaround trong `splitStatements`:** `endOfLastToken` (gán 2 chỗ, không bao giờ đọc), `before`, `peekIdx` + `void before; void peekIdx;` để né noUnusedLocals — xóa cho sạch, branch `else if` thứ hai gần như vô nghĩa (chỉ set `stmtStart = i`).
+6. **`ParsedStatement` doc comment tự mâu thuẫn** (`types.ts`): "`text`: đã strip comment, đã trim" rồi ngay sau "KHỘNG trim" — sửa doc cho khớp behavior (giữ nguyên vị trí). File thiếu trailing newline.
+7. **`sqlToRun` selection-mode: start/end là offset trong SLICE (remap về 0), không phải document offset.** Đã ghi trong doc comment, nhưng consumer cần `+ selection.start` để map về document — footgun; nên ghi rõ hơn hoặc trả thêm offset gốc.
+
+NEXT_STATUS_FOR_INDEX: changes_requested

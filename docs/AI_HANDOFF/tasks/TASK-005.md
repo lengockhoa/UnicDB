@@ -1,8 +1,8 @@
 # TASK-005 — ConnectionManager (SecretStorage/WorkspaceState) + StatusBar
 
-- Status: `ready`
-- Owner: `-`
-- Reviewer: `-`
+- Status: `approved_minor`
+- Owner: `claude-code`
+- Reviewer: `claude-opus-4-8`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §3 (design §3, §8)
 
 ## Goal
@@ -167,3 +167,56 @@ Error: Failed to load url ../connectionManager (resolved id: ../connectionManage
 ### Note
 
 Không đụng `src/adapters/*` (TASK-004 territory), `extension.ts` chỉ là stub từ TASK-001, `package.json` đã có contributions từ TASK-001. Tests cover toàn bộ 7 test cases bắt buộc + fallback globalState + EventEmitter + 3 test cho StatusBar. Tất cả 46 tests PASS; tsc clean.
+
+---
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR (approved_minor)
+
+REVIEWER_MODEL: claude-opus-4-8
+
+EXECUTOR_MODEL: claude-sonnet-4-6 (≠ reviewer — OK, không refuse)
+
+### VERIFICATION_RERUN (fresh, trong turn review)
+
+`npx tsc --noEmit` → exit 0, không output.
+
+`npx vitest run src/core/__tests__/connectionManager.test.ts src/ui/__tests__/statusBar.test.ts`:
+
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+
+ ✓ src/ui/__tests__/statusBar.test.ts  (3 tests) 2ms
+ ✓ src/core/__tests__/connectionManager.test.ts  (9 tests) 7ms
+
+ Test Files  2 passed (2)
+      Tests  12 passed (12)
+```
+
+Full regression `npx vitest run`: 11 files / 87 tests PASS (exit 0). Executor output khớp — không discrepancy.
+
+### R4 findings
+
+**Critical**: none.
+
+**Important**: none.
+
+**Minor**:
+1. `tryStorePassword` (src/core/connectionManager.ts:317) catch hoàn toàn im lặng — design §8 degradation tới được user (getAdapter throw "nhập lại password"), nhưng tại thời điểm lưu không có tín hiệu nào rằng password KHÔNG được lưu (user tưởng đã lưu). Ask-each-time UX thật sẽ wire ở TASK-006/007; nên thêm `console.warn`/warning message khi store fail ngay bây giờ.
+2. Double-close race: `closeCurrentAdapter` await `close()` trong khoảng giữa check `if (this.currentAdapter)` và gán `null` — idle timer + `setActive` đồng thời → `adapter.close()` gọi 2 lần. Không crash (try/catch nuốt), nhưng nên gán `this.currentAdapter = null` trước khi await hoặc thêm closing-flag.
+3. `pickMemento()` gọi mỗi lần read/write: user mở workspace giữa session → state tách đôi (connections lưu globalState trở nên vô hình). Edge case v1, chấp nhận được.
+4. statusBar.ts monkey-patch `item.dispose` để chain `sub.dispose()` — hoạt động nhưng fragile; prefer expose subscription riêng.
+5. Idle timer chỉ reset trên `getAdapter()` call, không theo từng query — caller giữ adapter reference >10 phút sẽ bị đóng socket ngầm. Pattern hiện tại (re-fetch per operation) an toàn; nên ghi chú contract.
+
+### Điểm pass đáng chú ý (R4 checklist)
+
+- SecretStorage error → try/catch đầy đủ ở store/get/delete; getAdapter throw actionable error (không crash, có hướng dẫn nhập lại) — test #6 pass.
+- workspace→globalState fallback đúng (`pickMemento`, có test riêng).
+- Idle 10 phút: reset trên mỗi getAdapter, close + clear timer khi hết hạn, reconnect lazy sau đó (test #7, fake timers, đúng 9'/11' boundary).
+- Switch active đóng adapter cũ (test #5 verify close được gọi thêm).
+- Password: không xuất hiện trong error message, không console.log, metadata không chứa password (test #1 assert).
+- dispose(): đóng adapter + clear timer + dispose EventEmitter.
+- RED_OUTPUT thật (file chưa tồn tại → load fail), không khai suông.
+
+NEXT_STATUS_FOR_INDEX: approved_minor (→ done)

@@ -171,3 +171,51 @@ All 6 spec test cases PASS, plus 3 bonus wiring tests, plus full pre-existing su
 - `ResultsPanel.setExtensionUri(context.extensionUri)` called in `activate()` per spec.
 
 ---
+
+## Reviewer Verdict
+
+TASK: TASK-007 — Schema Explorer tree + command wiring + activation
+VERDICT: CHANGES_REQUESTED
+REVIEWER_MODEL: claude-opus-4-8
+EXECUTOR_MODEL: claude-sonnet-4-6
+VERIFICATION_RERUN: PASS
+DATE: 2026-08-21
+
+Re-run output (main tree, reviewer-executed):
+
+```
+npx tsc --noEmit   → exit 0, no output
+npx vitest run     → Test Files 11 passed (11) · Tests 87 passed (87) · 874ms
+```
+(87 vs executor's 82: main tree now also contains TASK-008's `tests/install-vsdb.test.ts` (5 tests) — consistent, not a discrepancy.)
+
+Checks that PASSED:
+- contextValue ↔ menus: every `viewItem` value in package.json when-clauses (`table`/`view`/`column`/`routine`) is produced by `SchemaTreeProvider` — no dead menu entries. All 10 commands registered; context-menu args resolve correctly (VS Code passes the provider element from `getChildren()`, which carries `meta` — verified against extHostTreeViews argument conversion).
+- CodeLens: `document.positionAt(stmt.start/end)` matches `splitStatements` offsets exactly (`sql.substring(start,end) === text`); `showRunLens` respected per-call and `_onDidChangeCodeLenses` fired on config change; languageId filter works.
+- `sqlToRun` usage in `runQueryFromEditor` matches parser contract: `selection` passed only when non-empty, otherwise cursor mode — correct.
+- Generate SELECT templates correct per driver: pg `SELECT * FROM public.users LIMIT 100;`, mysql ``SELECT * FROM `users` LIMIT 100;``, mssql `SELECT TOP 100 * FROM dbo.users;`.
+- activate() disposal: mgr, treeView, statusBar, panel, CodeLens registration and all 10 commands reach `context.subscriptions`; no-connection paths in runQuery/runStatement prompt to Add/Select; adapter-throw paths return "Connect failed" error nodes without crashing the tree.
+
+FINDINGS:
+
+### critical
+1. **Connection/socket leak — `src/ui/schemaTree.ts` + `src/core/connectionManager.ts:202` (`getAdapterFor`)**. Every uncached expansion of a NON-active connection calls `mgr.getAdapterFor(conn)`, which builds a brand-new adapter (pg Pool max=1 / mysql2 pool / tedious Connection), runs `testConnection()`, and returns it. `SchemaTreeProvider` never closes it and `ConnectionManager` neither caches nor tracks it (its own comment says "caller dispose nếu cần" — nobody does). Expanding Tables + Views + Routines + one table's columns of a non-active connection leaks 4 live sockets; each 60s cache expiry or Refresh leaks them again for the extension's lifetime. This can exhaust server `max_connections` in normal use and defeats TASK-005's 10-min idle-close design. Fix: cache adapters per connection id in the provider (or manager), close on refresh/dispose, or close after each metadata fetch.
+
+### important
+2. **Spec test #5 not implemented, and mislabeled in the report.** Spec #5: "runQuery không connection → showQuickPick được gọi với option 'Add Connection' (spy)". No such test exists in `src/extension.test.ts` (its 6 cases cover command/view/statusbar/codelens/subscriptions/deactivate). The report's coverage table maps "#5 → CodeLens lens position", silently remapping spec #5/#6. Acceptance "6 test trên PASS" is not met as written.
+3. **Spec Goal "click connection đổi active" not implemented.** Connection nodes from `getRoot()` carry no `command`, and package.json has no `view/item/context` entry to set active on a connection node — active can only be changed via status bar or command palette. Deviation not reported by the executor (package.json left untouched by design, but the tree-side wiring is absent too).
+4. **`src/extension.ts:458-488` — `commandGenerateSelect` uses the ACTIVE connection's driver, not the tree node's connection.** Right-clicking a table under a non-active MySQL connection while postgres is active generates `SELECT * FROM mydb.users LIMIT 100;` (wrong dialect, unquoted, schema-dotted) instead of ``SELECT * FROM `users` LIMIT 100;``. Use `meta.connection.driver` when available.
+5. **package.json:121 when-clause precedence bug still present** (`view == vsdb.schemaTree && viewItem == table || viewItem == view` → the `|| viewItem == view` arm is unscoped and leaks "Generate SELECT" into other extensions' tree context menus). Inherited from TASK-001 (flagged there as important); TASK-007 explicitly did not touch package.json. Should be fixed together with finding 3 when menus are touched.
+
+### minor
+6. `src/ui/codeLensProvider.ts:19` — the `onDidChangeConfiguration` subscription created in the constructor is never disposed (lens-provider disposal doesn't remove it), and `_onDidChangeCodeLenses` emitter is never disposed — listener leak across activation/reload.
+7. `src/ui/schemaTree.ts:70` — `mgr.onDidChangeActive(...)` subscription is not stored/disposed.
+8. No-connection flow: after choosing "Add Connection" from the prompt, `addConnection` does not auto-activate, so the run still aborts with "chưa chọn connection" — consider `setActive` on the newly added connection.
+9. `vsdb.batchSize` is read once at `activate()`; config changes require reload.
+10. `schemaTree.test.ts` Test #3 accepts either `[errorNode]` or `[]` — masks regressions in the error-node path; tighten to expect the error node.
+11. `activate()` pushes command disposables to both the module `disposables` array and `context.subscriptions` → double dispose on deactivate (tolerated by VS Code, but pick one owner).
+12. Manual F5 smoke skipped (documented honestly) — end-to-end run against docker postgres remains unverified; TASK-008 should cover it.
+
+NEXT_STATUS_FOR_INDEX: changes_requested
+
+---

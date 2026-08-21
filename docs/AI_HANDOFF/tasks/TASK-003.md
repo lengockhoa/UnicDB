@@ -183,3 +183,42 @@ All 5 integration tests PASS:
 - Test #1 expectation updated to reflect that SELECT always uses cursor — caller reads via `batched.fetchBatch()`.
 - Docker compose: pulled `postgres:16-alpine` took ~3 min on first run due to network. Healthcheck uses `pg_isready`. Subsequent starts are quick.
 - All Postgres passwords (vsdb), MySQL root password (vsdb), MSSQL SA password (VsdbPass123!) are local TEST containers only.
+
+## Reviewer Verdict
+
+VERDICT: CHANGES_REQUESTED
+
+REVIEWER_MODEL: claude-opus-4-8
+
+EXECUTOR_MODEL: claude-sonnet-4-6 (present, ≠ reviewer model — OK)
+
+VERIFICATION_RERUN:
+- `npx tsc --noEmit` → EXIT=0.
+- `npx vitest run src/adapters/__tests__/factory.test.ts` → 4/4 PASS.
+- `npm test` → 11 files, 87/87 PASS (không regression).
+- `docker compose -f docker/docker-compose.yml up -d` → postgres + mssql Running (postgres healthy). LƯU Ý: mysql bị conflict tên container `vsdb-mysql` (container cũ không có compose label — môi trường, xem MINOR #8).
+- `VSDB_IT=1 npx vitest run --config vitest.integration.config.ts src/adapters/__tests__/postgres.integration.test.ts` → 5/5 PASS, 10.10s. Duration 10s này chính là evidence cho CRITICAL #1 (test cancel đốt trọn 10s connectionTimeoutMillis bên trong `cancel()`).
+- Adversarial probes (script .mjs đặt tạm trong repo rồi xoá, không commit; dùng chính pg Pool max=1 như adapter):
+  (a) `pool.query("SELECT pg_cancel_backend($1)")` khi cursor đang giữ client duy nhất → "timeout exceeded when trying to connect" sau 10002ms — pg_cancel_backend KHÔNG BAO GIỜ chạy.
+  (b) DECLARE với SQL lỗi (`SELECT * FROM no_such_table`) → client không được release → mọi `pool.query` sau đó timeout 3001ms — POOL WEDGED vĩnh viễn.
+  (c) `pool.end()` khi cursor còn mở → KHÔNG resolve sau 5s — `adapter.close()` treo vĩnh viễn.
+
+FINDINGS:
+
+CRITICAL:
+1. **`openCursorForStatement` không try/catch quanh BEGIN/DECLARE/FETCH 0 → pool wedge vĩnh viễn khi SELECT lỗi.** `src/adapters/postgres.ts:251-281`: nếu DECLARE throw (câu SELECT có typo bảng/cột — path người dùng gõ SQL hàng ngày), client duy nhất của pool max=1 bị giữ trong transaction aborted, không bao giờ release. Mọi `runQuery`/`testConnection`/`close` sau đó timeout. Probe (b) xác nhận: "timeout exceeded when trying to connect after 3001ms". Adapter chết đến khi user reconnect. Fix: wrap toàn bộ BEGIN→DECLARE→FETCH 0 trong try/catch → ROLLBACK + `client.release(true)` rồi rethrow.
+2. **`cancel()` không bao giờ thực thi `pg_cancel_backend`.** `src/adapters/postgres.ts:344-364`: `this.pool.query("SELECT pg_cancel_backend($1)")` chạy trên CHÍNH pool max=1 mà client duy nhất đang bị cursor giữ → request xếp hàng, đợi 10s `connectionTimeoutMillis` rồi throw (bị `catch { ignore }` nuốt). Probe (a): ERR sau 10002ms. Query thật sự chỉ được cancel nhờ `client.release(true)` phá socket — nghĩa là user bấm Cancel phải chờ 10s, và với query dài đang FETCH, server chỉ dừng khi socket chết. Fix: chạy `pg_cancel_backend` trên connection riêng (một `new Client` one-off hoặc pool thứ hai), hoặc dùng cancel request của protocol (`connection.cancel()`); gọi TRƯỚC khi ROLLBACK/release.
+
+IMPORTANT:
+3. **`adapter.close()` treo vĩnh viễn nếu còn BatchedQuery mở.** `pool.end()` đợi mọi checked-out client trả về; cursor client chỉ release ở EOF/cancel/close. User chạy SELECT lớn, không Load more hết, rồi disconnect → `close()` không resolve (probe (c) confirmed >5s hang). connectionManager TASK-005 gọi close khi disconnect → deadlock disconnect. Fix: adapter track các BatchedQuery đang mở, cleanup hết trước `pool.end()`, hoặc dùng `pool.end({ timeout: ms })` (pg ≥8.10).
+4. **`fetchBatch()` sau `cancel()` throw thay vì trả null — sai contract spec Test #4.** Spec table #4: "fetchBatch sau đó trả null/close không throw". Code (`postgres.ts:312-316`): state='closed' → `throw new Error("cursor đã đóng")`. Test viết ra không gọi fetchBatch sau cancel nên pass — expectation của spec không được verify. TASK-006 resultBatcher/queryRunner consume theo contract null-after-cancel sẽ gặp throw. Fix: sau cancel/close, `fetchBatch` trả `null` (giống eof) thay vì throw; hoặc cập nhật types.ts doc + test cho khớp — nhưng spec TASK-003 là nguồn chân lý.
+5. **`commandTag` không bao giờ được populate.** `QueryResult.commandTag` là field trong interface (types.ts:15) nhưng path non-cursor luôn set `commandTag: undefined` (`postgres.ts:119`) dù pg trả `r.command` ("SELECT 5", "INSERT 0 3"). Field chết; consumer hiển thị command tag sẽ luôn trống. Fix một dòng: `commandTag: r.command`.
+
+MINOR:
+6. **SQL embedded trong DECLARE — chấp nhận được về threat model nhưng cần comment rõ.** `DECLARE "${cursorName}" CURSOR FOR ${sql}` không thể parameterize (cursor body phải là literal). SQL đến từ editor của chính user chạy trên DB của họ → không phải injection vector thực (user đã có arbitrary SQL qua pool.query path). `cursorName` được quote bằng `"..."` và chỉ chứa `[a-z0-9_]` → an toàn. Chỉ cần doc comment ghi rõ "sql là user-supplied, chạy y nguyên theo đúng mục đích công cụ". SQL chứa `;` (kể cả trong string literal) đã được chặn khỏi cursor path bởi check `!includes(";")` → fallback pool.query — conservative, đúng.
+7. **Password handling OK.** Password chỉ nằm trong constructor + Pool options; không có console.log/log nào trong postgres.ts; pg error messages không chứa password. `ssl: { rejectUnauthorized: false }` khi cfg.ssl — chấp nhận cho dev tool local nhưng nên document (MITM nếu dùng qua SSH tunnel/public host).
+8. **docker-compose: `container_name:` cứng gây conflict trên máy nhiều checkout/worktree.** Lần này `up -d` fail ở mysql: container `vsdb-mysql` cũ tồn tại không có compose label (không adopt được). File compose OK về ports (5433/3307/1434 không đụng standard), healthcheck cả 3 service (pg_isready/mysqladmin/sqlcmd), named volumes, password local-test chấp nhận được. Gợi ý: bỏ `container_name` hoặc thêm `name: vsdb` top-level để project name ổn định qua các checkout.
+9. **`listColumns` với table không tồn tại throw thay vì trả [].** `(quote_ident($1)||'.'||quote_ident($2))::regclass` throw "relation does not exist"; information_schema path thuần sẽ trả []. Caller schemaTree nên catch, nhưng adapter nên trả [] cho nhất quán.
+10. **Metadata khác:** `listViews` không bao gồm materialized views (information_schema.views không có; cần pg_matviews nếu muốn). `n.oid <> 11` magic-number pg_catalog — dư vì đã WHERE nspname=$1. `listRoutines` bỏ aggregate ('a')/window ('w') — hợp lý.
+
+NEXT_STATUS_FOR_INDEX: changes_requested

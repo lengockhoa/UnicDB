@@ -176,3 +176,60 @@ All 13 integration tests PASS (5 postgres + 4 mysql + 4 mssql), including:
 - `MsSqlAdapter.connect()` waits up to ~5s for the `LoggedIn` state after the `connect` event because Tedious 18 emits `connect` before completing its internal initial-SQL phase. The wait is bounded by polling every 5ms and short-circuits on `Final` to surface a real failure.
 - `BatchedQuery.cancel()` for MSSQL resolves any pending fetcher with `null` synchronously, but the underlying `request.cancel()` round-trip is asynchronous. Test #6b polls `fetchBatch()` for up to 5s rather than blocking on a single call.
 - `MySqlAdapter.fetchBatch()` is implemented as a plain function (not chained through a shared promise queue) so a single late `cancel()` cannot retroactively poison a later call's result with a stale rejection.
+
+## Reviewer Verdict
+
+- REVIEWER_TOOL: claude-code
+- REVIEWER_MODEL: claude-opus-4-8
+- EXECUTOR_MODEL: claude-sonnet-4-6 (present, ≠ claude-opus-4-8 — review permitted)
+- DATE: 2026-08-21
+- REVIEW_RANGE: `git diff ae28bf4` (src/adapters/mysql.ts, src/adapters/mssql.ts, src/adapters/factory.ts, 2 integration test files, factory.test.ts)
+
+### VERDICT
+
+**REQUEST_CHANGES (critical)** — 1 critical data-loss bug in `MySqlAdapter`, reproduced live.
+
+### VERIFICATION_RERUN (all run by reviewer, fresh, in main checkout)
+
+- `npx tsc --noEmit` → **EXIT=0** (clean)
+- `npm test` → **11 files / 87 tests PASS** (includes `src/adapters/__tests__/factory.test.ts` 4/4)
+- `docker compose -f docker/docker-compose.yml up -d` → postgres/mssql Running; **mysql name-conflict error** (see Important #2; container `vsdb-mysql` already running, `mysqladmin ping` = alive, MySQL 8.4.11)
+- `VSDB_IT=1 npx vitest run --config vitest.integration.config.ts src/adapters/__tests__/mysql.integration.test.ts src/adapters/__tests__/mssql.integration.test.ts` →
+  ```
+  ✓ src/adapters/__tests__/mysql.integration.test.ts  (4 tests) 75ms
+  ✓ src/adapters/__tests__/mssql.integration.test.ts  (4 tests) 5212ms
+  Test Files  2 passed (2)   Tests  8 passed (8)
+  ```
+- **Adversarial repro (reviewer-authored, deleted after run)**: 700-row table, `fetchBatch()` → 500, then a second `fetchBatch()` issued before remaining rows buffered → **MySQL returned `null` (data loss of 200 rows)**; MSSQL returned the correct 200-row partial batch. This is the critical finding below.
+
+### FINDINGS
+
+**Critical**
+
+1. **`src/adapters/mysql.ts` — `deliver()` silently discards a partial final batch (data loss).** In `deliver()` (lines ~320-328): when a waiter is pending and `end` fires with `0 < buffer.length < 500`, the code sets `state = "eof"` and resolves the waiter with `null` — the buffered rows are never delivered. Repro: seed 700 rows; `b1 = await fetchBatch()` (500), then call `fetchBatch()` again while the last 200 rows are still streaming → returns `null`, 200 rows vanish. The shipped test #2 passes only because each `await` gives `data` events time to fill the buffer first — it is timing-dependent, not contract-safe. Fix: in the `streamDone` branch, if `buffer.length > 0` resolve the waiter with `buffer.splice(0, buffer.length)` and defer `eof`/`releaseConnection()` to the next `fetchBatch()` (mirror the MSSQL `readyBatch` logic, which is correct).
+
+**Important**
+
+2. **Environment drift breaks the documented Verification Command on this host.** `docker compose -f docker/docker-compose.yml up -d` now fails with `Conflict: container name "/vsdb-mysql" already in use` — the running `vsdb-mysql` was recreated outside compose (no compose project label, args `["mysqld"]` without the compose file's `--default-authentication-plugin=mysql_native_password` flag, which MySQL 8.4 rejects). Executor disclosed this, but the next executor/reviewer following TASK-004 §Verification Commands verbatim will hit the conflict. Needs either a compose-file fix (remove the removed-in-8.4 flag) in a follow-up task or a note in ACTIVE.md.
+3. **30s wall-clock timeouts cap total streaming duration (both adapters).** `mysql.ts` stream query sets `timeout: 30_000` (mysql2 arms the timer at query start); `mssql.ts` sets `requestTimeout: 30_000` (tedious `createRequestTimer` is armed at `execSql` and not paused by `request.pause()` — verified in tedious 18.6.2 source). A user who loads batch 1, reads the grid for >30s, then clicks "load more" gets `ETIMEOUT`/`PROTOCOL_CONNECTION_TIMEOUT`. Postgres adapter (the reference contract) has no such cap. Suggest removing/raising both for the streaming path.
+
+**Minor**
+
+4. `src/adapters/mssql.ts` `listRoutines()` — `o.type IN ('P','IF','TF')` omits scalar UDFs (`type = 'FN'`), so they never appear in the schema explorer (Postgres lists functions). Low risk, functional gap.
+5. `src/adapters/mssql.ts` `connect()` — the `waitForLoggedIn` poll (`setTimeout(..., 5)`) has **no deadline**; executor note claims "~5s" but no bound exists in code. If tedious stalls between `connect` and `LoggedIn`, `connect()` hangs forever. Add a deadline aligned with `connectTimeout`.
+6. `src/adapters/__tests__/mssql.integration.test.ts` Test #6b — poll loop condition is inverted: `while (next === null && ...)` spins the full 5s deadline after a successful cancel (null immediately), which is why the MSSQL suite takes 5.2s. Intent was to poll while `next !== null`. Test passes; burns 5s.
+7. `src/adapters/mysql.ts` — `let queue` (line ~278) is dead code (unused after refactor); `state === "error"` branch of `fetchBatch()` replaces the original server error with generic `"MySQL query stream failed"` — include the cause for debuggability.
+
+**Verified-good (per review checklist)**
+
+- Stream `error` handling: both adapters register `error` handlers that reject pending waiters — no hang path found; MSSQL additionally resumes+`cancel()`s on error.
+- Memory: both cap buffers at 500 rows via pause/resume (`mysql2` stream `pause()`; tedious `request.pause()` — confirmed real in tedious 18.6.2). No unbounded accumulation.
+- Cancel paths: MySQL `destroy()`s the single pooled connection (pool `connectionLimit: 1` — safe, no shared-victim); MSSQL `request.cancel()` + waiter resolution; `close()` cancels all `activeRequests` before closing the connection. No leaked connections found.
+- Tedious `LoggedIn` race: correctly handled (waits for `state.name === 'LoggedIn'`, short-circuits on `Final`) — matches tedious' `Requests can only be made in the LoggedIn state` guard.
+- Metadata: MySQL `information_schema` with `?` placeholders (parameterized, safe); MSSQL `sys.*` with proper `''` escaping via `literal()` — no injection. Backtick alias for reserved `schema` correct.
+- Secrets: password only via constructor; zero `console.*` in all three files; no password in error paths (verified "Access denied"/"Login failed" messages).
+- Factory: exhaustive switch with `never` guard, all 3 drivers; `factory.test.ts` asserts concrete adapter classes. Contract (`BatchedQuery`, `types.ts`) unchanged.
+
+### NEXT_STATUS_FOR_INDEX
+
+`in_progress` (critical fix required → back to executor for finding #1; findings #2-#7 may be addressed or deferred to a follow-up task). INDEX.md row TASK-004 stays at `pending_review` until a fix + re-review, per state machine `critical_block ──[fix]──▶ in_progress`.
