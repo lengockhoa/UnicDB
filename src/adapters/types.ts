@@ -28,6 +28,11 @@ export interface ViewInfo {
   schema: string;
 }
 
+/** Thông tin một schema. */
+export interface SchemaInfo {
+  name: string;
+}
+
 /**
  * Thông tin một routine (function hoặc procedure).
  * `kind` phân biệt function/procedure vì Postgres trả về cả 2 từ pg_proc.
@@ -85,6 +90,7 @@ export interface DbAdapter {
   connect(): Promise<void>;
   close(): Promise<void>;
   runQuery(sql: string): Promise<RunResult>;
+  listSchemas(includeSystem: boolean): Promise<SchemaInfo[]>;
   listTables(schema?: string): Promise<TableInfo[]>;
   listViews(schema?: string): Promise<ViewInfo[]>;
   listRoutines(schema?: string): Promise<RoutineInfo[]>;

@@ -84,6 +84,7 @@ function fakeAdapter(ok: boolean): DbAdapter {
     connect: thrower as never,
     close: (() => Promise.resolve()) as never,
     testConnection: thrower as never,
+    listSchemas: thrower as never,
     runQuery: thrower as never,
     loadMore: thrower as never,
     cancel: thrower as never,

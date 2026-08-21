@@ -125,6 +125,17 @@ describe("scaffold", () => {
     expect(pkg.contributes.configuration.properties["vsdb.batchSize"].type).toBe("number");
   });
 
+  it("package.json declares hideSystemSchemas setting enabled by default", () => {
+    const pkgPath = path.resolve(__dirname, "..", "package.json");
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+    const setting = pkg.contributes.configuration.properties["vsdb.hideSystemSchemas"];
+
+    expect(setting).toBeTruthy();
+    expect(setting.type).toBe("boolean");
+    expect(setting.default).toBe(true);
+    expect(setting.description).toBeTruthy();
+  });
+
   it("icon.png exists and >0 bytes", () => {
     const iconPath = path.resolve(__dirname, "..", "media", "icon.png");
     expect(fs.existsSync(iconPath)).toBe(true);

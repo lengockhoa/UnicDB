@@ -188,6 +188,11 @@
           "minimum": 50,
           "maximum": 10000,
           "description": "Số rows tải về mỗi lần (Load 500 more)."
+        },
+        "vsdb.hideSystemSchemas": {
+          "type": "boolean",
+          "default": true,
+          "description": "Hide system schemas such as pg_catalog and information_schema in the Schema Explorer."
         }
       }
     }

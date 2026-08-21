@@ -36,6 +36,7 @@ import type {
   QueryResult,
   RoutineInfo,
   RunResult,
+  SchemaInfo,
   TableInfo,
   ViewInfo,
 } from "./types";
@@ -183,6 +184,19 @@ export class PostgresAdapter implements DbAdapter {
   }
 
   // ---- Metadata -------------------------------------------------------------
+
+  async listSchemas(includeSystem: boolean): Promise<SchemaInfo[]> {
+    const filter = includeSystem
+      ? ""
+      : `WHERE nspname NOT LIKE 'pg\\_%' AND nspname <> 'information_schema'`;
+    const r = await this.query<{ nspname: string }>(
+      `SELECT nspname
+         FROM pg_namespace
+        ${filter}
+        ORDER BY nspname`,
+    );
+    return r.rows.map((row) => ({ name: row.nspname }));
+  }
 
   async listTables(schema: string = "public"): Promise<TableInfo[]> {
     const r = await this.query<{ table_name: string; table_schema: string }>(

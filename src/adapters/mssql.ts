@@ -8,6 +8,7 @@ import type {
   DbAdapter,
   QueryResult,
   RoutineInfo,
+  SchemaInfo,
   RunResult,
   TableInfo,
   ViewInfo,
@@ -191,6 +192,23 @@ export class MsSqlAdapter implements DbAdapter {
       results.push(await this.execute(text));
     }
     return { results };
+  }
+
+  async listSchemas(includeSystem: boolean): Promise<SchemaInfo[]> {
+    const result = await this.execute(
+      `SELECT s.name AS name
+         FROM sys.schemas s
+        ORDER BY s.name`,
+    );
+    const schemas = result.rows.map((row) => ({ name: String(row[0]) }));
+    if (includeSystem) return schemas;
+    return schemas.filter(
+      (s) =>
+        s.name !== "sys" &&
+        s.name !== "INFORMATION_SCHEMA" &&
+        s.name !== "guest" &&
+        !s.name.startsWith("db_"),
+    );
   }
 
   async listTables(schema = "dbo"): Promise<TableInfo[]> {

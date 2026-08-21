@@ -41,7 +41,7 @@ describe("createAdapter — factory", () => {
     // Duck-type: phải có các method đặc trưng.
     expect(typeof a.connect).toBe("function");
     expect(typeof a.close).toBe("function");
-    expect(typeof a.runQuery).toBe("function");
+    expect(typeof a.listSchemas).toBe("function");
     expect(typeof a.listTables).toBe("function");
     expect(typeof a.listViews).toBe("function");
     expect(typeof a.listRoutines).toBe("function");

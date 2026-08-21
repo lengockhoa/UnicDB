@@ -12,10 +12,17 @@ import type {
   DbAdapter,
   QueryResult,
   RoutineInfo,
+  SchemaInfo,
   RunResult,
   TableInfo,
   ViewInfo,
 } from "./types";
+const SYSTEM_SCHEMAS: Record<string, true> = {
+  mysql: true,
+  information_schema: true,
+  performance_schema: true,
+  sys: true,
+};
 
 const BATCH_SIZE = 500;
 
@@ -139,6 +146,17 @@ export class MySqlAdapter implements DbAdapter {
       results.push(await this.executeText(text));
     }
     return { results };
+  }
+
+  async listSchemas(includeSystem: boolean): Promise<SchemaInfo[]> {
+    const result = await this.query(
+      `SELECT schema_name AS name
+         FROM information_schema.schemata
+        ORDER BY schema_name`,
+    );
+    const schemas = this.mapRows(result, (row) => ({ name: String(row.name) }));
+    if (includeSystem) return schemas;
+    return schemas.filter((s) => !SYSTEM_SCHEMAS[s.name]);
   }
 
   async listTables(schema = this.cfg.database): Promise<TableInfo[]> {
