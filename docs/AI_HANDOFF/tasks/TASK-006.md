@@ -218,3 +218,94 @@ COMPLETE — all 6 required test cases (plus 11 additional edge cases) PASS; tsc
 
 Blocking for approval: finding #1 (batched columns dropped — core Postgres flow shows no data), #2 (no header row), #3 (loadMore race). Findings #4/#5 strongly recommended in the same fix round.
 
+---
+
+## Executor Report (fix round 1)
+
+- EXECUTOR_TOOL: claude-code
+- EXECUTOR_MODEL: claude-sonnet-4-6
+- TASK: TASK-006-fix
+- DATE: 2026-08-21
+- WORKTREE: fix-006
+
+### FINDINGS_ADDRESSED
+
+- **CRITICAL #1** — `pickResult()` now batched-aware: when `runResult.batched` is set, build `result = { columns: batched.columns, rows: <initial 500>, rowCount: <initial.length || null> }` by calling `batched.fetchBatch()` immediately. Mocks in `src/core/__tests__/queryRunner.test.ts` rewritten to match real adapter contract (`results: [], batched` for SELECT — the "results-with-columns" mock that hid the break is gone).
+- **IMPORTANT #2** — `VirtualGrid` constructor now appends header table (with thead) to the DOM between root and scrollEl. `setColumns()` mutates the actual header table's thead (not body). CSS updated so body table has hidden thead; header table is its own row.
+- **IMPORTANT #3** — `QueryRunner.loadMore()` has per-index in-flight promise chain: concurrent calls serialize via `.then(() => this.loadMoreImpl(index))`. Webview main.ts tracks `loadMoreInFlight` boolean and calls `grid.setLoadMoreInFlight(true/false)`; cleared on host `state`/`busy` response.
+- **IMPORTANT #4** — `currentBatched` assigned immediately after `runResult.batched` resolves (before fetchBatch initial). Also assigned in `loadMoreImpl` (cancel mid-loadMore reaches cursor). `pickResult` initial fetch wrapped; status check after pickResult respects `cancelRequested`. `run()` finally block clears `currentBatched` and `loadMoreInFlight` between runs.
+- **IMPORTANT #5** — `ResultsPanel.postMessage` now sanitizes rows (BigInt → number-or-string; Date → ISO; circular → `[Circular]`). Rejection (sync or async) surfaces via `console.error` + `vscode.window.showErrorMessage`.
+
+### FILES_TOUCHED
+
+- `src/core/queryRunner.ts` — pickResult batched-aware, currentBatched timing fix, loadMore in-flight chain, cancel reaches in-flight cursor.
+- `src/core/__tests__/queryRunner.test.ts` — rewritten mocks to match real adapter contract (batched-only for SELECT). Added tests for batched contract, initial 500 fetch, concurrent loadMore serialization, cancel during in-flight runQuery.
+- `src/core/__tests__/queryRunner.integration.test.ts` — NEW. Real docker postgres integration (3 tests).
+- `webview/grid.ts` — header table appended, setColumns mutates real header, loadMoreInFlight throttle.
+- `webview/main.ts` — loadMoreInFlight tracking, throttled onLoadMore, cleared on host response.
+- `webview/styles.css` — header/body table styling adjusted (header is its own table outside scrollEl).
+- `src/ui/resultsPanel.ts` — `sanitizeStatementResult()` for BigInt/Date/circular; rejection surfacing via console + showErrorMessage.
+- `src/ui/__tests__/resultsPanel.test.ts` — NEW. 10 tests covering BigInt safe/unsafe, Date, nested, arrays, circular, postMessage sync/async rejection.
+- `vitest.integration-all.config.ts` — NEW. Includes both adapter and core integration tests (adapter config hardcoded).
+
+### RED_OUTPUT (initial run before fixes)
+
+```
+RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/fix-006
+
+❯ src/core/__tests__/queryRunner.test.ts (13 tests | 1 failed)
+   ❯ Fix #3 — concurrent loadMore cho cùng index được serialize
+     → expected "spy" to be called 3 times, but got 2 times
+```
+
+(Only one failure was surfaced before manual review caught deeper issues; the other findings were identified by code review / integration testing rather than unit test failures.)
+
+### Verification Output
+
+**Type check (extension host):** `npx tsc --noEmit` → exit 0, no errors.
+
+**Type check (webview):** `npx tsc -p tsconfig.webview.json --noEmit` → exit 0, no errors.
+
+**Full unit suite:** `npx vitest run`
+```
+Test Files  12 passed (12)
+     Tests  122 passed (122)
+```
+
+**Integration suite (docker postgres):** `VSDB_IT=1 npx vitest run -c vitest.integration-all.config.ts`
+```
+✓ src/core/__tests__/queryRunner.integration.test.ts (3 tests) 85ms
+✓ src/adapters/__tests__/postgres.integration.test.ts (10 tests) 147ms
+✓ src/adapters/__tests__/mysql.integration.test.ts (6 tests) 1139ms
+✓ src/adapters/__tests__/mssql.integration.test.ts (5 tests) 2191ms
+
+Test Files  4 passed (4)
+     Tests  24 passed (24)
+```
+
+The 3 new integration tests against docker postgres close the loop on CRITICAL #1:
+- `Real adapter SELECT: initial 500 rows + columns từ batched` — passes; columns come from batched, 500 rows fetched immediately.
+- `Real adapter loadMore: 4 batches total = 1200 rows` — passes; loads 500 → 1000 → 1200 → EOF.
+- `Real adapter cancel mid-fetchBatch: in-flight cursor cancel called` — passes; cancel reaches cursor.
+
+**esbuild compile:** `npm run compile`
+```
+dist/webview.js      14.1kb
+dist/webview.js.map  28.5kb
+dist/extension.js    4.5mb
+esbuild: build complete
+```
+
+### Status
+
+COMPLETE — All 5 reviewer findings (1 CRITICAL + 4 IMPORTANT) addressed. 122 unit tests pass; 24 integration tests pass (including 3 new ones against docker postgres). tsc clean for both host and webview; esbuild bundles webview cleanly.
+
+### Note
+
+- `loadMoreInFlight` is cleared in webview on any host `state` or `busy` message. If the host does not send a message back (e.g. crash), the flag stays set — minor edge case, out of scope.
+- Per-index serialization chain in loadMore: `tracked.finally(() => delete key)` — careful not to delete newer chain's key (checks `loadMoreInFlight.get(index) === tracked`).
+- `pickResult()` is exported so integration tests can validate the contract independently.
+- `vitest.integration-all.config.ts` is new (not modifying existing `vitest.integration.config.ts` which has a hardcoded include for adapter tests only).
+- Minor findings #6/#9/#10 from the reviewer verdict are out of scope for fix round 1 — they don't block core correctness.
+
+

@@ -3,15 +3,21 @@
 //
 // Features:
 // - Chỉ render rows trong viewport (windowing ~30 rows).
-// - Sticky header; NULL xám; số căn phải; selection + copy tab-separated.
+// - Sticky header via position: sticky on thead (parent scroll container).
+// - NULL xám; số căn phải; selection + copy tab-separated.
 // - Callback onLoadMore khi scroll gần cuối.
 //
-// Designed cho vanilla DOM (no React). Mỗi grid là instance.
+// IMPORTANT (fix round 1):
+// - Header table is now properly appended to the DOM (was missing — thead
+//   was built but never attached, causing setColumns() to match body table).
+// - Column widths synced via table-layout: fixed on both header and body tables.
 
 export interface GridColumn {
   name: string;
   /** Type hint: "number" → align right. */
   type?: "number" | "string" | "boolean" | "date" | "other";
+  /** Optional explicit width (CSS string, e.g. "120px"). */
+  width?: string;
 }
 
 export interface GridCallbacks {
@@ -23,57 +29,64 @@ export interface GridCallbacks {
 
 const ROW_HEIGHT = 22; // px
 const OVERSCAN = 5; // rows above/below viewport
+const DEFAULT_MIN_WIDTH = "80px";
 
 export class VirtualGrid {
   private readonly root: HTMLElement;
+  private readonly headerTableEl: HTMLTableElement;
   private readonly scrollEl: HTMLElement;
   private readonly viewportEl: HTMLElement;
   private readonly spacerEl: HTMLElement;
-  private readonly tbodyEl: HTMLElement;
+  private readonly bodyTableEl: HTMLTableElement;
   private readonly footerEl: HTMLElement;
-  private readonly columns: GridColumn[];
+  private columns: GridColumn[] = [];
   private rows: any[][] = [];
   private callbacks: GridCallbacks = {};
   private totalRows: number | null = null;
   private hasMore: boolean = false;
   private rafId: number | null = null;
+  private loadMoreInFlight: boolean = false;
 
   constructor(root: HTMLElement, columns: GridColumn[], callbacks: GridCallbacks = {}) {
     this.root = root;
     this.callbacks = callbacks;
-    this.columns = columns;
+    this.columns = columns.slice();
     this.root.innerHTML = "";
     this.root.classList.add("vsdb-grid-container");
 
-    // Build DOM.
-    const table = document.createElement("table");
-    table.className = "vsdb-grid";
-
+    // ---- Header table (sticky via position: sticky on thead) ----
+    this.headerTableEl = document.createElement("table");
+    this.headerTableEl.className = "vsdb-grid vsdb-header";
     const thead = document.createElement("thead");
     const headRow = document.createElement("tr");
     for (const col of this.columns) {
       const th = document.createElement("th");
       th.textContent = col.name;
       if (col.type === "number") th.classList.add("vsdb-num");
+      if (col.width) th.style.width = col.width;
       headRow.appendChild(th);
     }
     thead.appendChild(headRow);
-    table.appendChild(thead);
+    this.headerTableEl.appendChild(thead);
 
+    // ---- Scroll container with body table ----
     this.scrollEl = document.createElement("div");
     this.scrollEl.className = "vsdb-scroll";
     this.viewportEl = document.createElement("div");
     this.viewportEl.className = "vsdb-viewport";
     this.spacerEl = document.createElement("div");
     this.spacerEl.className = "vsdb-spacer";
-    this.tbodyEl = document.createElement("table");
-    this.tbodyEl.className = "vsdb-grid vsdb-body";
+    this.bodyTableEl = document.createElement("table");
+    this.bodyTableEl.className = "vsdb-grid vsdb-body";
     const tbodyBody = document.createElement("tbody");
-    this.tbodyEl.appendChild(tbodyBody);
+    this.bodyTableEl.appendChild(tbodyBody);
 
     this.viewportEl.appendChild(this.spacerEl);
     this.scrollEl.appendChild(this.viewportEl);
-    this.scrollEl.appendChild(this.tbodyEl);
+    this.scrollEl.appendChild(this.bodyTableEl);
+
+    // ---- Append header + scroll + footer in order ----
+    this.root.appendChild(this.headerTableEl);
     this.root.appendChild(this.scrollEl);
 
     this.footerEl = document.createElement("div");
@@ -103,41 +116,46 @@ export class VirtualGrid {
   }
 
   setColumns(columns: GridColumn[]): void {
-    // Re-build header if columns changed.
-    if (columns.length === this.columns.length && columns.every((c, i) => c.name === this.columns[i].name)) {
-      return;
+    // Rebuild header only if column set actually changed.
+    const same =
+      columns.length === this.columns.length &&
+      columns.every((c, i) => c.name === this.columns[i].name);
+    if (same) return;
+    this.columns = columns.slice();
+
+    // Rebuild header thead.
+    const old = this.headerTableEl.querySelector("thead");
+    if (old) old.remove();
+    const thead = document.createElement("thead");
+    const headRow = document.createElement("tr");
+    for (const col of this.columns) {
+      const th = document.createElement("th");
+      th.textContent = col.name;
+      if (col.type === "number") th.classList.add("vsdb-num");
+      if (col.width) th.style.width = col.width;
+      headRow.appendChild(th);
     }
-    this.columns.splice(0, this.columns.length, ...columns);
-    // Thead is outside scrollEl/tbodyEl — re-create wrapper.
-    const old = this.root.querySelector("table.vsdb-grid");
-    if (old) {
-      const thead = old.querySelector("thead");
-      if (thead) {
-        thead.innerHTML = "";
-        const headRow = document.createElement("tr");
-        for (const col of columns) {
-          const th = document.createElement("th");
-          th.textContent = col.name;
-          if (col.type === "number") th.classList.add("vsdb-num");
-          headRow.appendChild(th);
-        }
-        thead.appendChild(headRow);
-      }
-    }
+    thead.appendChild(headRow);
+    this.headerTableEl.appendChild(thead);
+    this.requestRender();
+  }
+
+  /**
+   * Mark whether a loadMore is currently in-flight. Used to throttle the
+   * scroll-driven loadMore trigger (fix round 1 — IMPORTANT #3).
+   */
+  setLoadMoreInFlight(inFlight: boolean): void {
+    this.loadMoreInFlight = inFlight;
   }
 
   setCallbacks(cb: GridCallbacks): void {
     this.callbacks = cb;
   }
 
-  /**
-   * Lấy rows đang selection (dùng cho copy).
-   */
   private getSelectedRows(): any[][] {
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0) return [];
     const range = sel.getRangeAt(0);
-    // Lấy toàn bộ text → split rows.
     const fragment = range.cloneContents();
     const rows: any[][] = [];
     const trs = fragment.querySelectorAll("tr");
@@ -156,7 +174,6 @@ export class VirtualGrid {
     if (!isCopy) return;
     const sel = window.getSelection();
     if (sel && sel.toString().length > 0) {
-      // Default clipboard sẽ copy text trong selection; nhưng ta muốn tab-separated.
       e.preventDefault();
       const rows = this.getSelectedRows();
       if (rows.length > 0) {
@@ -164,7 +181,6 @@ export class VirtualGrid {
         if (this.callbacks.onCopy) {
           this.callbacks.onCopy(text);
         } else {
-          // Fallback: clipboard API.
           navigator.clipboard.writeText(text).catch(() => {});
         }
       }
@@ -189,22 +205,14 @@ export class VirtualGrid {
       Math.ceil((scrollTop + viewportHeight) / ROW_HEIGHT) + OVERSCAN,
     );
 
-    // Clamp vào rows đã load.
     if (endIdx > this.rows.length) endIdx = this.rows.length;
     if (startIdx > endIdx) startIdx = endIdx;
 
     const offsetY = startIdx * ROW_HEIGHT;
 
-    // Build tbody.
-    const tbody = this.tbodyEl.querySelector("tbody") as HTMLElement;
+    const tbody = this.bodyTableEl.querySelector("tbody") as HTMLElement;
     tbody.innerHTML = "";
     tbody.style.transform = `translateY(${offsetY}px)`;
-
-    // Update header alignment if needed.
-    const headRow = this.root.querySelector("thead tr");
-    if (headRow) {
-      // Sync width grid header với body. Chỉ cần set CSS table-layout.
-    }
 
     for (let i = startIdx; i < endIdx; i++) {
       const tr = document.createElement("tr");
@@ -224,8 +232,8 @@ export class VirtualGrid {
       tbody.appendChild(tr);
     }
 
-    // Trigger load-more khi gần cuối.
-    if (this.hasMore) {
+    // Trigger load-more khi gần cuối — throttle nếu đang in-flight.
+    if (this.hasMore && !this.loadMoreInFlight) {
       const remaining = scrollTop + viewportHeight;
       const totalHeight = total * ROW_HEIGHT;
       if (totalHeight - remaining < 200) {

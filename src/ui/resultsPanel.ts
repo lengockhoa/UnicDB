@@ -12,6 +12,14 @@
 // - CSP meta tag chỉ cho phép script-src 'self' và vscode-webview.
 // - Sử dụng asWebviewUri() cho JS/CSS.
 //
+// IMPORTANT (fix round 1):
+// - sanitizeRowsForPostMessage() converts BigInt → string với marker.
+//   BigInt vượt Number.MAX_SAFE_INTEGER → string nguyên bản (an toàn).
+//   BigInt nằm trong safe range → number (compact form). Date → ISO string.
+//   Catches throws from structured clone (BigInt) silently.
+// - postMessage failures (rejected Thenable) are logged via console + showErrorMessage
+//   so caller can react (instead of being silently void-ed).
+//
 // Phụ thuộc: vscode (UI-only).
 import * as vscode from "vscode";
 import type { QueryRunner, StatementResult } from "../core/queryRunner";
@@ -125,8 +133,36 @@ export class ResultsPanel {
 
   private postMessage(msg: HostMessage): void {
     if (!this.panel) return;
-    // Safe JSON — Date/BigInt được stringified cẩn thận.
-    void this.panel.webview.postMessage(msg);
+    // IMPORTANT #5 (fix round 1): sanitize rows trước khi postMessage.
+    // webview.postMessage dùng structured clone — THROWs trên BigInt.
+    let payload: HostMessage = msg;
+    if (msg.type === "state") {
+      payload = {
+        ...msg,
+        results: msg.results.map((r) => sanitizeStatementResult(r)),
+      };
+    }
+    // Catch rejection (BigInt slip-through, internal errors) — surface to user.
+    try {
+      const p = this.panel.webview.postMessage(payload) as unknown;
+      if (p && typeof (p as { then?: unknown }).then === "function") {
+        (p as Thenable<unknown>).then(
+          undefined,
+          (err: unknown) => {
+            const m = err instanceof Error ? err.message : String(err);
+            // eslint-disable-next-line no-console
+            console.error("[vsdb] postMessage rejected:", m);
+            void vscode.window.showErrorMessage(`Results panel postMessage failed: ${m}`);
+          },
+        );
+      }
+    } catch (err) {
+      // synchronous throw (vd structured clone BigInt không bị Thenable catch).
+      const m = err instanceof Error ? err.message : String(err);
+      // eslint-disable-next-line no-console
+      console.error("[vsdb] postMessage sync throw:", m);
+      void vscode.window.showErrorMessage(`Results panel postMessage failed: ${m}`);
+    }
   }
 
   private async handleMessage(msg: WebviewMessage): Promise<void> {
@@ -214,6 +250,63 @@ export class ResultsPanel {
 </body>
 </html>`;
   }
+}
+
+/**
+ * Sanitize a single StatementResult for webview.postMessage structured-clone.
+ *
+ * BigInt vượt Number.MAX_SAFE_INTEGER → string (nguyên bản).
+ * BigInt nằm trong safe range → number (compact).
+ * Date → ISO string.
+ * Circular objects → walk replaced with "[Circular]".
+ *
+ * IMPORTANT #5 (fix round 1): without this, webview.postMessage THROWS on
+ * BigInt (DataCloneError) and the panel stops updating silently.
+ */
+export function sanitizeStatementResult(r: StatementResult): StatementResult {
+  if (!r.result) return r;
+  const result = r.result;
+  return {
+    ...r,
+    result: {
+      ...result,
+      rows: result.rows.map((row) => sanitizeRow(row)),
+    },
+  };
+}
+
+function sanitizeRow(row: any[]): any[] {
+  return row.map((v) => sanitizeCell(v, new WeakSet()));
+}
+
+function sanitizeCell(v: any, seen: WeakSet<object>): any {
+  if (v === null || v === undefined) return v;
+  const t = typeof v;
+  if (t === "bigint") {
+    // If within safe integer range → number; else string.
+    if (v <= BigInt(Number.MAX_SAFE_INTEGER) && v >= BigInt(Number.MIN_SAFE_INTEGER)) {
+      return Number(v);
+    }
+    return v.toString();
+  }
+  if (t !== "object") return v;
+  if (v instanceof Date) return v.toISOString();
+  if (Array.isArray(v)) {
+    if (seen.has(v)) return "[Circular]";
+    seen.add(v);
+    return v.map((x) => sanitizeCell(x, seen));
+  }
+  if (seen.has(v as object)) return "[Circular]";
+  seen.add(v as object);
+  const out: Record<string, any> = {};
+  for (const k of Object.keys(v as object)) {
+    try {
+      out[k] = sanitizeCell((v as any)[k], seen);
+    } catch {
+      out[k] = "[Unserializable]";
+    }
+  }
+  return out;
 }
 
 function escapeHtml(s: string): string {

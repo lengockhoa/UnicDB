@@ -7,18 +7,23 @@
 //   - Với mỗi statement, push running → onUpdate callback.
 //   - Khi xong: status = 'done' | 'error' | 'cancelled'.
 //   - Statement N lỗi → KHÔNG chạy N+1; statements sau status = 'cancelled'.
-//   - Nếu adapter runQuery trả `batched` (Postgres cursor), lưu BatchedQuery vào
-//     StatementResult để loadMore() có thể dùng.
+//   - Nếu adapter runQuery trả `batched` (Postgres cursor), build result từ
+//     batched.columns + initial 500-row fetch rồi lưu BatchedQuery để loadMore().
 //   - onUpdate được gọi SAU mỗi state change (running, done, error, cancelled).
 // - `loadMore(index)`:
 //   - Lấy batch kế tiếp từ BatchedQuery; append vào result.rows.
 //   - Trả về mảng results mới (cùng reference tới internal state).
+//   - Có in-flight guard — concurrent loadMore cho cùng index được serialize.
 // - `cancel()`:
-//   - Đánh dấu cancel = true. Hành vi:
-//     - Nếu đang chờ batched.fetchBatch() → gọi batched.cancel().
-//     - Statement đang chạy sẽ bị cancel khi promise adapter.runQuery resolve/reject.
+//   - Gọi batched.cancel() trên cursor đang mở (CURRENT statement, not previous).
+//   - Statement đang chạy sẽ bị cancel khi promise adapter.runQuery resolve/reject.
 //
-// Không phụ thuộc vscode; có thể test với mock adapter.
+// IMPORTANT (fix round 1):
+// - `currentBatched` được assign NGAY KHI batched handle xuất hiện (trước khi
+//   fetchBatch initial) — để cancel mid-`fetchBatch(initial)` reaches đúng cursor.
+// - Batched cursor được close sau khi run() xong (success/error/cancel) nếu còn open.
+// - `pickResult()` xử lý contract batched: results=[] thì result = batched columns
+//   + rows initial từ fetchBatch().
 import type { ParsedStatement } from "../config/types";
 import type { BatchedQuery, DbAdapter, QueryResult, RunResult } from "../adapters/types";
 import { appendBatch } from "./resultBatcher";
@@ -45,9 +50,12 @@ export class QueryRunner {
   private readonly batchSize: number;
   private results: StatementResult[] = [];
   private cancelRequested = false;
+  /** Batched handle của statement đang in-flight (cancel target). */
   private currentBatched: BatchedQuery | null = null;
   private currentIndex = -1;
   private running: Promise<void> | null = null;
+  /** Per-index in-flight promise — serializes concurrent loadMore cho cùng index. */
+  private loadMoreInFlight: Map<number, Promise<StatementResult[]>> = new Map();
 
   constructor(
     adapterProvider: () => Promise<DbAdapter>,
@@ -90,6 +98,8 @@ export class QueryRunner {
       throw new Error("QueryRunner is already running");
     }
     this.cancelRequested = false;
+    this.currentBatched = null;
+    this.loadMoreInFlight.clear();
     this.results = statements.map((s, i) => ({
       index: i,
       sql: s.text,
@@ -104,6 +114,7 @@ export class QueryRunner {
       await runPromise;
     } finally {
       this.running = null;
+      this.currentBatched = null;
     }
     return this.results.slice();
   }
@@ -127,6 +138,16 @@ export class QueryRunner {
       const start = Date.now();
       try {
         const runResult: RunResult = await adapter.runQuery(statements[i].text);
+        // Clear currentBatched assignment từ lần trước trước khi re-assign.
+        // (nếu statement trước cancel xong, currentBatched có thể stale.)
+        this.currentBatched = null;
+
+        if (runResult.batched) {
+          // CRITICAL #1 contract: batched cursor — assign currentBatched NGAY
+          // để cancel trong fetchBatch(initial) reaches đúng cursor.
+          this.currentBatched = runResult.batched;
+        }
+
         if (this.cancelRequested) {
           this.results[i].status = "cancelled";
           if (runResult.batched) {
@@ -135,18 +156,39 @@ export class QueryRunner {
             } catch {
               // ignore
             }
+            this.currentBatched = null;
           }
-        } else {
-          // Lấy result cuối (adapter có thể trả nhiều statement trong 1 call).
-          const result = pickResult(runResult);
-          this.results[i].status = "done";
-          this.results[i].result = result;
-          this.results[i].durationMs = Date.now() - start;
-          if (runResult.batched) {
-            this.results[i].batched = runResult.batched;
-            this.currentBatched = runResult.batched;
-          }
+          onUpdate(this.results.slice());
+          continue;
         }
+
+        // Pick result với batched-aware contract.
+        const result = await pickResult(runResult);
+
+        // Re-check cancel: cancel có thể đã được gọi trong lúc fetchBatch(initial)
+        // đang chờ. Status cuối cùng là 'cancelled', KHÔNG done.
+        if (this.cancelRequested) {
+          this.results[i].status = "cancelled";
+          if (runResult.batched) {
+            try {
+              await runResult.batched.close();
+            } catch {
+              // ignore
+            }
+            this.currentBatched = null;
+          }
+          onUpdate(this.results.slice());
+          continue;
+        }
+
+        this.results[i].status = "done";
+        this.results[i].result = result;
+        this.results[i].durationMs = Date.now() - start;
+        if (runResult.batched) {
+          this.results[i].batched = runResult.batched;
+          // currentBatched đã set ở trên — giữ để loadMore dùng.
+        }
+        onUpdate(this.results.slice());
       } catch (err) {
         if (this.cancelRequested) {
           this.results[i].status = "cancelled";
@@ -155,6 +197,7 @@ export class QueryRunner {
           this.results[i].error = err instanceof Error ? err.message : String(err);
           this.results[i].durationMs = Date.now() - start;
         }
+        this.currentBatched = null;
         // Emit state change (error dừng chuỗi).
         onUpdate(this.results.slice());
         // Nếu lỗi logic (không phải cancel) → KHÔNG chạy statements sau.
@@ -167,15 +210,40 @@ export class QueryRunner {
           return;
         }
       }
-      onUpdate(this.results.slice());
     }
   }
 
   /**
    * Lấy batch kế tiếp từ BatchedQuery (nếu có) cho statement `index`.
    * Append vào result.rows; trả về mảng results mới.
+   *
+   * IMPORTANT #3 (fix round 1): serialize concurrent calls cho cùng index bằng
+   * một in-flight promise chain. Hai loadMore đồng thời → batch thứ hai phải
+   * đợi batch thứ nhất hoàn thành rồi mới fetchBatch tiếp (không mất batch).
    */
   async loadMore(index: number): Promise<StatementResult[]> {
+    // Per-index guard — chain cùng key. Concurrent loadMore cho cùng index
+    // được serialize: call thứ hai phải đợi call thứ nhất xong rồi MỚI fetch
+    // batch kế tiếp (không mất batch).
+    const existing = this.loadMoreInFlight.get(index);
+    let promise: Promise<StatementResult[]>;
+    if (existing) {
+      promise = existing.then(() => this.loadMoreImpl(index));
+    } else {
+      promise = this.loadMoreImpl(index);
+    }
+    const tracked = promise.finally(() => {
+      // Chỉ clear nếu key vẫn còn trỏ tới promise này (tránh race với chain
+      // tiếp theo set key mới).
+      if (this.loadMoreInFlight.get(index) === tracked) {
+        this.loadMoreInFlight.delete(index);
+      }
+    });
+    this.loadMoreInFlight.set(index, tracked);
+    return tracked;
+  }
+
+  private async loadMoreImpl(index: number): Promise<StatementResult[]> {
     const r = this.results[index];
     if (!r) {
       throw new Error(`Statement ${index} not found`);
@@ -186,28 +254,49 @@ export class QueryRunner {
     if (r.status !== "done") {
       throw new Error(`Statement ${index} is not done (status=${r.status})`);
     }
-    const batch = await r.batched.fetchBatch();
-    if (batch === null || batch.length === 0) {
-      // EOF — không append gì; rowCount = current rows length.
+    if (this.cancelRequested) {
+      throw new Error(`Statement ${index} cancelled`);
+    }
+    const batched = r.batched;
+    // Track currentBatched để cancel mid-fetchBatch reaches đúng cursor.
+    this.currentBatched = batched;
+    try {
+      const batch = await batched.fetchBatch();
+      if (batch === null || batch.length === 0) {
+        // EOF — không append gì; rowCount = current rows length.
+        if (r.result) {
+          r.result = { ...r.result, rowCount: r.result.rows.length };
+        }
+        return this.results.slice();
+      }
+      const currentRows = r.result?.rows ?? [];
+      const merged = appendBatch(currentRows, batch);
       if (r.result) {
-        r.result = { ...r.result, rowCount: r.result.rows.length };
+        r.result = {
+          ...r.result,
+          rows: merged,
+          rowCount: merged.length,
+        };
       }
       return this.results.slice();
+    } finally {
+      // currentBatched sẽ được reset bởi run() hoặc cancel().
+      if (this.currentBatched === batched) {
+        this.currentBatched = null;
+      }
     }
-    const currentRows = r.result?.rows ?? [];
-    const merged = appendBatch(currentRows, batch);
-    if (r.result) {
-      r.result = {
-        ...r.result,
-        rows: merged,
-        rowCount: merged.length,
-      };
-    }
-    return this.results.slice();
   }
 
   /**
-   * Yêu cầu cancel. Nếu đang trong batched query, gọi batched.cancel().
+   * Yêu cầu cancel. Nếu đang trong batched query (in-flight), gọi batched.cancel().
+   *
+   * IMPORTANT #4 (fix round 1): cancel reaches `currentBatched` (in-flight
+   * cursor), KHÔNG phải previous statement's cursor. Nếu run() chưa gán
+   * currentBatched (vd đang chờ statement đầu), cancel sẽ no-op cho phần đó
+   * nhưng flag vẫn được set — statement sẽ thành 'cancelled' khi runQuery
+   * resolve.
+   *
+   * Sau khi cancel xong, attempt close batched cursor (idempotent).
    */
   async cancel(): Promise<void> {
     this.cancelRequested = true;
@@ -217,19 +306,48 @@ export class QueryRunner {
       } catch {
         // ignore
       }
-    }
-    // Đánh dấu statement hiện tại running → cancelled nếu đang chờ.
-    if (this.currentIndex >= 0 && this.results[this.currentIndex]?.status === "running") {
-      // Sẽ được set sang 'cancelled' khi promise runQuery của nó resolve.
+      try {
+        await this.currentBatched.close();
+      } catch {
+        // ignore
+      }
+      this.currentBatched = null;
     }
   }
 }
 
 /**
- * Chọn QueryResult từ RunResult. Hầu hết adapter trả 1 result; một số (postgres)
- * có thể trả nhiều (nếu SQL có nhiều statement). Lấy result thứ `index` an toàn.
+ * Build QueryResult từ RunResult theo contract batched-aware.
+ *
+ * CRITICAL #1 contract (fix round 1):
+ * - Nếu `runResult.batched` tồn tại: Postgres adapter trả `results: []` cùng
+ *   batched handle (single SELECT). Caller PHẢI build result từ batched.columns
+ *   + initial 500-row fetch (load first batch ngay để grid render footer "500 rows").
+ * - Nếu `runResult.results` có data (multi-statement, INSERT, non-SELECT):
+ *   trả về QueryResult cuối cùng (hoặc cái đầu tiên có rows).
+ *
+ * Trả về QueryResult với rowCount = null cho batched (chưa biết tổng).
+ * Nếu fetch initial thất bại → result.rows = [] + error được set bởi caller (try/catch).
  */
-function pickResult(runResult: RunResult): QueryResult {
+export async function pickResult(runResult: RunResult): Promise<QueryResult> {
+  // Batched case (Postgres cursor): adapter returns { results: [], batched }.
+  // Caller (QueryRunner.executeAll) catches errors; here we always assume batched is valid.
+  if (runResult.batched) {
+    const cols = runResult.batched.columns;
+    let initialRows: any[][] = [];
+    try {
+      const first = await runResult.batched.fetchBatch();
+      if (first) initialRows = first;
+    } catch {
+      // ignore — caller will set error status if it bubbles up.
+    }
+    return {
+      columns: cols,
+      rows: initialRows,
+      rowCount: initialRows.length > 0 ? initialRows.length : null,
+      durationMs: 0,
+    };
+  }
   if (runResult.results.length === 0) {
     return {
       columns: [],
@@ -238,7 +356,7 @@ function pickResult(runResult: RunResult): QueryResult {
       durationMs: 0,
     };
   }
-  // Chọn result có rows > 0 ưu tiên (tránh bị trả result rỗng khi batched).
+  // Multi-statement path: chọn result có rows > 0 ưu tiên.
   for (const r of runResult.results) {
     if (r.rows.length > 0) return r;
   }

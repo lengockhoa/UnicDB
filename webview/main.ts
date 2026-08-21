@@ -67,6 +67,9 @@ let busy = false;
 let activeTab = 0;
 let grid: VirtualGrid | null = null;
 let currentColumns: GridColumn[] = [];
+/** IMPORTANT #3 (fix round 1): track in-flight loadMore to throttle scroll-driven
+ *  triggers. Webview sets this on dispatch, host clears via 'busy' / 'state'. */
+let loadMoreInFlight = false;
 
 // ---- Render ----------------------------------------------------------------
 
@@ -192,17 +195,23 @@ function renderGrid(): void {
 
   const loaded = r.result.rows.length;
   const total = r.batched ? null : r.result.rowCount ?? loaded;
-  const hasMore = !!r.batched && loaded < (r.result.rowCount ?? Number.MAX_SAFE_INTEGER);
+  const hasMore = !!r.batched && (r.result.rowCount === null || loaded < r.result.rowCount);
 
   grid = new VirtualGrid(gridHost, cols, {
     onLoadMore: () => {
-      if (!busy) postToHost({ type: "loadMore", index: activeTab });
+      // IMPORTANT #3: throttle — skip nếu loadMore đang in-flight.
+      if (loadMoreInFlight || busy) return;
+      loadMoreInFlight = true;
+      if (grid) grid.setLoadMoreInFlight(true);
+      postToHost({ type: "loadMore", index: activeTab });
     },
     onCopy: (text) => postToHost({ type: "copy", text }),
   });
 
   grid.setColumns(cols);
   grid.setData(r.result.rows, total, hasMore);
+  // Sync in-flight flag (host may have re-rendered while loadMore was pending).
+  grid.setLoadMoreInFlight(loadMoreInFlight);
   currentColumns = cols;
 
   // Footer text.
@@ -261,10 +270,13 @@ window.addEventListener("message", (ev: MessageEvent) => {
     headerText = msg.header;
     results = msg.results || [];
     busy = msg.busy;
+    // Host returned from loadMore → clear in-flight flag.
+    loadMoreInFlight = false;
     if (activeTab >= results.length) activeTab = Math.max(0, results.length - 1);
     render();
   } else if (msg.type === "busy") {
     busy = msg.busy;
+    if (!busy) loadMoreInFlight = false;
     render();
   }
 });

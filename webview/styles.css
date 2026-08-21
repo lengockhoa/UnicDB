@@ -122,14 +122,13 @@
   font-size: var(--vscode-editor-font-size, 13px);
 }
 
-.vsdb-grid thead {
-  position: sticky;
-  top: 0;
-  background: var(--vscode-editorGroupHeaderTabsBackground, #252526);
-  z-index: 2;
+/* Header table sits OUTSIDE the scroll container — no sticky needed. */
+.vsdb-grid.vsdb-header {
+  display: table;
+  flex-shrink: 0;
 }
 
-.vsdb-grid thead th {
+.vsdb-grid.vsdb-header thead th {
   text-align: left;
   padding: 4px 8px;
   border: 1px solid var(--vscode-panel-border, #444);
@@ -138,6 +137,12 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Body table is INSIDE scroll container — also sticky-positioned thead for
+   long content overflow. */
+.vsdb-grid.vsdb-body thead {
+  display: none; /* body table has no visible thead — header table is separate. */
 }
 
 .vsdb-grid tbody tr {
