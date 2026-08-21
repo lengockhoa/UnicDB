@@ -377,3 +377,14 @@ Compose parses cleanly. The MySQL 8.4-incompatible `--default-authentication-plu
 - `requestTimeout: 0` in `MsSqlAdapter` is a per-connection default; for non-streaming metadata queries the existing short-duration implicit cap from the network round-trip still applies. If a future task needs a per-query timeout for metadata queries, it can be re-added via `request.setTimeout(...)` in `runRequest()` without affecting the streaming path.
 - The docker compose change touches only the `mysql.command:` list. The running container (`vsdb-mysql` mapped to host port 3307) is unchanged. To exercise a full clean re-create with the new flag set, a reviewer would need to `docker compose down -v && docker compose up -d`, which destroys `vsdb_mysql_data`. The current state on this host leaves the container untouched as instructed.
 - The 700-row standalone repro script (`scripts/repro-700-rows.ts`) was used once and then deleted — the integration test #2b is the durable regression.
+
+## Reviewer Verdict (fix round 1)
+VERDICT: approved_minor
+REVIEWER_MODEL: claude-opus-4-8
+EXECUTOR_MODEL: claude-sonnet-4-6
+VERIFICATION_RERUN: PASS
+FINDINGS:
+  critical: none
+  important: none
+  minor: mysql deliver() drain final batch cho waiter pending nhưng KHÔNG resume stream / không set streamDone-eof transition trong branch đó (đúng vì end đã fire — chỉ là observation, hành vi vẫn đúng); requestTimeout: 0 áp cho cả non-streaming metadata query trên mssql (WAITFOR test #5c chứng minh không regress); container vsdb-mysql vẫn chạy ngoài compose (môi trường dev host, compose file đã sửa đúng).
+NEXT_STATUS_FOR_INDEX: done

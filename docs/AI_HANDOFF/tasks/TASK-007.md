@@ -293,3 +293,14 @@ COMPLETED — all 5 critical/important reviewer findings addressed with regressi
 - The new `vsdb.selectConnectionFromTree` command is intentionally NOT added to `package.json` `contributes.commands` (per the spec's "10 commands"; this is an internal trigger from `TreeItem.command`). If desired, it can be added later.
 - Adapter caching policy is per-connection-id: passive adapters persist until edit/delete/dispose. Idle-close is NOT applied to passive adapters (active only). This trades long-lived idle sockets for correctness; if a connection is unused for hours, the user can delete it to reclaim the socket. (Active adapter still gets the 10-min idle close via existing logic.)
 - `package.json` edits were scoped to the precedence fix on line 121; the when-clauses on lines 109, 114, 126, 131, 137, 142 were inspected and were already correctly scoped (no unscoped-OR found).
+
+## Reviewer Verdict (fix round 1)
+VERDICT: approved_minor
+REVIEWER_MODEL: claude-opus-4-8
+EXECUTOR_MODEL: claude-sonnet-4-6
+VERIFICATION_RERUN: PASS
+FINDINGS:
+  critical: none
+  important: none
+  minor: passiveAdapters không áp idle-close 10 phút (executor khai báo trade-off trong Note — socket idle sống đến dispose; đánh đổi có chủ đích, chấp nhận); `vsdb.selectConnectionFromTree` không có trong package.json contributes.commands (internal command — VS Code cho phép nhưng không hiện trong Command Palette).
+NEXT_STATUS_FOR_INDEX: done

@@ -222,3 +222,14 @@ EXIT=0
 ```
 Status: PASS
 Note: All 13 new regression tests added and GREEN; original 26 tests + 13 regression = 39/39 pass; full project suite (100 tests across 11 files) also green; parser rewritten with construct-stack approach that handles nested plpgsql/T-SQL bodies correctly across all 6 review findings.
+
+## Reviewer Verdict (fix round 1)
+VERDICT: approved_minor
+REVIEWER_MODEL: claude-opus-4-8
+EXECUTOR_MODEL: claude-sonnet-4-6
+VERIFICATION_RERUN: PASS
+FINDINGS:
+  critical: none
+  important: none
+  minor: parser giờ đếm IF/CASE/LOOP/FOR/WHILE là "construct" cả ngoài BEGIN — `IF a THEN ...; END IF; SELECT 2;` ở top level tách 3 statement thay vì 2 (keyword-only heuristic, không parse đủ SQL; spec TASK-002 chỉ yêu cầu BEGIN...END nên chấp nhận); `prevWasEnd` chỉ reset khi kwBuffer rỗng → `SELECT 1; END IF;` không-in-block pop stack rỗng (harmless); MINOR #7 sqlToRun selection offset remap vẫn chưa trả offset gốc (executor khai báo NOT ADDRESSED, doc đã cảnh báo).
+NEXT_STATUS_FOR_INDEX: done

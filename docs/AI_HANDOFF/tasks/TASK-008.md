@@ -417,3 +417,14 @@ verification green in this worktree.
 - Orchestrator still owns: git tag, push to main, GitHub Release with
   `.vsix` asset attached. Until those exist, README tells users to use
   the `--local` install path (which now works immediately).
+
+## Reviewer Verdict (fix round 1)
+VERDICT: approved_minor
+REVIEWER_MODEL: claude-opus-4-8
+EXECUTOR_MODEL: claude-sonnet-4-6
+VERIFICATION_RERUN: PASS
+FINDINGS:
+  critical: none
+  important: none
+  minor: build.sh vẫn chạy `npm ci` + full `npm test` mỗi lần (chậm nhưng đúng); vsix 14 files gồm extension.js.map (4.7MB tổng) — sourcemap ship trong package, có thể bỏ qua .map trong .vscodeignore để giảm size; GitHub API rate-limit 60req/h chưa có retry (MINOR #5 round 1, đã ghi nhận).
+NEXT_STATUS_FOR_INDEX: done

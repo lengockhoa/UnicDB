@@ -2,7 +2,7 @@
   "name": "vsdb",
   "displayName": "VSDB — Run SQL from VS Code",
   "description": "Run SQL against PostgreSQL, MySQL/MariaDB and SQL Server directly from VS Code. Cmd+Enter (macOS) / Ctrl+Enter (Win/Linux) executes the selected statement.",
-  "version": "0.1.0",
+  "version": "1.0.1",
   "publisher": "lengockhoa",
   "engines": {
     "vscode": "^1.75.0"
@@ -10,8 +10,17 @@
   "main": "dist/extension.js",
   "icon": "media/icon.png",
   "license": "MIT",
-  "categories": ["Other"],
-  "keywords": ["sql", "postgresql", "mysql", "mariadb", "mssql", "database"],
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "sql",
+    "postgresql",
+    "mysql",
+    "mariadb",
+    "mssql",
+    "database"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/lengockhoa/VSDB"
