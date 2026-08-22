@@ -31,7 +31,7 @@ import {
   quoteIdent,
   type Dialect,
 } from "../core/saveStatements";
-import { sqlLiteral } from "./resultsGridModel";
+import { sqlLiteral, composeRequery } from "./resultsGridModel";
 
 /**
  * Host-side save flow hook. The extension wires this so the panel knows:
@@ -258,6 +258,9 @@ export class ResultsPanel {
         break;
       case "saveEdits":
         await this.handleSaveEdits(msg.index, msg.tableName, msg.pkColumns, msg.edits);
+        break;
+      case "requery":
+        await this.handleRequery(msg.index, msg.where, msg.orderBy);
         break;
       case "ready":
         // Send initial state khi webview ready.
@@ -513,6 +516,103 @@ export class ResultsPanel {
         });
       }
       this.postMessage({ type: "saveResult", index, ok: true });
+    } finally {
+      this.setBusy(false);
+    }
+  }
+
+  /**
+   * TASK-504 — WHERE/ORDER BY "Re-Run" handler.
+   *
+   * Looks up `lastResults[index]`, composes a new SQL via
+   * `composeRequery(r.sql, where, orderBy)`, runs it through the same
+   * `runner.runSql` path used by the SAVE-edits refresh, and swaps the
+   * statement at `index` in `lastResults` with the new result. The webview
+   * gets a fresh `state` message and the grid re-renders.
+   *
+   * Errors are surfaced as a host-side notification AND as a synthetic
+   * error StatementResult so the webview shows the error in the existing
+   * `vsdb-error` placeholder (no new banner needed).
+   *
+   * Cancel-during-requery is treated like cancel-during-loadMore: the
+   * runner reports `cancelled` and we re-post the previous state silently
+   * — no toast.
+   */
+  private async handleRequery(
+    index: number,
+    where: string,
+    orderBy: string,
+  ): Promise<void> {
+    const r = this.lastResults[index];
+    if (!r) {
+      void vscode.window.showErrorMessage(
+        `VSDB: requery failed — no statement at index ${index}.`,
+      );
+      return;
+    }
+    const composed = composeRequery(r.sql, where, orderBy);
+    this.setBusy(true);
+    try {
+      const refreshed = await this.runner.runSql(composed);
+      const freshResult = refreshed.results[0];
+      const next = this.lastResults.slice();
+      // Synthesize the new StatementResult. We keep `index`, `sql` (the
+      // ORIGINAL — what the user wrote) and `durationMs` from the prior
+      // run so the toolbar / Messages tab continue to show the user's
+      // authored SQL.
+      next[index] = {
+        index: r.index,
+        sql: r.sql,
+        status: "done",
+        result: freshResult,
+        durationMs: Date.now(),
+      };
+      this.lastResults = next;
+      // Re-derive table map for the index — the wrapped SQL still
+      // references the same table; parseFromClause on the original
+      // keeps the addressable table valid.
+      const parsed = parseFromClause(r.sql);
+      if (parsed) this.tableByStatement.set(r.index, parsed);
+      else this.tableByStatement.delete(r.index);
+      this.postMessage({
+        type: "state",
+        header: this.header,
+        results: next,
+        busy: this.busy,
+      });
+    } catch (err) {
+      const cancelled =
+        this.runner.isCancelled?.() === true ||
+        /cancel/i.test(err instanceof Error ? err.message : String(err));
+      if (!cancelled) {
+        const m = err instanceof Error ? err.message : String(err);
+        void vscode.window.showErrorMessage(`VSDB requery failed: ${m}`);
+        // Surface as a per-statement error so the webview grid shows the
+        // existing error placeholder instead of the stale result.
+        const next = this.lastResults.slice();
+        next[index] = {
+          index: r.index,
+          sql: r.sql,
+          status: "error",
+          error: m,
+          durationMs: Date.now(),
+        };
+        this.lastResults = next;
+        this.postMessage({
+          type: "state",
+          header: this.header,
+          results: next,
+          busy: this.busy,
+        });
+      } else {
+        // Re-post the prior state so the webview drops its in-flight flag.
+        this.postMessage({
+          type: "state",
+          header: this.header,
+          results: this.lastResults,
+          busy: this.busy,
+        });
+      }
     } finally {
       this.setBusy(false);
     }

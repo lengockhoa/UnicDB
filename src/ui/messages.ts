@@ -64,7 +64,19 @@ export type WebviewMessage =
   | CopyMessage
   | ExportFileMessage
   | SaveEditsMessage
+  | RequeryMessage
   | ReadyMessage;
+
+export interface RequeryMessage {
+  /** TASK-504 — user clicked "Re-Run" with a WHERE/ORDER BY filter. Host
+   *  composes the SQL via `composeRequery(r.sql, where, orderBy)` and runs
+   *  it through the QueryRunner; the resulting StatementResult replaces
+   *  the entry at `index` in the panel. */
+  type: "requery";
+  index: number;
+  where: string;
+  orderBy: string;
+}
 
 export interface SaveEditsMessage {
   type: "saveEdits";

@@ -49,6 +49,7 @@ import {
   parseTsvPaste,
   applyPasteToDirty,
   serializeExport,
+  composeRequery,
   type ColumnSpec,
   type ResultsGridModel,
   type ExportFormat,
@@ -99,6 +100,12 @@ interface StatementResult {
   error?: string;
   durationMs: number;
 }
+type RequeryMsg = {
+  type: "requery";
+  index: number;
+  where: string;
+  orderBy: string;
+};
 type SaveEditsMsg = {
   type: "saveEdits";
   index: number;
@@ -112,6 +119,7 @@ type WebviewMsg =
   | CopyMsg
   | ExportFileMsg
   | SaveEditsMsg
+  | RequeryMsg
   | ReadyMsg;
 
 
@@ -294,15 +302,21 @@ interface PersistentDom {
   gridHost: HTMLDivElement;
   /** Persistent grid footer. */
   gridFooter: HTMLDivElement;
-  /** Wraps gridHost + gridFooter in a `.vsdb-grid-host` flex column. */
-  /** Wraps gridHost + gridFooter + saveBanner in a `.vsdb-grid-host` flex column. */
-  gridWrap: HTMLDivElement;
   /** Persistent banner above the footer — shows save errors / no_pk warnings.
    *  Created once, hidden by default; populated on saveResult with errors. */
   saveBanner: HTMLDivElement;
+  /** TASK-504 — WHERE input on the requery bar. */
+  requeryWhere: HTMLInputElement;
+  /** TASK-504 — ORDER BY input on the requery bar. */
+  requeryOrderBy: HTMLInputElement;
+  /** TASK-504 — Re-Run button that posts the requery message. */
+  requeryRunBtn: HTMLButtonElement;
+  /** TASK-504 — Clear button that resets both inputs. */
+  requeryClearBtn: HTMLButtonElement;
 }
 let dom: PersistentDom | null = null;
 let firstRender = true;
+
 
 // Currently displayed footer/statement (for quick-filter live updates).
 function setCurrentStatement(r: StatementResult | null): void {
@@ -606,6 +620,49 @@ function buildPersistentDom(): PersistentDom {
   saveBanner.className = "vsdb-save-banner vsdb-hidden";
   saveBanner.setAttribute("hidden", "");
   saveBanner.setAttribute("role", "alert");
+
+  // TASK-504 — WHERE/ORDER BY "Re-Run" bar. Sits inside the persistent
+  // gridWrap (above the footer) so it scrolls with the grid and survives
+  // every re-render alongside the grid host. The bar is NEVER recreated
+  // — only its inputs' values are read on click. A "Clear" button resets
+  // both inputs.
+  const requeryBar = document.createElement("div");
+  requeryBar.className = "vsdb-requery-bar";
+  requeryBar.setAttribute("data-vsdb-requery-bar", "");
+  const requeryWhereLabel = document.createElement("label");
+  requeryWhereLabel.className = "vsdb-requery-label";
+  requeryWhereLabel.textContent = "WHERE";
+  requeryBar.appendChild(requeryWhereLabel);
+  const requeryWhere = document.createElement("input");
+  requeryWhere.type = "text";
+  requeryWhere.placeholder = "e.g. id > 10";
+  requeryWhere.className = "vsdb-requery-input vsdb-requery-where";
+  requeryBar.appendChild(requeryWhere);
+  const requeryOrderLabel = document.createElement("label");
+  requeryOrderLabel.className = "vsdb-requery-label";
+  requeryOrderLabel.textContent = "ORDER BY";
+  requeryBar.appendChild(requeryOrderLabel);
+  const requeryOrderBy = document.createElement("input");
+  requeryOrderBy.type = "text";
+  requeryOrderBy.placeholder = "e.g. created_at DESC";
+  requeryOrderBy.className = "vsdb-requery-input vsdb-requery-order";
+  requeryBar.appendChild(requeryOrderBy);
+  const requeryRunBtn = document.createElement("button");
+  requeryRunBtn.textContent = "Re-Run";
+  requeryRunBtn.className = "vsdb-btn vsdb-requery-run";
+  requeryRunBtn.title = "Re-run the active statement with the WHERE / ORDER BY filter";
+  requeryRunBtn.addEventListener("click", () => onRequeryClick());
+  requeryBar.appendChild(requeryRunBtn);
+  const requeryClearBtn = document.createElement("button");
+  requeryClearBtn.textContent = "Clear";
+  requeryClearBtn.className = "vsdb-btn vsdb-requery-clear";
+  requeryClearBtn.title = "Clear the WHERE and ORDER BY inputs";
+  requeryClearBtn.addEventListener("click", () => {
+    requeryWhere.value = "";
+    requeryOrderBy.value = "";
+  });
+  requeryBar.appendChild(requeryClearBtn);
+  gridWrap.appendChild(requeryBar);
   gridWrap.appendChild(saveBanner);
 
 
@@ -629,7 +686,10 @@ function buildPersistentDom(): PersistentDom {
     gridHost,
     gridFooter,
     gridWrap,
-    saveBanner,
+    requeryWhere,
+    requeryOrderBy,
+    requeryRunBtn,
+    requeryClearBtn,
   };
 }
 
@@ -727,6 +787,7 @@ function renderGrid(): void {
   // + footer intact.
   for (const child of Array.from(container.children)) {
     if (child === gridHost || child === footer || child === saveBanner) continue;
+    if ((child as HTMLElement).classList?.contains("vsdb-requery-bar")) continue;
     container.removeChild(child);
   }
 
@@ -1330,6 +1391,17 @@ function onCommitClick(): void {
     dom.saveBanner.setAttribute("hidden", "");
     dom.saveBanner.textContent = "";
   }
+}
+
+/** TASK-504 — Re-Run click: post a requery to the host with the current
+ *  WHERE / ORDER BY values. The host composes the SQL via composeRequery
+ *  and runs it through the QueryRunner, then posts a fresh state message
+ *  that re-renders the grid. */
+function onRequeryClick(): void {
+  if (!dom) return;
+  const where = dom.requeryWhere.value;
+  const orderBy = dom.requeryOrderBy.value;
+  postToHost({ type: "requery", index: activeTab, where, orderBy });
 }
 
 /** CSV toggle: flip csvMode and rebuild the valueFormatter on every visible

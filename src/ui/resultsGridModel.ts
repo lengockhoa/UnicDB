@@ -799,3 +799,62 @@ export function applyPasteToDirty(
     }
   }
 }
+
+// ---- composeRequery (TASK-504) --------------------------------------------
+//
+// Pure-logic helper used by the webview's WHERE/ORDER BY "Re-Run" bar. The
+// user types a filter and/or an ordering on top of the statement currently
+// rendered in the grid; we wrap the original statement as a subquery and
+// compose a new SQL the host runs through the QueryRunner.
+//
+// Shape:
+//   SELECT * FROM (<stmt>) vsdb_sub WHERE <where> ORDER BY <orderBy>
+//
+// Behavior:
+//   - Both empty         → return the original statement (trailing `;` and
+//                          surrounding whitespace stripped). No wrap.
+//   - where only         → emit the WHERE clause only (no ORDER BY).
+//   - orderBy only       → emit the ORDER BY clause only (no WHERE).
+//   - Multi-statement    → split on top-level `;`, use the LAST non-empty
+//                          segment. (Not string-literal aware — covers the
+//                          common "user pasted a multi-statement SQL file"
+//                          case. The runner index comes from the statement
+//                          the webview is showing, not the original text.)
+//
+// Injection policy:
+//   The `where` and `orderBy` fragments are USER-INTENDED SQL — VSDB is a
+//   SQL client; the user already runs arbitrary SQL via the editor. We do
+//   not escape / quote these fragments. No validation pass; an invalid
+//   fragment surfaces as a database error from the runner.
+export function composeRequery(
+  sql: string,
+  where: string,
+  orderBy: string,
+): string {
+  const w = where.trim();
+  const o = orderBy.trim();
+  // If both fragments are empty, return the LAST non-empty segment of the
+  // original statement (handles "user pasted 2 statements; rendered the
+  // second one; clicked Re-Run with no input") with trailing `;` and
+  // surrounding whitespace stripped.
+  if (!w && !o) {
+    const segments = sql
+      .split(";")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    if (segments.length === 0) return sql.trim();
+    return segments[segments.length - 1];
+  }
+  // Otherwise pick the LAST non-empty statement segment of the original
+  // SQL to wrap. Same multi-statement handling as above; the wrap keeps
+  // the user's trailing `;` if any (the composed query goes to the
+  // runner; the runner is happy with either).
+  const segments = sql
+    .split(";")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  const inner = segments.length === 0 ? sql.trim() : segments[segments.length - 1];
+  const whereClause = w ? ` WHERE ${w}` : "";
+  const orderClause = o ? ` ORDER BY ${o}` : "";
+  return `SELECT * FROM (${inner}) vsdb_sub${whereClause}${orderClause}`;
+}
