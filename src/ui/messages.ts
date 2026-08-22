@@ -4,8 +4,7 @@
 //
 // All messages use a `type` discriminator. Unknown messages are ignored.
 import type { StatementResult } from "../core/queryRunner";
-
-// ---- Host → Webview --------------------------------------------------------
+import type { ExportFormat } from "./resultsGridModel";
 
 export interface InitMessage {
   type: "init";
@@ -52,7 +51,7 @@ export interface CopyMessage {
 
 export interface ExportFileMessage {
   type: "exportFile";
-  format: "tsv" | "csv" | "xml" | "json" | "sql-inserts" | "sql-inserts-multirow" | "sql-updates" | "sql-where";
+  format: ExportFormat;
   text: string;
 }
 

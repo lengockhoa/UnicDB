@@ -447,12 +447,24 @@ function buildPersistentDom(): PersistentDom {
   // Toggle Header checkbox enable/disable based on format — SQL modes have
   // a fixed structure (INSERT column list, UPDATE SET list, WHERE groups)
   // so a header checkbox has no meaning and is forced off.
+  //
+  // Fix R1 minor: remember the user's last non-SQL header preference so
+  // toggling CSV→sql-inserts→CSV does not silently reset it to off.
+  let headerPrefNonSql = false;
   const updateExportHeaderState = (): void => {
     const v = exportFormat.value;
     const isSql = v.startsWith("sql-");
+    if (isSql) {
+      headerPrefNonSql = exportHeader.checked;
+      exportHeader.checked = false;
+    } else {
+      exportHeader.checked = headerPrefNonSql;
+    }
     exportHeader.disabled = isSql;
-    exportHeader.checked = isSql ? false : exportHeader.checked;
   };
+  exportHeader.addEventListener("change", () => {
+    if (!exportHeader.disabled) headerPrefNonSql = exportHeader.checked;
+  });
   exportFormat.addEventListener("change", updateExportHeaderState);
   updateExportHeaderState();
   const searchInput = document.createElement("input");
@@ -1278,35 +1290,46 @@ function readExportInput():
 function onExportCopyClick(): void {
   const input = readExportInput();
   if (!input) return;
-  const text = serializeExport(
-    input.format,
-    input.columns,
-    input.rows,
-    {
-      includeHeader: input.includeHeader,
-      tableName: input.tableName,
-      pkColumns: input.pkColumns,
-      selectedRows: input.selectedRows,
-    },
-  );
-  postToHost({ type: "copy", text });
+  // Fix R1: serializeExport is contracted to never throw (R1 makes
+  // serializeSqlUpdates degrade safely on empty PK), but defensive
+  // logging is cheap and protects against future regression.
+  try {
+    const text = serializeExport(
+      input.format,
+      input.columns,
+      input.rows,
+      {
+        includeHeader: input.includeHeader,
+        tableName: input.tableName,
+        pkColumns: input.pkColumns,
+        selectedRows: input.selectedRows,
+      },
+    );
+    postToHost({ type: "copy", text });
+  } catch (err) {
+    console.error("vsdb export copy failed:", err);
+  }
 }
-
 function onExportFileClick(): void {
   const input = readExportInput();
   if (!input) return;
-  const text = serializeExport(
-    input.format,
-    input.columns,
-    input.rows,
-    {
-      includeHeader: input.includeHeader,
-      tableName: input.tableName,
-      pkColumns: input.pkColumns,
-      selectedRows: input.selectedRows,
-    },
-  );
-  postToHost({ type: "exportFile", format: input.format, text });
+  // Same defensive contract as onExportCopyClick — see comment there.
+  try {
+    const text = serializeExport(
+      input.format,
+      input.columns,
+      input.rows,
+      {
+        includeHeader: input.includeHeader,
+        tableName: input.tableName,
+        pkColumns: input.pkColumns,
+        selectedRows: input.selectedRows,
+      },
+    );
+    postToHost({ type: "exportFile", format: input.format, text });
+  } catch (err) {
+    console.error("vsdb export file failed:", err);
+  }
 }
 
 function copySelectionToHost(): void {

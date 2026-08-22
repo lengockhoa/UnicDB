@@ -338,9 +338,17 @@ export function formatCell(v: unknown): string {
 // what they export.
 
 /**
- * Quote-escape for SQL string literals. Single-quotes are doubled per
- * ANSI SQL. Embedded `\n` → escape sequence so a SQL viewer renders the
- * break; the round-trippable literal is the host's concern, not ours.
+ * Quote-escape for SQL string literals.
+ *
+ * PORTABILITY (Fix R1): only single-quote is doubled. Backslash and the
+ * C-style control escapes (`\n`, `\r`, `\t`) are NOT applied — PostgreSQL
+ * (default standard_conforming_strings=on) and SQL Server treat backslash
+ * literally, so pre-fix escaping silently corrupted data on those DBs
+ * (a value `a\b` exported as `'a\\b'` and inserted `a\\b` instead of
+ * `a\b`). MySQL interprets backslash escapes, but a non-escaped
+ * portable literal is also valid there. Newlines / tabs / CRs are
+ * embedded raw inside the quoted string — portable across PG, MSSQL,
+ * MySQL. The .sql file is round-trippable without backslash-mangling.
  */
 export function sqlLiteral(v: unknown): string {
   if (v === null || v === undefined) return "NULL";
@@ -352,14 +360,8 @@ export function sqlLiteral(v: unknown): string {
   if (typeof v === "bigint") return v.toString();
   if (v instanceof Date) return `'${v.toISOString().replace(/'/g, "''")}'`;
   const s = String(v);
-  // Escape backslash + single-quote + newline/tab/carriage-return.
-  const escaped = s
-    .replace(/\\/g, "\\\\")
-    .replace(/'/g, "''")
-    .replace(/\n/g, "\\n")
-    .replace(/\r/g, "\\r")
-    .replace(/\t/g, "\\t");
-  return `'${escaped}'`;
+  // Only single-quote doubling — no backslash / control-char escapes.
+  return `'${s.replace(/'/g, "''")}'`;
 }
 
 /** CSV escape per RFC4180: if the cell contains `,`, `"`, `\r`, or `\n`,
@@ -444,7 +446,15 @@ export function serializeCsv(
   return out.join("\n");
 }
 
-/** Serialize to XML — root `<rows>` with one `<row>` per record. */
+/** Serialize to XML — root `<rows>` with one `<row>` per record.
+ *
+ * Fix R1: column names live in a `name` attribute on a `<col>` wrapper,
+ * never as a raw element tag. The source column names from
+ * `SELECT ... AS "..."` can contain spaces, start with a digit, or use
+ * other characters that are NOT valid in an XML Name — interpolating
+ * them as raw tags yields malformed XML. The `name` attribute is the
+ * only place a raw string is rendered, and its content is XML-escaped
+ * like the cell value. */
 export function serializeXml(
   columns: string[],
   rows: unknown[][],
@@ -454,7 +464,7 @@ export function serializeXml(
   const body = rows
     .map((row) => {
       const cells = columns
-        .map((c, j) => `<${c}>${xmlEscape(formatCell(row[j] ?? null))}</${c}>`)
+        .map((c, j) => `<col name="${xmlEscape(c)}">${xmlEscape(formatCell(row[j] ?? null))}</col>`)
         .join("");
       return `<row>${cells}</row>`;
     })
@@ -494,25 +504,27 @@ export function serializeSqlInserts(
     .join("\n");
 }
 
-/** Serialize to UPDATE statements — SET on non-PK columns, WHERE on PK. */
+/** Serialize to UPDATE statements — SET on non-PK columns, WHERE on PK.
+ *
+ * Fix R1: when `pkColumns` is empty, do NOT throw. The webview's
+ * Copy / Export-to-file click handlers used to die silently in this
+ * case because there is no PK metadata source until TASK-503 lands.
+ * Instead, degrade to the documented fallback: treat ALL columns as
+ * the key (same semantics as `serializeWhereClause` with empty PK).
+ * That gives an UPDATE that targets a single row by its full row
+ * fingerprint — safe and round-trippable. When every column is a PK
+ * (PK list covers the whole schema), the SET list is empty; the
+ * implementation emits `WHERE (all cols)` and skips SET, instead of
+ * throwing. */
 export function serializeSqlUpdates(
   columns: string[],
   rows: unknown[][],
   opts: SerializeOptions,
 ): string {
   if (rows.length === 0) return "";
-  if (opts.pkColumns.length === 0) {
-    throw new Error(
-      "serializeSqlUpdates: pkColumns must be non-empty (no PK → use sql-where)",
-    );
-  }
-  const pkSet = new Set(opts.pkColumns);
+  const pkCols = opts.pkColumns.length > 0 ? opts.pkColumns : columns;
+  const pkSet = new Set(pkCols);
   const setCols = columns.filter((c) => !pkSet.has(c));
-  if (setCols.length === 0) {
-    throw new Error(
-      "serializeSqlUpdates: every column is a PK — nothing to SET",
-    );
-  }
   return rows
     .map((row) => {
       const setClause = setCols
@@ -521,13 +533,21 @@ export function serializeSqlUpdates(
           return `${c}=${sqlLiteral(row[i])}`;
         })
         .join(", ");
-      const whereClause = opts.pkColumns
+      // Wrap WHERE in parens only on the empty-PK fallback (SET is empty
+      // too) so the SQL is still visually unambiguous. With a real PK
+      // the SET clause distinguishes the UPDATE so plain `WHERE col=val`
+      // reads cleaner.
+      const whereClause = pkCols
         .map((c) => {
           const i = columns.indexOf(c);
           return `${c}=${sqlLiteral(row[i])}`;
         })
         .join(" AND ");
-      return `UPDATE ${opts.tableName} SET ${setClause} WHERE ${whereClause};`;
+      const setPart = setClause ? ` SET ${setClause}` : "";
+      const wherePart = setClause
+        ? ` WHERE ${whereClause}`
+        : ` WHERE (${whereClause})`;
+      return `UPDATE ${opts.tableName}${setPart}${wherePart};`;
     })
     .join("\n");
 }
@@ -744,7 +764,6 @@ export function applyPasteToDirty(
     // grid's rowCount even though `r < n` (= rowCount). The old formula
     // silently stamped into non-existent rows. Drop the write instead.
     if (!targetRowIds && targetRow >= rowCount) continue;
-    if (targetRow < 0) continue;
     const row = parsed[r];
     for (let c = 0; c < row.length; c++) {
       const targetCol = anchorCol + c;

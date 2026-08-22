@@ -248,7 +248,15 @@ export class ResultsPanel {
           : { [format.toUpperCase()]: [ext], "All Files": ["*"] },
     });
     if (!uri) return; // user cancelled
-    await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(text));
+    // Fix R1 minor: catch rejected workspace.fs.writeFile (permissions,
+    // dropped network path, etc.) so the failure surfaces as a user
+    // notification instead of an unhandled promise rejection.
+    try {
+      await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(text));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      void vscode.window.showErrorMessage(`Failed to write export: ${msg}`);
+    }
   }
 
 

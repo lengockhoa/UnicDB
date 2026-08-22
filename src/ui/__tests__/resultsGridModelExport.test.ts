@@ -64,7 +64,7 @@ describe("serializeCsv", () => {
 
 // ---- 3. serializeXml -------------------------------------------------------
 describe("serializeXml", () => {
-  it("3. well-formed XML, `&<>` escaped", () => {
+  it("3. well-formed XML, `&<>` escaped — col wrapper with name attribute", () => {
     const cols = ["id", "msg"];
     const rows: unknown[][] = [
       [1, "a&b<c>d"],
@@ -76,8 +76,10 @@ describe("serializeXml", () => {
     });
     expect(out.startsWith('<?xml version="1.0" encoding="UTF-8"?>')).toBe(true);
     expect(out).toContain("<row>");
-    expect(out).toContain("<id>1</id>");
-    expect(out).toContain("<msg>a&amp;b&lt;c&gt;d</msg>");
+    // R1: column names live in `name` attributes on a <col> wrapper to
+    // guarantee well-formed XML regardless of the source alias.
+    expect(out).toContain('<col name="id">1</col>');
+    expect(out).toContain('<col name="msg">a&amp;b&lt;c&gt;d</col>');
     expect(out.trim().endsWith("</rows>")).toBe(true);
   });
 });
@@ -100,13 +102,13 @@ describe("serializeSqlInserts", () => {
       includeHeader: true,
       tableName: "users",
     });
+    // R1 portable literals: newline is embedded raw, backslash passes through.
     expect(out).toBe(
       "INSERT INTO users (id, name, active) VALUES (1, 'alpha', TRUE);\n" +
         "INSERT INTO users (id, name, active) VALUES (2, 'beta, \"q\"', FALSE);\n" +
-        "INSERT INTO users (id, name, active) VALUES (3, 'line\\nbreak', NULL);",
+        "INSERT INTO users (id, name, active) VALUES (3, 'line\nbreak', NULL);",
     );
   });
-
   it("6. multirow INSERT — 1 INSERT nhiều tuple groups", () => {
     const out = serializeSqlInserts(COLS, ROWS, {
       ...NO_OPT,
@@ -114,14 +116,13 @@ describe("serializeSqlInserts", () => {
       tableName: "users",
       multirow: true,
     });
+    // R1 portable literals: newline is embedded raw.
     expect(out).toBe(
       "INSERT INTO users (id, name, active) VALUES " +
-        "(1, 'alpha', TRUE), (2, 'beta, \"q\"', FALSE), (3, 'line\\nbreak', NULL);",
+        "(1, 'alpha', TRUE), (2, 'beta, \"q\"', FALSE), (3, 'line\nbreak', NULL);",
     );
   });
 });
-
-// ---- 7. serializeSqlUpdates -------------------------------------------------
 describe("serializeSqlUpdates", () => {
   it("7. UPDATE — `SET ...` theo non-PK cols, `WHERE` theo PK", () => {
     const out = serializeSqlUpdates(COLS, ROWS, {
@@ -130,14 +131,18 @@ describe("serializeSqlUpdates", () => {
       tableName: "users",
       pkColumns: ["id"],
     });
+    // R1 portable literals: newline is embedded raw.
     expect(out).toBe(
       "UPDATE users SET name='alpha', active=TRUE WHERE id=1;\n" +
         "UPDATE users SET name='beta, \"q\"', active=FALSE WHERE id=2;\n" +
-        "UPDATE users SET name='line\\nbreak', active=NULL WHERE id=3;",
+        "UPDATE users SET name='line\nbreak', active=NULL WHERE id=3;",
     );
   });
 
-  it("7b. UPDATE with no PK columns → throws (caller must supply PK)", () => {
+  // R1: empty pkColumns no longer throws. It degrades to a per-row
+  // all-columns WHERE (same fallback as sql-where). The contract is:
+  // the call must succeed and reference the table name.
+  it("7b. UPDATE with no PK columns → degrades to all-cols WHERE (no throw)", () => {
     expect(() =>
       serializeSqlUpdates(COLS, ROWS, {
         ...NO_OPT,
@@ -145,7 +150,17 @@ describe("serializeSqlUpdates", () => {
         tableName: "users",
         pkColumns: [],
       }),
-    ).toThrow(/pk/i);
+    ).not.toThrow();
+    const out = serializeSqlUpdates(COLS, ROWS, {
+      ...NO_OPT,
+      includeHeader: true,
+      tableName: "users",
+      pkColumns: [],
+    });
+    expect(out).toContain("UPDATE users");
+    // With empty PK, all columns are treated as the key. SET would be empty
+    // so the implementation emits `WHERE (all cols)` instead of a no-op SET.
+    expect(out).toContain("WHERE (id=1 AND name='alpha' AND active=TRUE)");
   });
 });
 
@@ -162,7 +177,8 @@ describe("serializeWhereClause", () => {
         [3, "line\nbreak", null],
       ],
     });
-    expect(out).toBe("WHERE (id=1 AND name='alpha') OR (id=3 AND name='line\\nbreak')");
+    // R1 portable literals: newline embedded raw.
+    expect(out).toBe("WHERE (id=1 AND name='alpha') OR (id=3 AND name='line\nbreak')");
   });
 
   it("8b. no PK columns → fallback to all-columns joined AND (documented)", () => {
@@ -301,5 +317,139 @@ describe("serializeExport dispatch", () => {
       });
       expect(out.length, `fmt=${fmt}`).toBeGreaterThan(0);
     }
+  });
+});
+
+// ---- Fix Round 1: portable sqlLiteral (no backslash / control-char escape) -
+
+describe("sqlLiteral — portable ANSI SQL (Fix R1)", () => {
+  it("R1.sqlLiteral.1: backslash is NOT escaped — passes through verbatim", () => {
+    // PG (standard_conforming_strings=on) and MSSQL treat backslash
+    // literally; pre-fix escaping `\` → `\\` corrupted data. Portable
+    // output is the raw character inside the quoted literal.
+    expect(sqlLiteral("a\\b")).toBe("'a\\b'");
+    expect(sqlLiteral("C:\\path")).toBe("'C:\\path'");
+  });
+
+  it("R1.sqlLiteral.2: literal newline is embedded raw inside the string", () => {
+    // A newline inside a SQL string literal is portable across PG, MSSQL,
+    // MySQL — the only consumer that needs an escape sequence is the
+    // client reading the .sql file. The .sql file is round-trippable
+    // without backslash-mangling.
+    expect(sqlLiteral("line\nbreak")).toBe("'line\nbreak'");
+    expect(sqlLiteral("with\ttab")).toBe("'with\ttab'");
+  });
+
+  it("R1.sqlLiteral.3: carriage return also passes through raw", () => {
+    expect(sqlLiteral("a\rb")).toBe("'a\rb'");
+  });
+
+  it("R1.sqlLiteral.4: single-quote doubling is still applied", () => {
+    expect(sqlLiteral("q'uote")).toBe("'q''uote'");
+  });
+
+  it("R1.sqlLiteral.5: round-trip with both backslash and newline together", () => {
+    const v = "a\\b\nc";
+    expect(sqlLiteral(v)).toBe("'a\\b\nc'");
+  });
+});
+
+// ---- Fix Round 1: sql-updates degrades safely on empty PK ---------------
+
+describe("serializeSqlUpdates — empty PK degrades safely (Fix R1)", () => {
+  it("R1.updates.1: empty pkColumns does NOT throw — falls back to all-cols WHERE", () => {
+    // Until TASK-503 wires real PK metadata into the webview, sql-updates
+    // must not silently throw on the Copy/Export-to-file click handlers.
+    // Degrade: WHERE uses ALL columns (same fallback as sql-where). SET
+    // is empty because every column is in the key, so the implementation
+    // emits just `UPDATE users WHERE (all cols)` without the SET keyword.
+    expect(() =>
+      serializeSqlUpdates(COLS, ROWS, {
+        includeHeader: true,
+        tableName: "users",
+        pkColumns: [],
+      }),
+    ).not.toThrow();
+    const out = serializeSqlUpdates(COLS, ROWS, {
+      includeHeader: true,
+      tableName: "users",
+      pkColumns: [],
+    });
+    expect(out).toContain("UPDATE users");
+    expect(out).toContain("WHERE (id=1 AND name='alpha' AND active=TRUE)");
+  });
+
+  it("R1.updates.2: with PK, output uses PK in WHERE", () => {
+    const out = serializeSqlUpdates(COLS, ROWS, {
+      includeHeader: true,
+      tableName: "users",
+      pkColumns: ["id"],
+    });
+    expect(out).toContain("WHERE id=1");
+    expect(out).toContain("WHERE id=2");
+  });
+});
+
+// ---- Fix Round 1: serializeXml uses safe tag names ----------------------
+
+describe("serializeXml — sanitizes tag names (Fix R1)", () => {
+  it("R1.xml.1: aliased column with space — column NAME preserved in attribute", () => {
+    const cols = ["id", "total count"];
+    const rows: unknown[][] = [
+      [1, 42],
+    ];
+    const out = serializeXml(cols, rows, {
+      includeHeader: true,
+      tableName: "t",
+      pkColumns: [],
+    });
+    // Tag must NOT be "total count" — that's invalid XML. The column NAME
+    // is preserved as an attribute on a safe <col> wrapper.
+    expect(out).not.toContain("<total count>");
+    expect(out).not.toContain("</total count>");
+    expect(out).toContain('<col name="total count">42</col>');
+  });
+
+  it("R1.xml.2: column starting with a digit — name lives in attribute, never in tag", () => {
+    const cols = ["id", "2nd"];
+    const rows: unknown[][] = [[1, "x"]];
+    const out = serializeXml(cols, rows, {
+      includeHeader: true,
+      tableName: "t",
+      pkColumns: [],
+    });
+    // Consistent design: column NAME always in the `name` attribute on a
+    // safe <col> wrapper — never as a raw element tag (which would be
+    // invalid for names with spaces, digits, or special chars).
+    expect(out).toContain('<col name="2nd">x</col>');
+    expect(out).not.toMatch(/<2nd>/);
+  });
+
+  it("R1.xml.3: column with `count(*)` alias — name preserved as attr", () => {
+    const cols = ["id", "count(*)"];
+    const rows: unknown[][] = [[1, 5]];
+    const out = serializeXml(cols, rows, {
+      includeHeader: true,
+      tableName: "t",
+      pkColumns: [],
+    });
+    expect(out).toContain('<col name="count(*)">5</col>');
+    expect(out).not.toContain("<count(*)>");
+  });
+
+  it("R1.xml.4: well-formed XML — parses without error", () => {
+    const cols = ["id", "User Name", "2nd"];
+    const rows: unknown[][] = [[1, "a b", "v"]];
+    const out = serializeXml(cols, rows, {
+      includeHeader: true,
+      tableName: "t",
+      pkColumns: [],
+    });
+    // Sanity: opening + closing <col> tags balanced, no naked "User Name"
+    // or "2nd" as raw element name.
+    expect(out).toContain('<col name="User Name">a b</col>');
+    expect(out).toContain('<col name="2nd">v</col>');
+    expect(out).not.toMatch(/<User Name>/);
+    expect(out).not.toMatch(/<2nd>/);
   });
 });
