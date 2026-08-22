@@ -157,12 +157,26 @@ function renderGrid(): void {
     container.appendChild(err);
     return;
   }
-
   if (!r.result) {
     const empty = document.createElement("div");
     empty.className = "vsdb-empty";
     empty.textContent = "No result.";
     container.appendChild(empty);
+    return;
+  }
+
+  // Non-SELECT (INSERT/UPDATE/DELETE/DDL): no columns/rows → hiển thị message
+  // kết quả nổi bật thay vì grid trống (DataGrip-style "1 row affected").
+  if (r.result.columns.length === 0 && r.result.rows.length === 0) {
+    const msg = document.createElement("div");
+    msg.className = "vsdb-ok-message";
+    const tag = r.result.commandTag ?? "OK";
+    const affected = r.result.rowCount ?? 0;
+    msg.textContent =
+      affected > 0
+        ? `✓ ${tag} — ${affected} row${affected === 1 ? "" : "s"} affected  ⏱ ${r.durationMs}ms`
+        : `✓ ${tag}  ⏱ ${r.durationMs}ms`;
+    container.appendChild(msg);
     return;
   }
 

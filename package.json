@@ -2,7 +2,7 @@
   "name": "vsdb",
   "displayName": "VSDB — Run SQL from VS Code",
   "description": "Run SQL against PostgreSQL, MySQL/MariaDB and SQL Server directly from VS Code. Cmd+Enter (macOS) / Ctrl+Enter (Win/Linux) executes the selected statement.",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "publisher": "lengockhoa",
   "engines": {
     "vscode": "^1.75.0"
@@ -182,6 +182,15 @@
         {
           "id": "vsdb.schemaTree",
           "name": "Schema Explorer"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vsdb",
+          "title": "VSDB",
+          "icon": "media/vsdb.svg"
         }
       ]
     },

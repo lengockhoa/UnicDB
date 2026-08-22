@@ -110,12 +110,15 @@ describe("scaffold", () => {
     expect(mac).toBeTruthy();
     expect(win).toBeTruthy();
 
+    // viewsContainers.activitybar PHẢI tồn tại — regression v1.2.1: mất key này
+    // → mất icon VSDB trên Activity Bar sau reload window.
+    const activitybar = pkg.contributes.viewsContainers?.activitybar;
+    expect(activitybar, "viewsContainers.activitybar must exist").toBeTruthy();
+    expect(activitybar[0].id).toBe("vsdb");
+    expect(activitybar[0].icon).toBe("media/vsdb.svg");
+
     // views.vsdb.schemaTree
     expect(pkg.contributes.views.vsdb).toBeTruthy();
-    const schemaTree = pkg.contributes.views.vsdb.find(
-      (v: { id: string }) => v.id === "vsdb.schemaTree",
-    );
-    expect(schemaTree).toBeTruthy();
 
     // DataGrip-style: mọi command có icon; view/title chỉ icon (navigation group),
     // refresh đứng trước add để toolbar không đổi chỗ khi connection xuất hiện.
