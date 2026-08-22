@@ -222,18 +222,12 @@ describeIfBundle("webview/main.ts bundle (TASK-203)", () => {
       }),
     );
     void received;
-    const allInputs = document.querySelectorAll(".vsdb-search-input");
-    console.log("DEBUG inputs:", allInputs.length, "parent root children count:", document.getElementById("vsdb-root")?.children.length);
     const input = root.querySelector(".vsdb-search-input") as HTMLInputElement;
     expect(input).toBeTruthy();
-    console.log("DEBUG input listeners via inline:", input.outerHTML);
-    console.log("DEBUG input value before:", input.value);
-    input.value = "beta";
     input.value = "beta";
     input.dispatchEvent(new Event("input", { bubbles: true }));
     const api = getGridApi();
     expect(api).toBeTruthy();
-    console.log("DEBUG getDisplayedRowCount:", api!.getDisplayedRowCount());
     expect(api!.getDisplayedRowCount()).toBe(1);
     const footer = root.querySelector(".vsdb-grid-footer") as HTMLElement;
     expect(footer).toBeTruthy();
@@ -474,5 +468,88 @@ describeIfBundle("webview/main.ts bundle (TASK-203)", () => {
     const err = root.querySelector(".vsdb-error") as HTMLElement;
     expect(err).toBeTruthy();
     expect(err.textContent).toContain("table not found");
+  });
+
+  itIfBundle("8. regression (CRITICAL 1) — after second render cycle, .vsdb-grid-host still contains .ag-root and rows reflect latest state", () => {
+    // Reproduces the bug R4.5 reviewer flagged: render() wiped the DOM root
+    // on every message, detaching the AG Grid GUI after the first render.
+    // After a busy toggle + a state append, the live grid host must still
+    // contain [class*=ag-root] and the displayed row count must reflect
+    // the latest data — not 0 and not stale.
+    const { root } = loadBundle();
+    dispatchState(
+      selectState({
+        results: [
+          {
+            index: 0,
+            sql: "SELECT * FROM t",
+            status: "done",
+            result: {
+              columns: ["id", "name"],
+              rows: [
+                [1, "alpha"],
+                [2, "beta"],
+                [3, "gamma"],
+              ],
+              rowCount: 3,
+              durationMs: 1,
+            },
+            durationMs: 1,
+          },
+        ],
+      }),
+    );
+    const host1 = root.querySelector(".vsdb-grid-host") as HTMLElement;
+    expect(host1).toBeTruthy();
+    expect(host1.querySelector('[class*="ag-root"]')).toBeTruthy();
+    expect(getGridApi()!.getDisplayedRowCount()).toBe(3);
+
+    // Second render: busy toggle (fires on most query lifecycles).
+    window.dispatchEvent(
+      new MessageEvent("message", { data: { type: "busy", busy: true } }),
+    );
+    const host2 = root.querySelector(".vsdb-grid-host") as HTMLElement;
+    expect(host2).toBeTruthy();
+    expect(host2.querySelector('[class*="ag-root"]')).toBeTruthy();
+    // Grid still mounted and still shows the same rows.
+    expect(getGridApi()!.getDisplayedRowCount()).toBe(3);
+
+    // Third render: state with more rows (append delta path).
+    dispatchState(
+      selectState({
+        results: [
+          {
+            index: 0,
+            sql: "SELECT * FROM t",
+            status: "done",
+            result: {
+              columns: ["id", "name"],
+              rows: [
+                [1, "alpha"],
+                [2, "beta"],
+                [3, "gamma"],
+                [4, "delta"],
+              ],
+              rowCount: 4,
+              durationMs: 2,
+            },
+            durationMs: 2,
+          },
+        ],
+      }),
+    );
+    const host3 = root.querySelector(".vsdb-grid-host") as HTMLElement;
+    expect(host3).toBeTruthy();
+    expect(host3.querySelector('[class*="ag-root"]')).toBeTruthy();
+    expect(getGridApi()!.getDisplayedRowCount()).toBe(4);
+
+    // Fourth render: busy off (another common toggle).
+    window.dispatchEvent(
+      new MessageEvent("message", { data: { type: "busy", busy: false } }),
+    );
+    const host4 = root.querySelector(".vsdb-grid-host") as HTMLElement;
+    expect(host4).toBeTruthy();
+    expect(host4.querySelector('[class*="ag-root"]')).toBeTruthy();
+    expect(getGridApi()!.getDisplayedRowCount()).toBe(4);
   });
 });

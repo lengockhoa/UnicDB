@@ -110,3 +110,34 @@ FINDINGS:
     - .vscodeignore:38-44 — không exclude CLAUDE.md, AGENTS.md, opencode.json, .omp/**; rebuild từ main repo sinh vsix 26 files kèm agent files (đã verify bằng rebuild — dist artifact của executor sạch 12 files vì worktree không có các file đó). Sửa: thêm các pattern này vào .vscodeignore trước khi orchestrator rebuild.
 NEXT_STATUS_FOR_INDEX: changes_requested
 NOTES: Version bump + packaging + manifest smoke đều PASS khi re-run. Chỉ README edit là sai lệch so với task spec (delete thay vì add) — sửa 1 dòng là xong. Scratch test files là lỗi từ wave 2, đề nghị orchestrator route sang TASK-203 fix round.
+
+## Executor Report (fix round 1)
+EXECUTOR_TOOL: omp (claude-code)
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: Fix205R1
+Worktree: /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-205fix
+Fixes:
+  1) README.md — restored the **Refresh metadata** bullet (vsdb.refreshSchema still ships) + added **Results grid (AG Grid Community)** as a separate line. Diff = +1 line, no deletes of pre-existing bullets.
+  2) README.md line 77 — "row count hiển thị ở status bar" → "row count hiển thị ở footer của panel" (row count lives in `.vsdb-grid-footer` at webview/main.ts:521, not VS Code status bar).
+  3) .vscodeignore — added `.omp/**`, `CLAUDE.md`, `AGENTS.md`, `opencode.json` exclusions. Kept existing `.claude/**`, `.codex/**`, `.ukit/**`, `.antigravity/**` and `docs/**` (already covers AI_HANDOFF). Defensive: even when these agent files are present at the repo root, vsce packaging excludes them.
+  (Scratch tests _qf/_quick/_input left for TASK-203 — not touched.)
+Verification Output:
+  $ node -e version + contributes
+  version: 1.3.0 | keys: commands,keybindings,menus,views,viewsContainers,viewsWelcome,configuration
+  $ npx tsc --noEmit
+  (no output)  tsc-exit=0
+  $ npx vitest run --reporter=basic
+  Test Files  21 passed (21)
+       Tests  204 passed (204)
+  $ npm run compile && npx @vscode/vsce package --no-dependencies -o dist/
+  DONE  Packaged: dist/vsdb-1.3.0.vsix (12 files, 1.53 MB)
+  $ ls -la dist/vsdb-1.3.0.vsix
+  -rw-r--r-- 1 lenk staff 1602234 Aug 22 13:54 dist/vsdb-1.3.0.vsix
+  $ unzip -l dist/vsdb-1.3.0.vsix | grep -iE 'claude|agents|opencode|omp|handoff'
+  (no output → 0 matches)
+  Defensive leak test: staged CLAUDE.md, AGENTS.md, opencode.json, .omp/ in worktree, repackaged → vsix still 12 files, zero agent artifacts inside, then cleaned up.
+  $ grep -n 'Refresh metadata\|footer của panel' README.md
+  76:- **Refresh metadata**: nút refresh trên title bar của panel **VSDB** ...
+  77:- **Results grid (AG Grid Community)**: ... row count hiển thị ở footer của panel.
+Status: PASS
+Note: no git ops. dist/vsdb-1.3.0.vsix preserved on disk for orchestrator. Staged agent files used for defensive test cleaned up. Hand-off → reviewer.

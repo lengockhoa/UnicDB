@@ -4,22 +4,34 @@
 // Message protocol: see src/ui/messages.ts (mirror of types).
 //
 // TASK-203: thay VirtualGrid bằng AG Grid Community (client-side row model +
-// applyTransaction append). Pure-logic model đã dời sang src/ui/resultsGridModel.ts.
+// applyTransaction append). Pure-logic model đã dới sang src/ui/resultsGridModel.ts.
+//
+// Render lifecycle (TASK-203 R4.5 fix round 1):
+//   - Persistent DOM containers (header, toolbar, tabs strip, panel area) are
+//     created ONCE on first render. Subsequent renders only update text/state
+//     and swap the panel content (grid / messages / empty).
+//   - The AG Grid host element is persistent. The grid instance is created once
+//     on the first grid-render and re-used across re-renders via
+//     setGridOption("rowData" | "columnDefs") + applyTransaction (append).
+//   - Tab clicks clear only the active panel slot, never the grid host.
+//   - The panel slot is wiped (innerHTML="") ONLY when leaving the grid (e.g.
+//     switching to Messages) — the grid host is detached and re-attached as a
+//     single child of the panel rather than destroyed, so the AG Grid instance
+//     stays in the live DOM.
 import "ag-grid-community/styles/ag-grid.css";
 import "ag-grid-community/styles/ag-theme-quartz.css";
 import "./styles.css";
 import {
   createGrid,
-  getGridApi,
   AllCommunityModule,
   ModuleRegistry,
+  type BodyScrollEvent,
 } from "ag-grid-community";
 import type { GridApi } from "ag-grid-community";
 import {
   inferColumns,
   createResultsGridModel,
   selectionToText,
-  shouldResetGrid,
   footerText,
   formatCell,
   type ColumnSpec,
@@ -72,10 +84,7 @@ type WebviewMsg = LoadMoreMsg | CancelMsg | CopyMsg | ReadyMsg;
 declare const acquireVsCodeApi: undefined | (() => unknown);
 const vscodeApi = (typeof acquireVsCodeApi === "function" ? acquireVsCodeApi() : null) as
   | { postMessage: (msg: unknown) => void }
-/** Currently rendered footer element (for quick-filter live updates). */
-let currentFooter: HTMLElement | null = null;
-/** Currently rendered statement (for footer duration lookup). */
-let currentStatement: StatementResult | null = null;
+  | null;
 
 function postToHost(msg: WebviewMsg): void {
   if (vscodeApi) {
@@ -98,6 +107,10 @@ let activeTab = 0;
  *  reset vs append vs tab-switch. */
 let lastRenderedIndex = -1;
 let lastResultStatus: StatementResult["status"] | null = null;
+/** Last column count seen for the active statement (used to detect
+ *  column-set changes for the same statement, not row count — row count is
+ *  handled by append delta). */
+let lastColumnCount = -1;
 /** AG Grid instance (one per webview lifecycle — re-used across re-renders). */
 let gridApi: GridApi | null = null;
 /** Per-statement loadMore gate model. Keyed by statement index. */
@@ -109,7 +122,41 @@ const statementRows = new Map<number, unknown[][]>();
 let loadMoreInFlight = false;
 let quickFilterActive = false;
 
-function rowsToObjects(rows: unknown[][], specs: readonly ColumnSpec[]): Record<string, unknown>[] {
+// ---- Persistent DOM (created once on first render) -------------------------
+
+interface PersistentDom {
+  header: HTMLDivElement;
+  toolbar: HTMLDivElement;
+  cancelBtn: HTMLButtonElement;
+  searchInput: HTMLInputElement;
+  tabs: HTMLDivElement;
+  /** Slot where the active panel renders. The grid host and messages live
+   *  here. Cleared and re-populated on tab switch / state change, but the
+   *  grid host (once created) is preserved as a single child. */
+  panel: HTMLDivElement;
+  /** Persistent AG Grid host element. Created once. The AG Grid instance
+   *  mounts onto this element and stays attached across re-renders. */
+  gridHost: HTMLDivElement;
+  /** Persistent grid footer. */
+  gridFooter: HTMLDivElement;
+  /** Wraps gridHost + gridFooter in a `.vsdb-grid-host` flex column. */
+  gridWrap: HTMLDivElement;
+}
+let dom: PersistentDom | null = null;
+let firstRender = true;
+
+// Currently displayed footer/statement (for quick-filter live updates).
+function setCurrentStatement(r: StatementResult | null): void {
+  currentStatement = r;
+  if (dom) currentFooter = dom.gridFooter;
+}
+let currentFooter: HTMLElement | null = null;
+let currentStatement: StatementResult | null = null;
+
+function rowsToObjects(
+  rows: unknown[][],
+  specs: readonly ColumnSpec[],
+): Record<string, unknown>[] {
   return rows.map((row) => {
     const obj: Record<string, unknown> = { __select__: false };
     specs.forEach((s, i) => {
@@ -118,30 +165,47 @@ function rowsToObjects(rows: unknown[][], specs: readonly ColumnSpec[]): Record<
     return obj;
   });
 }
+
 // ---- Render ----------------------------------------------------------------
 
 function render(): void {
-  currentFooter = null;
-  currentStatement = null;
-  root.innerHTML = "";
+  if (firstRender) {
+    root.innerHTML = "";
+    dom = buildPersistentDom();
+    root.appendChild(dom.header);
+    root.appendChild(dom.toolbar);
+    root.appendChild(dom.tabs);
+    root.appendChild(dom.panel);
+    firstRender = false;
+  }
+  if (!dom) return;
 
-  // Header.
-  const headerEl = document.createElement("div");
-  headerEl.className = "vsdb-header";
-  headerEl.textContent = headerText || "VSDB Results";
-  root.appendChild(headerEl);
+  // Header text update.
+  dom.header.textContent = headerText || "VSDB Results";
 
-  // Toolbar.
+  // Cancel button state.
+  dom.cancelBtn.disabled = !busy;
+
+  // Tabs — rebuild only the buttons (cheap; tabs length changes with results).
+  rebuildTabs(dom.tabs);
+
+  // Panel content — re-render based on active tab.
+  renderActivePanel();
+}
+
+function buildPersistentDom(): PersistentDom {
+  const header = document.createElement("div");
+  header.className = "vsdb-header";
+
   const toolbar = document.createElement("div");
   toolbar.className = "vsdb-toolbar";
+
   const cancelBtn = document.createElement("button");
   cancelBtn.textContent = "Cancel";
   cancelBtn.className = "vsdb-btn vsdb-btn-danger";
-  cancelBtn.disabled = !busy;
   cancelBtn.addEventListener("click", () => postToHost({ type: "cancel" }));
   toolbar.appendChild(cancelBtn);
 
-  // Quick filter input (only relevant when results have a grid).
   const searchInput = document.createElement("input");
   searchInput.type = "text";
   searchInput.placeholder = "Search…";
@@ -156,25 +220,76 @@ function render(): void {
       } catch {
         gridApi.refreshClientSideRowModel();
       }
-      try { gridApi.onFilterChanged(); } catch { /* older API */ }
-      updateFooters();
+      try {
+        gridApi.onFilterChanged();
+      } catch {
+        /* older API */
+      }
+      updateFooterNow();
     }
   });
   toolbar.appendChild(searchInput);
 
-  root.appendChild(toolbar);
+  const tabs = document.createElement("div");
+  tabs.className = "vsdb-tabs";
 
-  if (results.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "vsdb-empty";
-    empty.textContent = busy ? "Running…" : "No results yet.";
-    root.appendChild(empty);
-    return;
-  }
+  const panel = document.createElement("div");
+  panel.className = "vsdb-panel";
 
-  // Tabs.
-  const tabsEl = document.createElement("div");
-  tabsEl.className = "vsdb-tabs";
+  // Persistent grid wrapper + AG Grid host + footer. The AG Grid mounts on
+  // gridHost and is NEVER detached once created. The wrapper survives every
+  // re-render so the grid DOM stays live.
+  const gridWrap = document.createElement("div");
+  gridWrap.className = "vsdb-grid-host";
+  gridWrap.style.display = "none"; // hidden until first grid render
+  // Listen on the outer container so Ctrl/Cmd+C is caught whether the event
+  // is dispatched on the container itself (test) or bubbled from inner AG Grid
+  // cells (real interaction). useCapture=true ensures we see the event before
+  // AG Grid / browser default handling swallows it.
+  gridWrap.addEventListener(
+    "keydown",
+    (ev) => {
+      if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "c") {
+        copySelectionToHost();
+      }
+    },
+    true,
+  );
+
+  const gridHost = document.createElement("div");
+  gridHost.className = "ag-theme-quartz";
+  gridHost.style.flex = "1";
+  gridHost.style.width = "100%";
+  gridHost.style.minHeight = "0";
+  gridWrap.appendChild(gridHost);
+
+  const gridFooter = document.createElement("div");
+  gridFooter.className = "vsdb-grid-footer";
+  gridWrap.appendChild(gridFooter);
+
+
+  return {
+    header,
+    toolbar,
+    cancelBtn,
+    searchInput,
+    tabs,
+    panel,
+    gridHost,
+    gridFooter,
+    gridWrap,
+  };
+}
+
+function tabBadge(r: StatementResult): string {
+  if (r.status === "done") return "✓";
+  if (r.status === "error") return "✗";
+  if (r.status === "cancelled") return "⌀";
+  return "…";
+}
+
+function rebuildTabs(tabsEl: HTMLDivElement): void {
+  tabsEl.innerHTML = "";
   results.forEach((r, i) => {
     const tab = document.createElement("button");
     tab.className = "vsdb-tab" + (i === activeTab ? " vsdb-tab-active" : "");
@@ -182,9 +297,12 @@ function render(): void {
     if (r.status === "cancelled") tab.classList.add("vsdb-tab-cancelled");
     tab.textContent = `Statement ${i + 1} ${tabBadge(r)}`;
     tab.addEventListener("click", () => {
+      if (activeTab === i) return;
       activeTab = i;
       // Tab switch IS a legitimate reset (different statement context).
       loadMoreInFlight = false;
+      // Wipe transient state (the panel will be re-populated), but keep the
+      // grid host wrapper alive in the panel so the AG Grid stays mounted.
       render();
     });
     tabsEl.appendChild(tab);
@@ -195,66 +313,84 @@ function render(): void {
   const hasErrors = results.some((r) => r.status === "error");
   msgTab.textContent = `Messages${hasErrors ? " ⚠" : ""}`;
   msgTab.addEventListener("click", () => {
+    if (activeTab === results.length) return;
     activeTab = results.length;
     render();
   });
   tabsEl.appendChild(msgTab);
-  root.appendChild(tabsEl);
+}
 
-  // Active panel.
-  if (activeTab === results.length) {
-    renderMessages();
-  } else {
-    renderGrid();
+function renderActivePanel(): void {
+  if (!dom) return;
+  const panel = dom.panel;
+
+  if (results.length === 0) {
+    // Empty state — wipe panel and show placeholder.
+    teardownGridWrap();
+    panel.innerHTML = "";
+    const empty = document.createElement("div");
+    empty.className = "vsdb-empty";
+    empty.textContent = busy ? "Running…" : "No results yet.";
+    panel.appendChild(empty);
+    return;
   }
+
+  if (activeTab === results.length) {
+    // Messages tab — wipe panel, render messages.
+    teardownGridWrap();
+    panel.innerHTML = "";
+    renderMessagesInto(panel);
+    return;
+  }
+
+  // Statement grid tab — wipe panel and re-mount the persistent grid wrap.
+  // The grid wrap keeps its AG Grid child mounted on gridHost; re-attaching
+  // the wrap to the panel restores the grid GUI to the live DOM.
+  panel.innerHTML = "";
+  panel.appendChild(dom.gridWrap);
+  dom.gridWrap.style.display = "flex";
+  renderGrid();
 }
 
-function tabBadge(r: StatementResult): string {
-  if (r.status === "done") return "✓";
-  if (r.status === "error") return "✗";
-  if (r.status === "cancelled") return "⌀";
-  return "…";
+/** Hide the grid wrap when the user navigates away (to Messages or empty
+ *  state). The AG Grid instance is preserved on gridHost; we just don't
+ *  show the wrap. */
+function teardownGridWrap(): void {
+  if (!dom) return;
+  dom.gridWrap.style.display = "none";
+  setCurrentStatement(null);
 }
-
-// ---- Grid render -----------------------------------------------------------
 
 function renderGrid(): void {
+  if (!dom) return;
   const r = results[activeTab];
   if (!r) return;
-  const container = document.createElement("div");
-  container.className = "vsdb-grid-host";
-  // Listen on the outer container so Ctrl/Cmd+C is caught whether the event
-  // is dispatched on the container itself (test) or bubbled from inner AG Grid
-  // cells (real interaction). useCapture=true ensures we see the event before
-  // AG Grid / browser default handling swallows it.
-  container.addEventListener(
-    "keydown",
-    (ev) => {
-      if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "c") {
-        copySelectionToHost();
-      }
-    },
-    true,
-  );
-  root.appendChild(container);
+  // Reference the persistent elements (do NOT create new ones).
+  const container = dom.gridWrap;
+  const gridHost = dom.gridHost;
+  const footer = dom.gridFooter;
+  // Clear any non-grid children from the wrap (e.g. transient error/ok
+  // placeholder divs from a previous error/ok-message render). Keep gridHost
+  // + footer intact.
+  for (const child of Array.from(container.children)) {
+    if (child === gridHost || child === footer) continue;
+    container.removeChild(child);
+  }
 
   if (r.status === "error") {
+    // Error placeholder lives next to the grid host, not in place of it.
     const err = document.createElement("div");
     err.className = "vsdb-error";
     err.textContent = `Error: ${r.error ?? "unknown"}`;
-    container.appendChild(err);
+    container.insertBefore(err, gridHost);
+    setCurrentStatement(null);
     return;
   }
   if (!r.result) {
-    // Running / pending state with no result yet. Mark this as the latest
-    // render so the next terminal state (running→done/error) is detected as a
-    // statement reset (BUG 2 regression).
+    // Running / pending state with no result yet.
     lastRenderedIndex = activeTab;
     lastResultStatus = r.status;
-    const empty = document.createElement("div");
-    empty.className = "vsdb-empty";
-    empty.textContent = "No result.";
-    container.appendChild(empty);
+    setCurrentStatement(null);
     return;
   }
 
@@ -269,14 +405,13 @@ function renderGrid(): void {
       affected > 0
         ? `✓ ${tag} — ${affected} row${affected === 1 ? "" : "s"} affected  ⏱ ${r.durationMs}ms`
         : `✓ ${tag}  ⏱ ${r.durationMs}ms`;
-    container.appendChild(msg);
+    container.insertBefore(msg, gridHost);
+    setCurrentStatement(r);
     return;
   }
-  // Footer.
-  const footer = document.createElement("div");
-  footer.className = "vsdb-grid-footer";
-  currentFooter = footer;
-  currentStatement = r;
+
+  setCurrentStatement(r);
+
   // Compute columns from the result.
   const specs: ColumnSpec[] = inferColumns(r.result.columns, r.result.rows);
 
@@ -322,29 +457,20 @@ function renderGrid(): void {
     ...baseCols,
   ];
 
-  // Grid host element.
-  const gridHost = document.createElement("div");
-  gridHost.className = "ag-theme-quartz";
-  gridHost.style.flex = "1";
-  gridHost.style.width = "100%";
-  gridHost.style.minHeight = "0";
-  container.appendChild(gridHost);
-
   // Determine reset vs append:
-  //   - first render (no api yet) → reset
-  //   - tab switched → reset (caller set activeTab, we lost previous gridApi
-  //     for this statement; or we still have one — see logic below)
-  //   - same statement + status went running→terminal → reset (new query)
+  //   - first render (no api yet) → reset (create grid)
+  //   - tab switched → reset (destroy + recreate on same gridHost, since
+  //     columns may differ)
+  //   - same statement + status went running→terminal → reset
   //   - same statement + rows grew → append via applyTransaction
-  //   - otherwise → reset (rows shrunk or columns changed)
+  //   - same statement + columns changed → reset (columnDefs swap)
+  //   - otherwise → idempotent no-op
   const isFirstRender = !gridApi;
   const tabSwitched = lastRenderedIndex !== activeTab;
   const statementReset = lastResultStatus === "running" && r.status !== "running";
   const previousRows = statementRows.get(activeTab) ?? [];
   const rowsGrew = r.result.rows.length > previousRows.length;
-  const sameColumns =
-    specs.length === previousRows.length /* cheap check */ ||
-    (previousRows.length > 0 && previousRows.length > 0); // no-op sanity
+  const columnsChanged = specs.length !== lastColumnCount;
 
   const model = ensureModel(activeTab);
   const syncResult = model.sync(r.result.rows, activeTab, !!r.batched, {
@@ -352,54 +478,53 @@ function renderGrid(): void {
     loadedBefore: tabSwitched || statementReset ? 0 : previousRows.length,
   });
 
-  // Decide create vs reuse vs setRowData vs applyTransaction.
-  if (tabSwitched || statementReset || isFirstRender || syncResult.isReset) {
-    // Full reset: build new grid if needed, set columns + setRowData.
-    if (isFirstRender || tabSwitched) {
-      // Destroy previous grid before creating new one (when switching tab).
-      if (gridApi && tabSwitched) {
-        try {
-          gridApi.destroy();
-        } catch {
-          /* noop */
-        }
-        gridApi = null;
+  if (isFirstRender || tabSwitched) {
+    if (gridApi) {
+      // Tab switch: destroy old grid and recreate on the same persistent
+      // host with new columns. Destroying ensures the new grid sees fresh
+      // columnDefs (column defs are immutable after construction in v32+).
+      try {
+        gridApi.destroy();
+      } catch {
+        /* noop */
       }
-      if (!gridApi) {
-        gridApi = createGrid(gridHost, {
-          columnDefs: colDefs,
-          rowData: rowsToObjects(r.result.rows, specs),
-          rowSelection: {
-            mode: "multiRow",
-            checkboxes: false, // we render explicit checkbox column
-            headerCheckbox: false,
-            enableClickSelection: false,
-          },
-          enableBrowserTooltips: true,
-          suppressColumnVirtualisation: false,
-          rowHeight: 28,
-          headerHeight: 28,
-          floatingFiltersHeight: 28,
-          onCellKeyDown: (e) => {
-            const ev = (e as unknown as { event: KeyboardEvent }).event;
-            if (ev && (ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "c") {
-              copySelectionToHost();
-            }
-          },
-          onModelUpdated: () => updateFooter(footer, model, gridApi, r),
-          onBodyScroll: (e) => onBodyScroll(e, activeTab, model),
-        });
-        // Expose api on host for testing.
-        (gridHost as unknown as { __vsdbApi: GridApi }).__vsdbApi = gridApi;
-      }
-    } else if (statementReset && gridApi) {
-      // Statement reset (running→terminal) on an existing grid: must replace
-      // rowData so stale rows from the previous query are cleared.
-      gridApi.setGridOption("rowData", rowsToObjects(r.result.rows, specs));
+      gridApi = null;
     }
+    gridApi = createGrid(gridHost, {
+      columnDefs: colDefs,
+      rowData: rowsToObjects(r.result.rows, specs),
+      rowSelection: {
+        mode: "multiRow",
+        checkboxes: false,
+        headerCheckbox: false,
+        enableClickSelection: false,
+      },
+      enableBrowserTooltips: true,
+      suppressColumnVirtualisation: false,
+      rowHeight: 28,
+      headerHeight: 28,
+      floatingFiltersHeight: 28,
+      onCellKeyDown: (e) => {
+        const ev = (e as unknown as { event: KeyboardEvent }).event;
+        if (ev && (ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "c") {
+          copySelectionToHost();
+        }
+      },
+      onModelUpdated: () => updateFooterNow(),
+      onBodyScroll: (e: BodyScrollEvent) => onBodyScroll(e, activeTab, model),
+    });
+    (gridHost as unknown as { __vsdbApi: GridApi }).__vsdbApi = gridApi;
+    statementRows.set(activeTab, r.result.rows.slice());
+    lastColumnCount = specs.length;
+  } else if (statementReset || columnsChanged || syncResult.isReset) {
+    // Replace rowData (and column defs if changed) on the existing grid.
+    if (columnsChanged) {
+      gridApi!.setGridOption("columnDefs", colDefs);
+      lastColumnCount = specs.length;
+    }
+    gridApi!.setGridOption("rowData", rowsToObjects(r.result.rows, specs));
     statementRows.set(activeTab, r.result.rows.slice());
   } else if (rowsGrew && syncResult.appendDelta.length > 0) {
-    // map each new row to { ...row } with field-keyed shape.
     const newRowObjects = syncResult.appendDelta.map((row) => {
       const obj: Record<string, unknown> = {};
       specs.forEach((s, i) => {
@@ -411,21 +536,17 @@ function renderGrid(): void {
     const addIndex = previousRows.length;
     gridApi!.applyTransaction({ add: newRowObjects, addIndex });
     statementRows.set(activeTab, r.result.rows.slice());
-  } else if (!sameColumns) {
-    // Columns changed — rebuild grid defs.
-    gridApi!.setGridOption("columnDefs", colDefs);
-    gridApi!.setGridOption("rowData", rowsToObjects(r.result.rows, specs));
-    statementRows.set(activeTab, r.result.rows.slice());
   }
   // else: idempotent — no-op.
 
   lastRenderedIndex = activeTab;
   lastResultStatus = r.status;
 
-  // Initial footer.
-  updateFooter(footer, model, gridApi, r);
+  // Initial footer text.
+  updateFooterNow();
 
-  // Hook: expose a checkLoadMore for tests / programmatic triggers.
+  // Expose the checkLoadMore hook on the grid host (so tests / external code
+  // can trigger a loadMore programmatically).
   (container as unknown as { __checkLoadMore?: () => void }).__checkLoadMore = () => {
     if (loadMoreInFlight || busy || quickFilterActive) return;
     if (!model.getState().hasMore()) return;
@@ -438,9 +559,6 @@ function renderGrid(): void {
       const hook = (host as unknown as { __checkLoadMore?: () => void }).__checkLoadMore;
       if (typeof hook === "function") hook();
     };
-
-  // Footer appended last.
-  container.appendChild(footer);
 }
 
 function ensureModel(index: number): ResultsGridModel {
@@ -464,26 +582,31 @@ function dispatchLoadMore(): void {
   postToHost({ type: "loadMore", index: activeTab });
 }
 
+/**
+ * AG Grid BodyScrollEvent — fires on every body scroll.
+ *
+ * IMPORTANT: AG Grid BodyScrollEvent has `direction`, `left`, `top` — NOT a
+ * `bottom` field. We gate on direction === "vertical" and use the API to
+ * detect near-bottom via the last-displayed-row index.
+ */
 function onBodyScroll(
-  e: { top: number; bottom: number },
-  index: number,
+  e: BodyScrollEvent,
+  _index: number,
   model: ResultsGridModel,
 ): void {
   if (loadMoreInFlight || busy || quickFilterActive) return;
+  if (e.direction !== "vertical") return;
+  const api = gridApi;
+  if (!api) return;
   const state = model.getState();
   if (!state.hasMore()) return;
-  // Use viewport-rows proxy via model.requestWindow(displayedLast, viewport).
-  // AG Grid's onBodyScroll doesn't give row index directly; we treat any
-  // near-bottom scroll (top + viewportHeight - bottom < threshold) as a
-  // near-bottom hit and ask the model.
-  // Simpler proxy: whenever the user scrolls (any direction) and we're not at
-  // the very top, signal "near bottom" if bottom is reached.
-  if (e.bottom === 0) {
-    // bottom === 0 means we reached the end of scroll.
+  const lastDisplayed = api.getLastDisplayedRowIndex();
+  const total = api.getDisplayedRowCount();
+  // Trigger when within 5 rows of the bottom (viewport buffer).
+  if (lastDisplayed >= 0 && total > 0 && lastDisplayed >= total - 5) {
     model.requestWindow(state.getLoaded(), 0);
     dispatchLoadMore();
   }
-  void index;
 }
 
 function copySelectionToHost(): void {
@@ -494,7 +617,6 @@ function copySelectionToHost(): void {
   const arr = selected.map((obj) => {
     const row: unknown[] = [];
     const r = obj as Record<string, unknown>;
-    // First slot is __select__ marker; skip.
     for (const k of Object.keys(r)) {
       if (k === "__select__") continue;
       row.push(r[k]);
@@ -522,27 +644,27 @@ function updateFooter(
     footerText(loaded, total, hasMore, displayed, filtered) +
     (duration > 0 ? `  ⏱ ${duration}ms` : "");
 }
-function updateFooters(): void {
-  const footer = currentFooter;
+
+function updateFooterNow(): void {
+  if (!dom) return;
+  const footer = dom.gridFooter;
   const api = gridApi;
-  if (!footer || !api || !currentStatement) return;
+  const r = currentStatement;
+  if (!r) {
+    footer.textContent = "";
+    return;
+  }
   const model = models.get(activeTab);
-  if (!model) return;
-  const displayed = api.getDisplayedRowCount();
-  const state = model.getState();
-  const loaded = state.getLoaded();
-  const total = state.getTotal();
-  const hasMore = state.hasMore();
-  const filtered = displayed !== loaded && quickFilterActive;
-  const duration = currentStatement.durationMs;
-  footer.textContent =
-    footerText(loaded, total, hasMore, displayed, filtered) +
-    (duration > 0 ? `  ⏱ ${duration}ms` : "");
+  if (!model) {
+    footer.textContent = "";
+    return;
+  }
+  updateFooter(footer, model, api, r);
 }
 
 // ---- Messages tab ----------------------------------------------------------
 
-function renderMessages(): void {
+function renderMessagesInto(panel: HTMLDivElement): void {
   const wrap = document.createElement("div");
   wrap.className = "vsdb-messages";
   results.forEach((r, i) => {
@@ -578,7 +700,7 @@ function renderMessages(): void {
     }
     wrap.appendChild(card);
   });
-  root.appendChild(wrap);
+  panel.appendChild(wrap);
 }
 
 // ---- Message handling ------------------------------------------------------
@@ -623,6 +745,3 @@ render();
     };
   },
 };
-
-// Also keep getGridApi (the AG Grid official accessor) bound.
-void getGridApi;

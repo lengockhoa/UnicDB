@@ -12,9 +12,15 @@ node_modules/**
 
 # UKit / agent artifacts (vsce does NOT read .gitignore)
 .claude/**
+.omp/**
 .codex/**
 .ukit/**
 .antigravity/**
+
+# Root-level agent tool files (rebuild from main repo — vsce does NOT read .gitignore)
+CLAUDE.md
+AGENTS.md
+opencode.json
 
 # Repo-level tool files
 .git/**

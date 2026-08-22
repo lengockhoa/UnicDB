@@ -73,7 +73,8 @@ code --install-extension vsdb-<version>.vsix
   - Hiển thị **mọi schema** bạn truy cập được, không chỉ schema mặc định (`public` / `dbo` / database đang connect).
   - Setting `vsdb.hideSystemSchemas` (default `true`): ẩn schema hệ thống (`pg_catalog`, `information_schema`, `mysql`, `sys`...); tắt nếu muốn xem hết.
   - Click phải table/view → `Generate SELECT`, `Copy Qualified Name` (dùng đúng `schema.table`, kể cả schema khác mặc định).
-- **Results grid (AG Grid Community)**: xem kết quả trong panel **VSDB Results** với sort / filter per column, quick search, multi-row selection + copy (Ctrl+C), và row count hiển thị ở status bar.
+- **Refresh metadata**: nút refresh trên title bar của panel **VSDB** (chạy `VSDB: Refresh Schema`) reload lại schema cache từ server — dùng sau khi bạn tạo/xoá table ở bên ngoài VS Code mà không muốn tạo connection mới.
+- **Results grid (AG Grid Community)**: xem kết quả trong panel **VSDB Results** với sort / filter per column, quick search, multi-row selection + copy (Ctrl+C), và row count hiển thị ở footer của panel.
 
 ---
 
@@ -103,7 +104,7 @@ sang tổ hợp khác (vd. `Cmd+Shift+Enter`), hoặc unbind phím của extensi
 - Linux: libsecret / kwallet
 - Windows: Windows Credential Vault
 
-Xóa: `Code → Settings → Clear Secret Storage` (hoặc gỡ extension sẽ xóa luôn).
+Xóa: `Code → Settings → Clear Secret Storage** (hoặc gỡ extension sẽ xóa luôn).
 
 ### Gỡ cài đặt
 
