@@ -558,25 +558,45 @@ export class ResultsPanel {
     // FIX R1 critical #3 — close the previous batched cursor before
     // starting a new requery. Postgres pool max=1: a leaked cursor holds
     // the client until close(), blocking the next query with a connect
-    // timeout. Best-effort — both cancel() (if mid-fetch) and close()
-    // are idempotent on the cursor.
+    // timeout. Best-effort — close() alone is sufficient (Fix R2
+    // minor); cancel() was redundant.
     const staleCursor: BatchedQuery | undefined = r.batched;
     if (staleCursor && r.status === "done") {
       try {
-        await staleCursor.cancel();
-      } catch {
-        // ignore — cursor may already be closed
-      }
-      try {
         await staleCursor.close();
       } catch {
-        // ignore
+        // ignore — cursor may already be closed
       }
     }
     const composed = composeRequery(r.sql, where, orderBy);
     this.setBusy(true);
     const start = Date.now();
     try {
+      // FIX R2 critical #1 — post `status:"running"` for the statement
+      // BEFORE the runSql call. The webview's renderGrid detects a
+      // same-statement RESET via
+      //   lastResultStatus === "running" && r.status !== "running"
+      // Without the running post, equal-row-count requeries (ORDER BY
+      // change — the headline use case) take the idempotent no-op
+      // branch and the grid stays stale. Row-growing requeries take
+      // the append-delta branch and KEEP the OLD prefix.
+      const runningEntry: StatementResult = {
+        index: r.index,
+        sql: r.sql,
+        status: "running",
+        result: r.result,
+        batched: r.batched,
+        durationMs: Date.now() - start,
+      };
+      const runningState = this.lastResults.slice();
+      runningState[index] = runningEntry;
+      this.lastResults = runningState;
+      this.postMessage({
+        type: "state",
+        header: this.header,
+        results: runningState,
+        busy: this.busy,
+      });
       const runResult = await this.runner.runSql(composed);
       // FIX R1 critical #2 — `refreshed.results[0]` is always undefined
       // when the adapter returns a batched handle (Postgres single
@@ -590,7 +610,7 @@ export class ResultsPanel {
       // ORIGINAL — what the user wrote). `batched` is the NEW cursor
       // (mirrors QueryRunner.executeAll behaviour) so loadMore still
       // works.
-      next[index] = {
+      const newStmt: StatementResult = {
         index: r.index,
         sql: r.sql,
         status: "done",
@@ -598,7 +618,17 @@ export class ResultsPanel {
         batched: runResult.batched,
         durationMs: Date.now() - start,
       };
+      next[index] = newStmt;
       this.lastResults = next;
+      // FIX R2 critical #2 — sync the runner-internal entry so that
+      // `runner.loadMore(index)` reaches the NEW batched cursor. Without
+      // this, the runner still holds the PRE-requery cursor and a
+      // subsequent loadMore would fetch OLD rows.
+      try {
+        this.runner.adopt(r.index, newStmt);
+      } catch {
+        // adopt is best-effort; loadMore path failure is non-fatal here.
+      }
       // Re-derive table map for the index — the wrapped SQL still
       // references the same table; parseFromClause on the original
       // keeps the addressable table valid.

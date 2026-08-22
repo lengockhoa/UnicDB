@@ -811,21 +811,36 @@ export function applyPasteToDirty(
 //   SELECT * FROM (<stmt>) vsdb_sub WHERE <where> ORDER BY <orderBy>
 //
 // Behavior:
-//   - Both empty         → return the original statement (trailing `;` and
-//                          surrounding whitespace stripped). No wrap.
+//   - Both empty         → return the original statement with a trailing
+//                          `;` (+ surrounding whitespace) stripped. No
+//                          wrap; the host runs the original SQL.
 //   - where only         → emit the WHERE clause only (no ORDER BY).
 //   - orderBy only       → emit the ORDER BY clause only (no WHERE).
-//   - Multi-statement    → split on top-level `;`, use the LAST non-empty
-//                          segment. (Not string-literal aware — covers the
-//                          common "user pasted a multi-statement SQL file"
-//                          case. The runner index comes from the statement
-//                          the webview is showing, not the original text.)
+//
+// IMPORTANT (Fix Round 2): composeRequery uses `sql` VERBATIM and only
+// strips a TRAILING `;` (+ whitespace). It does NOT split on `;` — naive
+// split(";") corrupts statements containing `;` inside string literals
+// (e.g. `SELECT 'a;b' AS x FROM t` → split chops the literal). The host
+// path always passes a single statement (statementParser.splitStatements
+// is literal-aware upstream — multi-statement handling is dead code).
 //
 // Injection policy:
 //   The `where` and `orderBy` fragments are USER-INTENDED SQL — VSDB is a
 //   SQL client; the user already runs arbitrary SQL via the editor. We do
 //   not escape / quote these fragments. No validation pass; an invalid
 //   fragment surfaces as a database error from the runner.
+function stripTrailingSemicolon(sql: string): string {
+  // Match optional trailing whitespace then optional `;` then optional
+  // trailing whitespace. Only strip if there's something left after.
+  const m = /^(.*?)(\s*;?\s*)$/s.exec(sql);
+  if (!m) return sql;
+  const body = m[1] ?? "";
+  // Body must have at least one non-whitespace character; otherwise we
+  // would have stripped a meaningful input.
+  if (body.trim().length === 0) return sql.trim();
+  return body.trimEnd();
+}
+
 export function composeRequery(
   sql: string,
   where: string,
@@ -833,27 +848,12 @@ export function composeRequery(
 ): string {
   const w = where.trim();
   const o = orderBy.trim();
-  // If both fragments are empty, return the LAST non-empty segment of the
-  // original statement (handles "user pasted 2 statements; rendered the
-  // second one; clicked Re-Run with no input") with trailing `;` and
-  // surrounding whitespace stripped.
+  // Empty input: pass through with trailing `;` stripped.
   if (!w && !o) {
-    const segments = sql
-      .split(";")
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-    if (segments.length === 0) return sql.trim();
-    return segments[segments.length - 1];
+    return stripTrailingSemicolon(sql);
   }
-  // Otherwise pick the LAST non-empty statement segment of the original
-  // SQL to wrap. Same multi-statement handling as above; the wrap keeps
-  // the user's trailing `;` if any (the composed query goes to the
-  // runner; the runner is happy with either).
-  const segments = sql
-    .split(";")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-  const inner = segments.length === 0 ? sql.trim() : segments[segments.length - 1];
+  // Otherwise use sql verbatim (preserve interior `;` inside literals).
+  const inner = sql.trimEnd();
   const whereClause = w ? ` WHERE ${w}` : "";
   const orderClause = o ? ` ORDER BY ${o}` : "";
   return `SELECT * FROM (${inner}) vsdb_sub${whereClause}${orderClause}`;

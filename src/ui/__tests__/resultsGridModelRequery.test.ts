@@ -9,7 +9,12 @@
 //                          + whitespace stripped).
 //   - Only where         → return the WHERE clause only.
 //   - Only orderBy       → return the ORDER BY clause only.
-//   - Multi-statement    → use the LAST statement segment of the input.
+//
+// IMPORTANT (Fix Round 2): composeRequery uses `sql` VERBATIM and only strips
+// a TRAILING `;` (+ whitespace). It does NOT split on `;` — `r.sql` already
+// contains a single statement (statementParser is literal-aware upstream),
+// and naive split(";") corrupts SQL containing `;` inside string literals
+// (e.g. `SELECT 'a;b' AS x FROM t` → split eats the inner literal).
 //
 // No DOM, no vscode — plain vitest node environment.
 import { describe, it, expect } from "vitest";
@@ -26,11 +31,12 @@ describe("composeRequery — happy path", () => {
       "SELECT * FROM (SELECT a FROM t) vsdb_sub WHERE a>1 ORDER BY a DESC",
     );
   });
-  it("trims surrounding whitespace from the inner statement when wrapping", () => {
-    const sql = "  select  a,  b\n  from  t  where  x=1  ";
-    const out = composeRequery(sql, "b > 0", "a");
+
+  it("preserves the inner statement verbatim (no double-wrap, no splitting)", () => {
+    const inner = "WITH cte AS (SELECT 1) SELECT * FROM cte";
+    const out = composeRequery(inner, "1=1", "");
     expect(out).toBe(
-      "SELECT * FROM (select  a,  b\n  from  t  where  x=1) vsdb_sub WHERE b > 0 ORDER BY a",
+      `SELECT * FROM (${inner}) vsdb_sub WHERE 1=1`,
     );
   });
 
@@ -60,9 +66,10 @@ describe("composeRequery — single fragment", () => {
     expect(out).toBe(
       "SELECT * FROM (SELECT a FROM t) vsdb_sub ORDER BY a DESC",
     );
-    expect(out).not.toContain("WHERE");
+    expect(out).not.toContain(" WHERE ");
   });
-  it("whitespace-only where / orderBy are treated as empty → returns stripped statement", () => {
+
+  it("whitespace-only where / orderBy are treated as empty", () => {
     expect(composeRequery("SELECT 1", "   ", "")).toBe("SELECT 1");
     expect(composeRequery("SELECT 1", "", "   \t  ")).toBe("SELECT 1");
     // Mixed — whitespace-only where + non-empty orderBy → only ORDER BY clause.
@@ -76,7 +83,7 @@ describe("composeRequery — single fragment", () => {
 // 3. composeRequery — both empty (Test #3)
 // =============================================================================
 describe("composeRequery — both empty", () => {
-  it("Test #3 — both empty returns the stripped statement (no WHERE / no ORDER BY)", () => {
+  it("Test #3 — both empty returns the statement with trailing `;` stripped (no WHERE / no ORDER BY)", () => {
     const out = composeRequery("SELECT 1;", "", "");
     expect(out).toBe("SELECT 1");
   });
@@ -85,57 +92,57 @@ describe("composeRequery — both empty", () => {
     expect(composeRequery("SELECT 1;\n", "", "")).toBe("SELECT 1");
     expect(composeRequery("SELECT 1 ;  ", "", "")).toBe("SELECT 1");
     expect(composeRequery("SELECT 1\n", "", "")).toBe("SELECT 1");
+    expect(composeRequery("SELECT 1  ;  \n  ", "", "")).toBe("SELECT 1");
   });
 
-  it("Test #3c — inner trailing `;` is stripped by the multi-statement split", () => {
-    // Even when wrapping, the inner statement is taken via the
-    // multi-statement split — the trailing `;` is filtered out as part of
-    // the "last non-empty segment" pick.
-    const sql = "SELECT 1;";
-    const out = composeRequery(sql, "1=1", "1");
-    expect(out).toBe(
-      "SELECT * FROM (SELECT 1) vsdb_sub WHERE 1=1 ORDER BY 1",
-    );
-  });
-});
-// =============================================================================
-// 4. composeRequery — multi-statement input (Test #4)
-// =============================================================================
-describe("composeRequery — multi-statement input", () => {
-  it("Test #4 — splits on `;` and uses the LAST non-empty statement segment", () => {
-    const sql = "SELECT 1; SELECT a FROM t; SELECT b FROM u";
-    const out = composeRequery(sql, "a>1", "a");
-    expect(out).toBe(
-      "SELECT * FROM (SELECT b FROM u) vsdb_sub WHERE a>1 ORDER BY a",
-    );
-  });
-
-  it("Test #4b — trailing `;` after the last statement is harmless", () => {
-    const sql = "SELECT 1; SELECT a FROM t;";
-    const out = composeRequery(sql, "", "a");
-    expect(out).toBe(
-      "SELECT * FROM (SELECT a FROM t) vsdb_sub ORDER BY a",
-    );
-  });
-
-  it("Test #4c — when input has empty leading segments, uses the last non-empty one", () => {
-    const sql = "; ; SELECT a FROM t;";
-    const out = composeRequery(sql, "a>1", "");
-    expect(out).toBe(
-      "SELECT * FROM (SELECT a FROM t) vsdb_sub WHERE a>1",
-    );
+  it("Test #3c — preserves interior `;` (not stripped) when both fragments empty", () => {
+    // Trailing `;` is stripped, but interior `;` inside a comment or
+    // unrelated context is preserved. composeRequery treats the input as
+    // one statement; trailing whitespace+`;` only.
+    expect(composeRequery("SELECT 1 /* ; */", "", "")).toBe("SELECT 1 /* ; */");
   });
 });
 
 // =============================================================================
-// 5. composeRequery — id / parity with existing test expectations
+// 4. composeRequery — LITERAL-PRESERVING wrap (Fix Round 2)
 // =============================================================================
-describe("composeRequery — does not double-wrap when already a SELECT", () => {
-  it("does not mangle the inner SQL — passes the inner statement through verbatim", () => {
-    const inner = "WITH cte AS (SELECT 1) SELECT * FROM cte";
-    const out = composeRequery(inner, "1=1", "");
+//
+// The previous implementation did `sql.split(";")` to handle multi-statement
+// input. That corrupted statements containing `;` inside string literals —
+// `SELECT 'a;b' AS x FROM t` got chopped MID-LITERAL. Host already passes a
+// single statement (statementParser.splitStatements is literal-aware), so
+// multi-statement handling is dead code. composeRequery now uses sql
+// VERBATIM and only strips a trailing `;`.
+describe("composeRequery — literal-preserving (Fix Round 2 important #1)", () => {
+  it("does NOT chop the statement at `;` inside a string literal", () => {
+    const sql = "SELECT 'a;b' AS x FROM t";
+    const out = composeRequery(sql, "x IS NOT NULL", "");
     expect(out).toBe(
-      `SELECT * FROM (${inner}) vsdb_sub WHERE 1=1`,
+      "SELECT * FROM (SELECT 'a;b' AS x FROM t) vsdb_sub WHERE x IS NOT NULL",
     );
+    // Sanity: the inner literal `'a;b'` must round-trip intact.
+    expect(out).toContain("'a;b'");
+  });
+
+  it("does NOT chop at `;` inside a string literal with both fragments", () => {
+    const sql = "SELECT 'x;y;z' AS a, id FROM t";
+    const out = composeRequery(sql, "id > 0", "a DESC");
+    expect(out).toBe(
+      "SELECT * FROM (SELECT 'x;y;z' AS a, id FROM t) vsdb_sub WHERE id > 0 ORDER BY a DESC",
+    );
+  });
+
+  it("does NOT chop at `;` inside a dollar-quoted string (postgres $$...$$)", () => {
+    const sql = "SELECT $$hello;world$$ AS greeting, id FROM t";
+    const out = composeRequery(sql, "id = 1", "");
+    expect(out).toBe(
+      "SELECT * FROM (SELECT $$hello;world$$ AS greeting, id FROM t) vsdb_sub WHERE id = 1",
+    );
+  });
+
+  it("trailing `;` still gets stripped when present alongside interior literal `;`", () => {
+    const sql = "SELECT 'a;b' AS x FROM t;";
+    const out = composeRequery(sql, "", "");
+    expect(out).toBe("SELECT 'a;b' AS x FROM t");
   });
 });

@@ -343,6 +343,47 @@ export class QueryRunner {
     const adapter = await this.adapterProvider();
     return adapter.runQuery(sql);
   }
+
+  /**
+   * TASK-504 Fix R2 critical #2 — adopt a StatementResult from an external
+   * source (typically the ResultsPanel after a requery). Replaces the
+   * runner-internal entry at `index` with the supplied StatementResult so
+   * subsequent `loadMore(index)` reads the NEW batched cursor / rows
+   * instead of the runner's stale, pre-requery state.
+   *
+   * Why this exists: `runSql()` does NOT route through `this.executeAll()`
+   * and therefore does not mutate `this.results` — the runner's internal
+   * `results[index].batched` is still the cursor from the original `run()`.
+   * The panel swaps its own `lastResults[index]` but `runner.loadMore(i)`
+   * reads the runner's entry, leaving the cursor unreachable. `adopt()`
+   * closes that gap without forcing requery through the full `run()`
+   * lifecycle (no `running` / `done` transition, no `onUpdate` callbacks).
+   *
+   * Adopted entries keep the original `index` and `sql` (the wrapped SQL
+   * returned by `runSql`); the new `result` and `batched` come from the
+   * panel's requery result.
+   */
+  adopt(index: number, stmt: StatementResult): void {
+    if (index < 0 || index >= this.results.length) {
+      throw new Error(
+        `QueryRunner.adopt: index ${index} out of range (have ${this.results.length} entries)`,
+      );
+    }
+    const prev = this.results[index];
+    if (prev && prev.batched && prev.batched !== stmt.batched) {
+      // Best-effort close of the displaced cursor to release the
+      // Postgres pool client (Fix R1 critical #3 mirror). The panel also
+      // closes this cursor on its side, but doing it here too keeps the
+      // invariant "only the runner-adopted cursor is open" simple.
+      try {
+        // do not await — adopt must remain sync for hot-path use
+        void prev.batched.close().catch(() => undefined);
+      } catch {
+        // ignore
+      }
+    }
+    this.results[index] = stmt;
+  }
 }
 
 /**
@@ -373,7 +414,12 @@ export async function pickResult(runResult: RunResult): Promise<QueryResult> {
     return {
       columns: cols,
       rows: initialRows,
-      rowCount: initialRows.length > 0 ? initialRows.length : null,
+      // rowCount=null for batched: we don't know the total until EOF.
+      // Returning `initialRows.length` here flipped the grid model's
+      // hasMore=false while the cursor was still open, hiding Load More
+      // on the very first batch (Fix R2 important #2). Doc-comment
+      // contract matches: "rowCount = null cho batched (chưa biết tổng)".
+      rowCount: null,
       durationMs: 0,
     };
   }

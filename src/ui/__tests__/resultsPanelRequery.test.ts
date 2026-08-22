@@ -1,42 +1,43 @@
 // src/ui/__tests__/resultsPanelRequery.test.ts
 //
-// TASK-504 Fix Round 1 — host-side requery handler tests.
+// TASK-504 — host-side requery handler tests across fix rounds.
 //
-// Covers the three blocker findings from the reviewer verdict:
+// Fix Round 1:
+//   - critical #2: handleRequery consumes the batched handle via
+//     pickResult (adapters return {results:[], batched} for single SELECTs).
+//   - critical #3: previous batched cursor is closed before the requery
+//     runs (Postgres pool max=1 — leaked cursor wedges the next query).
+//   - critical #1: webview banner persistence (covered by
+//     webviewKeybinding + webviewSaveEdits regressions).
 //
-//   1. CRITICAL #2 — handleRequery must consume the batched handle exactly
-//      like QueryRunner.executeAll does. Adapters return
-//      { results: [], batched } for a single `;`-free SELECT (which is
-//      exactly what composeRequery emits). The unguarded
-//      `refreshed.results[0]` was always undefined → entry swapped to
-//      `status:"done"` with no result → grid blanks. We must adopt the
-//      batched cursor (pickResult + initial fetchBatch + store) and the
-//      requery must actually return rows.
-//
-//   2. CRITICAL #3 — abandoning the previous batched cursor leaks the
-//      Postgres pool client (pool max=1). Before starting a new requery,
-//      the previous statement's batched handle MUST be closed/cancelled.
-//      Fake adapter records close/cancel calls; we assert the previous
-//      cursor was closed.
-//
-//   3. CRITICAL #1 (webview/main.ts) — covered by webviewKeybinding
-//      B1/B2 and webviewSaveEdits T4 (banner persistence). This file is
-//      only for the host-side fixes; the webview fix is verified via the
-//      regression banner tests.
+// Fix Round 2:
+//   - critical #1: requery posts `status:"running"` for the statement
+//     BEFORE runSql so the webview's statementReset branch fires —
+//     otherwise equal-row-count requeries leave the grid stale.
+//     Host-level behaviour verified by webviewRequery.test.ts; this file
+//     covers host state-transition ordering.
+//   - critical #2: loadMore after requery reads the NEW cursor. The panel
+//     calls `runner.adopt(index, stmt)` to sync the runner's internal
+//     entry to the new batched cursor so subsequent `runner.loadMore(i)`
+//     reaches the new cursor, not the pre-requery one.
+//   - important #1: composeRequery uses sql VERBATIM (no `;` split —
+//     split is literal-unsafe). Covered by resultsGridModelRequery.test.ts.
+//   - important #2: pickResult returns rowCount=null for batched cursors
+//     so webview hasMore stays true while the cursor is open.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type {
+import {
   QueryRunner,
-  RunResult,
-  BatchedQuery,
-  QueryResult,
+  pickResult,
+  type RunResult,
+  type BatchedQuery,
+  type QueryResult,
 } from "../../core/queryRunner";
-
+import type { ParsedStatement } from "../../config/types";
+import type { DbAdapter } from "../../adapters/types";
 type MessageHandler = (msg: unknown) => void;
 
-// Re-declare just the bits we need from the sibling test file (it's not
-// exported). We replicate the FakeWebview / FakeWebviewPanel locally — the
-// only behavioral dependency is "panel dispatches our requery message".
+// ---- FakeWebview + FakeWebviewPanel (mirrors sibling test files) ----------
 
 class FakeWebview {
   html = "";
@@ -86,7 +87,14 @@ vi.mock("vscode", () => {
     Uri: {
       file: (p: string) => ({ fsPath: p, path: p, toString: () => p }),
       joinPath: (...parts: unknown[]) => ({
-        path: parts.map((p: unknown) => (p as { fsPath?: string; path?: string })?.fsPath ?? (p as { path?: string })?.path ?? "").join("/"),
+        path: parts
+          .map(
+            (p: unknown) =>
+              (p as { fsPath?: string; path?: string })?.fsPath ??
+              (p as { path?: string })?.path ??
+              "",
+          )
+          .join("/"),
       }),
     },
     ViewColumn: { Beside: 1, Active: 2, One: 3, Two: 4, Three: 5 },
@@ -106,27 +114,23 @@ vi.mock("vscode", () => {
 
 import { ResultsPanel } from "../resultsPanel";
 
+// ---- helpers --------------------------------------------------------------
+
 interface BatchedOpts {
-  /** Columns returned by the cursor's metadata. */
   columns: string[];
-  /** Rows for the initial 500-row fetch. */
   initialRows: unknown[][];
-  /** Rows for subsequent fetchBatch calls (after initial). */
   nextBatches?: unknown[][][];
-  /** Optional error to throw from fetchBatch. */
   fetchError?: Error;
 }
 
 interface RecordingBatchedOpts extends BatchedOpts {
-  /** Track close() / cancel() calls. */
   closeCalls: number;
   cancelCalls: number;
 }
 
-function makeRecordingBatched(opts: RecordingBatchedOpts): BatchedQuery & {
-  closeCalls: number;
-  cancelCalls: number;
-} {
+function makeRecordingBatched(
+  opts: RecordingBatchedOpts,
+): BatchedQuery & { closeCalls: number; cancelCalls: number } {
   let fetched = 0;
   const cursor = {
     columns: opts.columns,
@@ -137,7 +141,7 @@ function makeRecordingBatched(opts: RecordingBatchedOpts): BatchedQuery & {
         return opts.initialRows;
       }
       const next = opts.nextBatches?.[fetched - 2];
-      return next ?? null; // EOF after nextBatches exhausted
+      return next ?? null;
     },
     async cancel(): Promise<void> {
       opts.cancelCalls += 1;
@@ -170,6 +174,82 @@ function makeBatchedRunResult(opts: BatchedOpts): RunResult {
   return { results: [], batched };
 }
 
+function makeBatchedCursor(
+  fetchSequence: Array<unknown[][] | null>,
+): BatchedQuery {
+  const fetchBatch = vi
+    .fn<[], Promise<unknown[][] | null>>()
+    .mockImplementation(async () => {
+      const next = fetchSequence.shift();
+      if (next === undefined) return null;
+      return next;
+    });
+  return {
+    columns: ["id"],
+    fetchBatch,
+    cancel: vi.fn(async () => undefined),
+    close: vi.fn(async () => undefined),
+  };
+}
+
+interface RealRunnerSetup {
+  runner: QueryRunner;
+  initialBatched: BatchedQuery;
+  requeryBatched: BatchedQuery;
+  firstSql: { sql: string };
+  secondSql: { sql: string };
+}
+
+function makeRealRunner(): RealRunnerSetup {
+  const initialBatched = makeBatchedCursor([[[1], [2], [3]]]);
+  const requeryBatched = makeBatchedCursor([[[10], [11], [12]], [[100]]]);
+  const firstSql = { sql: "" };
+  const secondSql = { sql: "" };
+  let callCount = 0;
+  const adapter: DbAdapter = {
+    connect: vi.fn(async () => undefined),
+    close: vi.fn(async () => undefined),
+    runQuery: vi.fn(async (sql: string): Promise<RunResult> => {
+      callCount += 1;
+      if (callCount === 1) {
+        firstSql.sql = sql;
+        return { results: [], batched: initialBatched };
+      }
+      if (callCount === 2) {
+        secondSql.sql = sql;
+        return { results: [], batched: requeryBatched };
+      }
+      throw new Error("unexpected runQuery call");
+    }),
+    listSchemas: vi.fn(async () => []),
+    listTables: vi.fn(async () => []),
+    listViews: vi.fn(async () => []),
+    listRoutines: vi.fn(async () => []),
+    listColumns: vi.fn(async () => []),
+    testConnection: vi.fn(async () => undefined),
+  } as unknown as DbAdapter;
+  const runner = new QueryRunner(async () => adapter);
+  return { runner, initialBatched, requeryBatched, firstSql, secondSql };
+}
+
+function makeStmt(text: string): ParsedStatement {
+  return { text, start: 0, end: text.length };
+}
+
+/** Wait until the last state message for statement 0 is in a terminal
+ * status (done | error | no r.result at all). The running post is the
+ * FIRST state sent; we want the second one (done | error) before
+ * asserting on the requery outcome. */
+async function waitForTerminal(fake: FakeWebviewPanel): Promise<void> {
+  for (let i = 0; i < 500; i++) {
+    const states = stateMessages(fake);
+    const last = states[states.length - 1];
+    const r = (last?.results as Array<{ status?: string }> | undefined)?.[0];
+    if (r && r.status !== "running") return;
+    await Promise.resolve();
+  }
+}
+
 function stateMessages(fake: FakeWebviewPanel) {
   return fake.webview.postMessage.mock.calls
     .map((c) => c[0] as { type?: string; results?: Array<Record<string, unknown>>; index?: number })
@@ -181,13 +261,12 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-// ---- CRITICAL #2 — batched handle adopted on requery ------------------------
+// =============================================================================
+// Fix R1 critical #2 — batched handle adopted on requery
+// =============================================================================
 
 describe("ResultsPanel — handleRequery adopts batched cursor (Fix R1 critical #2)", () => {
   it("Requery on a single SELECT → state.postMessage carries rows + columns from the initial fetchBatch", async () => {
-    // The requery adapter returns a NEW batched cursor (mirrors what the
-    // Postgres adapter does for any single `;`-free SELECT — which is
-    // exactly what composeRequery emits).
     const requeryBatched = makeRecordingBatched({
       columns: ["id"],
       initialRows: [[10], [20]],
@@ -205,9 +284,6 @@ describe("ResultsPanel — handleRequery adopts batched cursor (Fix R1 critical 
       runSql,
     } as unknown as QueryRunner;
     const panel = new ResultsPanel({ runner });
-    // Initial render supplies a synthetic StatementResult — runSql is
-    // NOT called for the editor SQL itself (that's done by extension.ts
-    // before ResultsPanel.render). We only patch runSql for the requery.
     panel.render(
       [
         {
@@ -229,19 +305,14 @@ describe("ResultsPanel — handleRequery adopts batched cursor (Fix R1 critical 
       where: "id > 5",
       orderBy: "id DESC",
     });
-    for (let i = 0; i < 200; i++) {
-      if (stateMessages(fake).length > 0) break;
-      await Promise.resolve();
-    }
+    await waitForTerminal(fake);
 
-    // The requery composed the SQL via composeRequery (wrap + WHERE + ORDER BY).
+    // composeRequery wraps + adds WHERE + ORDER BY. With the R2 fix, the
+    // inner statement is verbatim — no `;` split.
     expect(recorded[0]?.sql).toBe(
       "SELECT * FROM (SELECT id FROM t) vsdb_sub WHERE id > 5 ORDER BY id DESC",
     );
 
-    // The state postMessage MUST carry the batched rows + columns. If the
-    // bug is present the entry would be { status:"done", result: undefined }
-    // and the grid would blank.
     const states = stateMessages(fake);
     expect(states.length).toBeGreaterThanOrEqual(1);
     const lastState = states[states.length - 1]!;
@@ -256,12 +327,11 @@ describe("ResultsPanel — handleRequery adopts batched cursor (Fix R1 critical 
     expect(entry.result).toBeTruthy();
     expect(entry.result!.columns).toEqual(["id"]);
     expect(entry.result!.rows).toEqual([[10], [20]]);
-    // Batched cursor stored on the entry so the webview's "load more"
-    // would still work (mirrors QueryRunner.executeAll behaviour).
     expect(entry.batched).toBeTruthy();
     expect(entry.batched).toBe(requeryBatched);
   });
-  it("Requery with empty WHERE/ORDER BY still emits a batched-aware state (no `;` corruption)", async () => {
+
+  it("Requery with empty WHERE/ORDER BY emits the literal statement (no `;` corruption)", async () => {
     const requeryBatched = makeRecordingBatched({
       columns: ["id"],
       initialRows: [[1]],
@@ -300,15 +370,9 @@ describe("ResultsPanel — handleRequery adopts batched cursor (Fix R1 critical 
       where: "",
       orderBy: "",
     });
-    for (let i = 0; i < 200; i++) {
-      if (stateMessages(fake).length > 0) break;
-      await Promise.resolve();
-    }
+    await waitForTerminal(fake);
 
-    // The composed SQL must NOT have a trailing `;` from the input that
-    // would defeat the Postgres single-SELECT cursor path.
     expect(recorded[0]?.sql).toBe("SELECT id FROM t");
-    // State carries the batched columns + initial rows.
     const lastState = stateMessages(fake).slice(-1)[0]!;
     const results = lastState.results as Array<{
       result?: QueryResult;
@@ -320,11 +384,12 @@ describe("ResultsPanel — handleRequery adopts batched cursor (Fix R1 critical 
   });
 });
 
-// ---- CRITICAL #3 — previous batched cursor closed on requery ---------------
+// =============================================================================
+// Fix R1 critical #3 — previous batched cursor closed on requery
+// =============================================================================
 
 describe("ResultsPanel — handleRequery closes previous batched cursor (Fix R1 critical #3)", () => {
   it("Previous statement's batched cursor is closed before the requery runs", async () => {
-    // Previous cursor: the one returned for the original SELECT.
     const previousCloseable = {
       columns: ["id"],
       initialRows: [[1]],
@@ -334,18 +399,15 @@ describe("ResultsPanel — handleRequery closes previous batched cursor (Fix R1 
     };
     const previousBatched = makeRecordingBatched(previousCloseable);
 
-    // Requery cursor: a brand-new cursor.
     const requeryBatched = makeRecordingBatched({
       columns: ["id"],
       initialRows: [[10]],
       closeCalls: 0,
       cancelCalls: 0,
     });
-
     const recorded: { sql: string }[] = [];
     const runSql = vi.fn(async (sql: string): Promise<RunResult> => {
       recorded.push({ sql });
-      // Only the requery path calls runSql — render() just posts state.
       return { results: [], batched: requeryBatched };
     });
     const runner = {
@@ -362,7 +424,6 @@ describe("ResultsPanel — handleRequery closes previous batched cursor (Fix R1 
           sql: "SELECT id FROM t",
           status: "done",
           result: { columns: ["id"], rows: [[1]], rowCount: 1, durationMs: 0 },
-          // Previous run already adopted this cursor.
           batched: previousBatched,
           durationMs: 0,
         },
@@ -372,25 +433,17 @@ describe("ResultsPanel — handleRequery closes previous batched cursor (Fix R1 
     const fake = lastPanel.current!;
     fake.webview.postMessage.mockClear();
 
-    // Fire requery.
     fake.webview.dispatch({
       type: "requery",
       index: 0,
       where: "id > 5",
       orderBy: "",
     });
-    for (let i = 0; i < 200; i++) {
-      if (stateMessages(fake).length > 0) break;
-      await Promise.resolve();
-    }
+    await waitForTerminal(fake);
 
-    // The previous cursor's close() must have been called AT LEAST once
-    // before the requery's runSql invocation. (Adapters may also call
-    // cancel(); we accept either or both.)
     expect(
       previousCloseable.closeCalls + previousCloseable.cancelCalls,
     ).toBeGreaterThanOrEqual(1);
-    // The new cursor is the one we expect on the entry.
     const lastState = stateMessages(fake).slice(-1)[0]!;
     const results = lastState.results as Array<{
       batched?: BatchedQuery;
@@ -399,12 +452,13 @@ describe("ResultsPanel — handleRequery closes previous batched cursor (Fix R1 
   });
 });
 
-// ---- Sanity: requery without batched (multi-statement or non-SELECT) --------
+// =============================================================================
+// Fix R1 — plain results path (non-batched adapters)
+// =============================================================================
 
 describe("ResultsPanel — handleRequery plain results path (Fix R1)", () => {
-  it("Adapter returns `{ results: [...], batched: undefined }` → state carries rows (no batched handle needed)", async () => {
+  it("Adapter returns `{ results: [...], batched: undefined }` → state carries rows", async () => {
     const runSql = vi.fn(async (_sql: string): Promise<RunResult> => {
-      // Simulate MySQL/MSSQL adapter returning populated results.
       return {
         results: [
           {
@@ -443,10 +497,7 @@ describe("ResultsPanel — handleRequery plain results path (Fix R1)", () => {
       where: "x > 0",
       orderBy: "",
     });
-    for (let i = 0; i < 200; i++) {
-      if (stateMessages(fake).length > 0) break;
-      await Promise.resolve();
-    }
+    await waitForTerminal(fake);
     const lastState = stateMessages(fake).slice(-1)[0]!;
     const results = lastState.results as Array<{
       result?: QueryResult;
@@ -454,7 +505,195 @@ describe("ResultsPanel — handleRequery plain results path (Fix R1)", () => {
     }>;
     expect(results[0]!.result!.rows).toEqual([["a"], ["b"]]);
     expect(results[0]!.result!.columns).toEqual(["x"]);
-    // No batched cursor (mysql/mssql) — entry.batched must not be set.
     expect(results[0]!.batched).toBeUndefined();
   });
 });
+
+// =============================================================================
+// Fix R2 critical #1 — requery posts running THEN done (state sequence)
+// =============================================================================
+//
+// The webview's renderGrid detects a same-statement RESET via
+// `lastResultStatus === "running" && r.status !== "running"`. The host
+// must post a `running` state for the statement BEFORE runSql completes
+// so the next `done` post triggers the reset branch (otherwise equal-row
+// requeries take the append-delta / idempotent no-op branch and the grid
+// stays stale).
+describe("ResultsPanel — handleRequery state-transition order (Fix R2 critical #1)", () => {
+  it("Requery posts running BEFORE done (statement sees the transition)", async () => {
+    const requeryBatched = makeRecordingBatched({
+      columns: ["id"],
+      initialRows: [[10]],
+      closeCalls: 0,
+      cancelCalls: 0,
+    });
+    const runSql = vi.fn(async (_sql: string): Promise<RunResult> => {
+      return { results: [], batched: requeryBatched };
+    });
+    const runner = {
+      loadMore: vi.fn(async () => []),
+      cancel: vi.fn(async () => undefined),
+      runSql,
+    } as unknown as QueryRunner;
+    const panel = new ResultsPanel({ runner });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT id FROM t",
+          status: "done",
+          result: { columns: ["id"], rows: [[1]], rowCount: 1, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    const fake = lastPanel.current!;
+    fake.webview.postMessage.mockClear();
+
+    fake.webview.dispatch({
+      type: "requery",
+      index: 0,
+      where: "",
+      orderBy: "id",
+    });
+    // Fix R2 critical #1: handleRequery now posts running BEFORE done.
+    // Wait for the terminal state (status done | error), not just any
+    // state — the running post is the FIRST state sent.
+    await waitForTerminal(fake);
+
+    const states = stateMessages(fake);
+    // The last state should be done; there should be at least one state
+    // with status running posted BEFORE the final done.
+    const lastState = states[states.length - 1]!;
+    const lastResults = lastState.results as Array<{
+      index: number;
+      status: string;
+    }>;
+    expect(lastResults[0]!.status).toBe("done");
+
+    // Find a running state for statement 0 posted BEFORE the last one.
+    const runningBefore = states.slice(0, -1).some((s) => {
+      const rs = s.results as Array<{ index: number; status: string }>;
+      return rs.some((r) => r.index === 0 && r.status === "running");
+    });
+    expect(runningBefore).toBe(true);
+  });
+});
+
+// =============================================================================
+// Fix R2 critical #2 — loadMore after requery uses the NEW cursor
+// =============================================================================
+//
+// Before the fix, requery swapped `panel.lastResults[index].batched` but
+// `runner.loadMore(index)` reads runner-internal `results[index].batched`
+// (queryRunner.ts:261) — still the PRE-requery cursor. After this fix the
+// panel calls `runner.adopt(index, stmt)` to sync the new cursor.
+describe("ResultsPanel — handleRequery syncs runner cursor (Fix R2 critical #2)", () => {
+  it("loadMore after requery reads the NEW cursor (returns new rows, not pre-requery ones)", async () => {
+    const { runner, requeryBatched } = makeRealRunner();
+    await runner.run([makeStmt("SELECT id FROM t")], () => undefined);
+
+    const panel = new ResultsPanel({ runner });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT id FROM t",
+          status: "done",
+          result: {
+            columns: ["id"],
+            rows: [[1], [2], [3]],
+            rowCount: 3,
+            durationMs: 0,
+          },
+          batched: runner.getResults()[0]!.batched,
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    const fake = lastPanel.current!;
+    fake.webview.postMessage.mockClear();
+
+    fake.webview.dispatch({
+      type: "requery",
+      index: 0,
+      where: "id > 5",
+      orderBy: "id DESC",
+    });
+    // Fix R2 critical #1: handleRequery now posts running BEFORE done.
+    // Wait for the terminal state (status done | error).
+    await waitForTerminal(fake);
+    const requeryState = stateMessages(fake).slice(-1)[0]!;
+    const requeryResults = requeryState.results as Array<{
+      result?: QueryResult;
+      batched?: BatchedQuery;
+    }>;
+    expect(requeryResults[0]!.result!.rows).toEqual([[10], [11], [12]]);
+
+    // Load more through the runner. Must read requeryBatched (not the
+    // initial cursor) so we get the new next batch ([[100]]).
+    const updated = await runner.loadMore(0);
+    expect(updated[0]!.result!.rows).toEqual([[10], [11], [12], [100]]);
+  });
+
+  it("QueryRunner.adopt(index, stmt) replaces the entry's batched cursor in place", async () => {
+    const { runner, initialBatched, requeryBatched } = makeRealRunner();
+    await runner.run([makeStmt("SELECT id FROM t")], () => undefined);
+    // After runner.run(): initialBatched.fetchBatch was called once
+    // (pickResult initial fetch inside executeAll) and runner's entry
+    // holds rows [[1],[2],[3]].
+
+    // adopt: replace runner's internal entry[0] entirely. We do NOT
+    // pre-fetch requeryBatched — loadMore will fetch its first batch
+    // here (which is what the test asserts).
+    runner.adopt(0, {
+      index: 0,
+      sql: "SELECT id FROM t",
+      status: "done",
+      result: { columns: ["id"], rows: [], rowCount: null, durationMs: 0 },
+      batched: requeryBatched,
+      durationMs: 0,
+    });
+
+    const updated = await runner.loadMore(0);
+    expect(updated[0]!.result!.rows).toEqual([[10], [11], [12]]);
+    expect(initialBatched.fetchBatch).toHaveBeenCalledTimes(1);
+    expect(requeryBatched.fetchBatch).toHaveBeenCalledTimes(1);
+  });
+});
+
+// =============================================================================
+// Fix R2 important #2 — pickResult rowCount=null for batched
+// =============================================================================
+//
+// pickResult's doc comment says "rowCount = null cho batched (chưa biết
+// tổng)" but the implementation set `rowCount = initialRows.length` when
+// the initial batch returned any rows. That made the grid model's
+// hasMore=false while the cursor was still open — Load More vanished on
+// the very first batch. Fix: always null for batched so hasMore stays
+// true while the cursor is open.
+describe("pickResult — rowCount=null for batched (Fix R2 important #2)", () => {
+  it("batched with initial rows: rowCount=null (not initialRows.length)", async () => {
+    const batched = makeBatchedCursor([[[1], [2], [3]]]);
+    const r = await pickResult({ results: [], batched });
+    expect(r.rowCount).toBeNull();
+  });
+
+  it("batched with empty initial batch: rowCount=null", async () => {
+    const batched = makeBatchedCursor([null]);
+    const r = await pickResult({ results: [], batched });
+    expect(r.rowCount).toBeNull();
+  });
+
+  it("non-batched: rowCount preserved from results[0]", async () => {
+    const r = await pickResult({
+      results: [
+        { columns: ["x"], rows: [["a"], ["b"]], rowCount: 7, durationMs: 0 },
+      ],
+    });
+    expect(r.rowCount).toBe(7);
+  });
+});
+

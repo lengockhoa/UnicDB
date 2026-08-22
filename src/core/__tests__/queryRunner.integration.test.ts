@@ -57,9 +57,10 @@ describe.skipIf(!IT)("QueryRunner + PostgresAdapter (docker) — batched contrac
     // Initial 500-row batch shown immediately (design intent).
     expect(results[0].result?.rows).toHaveLength(500);
     expect(results[0].result?.rows[0]).toEqual([1]);
-    expect(results[0].result?.rows[499]).toEqual([500]);
-    // Footer-style rowCount = 500 (loaded so far, total unknown for batched).
-    expect(results[0].result?.rowCount).toBe(500);
+    // Footer-style rowCount = null for batched (Fix R2 important #2).
+    // Total unknown until EOF; returning `500` here flipped the grid
+    // model's hasMore=false on the very first batch and hid Load More.
+    expect(results[0].result?.rowCount).toBeNull();
     expect(results[0].batched).toBeDefined();
 
     // Cleanup: close cursor để adapter.close() không phải cleanup.
