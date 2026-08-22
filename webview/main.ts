@@ -35,6 +35,7 @@ import {
   themeQuartz,
   type BodyScrollEvent,
   type FilterChangedEvent,
+  type CellValueChangedEvent,
 } from "ag-grid-community";
 import type { GridApi } from "ag-grid-community";
 import {
@@ -43,6 +44,9 @@ import {
   selectionToText,
   footerText,
   formatCell,
+  EditState,
+  parseTsvPaste,
+  applyPasteToDirty,
   type ColumnSpec,
   type ResultsGridModel,
 } from "../src/ui/resultsGridModel";
@@ -135,6 +139,12 @@ let quickFilterActive = false;
  *  by `onFilterChanged` reading `api.isColumnFilterPresent()`. Reset on
  *  grid recreate and on columnDefs swap. */
 let colFilterActive = false;
+/** Local edit state — pure-logic dirty map. Cleared on tab switch / new query.
+ *  TASK-503 will read `editState.snapshot()` to build the save payload. */
+let editState = new EditState();
+/** When true, data cells display the raw value (CSV preview mode). Flipped
+ *  by the CSV toggle toolbar button. */
+let csvMode = false;
 
 // ---- Persistent DOM (created once on first render) -------------------------
 
@@ -142,6 +152,11 @@ interface PersistentDom {
   header: HTMLDivElement;
   toolbar: HTMLDivElement;
   cancelBtn: HTMLButtonElement;
+  refreshBtn: HTMLButtonElement;
+  addRowBtn: HTMLButtonElement;
+  deleteRowBtn: HTMLButtonElement;
+  undoBtn: HTMLButtonElement;
+  csvToggleBtn: HTMLButtonElement;
   searchInput: HTMLInputElement;
   tabs: HTMLDivElement;
   /** Slot where the active panel renders. The grid host and messages live
@@ -220,6 +235,44 @@ function buildPersistentDom(): PersistentDom {
   cancelBtn.addEventListener("click", () => postToHost({ type: "cancel" }));
   toolbar.appendChild(cancelBtn);
 
+  // TASK-501: edit / paste / undo toolbar. Add Row / Delete Row operate on
+  // local edit state only — TASK-503 will post the save payload to the
+  // host. Refresh is a noop visual reset (re-posts the current state so
+  // the host's "saved" snapshot matches).
+  const refreshBtn = document.createElement("button");
+  refreshBtn.textContent = "Refresh";
+  refreshBtn.className = "vsdb-btn";
+  refreshBtn.title = "Re-post the current result state to the host";
+  refreshBtn.addEventListener("click", () => onRefreshClick());
+  toolbar.appendChild(refreshBtn);
+
+  const addRowBtn = document.createElement("button");
+  addRowBtn.textContent = "Add Row";
+  addRowBtn.className = "vsdb-btn";
+  addRowBtn.title = "Append a blank row to the result (TASK-503 will save)";
+  addRowBtn.addEventListener("click", () => onAddRowClick());
+  toolbar.appendChild(addRowBtn);
+
+  const deleteRowBtn = document.createElement("button");
+  deleteRowBtn.textContent = "Delete Row";
+  deleteRowBtn.className = "vsdb-btn";
+  deleteRowBtn.title = "Mark the currently focused row as deleted (TASK-503 will save)";
+  deleteRowBtn.addEventListener("click", () => onDeleteRowClick());
+  toolbar.appendChild(deleteRowBtn);
+
+  const undoBtn = document.createElement("button");
+  undoBtn.textContent = "Undo";
+  undoBtn.className = "vsdb-btn";
+  undoBtn.title = "Undo the last cell edit";
+  undoBtn.addEventListener("click", () => onUndoClick());
+  toolbar.appendChild(undoBtn);
+
+  const csvToggleBtn = document.createElement("button");
+  csvToggleBtn.textContent = "CSV";
+  csvToggleBtn.className = "vsdb-btn";
+  csvToggleBtn.title = "Toggle CSV preview (raw values vs formatted)";
+  csvToggleBtn.addEventListener("click", () => onCsvToggleClick());
+  toolbar.appendChild(csvToggleBtn);
   const searchInput = document.createElement("input");
   searchInput.type = "text";
   searchInput.placeholder = "Search…";
@@ -268,6 +321,17 @@ function buildPersistentDom(): PersistentDom {
       }
     },
     true,
+    true,
+  );
+  // TASK-501: paste handler — TSV payload from the OS clipboard. AG Grid's
+  // own paste module requires Enterprise; we listen on gridWrap so the
+  // event is caught whether dispatched directly on the wrap (test) or
+  // bubbled from an inner cell. Capture phase so we run before AG Grid's
+  // default paste handling.
+  gridWrap.addEventListener(
+    "paste",
+    (ev) => onGridPaste(ev as ClipboardEvent),
+    true,
   );
 
   const gridHost = document.createElement("div");
@@ -288,6 +352,11 @@ function buildPersistentDom(): PersistentDom {
     header,
     toolbar,
     cancelBtn,
+    refreshBtn,
+    addRowBtn,
+    deleteRowBtn,
+    undoBtn,
+    csvToggleBtn,
     searchInput,
     tabs,
     panel,
@@ -477,7 +546,11 @@ function renderGrid(): void {
           },
       resizable: true,
       floatingFilter: true,
-      valueFormatter: (p: { value: unknown }) => formatCell(p.value),
+      // TASK-501: cells are editable (cellValueChanged → editState.markDirty).
+      // valueFormatter is rebuilt when csvMode flips (toggleCsv) so the user
+      // can preview raw values vs formatted.
+      editable: true,
+      valueFormatter: (p: { value: unknown }) => formatDataCell(p.value),
       cellStyle: isNumber
         ? { textAlign: "right" as const, fontVariantNumeric: "tabular-nums" }
         : {
@@ -515,6 +588,7 @@ function renderGrid(): void {
   });
 
   if (isFirstRender || tabSwitched) {
+    // Fresh grid (new statement OR tab switch) → drop any stale dirty edits.
     if (gridApi) {
       // Tab switch: destroy old grid and recreate on the same persistent
       // host with new columns. Destroying ensures the new grid sees fresh
@@ -584,6 +658,20 @@ function renderGrid(): void {
         colFilterActive = e.api.isColumnFilterPresent();
         updateFooterNow();
       },
+      // TASK-501: record cell edits into the local EditState. The event
+      // provides the AG Grid row index; we pair it with the column's
+      // colIndex via getColumnDefs so TASK-503 can build a save payload.
+      onCellValueChanged: (e: CellValueChangedEvent) => {
+        const col = e.colDef as { field?: string } | undefined;
+        if (!col || typeof col.field !== "string") return;
+        const cols = e.api.getColumnDefs() as Array<{ field?: string }> | undefined;
+        const colIndex = (cols ?? []).findIndex((c) => c.field === col.field);
+        if (colIndex < 0) return;
+        const rowId = e.node?.rowIndex ?? -1;
+        if (rowId < 0) return;
+        editState.markDirty(rowId, colIndex, e.newValue, e.oldValue);
+        updateFooterNow();
+      },
       onModelUpdated: () => updateFooterNow(),
       onBodyScroll: (e: BodyScrollEvent) => onBodyScroll(e, activeTab, model),
     });
@@ -591,6 +679,9 @@ function renderGrid(): void {
     statementRows.set(activeTab, r.result.rows.slice());
     lastColumnCount = specs.length;
   } else if (statementReset || columnsChanged || syncResult.isReset) {
+    // New data for the same statement (e.g. statementReset on terminal
+    // status, or columnsChanged). Drop stale dirty edits.
+    editState.clear();
     // Replace rowData (and column defs if changed) on the existing grid.
     if (columnsChanged) {
       // Column set changed → previous column filter is no longer valid.
@@ -688,6 +779,137 @@ function onBodyScroll(
     model.requestWindow(state.getLoaded(), 0);
     dispatchLoadMore();
   }
+}
+// ---- TASK-501: edit / paste / toolbar wiring ------------------------------
+
+/** Format a data cell value. csvMode off → formatted (formatCell, the
+ *  default display); csvMode on → raw (toString, so a Date renders as the
+ *  Date object's toString rather than an ISO string). */
+function formatDataCell(v: unknown): string {
+  if (csvMode) {
+    if (v === null || v === undefined) return "";
+    return String(v);
+  }
+  return formatCell(v);
+}
+
+/** Dispatch a paste payload from the OS clipboard. The browser's
+ *  ClipboardEvent carries text on `clipboardData.getData("text/plain")` for
+ *  plain-text paste. We parse TSV, clip to grid bounds, and mark each
+ *  in-bounds cell dirty. AG Grid doesn't fire its own cellValueChanged for
+ *  programmatic pastes — we apply the rowData change and call
+ *  `refreshClientSideRowModel()` so the grid reflects the new values. */
+function onGridPaste(ev: ClipboardEvent): void {
+  const text = ev.clipboardData?.getData("text/plain") ?? "";
+  if (!text) return;
+  if (!gridApi) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  const parsed = parseTsvPaste(text);
+  if (parsed.length === 0) return;
+  // Anchor at the focused cell; fall back to (0,0).
+  const focused = gridApi.getFocusedCell();
+  const anchorRow = focused?.rowIndex ?? 0;
+  const cols = gridApi.getColumnDefs() as Array<{ field?: string }> | undefined;
+  const anchorCol = focused?.column?.getColId
+    ? Math.max(0, (cols ?? []).findIndex((c) => c.field === focused.column.getColId()))
+    : 0;
+  if (anchorCol < 0) return;
+  const colCount = (cols ?? []).length;
+  const rowCount = gridApi.getDisplayedRowCount();
+  applyPasteToDirty(editState, anchorRow, anchorCol, parsed, colCount, rowCount);
+  // Apply the paste to the visible rows so the user sees the result. We
+  // copy current rowData, splice in the pasted values, then call
+  // setGridOption('rowData', ...) to push them back to the grid.
+  const current: Array<Record<string, unknown>> = [];
+  gridApi.forEachNode((node) => {
+    if (node.data) current.push({ ...node.data });
+  });
+  for (let r = 0; r < parsed.length; r++) {
+    const targetRow = anchorRow + r;
+    if (targetRow < 0 || targetRow >= rowCount) continue;
+    const target = current[targetRow];
+    if (!target) continue;
+    const row = parsed[r];
+    for (let c = 0; c < row.length; c++) {
+      const targetCol = anchorCol + c;
+      if (targetCol < 0 || targetCol >= colCount) continue;
+      const col = (cols ?? [])[targetCol];
+      if (!col?.field) continue;
+      target[col.field] = row[c];
+    }
+  }
+  gridApi.setGridOption("rowData", current);
+  updateFooterNow();
+}
+
+/** Refresh button: visual noop reset of dirty state + re-post the current
+ *  state to the host so the host's "saved" snapshot matches. */
+function onRefreshClick(): void {
+  editState.clear();
+  // No-op for the host today — TASK-503 will define the host message; for
+  // now this just clears the local dirty map (which is the user-visible
+  // "reset" semantics).
+  updateFooterNow();
+}
+
+/** Add Row: append a blank row to the local edit state. TASK-503 will read
+ *  the snapshot and post a save payload to the host. */
+function onAddRowClick(): void {
+  if (!gridApi) return;
+  const cols = gridApi.getColumnDefs() as Array<{ field?: string }> | undefined;
+  const colCount = (cols ?? []).length;
+  const newRowId = gridApi.getDisplayedRowCount();
+  // Record a single "insert" sentinel on (rowId=newRowId, colIndex=0) — the
+  // snapshot includes all future rows the user fills in via cellValueChanged.
+  editState.markDirty(newRowId, 0, "__vsdb_new_row__", undefined);
+  void colCount; // column count used by TASK-503 when materializing the new row.
+  updateFooterNow();
+}
+
+/** Delete Row: mark the currently focused row as deleted in local edit
+ *  state. TASK-503 will translate the snapshot into a DELETE statement. */
+function onDeleteRowClick(): void {
+  if (!gridApi) return;
+  const focused = gridApi.getFocusedCell();
+  const rowId = focused?.rowIndex ?? -1;
+  if (rowId < 0) return;
+  editState.markDirty(rowId, 0, "__vsdb_deleted__", undefined);
+  updateFooterNow();
+}
+
+/** Undo: pop the last dirty cell from EditState and revert its grid cell. */
+function onUndoClick(): void {
+  if (!gridApi) return;
+  const popped = editState.undo();
+  if (!popped) return;
+  const cols = gridApi.getColumnDefs() as Array<{ field?: string }> | undefined;
+  const col = (cols ?? [])[popped.colIndex];
+  if (!col?.field) return;
+  // Look up the original value from the underlying statement result row.
+  const r = results[activeTab];
+  const oldValue = r?.result?.rows?.[popped.rowId]?.[popped.colIndex];
+  const node = gridApi.getDisplayedRowAtIndex(popped.rowId);
+  if (!node?.data) return;
+  node.data[col.field] = oldValue;
+  gridApi.setGridOption("rowData", gridApi.getGridOption("rowData"));
+  updateFooterNow();
+}
+
+/** CSV toggle: flip csvMode and rebuild the valueFormatter on every visible
+ *  data column so the user sees raw values vs formatted. */
+function onCsvToggleClick(): void {
+  csvMode = !csvMode;
+  if (!gridApi) return;
+  const cols = gridApi.getColumnDefs() as
+    | Array<{ field?: string; valueFormatter?: unknown }>
+    | undefined;
+  if (!cols) return;
+  const next = cols.map((c) => ({
+    ...c,
+    valueFormatter: (p: { value: unknown }) => formatDataCell(p.value),
+  }));
+  gridApi.setGridOption("columnDefs", next);
 }
 
 function copySelectionToHost(): void {
@@ -840,4 +1062,12 @@ render();
       if (typeof hook === "function") hook();
     };
   },
+  get editState(): EditState {
+    return editState;
+  },
+  addRow: onAddRowClick,
+  deleteRow: onDeleteRowClick,
+  refresh: onRefreshClick,
+  toggleCsv: onCsvToggleClick,
+  undo: onUndoClick,
 };

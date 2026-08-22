@@ -6,6 +6,7 @@
 //
 // Pattern: vi.mock('vscode') đầy đủ.
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import type { Mock } from "vitest";
 import * as path from "node:path";
 
 type Listener<T> = (e: T) => void;
@@ -41,6 +42,14 @@ const state = {
     selection: { isEmpty: boolean; active: unknown; start: unknown; end: unknown };
     insertSnippet: (s: unknown) => Promise<void>;
   },
+  // Terminal stubs (cho TASK-505 runScript tests).
+  createdTerminals: [] as Array<{
+    name: string;
+    sendText: Mock;
+    show: Mock;
+    dispose: Mock;
+    exitStatus: { code: number } | undefined;
+  }>,
 };
 
 vi.mock("vscode", () => {
@@ -80,6 +89,18 @@ vi.mock("vscode", () => {
         };
         state.createdWebviewPanels.push(panel);
         return panel;
+      }),
+      createTerminal: vi.fn((options: { name?: string } = {}) => {
+        const exitStatus = { code: 0 };
+        const term = {
+          name: options.name ?? "vscode-terminal",
+          sendText: vi.fn(),
+          show: vi.fn(),
+          dispose: vi.fn(),
+          exitStatus,
+        };
+        state.createdTerminals.push(term);
+        return term;
       }),
       createTreeView: vi.fn().mockImplementation((id: string) => {
         const tv = { id, dispose: vi.fn() };
@@ -150,6 +171,7 @@ vi.mock("vscode", () => {
       line,
       character,
     })),
+    Terminal: class {},
   };
 });
 
@@ -193,6 +215,7 @@ describe("extension.activate — wiring smoke", () => {
     state.onDidChangeConfigSubscribers.length = 0;
     state.workspaceFolders = undefined;
     state.activeEditor = undefined;
+    state.createdTerminals.length = 0;
   });
 
   it("register đủ 10 command theo package.json", () => {
@@ -209,6 +232,7 @@ describe("extension.activate — wiring smoke", () => {
       "vsdb.copyQualifiedName",
       "vsdb.refreshSchema",
       "vsdb.runStatement",
+      "vsdb.runScript",
     ];
     for (const cmd of expected) {
       expect(state.registeredCommands.has(cmd)).toBe(true);
@@ -275,6 +299,7 @@ describe("Spec test #5 — runQuery without connection prompts QuickPick with 'A
     state.onDidChangeConfigSubscribers.length = 0;
     state.workspaceFolders = undefined;
     state.activeEditor = undefined;
+    state.createdTerminals.length = 0;
   });
 
   it("vsdb.runQuery với editor .sql và manager active=null → showQuickPick được gọi với option 'Add Connection'", async () => {
@@ -359,6 +384,7 @@ describe("TASK-303 — filter command + view/title menu", () => {
     state.onDidChangeConfigSubscribers.length = 0;
     state.workspaceFolders = undefined;
     state.activeEditor = undefined;
+    state.createdTerminals.length = 0;
   });
 
   it("package.json contributes khai báo 2 command mới với icon + menu entries đúng when", () => {
@@ -416,6 +442,136 @@ describe("TASK-303 — filter command + view/title menu", () => {
     expect(setFilterSpy).not.toHaveBeenCalled();
 
     setFilterSpy.mockRestore();
+  });
+});
+
+// =============================================================================
+// TASK-505: vsdb.runScript — send active shell script to a reused terminal.
+// =============================================================================
+describe("TASK-505 — runScript command + terminal reuse", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+    state.registeredTreeDataProviders.clear();
+    state.createdStatusBarItems.length = 0;
+    state.createdWebviewPanels.length = 0;
+    state.createdTreeViews.length = 0;
+    state.registeredCodeLensProviders.length = 0;
+    state.onDidChangeConfigSubscribers.length = 0;
+    state.workspaceFolders = undefined;
+    state.activeEditor = undefined;
+    state.createdTerminals.length = 0;
+  });
+
+  it("Test #1: command 'vsdb.runScript' được register khi activate", () => {
+    const ctx = makeCtx();
+    activate(ctx as never);
+    expect(state.registeredCommands.has("vsdb.runScript")).toBe(true);
+  });
+
+  it("Test #2: handler tạo terminal 'VSDB Script' + sendText full content của document shellscript", async () => {
+    const ctx = makeCtx();
+    activate(ctx as never);
+
+    const scriptText = "echo hello\necho world\nls -la\n";
+    state.activeEditor = {
+      document: {
+        languageId: "shellscript",
+        getText: () => scriptText,
+        offsetAt: (_p: unknown) => 0,
+      },
+      selection: {
+        isEmpty: true,
+        active: { line: 0, character: 0 },
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: 0 },
+      },
+      insertSnippet: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const fn = state.registeredCommands.get("vsdb.runScript");
+    expect(fn).toBeDefined();
+    await fn!();
+
+    // createTerminal được gọi đúng 1 lần với name "VSDB Script"
+    expect(state.createdTerminals.length).toBe(1);
+    expect(state.createdTerminals[0].name).toBe("VSDB Script");
+    // sendText nhận full document text + newline (paste full file)
+    const term = state.createdTerminals[0];
+    expect(term.sendText).toHaveBeenCalledTimes(1);
+    expect(term.sendText.mock.calls[0][0]).toBe(scriptText + "\n");
+    // terminal.show được gọi
+    expect(term.show).toHaveBeenCalled();
+  });
+
+  it("Test #3: document rỗng → vẫn sendText (newline), không throw", async () => {
+    const ctx = makeCtx();
+    activate(ctx as never);
+
+    state.activeEditor = {
+      document: {
+        languageId: "shellscript",
+        getText: () => "",
+        offsetAt: (_p: unknown) => 0,
+      },
+      selection: {
+        isEmpty: true,
+        active: { line: 0, character: 0 },
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: 0 },
+      },
+      insertSnippet: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const fn = state.registeredCommands.get("vsdb.runScript");
+    expect(fn).toBeDefined();
+    await expect(fn!()).resolves.toBeUndefined();
+
+    expect(state.createdTerminals.length).toBe(1);
+    const term = state.createdTerminals[0];
+    expect(term.sendText).toHaveBeenCalledTimes(1);
+    // Empty document: sendText được gọi với empty string + newline → "\n"
+    expect(term.sendText.mock.calls[0][0]).toBe("\n");
+    expect(term.show).toHaveBeenCalled();
+  });
+
+  it("Test #4: terminal cũ còn sống → reuse, chỉ 1 createTerminal call khi run 2 lần", async () => {
+    const ctx = makeCtx();
+    activate(ctx as never);
+
+    const scriptText = "echo hi\n";
+    state.activeEditor = {
+      document: {
+        languageId: "shellscript",
+        getText: () => scriptText,
+        offsetAt: (_p: unknown) => 0,
+      },
+      selection: {
+        isEmpty: true,
+        active: { line: 0, character: 0 },
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: 0 },
+      },
+      insertSnippet: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const fn = state.registeredCommands.get("vsdb.runScript");
+    expect(fn).toBeDefined();
+
+    // First call: tạo terminal mới.
+    await fn!();
+    expect(state.createdTerminals.length).toBe(1);
+    const firstTerm = state.createdTerminals[0];
+    // exitStatus undefined → terminal còn sống.
+    firstTerm.exitStatus = undefined;
+
+    // Second call: terminal cũ còn alive → reuse, không tạo mới.
+    await fn!();
+    expect(state.createdTerminals.length).toBe(1);
+
+    // sendText được gọi 2 lần (một cho mỗi invocation), cùng instance.
+    expect(firstTerm.sendText).toHaveBeenCalledTimes(2);
+    expect(firstTerm.show).toHaveBeenCalledTimes(2);
   });
 });
 

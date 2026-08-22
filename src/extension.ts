@@ -22,6 +22,8 @@ let disposables: vscode.Disposable[] = [];
 let state: ExtensionState | null = null;
 /** extensionUri capture ở activate() — dùng cho ConnectionForm webview resources. */
 let extensionUriForForm: vscode.Uri = vscode.Uri.file("/");
+/** Cached "VSDB Script" terminal instance (TASK-505). Reused while alive. */
+let runScriptTerminal: vscode.Terminal | null = null;
 
 interface ExtensionState {
   mgr: ConnectionManager;
@@ -199,6 +201,11 @@ export async function activate(
         }
       },
     ),
+  );
+
+  // 14. vsdb.runScript — send active .sh file to a reused terminal (TASK-505).
+  disposables.push(
+    vscode.commands.registerCommand("vsdb.runScript", () => commandRunScript()),
   );
 
   // Dispose schemaTree + codeLens on deactivate to drop subscriptions + cache.
@@ -542,4 +549,19 @@ async function commandCopyQualifiedName(qualifiedOrNode?: unknown): Promise<void
     `VSDB: copied "${text}"`,
     2000,
   );
+}
+
+/**
+ * TASK-505 — Send the active shell script's full text to a reused terminal
+ * ("VSDB Script"). Behaves like pasting the entire file into the shell.
+ */
+async function commandRunScript(): Promise<void> {
+  const editor = vscode.window.activeTextEditor;
+  const text = editor ? editor.document.getText() : "";
+  // Terminal còn sống (exitStatus undefined) → reuse; ngược lại tạo mới.
+  if (!runScriptTerminal || runScriptTerminal.exitStatus !== undefined) {
+    runScriptTerminal = vscode.window.createTerminal({ name: "VSDB Script" });
+  }
+  runScriptTerminal.sendText(text + "\n");
+  runScriptTerminal.show();
 }

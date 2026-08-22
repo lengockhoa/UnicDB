@@ -119,6 +119,12 @@
         "title": "Clear Schema Tree Filter",
         "category": "VSDB",
         "icon": "$(close)"
+      },
+      {
+        "command": "vsdb.runScript",
+        "title": "VSDB: Run Script",
+        "category": "VSDB",
+        "icon": "$(play)"
       }
     ],
     "keybindings": [
@@ -146,6 +152,11 @@
         {
           "command": "vsdb.cancelQuery",
           "when": "editorTextFocus && resourceLangId == sql",
+          "group": "navigation"
+        },
+        {
+          "command": "vsdb.runScript",
+          "when": "resourceLangId == shellscript",
           "group": "navigation"
         }
       ],

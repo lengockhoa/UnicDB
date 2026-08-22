@@ -326,3 +326,155 @@ export function formatCell(v: unknown): string {
   }
   return String(v);
 }
+
+// ---- EditState + TSV paste (TASK-501) --------------------------------------
+//
+// Pure-logic edit model — no DOM / ag-grid imports. Consumed by webview/main.ts
+// (cell edits, paste handler) and (later) by TASK-503 to build the save payload
+// via snapshot(). markDirty coalesces consecutive edits to the same cell into a
+// single undo step (the original oldValue stays at the bottom of the stack).
+
+export interface EditSnapshotEntry {
+  rowId: number;
+  colIndex: number;
+  value: unknown;
+}
+
+interface DirtyEntry {
+  rowId: number;
+  colIndex: number;
+  /** Most recent user-entered value. */
+  value: unknown;
+  /** Undo stack — bottom is the original pre-edit value. */
+  undoStack: unknown[];
+}
+
+export class EditState {
+  private readonly dirty = new Map<string, DirtyEntry>();
+
+  /** Total number of dirty cells. */
+  get dirtyCount(): number {
+    return this.dirty.size;
+  }
+
+  /**
+   * Record an edit to a single cell. Consecutive edits to the same cell
+   * coalesce: only the original oldValue is kept on the undo stack, so a
+   * single `undo()` restores back to the pre-edit value.
+   */
+  markDirty(rowId: number, colIndex: number, newValue: unknown, oldValue: unknown): void {
+    const key = `${rowId}:${colIndex}`;
+    const existing = this.dirty.get(key);
+    if (existing) {
+      // Coalesce: keep the bottom of the undo stack (original oldValue) and
+      // update the current value. Do NOT push a new undo step.
+      existing.value = newValue;
+      return;
+    }
+    this.dirty.set(key, {
+      rowId,
+      colIndex,
+      value: newValue,
+      undoStack: [oldValue],
+    });
+  }
+
+  /**
+   * Pop the last dirty cell (LIFO). Returns the cell that was popped (caller
+   * uses this to revert the AG Grid cell back to oldValue) and removes the
+   * dirty entry — the cell is no longer dirty once we restore oldValue.
+   * Returns null when the undo stack is empty.
+   */
+  undo(): { rowId: number; colIndex: number } | null {
+    // LIFO — pick the most-recently-marked cell. Iteration of Map preserves
+    // insertion order so we take the last entry.
+    if (this.dirty.size === 0) return null;
+    let lastKey: string | null = null;
+    for (const k of this.dirty.keys()) lastKey = k;
+    if (lastKey === null) return null;
+    const entry = this.dirty.get(lastKey)!;
+    this.dirty.delete(lastKey);
+    return { rowId: entry.rowId, colIndex: entry.colIndex };
+  }
+
+  /** Drop all dirty edits and undo state. Used on tab switch / new query. */
+  clear(): void {
+    this.dirty.clear();
+  }
+
+  /**
+   * Current dirty cells as `{rowId, colIndex, value}` for save payload
+   * (consumed by TASK-503). Order is not specified — caller should pair each
+   * entry with the column spec via colIndex.
+   */
+  snapshot(): EditSnapshotEntry[] {
+    const out: EditSnapshotEntry[] = [];
+    for (const e of this.dirty.values()) {
+      out.push({ rowId: e.rowId, colIndex: e.colIndex, value: e.value });
+    }
+    return out;
+  }
+}
+
+/**
+ * Parse TSV clipboard text into a 2-D string array.
+ *
+ * - Splits on `\n` (handles both `\n` and `\r\n`).
+ * - Drops trailing empty rows produced by a trailing newline (Excel behavior).
+ * - Pads each row to the maximum width with `""` so all rows share the same
+ *   column count (downstream applyPasteToDirty can iterate uniformly).
+ */
+export function parseTsvPaste(text: string): string[][] {
+  // Normalize CRLF / CR → LF so a single split handles all platforms.
+  const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const rawLines = normalized.split("\n");
+  // Drop ALL trailing empty lines (a paste from Excel always ends with a
+  // newline → produces one extra empty row; multiple trailing newlines
+  // likewise produce empty rows that are not user data).
+  while (rawLines.length > 0 && rawLines[rawLines.length - 1] === "") {
+    rawLines.pop();
+  }
+  if (rawLines.length === 0) return [];
+
+  let maxWidth = 0;
+  const rows: string[][] = [];
+  for (const line of rawLines) {
+    const cells = line.split("\t");
+    rows.push(cells);
+    if (cells.length > maxWidth) maxWidth = cells.length;
+  }
+  if (maxWidth === 0) return rows;
+  for (const row of rows) {
+    while (row.length < maxWidth) row.push("");
+  }
+  return rows;
+}
+
+/**
+ * Apply a parsed TSV paste onto an EditState at the given anchor cell,
+ * clipping out-of-bounds rows/columns. Cells outside (rowCount, colCount)
+ * are silently dropped — no throw.
+ *
+ * oldValue for markDirty is `undefined` because paste-from-clipboard does not
+ * know the cell's pre-paste value; the webview main callsite supplies the
+ * real oldValue from the AG Grid node data when wiring the paste handler.
+ */
+export function applyPasteToDirty(
+  state: EditState,
+  anchorRow: number,
+  anchorCol: number,
+  parsed: string[][],
+  colCount: number,
+  rowCount: number,
+): void {
+  for (let r = 0; r < parsed.length; r++) {
+    const targetRow = anchorRow + r;
+    if (targetRow < 0 || targetRow >= rowCount) continue;
+    const row = parsed[r];
+    for (let c = 0; c < row.length; c++) {
+      const targetCol = anchorCol + c;
+      if (targetCol < 0 || targetCol >= colCount) continue;
+      state.markDirty(targetRow, targetCol, row[c], undefined);
+    }
+  }
+}
