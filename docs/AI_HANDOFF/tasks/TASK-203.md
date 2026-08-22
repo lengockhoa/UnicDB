@@ -110,3 +110,26 @@ Verification Output:
   - `npx vitest run src/ui/__tests__/webviewBundle.test.ts` → 7/7 pass (all green; was 4/7).
   - `npx vitest run` (full suite in worktree) → 21 test files, 204 tests pass.
 Status: PASS
+
+## Reviewer Verdict
+
+VERDICT: critical_block
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npm run compile && npx tsc --noEmit && npx vitest run src/ui/__tests__/resultsGridModel.test.ts src/ui/__tests__/webviewBundle.test.ts
+  result: 30 pass / 0 fail (23 + 7)
+TEST_PLAN_COVERAGE: all-followed (7/7 implemented and green; but tests assert API-level counts only — see critical findings on why they miss the DOM bugs)
+FINDINGS:
+  critical:
+    - webview/main.ts:128 + 355-419 — render() does `root.innerHTML=""` every message, then the "reuse" paths (append via applyTransaction :412, statementReset setGridOption("rowData") :398, sameColumns rebuild :416-417) mutate a grid whose GUI is DETACHED from the document; the freshly rendered `.vsdb-grid-host` stays empty. Reproduced against dist/webview.js (jsdom): after (a) loadMore append 500→1000, (b) busy true→false toggle, (c) tab switch Messages→back, the live `.vsdb-grid-host` contains 0 `.ag-root` elements while `gridApi.getDisplayedRowCount()` still reports data — user sees a BLANK grid panel after any re-render (busy toggles fire around every query/loadMore per TASK-204). Also leaks AG Grid window/document listeners (only freed by destroy()). Correct: destroy+recreate grid each render, or keep one persistent host element and re-parent `gridApi` GUI into the new container; never mutate a grid whose root was removed by innerHTML wipe.
+    - webview/main.ts:441-456 — onBodyScroll gates on `e.bottom === 0`, but AG Grid `BodyScrollEvent` has NO `bottom` field (only direction/left/top — node_modules/ag-grid-community/dist/types/src/events.d.ts:604-608); `undefined === 0` is always false, so scroll-triggered loadMore NEVER fires. Real webview infinite scroll is dead; only the programmatic `__checkLoadMore` hook works (which is what test 5 exercises). Correct: compute near-bottom from `e.top` + viewport height (AG Grid `api.getVerticalPixelRange()`), or use `onBodyScroll` + `isLastRowIndexKnown`/displayed-row check.
+  important:
+    - webview/main.ts:366-367 — `sameColumns` compares `specs.length` (column count) with `previousRows.length` (row count); meaningless predicate that spuriously fires the columnDefs+rowData rebuild branch on same-statement re-renders.
+    - .cache/webview-repro/aggrid.html — deliverable listed in Target Files was NOT created (only legacy scroll.html exists); orchestrator browser smoke has no AG Grid repro page.
+  minor:
+    - src/ui/__tests__/webviewBundle.test.ts:~236-240 — leftover DEBUG console.log lines + duplicated `input.value = "beta"` line.
+    - webview/main.ts:12,626 — `getGridApi` import kept only for a `void getGridApi;` statement; dead code.
+    - webview/styles.css:280,289 — unrelated connectionForm margin tweak 6px→8px in shared file.
+NEXT_STATUS_FOR_INDEX: critical_block
+NOTES: All 7 bundle tests pass but they assert via gridApi counts, never that the grid DOM is attached after a SECOND render — exactly where both criticals live. Recommend: fix render/reuse lifecycle, fix scroll gate, add a test that dispatches state twice and asserts `.vsdb-grid-host .ag-root` still exists.

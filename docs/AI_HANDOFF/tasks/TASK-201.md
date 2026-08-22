@@ -1,8 +1,8 @@
 # TASK-201 — ag-grid-community dependency + bundle pipeline
 
-Status: ready
+Status: approved_minor
 Owner: -
-Reviewer: -
+Reviewer: unic-smart
 Parent plan: docs/AI_HANDOFF/PLAN.md
 
 ## Goal
@@ -128,3 +128,26 @@ $ npx vitest run src/ui/__tests__/agGridSmoke.test.ts
 ```
 Status: PASS
 Note: AG Grid v36 modularizes row models — test bootstrap registers `AllCommunityModule` so `api.getDisplayedRowCount()` resolves. No production-code change beyond the two CSS imports in `webview/main.ts`. `dist/webview.js` does not contain AG Grid JS yet (TASK-203 will import the JS api).
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+EXECUTOR_TOOL: claude-code (subagent Exec201)
+VERIFICATION_RERUN:
+  command: npm install --no-audit --no-fund; npx tsc --noEmit && npx vitest run src/ui/__tests__/agGridSmoke.test.ts && npm run compile && ls -la dist/webview.css && grep -c 'ag-theme-quartz' dist/webview.css
+  result: PASS — tsc clean; 3/3 tests pass (1 file, 166ms); compile emits dist/webview.css 327,911 bytes with 832 `.ag-theme-quartz` matches; dist/webview.js contains AG Grid bundle (createGrid/ModuleRegistry present)
+TEST_PLAN_COVERAGE: all-followed — 3/3 planned tests implemented (happy: 3-row render; happy: CSS bundle contains `.ag-theme-quartz`+`.ag-root`; edge: empty rowData no-throw, count 0) with real assertions (toBe/toMatch); RED_OUTPUT contains genuine failing run with stack trace (jsdom unresolvable pre-install)
+MODEL_ISOLATION: reviewer unic-smart ≠ executor unic-code — OK (matches handoff.reviewer.model=unic-smart in .ukit/storage/config.json)
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - src/ui/__tests__/agGridSmoke.test.ts:117-124 — two acceptance criteria verified only by manual grep, not automated: (a) no CDN `https?://` URL in dist/webview.css, (b) `.vsdb-*` custom rules appear AFTER quartz CSS in bundle. Reviewer confirmed both manually (only http match is the SVG xmlns inside an inline `data:image/svg+xml` URI; vsdb idx 320953 > quartz idx 249186). Consider folding both into test #3 in a future pass.
+    - docs/AI_HANDOFF/tasks/TASK-201.md:26-31 — task plan lists 1 edge case vs handoff.plan.minTestsEdgeCase=2; executor implemented exactly what was planned (faithful), gap is planner-level and already accepted in plan review; noted for future task authoring.
+    - docs/AI_HANDOFF/tasks/TASK-201.md:33 — documented order (compile → vitest) is self-consistent since test #3 reads dist/webview.css; a fresh checkout running vitest before compile would fail on missing artifact — harmless given documented order, just worth knowing.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Community-only confirmed (no ag-grid-enterprise anywhere in package.json/package-lock/webview/src/esbuild.js; lock pins ag-grid-community@36.1.0). CSS imports are the first code lines of webview/main.ts (lines 8-10) with correct ag-grid → styles.css order. package.json contributes sanity passes (viewsContainers present). Remaining webview/main.ts diff body belongs to TASK-203 and is out of scope here.

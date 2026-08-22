@@ -90,3 +90,23 @@ Verification Output:
   - **Results grid (AG Grid Community)**: xem kết quả trong panel **VSDB Results** với sort / filter per column, quick search, multi-row selection + copy (Ctrl+C), và row count hiển thị ở status bar.
 Status: PASS
 Note: worktree had no node_modules → ran `npm install` once before `npm run package` (vsce refused without deps). Used `vsce package -o dist/` so vsix lives at `dist/vsdb-1.3.0.vsix` matching acceptance criterion. No git ops. No deletes of vsix (vsix preserved on disk for orchestrator).
+
+## Reviewer Verdict
+
+VERDICT: changes_requested
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code
+VERIFICATION_RERUN:
+  command: node -e version + contributes-keys; npx tsc --noEmit; npx vitest run --reporter=basic; npm run package; ls dist/vsdb-1.3.0.vsix
+  result: version=1.3.0 ✓ · contributes keys unchanged (7/7: commands,keybindings,menus,views,viewsContainers,viewsWelcome,configuration) ✓ · tsc clean ✓ · 21 files / 204 tests PASS ✓ · dist/vsdb-1.3.0.vsix exists (1,601,804 B), manifest version 1.3.0, no ag-grid-enterprise ✓
+TEST_PLAN_COVERAGE: all-followed (3/3 cases: version, vsix exists, manifest smoke incl. enterprise-absence)
+FINDINGS:
+  critical: none
+  important:
+    - README.md:76 — bullet "Nút refresh trên title bar để reload metadata" bị XÓA (thay vì thêm 1 bullet mới). `vsdb.refreshSchema` vẫn ship (manifest command + view/title menu navigation group, đã verify). Task nói "thêm 1 bullet", diff là 1 del + 1 add. Sửa: giữ lại bullet refresh, thêm bullet AG Grid mới thành dòng riêng.
+  minor:
+    - README.md:76 — bullet mới viết "row count hiển thị ở status bar" nhưng thực tế row count nằm ở grid footer (`.vsdb-grid-footer`, webview/main.ts:521); status bar VS Code chỉ hiển thị connection (src/ui/statusBar.ts:31). Sửa: đổi "status bar" → "footer của panel".
+    - src/ui/__tests__/_qf.test.ts:19-31, _quick.test.ts:19-31, _input.test.ts:8-20 — scratch debug files (console.log, không có expect) được commit từ wave 2 (commit 6adba9c, ngoài scope TASK-205). Sửa: delete 3 file `_*.test.ts` này; 204 count bị thổi phồng 3 test rỗng.
+    - .vscodeignore:38-44 — không exclude CLAUDE.md, AGENTS.md, opencode.json, .omp/**; rebuild từ main repo sinh vsix 26 files kèm agent files (đã verify bằng rebuild — dist artifact của executor sạch 12 files vì worktree không có các file đó). Sửa: thêm các pattern này vào .vscodeignore trước khi orchestrator rebuild.
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Version bump + packaging + manifest smoke đều PASS khi re-run. Chỉ README edit là sai lệch so với task spec (delete thay vì add) — sửa 1 dòng là xong. Scratch test files là lỗi từ wave 2, đề nghị orchestrator route sang TASK-203 fix round.
