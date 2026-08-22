@@ -1,6 +1,6 @@
 # TASK-503 — Save edits (PK/ctid) + Commit flow + warning banner
 
-- Status: `pending_review`
+- Status: `approved_minor`
 - Owner: `Exec503`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §7
@@ -178,3 +178,30 @@ ISSUES:
 HANDOFF_TO_REVIEWER: yes — Status now `pending_review`; ready for review.
 NEXT: ready for reviewer.
 NOTES: Placeholder concern xác nhận đúng — và còn hỏng một tầng trước đó (metadata wiring). Cả hai tầng đều phải fix: (1) host phải tự derive tableName/pkColumns (extension.ts đã có listPkColumns nhưng không ai gọi), (2) parameters phải được truyền hoặc inline. Executor nên thêm 1 integration-style test host-side với fake adapter chặn SQL gửi đi để khóa cả 2 tầng này.
+
+## Reviewer Verdict (Round 2)
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code (Fix503 — khác reviewer ✓; khớp handoff.reviewer.model=unic-smart)
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run src/adapters/__tests__/saveStatements.test.ts src/adapters/__tests__/saveStatementsInline.test.ts src/adapters/__tests__/saveStatementsParser.test.ts src/ui/__tests__/resultsPanelSaveEdits.test.ts src/ui/__tests__/webviewSaveEdits.test.ts src/ui/__tests__/webviewKeybinding.test.ts && npm run typecheck
+  result: PASS — compile clean; 50/50 targeted (6 files); typecheck exit 0.
+PROBE_EVIDENCE (fake-adapter qua ResultsPanel.handleMessage, độc lập với test của executor — 15 probes all PASS, đã xóa sau review):
+  - Fix#1 host-derived metadata: listPkColumns gọi đúng 1 lần với ("public","employees") từ parseFromClause; UPDATE dùng host PK "emp_id", webview "FAKE_TABLE"/"evil_col" KHÔNG xuất hiện trong bất kỳ SQL nào.
+  - Fix#2 inline literals: 3 dialect → `UPDATE users SET nm='O''Brien' WHERE id=1` (pg) / backtick (mysql) / bracket (mssql); regex \$\d và "?" = 0 match trên mọi UPDATE; postgres ctid path: `WHERE ctid='(0,7)'` cũng inline-literal. No parameters channel needed.
+  - Fix#3 ack honesty: pg no-PK + ctid lookup rỗng → {ok:false, refused:true, reason …ctid}; mysql no-PK → {ok:false, refused:true, reason …PRIMARY KEY}; không có silent ok:true; 0 UPDATE tới driver.
+  - Fix#4 ctid ambiguity: 2 match → 0 UPDATE + refused ack "ambig"; ctid SELECT dùng quoted ident + `IS NOT DISTINCT FROM 'a''b'` (null-safe, escape đúng).
+  - Fix#5 Cmd+Enter input gate: Cmd+Enter trong <input> focus → 0 postMessage; trên grid wrap → đúng 1 saveEdits.
+  - Fix#6 banner refusal: refused ack → banner text "no PRIMARY KEY", visible (không hidden); hard-failure errors[] joined.
+  - Fix#7 partial failure: 2 UPDATE đều chạy (không dừng sau lỗi #1), ack ok:false + errors chứa "unique constraint \"t_pkey\"", không refresh state sau failure.
+TEST_PLAN_COVERAGE: all-followed — cả 8 case §4 được cover qua 50 test targeted + probes; host-side (vùng 0-test ở round 1) giờ có 8 test qua fake adapter.
+FINDINGS:
+  critical: (none)
+  important: (none)
+  minor:
+    - src/ui/resultsPanel.ts:499 — refresh sau save vẫn đọc `refreshed.results[0]`; với postgres batched cursor (results=[]) freshResult undefined → grid không refresh thật. Executor đã ghi nhận deferred (pickResult() là fix đúng). Không block.
+    - src/core/saveStatements.ts:410 — delete-marker loop vẫn tính colIdx per-row (O(rows×cols)); executor đã ghi nhận deferred. Không block.
+    - webview/main.ts:554-567 — comment "TASK-503" bị nhân đôi sau khi thêm block "Fix R1" (comment cũ không dọn). Cosmetic.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Cả 2 critical + 4 important round-1 đều đã fix đúng và được khóa bằng test + probe độc lập. 2 minor deferred đã được executor document rõ trong ISSUES — chấp nhận theo kết quả fix round.
