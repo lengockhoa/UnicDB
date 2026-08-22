@@ -1,6 +1,6 @@
 Command: handoff-fullstack
-Goal: Thay custom VirtualGrid bằng AG Grid Community cho Results panel — hết bug grid trống/scroll, có sort/filter; fix Cancel disable
+Goal: Schema Explorer row counts + tree filter (cycle 2026-08-22-B)
 Base: main
-Phase: done
-Cursor: released v1.3.0 (5/5 tasks approved, pushed 34355e6)
-Next: none — cycle complete
+Phase: P2.5
+Cursor: plan written (PLAN.md + 4 tasks ready), cycle A archived
+Next: PlanReviewer → P3 commit plan → waves 301 → 302 → 303 → 304

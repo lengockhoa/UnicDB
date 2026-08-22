@@ -1,4 +1,4 @@
-Cycle: 2026-08-22-A   Date: 2026-08-22   Base: main
-Goal: Results panel dùng AG Grid Community (filter/sort/search/selection/ellipsis/row-count) thay VirtualGrid bug scroll + fix Cancel disable
-Tasks: 5 total
-Status: planning_done — ready for executor
+Cycle: 2026-08-22-B   Date: 2026-08-22   Base: main
+Goal: Schema Explorer — per-table row counts (reltuples badge) + tree filter box (schemas/tables/views/routines/columns)
+Tasks: 4 total
+Status: plan_written — awaiting plan review

@@ -5,20 +5,18 @@ Status values (xem RULES.md §Status state machine):
 ready | in_progress | pending_review | changes_requested | critical_block | approved | approved_minor | done | blocked | needs_breakdown
 
 Wave structure (không task cùng wave share file):
-W1: 201, 202, 204 | W2: 203 | W3: 205
+W1: 301, (302 chờ 301 — chạy sau) | W2: 302 → 303 | W3: 304
 -->
 
 | ID | Title | Priority | Size | Status | Owner | Reviewer | File |
 |----|-------|----------|------|--------|-------|----------|------|
-| TASK-201 | ag-grid-community dependency + bundle pipeline | P0 | S | done | unic-smart | - | `docs/AI_HANDOFF/tasks/TASK-201.md` |
-| TASK-202 | resultsGridModel: pure-logic module | P0 | M | done | - | unic-smart | `docs/AI_HANDOFF/tasks/TASK-202.md` |
-| TASK-203 | Thay VirtualGrid bằng AG Grid trong webview | P0 | L | done | - | unic/unic-smart | `docs/AI_HANDOFF/tasks/TASK-203.md` |
-| TASK-204 | Host setBusy quanh loadMore + nuốt cancel error | P0 | S | done | - | unic-smart | `docs/AI_HANDOFF/tasks/TASK-204.md` |
-| TASK-205 | Version 1.3.0 + smoke manifest | P1 | S | done | - | unic/unic-smart | `docs/AI_HANDOFF/tasks/TASK-205.md` |
+| TASK-301 | Adapter estimateTableRows (reltuples) | P0 | S | ready | - | - | `docs/AI_HANDOFF/tasks/TASK-301.md` |
+| TASK-302 | schemaTree row-count badges + filter engine | P0 | M | ready | - | - | `docs/AI_HANDOFF/tasks/TASK-302.md` |
+| TASK-303 | Filter command + view/title menu | P0 | S | ready | - | - | `docs/AI_HANDOFF/tasks/TASK-303.md` |
+| TASK-304 | Version 1.3.1 + README | P1 | S | ready | - | - | `docs/AI_HANDOFF/tasks/TASK-304.md` |
 
 ## Queued (future cycles)
 
-- Schema Explorer: per-table row counts + tree filter box
 - Results panel: AI assist tab
 
-Updated: 2026-08-22 · Planner (cycle 2026-08-22-A)
+Updated: 2026-08-22 · Main (cycle 2026-08-22-B plan)
