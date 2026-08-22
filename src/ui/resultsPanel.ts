@@ -168,6 +168,10 @@ export class ResultsPanel {
   private async handleMessage(msg: WebviewMessage): Promise<void> {
     switch (msg.type) {
       case "loadMore":
+        // Mark busy TRƯỚC await để webview enable Cancel button ngay khi batch
+        // bắt đầu fetch qua mạng. finally đảm bảo busy:false kể cả khi reject,
+        // tránh kẹt disable vĩnh viễn.
+        this.setBusy(true);
         try {
           const updated = await this.runner.loadMore(msg.index);
           this.lastResults = updated;
@@ -178,9 +182,24 @@ export class ResultsPanel {
             busy: this.busy,
           });
         } catch (err) {
-          void vscode.window.showErrorMessage(
-            `Load more failed: ${err instanceof Error ? err.message : String(err)}`,
-          );
+          // Cancel-during-loadMore: runner đã hủy cursor (xem queryRunner.ts
+          // loadMoreImpl — currentBatched set trước fetchBatch). Nuốt error
+          // (không toast) và re-post state để webview clear in-flight flag.
+          const cancelled = this.runner.isCancelled?.() === true ||
+            /cancel/i.test(err instanceof Error ? err.message : String(err));
+          if (!cancelled) {
+            void vscode.window.showErrorMessage(
+              `Load more failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+          this.postMessage({
+            type: "state",
+            header: this.header,
+            results: this.lastResults,
+            busy: this.busy,
+          });
+        } finally {
+          this.setBusy(false);
         }
         break;
       case "cancel":

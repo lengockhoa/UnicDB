@@ -77,3 +77,37 @@ export function formatCell(v: unknown): string;
 
 ### 2026-08-22 · planner · unic-smart
 `sync` nhận results + index và tự so với state trước đó của CÙNG index (rows.length tăng → delta; bằng → no-op; kẹt lại statement khác / rows.length giảm → isReset=true). Đây là trái tim của fix bug 1+2: APPEND thay vì rebuild.
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: Exec202
+RED_OUTPUT: |
+  FAIL  src/ui/__tests__/resultsGridModel.test.ts [ src/ui/__tests__/resultsGridModel.test.ts ]
+  Error: Failed to load url ../resultsGridModel (resolved id: ../resultsGridModel) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-202/src/ui/__tests__/resultsGridModel.test.ts. Does the file exist?
+   ❯ loadAndTransform ../../node_modules/vite/dist/chunks/dep-BK3b2jBa.js:51969:17
+   Test Files  1 failed (1)
+        Tests  no tests
+  Confirmed: 0 tests collected because the module under test did not exist yet (RED-before-GREEN).
+Verification Output: |
+  --- tsc --noEmit ---
+  (no output, exit code 0)
+
+  --- vitest run src/ui/__tests__/resultsGridModel.test.ts ---
+   RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-202
+
+   ✓ src/ui/__tests__/resultsGridModel.test.ts  (23 tests) 6ms
+
+   Test Files  1 passed (1)
+        Tests  23 passed (23)
+     Start at  12:56:35
+     Duration  274ms
+
+  --- Acceptance check ---
+  - webview/grid.ts untouched (only two ?? files in git status)
+  - No "vscode" / "ag-grid" runtime imports in src/ui/resultsGridModel.ts
+    (only mention in module docstring explaining the constraint)
+  - formatCell body byte-identical to webview/grid.ts formatCell;
+    signature widened from `v: any` to `v: unknown` (stricter, behaviorally identical)
+Status: PASS
+Note: All 10 required test cases pass (some expanded into sub-tests → 23 total assertions). Module is pure logic (no vscode/ag-grid dependency) and importable under plain vitest node env.

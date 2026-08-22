@@ -2,6 +2,9 @@
 // Webview entry — nhận state từ extension host, render tabs + grid + Messages.
 //
 // Message protocol: see src/ui/messages.ts (mirror of types).
+import "ag-grid-community/styles/ag-grid.css";
+import "ag-grid-community/styles/ag-theme-quartz.css";
+import "./styles.css";
 import { VirtualGrid, formatCell } from "./grid";
 import type { GridColumn } from "./grid";
 

@@ -5,15 +5,18 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ---- vscode mock -----------------------------------------------------------
 
-type MessageHandler = (msg: any) => void;
+type MessageHandler = (msg: unknown) => void;
 
 class FakeWebview {
   html = "";
   private csp = "vscode-resource:webview";
-  postMessage = vi.fn(async (_msg: any) => undefined);
-  onDidReceiveMessage = (h: MessageHandler) => ({ dispose: () => undefined });
-  asWebviewUri = (u: any) => u;
+  postMessage = vi.fn(async (_msg: unknown) => undefined);
+  onDidReceiveMessage = (h: MessageHandler) => { this.handler = h; return { dispose: () => undefined }; };
+  asWebviewUri = (u: unknown) => u;
   get cspSource() { return this.csp; }
+  /** Dispatch a message from the webview into the panel handler (test-only). */
+  dispatch(msg: unknown) { if (this.handler) this.handler(msg); }
+  private handler: MessageHandler | null = null;
 }
 
 class FakeWebviewPanel {
@@ -21,8 +24,8 @@ class FakeWebviewPanel {
   visible = true;
   private disposables: { dispose: () => void }[] = [];
   private didDisposeHandlers: (() => void)[] = [];
-  constructor(public viewType: string, public title: string, public viewColumn: number, public options: any) {}
-  reveal(_col?: any) {}
+  constructor(public viewType: string, public title: string, public viewColumn: number, public options: unknown) {}
+  reveal(_col?: unknown) {}
   onDidReceiveMessage(h: MessageHandler) { return { dispose: () => undefined }; }
   onDidDispose(h: () => void) {
     this.didDisposeHandlers.push(h);
@@ -39,14 +42,13 @@ vi.mock("vscode", () => {
   return {
     Uri: {
       file: (p: string) => ({ fsPath: p, path: p, toString: () => p }),
-      joinPath: (...parts: any[]) => ({
-        fsPath: parts.map((p) => p?.fsPath ?? p?.path ?? "").join("/"),
+      joinPath: (...parts: unknown[]) => ({
         path: parts.map((p) => p?.fsPath ?? p?.path ?? "").join("/"),
       }),
     },
     ViewColumn: { Beside: 1, Active: 2, One: 3, Two: 4, Three: 5 },
     window: {
-      createWebviewPanel: (vt: string, t: string, col: number, opts: any) => {
+      createWebviewPanel: (vt: string, t: string, col: number, opts: unknown) => {
         const p = new FakeWebviewPanel(vt, t, col, opts);
         lastPanel.current = p;
         return p;
@@ -58,10 +60,9 @@ vi.mock("vscode", () => {
     },
   };
 });
-
 import * as vscode from "vscode";
 import { ResultsPanel, sanitizeStatementResult } from "../resultsPanel";
-import type { QueryRunner } from "../../core/queryRunner";
+import type { QueryRunner, StatementResult } from "../../core/queryRunner";
 
 function makeRunnerStub(): QueryRunner {
   return {
@@ -161,7 +162,7 @@ describe("ResultsPanel — sanitizeStatementResult (IMPORTANT #5)", () => {
       },
       durationMs: 0,
     });
-    const obj = r.result!.rows[0][0] as any;
+    const obj = r.result!.rows[0][0] as unknown as Record<string, unknown>;
     expect(obj.x).toBe(7);
     expect(typeof obj.y.z).toBe("string");
     expect(obj.y.z).toBe("99999999999999999999");
@@ -184,7 +185,7 @@ describe("ResultsPanel — sanitizeStatementResult (IMPORTANT #5)", () => {
   });
 
   it("Circular reference → '[Circular]' (không throw)", () => {
-    const a: any = { x: 1 };
+    const a: Record<string, unknown> = { x: 1 };
     a.self = a;
     const r = sanitizeStatementResult({
       index: 0,
@@ -198,7 +199,7 @@ describe("ResultsPanel — sanitizeStatementResult (IMPORTANT #5)", () => {
       },
       durationMs: 0,
     });
-    const obj = r.result!.rows[0][0] as any;
+    const obj = r.result!.rows[0][0] as unknown as Record<string, unknown>;
     expect(obj.x).toBe(1);
     expect(obj.self).toBe("[Circular]");
   });
@@ -276,9 +277,8 @@ describe("ResultsPanel — postMessage surface (IMPORTANT #5)", () => {
     // Wait microtask queue để .then reject handler chạy.
     await new Promise((r) => setTimeout(r, 10));
     expect(vscode.window.showErrorMessage).toHaveBeenCalled();
-    const msg = String(
-      (vscode.window.showErrorMessage as any).mock.calls[0][0],
-    );
+    const showErr = vscode.window.showErrorMessage as unknown as { mock: { calls: unknown[][] } };
+    const msg = String(showErr.mock.calls[0][0]);
     expect(msg).toMatch(/postMessage failed/);
   });
 
@@ -324,9 +324,136 @@ describe("ResultsPanel — postMessage surface (IMPORTANT #5)", () => {
       "hdr",
     );
     expect(vscode.window.showErrorMessage).toHaveBeenCalled();
-    const msg = String(
-      (vscode.window.showErrorMessage as any).mock.calls[0][0],
-    );
+    const showErr = vscode.window.showErrorMessage as unknown as { mock: { calls: unknown[][] } };
+    const msg = String(showErr.mock.calls[0][0]);
     expect(msg).toMatch(/postMessage failed/);
   });
 });
+
+describe("ResultsPanel — handleMessage loadMore (TASK-204)", () => {
+  function newPanel() {
+    const runner = makeRunnerStub();
+    const panel = new ResultsPanel({ runner });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT 1",
+          status: "done",
+          result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    return { panel, runner, fake: lastPanel.current! };
+  }
+
+  /** Wait until postMessage được gọi với type khớp predicate, hoặc fail. */
+  async function waitForPostMessage(
+    fake: FakeWebview,
+    predicate: (m: { type?: string; busy?: boolean }) => boolean,
+  ): Promise<void> {
+    for (let i = 0; i < 200; i++) {
+      const match = fake.webview.postMessage.mock.calls
+        .map((c) => c[0] as { type?: string; busy?: boolean })
+        .some(predicate);
+      if (match) return;
+      await Promise.resolve();
+    }
+    throw new Error("timeout waiting for postMessage predicate");
+  }
+
+  it("busy:true postMessage TRƯỚC khi loadMore resolve", async () => {
+    const { runner, fake } = newPanel();
+    fake.webview.postMessage.mockClear();
+    const { promise, resolve } = Promise.withResolvers<StatementResult[]>();
+    runner.loadMore = vi.fn(() => promise) as unknown as typeof runner.loadMore;
+    fake.webview.dispatch({ type: "loadMore", index: 0 });
+    await waitForPostMessage(fake, (m) => m.type === "busy" && m.busy === true);
+    resolve([]);
+    await waitForPostMessage(fake, (m) => m.type === "busy" && m.busy === false);
+    const calls = fake.webview.postMessage.mock.calls
+      .map((c) => c[0] as { type?: string });
+    expect(calls.some((m) => m.type === "state")).toBe(true);
+  });
+
+  it("state cuối chứa updated results từ loadMore (sanitize vẫn chạy)", async () => {
+    const { runner, fake } = newPanel();
+    fake.webview.postMessage.mockClear();
+    const newResults: StatementResult[] = [
+      {
+        index: 0,
+        sql: "SELECT 1",
+        status: "done",
+        result: {
+          columns: ["y"],
+          rows: [[BigInt("9007199254740993")]],
+          rowCount: 1,
+          durationMs: 0,
+        },
+        durationMs: 0,
+      },
+    ];
+    runner.loadMore = vi.fn(
+      async () => newResults,
+    ) as unknown as typeof runner.loadMore;
+    fake.webview.dispatch({ type: "loadMore", index: 0 });
+    await waitForPostMessage(fake, (m) => m.type === "busy" && m.busy === false);
+    const stateMsg = fake.webview.postMessage.mock.calls
+      .map((c) => c[0] as { type?: string })
+      .filter((m) => m.type === "state")
+      .pop();
+    expect(stateMsg).toBeDefined();
+    const rowVal = (stateMsg as { results: Array<{ result: { rows: unknown[][] } }> })
+      .results[0].result.rows[0][0];
+    expect(typeof rowVal).toBe("string");
+    expect(rowVal).toBe("9007199254740993");
+  });
+
+  it("cancel-during-loadMore (cancelled message) KHÔNG toast — swallow error", async () => {
+    const { runner, fake } = newPanel();
+    fake.webview.postMessage.mockClear();
+    const showErr = vscode.window.showErrorMessage as unknown as { mockClear: () => void };
+    showErr.mockClear();
+    runner.loadMore = vi.fn(async () => { throw new Error("Statement 0 cancelled"); }) as unknown as typeof runner.loadMore;
+    (runner as unknown as { isCancelled?: () => boolean }).isCancelled = () => false;
+    fake.webview.dispatch({ type: "loadMore", index: 0 });
+    await waitForPostMessage(fake, (m) => m.type === "busy" && m.busy === false);
+    expect((vscode.window.showErrorMessage as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(0);
+    const calls = fake.webview.postMessage.mock.calls
+      .map((c) => c[0] as { type?: string });
+    expect(calls.some((m) => m.type === "state")).toBe(true);
+  });
+
+  it("cancel-during-loadMore (fetchBatch reject) detect qua isCancelled()", async () => {
+    const { runner, fake } = newPanel();
+    fake.webview.postMessage.mockClear();
+    const showErr = vscode.window.showErrorMessage as unknown as { mockClear: () => void };
+    showErr.mockClear();
+    runner.loadMore = vi.fn(async () => { throw new Error("another query is in progress"); }) as unknown as typeof runner.loadMore;
+    (runner as unknown as { isCancelled?: () => boolean }).isCancelled = () => true;
+    fake.webview.dispatch({ type: "loadMore", index: 0 });
+    await waitForPostMessage(fake, (m) => m.type === "busy" && m.busy === false);
+    expect((vscode.window.showErrorMessage as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(0);
+    const calls = fake.webview.postMessage.mock.calls
+      .map((c) => c[0] as { type?: string });
+    expect(calls.some((m) => m.type === "state")).toBe(true);
+  });
+
+  it("lỗi thật VẪN toast 'Load more failed: ...'", async () => {
+    const { runner, fake } = newPanel();
+    fake.webview.postMessage.mockClear();
+    const showErr = vscode.window.showErrorMessage as unknown as { mockClear: () => void };
+    showErr.mockClear();
+    runner.loadMore = vi.fn(async () => { throw new Error("connection refused"); }) as unknown as typeof runner.loadMore;
+    (runner as unknown as { isCancelled?: () => boolean }).isCancelled = () => false;
+    fake.webview.dispatch({ type: "loadMore", index: 0 });
+    await waitForPostMessage(fake, (m) => m.type === "busy" && m.busy === false);
+    const errMock = vscode.window.showErrorMessage as unknown as { mock: { calls: unknown[][] } };
+    expect(errMock.mock.calls.length).toBeGreaterThanOrEqual(1);
+    const lastMsg = String(errMock.mock.calls[errMock.mock.calls.length - 1][0]);
+    expect(lastMsg).toBe("Load more failed: connection refused");
+  });
+});
+
