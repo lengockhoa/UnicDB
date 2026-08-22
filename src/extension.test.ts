@@ -91,7 +91,9 @@ vi.mock("vscode", () => {
         return panel;
       }),
       createTerminal: vi.fn((options: { name?: string } = {}) => {
-        const exitStatus = { code: 0 };
+        // Terminal mới sinh ra còn sống (exitStatus = undefined), đúng contract VS Code API.
+        // Test muốn simulate "đã chết" thì set `term.exitStatus = { code: 0 }` sau khi tạo.
+        const exitStatus: { code: number } | undefined = undefined;
         const term = {
           name: options.name ?? "vscode-terminal",
           sendText: vi.fn(),
@@ -218,7 +220,7 @@ describe("extension.activate — wiring smoke", () => {
     state.createdTerminals.length = 0;
   });
 
-  it("register đủ 10 command theo package.json", () => {
+  it("register đủ 11 command theo package.json", () => {
     const ctx = makeCtx();
     activate(ctx as never);
     const expected = [
@@ -461,17 +463,26 @@ describe("TASK-505 — runScript command + terminal reuse", () => {
     state.workspaceFolders = undefined;
     state.activeEditor = undefined;
     state.createdTerminals.length = 0;
+    // Reset module để drop module-level `runScriptTerminal` từ test trước.
+    vi.resetModules();
   });
 
-  it("Test #1: command 'vsdb.runScript' được register khi activate", () => {
+  // Re-import + activate sau resetModules (mỗi test lấy module + registeredCommands mới).
+  // activateFresh: dynamic import cố ý (resetModules vừa drop cache).
+  async function activateFresh(ctx: ReturnType<typeof makeCtx>) {
+    const mod = await import("./extension");
+    await mod.activate(ctx as never);
+  }
+
+  it("Test #1: command 'vsdb.runScript' được register khi activate", async () => {
     const ctx = makeCtx();
-    activate(ctx as never);
+    await activateFresh(ctx);
     expect(state.registeredCommands.has("vsdb.runScript")).toBe(true);
   });
 
   it("Test #2: handler tạo terminal 'VSDB Script' + sendText full content của document shellscript", async () => {
     const ctx = makeCtx();
-    activate(ctx as never);
+    await activateFresh(ctx);
 
     const scriptText = "echo hello\necho world\nls -la\n";
     state.activeEditor = {
@@ -506,7 +517,7 @@ describe("TASK-505 — runScript command + terminal reuse", () => {
 
   it("Test #3: document rỗng → vẫn sendText (newline), không throw", async () => {
     const ctx = makeCtx();
-    activate(ctx as never);
+    await activateFresh(ctx);
 
     state.activeEditor = {
       document: {
@@ -537,7 +548,7 @@ describe("TASK-505 — runScript command + terminal reuse", () => {
 
   it("Test #4: terminal cũ còn sống → reuse, chỉ 1 createTerminal call khi run 2 lần", async () => {
     const ctx = makeCtx();
-    activate(ctx as never);
+    await activateFresh(ctx);
 
     const scriptText = "echo hi\n";
     state.activeEditor = {
@@ -558,12 +569,10 @@ describe("TASK-505 — runScript command + terminal reuse", () => {
     const fn = state.registeredCommands.get("vsdb.runScript");
     expect(fn).toBeDefined();
 
-    // First call: tạo terminal mới.
+    // First call: tạo terminal mới (mock alive-by-default).
     await fn!();
     expect(state.createdTerminals.length).toBe(1);
     const firstTerm = state.createdTerminals[0];
-    // exitStatus undefined → terminal còn sống.
-    firstTerm.exitStatus = undefined;
 
     // Second call: terminal cũ còn alive → reuse, không tạo mới.
     await fn!();
@@ -572,6 +581,53 @@ describe("TASK-505 — runScript command + terminal reuse", () => {
     // sendText được gọi 2 lần (một cho mỗi invocation), cùng instance.
     expect(firstTerm.sendText).toHaveBeenCalledTimes(2);
     expect(firstTerm.show).toHaveBeenCalledTimes(2);
+  });
+
+  it("Test #5: terminal cũ đã chết (exitStatus !== undefined) → tạo terminal mới khi run lại", async () => {
+    const ctx = makeCtx();
+    await activateFresh(ctx);
+
+    state.activeEditor = {
+      document: {
+        languageId: "shellscript",
+        getText: () => "echo first\n",
+        offsetAt: (_p: unknown) => 0,
+      },
+      selection: {
+        isEmpty: true,
+        active: { line: 0, character: 0 },
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: 0 },
+      },
+      insertSnippet: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const fn = state.registeredCommands.get("vsdb.runScript");
+    expect(fn).toBeDefined();
+
+    // First call: module runScriptTerminal = null → tạo terminal mới.
+    await fn!();
+    expect(state.createdTerminals.length).toBe(1);
+    const firstTerm = state.createdTerminals[0];
+
+    // Terminal process exits → đánh dấu dead.
+    firstTerm.exitStatus = { code: 0 };
+
+    // Second call: terminal cũ đã chết → phải tạo terminal mới, KHÔNG reuse.
+    await fn!();
+    expect(state.createdTerminals.length).toBe(2);
+
+    const secondTerm = state.createdTerminals[1];
+    // Instance khác nhau (không reuse).
+    expect(secondTerm).not.toBe(firstTerm);
+    // Terminal mới cũng tên "VSDB Script".
+    expect(secondTerm.name).toBe("VSDB Script");
+    // Terminal cũ không nhận text lần 2.
+    expect(firstTerm.sendText).toHaveBeenCalledTimes(1);
+    // Terminal mới nhận text lần 2.
+    expect(secondTerm.sendText).toHaveBeenCalledTimes(1);
+    expect(secondTerm.sendText.mock.calls[0][0]).toBe("echo first\n\n");
+    expect(secondTerm.show).toHaveBeenCalled();
   });
 });
 

@@ -36,7 +36,9 @@ import {
   type BodyScrollEvent,
   type FilterChangedEvent,
   type CellValueChangedEvent,
-} from "ag-grid-community";
+  type CellStyle,
+  type ColDef,
+ } from "ag-grid-community";
 import type { GridApi } from "ag-grid-community";
 import {
   inferColumns,
@@ -145,9 +147,82 @@ let editState = new EditState();
 /** When true, data cells display the raw value (CSV preview mode). Flipped
  *  by the CSV toggle toolbar button. */
 let csvMode = false;
+/** Locally-added rows beyond the server's row count. Add Row appends
+ *  a fresh row and assigns it a stable __rowId past the source array.
+ *  Reset on tab switch / new query (each renderGrid already calls
+ *  editState.clear() in the reset branch). */
+let newRowCount = 0;
+/** Last ColumnSpecs seen for the active statement. Used by handlers
+ *  (onUndoClick, onAddRowClick, onCsvToggleClick, onGridPaste) that
+ *  need a stable column ordering for colIndex ↔ field mapping. The
+ *  handler closure captures this at renderGrid time. */
+let currentSpecs: readonly ColumnSpec[] = [];
+/**
+ * Type-narrowed accessor for the stable row identity that AG Grid's
+ * getRowId/restore-style flows rely on. AG Grid calls our getRowId
+ * with `r.data`; we set `__rowId` on every row in rowsToObjects so the
+ * identity is stable across sort, filter, and column reorder.
+ */
+function readRowId(
+  data: Record<string, unknown> | undefined,
+): number | undefined {
+  if (!data || !("__rowId" in data)) return undefined;
+  const v = data["__rowId"];
+  return typeof v === "number" ? v : undefined;
+}
+/** True when the event target is a text input — floating-filter inputs
+ *  and similar. The capture-phase paste listener must NOT treat such
+ *  pastes as grid edits (they are the user's local typing). */
+function isFilterInput(t: EventTarget | null): boolean {
+  if (!t) return false;
+  return t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement;
+}
 
-// ---- Persistent DOM (created once on first render) -------------------------
+/** onCellValueChanged handler (TASK-501). Records cell edits into the
+ *  local EditState, keyed by STABLE row identity (`__rowId`) and
+ *  stable colIndex (resolved against the immutable `currentSpecs`).
+ *  Promoted to module level so the simulateCellEdit test hook can
+ *  invoke the same handler the grid uses, with synthetic event
+ *  payloads. This is the wiring real UI edits follow. */
+function onCellValueChangedHandler(e: CellValueChangedEvent): void {
+  const col = e.colDef as { field?: string } | undefined;
+  if (!col || typeof col.field !== "string") return;
+  const colIndex = currentSpecs.findIndex((s) => s.field === col.field);
+  if (colIndex < 0) return;
+  const rowId = readRowId(e.node?.data);
+  if (rowId === undefined) return;
+  editState.markDirty(rowId, colIndex, e.newValue, e.oldValue);
+  updateFooterNow();
+}
 
+/** Test seam for integration tests: simulate a user cell edit by
+ *  invoking the same onCellValueChanged handler the grid uses, with a
+ *  synthetic event payload. Resolves the row via the grid's stable
+ *  __rowId and the colDef via currentSpecs. */
+function simulateCellEdit(
+  rowId: number,
+  colField: string,
+  newValue: unknown,
+  oldValue: unknown,
+): void {
+  if (!gridApi) return;
+  const node = gridApi.getRowNode(String(rowId));
+  if (!node) return;
+  // Find the column def by field. currentSpecs is the stable ordering
+  // (column drag-reorder would shift getColumnDefs but not currentSpecs).
+  const spec = currentSpecs.find((s) => s.field === colField);
+  if (!spec) return;
+  // Build the minimum event shape the handler reads. We mark `api`
+  // for typing but the handler does not call it.
+  const fakeEvent = {
+    api: gridApi,
+    node: { data: node.data },
+    colDef: { field: spec.field },
+    newValue,
+    oldValue,
+  } as unknown as CellValueChangedEvent;
+  onCellValueChangedHandler(fakeEvent);
+}
 interface PersistentDom {
   header: HTMLDivElement;
   toolbar: HTMLDivElement;
@@ -185,11 +260,16 @@ let currentStatement: StatementResult | null = null;
 function rowsToObjects(
   rows: unknown[][],
   specs: readonly ColumnSpec[],
+  startIndex = 0,
 ): Record<string, unknown>[] {
-  return rows.map((row) => {
-    const obj: Record<string, unknown> = {};
-    specs.forEach((s, i) => {
-      obj[s.field] = row[i];
+  // Each row gets a `__rowId` = the source-array index. AG Grid's
+  // `getRowId` reads from this so edits and undo remain stable across
+  // sort / filter / column reorder (display rowIndex would shift but the
+  // __rowId stays anchored to the original server row).
+  return rows.map((row, i) => {
+    const obj: Record<string, unknown> = { __rowId: startIndex + i };
+    specs.forEach((s, j) => {
+      obj[s.field] = row[j];
     });
     return obj;
   });
@@ -236,13 +316,12 @@ function buildPersistentDom(): PersistentDom {
   toolbar.appendChild(cancelBtn);
 
   // TASK-501: edit / paste / undo toolbar. Add Row / Delete Row operate on
-  // local edit state only — TASK-503 will post the save payload to the
-  // host. Refresh is a noop visual reset (re-posts the current state so
-  // the host's "saved" snapshot matches).
+  // local edit state only — TASK-503 will read the snapshot and post the
+  // save payload. Refresh is a local-only reset of the dirty map.
   const refreshBtn = document.createElement("button");
   refreshBtn.textContent = "Refresh";
   refreshBtn.className = "vsdb-btn";
-  refreshBtn.title = "Re-post the current result state to the host";
+  refreshBtn.title = "Discard dirty edits and refresh the local grid view";
   refreshBtn.addEventListener("click", () => onRefreshClick());
   toolbar.appendChild(refreshBtn);
 
@@ -320,8 +399,7 @@ function buildPersistentDom(): PersistentDom {
         copySelectionToHost();
       }
     },
-    true,
-    true,
+
   );
   // TASK-501: paste handler — TSV payload from the OS clipboard. AG Grid's
   // own paste module requires Enterprise; we listen on gridWrap so the
@@ -497,12 +575,16 @@ function renderGrid(): void {
 
   setCurrentStatement(r);
 
-  // Compute columns from the result.
+  // Compute columns from the result. specs is the stable identifier for
+  // column ordering — handlers (onUndoClick/onAddRowClick/onGridPaste)
+  // resolve colIndex via currentSpecs, not getColumnDefs (which a
+  // column drag-reorder would shift).
   const specs: ColumnSpec[] = inferColumns(r.result.columns, r.result.rows);
+  currentSpecs = specs;
 
   // Build AG Grid column defs from specs. Each column gets an Excel-like
-  // column filter: text filter for string/boolean, number filter for numbers,
-  // with up to 2 conditions (AND/OR) and a debounced input. Floating filter
+  // column filter: text/number filter + AND/OR (up to 2 conditions) and a
+  // debounced input. Floating filter
   // row stays enabled so users can type in place.
   const baseCols = specs.map((spec) => {
     const isNumber = spec.kind === "number";
@@ -548,16 +630,16 @@ function renderGrid(): void {
       floatingFilter: true,
       // TASK-501: cells are editable (cellValueChanged → editState.markDirty).
       // valueFormatter is rebuilt when csvMode flips (toggleCsv) so the user
-      // can preview raw values vs formatted.
       editable: true,
       valueFormatter: (p: { value: unknown }) => formatDataCell(p.value),
-      cellStyle: isNumber
+      cellStyle: (isNumber
         ? { textAlign: "right" as const, fontVariantNumeric: "tabular-nums" }
         : {
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
-          },
+          }) as CellStyle,
+
     };
   });
   // AG Grid v36 auto-creates a selection column from rowSelection. We do NOT
@@ -588,7 +670,12 @@ function renderGrid(): void {
   });
 
   if (isFirstRender || tabSwitched) {
-    // Fresh grid (new statement OR tab switch) → drop any stale dirty edits.
+    // Fresh grid (new statement OR tab switch) → drop any stale dirty edits
+    // and any locally-added rows. Without this, switching from a 5-col
+    // result to a 2-col result leaves dirty entries keyed to old columns/
+    // rows, so the next undo would read the wrong cells and TASK-503's
+    // snapshot() would carry phantom edits into a save payload for the
+    // wrong statement.
     if (gridApi) {
       // Tab switch: destroy old grid and recreate on the same persistent
       // host with new columns. Destroying ensures the new grid sees fresh
@@ -600,6 +687,8 @@ function renderGrid(): void {
       }
       gridApi = null;
     }
+    editState.clear();
+    newRowCount = 0;
     // Fresh grid → any previous column filter no longer applies.
     colFilterActive = false;
     gridApi = createGrid(gridHost, {
@@ -615,6 +704,12 @@ function renderGrid(): void {
       }),
       rowData: rowsToObjects(r.result.rows, specs),
       columnDefs: colDefs,
+      // Stable row identity — `__rowId` is set by rowsToObjects to the
+      // source-array index. With getRowId wired here, AG Grid's node.id
+      // is the original row identity regardless of sort/filter/column
+      // reorder. TASK-503's save payload and the bundle's undo handler
+      // both rely on this.
+      getRowId: (params) => String(params.data.__rowId),
       rowSelection: {
         mode: "multiRow",
         // v36 selection column is auto-created when checkboxes/headerCheckbox
@@ -635,7 +730,7 @@ function renderGrid(): void {
           suppressHeaderMenuButton: true,
           suppressMovable: true,
           lockPosition: "left",
-          cellStyle: { padding: 0 },
+        cellStyle: { padding: 0 },
         },
       },
       enableBrowserTooltips: true,
@@ -658,30 +753,27 @@ function renderGrid(): void {
         colFilterActive = e.api.isColumnFilterPresent();
         updateFooterNow();
       },
-      // TASK-501: record cell edits into the local EditState. The event
-      // provides the AG Grid row index; we pair it with the column's
-      // colIndex via getColumnDefs so TASK-503 can build a save payload.
-      onCellValueChanged: (e: CellValueChangedEvent) => {
-        const col = e.colDef as { field?: string } | undefined;
-        if (!col || typeof col.field !== "string") return;
-        const cols = e.api.getColumnDefs() as Array<{ field?: string }> | undefined;
-        const colIndex = (cols ?? []).findIndex((c) => c.field === col.field);
-        if (colIndex < 0) return;
-        const rowId = e.node?.rowIndex ?? -1;
-        if (rowId < 0) return;
-        editState.markDirty(rowId, colIndex, e.newValue, e.oldValue);
-        updateFooterNow();
-      },
+      // TASK-501: record cell edits into the local EditState. Edits are
+      // keyed by STABLE row identity (`__rowId`) so sort/filter/column
+      // reorder cannot misaddress a cell. colIndex is resolved against
+      // the immutable `currentSpecs` (NOT getColumnDefs — column
+      // drag-reorder would shift getColumnDefs order, breaking colIndex
+      // mapping to the raw row array index).
+      onCellValueChanged: onCellValueChangedHandler,
       onModelUpdated: () => updateFooterNow(),
       onBodyScroll: (e: BodyScrollEvent) => onBodyScroll(e, activeTab, model),
     });
+
     (gridHost as unknown as { __vsdbApi: GridApi }).__vsdbApi = gridApi;
     statementRows.set(activeTab, r.result.rows.slice());
     lastColumnCount = specs.length;
   } else if (statementReset || columnsChanged || syncResult.isReset) {
     // New data for the same statement (e.g. statementReset on terminal
-    // status, or columnsChanged). Drop stale dirty edits.
+    // status, or columnsChanged). Drop stale dirty edits and any rows
+    // the user added locally — they no longer make sense for a fresh
+    // result set; the user must re-add via the Add Row button.
     editState.clear();
+    newRowCount = 0;
     // Replace rowData (and column defs if changed) on the existing grid.
     if (columnsChanged) {
       // Column set changed → previous column filter is no longer valid.
@@ -697,19 +789,15 @@ function renderGrid(): void {
     gridApi!.setGridOption("rowData", rowsToObjects(r.result.rows, specs));
     statementRows.set(activeTab, r.result.rows.slice());
   } else if (rowsGrew && syncResult.appendDelta.length > 0) {
-    const newRowObjects = syncResult.appendDelta.map((row) => {
-      const obj: Record<string, unknown> = {};
-      specs.forEach((s, i) => {
-        obj[s.field] = row[i];
-      });
-      return obj;
-    });
+    // Append delta — only new server rows get added (no clobber). Each
+    // appended row needs a __rowId so the grid's stable-identity layer
+    // can resolve it for edits/undo just like the original rows.
+    const startIndex = previousRows.length;
+    const newRowObjects = rowsToObjects(syncResult.appendDelta, specs, startIndex);
     const addIndex = previousRows.length;
     gridApi!.applyTransaction({ add: newRowObjects, addIndex });
     statementRows.set(activeTab, r.result.rows.slice());
   }
-  // else: idempotent — no-op.
-
   lastRenderedIndex = activeTab;
   lastResultStatus = r.status;
 
@@ -800,6 +888,10 @@ function formatDataCell(v: unknown): string {
  *  programmatic pastes — we apply the rowData change and call
  *  `refreshClientSideRowModel()` so the grid reflects the new values. */
 function onGridPaste(ev: ClipboardEvent): void {
+  // Paste into a filter input is the user's local typing — do not treat
+  // it as a grid edit. The capture-phase wrapper checks ev.target first
+  // so the event still bubbles to native input handling below.
+  if (isFilterInput(ev.target)) return;
   const text = ev.clipboardData?.getData("text/plain") ?? "";
   if (!text) return;
   if (!gridApi) return;
@@ -807,39 +899,46 @@ function onGridPaste(ev: ClipboardEvent): void {
   ev.stopPropagation();
   const parsed = parseTsvPaste(text);
   if (parsed.length === 0) return;
-  // Anchor at the focused cell; fall back to (0,0).
+  // Anchor at the focused cell; fall back to (0,0). We use the row's
+  // STABLE identity (__rowId) — display rowIndex would shift with sort/
+  // filter and would misaddress the same row on every re-render.
   const focused = gridApi.getFocusedCell();
-  const anchorRow = focused?.rowIndex ?? 0;
+  const focusedNode = focused?.rowIndex !== undefined
+    ? gridApi.getDisplayedRowAtIndex(focused.rowIndex) ?? null
+    : null;
+  const anchorRowId = readRowId(focusedNode?.data) ?? 0;
   const cols = gridApi.getColumnDefs() as Array<{ field?: string }> | undefined;
-  const anchorCol = focused?.column?.getColId
-    ? Math.max(0, (cols ?? []).findIndex((c) => c.field === focused.column.getColId()))
+  const focusedColField = focused?.column?.getColId?.();
+  const anchorCol = focusedColField
+    ? Math.max(0, (cols ?? []).findIndex((c) => c.field === focusedColField))
     : 0;
   if (anchorCol < 0) return;
   const colCount = (cols ?? []).length;
-  const rowCount = gridApi.getDisplayedRowCount();
-  applyPasteToDirty(editState, anchorRow, anchorCol, parsed, colCount, rowCount);
-  // Apply the paste to the visible rows so the user sees the result. We
-  // copy current rowData, splice in the pasted values, then call
-  // setGridOption('rowData', ...) to push them back to the grid.
-  const current: Array<Record<string, unknown>> = [];
-  gridApi.forEachNode((node) => {
-    if (node.data) current.push({ ...node.data });
-  });
+  // Total data rows = server-truth + locally-added rows. Paste row indices
+  // are clipped to the displayed range, with new rows (added via
+  // applyTransaction) counted in.
+  const r0 = results[activeTab];
+  const dataRowCount = (r0?.result?.rows?.length ?? 0) + newRowCount;
+  applyPasteToDirty(editState, anchorRowId, anchorCol, parsed, colCount, dataRowCount);
+  // Apply the paste to the live grid by mapping each parsed cell onto
+  // the row whose __rowId matches anchorRowId + r. We resolve via the
+  // grid's stable getRowNode(__rowId) lookup — no forEachNode scan, no
+  // display-index dependency.
   for (let r = 0; r < parsed.length; r++) {
-    const targetRow = anchorRow + r;
-    if (targetRow < 0 || targetRow >= rowCount) continue;
-    const target = current[targetRow];
-    if (!target) continue;
+    const targetRowId = anchorRowId + r;
+    if (targetRowId < 0 || targetRowId >= dataRowCount) continue;
+    const node = gridApi.getRowNode(String(targetRowId));
+    if (!node?.data) continue;
     const row = parsed[r];
     for (let c = 0; c < row.length; c++) {
       const targetCol = anchorCol + c;
       if (targetCol < 0 || targetCol >= colCount) continue;
       const col = (cols ?? [])[targetCol];
       if (!col?.field) continue;
-      target[col.field] = row[c];
+      node.data[col.field] = row[c];
     }
   }
-  gridApi.setGridOption("rowData", current);
+  gridApi.refreshCells({ force: true });
   updateFooterNow();
 }
 
@@ -853,46 +952,77 @@ function onRefreshClick(): void {
   updateFooterNow();
 }
 
-/** Add Row: append a blank row to the local edit state. TASK-503 will read
- *  the snapshot and post a save payload to the host. */
+/** Add Row: append a real blank row to the grid. The row gets a stable
+ *  __rowId past the current server row count and is marked as pending
+ *  insert in EditState (TASK-503 reads snapshot() to drive INSERT). */
 function onAddRowClick(): void {
   if (!gridApi) return;
+  const r0 = results[activeTab];
+  const baseRows = r0?.result?.rows?.length ?? 0;
+  // Stable identity past the server's known rows. newRowCount survives
+  // re-renders for the same statement; it is reset on tab switch / new
+  // result / column-set change (renderGrid reset branches).
+  const newRowId = baseRows + newRowCount;
   const cols = gridApi.getColumnDefs() as Array<{ field?: string }> | undefined;
-  const colCount = (cols ?? []).length;
-  const newRowId = gridApi.getDisplayedRowCount();
-  // Record a single "insert" sentinel on (rowId=newRowId, colIndex=0) — the
-  // snapshot includes all future rows the user fills in via cellValueChanged.
-  editState.markDirty(newRowId, 0, "__vsdb_new_row__", undefined);
-  void colCount; // column count used by TASK-503 when materializing the new row.
+  // Blank row object: every spec column is "", with __rowId set so
+  // the grid's stable identity layer can resolve it for edits/undo.
+  const blank: Record<string, unknown> = { __rowId: newRowId };
+  for (const col of cols ?? []) {
+    if (col.field && col.field !== "__rowId") blank[col.field] = "";
+  }
+  gridApi.applyTransaction({ add: [blank] });
+  newRowCount++;
+  // Mark this row pending insert in EditState. The marker is a small
+  // array of blank values (one per column) so TASK-503 can see "this
+  // is a new row, generate an INSERT for it" without parsing magic
+  // strings — the snapshot entry also includes colIndex 0 .. colCount-1
+  // as blank cells the user will fill via cellValueChanged.
+  editState.markDirty(
+    newRowId,
+    0,
+    { __vsdb_new_row__: true, __rowId: newRowId, values: blank },
+    undefined,
+  );
   updateFooterNow();
 }
 
 /** Delete Row: mark the currently focused row as deleted in local edit
- *  state. TASK-503 will translate the snapshot into a DELETE statement. */
+ *  state. TASK-503 will translate the snapshot into a DELETE statement.
+ *  Uses the row's STABLE id (node.data.__rowId) so display-order changes
+ *  cannot misaddress the deletion. */
 function onDeleteRowClick(): void {
   if (!gridApi) return;
   const focused = gridApi.getFocusedCell();
-  const rowId = focused?.rowIndex ?? -1;
-  if (rowId < 0) return;
-  editState.markDirty(rowId, 0, "__vsdb_deleted__", undefined);
+  const focusedNode = focused?.rowIndex !== undefined
+    ? gridApi.getDisplayedRowAtIndex(focused.rowIndex) ?? null
+    : null;
+  const rowId = readRowId(focusedNode?.data);
+  if (rowId === undefined) return;
+  editState.markDirty(rowId, 0, { __vsdb_deleted__: true, __rowId: rowId }, undefined);
   updateFooterNow();
 }
 
-/** Undo: pop the last dirty cell from EditState and revert its grid cell. */
+/** Undo: pop the last dirty cell from EditState and revert its grid cell.
+ *  Resolves the field via currentSpecs (stable column ordering — column
+ *  drag-reorder would shift getColumnDefs order) and the row via the
+ *  grid's __rowId (stable row identity — sort/filter would shift
+ *  displayed row index). */
 function onUndoClick(): void {
   if (!gridApi) return;
   const popped = editState.undo();
   if (!popped) return;
-  const cols = gridApi.getColumnDefs() as Array<{ field?: string }> | undefined;
-  const col = (cols ?? [])[popped.colIndex];
-  if (!col?.field) return;
-  // Look up the original value from the underlying statement result row.
+  const spec = currentSpecs[popped.colIndex];
+  if (!spec) return;
+  // Restore from the original (server-truth) row at the same __rowId.
+  // r.result.rows is index-aligned with __rowId for server-provided
+  // rows; for locally-added rows (newRowId past server length) there
+  // is no original — drop the dirty entry without a revert.
   const r = results[activeTab];
-  const oldValue = r?.result?.rows?.[popped.rowId]?.[popped.colIndex];
-  const node = gridApi.getDisplayedRowAtIndex(popped.rowId);
+  const serverOld = r?.result?.rows?.[popped.rowId]?.[popped.colIndex];
+  const node = gridApi.getRowNode(String(popped.rowId));
   if (!node?.data) return;
-  node.data[col.field] = oldValue;
-  gridApi.setGridOption("rowData", gridApi.getGridOption("rowData"));
+  node.data[spec.field] = serverOld ?? node.data[spec.field] ?? "";
+  gridApi.refreshCells({ force: true });
   updateFooterNow();
 }
 
@@ -1070,4 +1200,6 @@ render();
   refresh: onRefreshClick,
   toggleCsv: onCsvToggleClick,
   undo: onUndoClick,
+  simulateCellEdit,
 };
+

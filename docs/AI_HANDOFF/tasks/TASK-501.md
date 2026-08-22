@@ -103,3 +103,69 @@ ISSUES:
 HANDOFF_TO_REVIEWER: yes
 NEXT: ready for review
 <!-- Executor report dưới đây -->
+
+---
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code (differs — OK)
+EXECUTION_TOOL: claude-code (subagent feature-implementer)
+VERIFICATION_RERUN:
+  command: npm run compile
+  result: exit 0 (esbuild complete, dist/webview.js rebuilt)
+  command: npx vitest run src/ui/__tests__/resultsGridModelEdit.test.ts src/ui/__tests__/webviewEdit.test.ts
+  result: 2 files / 16 tests passed, exit 0
+  command: npm run typecheck
+  result: exit 0 (package.json corruption from W1 concurrency is fixed in 03ccfb6)
+  command: npx vitest run webviewBundle webviewFilters webviewTheme resultsGridModel agGridSmoke (regression, shared files)
+  result: 5 files / 44 tests passed, exit 0
+TEST_PLAN_COVERAGE: partial — unit cases 1–9 genuinely implemented; integration case 10 NOT (see finding 1)
+FINDINGS:
+  critical:
+    - none
+  important:
+    - src/ui/__tests__/webviewEdit.test.ts:171-216 — Test Case 10 required integration: "cellValueChanged → dirty; paste event → dirty đúng vùng". Test 10 calls `editState.markDirty(0,1,…)` directly (never dispatches the grid's cellValueChanged), and 10b comments "jsdom ClipboardEvent handling is brittle, we test the observable contract" then also just calls markDirty ×4. Neither fires the events the task named; the wiring in main.ts:658-674 and main.ts:802-843 (preventDefault, anchor resolution, forEachNode reapply, setGridOption rowData) has ZERO coverage. Fix: dispatch a real `new ClipboardEvent("paste", {clipboardData: new DataTransfer()})` (jsdom supports DataTransfer) on `.vsdb-grid-host` and assert `editState.dirtyCount`/snapshot changes; for cellValueChanged use `gridApi.applyCellEdit`/`__vsdbApi` or dispatch via grid options captured at createGrid. The pure-logic layer is already covered by resultsGridModelEdit.test.ts — the integration layer is the point of case 10.
+    - webview/main.ts:590-592 — Comment says "Fresh grid (new statement OR tab switch) → drop any stale dirty edits" but the branch NEVER calls `editState.clear()` (only the `statementReset || columnsChanged` branch at :684 does). Switching from a 5-col result to a 2-col result leaves dirty entries keyed to old columns/rows; subsequent undo (:891 indexes the NEW result's rows by old rowId/colIndex) reads wrong cells, and TASK-503's snapshot() would carry phantom edits into a save payload for a different statement. Fix: call `editState.clear()` inside the `isFirstRender || tabSwitched` branch (before or after grid recreate).
+    - webview/main.ts:670 + :819 + :862 — Dirty cells are keyed by AG Grid DISPLAY rowIndex, but every data column is `sortable: true` (:512) and filterable. Click a header (or apply a filter) after editing → display order no longer matches `result.rows` order; undo (:891 `rows[popped.rowId][popped.colIndex]`) restores the wrong cell's value, and paste rowIds/undo rowIds conflate display index with data index. Also column drag-reorder changes `getColumnDefs()` order → colIndex no longer maps to raw row array index. Fix: key edits by a stable data-row identity (e.g. `rowsToObjects` adding a hidden `__rowIndex` from the source array, `getRowId: r => String(r.__rowIndex)`) and resolve colIndex from the immutable `specs` array, not live getColumnDefs().
+    - webview/main.ts:858-867 — Add Row button does not add a row: tooltip promises "Append a blank row to the result" but the handler only writes sentinel `markDirty(newRowId, 0, "__vsdb_new_row__", undefined)` with `void colCount` discarding the computed width; no `applyTransaction({add:[…]})`, nothing appears in the grid, and TASK-503 must now parse magic strings out of the dirty map (delete uses a second sentinel `__vsdb_deleted__` at :877 — same in-band overload). Fix: append an actual blank row object via `applyTransaction` with a stable negative/new rowId, or track inserts/deletes in dedicated arrays on EditState instead of sentinel values in the dirty map.
+  minor:
+    - src/ui/resultsGridModel.ts:348-349,378 — `undoStack: unknown[]` is written once ([oldValue]) and never read by undo(); doc comment "single undo() restores back to the pre-edit value" is misleading — undo() only pops+deletes, the webview re-derives oldValue from server rows. Delete the field or implement value restore in undo().
+    - webview/main.ts:802-808 — Capture-phase paste listener preventDefaults+stopPropagation ALL pastes inside gridWrap, including into floating-filter text inputs rendered in the grid header — users can no longer paste into a filter. Skip when `ev.target` is an input/textarea (the task brief itself called out "paste event target vs inputs").
+    - webview/main.ts:243 — Refresh tooltip "Re-post the current result state to the host" — it posts nothing (onRefreshClick only clears local state). Align the tooltip or implement the post.
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Pure-logic model (EditState/parseTsvPaste/applyPasteToDirty) is solid and fully tested; all gaps are in the webview wiring layer, which is exactly what Test Case 10 was written to pin down. Single fix round should address the 4 importants.
+
+---
+
+## Fix Round 1
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+SUMMARY: Fixed all 4 blocking reviewer findings + 3 minor. Added stable `__rowId` row identity (with `getRowId`), wired EditState clear into the reset branch, replaced the Add Row sentinel with a real `applyTransaction`, dispatched the registered onCellValueChanged handler through the simulateCellEdit test seam, dispatched a real paste Event with stubbed clipboardData (jsdom 29 has no DataTransfer), and skipped pastes whose target is an INPUT/TEXTAREA.
+TEST_PLAN_FOLLOWED: task §4 — every Test Case (1–10) now exercised through the bundle's REAL wiring; Test 6 (CRLF + trailing empty), Test 8 (clip), Test 9 (clear), Test 10f (sortable identity), Test 10g (real Add Row) and Test 10h (tab-switch clear) all green.
+FILES_CHANGED:
+  - src/ui/resultsGridModel.ts: dropped dead `undoStack: unknown[]` field; `markDirty` underscore-marks the now-unused oldValue param (webview re-derives oldValue from `r.result.rows[rowId][colIndex]` on undo); doc comment fixed.
+  - webview/main.ts: stable row identity via `__rowId` injected in `rowsToObjects` + `getRowId: r => String(r.__rowId)` on the grid; colIndex resolved against `currentSpecs` (module-level cache of the immutable `specs` for the active statement), NOT live `getColumnDefs()`; `editState.clear(); newRowCount = 0;` in the `isFirstRender || tabSwitched` branch and in the `statementReset || columnsChanged || syncResult.isReset` branch; Add Row calls `applyTransaction({ add: [blank] })` with the blank row carrying `__rowId = baseRows + newRowCount`, then marks the snapshot with `{ __vsdb_new_row__: true, __rowId, values: blank }` instead of the magic-string sentinel; Delete Row uses the focused row's STABLE id; Undo pops the LIFO entry, resolves the field via `currentSpecs`, restores the value via `gridApi.getRowNode(String(rowId))` (NO `getDisplayedRowAtIndex` — survives sort/filter); paste handler checks `ev.target instanceof HTMLInputElement || HTMLTextAreaElement` and returns early before preventDefault so floating-filter inputs still receive pastes; Refresh tooltip reworded to "Discard dirty edits and refresh the local grid view"; capture-phase paste listener fixed (dropped stray 4th arg); `simulateCellEdit(rowId, colField, newValue, oldValue)` exposed on `__vsdb` so integration tests can invoke the SAME `onCellValueChanged` handler the grid uses, with a synthetic event payload (real wiring, only the trigger source differs).
+  - src/ui/__tests__/webviewEdit.test.ts: rewrote to drive REAL wiring — Test 10 (cellValueChanged through the handler), Test 10b (real paste Event with stubbed clipboardData → 4 dirty entries), Test 10b2 (paste into a filter input is NOT a grid edit), Tests 10f (sortable identity), 10g (real Add Row appends a blank row with stable `__rowId`), 10h (tab-switch clears stale EditState); jsdom 29 has no `DataTransfer`/`ClipboardEvent` on window — manual stub via `Object.defineProperty(ev, "clipboardData", {value: {...}})` is the only realistic option in this test environment (verified via standalone repro).
+TESTS_ADDED:
+  - src/ui/__tests__/webviewEdit.test.ts: 10 (handler), 10b (real paste), 10b2 (filter-input passthrough), 10c (undo), 10d (toolbar exposure), 10e (CSV toggle), 10f (sortable identity), 10g (Add Row appends row), 10h (tab-switch clear).
+VERIFICATION:
+  command: npm run compile
+  result: dist/webview.js (2.2mb), dist/extension.js (4.6mb) — esbuild complete, exit 0
+  command: npx vitest run src/ui/__tests__/webviewEdit.test.ts src/ui/__tests__/resultsGridModelEdit.test.ts
+  result: Test Files 2 passed (2) / Tests 20 passed (20) / exit 0
+  command: npm run typecheck
+  result: tsc --noEmit exit 0
+  command: npx vitest run
+  result: Test Files 23 passed (23) / Tests 257 passed (257) / exit 0 — full regression suite clean (webviewFilters 7/7, webviewBundle 8/8, webviewTheme 3/3, resultsGridModel 23/23, agGridSmoke 3/3, and the 2 target files)
+RED_OUTPUT:
+  - Prior to the fix round: webviewEdit 7 failed (simulateCellEdit undefined, real paste not wired, Add Row no-op, tab-switch not clearing, sortable identity not handled, no DataTransfer in jsdom); resultsGridModelEdit 11 passed (model untouched).
+ISSUES:
+  - jsdom 29 does NOT expose `DataTransfer` or `ClipboardEvent` on its window global (verified standalone: `typeof dom.window.DataTransfer === "undefined"`). The bundle only reads `clipboardData.getData("text/plain")`, so the integration test dispatches a plain `Event("paste", {bubbles, cancelable})` with `Object.defineProperty(ev, "clipboardData", { value: {getData: t => …} })` — this exercises the EXACT same handler path (`preventDefault`, `stopPropagation`, `parseTsvPaste`, `applyPasteToDirty`, `forEach`-style stable-id resolution) without depending on jsdom gaps. This is the most realistic test possible in this environment and is documented in the test.
+  - Add Row inserts a stable `__rowId = baseRows + newRowCount` and `newRowCount` is reset alongside `editState.clear()` in the same branch as 403. Pastes target `getRowNode(String(rowId))` (the new stability layer) instead of `getDisplayedRowAtIndex`. The paste Event must dispatch BEFORE the next grid tick — the test awaits `flushGridEvents()` (microtask) to settle AG Grid's transaction queue.
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for review (round 2)

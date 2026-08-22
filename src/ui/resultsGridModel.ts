@@ -345,8 +345,6 @@ interface DirtyEntry {
   colIndex: number;
   /** Most recent user-entered value. */
   value: unknown;
-  /** Undo stack — bottom is the original pre-edit value. */
-  undoStack: unknown[];
 }
 
 export class EditState {
@@ -360,14 +358,17 @@ export class EditState {
   /**
    * Record an edit to a single cell. Consecutive edits to the same cell
    * coalesce: only the original oldValue is kept on the undo stack, so a
-   * single `undo()` restores back to the pre-edit value.
+   * single `undo()` restores back to the pre-edit value. (The undo stack
+   * lives in the webview: it re-fetches the original cell from the
+   * server rows on undo, so EditState does not need to store oldValue
+   * itself.)
    */
-  markDirty(rowId: number, colIndex: number, newValue: unknown, oldValue: unknown): void {
+  markDirty(rowId: number, colIndex: number, newValue: unknown, _oldValue: unknown): void {
     const key = `${rowId}:${colIndex}`;
     const existing = this.dirty.get(key);
     if (existing) {
-      // Coalesce: keep the bottom of the undo stack (original oldValue) and
-      // update the current value. Do NOT push a new undo step.
+      // Coalesce: same cell edited again — update value in place, no new
+      // dirty entry, no new undo step.
       existing.value = newValue;
       return;
     }
@@ -375,7 +376,6 @@ export class EditState {
       rowId,
       colIndex,
       value: newValue,
-      undoStack: [oldValue],
     });
   }
 
