@@ -138,3 +138,19 @@ NOTES: CSS mapping đúng 4 token spec, không map thêm; input rule có đủ b
 - Cùng lúc phát hiện + fix: `rowData` bị mất khỏi createGrid options (không rõ exec nào làm rơi — có thể merge conflict giữa 2 waves) → grid 0 rows. Restore + regression được 15 tests hiện có cover (bundle tests sẽ fail ngay nếu rowData mất).
 - Verification fresh: `npm run compile` ✓; `npx vitest run` → 21 files / 232 tests pass ✓; `npm run typecheck` exit 0 ✓.
 - Browser smoke (headless Chromium, `.cache/webview-repro/aggrid.html` + vscode dark vars stub): rwBg rgb(30,30,30)=#1e1e1e ✓; header text #cccccc ✓; 31 rows render ✓; 1 selection-checkbox/row ✓; filter contains → footer "0 of 50" ✓; clear → 50 ✓; append 120 rows + grid alive ✓.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart (handoff.reviewer.model=unic-smart; SELF-DECLARATION)
+EXECUTOR_MODEL: unic/unic-smart (orchestrator direct fix round 2 — same model; isolation WAIVED per assignment/precent for orchestrator fixes)
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run && npm run typecheck
+  result: compile PASS; vitest 21 files / 232 tests pass / 0 fail; typecheck exit 0
+TEST_PLAN_COVERAGE: all-followed for fix round 2 (themeQuartz.withParams CSS var strings in dist JS; legacy ag-grid/quartz CSS absent from dist CSS/JS; host class vsdb-ag-host; input UA override; bundle tests cover rowData/displayed rows)
+FINDINGS:
+  critical: none
+  important: none
+  minor: none
+NEXT_STATUS_FOR_INDEX: done
+NOTES: Fix-round executor shares reviewer model; waived by cycle constraint and independently re-verified. Independent RED check against 8bfe753 source produced 4 failing TASK-401/AG smoke assertions, then restored HEAD GREEN 6/6 targeted; browser smoke evidence in executor report confirms AG accepts unresolved CSS vars and renders dark rows.
