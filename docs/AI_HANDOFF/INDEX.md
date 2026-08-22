@@ -12,9 +12,9 @@ W1: 201, 202, 204 | W2: 203 | W3: 205
 |----|-------|----------|------|--------|-------|----------|------|
 | TASK-201 | ag-grid-community dependency + bundle pipeline | P0 | S | approved_minor | unic-smart | - | `docs/AI_HANDOFF/tasks/TASK-201.md` |
 | TASK-202 | resultsGridModel: pure-logic module | P0 | M | approved_minor | - | unic-smart | `docs/AI_HANDOFF/tasks/TASK-202.md` |
-| TASK-203 | Thay VirtualGrid bằng AG Grid trong webview | P0 | L | critical_block | - | unic/unic-smart | `docs/AI_HANDOFF/tasks/TASK-203.md` |
+| TASK-203 | Thay VirtualGrid bằng AG Grid trong webview | P0 | L | approved_minor | - | unic/unic-smart | `docs/AI_HANDOFF/tasks/TASK-203.md` |
 | TASK-204 | Host setBusy quanh loadMore + nuốt cancel error | P0 | S | approved | - | unic-smart | `docs/AI_HANDOFF/tasks/TASK-204.md` |
-| TASK-205 | Version 1.3.0 + smoke manifest | P1 | S | changes_requested | - | unic/unic-smart | `docs/AI_HANDOFF/tasks/TASK-205.md` |
+| TASK-205 | Version 1.3.0 + smoke manifest | P1 | S | approved_minor | - | unic/unic-smart | `docs/AI_HANDOFF/tasks/TASK-205.md` |
 
 ## Queued (future cycles)
 

@@ -154,3 +154,20 @@ Verification Output:
   - `npx vitest run src/ui/__tests__/webviewBundle.test.ts src/ui/__tests__/resultsGridModel.test.ts` → 31/31 pass (8 bundle + 23 model; was 30).
   - `npx vitest run` (full suite in worktree) → 18 test files, 202 tests pass (no regression elsewhere — connectionForm, schemaTree, resultsPanel, statusBar, queryRunner, etc. all green).
 Status: PASS
+
+## Reviewer Verdict (fix round 1)
+
+VERDICT: approved_minor
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN: PASS — npm run compile + npx tsc --noEmit + targeted (31/31: 8 bundle + 23 model) + full suite 18 files / 202 tests, 0 fail
+FINDINGS:
+  critical: none
+  important:
+    - .cache/webview-repro/aggrid.html — deliverable claimed created in fix-round report ('created — 3-step browser smoke') but does NOT exist on disk (.cache/webview-repro/ contains only legacy scroll.html; .cache is gitignored so no commit carries it). Orchestrator browser-smoke step has no AG Grid page. Action: create it (200 rows render → reset 50 → loadMore 500→1000) or strike the Target Files line.
+  minor:
+    - webview/main.ts:477-490 — tab-switch path destroys and re-creates the AG Grid instance on the persistent gridHost (correct per spec: columns may differ per statement); each destroy() fully releases the old instance's listeners, so no leak — but a statements-heavy session rebuilds the grid per tab visit. Acceptable per plan discussion ('tab switch là reset hợp lệ'); noted only.
+    - webview/main.ts:604-612 — onBodyScroll calls model.requestWindow(state.getLoaded(), 0) whose onNeedMore callback is intentionally a no-op (ensureModel wires it so); the gate/dedup live in dispatchLoadMore. Harmless but slightly misleading — requestWindow here only resets the model's pendingNeedMore flag.
+    - webview/main.ts:643-652 — copySelectionToHost rebuilds row arrays from row-object key order (Object.keys) rather than column order; column order matches insertion for fresh objects, so copy text is correct today; fragile only if rowData objects ever get re-shaped. Non-blocking.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Both criticals verified fixed — (1) persistent DOM: buildPersistentDom creates header/toolbar/tabs/panel/gridWrap/gridHost once; render() only updates state and re-mounts gridWrap; AG Grid is never re-parented through wiped DOM; gridWrap keydown (capture) attached once; test 8 asserts .ag-root survives busy toggles + append. (2) onBodyScroll gates on e.direction === 'vertical' + getLastDisplayedRowIndex() >= getDisplayedRowCount() - 5 — real AG Grid API (confirmed present in installed gridApi.d.ts), no e.bottom. Importants done: columnsChanged (specs.length vs lastColumnCount), footer wording in footerText. Minors from R2 cleaned (dead getGridApi gone, no console.log, single 'beta' line). Protocol unchanged: postToHost only ready/copy/loadMore/cancel. Community-only imports (ag-grid-community only, no enterprise). grid.ts deleted; copyWebviewCss gone; no scratch test files.

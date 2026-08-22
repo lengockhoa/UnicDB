@@ -101,11 +101,25 @@
   text-decoration: line-through;
 }
 
+/* Content area below the tab strip: fills remaining height and hosts the grid. */
+.vsdb-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 /* --- AG Grid host (kept from VirtualGrid era; AG Grid renders inside) --- */
 .vsdb-grid-host {
   flex: 1;
   display: flex;
   flex-direction: column;
+  min-height: 0;
+}
+
+/* Theme container must fill remaining host height (flex child of column host). */
+.vsdb-grid-host .ag-theme-quartz {
+  flex: 1;
   min-height: 0;
 }
 

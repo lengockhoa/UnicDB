@@ -141,3 +141,20 @@ Verification Output:
   77:- **Results grid (AG Grid Community)**: ... row count hiển thị ở footer của panel.
 Status: PASS
 Note: no git ops. dist/vsdb-1.3.0.vsix preserved on disk for orchestrator. Staged agent files used for defensive test cleaned up. Hand-off → reviewer.
+
+## Reviewer Verdict (fix round 1)
+
+VERDICT: approved_minor
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code
+VERIFICATION_RERUN: PASS
+  command: node -e version; npm run package (main-repo rebuild); unzip -l | grep -icE 'claude|agents|opencode|omp|handoff'; npx tsc --noEmit; npx vitest run; unzip -p vsix extension/package.json (version + ag-grid-enterprise); head -90 README.md | grep -n 'refresh\|AG Grid'
+  result: version=1.3.0 ✓ · vsix 12 files, agent-leak grep = 0 matches from main repo (agent files present at root) ✓ · tsc clean ✓ · 18 files / 202 tests PASS (scratch _qf/_quick/_input deleted by 269baa2 — count 204→202, now honest) ✓ · manifest 1.3.0, no ag-grid-enterprise ✓ · README L76 refresh bullet + L77 AG Grid bullet with "footer của panel" ✓
+TEST_PLAN_COVERAGE: all-followed (3/3: version, vsix exists+manifest 1.3.0, enterprise-absence)
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - .vscodeignore:34-35 — excludes vitest.config.ts + vitest.integration.config.ts but not vitest.integration-all.config.ts, which therefore ships inside vsdb-1.3.0.vsix (confirmed in file list of my rebuild). Zero runtime/security impact. Fix: add `vitest.integration-all.config.ts` to the next .vscodeignore touch (can ride TASK-203 fix round or 1.3.1).
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: All 3 prior findings fixed and verified (README refresh bullet restored as own line, AG Grid bullet separate, footer wording; .vscodeignore agent exclusions leak-proof against main-repo rebuild; scratch tests deleted in 269baa2). VERIFICATION_RERUN on rebuilt vsix from main repo — the real leak surface. Model isolation: unic-smart ≠ unic-code ✓.
