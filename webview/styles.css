@@ -1,4 +1,8 @@
-/* webview/styles.css — Results Panel webview (TASK-006). */
+/* webview/styles.css — Results Panel webview (TASK-203).
+ * VirtualGrid removed; AG Grid Community provides its own table styles.
+ * Custom rules retained: layout host/footer, search input, non-grid chrome,
+ * Messages tab, Connection Form (shared by vsdb.connectionForm webview).
+ */
 
 .vsdb-webview {
   font-family: var(--vscode-font-family, monospace);
@@ -50,6 +54,21 @@
   border-color: var(--vscode-inputValidation-errorBorder, #be1100);
 }
 
+/* --- Search input (AG Grid quick filter) --- */
+.vsdb-search-input {
+  flex: 1;
+  padding: 4px 8px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 2px;
+  font-family: inherit;
+  font-size: 13px;
+}
+.vsdb-search-input:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+}
+
 /* --- Tabs --- */
 .vsdb-tabs {
   display: flex;
@@ -82,7 +101,7 @@
   text-decoration: line-through;
 }
 
-/* --- Grid container --- */
+/* --- AG Grid host (kept from VirtualGrid era; AG Grid renders inside) --- */
 .vsdb-grid-host {
   flex: 1;
   display: flex;
@@ -90,89 +109,16 @@
   min-height: 0;
 }
 
-.vsdb-grid-container {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  border: 1px solid var(--vscode-panel-border, #444);
-  outline: none;
+/* AG Grid quartz theme — sizing overrides for compact rows. */
+.ag-theme-quartz {
+  --ag-row-height: 28px;
+  --ag-header-height: 28px;
+  --ag-grid-size: 4px;
+  --ag-font-size: 13px;
+  --ag-font-family: var(--vscode-editor-font-family, monospace);
 }
 
-.vsdb-scroll {
-  flex: 1;
-  overflow: auto;
-  position: relative;
-  min-height: 200px;
-}
-
-.vsdb-viewport {
-  position: relative;
-}
-
-.vsdb-spacer {
-  width: 1px;
-}
-
-.vsdb-grid {
-  border-collapse: collapse;
-  width: 100%;
-  table-layout: fixed;
-  font-family: var(--vscode-editor-font-family, monospace);
-  font-size: var(--vscode-editor-font-size, 13px);
-}
-
-/* Header table sits OUTSIDE the scroll container — no sticky needed. */
-.vsdb-grid.vsdb-header {
-  display: table;
-  flex-shrink: 0;
-}
-
-.vsdb-grid.vsdb-header thead th {
-  text-align: left;
-  padding: 4px 8px;
-  border: 1px solid var(--vscode-panel-border, #444);
-  background: var(--vscode-editorGroupHeaderTabsBackground, #252526);
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Body table is INSIDE scroll container — also sticky-positioned thead for
-   long content overflow. */
-.vsdb-grid.vsdb-body thead {
-  display: none; /* body table has no visible thead — header table is separate. */
-}
-
-.vsdb-grid tbody tr {
-  height: 22px;
-}
-
-.vsdb-grid tbody td {
-  padding: 2px 8px;
-  border: 1px solid var(--vscode-panel-border, #2d2d2d);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  background: var(--vscode-editor-background);
-}
-
-.vsdb-grid tbody tr:hover td {
-  background: var(--vscode-list-hoverBackground, #2a2d2e);
-}
-
-.vsdb-null {
-  color: var(--vscode-disabledForeground, #888);
-  font-style: italic;
-}
-
-.vsdb-num {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-/* --- Footer --- */
+/* --- Footer (kept from VirtualGrid era) --- */
 .vsdb-grid-footer {
   padding: 4px 8px;
   border-top: 1px solid var(--vscode-panel-border, #444);
@@ -331,7 +277,7 @@
 .vsdb-form-ssl {
   border-left: 2px solid var(--vscode-input-border, #3c3c3c);
   padding-left: 12px;
-  margin-top: 6px;
+  margin-top: 8px;
   max-width: 640px;
 }
 
@@ -340,7 +286,7 @@
   grid-template-columns: 140px 1fr auto;
   gap: 6px;
   align-items: center;
-  margin-top: 6px;
+  margin-top: 8px;
 }
 
 .vsdb-form-pick {
