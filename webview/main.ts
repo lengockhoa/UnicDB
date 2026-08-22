@@ -6,6 +6,11 @@
 // TASK-203: thay VirtualGrid bằng AG Grid Community (client-side row model +
 // applyTransaction append). Pure-logic model đã dới sang src/ui/resultsGridModel.ts.
 //
+// TASK-402: per-column filter nâng cấp Excel-like (text/number filter + AND/OR
+// tối đa 2 điều kiện), `colFilterActive` gate chặn loadMore vòng lặp khi cột
+// filter active, Fix #3 bỏ colDef `__select__` (tránh 2 checkbox/dòng) — dùng
+// `rowSelection.selectionColumnDef` v36 tự render selection column.
+//
 // Render lifecycle (TASK-203 R4.5 fix round 1):
 //   - Persistent DOM containers (header, toolbar, tabs strip, panel area) are
 //     created ONCE on first render. Subsequent renders only update text/state
@@ -26,6 +31,7 @@ import {
   AllCommunityModule,
   ModuleRegistry,
   type BodyScrollEvent,
+  type FilterChangedEvent,
 } from "ag-grid-community";
 import type { GridApi } from "ag-grid-community";
 import {
@@ -120,7 +126,12 @@ const models = new Map<number, ResultsGridModel>();
 const statementRows = new Map<number, unknown[][]>();
 /** Tracks if a loadMore was dispatched and is awaiting host reply. */
 let loadMoreInFlight = false;
+/** True when the quick-search box has text in it. */
 let quickFilterActive = false;
+/** True when a column filter (header / floating filter) is active. Updated
+ *  by `onFilterChanged` reading `api.isColumnFilterPresent()`. Reset on
+ *  grid recreate and on columnDefs swap. */
+let colFilterActive = false;
 
 // ---- Persistent DOM (created once on first render) -------------------------
 
@@ -158,7 +169,7 @@ function rowsToObjects(
   specs: readonly ColumnSpec[],
 ): Record<string, unknown>[] {
   return rows.map((row) => {
-    const obj: Record<string, unknown> = { __select__: false };
+    const obj: Record<string, unknown> = {};
     specs.forEach((s, i) => {
       obj[s.field] = row[i];
     });
@@ -415,47 +426,67 @@ function renderGrid(): void {
   // Compute columns from the result.
   const specs: ColumnSpec[] = inferColumns(r.result.columns, r.result.rows);
 
-  // Build AG Grid column defs from specs.
-  const baseCols = specs.map((spec) => ({
-    field: spec.field,
-    headerName: spec.headerName,
-    sortable: true,
-    filter: true,
-    resizable: true,
-    floatingFilter: true,
-    valueFormatter: (p: { value: unknown }) => formatCell(p.value),
-    cellStyle:
-      spec.kind === "number"
+  // Build AG Grid column defs from specs. Each column gets an Excel-like
+  // column filter: text filter for string/boolean, number filter for numbers,
+  // with up to 2 conditions (AND/OR) and a debounced input. Floating filter
+  // row stays enabled so users can type in place.
+  const baseCols = specs.map((spec) => {
+    const isNumber = spec.kind === "number";
+    return {
+      field: spec.field,
+      headerName: spec.headerName,
+      sortable: true,
+      filter: isNumber ? "agNumberColumnFilter" : "agTextColumnFilter",
+      filterParams: isNumber
+        ? {
+            filterOptions: [
+              "equals",
+              "notEqual",
+              "lessThan",
+              "lessThanOrEqual",
+              "greaterThan",
+              "greaterThanOrEqual",
+              "inRange",
+              "blank",
+              "notBlank",
+            ],
+            defaultOption: "equals",
+            maxNumConditions: 2,
+            debounceMs: 200,
+          }
+        : {
+            filterOptions: [
+              "contains",
+              "notContains",
+              "equals",
+              "notEqual",
+              "startsWith",
+              "endsWith",
+              "blank",
+              "notBlank",
+            ],
+            defaultOption: "contains",
+            maxNumConditions: 2,
+            debounceMs: 200,
+            caseSensitive: false,
+          },
+      resizable: true,
+      floatingFilter: true,
+      valueFormatter: (p: { value: unknown }) => formatCell(p.value),
+      cellStyle: isNumber
         ? { textAlign: "right" as const, fontVariantNumeric: "tabular-nums" }
         : {
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
           },
-  }));
-  // Checkbox selection column at the front.
-  const colDefs = [
-    {
-      headerName: "",
-      field: "__select__",
-      checkboxSelection: true,
-      headerCheckboxSelection: true,
-      headerCheckboxSelectionFilteredOnly: true,
-      width: 40,
-      minWidth: 40,
-      maxWidth: 40,
-      pinned: "left" as const,
-      sortable: false,
-      filter: false,
-      resizable: false,
-      floatingFilter: false,
-      suppressHeaderMenuButton: true,
-      suppressMovable: true,
-      lockPosition: "left" as const,
-      cellStyle: { padding: 0 },
-    },
-    ...baseCols,
-  ];
+    };
+  });
+  // AG Grid v36 auto-creates a selection column from rowSelection. We do NOT
+  // pre-pend a custom `__select__` column — doing so produced a second
+  // checkbox per row (Fix #3). Visual customisation of the auto-generated
+  // selection column lives in `rowSelection.selectionColumnDef` below.
+  const colDefs = baseCols;
 
   // Determine reset vs append:
   //   - first render (no api yet) → reset (create grid)
@@ -490,14 +521,33 @@ function renderGrid(): void {
       }
       gridApi = null;
     }
+    // Fresh grid → any previous column filter no longer applies.
+    colFilterActive = false;
     gridApi = createGrid(gridHost, {
       columnDefs: colDefs,
       rowData: rowsToObjects(r.result.rows, specs),
       rowSelection: {
         mode: "multiRow",
-        checkboxes: false,
-        headerCheckbox: false,
+        // v36 selection column is auto-created when checkboxes/headerCheckbox
+        // are true. We configure its visual layout via selectionColumnDef
+        // below — do NOT pre-pend a `__select__` colDef (Fix #3: that
+        // produced a second checkbox per row).
+        checkboxes: true,
+        headerCheckbox: true,
+        // Header checkbox selects only filtered rows, not the whole dataset.
+        selectAll: "filtered",
         enableClickSelection: false,
+        selectionColumnDef: {
+          pinned: "left",
+          width: 40,
+          resizable: false,
+          sortable: false,
+          filter: false,
+          suppressHeaderMenuButton: true,
+          suppressMovable: true,
+          lockPosition: "left",
+          cellStyle: { padding: 0 },
+        },
       },
       enableBrowserTooltips: true,
       suppressColumnVirtualisation: false,
@@ -510,6 +560,15 @@ function renderGrid(): void {
           copySelectionToHost();
         }
       },
+      // Keep `colFilterActive` in sync with grid state. Re-poll
+      // `isColumnFilterPresent()` instead of trusting a stale bool — the
+      // event source can be 'api' (programmatic setFilterModel) or 'ui'
+      // (header / floating filter) and we want the gate to be accurate in
+      // both cases. (See TASK-402 plan reviewer note.)
+      onFilterChanged: (e: FilterChangedEvent) => {
+        colFilterActive = e.api.isColumnFilterPresent();
+        updateFooterNow();
+      },
       onModelUpdated: () => updateFooterNow(),
       onBodyScroll: (e: BodyScrollEvent) => onBodyScroll(e, activeTab, model),
     });
@@ -519,6 +578,8 @@ function renderGrid(): void {
   } else if (statementReset || columnsChanged || syncResult.isReset) {
     // Replace rowData (and column defs if changed) on the existing grid.
     if (columnsChanged) {
+      // Column set changed → previous column filter is no longer valid.
+      colFilterActive = false;
       gridApi!.setGridOption("columnDefs", colDefs);
       lastColumnCount = specs.length;
     }
@@ -530,7 +591,6 @@ function renderGrid(): void {
       specs.forEach((s, i) => {
         obj[s.field] = row[i];
       });
-      obj.__select__ = false;
       return obj;
     });
     const addIndex = previousRows.length;
@@ -548,7 +608,7 @@ function renderGrid(): void {
   // Expose the checkLoadMore hook on the grid host (so tests / external code
   // can trigger a loadMore programmatically).
   (container as unknown as { __checkLoadMore?: () => void }).__checkLoadMore = () => {
-    if (loadMoreInFlight || busy || quickFilterActive) return;
+    if (loadMoreInFlight || busy || quickFilterActive || colFilterActive) return;
     if (!model.getState().hasMore()) return;
     dispatchLoadMore();
   };
@@ -578,6 +638,7 @@ function ensureModel(index: number): ResultsGridModel {
 function dispatchLoadMore(): void {
   if (loadMoreInFlight || busy) return;
   if (quickFilterActive) return;
+  if (colFilterActive) return;
   loadMoreInFlight = true;
   postToHost({ type: "loadMore", index: activeTab });
 }
@@ -594,7 +655,7 @@ function onBodyScroll(
   _index: number,
   model: ResultsGridModel,
 ): void {
-  if (loadMoreInFlight || busy || quickFilterActive) return;
+  if (loadMoreInFlight || busy || quickFilterActive || colFilterActive) return;
   if (e.direction !== "vertical") return;
   const api = gridApi;
   if (!api) return;
@@ -614,12 +675,25 @@ function copySelectionToHost(): void {
   const selected = gridApi.getSelectedRows();
   if (selected.length === 0) return;
   // Re-shape: AG Grid returns row objects; we need arrays of original values.
+  // There is no `__select__` synthetic field anymore (TASK-402 Fix #3) — just
+  // pass through the known spec field names.
+  const specsForCopy: readonly ColumnSpec[] = currentStatement?.result
+    ? inferColumns(
+        currentStatement.result.columns,
+        currentStatement.result.rows.slice(0, 1),
+      )
+    : [];
   const arr = selected.map((obj) => {
     const row: unknown[] = [];
     const r = obj as Record<string, unknown>;
-    for (const k of Object.keys(r)) {
-      if (k === "__select__") continue;
-      row.push(r[k]);
+    if (specsForCopy.length === 0) {
+      for (const k of Object.keys(r)) {
+        row.push(r[k]);
+      }
+    } else {
+      for (const s of specsForCopy) {
+        row.push(r[s.field]);
+      }
     }
     return row;
   });
@@ -638,7 +712,9 @@ function updateFooter(
   const total = state.getTotal();
   const hasMore = state.hasMore();
   const displayed = api ? api.getDisplayedRowCount() : loaded;
-  const filtered = displayed !== loaded && quickFilterActive;
+  // Either the quick search box or a column filter counts as "filtered"
+  // for footer display purposes.
+  const filtered = displayed !== loaded && (quickFilterActive || colFilterActive);
   const duration = r.durationMs;
   footer.textContent =
     footerText(loaded, total, hasMore, displayed, filtered) +

@@ -132,6 +132,31 @@
   --ag-font-family: var(--vscode-editor-font-family, monospace);
 }
 
+/* TASK-401 — VS Code theme mapping. AG Grid quartz (v36) derives ~20 colors
+ * (header bg, menu bg, panel bg, border, row hover, selected row, checkbox,
+ * etc.) from these 4 root tokens via color-mix — do not map additional
+ * --ag-* tokens here.
+ */
+.ag-theme-quartz {
+  --ag-background-color: var(--vscode-editor-background, #1e1e1e);
+  --ag-foreground-color: var(--vscode-foreground, #cccccc);
+  --ag-active-color: var(--vscode-focusBorder, #007fd4);
+  --ag-header-column-resize-handle-color: var(--vscode-panel-border, #3c3c3c);
+}
+
+/* Floating filter + filter menu inputs: UA stylesheet paints white on dark
+ * themes. border-color alone does not render — must also set border-style and
+ * border-width so the border actually appears.
+ */
+.ag-theme-quartz input.ag-input-field-input,
+.ag-theme-quartz textarea.ag-input-field-input {
+  background-color: var(--vscode-input-background, #2b2b2b);
+  color: var(--vscode-input-foreground, #cccccc);
+  border-color: var(--vscode-input-border, #3c3c3c);
+  border-style: solid;
+  border-width: 1px;
+}
+
 /* --- Footer (kept from VirtualGrid era) --- */
 .vsdb-grid-footer {
   padding: 4px 8px;

@@ -119,3 +119,45 @@ Lưu ý executor: `onFilterChanged` trong createGrid options là event callback 
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: Exec402
+SUMMARY: Đã nâng per-column filter lên Excel-like (text/number + AND/OR tối đa 2 đk + debounce), thêm `colFilterActive` gate chặn loadMore vòng lặp qua `onFilterChanged` re-poll `isColumnFilterPresent()`, bỏ colDef `__select__` (Fix #3) dùng `rowSelection.selectionColumnDef` v36. Footer "filtered" giờ tính cả quick + column filter.
+TEST_PLAN_FOLLOWED: task §4 (inline Test Cases 1, 3, 4, 5, 6, 7) — happy text filter, regression double-checkbox, header select-filtered, blocking gate on/off, regression counter-test.
+FILES_CHANGED:
+  - webview/main.ts: import FilterChangedEvent; thêm state `colFilterActive`; `baseCols` mỗi cột filter theo `spec.kind` (agTextColumnFilter / agNumberColumnFilter với filterOptions + maxNumConditions 2 + debounceMs 200); bỏ colDef `__select__` ở front; `rowSelection` đổi `checkboxes/headerCheckbox: true` + `selectAll: "filtered"` + `selectionColumnDef` cấu hình pinned/width/lockPosition; thêm `onFilterChanged` re-poll `isColumnFilterPresent()`; gate `__checkLoadMore` + `dispatchLoadMore` + `onBodyScroll` thêm `|| colFilterActive`; reset flag khi `isFirstRender || tabSwitched` và `columnsChanged`; footer `filtered = displayed !== loaded && (quickFilterActive || colFilterActive)`; `copySelectionToHost` dùng `specsForCopy` thay vì skip `__select__`.
+  - src/ui/__tests__/webviewFilters.test.ts: (new) 6 test theo TASK §Test Cases (1 text filter, 3/4/5 loadMore gate, 6 double-checkbox regression, 7 header select-filtered). Mỗi test `setFilterModel` xong `await flushGridEvents()` (AG Grid event bắn async 1 tick).
+  - .worktrees/task-402/node_modules → /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/node_modules (symlink cho worktree test).
+TESTS_ADDED:
+  - src/ui/__tests__/webviewFilters.test.ts: 1. Text column filter contains — displayed count 1, footer /1 of 3/; 3. column filter active + batched + checkLoadMore — loadMore is gated (not posted); 4. clear filter → loadMore becomes allowed again; 5. regression (counterpart of 3); 6. regression — exactly 1 .ag-selection-checkbox per row, no __select__ header column; 7. header select-filtered — header checkbox selects only displayed (filtered) rows.
+VERIFICATION:
+  command: `npm run compile`
+  result: PASS (esbuild: build complete, dist/webview.js 2.2mb)
+  output_excerpt: |
+    dist/webview.js         2.2mb ⚠️
+    dist/webview.css      320.4kb
+    ⚡ Done in 134ms
+    esbuild: build complete
+  command: `npx vitest run src/ui/__tests__/webviewFilters.test.ts src/ui/__tests__/webviewBundle.test.ts`
+  result: 14 tests passed (6 + 8), 0 failed
+  output_excerpt: |
+    ✓ src/ui/__tests__/webviewFilters.test.ts  (6 tests) 607ms
+    ✓ src/ui/__tests__/webviewBundle.test.ts    (8 tests) 862ms
+    Test Files  2 passed (2)
+         Tests  14 passed (14)
+  command: `npm run typecheck`
+  result: PASS (tsc --noEmit no errors)
+  output_excerpt: |
+    > vsdb@1.3.1 typecheck
+    > tsc --noEmit
+ISSUES: 
+  - AG Grid v36 `filterChanged` event fires async (1 setTimeout tick). Test phải `await new Promise(r => setTimeout(r, 0))` (helper `flushGridEvents()`) sau `setFilterModel(...)` trước khi assert footer / gọi `__vsdbCheckLoadMoreForHost`. Implementation giữ nguyên event-based update (không fallback synchronous poll) vì spec gốc yêu cầu cờ + event; test đợi tick là đủ cho harness jsdom.
+  - Header selection checkbox KHÔNG có class `ag-selection-column`; selector dùng `[col-id="ag-Grid-SelectionColumn"] .ag-checkbox-input`. Header class thực tế là `ag-header-cell ag-column-first ... col-id="ag-Grid-SelectionColumn"`.
+  - Header click chỉ chọn filtered rows khi `selectAll: "filtered"` trong rowSelection — config đã set.
+  - Selection column auto-render yêu cầu `checkboxes: true, headerCheckbox: true` (không phải false như trước). Config này kết hợp `selectionColumnDef` cho pinned/width/lockPosition.
+HANDOFF_TO_REVIEWER: yes — typecheck clean, 6/6 filters + 8/8 bundle regression pass. Diff focused vào main.ts (chỉ file này, không đụng styles.css / package.json).
+NEXT: ready for review (PlanRev3).

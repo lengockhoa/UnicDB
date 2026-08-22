@@ -80,6 +80,33 @@ npm run typecheck
 ---
 
 <!--
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: Exec401
+SUMMARY: Added 4-token `--ag-*` → `--vscode-*` mapping (with fallbacks) + input filter rule (with border-style/width per reviewer note) in `webview/styles.css`; new test `src/ui/__tests__/webviewTheme.test.ts` validates cascade order and ruleset contents against `dist/webview.css`.
+TEST_PLAN_FOLLOWED: task §Test Cases (3 tests: 1 happy + 2 edge — cascade order, input rule with border-style/width)
+FILES_CHANGED:
+  - webview/styles.css: added 2 new rulesets after line 133 (4 root token mappings + 1 input ruleset with border-color/-style/-width)
+  - src/ui/__tests__/webviewTheme.test.ts: (new) 3 test cases reading dist/webview.css
+TESTS_ADDED:
+  - src/ui/__tests__/webviewTheme.test.ts: "maps the 4 quartz root tokens to --vscode-* with fallbacks", "override block sits AFTER any base quartz `--ag-background-color: #fff` so cascade wins", "input rule declares --vscode-input-background, --vscode-input-foreground, --vscode-input-border together"
+VERIFICATION:
+  command: npx vitest run src/ui/__tests__/webviewTheme.test.ts src/ui/__tests__/webviewBundle.test.ts && npm run typecheck
+  result: 11 pass / 0 fail (3 new + 8 existing) ; typecheck exit 0
+  output_excerpt: |
+    ✓ src/ui/__tests__/webviewTheme.test.ts  (3 tests) 2ms
+    ✓ src/ui/__tests__/webviewBundle.test.ts  (8 tests) 883ms
+    Test Files  2 passed (2)
+    Tests  11 passed (11)
+    > vsdb@1.3.1 typecheck
+    > tsc --noEmit
+ISSUES: none — RED was confirmed before GREEN: 3/3 tests failed for expected reasons (no mapping, override at -1 vs base at 52695, no input ruleset), then passed after CSS edit. Esbuild's import order (ag-grid base quartz CSS → webview/styles.css in webview/main.ts) naturally places the override after the base, satisfying test #2.
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for review (reviewer must use a different model per handoff policy)
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->

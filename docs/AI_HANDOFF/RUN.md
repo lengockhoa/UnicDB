@@ -1,6 +1,6 @@
 Command: handoff-fullstack
-Goal: Schema Explorer row counts + tree filter (cycle 2026-08-22-B)
+Goal: Results grid theme theo VS Code + Excel-like filters + 1 checkbox/dòng (cycle 2026-08-22-C); cycle D queued: edit/paste/export
 Base: main
-Phase: done
-Cursor: released v1.3.1 (4/4 tasks approved, pushed 6791843)
-Next: queued future cycle — Results panel AI assist tab
+Phase: I3
+Cursor: plan approved+committed 1d0cc23, W1 tasks 401+402
+Next: create worktrees, spawn Exec401+Exec402 parallel, then W2 TASK-403

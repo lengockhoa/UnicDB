@@ -16,6 +16,7 @@ W1: 401, 402 (file disjoint) | W2: 403 (boundary: full suite)
 
 ## Queued (future cycles)
 
-- Results panel: AI assist tab
+- Cycle D — Results grid edit mode (user 2026-08-22): inline cell edit, Cmd+Enter commit 1 lần (batch), paste từ Excel (TSV, auto-ignore dòng thừa), export toolbar TSV/CSV/XML/JSON/SQL Inserts/SQL Insert Multirow/SQL Updates/Where Clause + Header checkbox + To Clipboard/Export; save theo PK hoặc PostgreSQL ctid khi không PK (warning banner); WHERE/ORDER BY bar; toolbar refresh/add/delete/undo/CSV toggle/Commit.
+- Cycle E — Run .sh button (user 2026-08-22): mở file .sh → nút Run chạy nội dung script như chạy full file trong terminal (Integrated Terminal).
 
 Updated: 2026-08-22 · cycle 2026-08-22-C (planning done)
