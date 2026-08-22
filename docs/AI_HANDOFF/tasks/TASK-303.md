@@ -86,4 +86,19 @@ NEXT: ready for review
 
 ## Reviewer Verdict
 
-(reviewer điền)
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic-code (differs — isolation OK)
+VERIFICATION_RERUN:
+  command: npm run typecheck && npx vitest run src/extension.test.ts && node -e "require('./package.json')" + contributes/menu-order check
+  result: typecheck exit 0; 11 pass / 0 fail; json OK; contributes OK; view/title order = refresh,add,filter,clear (contract giữ)
+TEST_PLAN_COVERAGE: all-followed (3/3: contributes assert, register smoke, Esc-undefined branch có spy setFilter not-called; RED_OUTPUT là assertion failures thật)
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/extension.ts:186 — comment `// 11. vsdb.selectConnectionFromTree` trùng số với `// 11. vsdb.filterSchemaTree` (chèn #11/#12 trước nó mà không đánh lại số) — renumber thành 13 cho đúng thứ tự.
+    - src/extension.test.ts:3 — header comment "10 command" stale, thực tế activate giờ register 12 command — cập nhật comment.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Logic khớp spec từng dòng (Esc→return trước setFilter; setContext awaited; when-clause clear có && vsdb.schemaTreeFilterActive; icons $(filter)/$(close)); value=tree.getFilter() pre-fill đúng. ORDER [refresh,add,filter,clear] verified sau orchestrator re-sort.
+

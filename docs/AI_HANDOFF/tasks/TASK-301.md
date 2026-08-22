@@ -111,6 +111,21 @@ NEXT: ready for review
 
 ## Reviewer Verdict
 
-
-(reviewer điền)
+VERDICT: APPROVED
+REVIEWER_MODEL: unic/unic-smart (Rev301)
+EXECUTOR_MODEL: unic/unic-code (Exec301, claude-code) — khác reviewer, isolation OK
+VERIFICATION_RERUN:
+  command: npm run typecheck
+  result: PASS (exit 0)
+  command: npx vitest run src/adapters/__tests__/postgres.test.ts
+  result: 6 pass / 0 fail
+TEST_PLAN_COVERAGE: all-followed — 6/6 case (2 happy + 4 edge), RED_OUTPUT có output thật (TypeError: adapter.estimateTableRows is not a function, 6 failed)
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/adapters/mysql.ts:259 — `typeof raw === "string" ? Number(raw) : Number(raw)` hai nhánh giống hệt nhau (mssql.ts:316 cùng pattern); vô hại nhưng dead branch — simplify thành Number(raw).
+    - src/adapters/mssql.ts:309-313 — SQL concat qua this.literal() thay vì param như pg/mysql. Đã escape quote (mssql.ts:710-712) và là convention hiện có của file (listColumns:289-290 dùng y hệt) nên chấp nhận; chỉ note để cân nhắc unify sau.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Null semantics đúng mọi path (0-row, reltuples<0, non-finite, reject→try/catch); SQL đúng relkind r/p, TABLE_TYPE='BASE TABLE', index_id IN (0,1); test mock hành vi qua pool.query queue, không test implementation detail; reltuples=0 → 0 (không nuốt thành null).
 

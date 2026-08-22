@@ -993,4 +993,19 @@ describe("SchemaTreeProvider — TASK-302 row-count badges + filter engine", () 
     // Badge KHÔNG đổi — vẫn tổng unfiltered.
     expect(tablesNode.description).toBe("3");
   });
+
+  it("cached schema nodes become Expanded after setFilter (regression)", async () => {
+    const { mgr } = setupTree({ schemas: [{ name: "app" }] });
+    await mgr.addConnection(makeCfg({ id: "cache1", name: "Cache" }), "p");
+    await mgr.setActive("cache1");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    const firstSchemas = await provider.getChildren(root[0]);
+    expect(firstSchemas[0].collapsible).toBe(1); // cached canonical: Collapsed
+
+    provider.setFilter("po_log");
+    const filteredSchemas = await provider.getChildren(root[0]);
+    expect(filteredSchemas[0].collapsible).toBe(2); // transient filter view: Expanded
+  });
 });

@@ -1,6 +1,6 @@
 // src/extension.test.ts
 // Smoke test — `activate(context)` wiring đầy đủ:
-//   - 10 command + CodeLens provider + tree view đăng ký.
+//   - 12 package commands + internal tree command + CodeLens provider + tree view đăng ký.
 //   - ResultsPanel nhận extensionUri.
 //   - status bar dispose không throw.
 //

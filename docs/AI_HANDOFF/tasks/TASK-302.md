@@ -129,4 +129,48 @@ NEXT: ready for review
 
 ## Reviewer Verdict
 
-(reviewer điền)
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code (isolated — differs from reviewer, OK)
+VERIFICATION_RERUN:
+  command: npm run typecheck && npx vitest run src/ui/__tests__/schemaTree.test.ts && npx vitest run
+  result: typecheck 0 errors / schemaTree 33 pass / full suite 19 files 221 pass (221 > 218 reported: sibling tasks landed concurrently)
+TEST_PLAN_COVERAGE: partial — 10/10 cases implemented, but "ancestors Expanded" case only exercises the uncached (fresh-load) path; cached path untested and broken (see finding)
+FINDINGS:
+  critical: none
+  important:
+    - file: src/ui/schemaTree.ts:238-240 — getSchemaNodesForConnection returns `cached.data` directly, but schema nodes are cached with `collapsible` frozen at load time (:280-282). After setFilter() fires onDidChangeTreeData, VS Code re-queries and gets STALE Collapsed nodes for up to 60s TTL — violating spec "Ancestors ... Expanded khi filter active". Reproduced: load schemas with no filter (collapsible=1), setFilter('po_log'), re-query → collapsible still 1, expected 2. Most common real flow (browse tree, THEN type filter) hits this. Fix: on the cached-hit path, map nodes with collapsible recomputed from current filterText before returning (mirror :280-282); add a test that loads schemas before setFilter.
+  minor:
+    - file: src/ui/schemaTree.ts:350-354 — same staleness class in reverse: schemas cached as Expanded while filter active stay Expanded after filter cleared (cosmetic, disappears at TTL expiry).
+    - file: src/ui/schemaTree.ts:397-401 — category children error path returns [errNode] unfiltered; error node ignores active filter. Arguably intentional (don't hide errors) — document or filter explicitly.
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Implementation quality is otherwise solid: rowCountCache is a separate typed Map, in-flight guard is synchronous before first await so double getCategoryChildren cannot double-fetch estimateTableRows, badge computed from unfiltered list cached unfiltered, root connections never filtered, dispose()/refresh() clear all three stores, formatRows pins 'en'. One reproducible spec violation blocks approval.
+
+## Executor Fix Report — Round 1
+
+- EXECUTOR_TOOL: claude-code (omp session)
+- EXECUTOR_MODEL: unic/unic-smart (orchestrator direct fix after reviewer findings)
+- Fix: `src/ui/schemaTree.ts` cached schema nodes now remap Collapsed → Expanded when `filterText` active; cache stays canonical Collapsed, filter view is transient.
+- Regression test added: `cached schema nodes become Expanded after setFilter (regression)`.
+- Verification fresh:
+  - `npm run typecheck` → exit 0
+  - `npx vitest run src/ui/__tests__/schemaTree.test.ts` → 34 passed
+  - `npx vitest run` → 19 files / 222 tests passed
+
+## Reviewer Verdict — Round 2
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code (original); fix round authored by orchestrator unic/unic-smart
+VERIFICATION_RERUN:
+  command: npm run typecheck && npx vitest run src/ui/__tests__/schemaTree.test.ts
+  result: typecheck 0 errors / schemaTree 34 pass; full suite 19 files / 222 pass
+TEST_PLAN_COVERAGE: all-followed — 10/10 cases + cached-path regression test added
+FINDINGS:
+  critical: none
+  important: none — round-1 blocking finding fixed: src/ui/schemaTree.ts:243-249 remaps cached Collapsed→Expanded when filterText active (cache keeps canonical copy); regression test src/ui/__tests__/schemaTree.test.ts:997-1011 loads schemas pre-filter then asserts collapsible 2 on cached re-query — fails on old code (returned collapsible 1)
+  minor:
+    - src/ui/schemaTree.ts:290-292 — schemas first loaded while filter active are cached Expanded and stay Expanded after filter cleared until TTL (round-1 minor, unchanged; cosmetic)
+    - src/ui/schemaTree.ts:373-383 — category error node returned unfiltered when filter active (round-1 minor, unchanged; arguably intentional)
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Fix-round author (orchestrator direct fix) shares reviewer model — noted per harness contract that orchestrator fixes review findings; diff independently re-verified by fresh runs above.

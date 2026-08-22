@@ -237,6 +237,16 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
 
     const cached = this.cache.get(key);
     if (cached && cached.expiresAt > Date.now()) {
+      // Cached nodes were built Collapsed. When a filter is active the spec
+      // requires ancestors of matches to be Expanded — remap on the way out
+      // (cache keeps the canonical Collapsed copy; filter state is transient).
+      if (this.filterText) {
+        return cached.data.map((n) =>
+          n.collapsible === vscode.TreeItemCollapsibleState.Collapsed
+            ? { ...n, collapsible: vscode.TreeItemCollapsibleState.Expanded }
+            : n,
+        );
+      }
       return cached.data;
     }
 

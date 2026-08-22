@@ -74,7 +74,7 @@ export async function activate(
 
   state = { mgr, runner, panel, tree, codeLens, statusBar };
 
-  // ---- Register all 10 commands ---------------------------------------------
+  // ---- Register all 12 package commands + 1 internal tree command -----------
 
   // 1. vsdb.runQuery — Cmd+Enter
   disposables.push(
@@ -181,8 +181,8 @@ export async function activate(
       );
     }),
   );
-  // 11. vsdb.selectConnectionFromTree — click connection node → set active.
-  // (Không thuộc 10 command khai báo trong package.json; command này được trigger
+  // 13. vsdb.selectConnectionFromTree — click connection node → set active.
+  // (Không thuộc 12 command khai báo trong package.json; command này được trigger
   // từ TreeItem.command trên connection node. StatusBar + tree badges auto-update
   // qua mgr.onDidChangeActive.)
   disposables.push(
