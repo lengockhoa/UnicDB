@@ -70,8 +70,19 @@ interface BusyMsg {
   type: "busy";
   busy: boolean;
 }
+interface SaveResultMsg {
+  type: "saveResult";
+  index: number;
+  ok: boolean;
+  errors?: string[];
+  /** Soft refusal (mysql/mssql no-PK) — `ok` will be true so the dirty
+   *  map clears; `reason` is the banner copy. */
+  refused?: boolean;
+  reason?: string;
+}
 
-type HostMsg = StateMsg | BusyMsg;
+type HostMsg = StateMsg | BusyMsg | SaveResultMsg;
+
 
 interface StatementResult {
   index: number;
@@ -88,13 +99,21 @@ interface StatementResult {
   error?: string;
   durationMs: number;
 }
+type SaveEditsMsg = {
+  type: "saveEdits";
+  index: number;
+  edits: Array<{ rowId: number; colIndex: number; value: unknown }>;
+  tableName: string | null;
+  pkColumns: string[];
+};
+type WebviewMsg =
+  | LoadMoreMsg
+  | CancelMsg
+  | CopyMsg
+  | ExportFileMsg
+  | SaveEditsMsg
+  | ReadyMsg;
 
-type LoadMoreMsg = { type: "loadMore"; index: number };
-type CancelMsg = { type: "cancel" };
-type CopyMsg = { type: "copy"; text: string };
-type ExportFileMsg = { type: "exportFile"; format: ExportFormat; text: string };
-type ReadyMsg = { type: "ready" };
-type WebviewMsg = LoadMoreMsg | CancelMsg | CopyMsg | ExportFileMsg | ReadyMsg;
 
 // ---- Acquire VS Code API ---------------------------------------------------
 
@@ -276,7 +295,11 @@ interface PersistentDom {
   /** Persistent grid footer. */
   gridFooter: HTMLDivElement;
   /** Wraps gridHost + gridFooter in a `.vsdb-grid-host` flex column. */
+  /** Wraps gridHost + gridFooter + saveBanner in a `.vsdb-grid-host` flex column. */
   gridWrap: HTMLDivElement;
+  /** Persistent banner above the footer — shows save errors / no_pk warnings.
+   *  Created once, hidden by default; populated on saveResult with errors. */
+  saveBanner: HTMLDivElement;
 }
 let dom: PersistentDom | null = null;
 let firstRender = true;
@@ -391,6 +414,17 @@ function buildPersistentDom(): PersistentDom {
   undoBtn.title = "Undo the last cell edit";
   undoBtn.addEventListener("click", () => onUndoClick());
   toolbar.appendChild(undoBtn);
+  // TASK-503 — Commit button (and Cmd/Ctrl+Enter keyboard shortcut).
+  // Posts a single saveEdits batch with every dirty cell. No-op when the
+  // dirty map is empty — we don't post a no-op message and don't disable
+  // the button (the user can still trigger one; the handler short-circuits).
+  const commitBtn = document.createElement("button");
+  commitBtn.textContent = "Commit";
+  commitBtn.className = "vsdb-btn vsdb-commit";
+  commitBtn.title = "Save all dirty edits to the database (Cmd/Ctrl+Enter)";
+  commitBtn.addEventListener("click", () => onCommitClick());
+  toolbar.appendChild(commitBtn);
+
 
   const csvToggleBtn = document.createElement("button");
   csvToggleBtn.textContent = "CSV";
@@ -516,6 +550,25 @@ function buildPersistentDom(): PersistentDom {
     },
     true, // capture — see comment above
   );
+  // TASK-503 — Cmd/Ctrl+Enter keyboard shortcut. AG Grid does not surface
+  // its own shortcut for this — we wire it ourselves. The shortcut only
+  // commits when the dirty map is non-empty (no-op otherwise, see
+  // onCommitClick).
+  gridWrap.addEventListener(
+    "keydown",
+    (ev) => {
+      if (
+        (ev.ctrlKey || ev.metaKey) &&
+        ev.key === "Enter" &&
+        !ev.shiftKey
+      ) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        onCommitClick();
+      }
+    },
+    true,
+  );
   // TASK-501: paste handler — TSV payload from the OS clipboard. AG Grid's
   // own paste module requires Enterprise; we listen on gridWrap so the
   // event is caught whether dispatched directly on the wrap (test) or
@@ -539,6 +592,15 @@ function buildPersistentDom(): PersistentDom {
   const gridFooter = document.createElement("div");
   gridFooter.className = "vsdb-grid-footer";
   gridWrap.appendChild(gridFooter);
+  // TASK-503 — Persistent banner above the footer. Hidden by default;
+  // populated on saveResult (ok:false → show; ok:true → hide). Sits
+  // inside gridWrap so it scrolls with the grid panel.
+  const saveBanner = document.createElement("div");
+  saveBanner.className = "vsdb-save-banner vsdb-hidden";
+  saveBanner.setAttribute("hidden", "");
+  saveBanner.setAttribute("role", "alert");
+  gridWrap.appendChild(saveBanner);
+
 
 
   return {
@@ -560,6 +622,7 @@ function buildPersistentDom(): PersistentDom {
     gridHost,
     gridFooter,
     gridWrap,
+    saveBanner,
   };
 }
 
@@ -651,11 +714,12 @@ function renderGrid(): void {
   const container = dom.gridWrap;
   const gridHost = dom.gridHost;
   const footer = dom.gridFooter;
+  const saveBanner = dom.saveBanner;
   // Clear any non-grid children from the wrap (e.g. transient error/ok
   // placeholder divs from a previous error/ok-message render). Keep gridHost
   // + footer intact.
   for (const child of Array.from(container.children)) {
-    if (child === gridHost || child === footer) continue;
+    if (child === gridHost || child === footer || child === saveBanner) continue;
     container.removeChild(child);
   }
 
@@ -1225,6 +1289,42 @@ function onUndoClick(): void {
   updateFooterNow();
 }
 
+/** TASK-503 — Commit: post a single saveEdits batch with every dirty cell.
+ *
+ *  - No-op (no postMessage) when dirtyCount === 0 — the keyboard shortcut
+ *    and the button stay silent when there is nothing to save.
+ *  - Batched: edits for many rows / many cells ship in ONE postMessage
+ *    so the host can wrap them in a single transaction.
+ *  - The host reads `tableName` + `pkColumns` from the statement's parsed
+ *    metadata (the extension sets these in the state payload). Without
+ *    metadata (tableName=null, pkColumns=[]) the host falls back to
+ *    no-PK semantics — for postgres it fetches ctids, for mysql/mssql
+ *    it returns `{ok:false, reason:'no_pk'}` which we render in the banner.
+ *  - The banner is hidden on entry (success carries no banner copy).
+ */
+function onCommitClick(): void {
+  if (editState.dirtyCount === 0) return;
+  const edits = editState.snapshot();
+  // tableName / pkColumns are derived on the host from the SELECT metadata
+  // parsed out of the original SQL (extension.ts has the parsed statement).
+  // Until that's wired through the state message we send empty hints —
+  // the host then falls back to its own parser / listColumns lookup.
+  postToHost({
+    type: "saveEdits",
+    index: activeTab,
+    edits,
+    tableName: null,
+    pkColumns: [],
+  });
+  // While the host is processing, hide any previous banner. Re-shown if
+  // the host returns an error.
+  if (dom?.saveBanner) {
+    dom.saveBanner.classList.add("vsdb-hidden");
+    dom.saveBanner.setAttribute("hidden", "");
+    dom.saveBanner.textContent = "";
+  }
+}
+
 /** CSV toggle: flip csvMode and rebuild the valueFormatter on every visible
  *  data column so the user sees raw values vs formatted. */
 function onCsvToggleClick(): void {
@@ -1443,6 +1543,40 @@ function renderMessagesInto(panel: HTMLDivElement): void {
 
 // ---- Message handling ------------------------------------------------------
 
+/** TASK-503 — handle `saveResult` ack from the host.
+ *
+ *  - ok:true (default)         → clear editState, hide banner.
+ *  - ok:true && refused:true   → clear editState, show `reason` banner
+ *                                 (mysql/mssql no-PK; nothing to retry)
+ *  - ok:false                  → KEEP editState (user retries), show errors
+ *                                 in the banner.
+ */
+function handleSaveResult(msg: SaveResultMsg): void {
+  const banner = dom?.saveBanner;
+  if (msg.ok) {
+    editState.clear();
+    if (banner) {
+      banner.classList.add("vsdb-hidden");
+      banner.setAttribute("hidden", "");
+      banner.textContent = "";
+    }
+    if (msg.refused && msg.reason && banner) {
+      banner.classList.remove("vsdb-hidden");
+      banner.removeAttribute("hidden");
+      banner.textContent = msg.reason;
+    }
+  } else {
+    const errs = msg.errors ?? ["Unknown save error"];
+    if (banner) {
+      banner.textContent = errs.join(" · ");
+      banner.classList.remove("vsdb-hidden");
+      banner.removeAttribute("hidden");
+    }
+    // edit state preserved; user can retry after fixing.
+  }
+  updateFooterNow();
+}
+
 window.addEventListener("message", (ev: MessageEvent) => {
   const msg = ev.data as HostMsg;
   if (msg.type === "state") {
@@ -1457,6 +1591,8 @@ window.addEventListener("message", (ev: MessageEvent) => {
     busy = msg.busy;
     if (!busy) loadMoreInFlight = false;
     render();
+  } else if (msg.type === "saveResult") {
+    handleSaveResult(msg);
   }
 });
 
@@ -1490,6 +1626,7 @@ render();
   refresh: onRefreshClick,
   toggleCsv: onCsvToggleClick,
   undo: onUndoClick,
+  commit: onCommitClick,
   simulateCellEdit,
 };
 

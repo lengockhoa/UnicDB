@@ -187,6 +187,20 @@
   font-size: 1.05em;
 }
 
+/* TASK-503 — save banner (errors / no_pk warnings). */
+.vsdb-save-banner {
+  padding: 8px 12px;
+  margin: 0 8px;
+  background: var(--vscode-inputValidation-warningBackground, #5a1d1d);
+  color: var(--vscode-inputValidation-warningForeground, #f48771);
+  border: 1px solid var(--vscode-inputValidation-warningBorder, #be1100);
+  border-radius: 2px;
+  font-family: var(--vscode-editor-fontFamily, monospace);
+  font-size: 0.95em;
+  white-space: pre-wrap;
+}
+.vsdb-save-banner.vsdb-hidden { display: none; }
+
 /* --- Messages tab --- */
 .vsdb-messages {
   flex: 1;

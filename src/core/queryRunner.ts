@@ -328,6 +328,21 @@ export class QueryRunner {
       this.currentBatched = null;
     }
   }
+
+  /**
+   * TASK-503 — run a single SQL string through the adapter (no statement
+   * parsing, no cursor lifecycle, no `results` bookkeeping). Used by the
+   * host Save flow which builds its own list of UPDATE/INSERT/DELETE
+   * statements and re-runs the original query afterwards.
+   *
+   * The adapter is fetched fresh (matches the existing `executeAll` pattern)
+   * so the active connection or a brand-new connection each route through
+   * the same plumbing as `run()`.
+   */
+  async runSql(sql: string): Promise<RunResult> {
+    const adapter = await this.adapterProvider();
+    return adapter.runQuery(sql);
+  }
 }
 
 /**

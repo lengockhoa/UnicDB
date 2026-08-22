@@ -4,7 +4,7 @@ import * as vscode from "vscode";
 import { ConnectionManager } from "./core/connectionManager";
 import { createAdapter } from "./adapters/factory";
 import { QueryRunner } from "./core/queryRunner";
-import { ResultsPanel } from "./ui/resultsPanel";
+import { ResultsPanel, type SaveContext } from "./ui/resultsPanel";
 import { createStatusBar } from "./ui/statusBar";
 import {
   SchemaTreeProvider,
@@ -61,7 +61,22 @@ export async function activate(
       vscode.workspace.getConfiguration("vsdb").get<number>("batchSize") ??
       500,
   });
-  const panel = new ResultsPanel({ runner });
+  // TASK-503 — Save flow dependencies: dialect (from active connection) +
+  // PK metadata via DbAdapter.listColumns. Cached at construction; the
+  // adapter is fetched lazily (matches QueryRunner.adapterProvider pattern).
+  const saveContext: SaveContext = {
+    getDriver: () => mgr.getActive()?.driver ?? null,
+    listPkColumns: async (schema: string, table: string): Promise<string[]> => {
+      try {
+        const adapter = await mgr.getAdapter();
+        const cols = await adapter.listColumns(table, schema || undefined);
+        return cols.filter((c) => c.isPrimaryKey === true).map((c) => c.name);
+      } catch {
+        return [];
+      }
+    },
+  };
+  const panel = new ResultsPanel({ runner, saveContext });
   panel.setExtensionUri(context.extensionUri);
   context.subscriptions.push(panel);
 
