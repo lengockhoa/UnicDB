@@ -1,6 +1,6 @@
 Command: handoff-fullstack
-Goal: Schema Explorer hiển thị mọi schema (không chỉ default) với tables/views/routines trong từng schema theo kiểu DataGrip
+Goal: Thay custom VirtualGrid bằng AG Grid Community cho Results panel — hết bug grid trống/scroll, có sort/filter; fix Cancel disable
 Base: main
-Phase: done
-Cursor: R5 complete — 3/3 tasks approved, fix round 1 used, v1.2.0 built and installed
-Next: cycle finished
+Phase: P2.5
+Cursor: P2 done — PLAN.md + 5 tasks ready, wave 1(201,202,204) wave 2(203) wave 3(205)
+Next: P3 commit plan khi PlanReviewer approve

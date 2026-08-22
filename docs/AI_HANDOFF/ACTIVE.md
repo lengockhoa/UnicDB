@@ -1,4 +1,4 @@
-Cycle: 2026-08-21-B   Date: 2026-08-22   Base: main
-Goal: Schema Explorer hiển thị mọi schema (không chỉ default) với tables/views/routines trong từng schema theo kiểu DataGrip
-Tasks: 3 total
-Status: done — 3/3 approved and released as v1.2.0
+Cycle: 2026-08-22-A   Date: 2026-08-22   Base: main
+Goal: Results panel dùng AG Grid Community (filter/sort/search/selection/ellipsis/row-count) thay VirtualGrid bug scroll + fix Cancel disable
+Tasks: 5 total
+Status: planning_done — ready for executor
