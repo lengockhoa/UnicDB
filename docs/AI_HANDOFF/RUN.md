@@ -1,6 +1,6 @@
 Command: handoff-fullstack
-Goal: Results grid theme theo VS Code + Excel-like filters + 1 checkbox/dòng (cycle 2026-08-22-C); cycle D queued: edit/paste/export
+Goal: Results grid theme theo VS Code + Excel-like filters + 1 checkbox/dòng (cycle 2026-08-22-C); queued D: edit/paste/export, E: run .sh
 Base: main
 Phase: I3
-Cursor: plan approved+committed 1d0cc23, W1 tasks 401+402
-Next: create worktrees, spawn Exec401+Exec402 parallel, then W2 TASK-403
+Cursor: wave 1 done f274617 (401 PASS styles.css+theme test, 402 PASS main.ts+filters test)
+Next: wave 2 TASK-403 version 1.3.2 + README + full-suite boundary

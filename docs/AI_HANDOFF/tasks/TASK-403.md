@@ -74,3 +74,19 @@ npm run typecheck
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+---
+
+## Executor Report
+
+- EXECUTOR_TOOL: claude-code (omp session)
+- EXECUTOR_MODEL: unic/unic-smart (orchestrator trực tiếp — task S assertion-only theo spec; TDD RED_OUTPUT N/A justified trong §Test Cases)
+- EXECUTOR_SUBAGENT: none
+- RED_OUTPUT: N/A — version/docs task (pattern TASK-304 cycle B; assert qua Verification Commands)
+- VERIFICATION (fresh):
+  - `node -e ... version` → 1.3.2 ✓
+  - `grep -c "Excel" README.md` → 1 ✓
+  - `npm run compile` → build complete ✓
+  - `npx vitest run` → 21 files / 231 tests passed ✓ (222 cũ + 3 theme + 6 filters)
+  - `npm run typecheck` → exit 0 ✓
+- Status: PASS
+- Note: bullet Results grid cũ bị trùng trong quá trình sửa — đã remove bản cũ, giữ 1 bullet mới đầy đủ (theme + Excel filter + sort/copy/footer cũ). Đã kiểm cả block không mất bullet nào khác.
