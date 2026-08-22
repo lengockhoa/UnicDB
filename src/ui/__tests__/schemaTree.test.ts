@@ -1,6 +1,7 @@
 // src/ui/__tests__/schemaTree.test.ts
 // Unit tests cho SchemaTreeProvider + generateSelect utility (TDD — TASK-007).
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { ThemeIcon } from "vscode";
 import type { ConnectionConfig } from "../../config/types";
 import type { DbAdapter, ColumnInfo } from "../../adapters/types";
 
@@ -56,8 +57,8 @@ vi.mock("vscode", () => {
     TreeItem: Item,
     TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
     ThemeIcon: vi.fn(),
-    Uri: { parse: (s: string) => ({ toString: () => s }) },
     ThemeColor: vi.fn(),
+    Uri: { parse: (s: string) => ({ toString: () => s }) },
     get window() {
       return {
         showInformationMessage: state.showInfo,
@@ -528,7 +529,7 @@ describe("SchemaTreeProvider — exports / sanity", () => {
     expect(typeof provider.refresh).toBe("function");
   });
 
-  it("root với 0 connections → empty-add node", async () => {
+  it("root với 0 connections → [] (empty state do viewsWelcome render, không còn placeholder node)", async () => {
     const stubMgr = {
       listConnections: () => [] as ConnectionConfig[],
       getActive: () => null,
@@ -536,8 +537,7 @@ describe("SchemaTreeProvider — exports / sanity", () => {
     };
     const provider = new SchemaTreeProvider(stubMgr as never);
     const root = await provider.getChildren(undefined);
-    expect(root).toHaveLength(1);
-    expect(root[0].contextValue).toBe("empty-add");
+    expect(root).toHaveLength(0);
   });
 });
 
@@ -676,5 +676,64 @@ describe("SchemaTreeProvider — connection node command + dialect per node", ()
     expect(root).toHaveLength(1);
     expect(root[0].command?.command).toBe("vsdb.selectConnectionFromTree");
     expect(root[0].command?.arguments).toEqual(["x"]);
+  });
+});
+
+// =============================================================================
+// DataGrip-style UX: connection root nodes xuất hiện sẵn (expanded), icon theo
+// driver, active tint xanh qua ThemeColor. ViewsWelcome thay cho empty-add node.
+// =============================================================================
+describe("SchemaTreeProvider — DataGrip-style root behavior", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.emitters = [];
+    state.treeItemCalls = [];
+    state.workspaceFolders = undefined;
+  });
+
+  it("connection node collapsible=Expanded (danh sách connected hiện sẵn)", async () => {
+    const { mgr } = setupTree();
+    await mgr.addConnection(makeCfg({ id: "a", name: "Local" }), "p");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    expect(root[0].collapsible).toBe(2); // TreeItemCollapsibleState.Expanded
+  });
+
+  it("connection node có icon theo driver (postgres=mysql=mssql khác nhau, no codicon prefix trong label)", async () => {
+    const stubMgr = {
+      listConnections: () => [
+        makeCfg({ id: "p", name: "PG", driver: "postgres" }),
+        makeCfg({ id: "m", name: "MY", driver: "mysql" }),
+        makeCfg({ id: "s", name: "MS", driver: "mssql" }),
+      ],
+      getActive: () => null,
+      onDidChangeActive: () => ({ dispose: () => {} }),
+    };
+    const provider = new SchemaTreeProvider(stubMgr as never);
+    const root = await provider.getChildren(undefined);
+
+    expect(root.map((n) => n.icon)).toEqual(["database", "server", "azure"]);
+    // Label sạch — không còn "$(pass-filled)" prefix codicon hack.
+    expect(root.every((n) => !n.label.includes("$("))).toBe(true);
+  });
+
+  it("getTreeItem: active connection icon tint xanh, non-active icon thường", async () => {
+    const { mgr } = setupTree();
+    await mgr.addConnection(makeCfg({ id: "a", name: "A" }), "p");
+    await mgr.addConnection(makeCfg({ id: "b", name: "B" }), "p");
+    await mgr.setActive("a");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    const itemA = provider.getTreeItem(root[0]) as { iconPath?: unknown };
+    const itemB = provider.getTreeItem(root[1]) as { iconPath?: unknown };
+
+    // Active: ThemeIcon(icon, ThemeColor) — 2 args.
+    expect(vi.mocked(ThemeIcon).mock.calls.at(-2)?.[1]).toBeDefined();
+    // Non-active: ThemeIcon(icon) — 1 arg, không color.
+    expect(vi.mocked(ThemeIcon).mock.calls.at(-1)?.[1]).toBeUndefined();
+    expect(itemA.iconPath).toBeDefined();
+    expect(itemB.iconPath).toBeDefined();
   });
 });

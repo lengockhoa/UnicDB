@@ -100,6 +100,20 @@ export class QueryRunner {
     this.cancelRequested = false;
     this.currentBatched = null;
     this.loadMoreInFlight.clear();
+    // Đóng các batched cursor còn mở từ lần chạy trước (user chạy câu mới
+    // mà chưa fetch hết rows cũ). Pool Postgres max=1 — nếu không đóng,
+    // statement đầu của lần chạy này xếp hàng chờ client và fail sau
+    // connectionTimeoutMillis ("timeout exceeded when trying to connect").
+    const stale = this.results
+      .filter((r) => r.status === "done" && r.batched)
+      .map((r) => r.batched!);
+    for (const b of stale) {
+      try {
+        await b.close();
+      } catch {
+        // best-effort — cursor có thể đã đóng.
+      }
+    }
     this.results = statements.map((s, i) => ({
       index: i,
       sql: s.text,

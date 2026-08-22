@@ -315,6 +315,8 @@ function openConnectionForm(
           sslKeyPath: payload.sslKeyPath || undefined,
         };
         await mgr.addConnection(cfg, payload.password);
+        // Tree hiện connection list ngay (root nodes) — không cần chờ user refresh.
+        state?.tree.refresh();
         void vscode.window.showInformationMessage(`VSDB: added "${cfg.name}"`);
       } else {
         await mgr.editConnection(
@@ -333,6 +335,7 @@ function openConnectionForm(
           },
           payload.password.length > 0 ? payload.password : undefined,
         );
+        state?.tree.refresh();
         void vscode.window.showInformationMessage(`VSDB: updated "${payload.name}"`);
       }
     },
@@ -393,6 +396,7 @@ async function commandDeleteConnection(
   );
   if (!confirm || !confirm.value) return;
   await mgr.deleteConnection(id!);
+  state?.tree.refresh();
   void vscode.window.showInformationMessage(`VSDB: deleted "${target.name}"`);
 }
 

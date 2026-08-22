@@ -398,6 +398,15 @@ export class PostgresAdapter implements DbAdapter {
             await finalize(false);
             return null;
           }
+          // FETCH trả ít hơn số row yêu cầu → cursor đã cạn. Đóng NGAY
+          // (không đợi lần fetch rỗng kế tiếp) — pool max=1 cần client
+          // trả về cho statement sau, nếu không mọi pool.query kế tiếp
+          // xếp hàng connectionTimeoutMillis rồi fail "timeout exceeded
+          // when trying to connect" (SELECT < 500 rows là case phổ biến).
+          if (rows.length < DEFAULT_BATCH_SIZE) {
+            state = "eof";
+            await finalize(false);
+          }
           return rows;
         } catch (err) {
           state = "error";

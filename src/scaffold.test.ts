@@ -117,6 +117,24 @@ describe("scaffold", () => {
     );
     expect(schemaTree).toBeTruthy();
 
+    // DataGrip-style: mọi command có icon; view/title chỉ icon (navigation group),
+    // refresh đứng trước add để toolbar không đổi chỗ khi connection xuất hiện.
+    for (const cmd of pkg.contributes.commands) {
+      expect(cmd.icon, `command ${cmd.command} phải có icon`).toMatch(/^\$\(/);
+    }
+    const viewTitle = pkg.contributes.menus["view/title"];
+    expect(viewTitle).toBeTruthy();
+    expect(viewTitle.every((m: { group?: string }) => m.group === "navigation")).toBe(true);
+    expect(viewTitle[0].command).toBe("vsdb.refreshSchema");
+    expect(viewTitle[1].command).toBe("vsdb.addConnection");
+
+    // Empty state: viewsWelcome thay cho tree node "No connections" — không còn
+    // node placeholder nào trong tree.
+    const welcome = pkg.contributes.viewsWelcome?.find(
+      (w: { view: string }) => w.view === "vsdb.schemaTree",
+    );
+    expect(welcome?.contents).toContain("command:vsdb.addConnection");
+
     // configuration
     expect(pkg.contributes.configuration).toBeTruthy();
     expect(pkg.contributes.configuration.properties["vsdb.showRunLens"]).toBeTruthy();

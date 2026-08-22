@@ -2,14 +2,14 @@
 // SchemaTreeProvider — TreeDataProvider cho "Schema Explorer" view.
 //
 // Node types:
-//   - "connection"          : mỗi connection trong ConnectionManager (active có chấm xanh).
+//   - "connection"          : mỗi connection trong ConnectionManager (root expand sẵn, icon theo driver, active tint xanh).
 //   - "schema"              : schema trong connection (icon symbol-namespace).
 //   - "category"            : "Tables" / "Views" / "Routines" (folder trong 1 schema)
 //   - "table" / "view"      : tên table/view với schema + qualifiedName
 //   - "routine"             : function/procedure
 //   - "column"              : column trong table
 //   - "error"               : node báo lỗi khi adapter throw
-//   - "empty-add"           : placeholder "Add Connection" khi rỗng / "No schemas"
+//   - "empty-add"           : placeholder "No schemas" (empty connection list do viewsWelcome render)
 //
 // Caching: 60s theo (connectionId, category). Refresh invalidates cache và fire onDidChangeTreeData.
 //
@@ -19,10 +19,17 @@ import type { ConnectionConfig } from "../config/types";
 import type { ConnectionManager } from "../core/connectionManager";
 import type { DbAdapter } from "../adapters/types";
 
+
+/** Icon theo driver — giống DataGrip: mỗi DB type có icon riêng. */
+const DRIVER_ICONS: Record<string, string> = {
+  postgres: "database",
+  mysql: "server",
+  mssql: "azure",
+};
+
 export type CategoryKind = "tables" | "views" | "routines" | "columns";
 
 export interface VsdbNode {
-  /** Hiển thị trong tree. */
   label: string;
   /** Icon id VS Code (vd "$(database)") hoặc undefined. */
   icon?: string;
@@ -108,13 +115,27 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
   getTreeItem(node: VsdbNode): vscode.TreeItem {
     const item = new vscode.TreeItem(node.label, node.collapsible);
     if (node.icon) {
-      item.iconPath = new vscode.ThemeIcon(node.icon);
+      if (node.contextValue === "connection" && this.isActive(node)) {
+        // Active connection: tint icon xanh (giống chấm xanh cũ) qua ThemeColor.
+        item.iconPath = new vscode.ThemeIcon(
+          node.icon,
+          new vscode.ThemeColor("testing.iconPassed"),
+        );
+      } else {
+        item.iconPath = new vscode.ThemeIcon(node.icon);
+      }
     }
     if (node.description !== undefined) item.description = node.description;
     if (node.tooltip !== undefined) item.tooltip = node.tooltip;
     if (node.command) item.command = node.command;
     item.contextValue = node.contextValue;
     return item;
+  }
+
+  /** Node connection có phải active connection hiện tại không. */
+  private isActive(node: VsdbNode): boolean {
+    const active = this.mgr.getActive();
+    return Boolean(active && node.meta?.connection?.id === active.id);
   }
 
   async getChildren(node: VsdbNode | undefined): Promise<VsdbNode[]> {
@@ -145,27 +166,15 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
   // ---- Root: connections ----------------------------------------------------
 
   private getRoot(): VsdbNode[] {
-    const conns = this.mgr.listConnections();
-    if (conns.length === 0) {
-      return [
-        {
-          label: "No connections. Click + to add.",
-          contextValue: "empty-add",
-          collapsible: vscode.TreeItemCollapsibleState.None,
-          command: {
-            command: "vsdb.addConnection",
-            title: "Add Connection",
-          },
-        },
-      ];
-    }
-    const active = this.mgr.getActive();
-    return conns.map((c) => ({
-      label: `${active && active.id === c.id ? "$(pass-filled) " : ""}${c.name}`,
+    // Empty state do viewsWelcome trong package.json render ("No connections yet.
+    // [Add Connection]"), không cần placeholder node trong tree.
+    return this.mgr.listConnections().map((c) => ({
+      label: c.name,
+      icon: DRIVER_ICONS[c.driver] ?? "database",
       tooltip: `${c.name}\n${c.driver}@${c.host}:${c.port}/${c.database}\nClick để đổi active connection`,
       contextValue: "connection",
-      collapsible: vscode.TreeItemCollapsibleState.Collapsed,
-      // Click → switch active (cập nhật statusBar + chấm xanh ở root).
+      collapsible: vscode.TreeItemCollapsibleState.Expanded,
+      // Click → switch active (statusBar + icon tint cập nhật qua onDidChangeActive).
       command: {
         command: "vsdb.selectConnectionFromTree",
         title: "Select as Active Connection",
@@ -174,6 +183,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
       meta: { connection: c },
     }));
   }
+
 
   // ---- Schema nodes (connection → schemas) ---------------------------------
 

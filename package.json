@@ -51,52 +51,62 @@
       {
         "command": "vsdb.addConnection",
         "title": "VSDB: Add Connection",
-        "category": "VSDB"
+        "category": "VSDB",
+        "icon": "$(add)"
       },
       {
         "command": "vsdb.editConnection",
         "title": "VSDB: Edit Connection",
-        "category": "VSDB"
+        "category": "VSDB",
+        "icon": "$(edit)"
       },
       {
         "command": "vsdb.deleteConnection",
         "title": "VSDB: Delete Connection",
-        "category": "VSDB"
+        "category": "VSDB",
+        "icon": "$(trash)"
       },
       {
         "command": "vsdb.selectConnection",
         "title": "VSDB: Select Active Connection",
-        "category": "VSDB"
+        "category": "VSDB",
+        "icon": "$(plug)"
       },
       {
         "command": "vsdb.runQuery",
         "title": "VSDB: Run Query",
-        "category": "VSDB"
+        "category": "VSDB",
+        "icon": "$(play)"
       },
       {
         "command": "vsdb.cancelQuery",
         "title": "VSDB: Cancel Query",
-        "category": "VSDB"
+        "category": "VSDB",
+        "icon": "$(debug-stop)"
       },
       {
         "command": "vsdb.generateSelect",
         "title": "VSDB: Generate SELECT",
-        "category": "VSDB"
+        "category": "VSDB",
+        "icon": "$(preview)"
       },
       {
         "command": "vsdb.copyQualifiedName",
         "title": "VSDB: Copy Qualified Name",
-        "category": "VSDB"
+        "category": "VSDB",
+        "icon": "$(copy)"
       },
       {
         "command": "vsdb.refreshSchema",
         "title": "VSDB: Refresh Schema",
-        "category": "VSDB"
+        "category": "VSDB",
+        "icon": "$(refresh)"
       },
       {
         "command": "vsdb.runStatement",
         "title": "VSDB: Run Statement",
-        "category": "VSDB"
+        "category": "VSDB",
+        "icon": "$(play)"
       }
     ],
     "keybindings": [
@@ -131,38 +141,39 @@
         {
           "command": "vsdb.generateSelect",
           "when": "view == vsdb.schemaTree && (viewItem == table || viewItem == view)",
-          "group": "vsdb"
+          "group": "inline"
         },
         {
           "command": "vsdb.copyQualifiedName",
           "when": "view == vsdb.schemaTree && (viewItem == table || viewItem == view || viewItem == column || viewItem == routine)",
-          "group": "vsdb"
+          "group": "inline"
         },
         {
           "command": "vsdb.refreshSchema",
           "when": "view == vsdb.schemaTree",
+          "group": "vsdb"
+        },
+        {
+          "command": "vsdb.editConnection",
+          "when": "view == vsdb.schemaTree && viewItem == connection",
+          "group": "vsdb"
+        },
+        {
+          "command": "vsdb.deleteConnection",
+          "when": "view == vsdb.schemaTree && viewItem == connection",
           "group": "vsdb"
         }
       ],
       "view/title": [
         {
-          "command": "vsdb.addConnection",
+          "command": "vsdb.refreshSchema",
           "when": "view == vsdb.schemaTree",
           "group": "navigation"
         },
         {
-          "command": "vsdb.refreshSchema",
+          "command": "vsdb.addConnection",
           "when": "view == vsdb.schemaTree",
           "group": "navigation"
-        }
-      ]
-    },
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "vsdb",
-          "title": "VSDB",
-          "icon": "media/vsdb.svg"
         }
       ]
     },
@@ -174,6 +185,12 @@
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "vsdb.schemaTree",
+        "contents": "No connections yet.\n[Add Connection](command:vsdb.addConnection)"
+      }
+    ],
     "configuration": {
       "title": "VSDB",
       "properties": {

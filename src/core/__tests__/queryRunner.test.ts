@@ -353,3 +353,57 @@ describe("QueryRunner — Serialization", () => {
     expect(json).toContain("9007199254740993");
   });
 });
+
+// =============================================================================
+// Regression: pool max=1 wedge — "timeout exceeded when trying to connect".
+// Trước fix: (1) batched cursor của SELECT < 500 rows không bao giờ tự đóng,
+// (2) run() mới không đóng cursor cũ còn mở → statement kế xếp hàng chờ
+// client duy nhất của pool → connectionTimeoutMillis (10s) → timeout error.
+// =============================================================================
+describe("QueryRunner — stale batched cursor release (pool wedge fix)", () => {
+  it("run() mới đóng batched cursor còn mở từ lần chạy trước", async () => {
+    // Lần 1: SELECT lớn — chỉ fetch initial 500 rows, cursor vẫn mở.
+    const bigBatched = makeBatched(["n"], [
+      Array.from({ length: 500 }, (_, i) => [i + 1]),
+    ]);
+    // Lần 2: non-SELECT kết quả thường.
+    const adapter = makeAdapter(async (sql) => {
+      if (sql.startsWith("SELECT")) return { results: [], batched: bigBatched };
+      return okResult(["ok"], [[1]]);
+    });
+    const runner = new QueryRunner(async () => adapter);
+
+    await runner.run([stmt("SELECT * FROM big", 0, 18)], () => {});
+    expect(bigBatched.close).not.toHaveBeenCalled(); // cursor còn mở sau run 1
+
+    await runner.run([stmt("UPDATE t SET x = 1", 0, 21)], () => {});
+    expect(bigBatched.close).toHaveBeenCalledTimes(1); // run 2 đóng cursor cũ
+    // Statement mới vẫn chạy được (không bị block).
+    const final = runner.getResults();
+    expect(final[0].status).toBe("done");
+  });
+
+  it("cursor cũ được đóng TRƯỚC khi statement mới chạy (thứ tự close → runQuery)", async () => {
+    // Lần 1: SELECT lớn — chỉ fetch initial batch, cursor còn mở.
+    const bigBatched = makeBatched(["n"], [
+      Array.from({ length: 500 }, (_, i) => [i + 1]),
+    ]);
+    const events: string[] = [];
+    const adapter = makeAdapter(async (sql) => {
+      events.push(`runQuery:${sql}`);
+      return { results: [], batched: bigBatched };
+    });
+    const runner = new QueryRunner(async () => adapter);
+
+    await runner.run([stmt("SELECT * FROM big", 0, 18)], () => {});
+    events.length = 0;
+    // bigBatched.close spy: ghi event vào queue chung để so thứ tự.
+    bigBatched.close.mockImplementation(async () => {
+      events.push("close");
+    });
+
+    await runner.run([stmt("SELECT * FROM big", 0, 18)], () => {});
+
+    expect(events).toEqual(["close", "runQuery:SELECT * FROM big"]);
+  });
+});

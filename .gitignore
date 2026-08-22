@@ -8,6 +8,7 @@ node_modules/
 .antigravity/
 .claude/
 .codex/
+.omp/
 .ukit/
 opencode.json
 AGENTS.md
