@@ -554,9 +554,16 @@ function buildPersistentDom(): PersistentDom {
   // its own shortcut for this — we wire it ourselves. The shortcut only
   // commits when the dirty map is non-empty (no-op otherwise, see
   // onCommitClick).
+  // TASK-503 Fix R1 — Cmd/Ctrl+Enter keyboard shortcut. AG Grid does not
+  // surface its own shortcut for this — we wire it ourselves. The shortcut
+  // only commits when the dirty map is non-empty (no-op otherwise, see
+  // onCommitClick). When focus is in an editable text input (filter box,
+  // quick-search, etc.) we MUST NOT capture the keystroke — that would
+  // swallow the user's local typing and trigger a save unexpectedly.
   gridWrap.addEventListener(
     "keydown",
     (ev) => {
+      if (isFilterInput(ev.target)) return;
       if (
         (ev.ctrlKey || ev.metaKey) &&
         ev.key === "Enter" &&

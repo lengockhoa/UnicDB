@@ -25,7 +25,13 @@ import * as vscode from "vscode";
 import type { QueryRunner, StatementResult } from "../core/queryRunner";
 import type { HostMessage, WebviewMessage, ExportFileMessage } from "./messages";
 import type { ConnectionConfig } from "../config/types";
-import { buildSaveStatements } from "../core/saveStatements";
+import {
+  buildSaveStatements,
+  parseFromClause,
+  quoteIdent,
+  type Dialect,
+} from "../core/saveStatements";
+import { sqlLiteral } from "./resultsGridModel";
 
 /**
  * Host-side save flow hook. The extension wires this so the panel knows:
@@ -64,6 +70,11 @@ export class ResultsPanel {
   private header: string = "";
   private lastResults: StatementResult[] = [];
   private busy: boolean = false;
+  /** Host-derived (schema?, table) per statement index, populated by
+   *  render() so handleSaveEdits can derive metadata without trusting the
+   *  webview-supplied tableName / pkColumns (Fix R1 critical #1). */
+  private tableByStatement: Map<number, { schema?: string; table: string }> =
+    new Map();
 
   constructor(options: ResultsPanelOptions) {
     this.runner = options.runner;
@@ -109,8 +120,18 @@ export class ResultsPanel {
    * Render results mới vào panel. Nếu panel chưa mở → show().
    */
   render(results: StatementResult[], header: string): void {
-    this.header = header;
     this.lastResults = results;
+    // Derive (schema?, table) per statement FROM the parsed SQL — host-side
+    // truth. The webview's tableName/pkColumns message is IGNORED (Fix R1
+    // critical #1). Statements whose SQL has no FROM/INSERT/UPDATE have no
+    // addressable table and trigger a hard refusal.
+    this.tableByStatement.clear();
+    for (const r of results) {
+      const parsed = parseFromClause(r.sql);
+      if (parsed) {
+        this.tableByStatement.set(r.index, parsed);
+      }
+    }
     this.show();
     if (this.panel) {
       this.postMessage({
@@ -285,28 +306,28 @@ export class ResultsPanel {
   }
 
   /**
-   * TASK-503 — Save edits: translate the webview payload into per-dialect
-   * UPDATE / INSERT / DELETE statements, execute them via the adapter, then
-   * re-run the original SQL to refresh grid state. Ack the webview with
-   * `saveResult` so it can clear its dirty map (success) or surface the
-   * errors in a banner (failure).
+   * TASK-503 Fix R1 — Save edits. Host derives the table name FROM the
+   * statement SQL via parseFromClause (webview-supplied tableName is
+   * IGNORED, see critical #1). Host also derives PK columns via
+   * saveContext.listPkColumns (webview-supplied pkColumns is IGNORED).
    *
-   * Soft refusals (no_pk) → ack with `refused:true`, `reason` populated,
-   * `ok:true` (refusal is NOT a failure: there is nothing to retry, and
-   * the dirty state is cleared too).
+   * SQL is emitted with INLINE LITERAL values (option B per reviewer's
+   * plan) so the statements can be shipped straight to adapter.runQuery
+   * without a parameter channel.
    *
-   * NOTE: client-side field-quoting/placeholders are produced by
-   * `buildSaveStatements`; the adapter uses `runQuery()` which expects
-   * plain SQL. For postgres parameters we rely on the adapter's own
-   * substitution model — the PostgresAdapter exposes `runQuery(sql)`
-   * only (no parameterised statement API); we substitute via simple
-   * literal-escape at the SQL string level so the SAVE statements remain
-   * transport-safe.
+   * Ack honesty (critical #3): if edits.length > 0 but every produced
+   * statement was refused (no_pk, ambiguous ctid, invalid identifier,
+   * unknown column), ack is ok:false with errors[] explaining why.
+   * Never silent ok:true.
+   *
+   * Partial failure: each per-statement error is collected into errors[].
+   * ack is ok:false when ANY statement failed; the webview keeps the
+   * dirty state so the user can retry.
    */
   private async handleSaveEdits(
     index: number,
-    tableName: string | null,
-    pkColumns: string[],
+    _webviewTableName: string | null,
+    _webviewPkColumns: string[],
     edits: Array<{ rowId: number; colIndex: number; value: unknown }>,
   ): Promise<void> {
     if (!this.saveContext) {
@@ -314,7 +335,9 @@ export class ResultsPanel {
         type: "saveResult",
         index,
         ok: false,
-        errors: ["Save context not wired — extension.ts must pass saveContext when constructing ResultsPanel."],
+        errors: [
+          "Save context not wired — extension.ts must pass saveContext when constructing ResultsPanel.",
+        ],
       });
       return;
     }
@@ -338,45 +361,112 @@ export class ResultsPanel {
       });
       return;
     }
+
+    // Critical #1: HOST derives table + pkColumns. Webview values are
+    // ignored on purpose — VS Code webview is semi-trusted and a
+    // mis-targeted UPDATE is the worst possible silent failure.
+    const parsed = this.tableByStatement.get(index);
+    if (!parsed) {
+      this.postMessage({
+        type: "saveResult",
+        index,
+        ok: false,
+        errors: [
+          `Cannot save: statement #${index} has no addressable table (no FROM/INSERT INTO/UPDATE clause in the SQL).`,
+        ],
+      });
+      return;
+    }
+    const tableName = parsed.table;
+    const pkColumns =
+      edits.length === 0
+        ? []
+        : await this.saveContext.listPkColumns(parsed.schema ?? "", tableName);
+
     const columns = r.result.columns;
     const serverRows = r.result.rows;
 
-    // Postgres no-PK fallback: pre-fetch ctids for every dirty rowId via
-    // a single SELECT ctid, col1, col2... This is a documented limitation
-    // — the contract says postgres tables without a declared PK get the
-    // ctid route, but the caller must accept the extra round-trip.
+    // Postgres no-PK fallback: pre-fetch ctids per row. fetchPostgresCtids
+    // uses quoted identifiers + safe literal escape; ambiguous matches
+    // (count > 1) are refused.
     let ctidByRowId: ReadonlyMap<number, string> | undefined;
-    if (driver === "postgres" && pkColumns.length === 0 && tableName) {
-      ctidByRowId = await this.fetchPostgresCtids(tableName, columns, serverRows);
+    if (
+      driver === "postgres" &&
+      pkColumns.length === 0 &&
+      edits.length > 0
+    ) {
+      const ctidRes = await this.fetchPostgresCtids(
+        tableName,
+        parsed.schema,
+        columns,
+        serverRows,
+      );
+      if (!ctidRes.ok) {
+        const reason =
+          ctidRes.reason === "ambiguous_only"
+            ? `Cannot save: postgres no-PK + ctid lookup is ambiguous (multiple rows match the dirty cells). Add a PRIMARY KEY or refine edits.`
+            : `Cannot save: postgres no-PK + ctid lookup failed for every dirty row.`;
+        this.postMessage({
+          type: "saveResult",
+          index,
+          ok: false,
+          refused: true,
+          reason,
+          errors: [reason],
+        });
+        return;
+      }
+      ctidByRowId = ctidRes.map;
     }
 
     const built = buildSaveStatements(
-      driver,
-      tableName ?? "results",
+      driver as Dialect,
+      tableName,
       pkColumns,
       columns,
       edits,
       serverRows,
       ctidByRowId ? { ctidByRowId } : {},
     );
+
+    // Refusal from build (no_pk / invalid_identifier). Banner with reason.
     if (built.ok === false) {
       const reason =
         built.reason === "no_pk"
-          ? `Cannot save: ${driver} has no PRIMARY KEY for "${tableName ?? "table"}". Switch to UPDATE via raw SQL or define a PRIMARY KEY.`
-          : "Save refused.";
+          ? `Cannot save: ${driver} has no PRIMARY KEY for "${tableName}". Switch to UPDATE via raw SQL or define a PRIMARY KEY.`
+          : `Save refused: ${built.warnings.join(" ")}`;
       this.postMessage({
         type: "saveResult",
         index,
-        ok: true, // refusal is not a runtime failure; dirty map clears.
+        ok: false,
         refused: true,
         reason,
+        errors: built.warnings,
       });
       return;
     }
 
-    // built is SaveStatementsOk here.
+    // Critical #3: edits present but every statement was skipped →
+    // ack ok:false with warnings. Never silent ok:true.
+    if (built.statements.length === 0 && edits.length > 0) {
+      const errText =
+        built.warnings.length > 0
+          ? built.warnings.join(" ")
+          : "Save produced no statements (every row was skipped).";
+      this.postMessage({
+        type: "saveResult",
+        index,
+        ok: false,
+        refused: true,
+        reason: errText,
+        errors: built.warnings,
+      });
+      return;
+    }
+
+    // Empty edits → no-op success (webview's dirtyCount gate should
+    // already have prevented this, but be defensive).
     if (built.statements.length === 0) {
-      // Nothing to do — treat as success so the webview clears.
       this.postMessage({ type: "saveResult", index, ok: true });
       return;
     }
@@ -384,10 +474,6 @@ export class ResultsPanel {
     this.setBusy(true);
     const errors: string[] = [];
     try {
-      // Drive each generated statement through the adapter. PostgresAdapter
-      // exposes `runQuery(sql)` only; for parameterized SQL we are already
-      // using pg-format-safe literal substitution in buildSaveStatements
-      // (sqlLiteral). Otherwise we substitute parameters client-side here.
       for (const stmt of built.statements) {
         try {
           await this.runner.runSql(stmt);
@@ -397,15 +483,21 @@ export class ResultsPanel {
         }
       }
       if (errors.length > 0) {
-        // Surface to the webview's banner; abort the refresh step.
-        this.postMessage({ type: "saveResult", index, ok: false, errors });
+        // Partial-failure path: ack ok:false with per-statement errors
+        // so the banner shows exactly which statement(s) failed. The
+        // webview keeps dirty state so the user can retry.
+        this.postMessage({
+          type: "saveResult",
+          index,
+          ok: false,
+          errors,
+        });
         return;
       }
-      // Re-run the original SQL so the grid reflects the saved state.
+      // Re-run the original SQL to refresh the grid.
       const refreshed = await this.runner.runSql(r.sql);
       const freshResult = refreshed.results[0];
-      if (freshResult && freshResult.rows.length >= 0) {
-        // Replace THIS statement in lastResults with the refreshed row set.
+      if (freshResult) {
         const next = this.lastResults.slice();
         next[index] = {
           ...r,
@@ -428,56 +520,68 @@ export class ResultsPanel {
 
   /**
    * Postgres no-PK support: fetch ctid for every row currently in view so
-   * `UPDATE ... WHERE ctid = $1` can address the row. We pull ctid + the
-   * full column set because ctid alone doesn't help us match against the
-   * webview's row identity (which is the source-array index, NOT a row id).
+   * UPDATE WHERE ctid = '<literal>' can address the row.
    *
-   * Match is by full-row equality — works for tables where the column set
-   * uniquely identifies a row (typical SELECT *). Documented limitation:
-   * concurrent writes between the fetch and the save can shift ctids.
+   * Fix R1 important #1: identifiers are quoted per dialect (postgres
+   * plain); values use sqlLiteral (single-quote doubling, NO backslash
+   * escape). Ambiguous rows (multiple matches → ambiguous ctid) are
+   * REFUSED — that row is dropped from the map so buildSaveStatements
+   * sees a missing ctid and skips it with a warning.
+   *
+   * Returns undefined only when EVERY row's lookup failed (caller treats
+   * that as a hard refusal). Otherwise returns the partial map.
    */
   private async fetchPostgresCtids(
     tableName: string,
+    schema: string | undefined,
     columns: string[],
     serverRows: unknown[][],
-  ): Promise<ReadonlyMap<number, string> | undefined> {
-    // Build a SELECT ctid, c1, c2, ... FROM <table> WHERE (col1 IS DISTINCT
-    // FROM $1 OR col2 IS DISTINCT FROM $2 OR ...) per row. Simpler & safer
-    // in our context (webview rows are bounded by the user's view) than
-    // building one giant OR clause.
+  ): Promise<
+    | { ok: true; map: ReadonlyMap<number, string> }
+    | { ok: false; reason: "all_failed" | "ambiguous_only" }
+  > {
     const map = new Map<number, string>();
+    let anySucceeded = false;
+    let anyAmbiguous = false;
+    const qSchema = schema ? quoteIdent(schema, "postgres") : null;
+    const qTable = quoteIdent(tableName, "postgres");
+    const fullTable = qSchema ? `${qSchema}.${qTable}` : qTable;
     try {
       for (let i = 0; i < serverRows.length; i++) {
         const row = serverRows[i];
         if (!row) continue;
         const conds: string[] = [];
         for (let c = 0; c < columns.length && c < row.length; c++) {
+          const col = columns[c];
           const v = row[c];
-          // Use IS NOT DISTINCT FROM for null-safety in the generated SQL.
           if (v === null || v === undefined) {
-            conds.push(`${columns[c]} IS NULL`);
-          } else if (typeof v === "number" || typeof v === "boolean") {
-            conds.push(`${columns[c]} = ${JSON.stringify(v)}`);
-          } else if (typeof v === "bigint") {
-            conds.push(`${columns[c]} = ${v.toString()}`);
+            conds.push(`${quoteIdent(col, "postgres")} IS NULL`);
           } else {
-            const s = String(v).replace(/'/g, "''");
-            conds.push(`${columns[c]} = '${s}'`);
+            conds.push(
+              `${quoteIdent(col, "postgres")} IS NOT DISTINCT FROM ${sqlLiteral(v)}`,
+            );
           }
         }
-        const sql = `SELECT ctid FROM ${tableName} WHERE ${conds.join(" AND ")} LIMIT 1`;
+        const sql = `SELECT ctid FROM ${fullTable} WHERE ${conds.join(" AND ")}`;
         const res = await this.runner.runSql(sql);
         const rows = res.results[0]?.rows ?? [];
-        if (rows.length > 0) {
+        if (rows.length === 1) {
           map.set(i, String(rows[0][0]));
+          anySucceeded = true;
+        } else if (rows.length > 1) {
+          // Ambiguous — refuse this row.
+          anyAmbiguous = true;
         }
       }
     } catch {
       // Best-effort: missing ctids will surface as per-row warnings in
       // buildSaveStatements.
     }
-    return map.size > 0 ? map : undefined;
+    if (anySucceeded) return { ok: true, map };
+    if (anyAmbiguous) return { ok: false, reason: "ambiguous_only" };
+    return { ok: false, reason: "all_failed" };
   }
+
 
 
   /**
