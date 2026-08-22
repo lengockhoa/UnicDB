@@ -158,6 +158,20 @@ let newRowCount = 0;
  *  (R2 finding #2). Reset alongside newRowCount on tab switch /
  *  new query. */
 let highestAllocatedId = -1;
+/** Maps __rowId → source-array index in r.result.rows. Populated by
+ *  rowsToObjects for every row it materializes and read by onUndoClick
+ *  to resolve the server-truth original cell for a dirty edit. Necessary
+ *  because the high-water-mark id scheme (R2 #2) decouples __rowId from
+ *  the source-array index — after Add Row + stream, a streamed row's
+ *  __rowId is past the source-array length, so the old
+ *  `r.result.rows[popped.rowId]` lookup returned the wrong row. The map
+ *  is cleared in the two reset branches (first-render / tab switch and
+ *  statementReset / columnsChanged / isReset) BEFORE rowsToObjects
+ *  repopulates; append-delta must NOT clear it because streaming appends
+ *  extend the same r.result.rows — the existing entries for ids 0..N-1
+ *  remain valid, and rowsToObjects adds entries for ids N..M-1 (R3
+ *  finding #1). */
+const serverIndexByRowId = new Map<number, number>();
 /** Last ColumnSpecs seen for the active statement. Used by handlers
  *  (onUndoClick, onAddRowClick, onCsvToggleClick, onGridPaste) that
  *  need a stable column ordering for colIndex ↔ field mapping. The
@@ -272,18 +286,32 @@ function rowsToObjects(
   rows: unknown[][],
   specs: readonly ColumnSpec[],
   startIndex = 0,
+  sourceIndexStart: number = startIndex,
 ): Record<string, unknown>[] {
   // Each row gets a `__rowId` = the source-array index. AG Grid's
   // `getRowId` reads from this so edits and undo remain stable across
   // sort / filter / column reorder (display rowIndex would shift but the
   // __rowId stays anchored to the original server row).
-  return rows.map((row, i) => {
+  //
+  // We also record the mapping __rowId → source-array index in
+  // r.result.rows. onUndoClick reads it to restore the original cell
+  // value. The mapping is necessary because the high-water-mark id
+  // scheme decouples __rowId from source-index after Add Row + stream
+  // (R3 finding #1): for first-render / reset, source-index === __rowId
+  // so the default keeps the call sites unchanged; the append-delta
+  // caller passes an explicit `sourceIndexStart` so a streamed row at
+  // __rowId 4 still maps to r.result.rows[3] (its true source-array
+  // position), not [4].
+  const out: Record<string, unknown>[] = [];
+  for (let i = 0; i < rows.length; i++) {
     const obj: Record<string, unknown> = { __rowId: startIndex + i };
     specs.forEach((s, j) => {
-      obj[s.field] = row[j];
+      obj[s.field] = rows[i][j];
     });
-    return obj;
-  });
+    serverIndexByRowId.set(startIndex + i, sourceIndexStart + i);
+    out.push(obj);
+  }
+  return out;
 }
 
 // ---- Render ----------------------------------------------------------------
@@ -702,6 +730,10 @@ function renderGrid(): void {
     newRowCount = 0;
     highestAllocatedId = -1;
     colFilterActive = false;
+    // Clear the server-id → source-index map BEFORE rowsToObjects
+    // repopulates. Stale entries from a prior statement would let undo
+    // read the wrong row's value after a tab switch (R3 finding #1).
+    serverIndexByRowId.clear();
     gridApi = createGrid(gridHost, {
       // VS Code theme follow (TASK-401 fix round 2): AG v36 paints the grid
       // via the JS Theming API (inline sheet + element-level vars), NOT via
@@ -790,6 +822,11 @@ function renderGrid(): void {
     editState.clear();
     newRowCount = 0;
     highestAllocatedId = -1;
+    // Clear the server-id → source-index map BEFORE rowsToObjects
+    // repopulates (same reason as the first-render branch — stale
+    // entries from the previous state would let undo read the wrong
+    // row after a same-statement refresh, R3 finding #1).
+    serverIndexByRowId.clear();
     if (columnsChanged) {
       // Column set changed → previous column filter is no longer valid.
       // Clear the filter model (AG Grid keeps filters for surviving columns
@@ -816,8 +853,19 @@ function renderGrid(): void {
     // already use ids >= r.result.rows.length, so a streaming append
     // starting from `previousRows.length` would collide. We start past
     // the highest id we have ever allocated (R2 finding #2).
+    //
+    // `sourceIndexStart` is `previousRows.length` — the delta slice
+    // starts at this position in r.result.rows. We pass it explicitly
+    // so rowsToObjects records __rowId → r.result.rows index mappings
+    // for the appended rows even when the high-water mark has bumped
+    // startIndex past previousRows.length (R3 finding #1).
     const startIndex = Math.max(previousRows.length, highestAllocatedId + 1);
-    const newRowObjects = rowsToObjects(syncResult.appendDelta, specs, startIndex);
+    const newRowObjects = rowsToObjects(
+      syncResult.appendDelta,
+      specs,
+      startIndex,
+      previousRows.length,
+    );
     const addIndex = previousRows.length;
     gridApi!.applyTransaction({ add: newRowObjects, addIndex });
     for (const obj of newRowObjects) {
@@ -939,10 +987,7 @@ function onGridPaste(ev: ClipboardEvent): void {
   // STABLE identity (__rowId) — display rowIndex would shift with sort/
   // filter and would misaddress the same row on every re-render.
   const focused = gridApi.getFocusedCell();
-  const focusedNode = focused?.rowIndex !== undefined
-    ? gridApi.getDisplayedRowAtIndex(focused.rowIndex) ?? null
-    : null;
-  const anchorRowId = readRowId(focusedNode?.data) ?? 0;
+  const anchorDisplayIndex = focused?.rowIndex ?? 0;
   // Resolve the focused column's STABLE index via currentSpecs — not via
   // live getColumnDefs. Column drag-reorder shifts getColumnDefs order
   // but currentSpecs still represents the original spec ordering, so
@@ -953,35 +998,53 @@ function onGridPaste(ev: ClipboardEvent): void {
     : 0;
   if (anchorCol < 0) return;
   const colCount = currentSpecs.length;
-  // Total data rows = server-truth + locally-added rows. Paste row indices
-  // are clipped to the displayed range, with new rows (added via
-  // applyTransaction) counted in.
-  const r0 = results[activeTab];
-  const dataRowCount = (r0?.result?.rows?.length ?? 0) + newRowCount;
-  applyPasteToDirty(editState, anchorRowId, anchorCol, parsed, colCount, dataRowCount);
-  // Apply the paste to the live grid by mapping each parsed cell onto
-  // the row whose __rowId matches anchorRowId + r. We resolve via the
-  // grid's stable getRowNode(__rowId) lookup — no forEachNode scan, no
-  // display-index dependency. Column field lookup uses currentSpecs (stable
-  // ordering) — NOT live getColumnDefs.
+  // Resolve paste targets by DISPLAY SEQUENCE from the anchor (Excel
+  // semantics) instead of dense `anchorRowId + r` arithmetic. After Add
+  // Row + stream the id namespace has holes and bumps so the dense
+  // formula misaddressed cells AND wrote into local blank rows whose
+  // pending-insert marker would be silently overwritten (R3 finding
+  // #2). We stop at the bottom edge (no node) AND skip locally-added
+  // rows — they have no entry in serverIndexByRowId (no server-truth
+  // source). Pasting past a local row would corrupt the marker that
+  // TASK-503 reads to generate INSERT statements.
+  const targetRowIds: number[] = [];
+  const targetNodes: Array<{ id: number; data: Record<string, unknown> }> = [];
   for (let r = 0; r < parsed.length; r++) {
-    const targetRowId = anchorRowId + r;
-    if (targetRowId < 0 || targetRowId >= dataRowCount) continue;
-    const node = gridApi.getRowNode(String(targetRowId));
-    if (!node?.data) continue;
+    const node = gridApi.getDisplayedRowAtIndex(anchorDisplayIndex + r);
+    if (!node?.data) break; // bottom edge
+    const id = readRowId(node.data);
+    if (id === undefined) continue;
+    if (serverIndexByRowId.get(id) === undefined) break; // local row — stop
+    targetRowIds.push(id);
+    targetNodes.push({ id, data: node.data });
+  }
+  applyPasteToDirty(
+    editState,
+    0,
+    anchorCol,
+    parsed,
+    colCount,
+    targetRowIds.length,
+    targetRowIds,
+  );
+  // Apply the paste to the live grid by mapping each parsed cell onto
+  // the precomputed nodes — same order as the applyPasteToDirty call
+  // above. Column field lookup uses currentSpecs (stable ordering) —
+  // NOT live getColumnDefs.
+  for (let r = 0; r < targetNodes.length; r++) {
+    const ref = targetNodes[r];
     const row = parsed[r];
     for (let c = 0; c < row.length; c++) {
       const targetCol = anchorCol + c;
       if (targetCol < 0 || targetCol >= colCount) continue;
       const spec = currentSpecs[targetCol];
       if (!spec) continue;
-      node.data[spec.field] = row[c];
+      ref.data[spec.field] = row[c];
     }
   }
   gridApi.refreshCells({ force: true });
   updateFooterNow();
 }
-
 /** Refresh button: visual noop reset of dirty state + re-post the current
  *  state to the host so the host's "saved" snapshot matches. */
 function onRefreshClick(): void {
@@ -1054,14 +1117,17 @@ function onUndoClick(): void {
   if (!popped) return;
   const spec = currentSpecs[popped.colIndex];
   if (!spec) return;
-  // Restore from the original (server-truth) row at the same __rowId.
-  // r.result.rows is index-aligned with __rowId for server-provided
-  // rows; for locally-added rows (newRowId past server length) there
-  // is no original — drop the dirty entry without a revert.
-  const r = results[activeTab];
-  const serverRow = r?.result?.rows?.[popped.rowId];
   const node = gridApi.getRowNode(String(popped.rowId));
   if (!node?.data) return;
+  // Resolve the server-truth source row via the stable __rowId → source-
+  // index map. After Add Row + stream, a streamed row's __rowId is past
+  // the source-array length, so the old `r.result.rows[popped.rowId]`
+  // returned the wrong row's value. The map is populated in
+  // rowsToObjects and cleared in the two reset branches (R3 finding #1).
+  // Locally-added rows have no entry → si is undefined → no revert.
+  const r = results[activeTab];
+  const si = serverIndexByRowId.get(popped.rowId);
+  const serverRow = si !== undefined ? r?.result?.rows?.[si] : undefined;
   // Distinguish NULL from MISSING — `serverRow` exists iff the row is
   // server-truth. A NULL cell value is a LEGITIMATE old value that must
   // be restored as null on undo (the most common SQL edge case: a cell

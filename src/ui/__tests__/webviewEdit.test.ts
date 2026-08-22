@@ -772,4 +772,173 @@ describeIfBundle("webview/main.ts bundle (TASK-501)", () => {
       expect(restoredNode.data!.name).toBeNull();
     },
   );
+
+  // Fix Round 3 — Finding #1 (defect from R2 #2): the undo path still reads
+  // `r.result.rows[popped.rowId]` assuming __rowId == source-array index.
+  // After Add Row + append-delta the high-water mark gives streamed rows
+  // ids PAST the source-array length, so server row resolution by __rowId
+  // returns the wrong row's value. Probe (per reviewer): 3 rows + Add Row
+  // (id 3) + grow to 5 server rows → streamed rows get ids 4,5; node with
+  // name="delta" (server array index 3) has __rowId 4; edit it → undo
+  // restores rows[4]="epsilon" (wrong cell). Fix: a serverIndexByRowId map
+  // populated by rowsToObjects and cleared/seeded in reset branches.
+  itIfBundle(
+    "R3-A. undo after Add Row + streaming restore returns the ORIGINAL server row, not the wrong streamed one",
+    async () => {
+      const { root } = loadBundle();
+      void root;
+      // Start with 3 server rows.
+      dispatchState(threeRowsState());
+      await flushGridEvents();
+
+      const api = vsdbApi()!;
+      const grid = api.gridApi!;
+      const editState = getEditState()!;
+      expect(grid).toBeTruthy();
+
+      // Add Row → allocates __rowId 3 (one past the 3 server rows).
+      api.addRow!();
+      await flushGridEvents();
+
+      // Stream grow to 5 server rows. Append-delta seeds ids 4,5
+      // (startIndex = Math.max(prev.length, highestAllocatedId+1) = 4).
+      // Now node ids: 0,1,2 (server), 3 (local blank), 4,5 (streamed).
+      // The row with name="delta" originally was server array index 3;
+      // after append it has __rowId = 4. A buggy undo reads
+      // r.result.rows[4] = "epsilon" (wrong cell).
+      dispatchState(fiveRowsState());
+      await flushGridEvents();
+
+      // Sanity: there are 6 rows in the grid now (3 server + 1 local +
+      // 2 streamed).
+      expect(grid.getDisplayedRowCount()).toBe(6);
+
+      // Confirm the row carrying name="delta" is the one at __rowId 4.
+      const deltaNode = grid.getRowNode("4");
+      expect(deltaNode).toBeTruthy();
+      expect(deltaNode!.data!.name).toBe("delta");
+
+      // Edit deltaNode's name to "DELTA-EDITED" via the registered handler.
+      const sim = getSimulateEdit();
+      expect(sim).toBeTruthy();
+      sim!(4, "name", "DELTA-EDITED", "delta");
+      await flushGridEvents();
+      // dirtyCount: 1 add-row marker + 1 cell edit = 2.
+      expect(editState.dirtyCount).toBe(2);
+
+      // Undo. The fix must read serverIndexByRowId.get(4) → server-array
+      // index 3 → "delta" (the ORIGINAL value of THIS row, not the value
+      // of whatever happened to live at array index 4 after streaming).
+      // LIFO: first undo pops the cell edit (4:name). Then the add-row
+      // marker remains.
+      api.undo!();
+      await flushGridEvents();
+
+      expect(editState.dirtyCount).toBe(1);
+      const restored = grid.getRowNode("4")!;
+      expect(restored.data!.name).toBe("delta"); // NOT "epsilon"
+    },
+  );
+
+
+  // Fix Round 3 — Finding #2: paste row arithmetic must iterate by DISPLAY
+  // SEQUENCE from the anchor, not by integer id addition. After Add Row
+  // the dense id space is broken (server rows 0..2, local row at id 3,
+  // streamed rows at id 4,5). A paste spanning past id 2 used to wrap
+  // into the local blank row and silently overwrite its insert marker.
+  // Probe (per reviewer): anchor at displayed row 1, paste 3 rows
+  // "R1\nR2\nR3" → buggy code wrote R3 into LOCAL row id 3 (blank) and
+  // marked it dirty; fix resolves by display sequence and stops at the
+  // local row OR writes only into server rows depending on intent.
+  itIfBundle(
+    "R3-B. paste at display index past a local Add-Row row does NOT mark the local row dirty",
+    async () => {
+      const { root } = loadBundle();
+      void root;
+      // 3 server rows.
+      dispatchState(threeRowsState());
+      await flushGridEvents();
+
+      const api = vsdbApi()!;
+      const grid = api.gridApi!;
+      const editState = getEditState()!;
+      expect(grid).toBeTruthy();
+
+      // Add Row → 4 displayed rows (3 server + 1 local blank).
+      api.addRow!();
+      await flushGridEvents();
+      expect(grid.getDisplayedRowCount()).toBe(4);
+
+      // The local row carries the pending-insert marker in the edit state.
+      const insertSnapBefore = editState.snapshot();
+      const insertMarkersBefore = insertSnapBefore.filter(
+        (s) =>
+          typeof s.value === "object" &&
+          s.value !== null &&
+          "__vsdb_new_row__" in (s.value as Record<string, unknown>),
+      );
+      expect(insertMarkersBefore.length).toBeGreaterThanOrEqual(1);
+
+      // Focus the displayed cell at display index 1 (server row id=1,
+      // col=id). The local blank row is at display index 3.
+      const focusTarget = grid.getDisplayedRowAtIndex(1)!;
+      const idCol = grid.getColumnDef("id")!;
+      grid.setFocusedCell(focusTarget.rowIndex ?? 1, idCol);
+      await flushGridEvents();
+
+      // Paste "R1\nR2\nR3" (3 rows × 1 col). The fix must target:
+      //   display[1] = server row id=1 → mark "R1"
+      //   display[2] = server row id=2 → mark "R2"
+      //   display[3] = LOCAL row id=3 → blank insert marker; the fix
+      //     stops BEFORE the local row OR clips it out so we don't
+      //     silently overwrite the pending-insert marker.
+      // The bug would write R3 into the local row at id=3 and dirty it.
+      const gridWrap = (root.querySelector(".vsdb-grid-host") ||
+        document.querySelector(".vsdb-grid-host")) as HTMLDivElement | null;
+      expect(gridWrap).toBeTruthy();
+      const fakeClipboardData = {
+        getData: (_type: string) => "R1\nR2\nR3",
+      };
+      const ev = new Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(ev, "clipboardData", {
+        value: fakeClipboardData,
+        enumerable: true,
+      });
+      gridWrap!.dispatchEvent(ev);
+      await flushGridEvents();
+
+      // The paste should mark server rows id=1 and id=2 dirty with R1/R2
+      // (2 dirty entries — one cell each, since the paste is 1 column wide
+      // and we're at colIndex 0).
+      const snap = editState.snapshot();
+      const byKey: Record<string, unknown> = {};
+      for (const s of snap) byKey[`${s.rowId}:${s.colIndex}`] = s.value;
+
+      // Server rows got pasted values.
+      expect(byKey["1:0"]).toBe("R1");
+      expect(byKey["2:0"]).toBe("R2");
+
+      // The local row (id=3) MUST NOT have a paste value stamped over its
+      // insert marker — it stays as the marker object, untouched.
+      const localKey = "3:0";
+      if (localKey in byKey) {
+        const v = byKey[localKey];
+        // If the paste reached the local row, the value would be "R3"
+        // (string) — NOT an object with __vsdb_new_row__. So either the
+        // key is absent, or it is still the marker object.
+        expect(typeof v).toBe("object");
+        expect(v).not.toBe("R3");
+      }
+
+      // Grid data confirms: server row id=1 id="R1", id=2 id="R2", local
+      // row id=3 stays blank (id=""), and no server row at id=3 (there is
+      // none) got its data mutated.
+      expect(grid.getRowNode("1")!.data!.id).toBe("R1");
+      expect(grid.getRowNode("2")!.data!.id).toBe("R2");
+      const localNode = grid.getRowNode("3");
+      if (localNode) {
+        expect(localNode.data!.id === "" || localNode.data!.id == null).toBe(true);
+      }
+    },
+  );
 });

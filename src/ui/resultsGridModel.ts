@@ -466,10 +466,21 @@ export function applyPasteToDirty(
   parsed: string[][],
   colCount: number,
   rowCount: number,
+  targetRowIds?: number[],
 ): void {
+  // When the caller has already resolved the target row ids (e.g. via
+  // display-sequence iteration in the webview's paste handler), it may
+  // pass `targetRowIds` so we skip the dense `anchorRow + r` arithmetic.
+  // This matters when the id namespace is not dense — locally-added
+  // rows and append-delta rows can leave "holes" or "bumps" in the
+  // __rowId space, so the legacy formula would misaddress cells or
+  // stamp over the local Add-Row marker (R3 finding #2). When
+  // `targetRowIds` is absent, behavior is unchanged.
+  const n = targetRowIds ? targetRowIds.length : rowCount;
   for (let r = 0; r < parsed.length; r++) {
-    const targetRow = anchorRow + r;
-    if (targetRow < 0 || targetRow >= rowCount) continue;
+    if (r >= n) break;
+    const targetRow = targetRowIds ? targetRowIds[r] : anchorRow + r;
+    if (targetRow < 0) continue;
     const row = parsed[r];
     for (let c = 0; c < row.length; c++) {
       const targetCol = anchorCol + c;

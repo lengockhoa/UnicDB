@@ -67,7 +67,10 @@ npm run typecheck
 
 (chưa có comment)
 
+> **2026-08-22 — Fix Round 3 waiver note (executor Fix501R3):** orchestrator authorized this round as an EXCEPTIONAL 3rd fix per run rules (RULES cap = 2; cf. precedent set by Rev304R2). The two Round-3 importants are localized defects introduced by Round-2 fix #2 (id namespace change) and share a single root cause (the dense rowId==array-index invariant no longer holds). Round-2 reviewers accepted fix #2 itself, so a guarded 3rd round addressing the two follow-on defects is lower risk than rolling fix #2 back. Decision: proceed with the per-defect RED-then-GREEN fix, document the waiver here for traceability.
+
 ---
+
 
 
 ## Executor Report
@@ -240,3 +243,68 @@ ISSUES:
   - The R2-A test ordering of paste writes is LIFO-based for undo (second cell popped first). Comment in test explicitly notes which `currentSpecs` index is restored first. The reorder path does NOT change paste colIndex → it always indexes into the stable `currentSpecs`, so the post-paste colIndex=0 ("a") / colIndex=1 ("b") mapping is preserved.
 HANDOFF_TO_REVIEWER: yes
 NEXT: ready for review (round 3)
+
+## Reviewer Verdict (Round 3)
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic-smart (config handoff.reviewer.model=unic-smart; executor=unic-code — differ, OK)
+EXECUTION_TOOL: claude-code (Fix Round 2 by feature-implementer, commit 85e3894)
+VERIFICATION_RERUN (fresh):
+  command: npm run compile
+  result: exit 0 (esbuild complete, 129ms)
+  command: npx vitest run src/ui/__tests__/resultsGridModelEdit.test.ts src/ui/__tests__/webviewEdit.test.ts
+  result: 2 files / 23 tests passed, exit 0
+  command: npm run typecheck
+  result: exit 0 (tsc --noEmit)
+  command: npx vitest run (full suite)
+  result: 23 files / 260 tests passed, exit 0
+ROUND_2_FINDINGS_STATUS:
+  #1 (paste col mapping via currentSpecs) — RESOLVED: onGridPaste anchorCol (:952) + per-cell spec.field (:976) both index currentSpecs; live getColumnDefs removed from the col path; R2-A test drives real reorder→paste→undo and asserts a=X/b=Y + LIFO undo restores b. Verified via read + test.
+  #2 (Add Row id high-water mark) — RESOLVED at its own scope: highestAllocatedId tracked at :160, seeded -1/:776/:806, Add Row :1005, append-delta startIndex Math.max(previousRows.length, highestAllocatedId+1) :812; R2-B asserts 6 unique ids, each getRowNode(id) resolves its own node. No collisions.
+  #3 (NULL vs missing undo) — RESOLVED: :1062 guards serverRow !== undefined, assigns serverRow[colIndex] (null restored as null); R2-C edits null→"EDITED", undo → null. Verified.
+  minors (keydown capture flag, unused ColDef import) — both fixed in 85e3894.
+FINDINGS (all probed against dist/webview.js via throwaway jsdom tests, probes deleted after):
+  important:
+    - webview/main.ts:1062 (onUndoClick) — new defect from fix #2: highestAllocatedId breaks the "rowId == r.result.rows array index" invariant that :1058 comment still claims. Probe: 3 rows + Add Row (id 3) + stream grow to 5 → streamed rows get ids 4,5; node with name="delta" (server array index 3) has __rowId 4; edit it → undo restores rows[4]="epsilon" — WRONG cell's value written into the edited row. Same misalignment affects TASK-503 snapshot semantics (dirty rowId ≠ server row index for post-Add-Row streams). Fix: resolve the server row for undo by a stable identity, not array index — e.g. tag each server row object with its original source index (rowsToObjects already injects __rowId; do the same for the server-truth index) and read it in onUndoClick, or keep a __rowId→serverIndex map next to statementRows. Note R2-C passes only because no Add Row precedes the undo; existing tests never cross the two id spaces.
+    - webview/main.ts:960,968 — paste row arithmetic assumes rowId k = data row k: dataRowCount = server rows + newRowCount (:960) and targetRowId = anchorRowId + r (:968) clip/resolve against a DENSE id space. After Add Row + stream (ids 0,1,2,3,4,5 but server truth rows 0..4), a paste spanning past id 4 wraps semantics: probe (anchor displayed index 1, paste "R1\nR2\nR3") wrote R3 into the LOCAL Add-Row row (id 3, blank) and marked it dirty — a blank local insert row received pasted data while dirtyCount=4 silently overwrote the insert marker semantics TASK-503 will read. Fix: iterate rows by node sequence from the anchor (gridApi.getRowNode chain via forEachNode or displayed order) instead of integer id arithmetic; clip at the true displayed/server+local count, OR skip rows whose __rowId has no server-truth twin.
+  minor:
+    - webview/main.ts:1057-1060 — comment asserts "r.result.rows is index-aligned with __rowId for server-provided rows", stale the moment fix #2 landed; update when fixing the important above.
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: All 3 round-2 findings are genuinely and cleanly fixed (verified by code read + fresh test runs + my own probes reproducing the pre-fix bugs' absence). The two importants are NEW defects introduced by fix #2's id namespace change — undo and paste still assume the old dense rowId==array-index model in two places. Both are localized (onUndoClick server-row resolution; onGridPaste row iteration). Max fix rounds (2) reached per run rules: task goes blocked; rest of the run continues. Human should decide whether to reopen a fix round or fold into TASK-503.
+
+## Fix Round 3 (Round-3 Defect 1 + Defect 2)
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: Fix501R3
+SUMMARY: Fixed both Round-3 important findings. Added module-level `serverIndexByRowId = Map<__rowId, sourceArrayIndex>` populated inside `rowsToObjects` (with explicit `sourceIndexStart` so append-delta records correct mappings even when the high-water mark bumps startIndex past previousRows.length); cleared in the two reset branches (first-render / tab-switch AND statementReset / columnsChanged / isReset) BEFORE rowsToObjects repopulates; NOT cleared on the append-delta branch. `onUndoClick` now resolves the server-truth row via `serverIndexByRowId.get(popped.rowId)` instead of `r.result.rows[popped.rowId]`, keeping the NULL-vs-MISSING logic intact. Rewrote `onGridPaste` to iterate by DISPLAY SEQUENCE from the anchor (Excel semantics): precompute `targetRowIds[]` by walking `getDisplayedRowAtIndex(anchorDisplayIndex + r)`; stop at the bottom edge AND stop at the first locally-added row (no entry in `serverIndexByRowId` — preserves the pending-insert marker TASK-503 reads). Extended `applyPasteToDirty` with optional `targetRowIds?: number[]` 7th arg; when provided, the function uses `targetRowIds[r]` instead of `anchorRow + r` and treats `rowCount` as `targetRowIds.length` (col clipping unchanged, all dense callers and existing tests unaffected). Added 2 RED-first regression tests R3-A + R3-B. Full suite 262/262 pass.
+TEST_PLAN_FOLLOWED: Round-3 Reviewer Findings → 2 regression tests (R3-A undo stable-id, R3-B paste display-sequence). Existing test cases 1–10 + R2-A/B/C remain green.
+FILES_CHANGED:
+  - webview/main.ts: added module-level `const serverIndexByRowId = new Map<number, number>()` + docstring; extended `rowsToObjects` with `sourceIndexStart: number = startIndex` 4th param + `serverIndexByRowId.set(startIndex + i, sourceIndexStart + i)`; `serverIndexByRowId.clear()` added BEFORE `rowsToObjects(r.result.rows, specs)` in both reset branches (~:736, :829); append-delta branch passes `sourceIndexStart = previousRows.length` to keep __rowId → r.result.rows mappings correct under the high-water mark; `onUndoClick` rewrote server-row resolution via the map (preserves the NULL-vs-MISSING check); `onGridPaste` rewrote to iterate display sequence from the anchor, stop at bottom edge, stop at first locally-added row, precompute `targetRowIds[]` + `targetNodes[]`, apply to `editState` via extended `applyPasteToDirty` and to live grid via the SAME precomputed node refs (col lookup via `currentSpecs`); refreshed the stale "index-aligned" comment on the undo branch.
+  - src/ui/resultsGridModel.ts: extended `applyPasteToDirty` with optional `targetRowIds?: number[]` 7th parameter — when present, uses `targetRowIds[r]` (skipping dense arithmetic) and bounds iteration at `targetRowIds.length`. Col clipping logic and the dense path are untouched, so all existing tests (1–9) and the legacy 6-arg call signature are unchanged.
+  - src/ui/__tests__/webviewEdit.test.ts: NEW R3-A test (3 rows + Add Row + stream grow to 5 → edit deltaNode (id=4, name="delta") → undo → assert grid restores "delta" not "epsilon"); NEW R3-B test (3 rows + Add Row → focus display index 1 → paste "R1\nR2\nR3" → assert rows 1/2 receive R1/R2, local row id=3 untouched, no marker overwrite).
+  - docs/AI_HANDOFF/INDEX.md: TASK-501 status flipped `blocked` → `pending_review` for this fix round.
+TESTS_ADDED:
+  - src/ui/__tests__/webviewEdit.test.ts:
+    - R3-A "undo after Add Row + streaming restore returns the ORIGINAL server row, not the wrong streamed one" — drives the bundle's REAL paste/undo wiring through the registered handlers and assertStableIdentity contract.
+    - R3-B "paste at display index past a local Add-Row row does NOT mark the local row dirty" — drives REAL paste Event, asserts byKey[1:0]="R1", byKey[2:0]="R2", local row id=3 NOT in byKey (or stays as object marker), grid data confirms server rows updated + local row blank.
+VERIFICATION:
+  command: npm run compile
+  result: dist/webview.js (2.2mb), dist/extension.js (4.6mb) — esbuild complete, exit 0
+  command: npx vitest run src/ui/__tests__/resultsGridModelEdit.test.ts src/ui/__tests__/webviewEdit.test.ts
+  result: Test Files 2 passed (2) / Tests 25 passed (25) / exit 0 (was 23 — 2 new R3 tests added, all green; all pre-existing 23 tests still pass)
+  command: npm run typecheck
+  result: tsc --noEmit exit 0
+  command: npx vitest run (full suite)
+  result: Test Files 23 passed (23) / Tests 262 passed (262) / exit 0 — full regression suite clean (webviewBundle 8/8, webviewFilters 7/7, webviewTheme 3/3, webviewEdit 14/14 [was 12], resultsGridModel 23/23, resultsGridModelEdit 11/11, agGridSmoke 3/3, and the rest)
+RED_OUTPUT:
+  - Before fix: R3-A failed at `expect(restored.data!.name).toBe("delta")` received "epsilon" (old code read `r.result.rows[4]="epsilon"` because __rowId 4 was decoupled from source-array index 3 after the high-water mark bumped the delta's startIndex); R3-B failed at `expect(typeof v).toBe("object")` received "string" (paste's `targetRowId = anchorRowId + r` arithmetic wrote "R3" into the local Add-Row row at id=3 col=0, overwriting the pending-insert marker object).
+  - After fix: all 25 target-file tests + all 262 full-suite tests pass.
+ISSUES:
+  - Fix 1 needed a 4th param `sourceIndexStart` on `rowsToObjects` (default = `startIndex`) so the dense cases (first-render / reset) need no change at the call site; only the append-delta branch passes an explicit `previousRows.length` source offset. Without this extension the contract-stated `set(startIndex + i, i)` formula would map __rowId 4 → 0 for a streamed delta starting at prevLen=3, which would be wrong. The 4th-param design keeps the dense cases readable.
+  - Fix 2 stops the paste at the FIRST locally-added row encountered during display-sequence iteration (no entry in `serverIndexByRowId`). The contract's wording "if node?.data → push" would have included the local row and overwritten its marker; "stop at first local" matches the reviewer's stated invariant ("don't silently overwrite the insert marker semantics TASK-503 will read") and is the natural Excel analog (pasting past a freshly-added blank row preserves the insert marker so the user can fill it manually). An alternative design — paste into the local row AND preserve the marker via a separate key — would require expanding the dirty map key shape, which is out of scope.
+  - The `onGridPaste` change adopts `focused?.rowIndex ?? 0` for the anchor display index (per contract). When the focused cell is the local blank row at id=3 (display index 3), the loop's first iteration checks `serverIndexByRowId.get(3) === undefined` and stops immediately — paste into a local row is a no-op, which is the safe default (user can focus the row directly and type).
+  - Round-3 Reviewer Finding (minor) about the stale "index-aligned" comment at the old :1057-1060 is folded into the `onUndoClick` rewrite — the new comment names `serverIndexByRowId` and explains the NULL-vs-MISSING semantics; no standalone line remains with the stale claim.
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for review (round 4 — note this was an exceptional round authorized via waiver; review should accept or open a 5th if blocking issues surface)
