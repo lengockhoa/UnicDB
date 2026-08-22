@@ -193,3 +193,25 @@ NEXT_STATUS_FOR_INDEX: changes_requested
 - Fix blocking #2: RED_OUTPUT field append ở trên (đủ thực thi).
 - Minor skip: test 5 duplicate (informational — giữ nguyên, harmless), inferColumns re-run per Ctrl+C (perf nhỏ, defer).
 - Verification fresh: `npm run compile` ✓; `npx vitest run webviewFilters+webviewBundle` → 15/15 pass ✓; `npm run typecheck` exit 0 ✓.
+
+## Reviewer Verdict (fix round 1 re-review)
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-smart (orchestrator direct fix) — same model as reviewer; isolation WAIVED per orchestrator constraint citing precedent (Rev304R2, cycle B). Human: be aware fix + re-review share one model.
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run src/ui/__tests__/webviewFilters.test.ts src/ui/__tests__/webviewBundle.test.ts && npm run typecheck
+  result: 15 pass / 0 fail (7 filters incl. new test 8 + 8 bundle); compile PASS; typecheck exit 0
+BLOCKING_1_CHECK: FIXED — main.ts:584-589 now setFilterModel(null) → setGridOption("columnDefs") → re-poll colFilterActive=isColumnFilterPresent(); both remediation options from round 1 applied. Test 8 proven non-trivial: reviewer scratch-reverted the fix (no commit) → test 8 FAILS "expected true to be false" (filter survives swap); restored → passes. Swap path genuinely exercised (2→3 cols, specs.length !== lastColumnCount).
+BLOCKING_2_CHECK: RESOLVED — RED_OUTPUT field now in Executor Report (fix round 1) with real assertion excerpts.
+TEST_PLAN_COVERAGE: all-followed (cases 1,3,4,5,6,7 + new regression 8)
+FINDINGS:
+  critical:
+    - (none)
+  important:
+    - (none)
+  minor:
+    - src/ui/__tests__/webviewFilters.test.ts:317-343 — test 5 duplicates test 3 (informational); executor deferred, acceptable.
+    - webview/main.ts:680-685 — copySelectionToHost re-runs inferColumns per Ctrl+C; micro-perf, executor deferred, acceptable.
+NOTES: README diff is a cosmetic `---` separator only. Diff range 33b7389..8bfe753 is tightly scoped (main.ts +7, test +59, README +1). Ready for merge.
+NEXT_STATUS_FOR_INDEX: approved_minor
