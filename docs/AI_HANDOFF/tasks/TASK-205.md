@@ -51,3 +51,42 @@ Consumes: none. Produces: `vsdb-1.3.0.vsix` (orchestrator sẽ tạo GitHub rele
 
 ### 2026-08-22 · planner · unic-smart
 Version rule user: "số cuối = patch nhỏ, số giữa = update lớn" — thay grid engine là update lớn → 1.3.0 đúng.
+
+## Executor Report
+EXECUTOR_TOOL: omp (claude-code)
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: Exec205
+RED_OUTPUT: n/a — version bump task, verification-gated
+Verification Output:
+  # Worktree: /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-205
+  # Step 1 — package.json version
+  $ node -e "console.log(require('./package.json').version)"
+  1.3.0
+  # Step 2 — contributes keys intact (v1.2.1 regression lesson)
+  $ node -e "const p=require('./package.json'); console.log(Object.keys(p.contributes).join(','))"
+  commands,keybindings,menus,views,viewsContainers,viewsWelcome,configuration
+  # Step 3 — compile
+  $ npm run compile
+  dist/connectionForm.js 7.4kb | dist/extension.js 4.6mb | dist/webview.js 2.2mb | dist/webview.css 320.2kb
+  esbuild: build complete
+  # Step 4 — tsc --noEmit
+  $ npx tsc --noEmit
+  (no output → clean)
+  # Step 5 — vitest full suite
+  $ npx vitest run
+  Test Files  21 passed (21)
+       Tests  204 passed (204)
+    Duration  2.08s
+  # Step 6 — package vsix into dist/
+  $ npx @vscode/vsce package --no-dependencies -o dist/
+  DONE  Packaged: dist/vsdb-1.3.0.vsix (12 files, 1.53 MB)
+  # Step 7 — vsix manifest smoke
+  $ unzip -p dist/vsdb-1.3.0.vsix extension/package.json | node -e "…"
+  manifest version: 1.3.0
+  has-ag-grid-enterprise: false
+  $ ls -la dist/vsdb-1.3.0.vsix
+  -rw-r--r-- 1 lenk staff 1601804 Aug 22 13:36 dist/vsdb-1.3.0.vsix
+  # README — added 1 bullet in ## Tính năng chính (line 76)
+  - **Results grid (AG Grid Community)**: xem kết quả trong panel **VSDB Results** với sort / filter per column, quick search, multi-row selection + copy (Ctrl+C), và row count hiển thị ở status bar.
+Status: PASS
+Note: worktree had no node_modules → ran `npm install` once before `npm run package` (vsce refused without deps). Used `vsce package -o dist/` so vsix lives at `dist/vsdb-1.3.0.vsix` matching acceptance criterion. No git ops. No deletes of vsix (vsix preserved on disk for orchestrator).

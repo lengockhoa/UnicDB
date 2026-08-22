@@ -73,7 +73,7 @@ code --install-extension vsdb-<version>.vsix
   - Hiển thị **mọi schema** bạn truy cập được, không chỉ schema mặc định (`public` / `dbo` / database đang connect).
   - Setting `vsdb.hideSystemSchemas` (default `true`): ẩn schema hệ thống (`pg_catalog`, `information_schema`, `mysql`, `sys`...); tắt nếu muốn xem hết.
   - Click phải table/view → `Generate SELECT`, `Copy Qualified Name` (dùng đúng `schema.table`, kể cả schema khác mặc định).
-  - Nút refresh trên title bar để reload metadata.
+- **Results grid (AG Grid Community)**: xem kết quả trong panel **VSDB Results** với sort / filter per column, quick search, multi-row selection + copy (Ctrl+C), và row count hiển thị ở status bar.
 
 ---
 
