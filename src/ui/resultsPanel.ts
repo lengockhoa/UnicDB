@@ -22,7 +22,12 @@
 //
 // Phụ thuộc: vscode (UI-only).
 import * as vscode from "vscode";
-import type { QueryRunner, StatementResult } from "../core/queryRunner";
+import type {
+  QueryRunner,
+  StatementResult,
+} from "../core/queryRunner";
+import type { BatchedQuery } from "../adapters/types";
+import { pickResult } from "../core/queryRunner";
 import type { HostMessage, WebviewMessage, ExportFileMessage } from "./messages";
 import type { ConnectionConfig } from "../config/types";
 import {
@@ -550,22 +555,48 @@ export class ResultsPanel {
       );
       return;
     }
+    // FIX R1 critical #3 — close the previous batched cursor before
+    // starting a new requery. Postgres pool max=1: a leaked cursor holds
+    // the client until close(), blocking the next query with a connect
+    // timeout. Best-effort — both cancel() (if mid-fetch) and close()
+    // are idempotent on the cursor.
+    const staleCursor: BatchedQuery | undefined = r.batched;
+    if (staleCursor && r.status === "done") {
+      try {
+        await staleCursor.cancel();
+      } catch {
+        // ignore — cursor may already be closed
+      }
+      try {
+        await staleCursor.close();
+      } catch {
+        // ignore
+      }
+    }
     const composed = composeRequery(r.sql, where, orderBy);
     this.setBusy(true);
+    const start = Date.now();
     try {
-      const refreshed = await this.runner.runSql(composed);
-      const freshResult = refreshed.results[0];
+      const runResult = await this.runner.runSql(composed);
+      // FIX R1 critical #2 — `refreshed.results[0]` is always undefined
+      // when the adapter returns a batched handle (Postgres single
+      // SELECT). pickResult() handles both shapes: batched → initial
+      // fetchBatch + columns; non-batched → first populated result.
+      // Without this the entry swapped to `{ status:"done", result: undefined }`
+      // and the grid blanked.
+      const freshResult = await pickResult(runResult);
       const next = this.lastResults.slice();
       // Synthesize the new StatementResult. We keep `index`, `sql` (the
-      // ORIGINAL — what the user wrote) and `durationMs` from the prior
-      // run so the toolbar / Messages tab continue to show the user's
-      // authored SQL.
+      // ORIGINAL — what the user wrote). `batched` is the NEW cursor
+      // (mirrors QueryRunner.executeAll behaviour) so loadMore still
+      // works.
       next[index] = {
         index: r.index,
         sql: r.sql,
         status: "done",
         result: freshResult,
-        durationMs: Date.now(),
+        batched: runResult.batched,
+        durationMs: Date.now() - start,
       };
       this.lastResults = next;
       // Re-derive table map for the index — the wrapped SQL still
@@ -595,7 +626,7 @@ export class ResultsPanel {
           sql: r.sql,
           status: "error",
           error: m,
-          durationMs: Date.now(),
+          durationMs: Date.now() - start,
         };
         this.lastResults = next;
         this.postMessage({

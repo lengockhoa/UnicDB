@@ -49,7 +49,6 @@ import {
   parseTsvPaste,
   applyPasteToDirty,
   serializeExport,
-  composeRequery,
   type ColumnSpec,
   type ResultsGridModel,
   type ExportFormat,
@@ -297,9 +296,9 @@ interface PersistentDom {
    *  here. Cleared and re-populated on tab switch / state change, but the
    *  grid host (once created) is preserved as a single child. */
   panel: HTMLDivElement;
-  /** Persistent AG Grid host element. Created once. The AG Grid instance
-   *  mounts onto this element and stays attached across re-renders. */
-  gridHost: HTMLDivElement;
+  /** Persistent grid wrap that contains gridHost + requeryBar + saveBanner.
+   *  Created once; re-attached to `panel` on every grid render. */
+  gridWrap: HTMLDivElement;
   /** Persistent grid footer. */
   gridFooter: HTMLDivElement;
   /** Persistent banner above the footer — shows save errors / no_pk warnings.
@@ -686,6 +685,7 @@ function buildPersistentDom(): PersistentDom {
     gridHost,
     gridFooter,
     gridWrap,
+    saveBanner,
     requeryWhere,
     requeryOrderBy,
     requeryRunBtn,
