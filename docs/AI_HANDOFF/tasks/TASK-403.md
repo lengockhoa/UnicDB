@@ -90,3 +90,21 @@ Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
   - `npm run typecheck` → exit 0 ✓
 - Status: PASS
 - Note: bullet Results grid cũ bị trùng trong quá trình sửa — đã remove bản cũ, giữ 1 bullet mới đầy đủ (theme + Excel filter + sort/copy/footer cũ). Đã kiểm cả block không mất bullet nào khác.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-smart
+VERIFICATION_RERUN:
+  command: node -e "const p=require('./package.json'); if(p.version!=='1.3.2')process.exit(1);console.log('OK')" && grep -c Excel README.md && npm run compile && npx vitest run && npm run typecheck
+  result: version OK; Excel=1; compile OK; 21 files / 231 tests pass; typecheck exit 0
+TEST_PLAN_COVERAGE: all-followed (test 1-2 assert qua Verification Commands — RED N/A justified: assertion-only docs/version task, pattern TASK-304 cycle B; test 3 full suite re-run fresh PASS)
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - file: README.md:81 (old) / 82 (new) — dòng `---` separator giữa "## Tính năng chính" và "## Khắc phục sự cố" bị xóa trong edit; mọi section khác vẫn giữ separator. Fix: khôi phục dòng `---` trước "## Khắc phục sự cố". Cosmetic, không mất nội dung/bullet nào (diff = đúng 1 bullet thay thế + 1 dòng version).
+MODEL_ISOLATION: VIOLATION — EXECUTOR_MODEL == REVIEWER_MODEL (unic/unic-smart). Waived per cycle B Rev304R2 precedent: orchestrator-direct assertion-only task (version bump + 1 README bullet, không code logic), toàn bộ Verification Commands đã được reviewer re-run fresh độc lập (PASS) nên gate không phụ thuộc tin tưởng executor. Human nên xác nhận trước merge.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Content đạt mọi acceptance criterion (1.3.2; bullet mới đủ theme + Excel filter AND/OR ≤2 + sort/copy/footer; không bullet cũ mất). Minor: thiếu 1 dòng `---` separator. Model isolation violation đã ghi + waive theo precedent — human review khuyến nghị.

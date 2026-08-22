@@ -579,8 +579,13 @@ function renderGrid(): void {
     // Replace rowData (and column defs if changed) on the existing grid.
     if (columnsChanged) {
       // Column set changed → previous column filter is no longer valid.
-      colFilterActive = false;
+      // Clear the filter model (AG Grid keeps filters for surviving columns
+      // across a columnDefs swap) and re-poll the live grid state instead of
+      // trusting a local bool — a stale false here re-opens the loadMore
+      // gate while a filter is still applied (fetch-loop bug).
+      gridApi!.setFilterModel(null);
       gridApi!.setGridOption("columnDefs", colDefs);
+      colFilterActive = gridApi!.isColumnFilterPresent();
       lastColumnCount = specs.length;
     }
     gridApi!.setGridOption("rowData", rowsToObjects(r.result.rows, specs));

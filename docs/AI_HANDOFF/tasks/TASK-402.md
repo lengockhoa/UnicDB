@@ -161,3 +161,35 @@ ISSUES:
   - Selection column auto-render yêu cầu `checkboxes: true, headerCheckbox: true` (không phải false như trước). Config này kết hợp `selectionColumnDef` cho pinned/width/lockPosition.
 HANDOFF_TO_REVIEWER: yes — typecheck clean, 6/6 filters + 8/8 bundle regression pass. Diff focused vào main.ts (chỉ file này, không đụng styles.css / package.json).
 NEXT: ready for review (PlanRev3).
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic-code (Exec402, claude-code) — differs from reviewer ✓
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run src/ui/__tests__/webviewFilters.test.ts src/ui/__tests__/webviewBundle.test.ts && npm run typecheck
+  result: 14 pass / 0 fail (6 filters + 8 bundle); typecheck PASS
+  red-check: baseline `git show 1d0cc23:webview/main.ts` + compile → 6/6 filter tests FAIL (reviewer-run; real regression nets)
+TEST_PLAN_COVERAGE: partial — all 6 listed cases (1,3,4,5,6,7) implemented and meaningful; MISSING edge: Action §5b columnDefs-swap filter-reset path untested (bug found exactly there, see below)
+FINDINGS:
+  critical:
+    - (none)
+  important:
+    - webview/main.ts:578-583 — gate leak after columnDefs swap: `colFilterActive = false` is set in the columnsChanged branch, but AG Grid RETAINS the filter model for surviving columns. Reviewer probe (jsdom, batched 50/1000, filter name contains "name-1", then 2→3 cols swap): after swap `isColumnFilterPresent()===true`, displayed=11, and `__vsdbCheckLoadMoreForHost()` POSTS `{type:"loadMore"}` — the exact fetch-loop bug this task exists to prevent, violating AC "Không có loadMore nào được post khi column filter active". Fix: after `setGridOption("columnDefs", colDefs)`, re-poll `colFilterActive = gridApi!.isColumnFilterPresent()`; if design intent is filters must NOT survive a column change, also call `gridApi!.setFilterModel(null)` before the re-poll. Add regression test: filter active + batched + columnsChanged (2→3 cols) → no loadMore posted.
+    - Executor Report — RED_OUTPUT field missing entirely (contract requires actual failing-test output pasted). Reviewer independently confirmed RED (6/6 fail on baseline), so intent verified, but executor MUST append the RED_OUTPUT evidence block per contract on resubmit.
+  minor:
+    - src/ui/__tests__/webviewFilters.test.ts:317-343 — test 5 duplicates test 3's assertion verbatim (own comment admits "informational"); acceptable, but it is not a pre-fix RED capture.
+    - webview/main.ts:680-685 — copySelectionToHost re-runs inferColumns(columns, rows.slice(0,1)) on every Ctrl+C; correct but could reuse specs cached in renderGrid.
+NOTES: Fix #3 double-checkbox, selectAll:"filtered", gates on all 3 dispatch paths, and footer logic are all correct and well-tested; single real defect is the stale flag on the columnsChanged path. Enterpise-grep: 1 match is AG Grid's own error-string, not an import ✓.
+NEXT_STATUS_FOR_INDEX: changes_requested
+
+## Executor Report (fix round 1)
+
+- EXECUTOR_TOOL: claude-code (omp session)
+- EXECUTOR_MODEL: unic/unic-smart (orchestrator direct fix — reviewer findings)
+- RED_OUTPUT (baseline, reviewer-confirmed independently): 6/6 test RED trước fix gốc — "AssertionError: expected 0 to be 1" (filter footer), "expected 0 to be 1" (gate chặn loadMore), "Expected length: 1, Received: 2" (double checkbox), stale header selector. Full output trong worktree log Rev402 verification (baseline RED 6/6 reviewer-confirmed).
+- Fix blocking #1 (main.ts:580-590): columnsChanged giờ `setFilterModel(null)` + `colFilterActive = gridApi.isColumnFilterPresent()` re-poll sau `setGridOption("columnDefs")` — không còn trust stale bool. Regression test 8 mới: filter active + batched + 2→3 column swap → 0 loadMore posted + filter cleared.
+- Fix blocking #2: RED_OUTPUT field append ở trên (đủ thực thi).
+- Minor skip: test 5 duplicate (informational — giữ nguyên, harmless), inferColumns re-run per Ctrl+C (perf nhỏ, defer).
+- Verification fresh: `npm run compile` ✓; `npx vitest run webviewFilters+webviewBundle` → 15/15 pass ✓; `npm run typecheck` exit 0 ✓.

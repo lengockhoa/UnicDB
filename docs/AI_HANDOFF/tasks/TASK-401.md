@@ -110,3 +110,21 @@ NEXT: ready for review (reviewer must use a different model per handoff policy)
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic/unic-smart (matches handoff.reviewer.model=unic-smart)
+EXECUTOR_MODEL: unic-code (differs — isolation OK)
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run src/ui/__tests__/webviewTheme.test.ts src/ui/__tests__/webviewBundle.test.ts && npm run typecheck
+  result: 11 pass / 0 fail (3 theme + 8 bundle); typecheck exit 0; compile OK
+TEST_PLAN_COVERAGE: all-followed (3/3: happy mapping regexes; edge cascade order — verified in dist: base `#fff` at lines 1112+7376, override at 8880 (last); edge input ruleset asserts 5 declarations incl. border-style/width per plan-reviewer note; RED evidence có concrete indices -1 vs 52695)
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/ui/__tests__/webviewTheme.test.ts:62-70 — khi ag-grid đổi base CSS và bỏ `--ag-background-color: #fff`, test #2 tự hạ cấp thành existence check (branch baseIdx === -1) → cascade-order guarantee silently mất. Đã có comment giải thích, chấp nhận được; nếu muốn chặt hơn thì expect base present thay vì fall-through.
+    - webview/styles.css fallback colors là dark-only (#1e1e1e...) — đúng spec task (kèm dark fallback; VS Code luôn inject --vscode-* nên fallback hầu như không dùng). Không cần sửa.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: CSS mapping đúng 4 token spec, không map thêm; input rule có đủ border-color/style/width; sizing vars cũ giữ nguyên (diff 0 deletion). Selector `ag-input-field-input` unique trong dist nên regex test #3 khớp đúng ruleset.

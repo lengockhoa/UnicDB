@@ -79,6 +79,7 @@ code --install-extension vsdb-<version>.vsix
 
 - **Results grid (AG Grid Community)**: xem kết quả trong panel **VSDB Results** — theme tự theo VS Code (dark/light); sort; **filter per-column kiểu Excel** (Text/Number Filters: Contains / Equals / Starts With…, kết hợp AND/OR tối đa 2 điều kiện) + quick search; multi-row selection + copy (Ctrl+C); row count ở footer.
 
+---
 ## Khắc phục sự cố (Troubleshooting)
 
 ### `code` CLI không tìm thấy khi cài

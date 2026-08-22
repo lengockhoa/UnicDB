@@ -373,3 +373,62 @@ describeIfBundle("webview/main.ts bundle (TASK-402)", () => {
     },
   );
 });
+
+describeIfBundle("webview/main.ts bundle (TASK-402 fix round 1)", () => {
+  itIfBundle(
+    "8. regression — filter active + batched + columnsChanged: no loadMore (gate survives columnDefs swap)",
+    async () => {
+      const { received, root } = loadBundle();
+      void root;
+
+      // Initial batched result: 50 of 1000 rows, 2 columns.
+      dispatchState(batchedState({ loaded: 50, rowCount: 1000, hasMore: true }));
+      await flushGridEvents();
+
+      const api = getGridApi();
+      expect(api).toBeTruthy();
+
+      // Activate a column filter.
+      api!.setFilterModel({
+        name: { filterType: "text", type: "contains", filter: "name-1" },
+      });
+      await flushGridEvents();
+      expect(api!.isColumnFilterPresent()).toBe(true);
+
+      // Now a new state arrives whose column count differs → columnsChanged
+      // path swaps columnDefs on the existing grid (2 → 3 columns).
+      const rows = Array.from({ length: 50 }, (_, i) => [
+        i + 1,
+        `name-${i}`,
+        `extra-${i}`,
+      ]);
+      dispatchState(
+        selectState({
+          results: [
+            {
+              index: 0,
+              sql: "SELECT * FROM big",
+              status: "done",
+              result: {
+                columns: ["id", "name", "extra"],
+                rows,
+                rowCount: null,
+                durationMs: 1,
+              },
+              batched: true,
+              durationMs: 1,
+            },
+          ],
+        }),
+      );
+      await flushGridEvents();
+
+      // Filter model cleared by the swap, and the gate must re-poll the live
+      // grid — never trust a stale local bool. Either way, no loadMore may
+      // be posted while a filter is (or was just) applied during the swap.
+      const loadMores = received.filter((m) => m.type === "loadMore");
+      expect(loadMores.length).toBe(0);
+      expect(api!.isColumnFilterPresent()).toBe(false);
+    },
+  );
+});
