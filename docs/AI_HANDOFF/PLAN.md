@@ -1,152 +1,152 @@
-# PLAN — Schema Explorer: per-table row counts + tree filter box
+# PLAN — Cycle 2026-08-22-C
 
-Cycle: 2026-08-22-B · Base: main · Planner: Main (unic/unic-smart)
+Base: `main` (HEAD 8b69a55, v1.3.1 released) · Release target: **1.3.2**
 
 ## §1 Intent
 
-Reference UI (QAS tool, ảnh "HUNG PRPO TEST") có DB EXPLORER sidebar với: per-table row counts + tree filter "Filter schemas, tables, columns, routines…". VSDB hiện thiếu cả hai:
+User (nguyên văn): "Tôi muốn cái table này có theme theo theme của VSCode tôi dùng theme đen thui mà cái table này trắng. Tôi muốn bộ filter ở trên nữa. Tôi muốn cập nhật nó sao mà filter giống như bên excel á. Tôi thấy nó hay hơn search cũng thân thiện với người dùng hơn."
 
-1. **Row counts**: `schemaTree.ts` hiển thị badge = *số lượng tables trong category* (`node.description = String(children.length)` — đếm node, không phải rows trong table). User muốn thấy "176 row(s)" kiểu QAS: mỗi table hiện tổng rows thật từ DB.
-2. **Tree filter**: không có ô filter nào — user phải mở từng schema để tìm table. QAS có search box lọc toàn tree theo tên.
+Hai vấn đề:
 
-**Success definition:** mở rộng Tables category → mỗi table node hiện description = row count thật (lazy, async, không block tree render); filter box trên tree lọc schemas/tables/views/routines/columns theo substring case-insensitive; tree tự expand ancestors của match khi có filter; xóa filter → tree về trạng thái bình thường. Version 1.3.1.
+1. **Bug theme**: Results grid (AG Grid `ag-theme-quartz`) render trắng/light mặc dù webview đang ở VS Code dark theme. Root cause: `ag-theme-quartz.css` set cứng `--ag-background-color: #fff` (line 11) và các input AG Grid dùng UA-default (nền trắng) — `webview/styles.css` chỉ override sizing vars (`--ag-row-height`...), không override màu. Webview đã có sẵn bộ `--vscode-*` CSS vars (styles.css đã dùng 58 lần).
+2. **Excel-like filter**: hiện tại mỗi cột chỉ có floating text filter (1 ô text chạy contains) + quick search box. User muốn filter kiểu Excel: menu filter per-column với nhiều điều kiện (Contains / Equals / Starts With / Not Equal…) + kết hợp AND/OR.
+
+Success: mở VSDB Results trên VS Code dark → grid nền tối, chữ sáng, header/menu/input filter đều theo theme (và tự theo light theme nếu user đổi theme — KHÔNG hard-code đen). Mỗi cột có nút menu filter với đầy đủ điều kiện kiểu Excel Text/Number Filters. Quick search box giữ nguyên. Load-more không rơi vòng lặp khi column filter đang active.
 
 ## §2 Scope
 
-**In scope:**
-- `src/adapters/postgres.ts` + `src/adapters/factory.ts` (nếu cần): method `estimateTableRows(schema, table)` — dùng `pg_class.reltuples` (nhanh, không seq scan; estimate từ ANALYZE, đủ tốt cho badge; nếu reltuples < 0 (chưa analyze) → fallback `SELECT COUNT(*)` chỉ khi table nhỏ? **KHÔNG** — fallback là "…" placeholder, tránh count table hàng tỷ rows).
-- `src/ui/schemaTree.ts`:
-  - Row-count badge: sau khi load category children xong, fire-and-forget fetch row counts per table (Promise.all, có concurrency guard), update node.description + re-render. Cache theo table, TTL như CACHE_TTL_MS.
-  - Filter: state `filterText` + method `setFilter(text)`. Khi có filter: getChildren trả node match (label chứa text, case-insensitive) + ancestor chain tự expand. Filter áp cho mọi cấp: connection/schema/category/table/view/routine/column.
-- `src/extension.ts`: TreeView filter UI. VS Code tree view không có built-in filter box → dùng `vsdb.filterSchemaTree` command + inline input (QuickInput/`window.showInputBox`) HOẶC thanh toolbar view (menu icon trong `views/title` contributed menu, package.json). Chọn: **`views/title` menu button** mở `showInputBox`, button "clear filter" hiện khi active. (Tree filter được lưu provider state, không phải UI text box nằm trong tree — VS Code API không cho custom HTML trong TreeView.)
-- `package.json`: contributes commands `vsdb.filterSchemaTree` (enablement khi tree focused), menu entries vào `view/title` của schema explorer view.
-- README.md: feature bullets. package.json version 1.3.1.
+**In-scope**
+- `webview/styles.css`: map AG Grid theme tokens → `--vscode-*` (kèm fallback cho browser smoke harness).
+- `webview/main.ts`: column filter defs kiểu Excel (`agTextColumnFilter` / `agNumberColumnFilter` + `filterParams`), biến `colFilterActive` gate load-more, footer `filtered` flag tính cả column filter.
+- `package.json` version 1.3.2 + `README.md` Results grid bullet.
+- Test: 2 file test mới theo pattern `src/ui/__tests__/webviewBundle.test.ts`.
 
-**Out of scope:**
-- Results panel AI tab (queued cycle C).
-**File ownership (không task cùng wave share file):**
-- W1: TASK-301 (`src/adapters/types.ts` DbAdapter interface, `src/adapters/postgres.ts`, `src/adapters/mysql.ts`, `src/adapters/mssql.ts`, `src/adapters/__tests__/postgres.test.ts` [file MỚI — mock-based, vi.mock('pg'); file hiện tại chỉ có integration test dùng DB thật]).
-- W2: TASK-302 (`src/ui/schemaTree.ts`, `src/ui/__tests__/schemaTree.test.ts`). Deps: 301.
-- W3: TASK-303 (`src/extension.ts`, `package.json` contributes, `src/extension.test.ts`). Deps: 302.
-- W4: TASK-304 (`package.json` version, `README.md`). Deps: 301,302,303.
+**Out-of-scope**
+- AG Grid Enterprise / Set Filter (checkbox list) — xem §3.
+- Đổi search box, pagination, column pinning UX mới.
+- Queued (cycle sau): "Results panel: AI assist tab" (giữ trong INDEX.md).
 
-**Dependency:** 301 → 302 → 303 → 304 (chain thẳng, không wave nào chạy song song).
+**Wave constraint**: W1 = TASK-401 (styles.css) ∥ TASK-402 (main.ts) — file disjoint. W2 = TASK-403 (package.json + README).
 
 ## §3 Approach
 
-**Row counts — `pg_class.reltuples`, không COUNT(*):**
-```sql
-SELECT c.reltuples::bigint AS row_estimate
-FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind IN ('r','p')
+### (a) Theme — map root tokens, để quartz tự derive
+
+`webview/styles.css` import SAU `ag-theme-quartz.css` trong bundle (main.ts:21-23 → esbuild giữ thứ tự import) nên rule `.ag-theme-quartz {...}` ở styles.css thắng cascade cùng specificity. Quartz v36 derive phần lớn màu từ 4 root token bằng `color-mix` (đã verify trong `ag-theme-quartz.css`):
+
+| AG Grid var | Map tới | Derived tự động nhờ root |
+|---|---|---|
+| `--ag-background-color` | `var(--vscode-editor-background, #1e1e1e)` | header bg (mix 2%), menu bg (3%), panel bg, odd-row, tooltip, control panel |
+| `--ag-foreground-color` | `var(--vscode-foreground, #cccccc)` | border (mix 15%), secondary-border, header text (secondary-foreground), icon color, chip |
+| `--ag-active-color` | `var(--vscode-focusBorder, #007fd4)` | row hover (mix 12%), selected row (mix 8%), checkbox checked, input focus border |
+| `--ag-header-column-resize-handle-color` | `var(--vscode-panel-border, #3c3c3c)` | (không derive từ 3 root trên — map trực tiếp) |
+
+**Input rule riêng (quan trọng nhất — đây là chỗ "trắng" lộ rõ nhất):** floating-filter inputs + filter menu inputs là `<input>`/`<textarea>` thật → UA stylesheet mặc định nền trắng chữ đen. Thêm rule specificity cao hơn element-rule của quartz:
+
+```css
+.ag-theme-quartz input.ag-input-field-input,
+.ag-theme-quartz textarea.ag-input-field-input {
+  background-color: var(--vscode-input-background, #2b2b2b);
+  color: var(--vscode-input-foreground, #cccccc);
+  border-color: var(--vscode-input-border, #3c3c3c);
+}
 ```
-- `reltuples < 0` (PG14+ chưa ANALYZE) → trả null → table node giữ description = schema name (fallback), KHÔNG fallback COUNT (table có thể hàng tỷ rows — anti-pattern).
-- Badge format: `Intl.NumberFormat('en', {notation:'compact'})` — **pin locale 'en'** cho output deterministic ("1.2M"), description field TreeItem.
-- Lazy + async: category children render ngay (tên tables), badges update từng table khi fetch xong (`_onDidChangeTreeData.fire(node)`). Không await toàn bộ trước render.
-- Row-count cache là **map riêng** `rowCountCache: Map<string, CacheEntry<number>>` — map `cache` hiện tại typed `CacheEntry<VsdbNode[]>`, không nhét number vào. TTL = CACHE_TTL_MS. Refresh command xóa cả hai map.
-- Lỗi fetch 1 table → giữ description fallback, không crash tree.
-- **Filter × badge interaction:** category badge (`node.description = String(children.length)`) tính từ list **UNFILTERED** (badge luôn là tổng objects thật); filter chỉ áp lên array trả về cho VS Code, KHÔNG áp lên array đưa vào `cache.set` (tránh stale badge sau khi clear filter trong TTL).
 
-**Tree filter — provider-side state:**
-- `setFilter(text)`: lưu + fire. Khi filter active:
-  - Root: connections **luôn giữ** (connection là ancestor container — filter theo object name, không theo connection name; drop connection = "No matches" phá use case).
-  - Schema nodes: giữ nếu schema name match HOẶC (luôn giữ khi filter non-empty — tables bên trong cần query mới biết; category children sẽ lọc).
-  - Category children: load như thường (query thật, cache thật) rồi **lọc output** theo label trước khi trả về.
-  - Table/view/routine/column: giữ nếu label match.
-  - Ancestors của match: `CollapsibleState.Expanded`.
-  - Empty match ở cấp category trở xuống → node "No matches for '…'" (contextValue empty-add).
-- Batch: fetch counts cho tables visible trong category vừa mở (không eager toàn schema).
+Fallback colors là dark (`#1e1e1e`/`#cccccc`/`#2b2b2b`) để `.cache/webview-repro/aggrid.html` (body `#1e1e1e`) render đúng dark khi smoke test ngoài VS Code. Trong VS Code mọi `--vscode-*` đều được define → fallback không bao giờ dùng → light theme user vẫn thấy light grid (đúng yêu cầu "theo theme VS Code tôi dùng", không hard-code đen).
 
-**Tree filter — provider-side state:**
-- `setFilter(text)`: lưu + `_onDidChangeTreeData.fire(undefined)`.
-- Khi filter active, `getChildren(undefined)` → root connections; mỗi cấp getChildren filter con theo `label.toLowerCase().includes(q)`. Node khớp trực tiếp HOẶC có descendant khớp → giữ. Match ở table → ancestors (connection/schema/category) giữ + `CollapsibleState.Expanded`.
-- Cần materialize tree khi filter: filter prefix làm cây sập về match-only. Column children chỉ load khi expand — với filter, tables match vẫn lazy (không eager-load columns của mọi table; filter chỉ so label các node đã load + khi user expand table bị filter thì columns cũng qua filter).
-- Tối ưu eager-load khi filter: khi có filter text, category children load tables (đã lazy) rồi lọc. Schema-level filter không cần load tables nếu schema name khớp (hiển thị schema, con vẫn lazy). **Kompromiss**: filter chỉ áp trên node label đã load được không cần query thêm — schemas list đã có, tables cần listTables(schema) query. Khi filter active: iterate schemas, với mỗi schema load tables/views/routines (3 queries/schema — chấp nhận được cho filter on-demand), lọc, chỉ giữ schemas còn match.
-- Empty match → single node "No matches for 'xyz'" (contextValue empty-add pattern).
+Rejected: `ag-theme-quartz-auto` (dark qua `prefers-color-scheme` OS — không phải VS Code theme, sai semantic); copy toàn bộ `ag-theme-quartz-dark` (không theo được light theme); map 20+ token riêng lẻ (thừa — color-mix đã derive).
 
-**Filter UI:**
-- package.json: `"commands": [{"command":"vsdb.filterSchemaTree","title":"Filter Schema Tree","icon":"$(filter)"}]`, `menus.view/title` cho explorer view: filter button (navigate) + khi `vsdb.schemaTreeFilterActive` context key true → thêm button "$(close)" clear.
-- extension.ts: command handler → `window.showInputBox({prompt:'Filter schemas, tables, columns, routines…', value: current})` → `provider.setFilter(text)` + `commands.executeCommand('setContext','vsdb.schemaTreeFilterActive', !!text)`. Title bar của view hiển thị filter active qua `contextValue`/view badge? — đơn giản: title button icon đổi không được; dùng context key + 2 buttons (filter / clear) là đủ, plus view description không có API → skip.
+### (b) Filter UX — Excel Text/Number Filters bằng Community
 
-## §4 Test Plan (TDD)
+AG Grid **Set Filter (checkbox list per column) là ENTERPRISE-only** — bị từ chối vì: (1) licence thương phí vi phạm constraint MIT/Community-only của repo, (2) bundle Enterprise từ CDN vi phạm webview CSP. Trong Community, tương đương hành vi *Excel Text Filters* là `agTextColumnFilter` / `agNumberColumnFilter` với `filterOptions` tường minh + multi-condition AND/OR (`maxNumConditions: 2`) — chính là dropdown Excel "Text Filters → Contains / Equals / Begins With…" khi mở menu header.
 
-- **TASK-301 (adapter row counts)**: happy — `estimateTableRows('qas','api_po_log')` trả số ≥0 từ reltuples (mock pg client trả reltuples=176). Edge 1 — reltuples=-1 (chưa analyze) → trả `null` (caller hiển thị "…"). Edge 2 — table không tồn tại → null, không throw. Edge 3 — adapter disconnect/throw → null + không propagate error lên tree.
-- **TASK-302 (tree badges + filter)**: happy — category children tables có description undefined ban đầu, sau fetch mock → description "176". Filter: setFilter('po') → getChildren chain chỉ giữ nodes có 'po' trong label hoặc descendant match; ancestors Expanded. Edge — filter không match → "No matches" node. Edge — filter rồi xóa → full tree trở lại. Edge — filter case-insensitive ('PO' == 'po'). Regression — badge không đè label table (label giữ nguyên tên).
-- **TASK-303 (command + menu)**: extension.test.ts smoke — command registered; setFilter gọi qua command. Edge — empty input → clear filter.
-- **TASK-304**: version assert qua existing pattern.
+Thiết kế trong `renderGrid()` (main.ts:419-435):
+- `spec.kind === "number"` → `filter: "agNumberColumnFilter"`, `filterParams: { filterOptions: ["equals","notEqual","lessThan","lessThanOrEqual","greaterThan","greaterThanOrEqual","inRange","blank","notBlank"], defaultOption: "equals", maxNumConditions: 2, debounceMs: 200 }`
+- kind string/boolean → `filter: "agTextColumnFilter"`, `filterParams: { filterOptions: ["contains","notContains","equals","notEqual","startsWith","endsWith","blank","notBlank"], defaultOption: "contains", maxNumConditions: 2, debounceMs: 200, caseSensitive: false }`
+- Giữ `floatingFilter: true` (hàng filter nhanh trên đầu) + search box (user: filter hay hơn, nhưng search giữ làm phụ).
+
+**Gate load-more khi column filter active (bug mới do feature này mở ra):** `quickFilterActive` (main.ts:123) chỉ track search box. Khi column filter lược bớt row hiển thị, `onBodyScroll` (main.ts:597) thấy "near bottom" → `dispatchLoadMore` → append thêm → vẫn filtered → lặp vô hạn fetch. Fix:
+- Thêm `let colFilterActive = false;`
+- Hook `onFilterChanged` trên grid (event option của `createGrid`, main.ts:493-515): `colFilterActive = api.isColumnFilterPresent()` (GridApi v36 method, đã verify `gridApi.d.ts:867`; quick filter không set cờ này).
+- Gate 3 chỗ: `__checkLoadMore` (main.ts:551), `dispatchLoadMore` (main.ts:580), `onBodyScroll` (main.ts:597): thêm `|| colFilterActive`.
+- Reset `colFilterActive = false` khi: grid recreate (tab switch / first render — filter model mất theo grid) và branch `statementReset || columnsChanged` (main.ts:519, columnDefs swap → filter không còn hợp lệ).
+- Footer (main.ts:641): `const filtered = displayed !== loaded && (quickFilterActive || colFilterActive);`
+
+### (c) Test strategy
+
+`tsconfig` exclude `webview/` → lỗi TS trong webview chỉ bắt được qua esbuild compile + bundle test (pattern đã có: `src/ui/__tests__/webviewBundle.test.ts` eval `dist/webview.js` trong jsdom). TASK-401 test trên artifact `dist/webview.css` (CSS custom properties không cascade được trong jsdom `getComputedStyle` → assert trực tiếp trên shipped bundle: mapping present + đúng thứ tự cascade sau quartz defaults). TASK-402 test hành vi qua `window.__vsdb.gridApi.setFilterModel(...)` + `window.__vsdbCheckLoadMoreForHost()`.
+
+## §4 Test Plan
+
+| Type | Test Name | Expected |
+|---|---|---|
+| happy (401) | dist/webview.css chứa 4 mapping `--ag-*` → `--vscode-*` kèm fallback | mỗi var xuất hiện đúng 1 lần trong block override |
+| edge-1 (401) | Thứ tự cascade: block override nằm SAU base quartz trong dist/webview.css | `indexOf(quartz base) < indexOf(override)` — sai thứ tự = override thua cascade |
+| edge-2 (401) | Input rule `.ag-input-field-input` map `--vscode-input-background/foreground` | present — chống bug input trắng (UA default) |
+| happy (402) | Column filter `setFilterModel({name:{filterType:"text",type:"contains",filter:"beta"}})` | displayed = 1, footer text "1 of 3" |
+| happy (402) | Number filter `setFilterModel({id:{filterType:"number",type:"greaterThan",filter:2}})` | displayed = đúng subset số dòng thỏa điều kiện |
+| edge-1 (402) | Batched (50 loaded / rowCount 1000) + column filter active + gọi `__vsdbCheckLoadMoreForHost()` | KHÔNG post `{type:"loadMore"}` — chặn vòng lặp fetch |
+| edge-2 (402) | Clear filter (`setFilterModel(null)`) → checkLoadMore | loadMore ĐƯỢC post lại (transition on→off) |
+| regression (402) | Cùng edge-1 chạy trên code hiện tại | RED: loadMore bị post khi filter active (bug repro) |
+| happy (403) | version == 1.3.2, README bullet Results grid cập nhật (theme + Excel-style filter) | pass |
+| boundary (403) | Full suite `npx vitest run` | 19+ files / 222+ tests pass (regression net cho cả cycle) |
 
 ## §5 Verification Commands
 
-- `npm run typecheck` (tsc)
-- `npx vitest run src/adapters/__tests__/postgres.test.ts src/ui/__tests__/schemaTree.test.ts src/extension.test.ts` (per-task)
-- Wave boundary: `npx vitest run` (full suite)
-- Smoke: `bash scripts/build.sh` (W3)
+Scripts có thật trong `package.json`: `compile` (esbuild), `typecheck` (tsc --noEmit), `test` (vitest run). Không có lint script — N/A. Lưu ý: `typecheck` KHÔNG cover `webview/` (tsconfig exclude) — webview được verify qua `compile` (esbuild parse lỗi là fail) + bundle test.
+
+- TASK-401: `npm run compile && npx vitest run src/ui/__tests__/webviewTheme.test.ts && npm run typecheck`
+- TASK-402: `npm run compile && npx vitest run src/ui/__tests__/webviewFilters.test.ts src/ui/__tests__/webviewBundle.test.ts && npm run typecheck`
+- TASK-403: `npm run compile && npx vitest run` + version/README asserts (xem task file)
+
+Wave boundary (W2): full `npx vitest run` bắt buộc — regression net.
 
 ## §6 Acceptance Criteria
 
-- [ ] Mở Tables category → mỗi table hiện row-count badge (số compact), lazy async, không block tree
-- [ ] reltuples âm/missing → "…", không COUNT(*) fallback
-- [ ] Filter box (view/title button) → nhập text → tree chỉ hiện match + ancestors expanded
-- [ ] Filter khớp case-insensitive mọi cấp node
-- [ ] Clear filter → tree đầy đủ
-- [ ] 202+ tests pass, typecheck pass, vsix build OK
-- [ ] Version 1.3.1, README updated
+- [ ] Grid + header + filter menu + floating filter input theo VS Code theme (dark user → dark; không hard-code) — TASK-401
+- [ ] Mỗi cột dữ liệu có menu filter đa điều kiện kiểu Excel (text/number theo `ColumnSpec.kind`), AND/OR ≤2 conditions — TASK-402
+- [ ] Column filter active → load-more bị chặn; clear filter → hoạt động lại; footer "X of Y" đúng khi column filter active — TASK-402
+- [ ] Quick search box + floating filter row hành vi cũ không đổi (bundle test cũ vẫn pass) — TASK-402
+- [ ] Version 1.3.2, README Results grid bullet cập nhật, full suite pass — TASK-403
 
 ## §7 Task Split
 
-- TASK-301 (S): adapter `estimateTableRows` — reltuples query, null trên unknown/error. Files: postgres.ts, factory.ts (DbAdapter interface), postgres.test.ts.
-- TASK-302 (M): schemaTree row-count badges + filter engine. Files: schemaTree.ts, schemaTree.test.ts. Deps: 301.
-- TASK-303 (S): filter command + view/title menu + context key. Files: extension.ts, package.json (contributes), extension.test.ts. Deps: 302.
-- TASK-304 (S): version 1.3.1 + README. Files: package.json, README.md. Deps: 301,302,303.
+| ID | Title | Size | Deps | Wave | Files owns |
+|---|---|---|---|---|---|
+| TASK-401 | Grid theme theo VS Code (CSS var mapping) | S | none | 1 | webview/styles.css, src/ui/__tests__/webviewTheme.test.ts (new) |
+| TASK-402 | Excel-like column filters + colFilterActive gating | M | none | 1 | webview/main.ts, src/ui/__tests__/webviewFilters.test.ts (new) |
+| TASK-403 | Version 1.3.2 + README + full-suite boundary | S | 401, 402 | 2 | package.json, README.md |
+
+## Planner Self-Audit
+Checklist: 12/12 pass
+Fixed during audit: nothing
+Known gaps: none — visual verification cuối (mở VS Code thật) thuộc về user sau khi install vsix; smoke trong pipeline dùng .cache/webview-repro/aggrid.html + bundle tests (harness có sẵn từ cycle A).
+
+## Planner Report
+PLANNER_MODEL: unic/unic-smart
 
 ## Plan Review Log
 
-### Round 1 — 2026-08-22 · unic/unic-smart (PlanRevB)
-
-VERDICT: **Issues Found** — 6 important, 5 minor. Không approved vòng này; planner áp findings rồi re-review (max 2 vòng theo config).
+### Round 1 — 2026-08-22 · unic/unic-smart
+Status: Approved
 
 COMPLETENESS:
-- IMPORTANT — TASK-301/PLAN §2 trỏ sai file: `DbAdapter` interface nằm ở `src/adapters/types.ts:84-94`, KHÔNG phải `factory.ts` (factory chỉ có `createAdapter`). Executor phải sửa types.ts; file list W1 thiếu `src/adapters/types.ts`.
-- IMPORTANT — Thêm method vào `DbAdapter` phá compile 2 adapter còn lại: `MySqlAdapter` (`src/adapters/mysql.ts:46`) và `MsSqlAdapter` (`src/adapters/mssql.ts:32`) đều `implements DbAdapter` → Verification `npm run typecheck` của chính TASK-301 sẽ FAIL. Plan im lặng về việc này. Fix: mở rộng TASK-301 thêm impl cho mysql/mssql (return null hoặc stats query) HOẶC khai báo optional member — chọn một, ghi rõ.
-- IMPORTANT — TASK-301 nói "mock pg client (pattern hiện tại trong src/adapters/__tests__/postgres.test.ts)" nhưng file ĐÓ KHÔNG TỒN TẠI. Chỉ có `postgres.integration.test.ts` (real DB, skip nếu VSDB_IT≠1). Không có mock pattern nào cho `pg` trong repo. Task phải ghi rõ: tạo file unit test mới, `vi.mock("pg")` fake Pool với `query` trả rows.
-- MINOR — TASK-303 không nêu view id (`vsdb.schemaTree`, package.json:183) và clause `when: "view == vsdb.schemaTree"` cho 2 menu entry mới (mọi entry view/title hiện tại đều có when — package.json:167-177). Executor tự grep được nhưng ghi thẳng bỏ một bước suy diễn.
-
+  - none — đủ 7 mục; task files TASK-401/402/403 có đủ 7 fields (ID/Title/Priority/Size/Deps/Wave/Files owns); test plan mỗi task ≥ happy + 2 edge khác loại (401: content + cascade-order; 402: loop-block + clear-transition + RED regression)
 CONSISTENCY:
-- IMPORTANT — Biểu diễn null/unknown mâu thuẫn PLAN vs TASK-302: PLAN §3 + §6 acceptance nói reltuples null → "…", nhưng TASK-302 Action 1 (`if (count === null) return`) + edge test lại giữ description = schema ("qas"). Phải thống nhất một behavior (đề nghị: giữ schema fallback như TASK-302, sửa PLAN §3/§6 — hoặc ngược lại), kẻo executor/reviewer gate khác nhau.
-- IMPORTANT — TASK-202 filter Action tự mâu thuẫn: bullet "Root: filter connections theo name match" trái với nguyên tắc ancestors-kept ở Goal và với bullet "connection node trả về với Expanded". Hiện thực theo bullet đó thì filter 'po_log' (không có trong tên connection) → connection bị drop → "No matches" — phá đúng use case chính. Sửa: connection LUÔN giữ khi filter active (như schema).
-- IMPORTANT — Wave labeling §2: PLAN xếp cả TASK-301 và TASK-302 vào W1 dù có dep 301→302; orchestrator chạy wave song song (maxParallelAgents=12) sẽ chạy 302 trước khi `estimateTableRows` tồn tại → typecheck fail không phải TDD-RED. INDEX.md đã ghi "302 chờ 301" nhưng PLAN nên khớp: 301=W1, 302=W2, 303=W3, 304=W4.
-- MINOR — PLAN §3 SQL thiếu `relkind IN ('r','p')` mà TASK-301 có (bản task tốt hơn). Divergence vô hại nhưng nên đồng bộ.
-
+  - none — mọi claim đối chiếu code OK: main.ts:123 quickFilterActive, :493 createGrid, :550 __checkLoadMore, :578 dispatchLoadMore, :592 onBodyScroll, :519 columnsChanged branch, :641 footer; `isColumnFilterPresent()` đúng tại gridApi.d.ts:867 và quick filter không set cờ (isQuickFilterPresent riêng, :939); onFilterChanged là public event hợp lệ v36; quartz derive (header/menu/panel/border/hover/selected) từ đúng 4 root token qua color-mix (ag-theme-quartz.css:8-110); styles.css import SAU quartz (main.ts:21-23) → cascade cùng specificity thắng
 CLARITY:
-- MINOR — Tương tác filter × category badge chưa spec: `getCategoryChildren` set `node.description = String(children.length)` (schemaTree.ts:405) trên children SAU lọc → badge hiện số filtered, và vì node object sống qua cache (schemaTree.ts:303-306), clear filter trong TTL vẫn hiện badge stale. Cần ghi: badge tính từ danh sách UNFILTERED, filter chỉ áp lên array trả về — không áp lên array đưa vào `cache.set`.
-- MINOR — Cache field hiện là `Map<string, CacheEntry<VsdbNode[]>>` (schemaTree.ts:70) — không chứa được number; row-count cache phải là map riêng. Task ngầm nói "cache như CACHE_TTL_MS" dễ khiến executor cố nhét vào `this.cache`.
-
+  - none — filterParams ghi tường minh theo kind (text vs number vs boolean→text), maxNumConditions/caseSensitive/debounceMs rõ; Community-only (Set Filter = Enterprise) ghi rõ kèm 2 lý do; không lint script là thật trong package.json → N/A hợp lệ
 SCOPE:
-- MINOR — `formatRows` dùng `Intl.NumberFormat(undefined, …)` → output theo locale runtime: đã verify node với locale 'de' trả "1,2 Mio." thay vì '1.2M'. Happy test `formatRows(1234567) → '1.2M'` sẽ flaky trên máy/CI khác locale. Fix: pin 'en' hoặc assert bằng regex /\d+[.,]?\d*M/.
-
+  - none — W1 = 401 (styles.css + webviewTheme.test.ts) ∥ 402 (main.ts + webviewFilters.test.ts) file-disjoint; W2 = 403 (package.json + README.md) tách đúng
 YAGNI:
-- none — reltuples-only + "…" no-COUNT fallback + provider-side filter đều đúng mức; không có tính năng thừa.
+  - none — 4 root token + 1 input rule là tối thiểu đúng (đã reject map 20+ token thừa vì color-mix tự derive); input rule dùng specificity cao hơn rule UA-white, đúng chỗ bug lộ rõ nhất
 
-CORRECTNESS (cross-check code thật):
-- reltuples approach đúng PG semantics: `-1` (PG14+ chưa VACUUM/ANALYZE) → null, không COUNT(*); `relkind IN ('r','p')` đúng; `$1/$2` khớp helper `query(sql, params)` (postgres.ts:310-319). Lưu ý nhỏ: PLAN ghi "PG13+" cho reltuples=-1 — marker này thực ra từ PG14; handling `< 0 → null` vẫn đúng nên không block.
-- View id + view/title navigation group tồn tại (package.json:167-183); error-node/cache/lazy pattern trong schemaTree.ts khớp mô tả plan; extension.test.ts có pattern capture registerCommand (extension.test.ts:109-113); version hiện tại 1.3.0 → bump 1.3.1 hợp lệ; README có mục Features (README.md:56-77); 210 test hiện có → "202+" đúng.
-- Test plan mỗi task đạt sàn happy + ≥2 edge khác loại (301: 6 case gồm null/0-row/reject/boundary 0-vs-null; 302: 9 case gồm no-match/clear/case-insensitive/regression; 303: Esc-undefined; 304: N/A có lý do). Typecheck có trong mọi Verification Commands (project không có lint script — thỏa requireLintOrTypecheckInVerification).
+NOTES: 2 minor non-blocking cho executor: (1) §3(b) reset `colFilterActive = false` cứng trong branch `statementReset || columnsChanged` (main.ts:519) — nếu colId sống sót qua columnDefs swap, AG Grid giữ filter model mà không phát filterChanged → footer đếm lệch đến lần filter kế tiếp; nên gán `colFilterActive = gridApi.isColumnFilterPresent()` sau `setGridOption("columnDefs", …)` thay vì hard false. (2) Input rule set `border-color` nhưng quartz không set border-style/width cho `.ag-input-field-input` (ag-theme-quartz.css:239-263 chỉ min-height/radius/padding) — background/color vẫn fix đúng bug trắng, border có thể không hiện (cosmetic).
 
-NOTES: Blocking nhất là 3 finding đầu (sai file interface, thiếu impl mysql/mssql, file test mock không tồn tại) — TASK-301 sẽ fail typecheck/RED ngay vòng đầu nếu không sửa. Planner chỉ cần sửa PLAN.md + TASK-301/302 cho khớp, không cần đụng code.
+## Plan Review Log
 
-## Planner Revise Log
-
-### Round 1 findings applied (2026-08-22 · planner = Main unic/unic-smart)
-- [B1] Interface file: types.ts (không factory.ts) — PLAN §2 + TASK-301 fixed.
-- [B2] mysql.ts + mssql.ts cùng implements DbAdapter → PLAN §2 W1 + TASK-301 thêm impl cho cả 3 adapter (mysql: information_schema.TABLES.TABLE_ROWS; mssql: sys.partitions sum).
-- [B3] src/adapters/__tests__/postgres.test.ts KHÔNG tồn tại → TASK-301 ghi rõ file MỚI + vi.mock('pg') (pattern theo factory.test.ts).
-- [B4] null/unknown behavior thống nhất: giữ description = schema name fallback (bỏ "…" — PLAN §3 rev2 + TASK-302 + test case khớp).
-- [B5] Root connections LUÔN giữ khi filter active (ancestor container) — PLAN §3 + TASK-302 + test mới.
-- [B6] Wave relabel: W1=301, W2=302, W3=303, W4=304 (chain tuần tự) — PLAN §2.
-- [M1] Filter × category badge: badge tính từ unfiltered list, filter chỉ áp output array, cache.set nhận unfiltered — PLAN §3 + TASK-302 Action.
-- [M2] rowCountCache là map riêng Map<string, CacheEntry<number>> — PLAN §3 + TASK-302.
-- [M3] formatRows pin locale 'en' (deterministic test) — PLAN §3 + TASK-302.
-- [M4] TASK-303 nêu view id vsdb.schemaTree + when clauses — fixed.
-- [M5] SQL relkind IN ('r','p') đồng bộ PLAN §3 = TASK-301.
-- (Minor note PG14 reltuples=-1 đã absorbed vào PLAN §3 wording.)
-Findings applied without re-review (cap 2 rounds theo RULES.md autonomy table).
+### Round 1 — findings applied without re-review (2026-08-22 · orchestrator unic/unic-smart)
+- Round 1 (PlanRevC, unic-smart): **Approved** — 0 blocking, 2 minor executor notes (colFilterActive re-poll sau columnDefs swap; input border cần border-style/width) → đã ghi chú vào TASK-402 Action.
+- Post-approval additions (user reports 2+3, same cycle C scope, same files):
+  - Double-checkbox mỗi dòng (user report #3): thêm Fix #3 vào TASK-402 Goal + test cases 6,7 — bỏ colDef `__select__`, dùng v36 `rowSelection.selectionColumnDef`.
+  - Queued cycle D (user report #2 — edit/paste/export/ctid): ghi vào INDEX queued section, KHÔNG vào cycle C.
