@@ -14,6 +14,8 @@ import {
   sqlLiteral,
   type ExportFormat,
 } from "../resultsGridModel";
+import { execSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
 
 const NO_OPT = { includeHeader: false, tableName: "t", pkColumns: [] as string[] };
 
@@ -139,10 +141,11 @@ describe("serializeSqlUpdates", () => {
     );
   });
 
-  // R1: empty pkColumns no longer throws. It degrades to a per-row
-  // all-columns WHERE (same fallback as sql-where). The contract is:
-  // the call must succeed and reference the table name.
-  it("7b. UPDATE with no PK columns → degrades to all-cols WHERE (no throw)", () => {
+  // R2 supersedes R1's "degrade to all-cols WHERE" — sqlite rejected
+  // `UPDATE t WHERE (…)` with no SET clause as a syntax error. The
+  // contract is now: when the SET list would be empty, emit a
+  // SQL comment line instead of a malformed UPDATE.
+  it("7b. UPDATE with no PK columns → skip-comment (no throw, no malformed UPDATE)", () => {
     expect(() =>
       serializeSqlUpdates(COLS, ROWS, {
         ...NO_OPT,
@@ -157,10 +160,12 @@ describe("serializeSqlUpdates", () => {
       tableName: "users",
       pkColumns: [],
     });
-    expect(out).toContain("UPDATE users");
-    // With empty PK, all columns are treated as the key. SET would be empty
-    // so the implementation emits `WHERE (all cols)` instead of a no-op SET.
-    expect(out).toContain("WHERE (id=1 AND name='alpha' AND active=TRUE)");
+    // Empty PK + multi-col schema → every column is treated as key,
+    // SET is empty → all rows skipped. No `UPDATE users` at all.
+    expect(out).not.toMatch(/UPDATE\s+users/);
+    expect(out).toContain("row 1 skipped: no non-key columns to update");
+    expect(out).toContain("row 2 skipped: no non-key columns to update");
+    expect(out).toContain("row 3 skipped: no non-key columns to update");
   });
 });
 
@@ -354,15 +359,17 @@ describe("sqlLiteral — portable ANSI SQL (Fix R1)", () => {
   });
 });
 
-// ---- Fix Round 1: sql-updates degrades safely on empty PK ---------------
+// ---- Fix Round 1+2: sql-updates degrades safely on empty PK ---------------
+// (R1 added the no-throw; R2 corrected the malformed `UPDATE … WHERE …`.)
 
-describe("serializeSqlUpdates — empty PK degrades safely (Fix R1)", () => {
-  it("R1.updates.1: empty pkColumns does NOT throw — falls back to all-cols WHERE", () => {
+describe("serializeSqlUpdates — empty PK degrades safely (Fix R1, R2)", () => {
+  it("R1.updates.1 (R2-corrected): empty pkColumns does NOT throw — all rows skipped with comment", () => {
     // Until TASK-503 wires real PK metadata into the webview, sql-updates
     // must not silently throw on the Copy/Export-to-file click handlers.
-    // Degrade: WHERE uses ALL columns (same fallback as sql-where). SET
-    // is empty because every column is in the key, so the implementation
-    // emits just `UPDATE users WHERE (all cols)` without the SET keyword.
+    // R1 added: don't throw, fall back to all-cols WHERE.
+    // R2 corrected: `UPDATE t WHERE (…)` has no SET clause → sqlite
+    // syntax error. The contract is now to skip the row and emit a
+    // SQL comment so the user sees why nothing was generated.
     expect(() =>
       serializeSqlUpdates(COLS, ROWS, {
         includeHeader: true,
@@ -375,8 +382,10 @@ describe("serializeSqlUpdates — empty PK degrades safely (Fix R1)", () => {
       tableName: "users",
       pkColumns: [],
     });
-    expect(out).toContain("UPDATE users");
-    expect(out).toContain("WHERE (id=1 AND name='alpha' AND active=TRUE)");
+    expect(out).not.toMatch(/UPDATE\s+users/);
+    expect(out).toContain("row 1 skipped: no non-key columns to update");
+    expect(out).toContain("row 2 skipped: no non-key columns to update");
+    expect(out).toContain("row 3 skipped: no non-key columns to update");
   });
 
   it("R1.updates.2: with PK, output uses PK in WHERE", () => {
@@ -451,5 +460,194 @@ describe("serializeXml — sanitizes tag names (Fix R1)", () => {
     expect(out).toContain('<col name="2nd">v</col>');
     expect(out).not.toMatch(/<User Name>/);
     expect(out).not.toMatch(/<2nd>/);
+  });
+});
+
+// ---- Fix Round 2: XML well-formedness with hostile column names + real parser --
+
+import { JSDOM } from "jsdom";
+
+function parseXmlOrThrow(text: string): { rows: number; cols: number } {
+  // jsdom's DOMParser: initialize the JSDOM with an empty XML document
+  // (not contentType: "application/xml", which leaves the parser in a
+  // weird state). Then explicitly parse with mime application/xml so
+  // the parse uses XML grammar. Bad XML returns a <parsererror> root
+  // (we do not get an exception in node + jsdom like a browser does).
+  const dom = new JSDOM('<?xml version="1.0"?><root/>');
+  const parser = new dom.window.DOMParser();
+  const xmlDoc = parser.parseFromString(text, "application/xml") as unknown as {
+    documentElement: { nodeName: string };
+    getElementsByTagName: (name: string) => { length: number };
+  };
+  if (xmlDoc.documentElement.nodeName === "parsererror") {
+    const errEl = xmlDoc.documentElement as unknown as { textContent?: string };
+    throw new Error(`xml parser error: ${errEl.textContent ?? "(unknown)"}`);
+  }
+  return {
+    rows: xmlDoc.getElementsByTagName("row").length,
+    cols: xmlDoc.getElementsByTagName("col").length,
+  };
+}
+
+
+describe("serializeXml — well-formedness with hostile column names (Fix R2)", () => {
+  it("R2.xml.1: column name containing `\"` — XML parses (no malformed attribute)", () => {
+    // Pre-R2: xmlEscape did NOT escape `"`, so serializeXml emitted
+    // `<col name="a&b<c>"d">…`, which terminates the attribute at
+    // the second `"` and yields malformed XML. Real DOMParser rejects it.
+    const cols = ['id', 'a&b<c>"d'];
+    const rows: unknown[][] = [
+      [1, "v"],
+      [2, "w"],
+    ];
+    const out = serializeXml(cols, rows, {
+      includeHeader: true,
+      tableName: "t",
+      pkColumns: [],
+    });
+    // The escape must produce &quot; in the rendered attribute.
+    expect(out).toContain("&quot;");
+    expect(out).not.toContain('name="a&b<c>"d"');
+    // Parses cleanly with a real XML parser.
+    const parsed = parseXmlOrThrow(out);
+    expect(parsed.rows).toBe(2);
+    expect(parsed.cols).toBe(4);
+  });
+
+  it("R2.xml.2: column names with single-quote, `<`, `&`, newline, digit-start — all parse", () => {
+    // Single-quote is NOT a special char in XML text, but the well-
+    // formedness contract covers it too. The fix uses a single escaper
+    // for both attribute and text content.
+    const cols = [
+      "id",
+      "it's",
+      "x<y",
+      "a&b",
+      "with\nnewline",
+      "1digit",
+    ];
+    const rows: unknown[][] = [[1, "v1", "v2", "v3", "v4", "v5"]];
+    const out = serializeXml(cols, rows, {
+      includeHeader: true,
+      tableName: "t",
+      pkColumns: [],
+    });
+    const parsed = parseXmlOrThrow(out);
+    expect(parsed.rows).toBe(1);
+    expect(parsed.cols).toBe(6);
+  });
+
+  it("R2.xml.3: column name containing both `&` and `\"` — escapes both, no double-escape", () => {
+    const cols = ["id", 'k="v"&x'];
+    const rows: unknown[][] = [[1, "z"]];
+    const out = serializeXml(cols, rows, {
+      includeHeader: true,
+      tableName: "t",
+      pkColumns: [],
+    });
+    // & → &amp;  (must appear BEFORE any &quot; that follows)
+    expect(out).toContain("name=\"k=&quot;v&quot;&amp;x\"");
+    const parsed = parseXmlOrThrow(out);
+    expect(parsed.rows).toBe(1);
+    expect(parsed.cols).toBe(2);
+  });
+
+  it("R2.xml.4: cell value containing `\"` — escapes as &quot; inside text, parses", () => {
+    const cols = ["id", "note"];
+    const rows: unknown[][] = [[1, 'has "quote" inside']];
+    const out = serializeXml(cols, rows, {
+      includeHeader: true,
+      tableName: "t",
+      pkColumns: [],
+    });
+    // Cell text inside <col>…</col> gets &quot; too.
+    expect(out).toContain("<col name=\"note\">has &quot;quote&quot; inside</col>");
+    const parsed = parseXmlOrThrow(out);
+    expect(parsed.rows).toBe(1);
+    expect(parsed.cols).toBe(2);
+  });
+});
+
+// ---- Fix Round 2: serializeSqlUpdates skip-comment on no-SET degrade ------
+
+describe("serializeSqlUpdates — no-SET degrade emits skip-comment (Fix R2)", () => {
+  it("R2.updates.1: empty PK on a 1-column row → no UPDATE statements, skip comment emitted", () => {
+    // Pre-R2: when PK is empty AND there is no non-key column to update,
+    // the implementation emitted `UPDATE t WHERE col=val;` with no SET
+    // clause — invalid SQL (sqlite parse error: near "WHERE"). Fix: skip
+    // the row entirely and emit a SQL comment so the user sees why.
+    const cols = ["id"];
+    const rows: unknown[][] = [[1], [2], [3]];
+    const out = serializeSqlUpdates(cols, rows, {
+      includeHeader: true,
+      tableName: "t",
+      pkColumns: [],
+    });
+    // No UPDATE statements should appear at all.
+    expect(out).not.toMatch(/UPDATE\s+t/);
+    // At least one skip comment per row.
+    expect(out).toContain("row 1 skipped: no non-key columns to update");
+    expect(out).toContain("row 2 skipped: no non-key columns to update");
+    expect(out).toContain("row 3 skipped: no non-key columns to update");
+  });
+
+  it("R2.updates.2: every column is in PK → mixed SET/skip across rows", () => {
+    // Schema [id, name]; pkColumns = [id, name]. Empty PK fallback
+    // would treat both as key → SET empty → all rows skipped. With a
+    // real PK list covering every column, behavior is identical: skip
+    // every row.
+    const cols = ["id", "name"];
+    const rows: unknown[][] = [
+      [1, "alpha"],
+      [2, "beta"],
+    ];
+    const out = serializeSqlUpdates(cols, rows, {
+      includeHeader: true,
+      tableName: "users",
+      pkColumns: ["id", "name"],
+    });
+    expect(out).not.toMatch(/UPDATE\s+users/);
+    expect(out).toContain("row 1 skipped: no non-key columns to update");
+    expect(out).toContain("row 2 skipped: no non-key columns to update");
+  });
+
+  it("R2.updates.3: emitted output contains zero invalid SQL statements (sqlite parse)", () => {
+    // Round-trip: the .sql file must be executable on a real engine.
+    // The reviewer's R2 blocker requires that the emit be parseable
+    // SQL, not just substring-shaped SQL. We use sqlite as the most
+    // portable reference parser; it rejects the pre-fix
+    // `UPDATE t WHERE (…)` shape with `near "WHERE": syntax error`.
+    const cols = ["id"];
+    const rows: unknown[][] = [[1], [2]];
+    const out = serializeSqlUpdates(cols, rows, {
+      includeHeader: true,
+      tableName: "t",
+      pkColumns: [],
+    });
+    const path = "/tmp/vsdb-r2-roundtrip.sql";
+    writeFileSync(path, out);
+    let stderr = "";
+    try {
+      execSync(`sqlite3 :memory: < ${path}`, {
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+    } catch (e) {
+      if (e && typeof e === "object" && "stderr" in e) {
+        const raw = (e as { stderr: unknown }).stderr;
+        stderr = typeof raw === "string" ? raw : String(raw ?? "");
+      } else {
+        stderr = String(e);
+      }
+    }
+    expect(stderr).not.toMatch(/syntax error|near "WHERE"|Error:/i);
+    expect(out).not.toMatch(/UPDATE\s+t/);
+  });
+  it("R2.updates.4: empty rows → empty output (no skip comments either)", () => {
+    const out = serializeSqlUpdates(["id"], [], {
+      includeHeader: true,
+      tableName: "t",
+      pkColumns: [],
+    });
+    expect(out).toBe("");
   });
 });

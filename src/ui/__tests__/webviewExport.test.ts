@@ -336,7 +336,7 @@ describeIfBundle("webview/main.ts export toolbar (TASK-502)", () => {
   );
 
   itIfBundle(
-    "R1.7. sql-updates click with no PK metadata does NOT throw — posts exportFile with degraded output",
+    "R1.7 (R2-corrected). sql-updates click with no PK metadata does NOT throw — posts exportFile with skip-comment output",
     () => {
       const { root, received } = loadBundle();
       dispatchState(threeRowsState());
@@ -352,16 +352,19 @@ describeIfBundle("webview/main.ts export toolbar (TASK-502)", () => {
         ".vsdb-export-file",
       ) as HTMLButtonElement | null;
       // Until TASK-503 wires PK metadata, the webview has no PK source.
-      // The click handler must NOT throw — it should still post an
-      // exportFile message with degraded output (empty PK → all-cols
-      // WHERE).
+      // R1: the click handler must NOT throw.
+      // R2: the emitted SQL must be parseable — pre-R2 emitted
+      // `UPDATE t WHERE (…)` (no SET), which sqlite rejects. The
+      // correct output is a SQL skip-comment per row instead.
       expect(() => exportBtn!.click()).not.toThrow();
 
       const exportMsgs = received.filter((m) => m.type === "exportFile");
       expect(exportMsgs.length).toBe(1);
       const m = exportMsgs[0] as { format: string; text: string };
       expect(m.format).toBe("sql-updates");
-      expect(m.text).toContain("UPDATE");
+      // No malformed UPDATE t WHERE … — every row is skipped.
+      expect(m.text).not.toMatch(/UPDATE\s+t/);
+      expect(m.text).toContain("row 1 skipped: no non-key columns to update");
       void root;
     },
   );

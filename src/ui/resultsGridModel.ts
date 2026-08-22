@@ -375,12 +375,23 @@ function csvEscape(v: unknown): string {
   return s;
 }
 
-/** XML escape for element text content. */
+/** XML escape for BOTH element text content and attribute values.
+ *
+ * Pre-R2 only escaped `& < >` — the column name was interpolated into
+ * a `"`-quoted attribute (`<col name="<xmlEscape(c)">`) and a column
+ * like `a&b<c>"d"` rendered `name="a&amp;b&lt;c&gt;"d""`, terminating
+ * the attribute at the second `"` and producing malformed XML. Fix R2
+ * adds the `"` → `&quot;` escape (and apostrophe for completeness so
+ * the escaper is reusable for both contexts). The order matters:
+ * `&` MUST run first to avoid double-escaping the entities introduced
+ * by the later replacements. */
 function xmlEscape(s: string): string {
   return s
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
 }
 
 export type ExportFormat =
@@ -506,50 +517,59 @@ export function serializeSqlInserts(
 
 /** Serialize to UPDATE statements — SET on non-PK columns, WHERE on PK.
  *
- * Fix R1: when `pkColumns` is empty, do NOT throw. The webview's
- * Copy / Export-to-file click handlers used to die silently in this
- * case because there is no PK metadata source until TASK-503 lands.
- * Instead, degrade to the documented fallback: treat ALL columns as
- * the key (same semantics as `serializeWhereClause` with empty PK).
- * That gives an UPDATE that targets a single row by its full row
- * fingerprint — safe and round-trippable. When every column is a PK
- * (PK list covers the whole schema), the SET list is empty; the
- * implementation emits `WHERE (all cols)` and skips SET, instead of
- * throwing. */
+ * R2: when the SET list would be empty (empty PK + no non-key cols, or
+ * PK covers the whole schema), the row is SKIPPED and a SQL comment
+ * `-- row N skipped: no non-key columns to update` is emitted. The
+ * pre-R2 implementation emitted `UPDATE t WHERE (…)` with no SET
+ * clause — invalid SQL (sqlite parse error: near "WHERE"). The
+ * contract is "never produce unexecutable SQL".
+ */
 export function serializeSqlUpdates(
   columns: string[],
   rows: unknown[][],
   opts: SerializeOptions,
 ): string {
   if (rows.length === 0) return "";
+  // Build a column→index Map ONCE — indexOf per column is O(n²) on
+  // wide rows AND silently produces `col=NULL` when a PK column is
+  // missing from the schema (indexOf −1 yields undefined → NULL). With
+  // the Map an absent key is detectable; we still skip silently for
+  // schema drift rather than throw, matching the rest of the file.
+  const colIdx = new Map<string, number>();
+  for (let i = 0; i < columns.length; i++) colIdx.set(columns[i], i);
   const pkCols = opts.pkColumns.length > 0 ? opts.pkColumns : columns;
   const pkSet = new Set(pkCols);
   const setCols = columns.filter((c) => !pkSet.has(c));
-  return rows
-    .map((row) => {
-      const setClause = setCols
-        .map((c) => {
-          const i = columns.indexOf(c);
-          return `${c}=${sqlLiteral(row[i])}`;
-        })
-        .join(", ");
-      // Wrap WHERE in parens only on the empty-PK fallback (SET is empty
-      // too) so the SQL is still visually unambiguous. With a real PK
-      // the SET clause distinguishes the UPDATE so plain `WHERE col=val`
-      // reads cleaner.
-      const whereClause = pkCols
-        .map((c) => {
-          const i = columns.indexOf(c);
-          return `${c}=${sqlLiteral(row[i])}`;
-        })
-        .join(" AND ");
-      const setPart = setClause ? ` SET ${setClause}` : "";
-      const wherePart = setClause
-        ? ` WHERE ${whereClause}`
-        : ` WHERE (${whereClause})`;
-      return `UPDATE ${opts.tableName}${setPart}${wherePart};`;
-    })
-    .join("\n");
+  const out: string[] = [];
+  rows.forEach((row, rowIdx) => {
+    const setClause = setCols
+      .map((c) => {
+        const i = colIdx.get(c);
+        if (i === undefined) return null;
+        return `${c}=${sqlLiteral(row[i])}`;
+      })
+      .filter((s): s is string => s !== null)
+      .join(", ");
+    if (!setClause) {
+      // R2: the reviewer flagged that `UPDATE t WHERE (…)` with no SET
+      // clause is invalid SQL (sqlite parse error: near "WHERE").
+      // Never produce unexecutable SQL — skip the row and emit a
+      // SQL comment so the user can see why nothing was generated.
+      out.push(`-- row ${rowIdx + 1} skipped: no non-key columns to update`);
+      return;
+    }
+    const whereClause = pkCols
+      .map((c) => {
+        const i = colIdx.get(c);
+        if (i === undefined) return null;
+        return `${c}=${sqlLiteral(row[i])}`;
+      })
+      .filter((s): s is string => s !== null)
+      .join(" AND ");
+    // SET is non-empty here — plain `WHERE col=val` reads cleanly.
+    out.push(`UPDATE ${opts.tableName} SET ${setClause} WHERE ${whereClause};`);
+  });
+  return out.join("\n");
 }
 
 /** Serialize to a WHERE clause fragment — per-row AND groups joined with
@@ -565,12 +585,19 @@ export function serializeWhereClause(
   const useRows =
     opts.selectedRows && opts.selectedRows.length > 0 ? opts.selectedRows : rows;
   if (useRows.length === 0) return "";
+  // Same index Map rationale as serializeSqlUpdates — O(n²) → O(n) per
+  // row, and a missing PK column no longer silently yields `col=NULL`.
+  const colIdx = new Map<string, number>();
+  for (let i = 0; i < columns.length; i++) colIdx.set(columns[i], i);
   const keyCols = opts.pkColumns.length > 0 ? opts.pkColumns : columns;
   const groups = useRows.map((row) => {
-    const parts = keyCols.map((c) => {
-      const i = columns.indexOf(c);
-      return `${c}=${sqlLiteral(row[i])}`;
-    });
+    const parts = keyCols
+      .map((c) => {
+        const i = colIdx.get(c);
+        if (i === undefined) return null;
+        return `${c}=${sqlLiteral(row[i])}`;
+      })
+      .filter((s): s is string => s !== null);
     return `(${parts.join(" AND ")})`;
   });
   return `WHERE ${groups.join(" OR ")}`;
