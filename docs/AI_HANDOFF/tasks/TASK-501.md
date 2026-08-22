@@ -308,3 +308,30 @@ ISSUES:
   - Round-3 Reviewer Finding (minor) about the stale "index-aligned" comment at the old :1057-1060 is folded into the `onUndoClick` rewrite — the new comment names `serverIndexByRowId` and explains the NULL-vs-MISSING semantics; no standalone line remains with the stale claim.
 HANDOFF_TO_REVIEWER: yes
 NEXT: ready for review (round 4 — note this was an exceptional round authorized via waiver; review should accept or open a 5th if blocking issues surface)
+
+## Reviewer Verdict (Round 4)
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart (config handoff.reviewer.model=unic-smart; executor=unic-code — differ, OK)
+EXECUTION_TOOL: claude-code (Fix Round 3 by Fix501R3, commit cc1f8e6; orchestrator waiver documented in Discussion §)
+VERIFICATION_RERUN (fresh, HEAD=cc1f8e6):
+  command: npm run compile
+  result: exit 0 (esbuild complete, 127ms)
+  command: npx vitest run src/ui/__tests__/resultsGridModelEdit.test.ts src/ui/__tests__/webviewEdit.test.ts
+  result: 2 files / 25 tests passed, exit 0
+  command: npm run typecheck
+  result: exit 0 (tsc --noEmit)
+  command: npx vitest run (full suite)
+  result: 23 files / 262 tests passed, exit 0
+ROUND_3_FINDINGS_STATUS:
+  #1 (undo resolves wrong server row) — RESOLVED: serverIndexByRowId populated in rowsToObjects (main.ts:311; append-delta passes sourceIndexStart=previousRows.length :862-868), cleared in both reset branches (:736,:829), read in onUndoClick (:1129) with NULL-vs-MISSING semantics preserved; stale "index-aligned" comment replaced. Verified via R3-A + my own jsdom probe (1 server row + Add Row + grow to 3 → edit id 2 → undo restores "beta"), probe deleted.
+  #2 (paste display-sequence targeting) — RESOLVED: onGridPaste iterates getDisplayedRowAtIndex from the anchor (:1014-1023), stops at bottom edge AND first local row — insert marker never overwritten. Verified via R3-B + my own probes (bottom-edge stop with no local rows; 5 server rows + local row at bottom → X1..X5 applied, marker object intact, X6 dropped cleanly), probes deleted.
+  minor (stale :1057 comment) — RESOLVED (folded into the onUndoClick rewrite).
+FINDINGS (probed against source + dist bundle; probes deleted after):
+  important:
+    - none
+  minor:
+    - src/ui/resultsGridModel.ts:478-482 — dense path of applyPasteToDirty LOST the `targetRow >= rowCount` upper-bound clip the pre-fix code had. Probe: applyPasteToDirty(s,1,0,[["a"],["b"],["c"]],1,2) now marks rowIds 1,2,3 (expected 1,2); anchor=3/rowCount=2 marks 1 entry (expected 0). Docstring (:456 "Cells outside (rowCount, colCount) are silently dropped") and the inline "When `targetRowIds` is absent, behavior is unchanged" claim are now false. No production impact — sole caller (webview/main.ts:1021) always passes targetRowIds. Fix: restore the clip for the dense case (`targetRowIds === undefined && targetRow >= rowCount → continue`) or amend the doc.
+    - webview/main.ts:1001 — `if (anchorCol < 0) return;` is dead code: anchorCol = Math.max(0, findIndex(…)) can never be negative. Cosmetic.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Both round-3 defects genuinely fixed and independently probed; the one new defect is a contract drift on a currently-unused dense path (one-line fix). Fold the dense-path clip into the next round that touches resultsGridModel.ts (W2 TASK-502) — not worth reopening a 5th round.
