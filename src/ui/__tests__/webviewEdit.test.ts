@@ -549,4 +549,227 @@ describeIfBundle("webview/main.ts bundle (TASK-501)", () => {
     const snap = editState!.snapshot();
     expect(snap[0]).toEqual({ rowId: 0, colIndex: 0, value: 999 });
   });
+
+  // Fix Round 2 — Finding #1: paste after column reorder must still target
+  // the ORIGINAL stable colIndex, not the reordered getColumnDefs index.
+  // The currentSpecs cache is the source of truth — onGridPaste reads from
+  // it, not from gridApi.getColumnDefs().
+  itIfBundle(
+    "R2-A. paste after column reorder targets the ORIGINAL stable colIndex",
+    async () => {
+      const { root } = loadBundle();
+      void root;
+      // 3 rows × 3 cols [a, b, c].
+      const threeColState: Record<string, unknown> = {
+        type: "state",
+        header: "test.sql",
+        busy: false,
+        results: [
+          {
+            index: 0,
+            sql: "SELECT * FROM t",
+            status: "done",
+            result: {
+              columns: ["a", "b", "c"],
+              rows: [
+                ["a0", "b0", "c0"],
+                ["a1", "b1", "c1"],
+                ["a2", "b2", "c2"],
+              ],
+              rowCount: 3,
+              durationMs: 1,
+            },
+            durationMs: 1,
+          },
+        ],
+      };
+      dispatchState(threeColState);
+      await flushGridEvents();
+
+      const api = vsdbApi()!.gridApi!;
+      expect(api).toBeTruthy();
+
+      // Reorder columns to [b, a, c] via the live API (this is what a
+      // user drag-reorder does). currentSpecs is untouched; it still
+      // represents the original [a, b, c] ordering.
+      api.setGridOption("columnDefs", [
+        { field: "b", headerName: "b" },
+        { field: "a", headerName: "a" },
+        { field: "c", headerName: "c" },
+      ]);
+      await flushGridEvents();
+
+      // Sanity: getColumnDefs now reports [b, a, c] order.
+      const reordered = api.getColumnDefs() as Array<{ field?: string }>;
+      expect(reordered.map((c) => c.field)).toEqual(["b", "a", "c"]);
+
+      // Now paste "X\tY" with no cell focused → anchor defaults to (0, 0).
+      // ORIGINAL colIndex 0 is `a`; ORIGINAL colIndex 1 is `b`.
+      // The buggy code reads `getColumnDefs()[0].field === "b"` and would
+      // mark colIndex=0 for the paste → wrong cell dirty (would write into
+      // `a`). The fix reads currentSpecs[0].field === "a" → marks
+      // colIndex=0 for `a` correctly.
+      const gridWrap = (root.querySelector(".vsdb-grid-host") ||
+        document.querySelector(".vsdb-grid-host")) as HTMLDivElement | null;
+      expect(gridWrap).toBeTruthy();
+      const fakeClipboardData = { getData: (_type: string) => "X\tY" };
+      const ev = new Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(ev, "clipboardData", {
+        value: fakeClipboardData,
+        enumerable: true,
+      });
+      gridWrap!.dispatchEvent(ev);
+      await flushGridEvents();
+
+      const editState = getEditState()!;
+      expect(editState.dirtyCount).toBe(2);
+      const snap = editState.snapshot();
+      // After the fix: colIndex must be the ORIGINAL stable index. The
+      // original [a, b, c] ordering means X → a (colIndex=0), Y → b
+      // (colIndex=1). The grid's data row at rowId 0 must have a="X" and
+      // b="Y", NOT b="X" and a="Y" (the bug).
+      const byKey: Record<string, unknown> = {};
+      for (const s of snap) byKey[`${s.rowId}:${s.colIndex}`] = s.value;
+      expect(byKey["0:0"]).toBe("X"); // original col a
+      expect(byKey["0:1"]).toBe("Y"); // original col b
+
+      // And the underlying grid data must show a="X", b="Y" at rowId 0 —
+      // proves the paste wired to the right cells, not the reordered ones.
+      const node = api.getRowNode("0");
+      expect(node).toBeTruthy();
+      expect(node!.data!.a).toBe("X");
+      expect(node!.data!.b).toBe("Y");
+
+      // Undo through the registered __vsdb.undo handler — LIFO pops the
+      // LAST marked cell (the second paste cell, which is original `b`
+      // at colIndex=1). After undo, `b` returns to its server value
+      // "b0", `a` stays at the pasted "X" (colIndex=0).
+      vsdbApi()!.undo!();
+      await flushGridEvents();
+      const after = api.getRowNode("0")!;
+      expect(after.data!.a).toBe("X"); // colIndex=0 still dirty
+      expect(after.data!.b).toBe("b0"); // colIndex=1 restored
+    },
+  );
+
+  // Fix Round 2 — Finding #2: Add Row id must not collide with the
+  // append-delta id space during streaming. The fix uses a high-water
+  // mark — locally-added rows get ids ABOVE the highest server or local
+  // id ever assigned for this statement.
+  itIfBundle(
+    "R2-B. Add Row during streaming does not collide with append-delta ids",
+    async () => {
+      const { root } = loadBundle();
+      void root;
+      // Start with 3 rows.
+      dispatchState(threeRowsState());
+      await flushGridEvents();
+
+      const api = vsdbApi()!;
+      const grid = api.gridApi!;
+      expect(grid).toBeTruthy();
+
+      // Add a row locally. This should NOT collide with id 3..5 that
+      // streaming will assign.
+      api.addRow!();
+      await flushGridEvents();
+
+      // Now grow the server result to 5 rows (streaming append).
+      dispatchState(fiveRowsState());
+      await flushGridEvents();
+
+      // Uniqueness: every visible row's __rowId must be unique. Before the
+      // fix, ids were [0, 1, 2, 3(add), 3(stream), 4(stream)] — duplicate.
+      const ids = new Set<number>();
+      let dups = 0;
+      for (let i = 0; i < grid.getDisplayedRowCount(); i++) {
+        const node = grid.getDisplayedRowAtIndex(i);
+        const id = (node!.data as { __rowId: unknown }).__rowId;
+        expect(typeof id).toBe("number");
+        if (ids.has(id as number)) dups++;
+        ids.add(id as number);
+      }
+      expect(dups).toBe(0);
+      expect(ids.size).toBe(6); // 3 server + 1 add + 2 streamed
+
+      // getRowNode(String(id)) must resolve each id to a distinct node —
+      // getRowId uniqueness is the contract TASK-503 / edit / paste depend
+      // on. Probe for duplicate ids by checking that all 6 ids are
+      // independently resolvable.
+      for (const id of ids) {
+        const node = grid.getRowNode(String(id));
+        expect(node).toBeTruthy();
+        expect((node!.data as { __rowId: number }).__rowId).toBe(id);
+      }
+    },
+  );
+
+  // Fix Round 2 — Finding #3: undoing an edit to a NULL cell must restore
+  // NULL, not the edited value or "". The buggy code used
+  // `serverOld ?? current ?? ""` which conflates null with missing.
+  itIfBundle(
+    "R2-C. undo of an edit to a NULL cell restores NULL",
+    async () => {
+      const { root } = loadBundle();
+      void root;
+      // 3 rows × 2 cols [id, name]. Row 1 (id=2) has name=null — the most
+      // common SQL edge value (NULL cell).
+      const stateWithNull: Record<string, unknown> = {
+        type: "state",
+        header: "test.sql",
+        busy: false,
+        results: [
+          {
+            index: 0,
+            sql: "SELECT * FROM t",
+            status: "done",
+            result: {
+              columns: ["id", "name"],
+              rows: [
+                [1, "alpha"],
+                [2, null],
+                [3, "gamma"],
+              ],
+              rowCount: 3,
+              durationMs: 1,
+            },
+            durationMs: 1,
+          },
+        ],
+      };
+      dispatchState(stateWithNull);
+      await flushGridEvents();
+
+      const api = vsdbApi()!;
+      const grid = api.gridApi!;
+      const editState = getEditState()!;
+      expect(grid).toBeTruthy();
+
+      // Confirm the underlying server row really has name=null at rowId=1.
+      const beforeNode = grid.getRowNode("1")!;
+      expect(beforeNode.data!.name).toBeNull();
+
+      // Drive the registered onCellValueChanged handler — the user edits
+      // row 1's name from null → "EDITED".
+      const sim = getSimulateEdit();
+      expect(sim).toBeTruthy();
+      sim!(1, "name", "EDITED", null);
+      await flushGridEvents();
+      expect(editState.dirtyCount).toBe(1);
+
+      // Grid reflects the edit (so we know the bundle applied it).
+      const editedNode = grid.getRowNode("1")!;
+      expect(editedNode.data!.name).toBe("EDITED");
+
+      // Undo. With the buggy `?? ""` conflation, the cell stays as
+      // "EDITED" because serverOld=null falls through to the current
+      // value. The fix must explicitly restore null.
+      api.undo!();
+      await flushGridEvents();
+
+      expect(editState.dirtyCount).toBe(0);
+      const restoredNode = grid.getRowNode("1")!;
+      expect(restoredNode.data!.name).toBeNull();
+    },
+  );
 });

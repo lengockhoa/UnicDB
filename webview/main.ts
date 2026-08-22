@@ -37,8 +37,7 @@ import {
   type FilterChangedEvent,
   type CellValueChangedEvent,
   type CellStyle,
-  type ColDef,
- } from "ag-grid-community";
+} from "ag-grid-community";
 import type { GridApi } from "ag-grid-community";
 import {
   inferColumns,
@@ -152,6 +151,13 @@ let csvMode = false;
  *  Reset on tab switch / new query (each renderGrid already calls
  *  editState.clear() in the reset branch). */
 let newRowCount = 0;
+/** Highest __rowId ever allocated (server-truth OR local) for the
+ *  current statement. Bumped on Add Row AND on append-delta — keeps
+ *  local-id and server-id spaces disjoint so a streamed append can
+ *  never produce a __rowId that collides with a locally-added row
+ *  (R2 finding #2). Reset alongside newRowCount on tab switch /
+ *  new query. */
+let highestAllocatedId = -1;
 /** Last ColumnSpecs seen for the active statement. Used by handlers
  *  (onUndoClick, onAddRowClick, onCsvToggleClick, onGridPaste) that
  *  need a stable column ordering for colIndex ↔ field mapping. The
@@ -212,6 +218,11 @@ function simulateCellEdit(
   // (column drag-reorder would shift getColumnDefs but not currentSpecs).
   const spec = currentSpecs.find((s) => s.field === colField);
   if (!spec) return;
+  // AG Grid mutates node.data[colDef.field] = newValue BEFORE firing
+  // onCellValueChanged — the registered handler runs against the
+  // already-mutated cell. The test seam mirrors that so undo/refresh
+  // assertions read the value the user actually sees on screen.
+  node.data[spec.field] = newValue;
   // Build the minimum event shape the handler reads. We mark `api`
   // for typing but the handler does not call it.
   const fakeEvent = {
@@ -399,7 +410,7 @@ function buildPersistentDom(): PersistentDom {
         copySelectionToHost();
       }
     },
-
+    true, // capture — see comment above
   );
   // TASK-501: paste handler — TSV payload from the OS clipboard. AG Grid's
   // own paste module requires Enterprise; we listen on gridWrap so the
@@ -689,7 +700,7 @@ function renderGrid(): void {
     }
     editState.clear();
     newRowCount = 0;
-    // Fresh grid → any previous column filter no longer applies.
+    highestAllocatedId = -1;
     colFilterActive = false;
     gridApi = createGrid(gridHost, {
       // VS Code theme follow (TASK-401 fix round 2): AG v36 paints the grid
@@ -763,10 +774,14 @@ function renderGrid(): void {
       onModelUpdated: () => updateFooterNow(),
       onBodyScroll: (e: BodyScrollEvent) => onBodyScroll(e, activeTab, model),
     });
-
     (gridHost as unknown as { __vsdbApi: GridApi }).__vsdbApi = gridApi;
     statementRows.set(activeTab, r.result.rows.slice());
     lastColumnCount = specs.length;
+    // Seed the high-water mark to the last server row's id. Locally-added
+    // rows must always get ids ABOVE this — append-delta uses
+    // `Math.max(previousRows.length, highestAllocatedId + 1)` to keep
+    // the two id spaces disjoint.
+    highestAllocatedId = r.result.rows.length - 1;
   } else if (statementReset || columnsChanged || syncResult.isReset) {
     // New data for the same statement (e.g. statementReset on terminal
     // status, or columnsChanged). Drop stale dirty edits and any rows
@@ -774,13 +789,12 @@ function renderGrid(): void {
     // result set; the user must re-add via the Add Row button.
     editState.clear();
     newRowCount = 0;
-    // Replace rowData (and column defs if changed) on the existing grid.
+    highestAllocatedId = -1;
     if (columnsChanged) {
       // Column set changed → previous column filter is no longer valid.
       // Clear the filter model (AG Grid keeps filters for surviving columns
       // across a columnDefs swap) and re-poll the live grid state instead of
       // trusting a local bool — a stale false here re-opens the loadMore
-      // gate while a filter is still applied (fetch-loop bug).
       gridApi!.setFilterModel(null);
       gridApi!.setGridOption("columnDefs", colDefs);
       colFilterActive = gridApi!.isColumnFilterPresent();
@@ -788,14 +802,30 @@ function renderGrid(): void {
     }
     gridApi!.setGridOption("rowData", rowsToObjects(r.result.rows, specs));
     statementRows.set(activeTab, r.result.rows.slice());
+    // Re-seed the high-water mark after the rowData swap. New server rows
+    // may have arrived (the user clicked Refresh), so the mark moves with
+    // r.result.rows.length. Locally-added rows were cleared above so this
+    // is safe.
+    highestAllocatedId = r.result.rows.length - 1;
   } else if (rowsGrew && syncResult.appendDelta.length > 0) {
     // Append delta — only new server rows get added (no clobber). Each
     // appended row needs a __rowId so the grid's stable-identity layer
     // can resolve it for edits/undo just like the original rows.
-    const startIndex = previousRows.length;
+    //
+    // `startIndex` MUST respect the high-water mark — locally-added rows
+    // already use ids >= r.result.rows.length, so a streaming append
+    // starting from `previousRows.length` would collide. We start past
+    // the highest id we have ever allocated (R2 finding #2).
+    const startIndex = Math.max(previousRows.length, highestAllocatedId + 1);
     const newRowObjects = rowsToObjects(syncResult.appendDelta, specs, startIndex);
     const addIndex = previousRows.length;
     gridApi!.applyTransaction({ add: newRowObjects, addIndex });
+    for (const obj of newRowObjects) {
+      const id = obj.__rowId;
+      if (typeof id === "number" && id > highestAllocatedId) {
+        highestAllocatedId = id;
+      }
+    }
     statementRows.set(activeTab, r.result.rows.slice());
   }
   lastRenderedIndex = activeTab;
@@ -886,7 +916,13 @@ function formatDataCell(v: unknown): string {
  *  plain-text paste. We parse TSV, clip to grid bounds, and mark each
  *  in-bounds cell dirty. AG Grid doesn't fire its own cellValueChanged for
  *  programmatic pastes — we apply the rowData change and call
- *  `refreshClientSideRowModel()` so the grid reflects the new values. */
+ *  `refreshClientSideRowModel()` so the grid reflects the new values.
+ *
+ * Column mapping uses `currentSpecs` (the immutable spec ordering captured
+ * at renderGrid time), NOT `gridApi.getColumnDefs()` — a column drag-reorder
+ * would shift the live getColumnDefs order and break colIndex ↔ field
+ * mapping for any handler that wrote through it (R2 finding #1).
+ */
 function onGridPaste(ev: ClipboardEvent): void {
   // Paste into a filter input is the user's local typing — do not treat
   // it as a grid edit. The capture-phase wrapper checks ev.target first
@@ -907,13 +943,16 @@ function onGridPaste(ev: ClipboardEvent): void {
     ? gridApi.getDisplayedRowAtIndex(focused.rowIndex) ?? null
     : null;
   const anchorRowId = readRowId(focusedNode?.data) ?? 0;
-  const cols = gridApi.getColumnDefs() as Array<{ field?: string }> | undefined;
+  // Resolve the focused column's STABLE index via currentSpecs — not via
+  // live getColumnDefs. Column drag-reorder shifts getColumnDefs order
+  // but currentSpecs still represents the original spec ordering, so
+  // anchorCol always maps to the right underlying column.
   const focusedColField = focused?.column?.getColId?.();
   const anchorCol = focusedColField
-    ? Math.max(0, (cols ?? []).findIndex((c) => c.field === focusedColField))
+    ? Math.max(0, currentSpecs.findIndex((s) => s.field === focusedColField))
     : 0;
   if (anchorCol < 0) return;
-  const colCount = (cols ?? []).length;
+  const colCount = currentSpecs.length;
   // Total data rows = server-truth + locally-added rows. Paste row indices
   // are clipped to the displayed range, with new rows (added via
   // applyTransaction) counted in.
@@ -923,7 +962,8 @@ function onGridPaste(ev: ClipboardEvent): void {
   // Apply the paste to the live grid by mapping each parsed cell onto
   // the row whose __rowId matches anchorRowId + r. We resolve via the
   // grid's stable getRowNode(__rowId) lookup — no forEachNode scan, no
-  // display-index dependency.
+  // display-index dependency. Column field lookup uses currentSpecs (stable
+  // ordering) — NOT live getColumnDefs.
   for (let r = 0; r < parsed.length; r++) {
     const targetRowId = anchorRowId + r;
     if (targetRowId < 0 || targetRowId >= dataRowCount) continue;
@@ -933,9 +973,9 @@ function onGridPaste(ev: ClipboardEvent): void {
     for (let c = 0; c < row.length; c++) {
       const targetCol = anchorCol + c;
       if (targetCol < 0 || targetCol >= colCount) continue;
-      const col = (cols ?? [])[targetCol];
-      if (!col?.field) continue;
-      node.data[col.field] = row[c];
+      const spec = currentSpecs[targetCol];
+      if (!spec) continue;
+      node.data[spec.field] = row[c];
     }
   }
   gridApi.refreshCells({ force: true });
@@ -951,18 +991,19 @@ function onRefreshClick(): void {
   // "reset" semantics).
   updateFooterNow();
 }
-
 /** Add Row: append a real blank row to the grid. The row gets a stable
- *  __rowId past the current server row count and is marked as pending
- *  insert in EditState (TASK-503 reads snapshot() to drive INSERT). */
+ *  __rowId past every id we have ever allocated (server OR local) — the
+ *  high-water mark `highestAllocatedId` is bumped below and re-read by
+ *  append-delta on the next streaming grow so the two id spaces never
+ *  collide (R2 finding #2). */
 function onAddRowClick(): void {
   if (!gridApi) return;
-  const r0 = results[activeTab];
-  const baseRows = r0?.result?.rows?.length ?? 0;
-  // Stable identity past the server's known rows. newRowCount survives
-  // re-renders for the same statement; it is reset on tab switch / new
-  // result / column-set change (renderGrid reset branches).
-  const newRowId = baseRows + newRowCount;
+  // Allocate past every id the grid has ever seen — server-truth AND
+  // locally-added. baseRows + newRowCount was the old formula and
+  // collided with append-delta during streaming (probe: 3 rows + Add
+  // Row + grow to 5 server rows produced duplicate id 3).
+  const newRowId = highestAllocatedId + 1;
+  highestAllocatedId = newRowId;
   const cols = gridApi.getColumnDefs() as Array<{ field?: string }> | undefined;
   // Blank row object: every spec column is "", with __rowId set so
   // the grid's stable identity layer can resolve it for edits/undo.
@@ -1018,10 +1059,22 @@ function onUndoClick(): void {
   // rows; for locally-added rows (newRowId past server length) there
   // is no original — drop the dirty entry without a revert.
   const r = results[activeTab];
-  const serverOld = r?.result?.rows?.[popped.rowId]?.[popped.colIndex];
+  const serverRow = r?.result?.rows?.[popped.rowId];
   const node = gridApi.getRowNode(String(popped.rowId));
   if (!node?.data) return;
-  node.data[spec.field] = serverOld ?? node.data[spec.field] ?? "";
+  // Distinguish NULL from MISSING — `serverRow` exists iff the row is
+  // server-truth. A NULL cell value is a LEGITIMATE old value that must
+  // be restored as null on undo (the most common SQL edge case: a cell
+  // is null on disk, the user edits to "EDITED", then undoes — the
+  // grid cell must return to null, not stay "EDITED" or become "").
+  // The buggy `serverOld ?? node.data[spec.field] ?? ""` conflated
+  // null with absent because `null ?? anything` returns anything (R2
+  // finding #3).
+  if (serverRow !== undefined) {
+    node.data[spec.field] = serverRow[popped.colIndex];
+  }
+  // Locally-added rows have no server-row twin; leave the cell as-is —
+  // the user added the row, there is no "original" to revert to.
   gridApi.refreshCells({ force: true });
   updateFooterNow();
 }

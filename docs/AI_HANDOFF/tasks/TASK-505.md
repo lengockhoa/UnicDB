@@ -174,3 +174,24 @@ RED_OUTPUT (Test #5 pre-mock-fix, this round): |
 ISSUES: none (Test #5 RED → GREEN after mock + resetModules + Test #5 expectation adjustment; all 16 tests pass clean).
 HANDOFF_TO_REVIEWER: yes
 NEXT: ready for re-review (Test #5 added; mock fidelity fixed; title drift fixed; recreate branch exercised end-to-end).
+
+
+## Reviewer Verdict (Round 2)
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code (isolation OK)
+REVIEWED_COMMIT: 66862a0 (fix round 1)
+PRIOR_FINDINGS_RESOLUTION:
+  - IMPORTANT (mock dead-by-default + missing recreate coverage): RESOLVED. createTerminal mock now returns alive terminals (exitStatus: undefined, src/extension.test.ts:93-105) matching VS Code API contract; Test #4 dropped the hand-patch; Test #5 (new, src/extension.test.ts:585-630) drives extension.ts:562 recreate branch end-to-end: run → mark dead → run → expects 2 terminals, distinct instances, firstTerm.sendText exactly 1, secondTerm.sendText payload "echo first\n\n", secondTerm.show called. Edge-case floor (>=2) now met (#3 empty-doc + #5 dead-terminal).
+  - MINOR (title drift 10 -> 11): RESOLVED — smoke title now "register đủ 11 command" (src/extension.test.ts:223) matching 11 expected ids.
+  - MINOR (sendText single-arg): accepted as-is in Round 1; not relitigated.
+NEW_DEFECTS_FROM_FIX: none. vi.resetModules() + activateFresh dynamic import correctly isolates module-level runScriptTerminal per test; vi.mock factory closure over the single `state` object survives resetModules, so createdTerminals stays observable.
+VERIFICATION_RERUN (fresh, this round):
+  command: npx vitest run src/extension.test.ts
+  result: PASS — 16 pass / 0 fail, exit 0
+  command: npm run typecheck
+  result: PASS — tsc --noEmit, exit 0
+TEST_PLAN_COVERAGE: all-followed — 5/5 tests (4 from §4 + Test #5 recreate edge case), >=2 edge cases satisfied.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: All Round-1 blocking findings resolved; no regressions introduced by the fix.

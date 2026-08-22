@@ -169,3 +169,74 @@ ISSUES:
   - Add Row inserts a stable `__rowId = baseRows + newRowCount` and `newRowCount` is reset alongside `editState.clear()` in the same branch as 403. Pastes target `getRowNode(String(rowId))` (the new stability layer) instead of `getDisplayedRowAtIndex`. The paste Event must dispatch BEFORE the next grid tick — the test awaits `flushGridEvents()` (microtask) to settle AG Grid's transaction queue.
 HANDOFF_TO_REVIEWER: yes
 NEXT: ready for review (round 2)
+
+## Reviewer Verdict (Round 2)
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic-smart (config handoff.reviewer.model=unic-smart; executor=unic-code — differ, OK)
+EXECUTION_TOOL: claude-code (Fix Round 1 by feature-implementer)
+VERIFICATION_RERUN (fresh, HEAD=66862a0):
+  command: npm run compile
+  result: exit 0 (dist/webview.js rebuilt)
+  command: npx vitest run src/ui/__tests__/resultsGridModelEdit.test.ts src/ui/__tests__/webviewEdit.test.ts
+  result: 2 files / 20 tests passed, exit 0
+  command: npm run typecheck
+  result: exit 0
+  command: npx vitest run (full suite)
+  result: 23 files / 257 tests passed, exit 0
+PRIOR_BLOCKING_STATUS: #1 real-event tests RESOLVED (real paste Event through registered listener; simulateCellEdit invokes the registered handler — accepted seam); #2 editState.clear() in reset branch RESOLVED (main.ts:690,775; test 10h); #3 stable row identity PARTIAL (see finding 1); #4 Add Row real applyTransaction RESOLVED at surface (test 10g) but introduces finding 2.
+FINDINGS (all reproduced via throwaway jsdom probes against dist/webview.js, probes deleted after):
+  important:
+    - webview/main.ts:910-916,930-941 — onGridPaste still resolves anchorCol/colCount and writes cells against LIVE gridApi.getColumnDefs(), the exact pattern R1 finding 3 told the executor to remove. Columns are movable by default (only the selection col sets suppressMovable). Probe (reorder to [b,a,c] via setGridOption("columnDefs"), paste "X\tY"): grid ends with b="X", a="Y" but snapshot records {colIndex:0,value:"X"} where specs col0 = a → TASK-503 would write X into column a (wrong cell), and wired undo restores column b first (wrong column). Fix: derive anchor field/colCount/write targets from currentSpecs (field = currentSpecs[anchorCol+c].field), matching onCellValueChangedHandler/onUndoClick.
+    - webview/main.ts:965 vs :795 — Add Row (`baseRows + newRowCount`) and append-delta (`startIndex = previousRows.length`) allocate __rowId from the live row count independently. Add Row during a streaming result, then more server rows arrive → duplicate ids. Probe: 3 rows + Add Row + grow to 5 server rows → node ids [0,1,2,3,4,3]; getRowId uniqueness broken — getRowNode("3") resolves one arbitrary node, so edits/paste/TASK-503 row identity are ambiguous. Fix: allocate append-delta ids past a high-water mark that accounts for locally-added rows (e.g. max(previousRows.length, highestAllocatedLocalId+1)) or assign local rows negative ids.
+    - webview/main.ts:1024 — `node.data[spec.field] = serverOld ?? node.data[spec.field] ?? ""` conflates NULL with "no original". Undo of an edit to a NULL server cell: serverOld=null falls through to the current (edited) value, so in the real UI the grid keeps showing the edit while the dirty entry is removed — grid and dirty map silently diverge for the most common SQL edge value. Probe: server name=null, edit→"EDITED", wired undo → cell does not return to null. Fix: guard on `serverOld !== undefined` (or row existence) and assign null explicitly.
+  minor:
+    - webview/main.ts:316-402 — keydown copy listener lost its `true, true` trailing args in the fix diff (undocumented drive-by); behavior still covered by onCellKeyDown and bubbles tests pass, but restore the capture flag or note the intent.
+    - webview/main.ts:40 — `type ColDef` imported, never used.
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: All 4 R1 blockers were genuinely attempted and 3 of 4 are fixed; finding 1 is the unfinished half of R1 #3 (paste path), findings 2–3 are new defects the stable-identity work introduced. All three fixes are small and localized to onGridPaste/onAddRowClick/onUndoClick.
+
+
+## Fix Round 2
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+SUMMARY: Fixed all 3 Round 2 blocking findings (#1 paste stable column mapping, #2 Add Row id no-collision with append-delta, #3 undo distinguishes NULL from MISSING). Also addressed both minor findings (keydown capture flag, unused `ColDef` import). Added 3 RED-first regression tests pinning each finding. Full suite 260/260 pass.
+TEST_PLAN_FOLLOWED: Round 2 reviewer findings → 3 regression tests (R2-A reorder+paste, R2-B Add-row+streaming id, R2-C undo-to-NULL).
+FILES_CHANGED:
+  - webview/main.ts:
+    - `currentSpecs` declaration restored (had been lost in Round 1 diff).
+    - `highestAllocatedId` module-level tracker introduced (init -1, bumped on Add Row and on append-delta) to keep server-truth ids and locally-added ids in disjoint spaces.
+    - `onGridPaste`: dropped `gridApi.getColumnDefs()` lookups; both `anchorCol` resolution and per-cell `spec.field` writes go through `currentSpecs` (stable). Column drag-reorder no longer misaddresses the underlying column.
+    - `onAddRowClick`: `newRowId = baseRows + newRowCount` → `newRowId = highestAllocatedId + 1` (and bump). New rows always land above every server and local id seen so far.
+    - Append-delta branch in renderGrid: `startIndex = previousRows.length` → `Math.max(previousRows.length, highestAllocatedId + 1)`. Each appended row bumps the high-water mark.
+    - First-render and reset branches seed `highestAllocatedId = r.result.rows.length - 1` so the first Add Row allocates above the server row range.
+    - `onUndoClick`: replaced `serverOld ?? node.data[spec.field] ?? ""` (which conflated null with absent) with explicit `serverRow !== undefined` guard; restores `null` for legitimate NULL server cells. Locally-added rows with no server twin are no-ops (no false revert).
+    - `simulateCellEdit` test seam: now mirrors real AG Grid by mutating `node.data[spec.field] = newValue` BEFORE invoking the handler. Necessary for the R2-C regression test to observe the post-edit state.
+    - keydown copy listener: restored `true` capture flag (Round 1 minor finding).
+    - Dropped unused `type ColDef` import (Round 1 minor finding).
+  - src/ui/__tests__/webviewEdit.test.ts: 3 new tests (R2-A, R2-B, R2-C) — each drives the bundle's REAL wiring through the registered handlers and asserts the stable-id/stable-colIndex/null-vs-absent contracts.
+TESTS_ADDED:
+  - src/ui/__tests__/webviewEdit.test.ts:
+    - R2-A "paste after column reorder targets the ORIGINAL stable colIndex" — 3-col grid reordered to [b,a,c] via setGridOption, paste "X\tY" at default anchor → snapshot colIndex 0/1 (original `a`/`b`), grid data `a=X, b=Y` (not `b=X, a=Y` which was the bug); undo pops LIFO colIndex=1 (b) → `b=b0`, `a` stays dirty.
+    - R2-B "Add Row during streaming does not collide with append-delta ids" — 3 rows + Add Row + grow to 5 server rows → 6 rows, every __rowId unique, every getRowNode(String(id)) resolves to its own node.
+    - R2-C "undo of an edit to a NULL cell restores NULL" — row with name=null edited via simulateCellEdit to "EDITED", undo → name returns to null (not "EDITED" or "").
+VERIFICATION:
+  command: npm run compile
+  result: dist/webview.js (2.2mb), dist/extension.js (4.6mb) — esbuild complete, exit 0
+  command: npx vitest run src/ui/__tests__/resultsGridModelEdit.test.ts src/ui/__tests__/webviewEdit.test.ts
+  result: Test Files 2 passed (2) / Tests 23 passed (23) / exit 0 (was 20 — 3 new R2 tests added, all green)
+  command: npm run typecheck
+  result: tsc --noEmit exit 0
+  command: npx vitest run (full suite, boundary)
+  result: Test Files 23 passed (23) / Tests 260 passed (260) / exit 0 — full regression suite clean (webviewBundle 8/8, webviewFilters 7/7, webviewTheme 3/3, webviewEdit 12/12, resultsGridModel 23/23, resultsGridModelEdit 11/11, agGridSmoke 3/3, and the rest)
+RED_OUTPUT:
+  - Before fix: R2-A failed at `expect(node!.data!.a).toBe("X")` received "Y" (paste used live getColumnDefs reordered index → wrote into `b` then `a`); R2-B failed at `expect(dups).toBe(0)` received 1 (add-row id=3 collided with stream append id=3); R2-C failed at `expect(restoredNode.data!.name).toBeNull()` received "EDITED" (`null ?? x` falls through so undo re-assigned the current edited value).
+  - After fix: all 23 target-file tests + all 260 full-suite tests pass.
+ISSUES:
+  - R2-C required updating `simulateCellEdit` to mutate `node.data[spec.field] = newValue` BEFORE invoking the registered handler. Real AG Grid does this automatically; the test seam had only invoked the handler (relying on AG Grid's pipeline to mutate). The seam change is small and keeps the seam faithful to the production code path. All previously-passing tests using the seam (10, 10b, 10c, 10f, 10h) still pass.
+  - The R2-A test ordering of paste writes is LIFO-based for undo (second cell popped first). Comment in test explicitly notes which `currentSpecs` index is restored first. The reorder path does NOT change paste colIndex → it always indexes into the stable `currentSpecs`, so the post-paste colIndex=0 ("a") / colIndex=1 ("b") mapping is preserved.
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for review (round 3)
