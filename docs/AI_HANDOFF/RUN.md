@@ -1,6 +1,6 @@
 Command: handoff-fullstack
-Goal: Results grid theme theo VS Code + Excel-like filters + 1 checkbox/dòng (cycle 2026-08-22-C); queued D: edit/paste/export, E: run .sh
+Goal: Cycle D+E — grid edit/paste/export/save + WHERE bar + Run .sh; release v1.4.0
 Base: main
-Phase: DONE — released v1.3.2
-Cursor: main @ 10b2403, tag v1.3.2 pushed, GitHub release asset vsdb-1.3.2.vsix live
-Next: Cycle D (Results grid edit mode) hoặc Cycle E (Run .sh) — xem INDEX.md queued
+Phase: P (plan done, tasks ready)
+Cursor: PLAN + 6 tasks written; W1 = TASK-501 + TASK-505
+Next: dispatch W1 executors (unic-code), sau đó review (unic-smart)

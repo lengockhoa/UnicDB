@@ -1,152 +1,100 @@
-# PLAN — Cycle 2026-08-22-C
-
-Base: `main` (HEAD 8b69a55, v1.3.1 released) · Release target: **1.3.2**
+# PLAN — cycle 2026-08-22-D+E
 
 ## §1 Intent
 
-User (nguyên văn): "Tôi muốn cái table này có theme theo theme của VSCode tôi dùng theme đen thui mà cái table này trắng. Tôi muốn bộ filter ở trên nữa. Tôi muốn cập nhật nó sao mà filter giống như bên excel á. Tôi thấy nó hay hơn search cũng thân thiện với người dùng hơn."
+User (2026-08-22, after v1.3.2 release): "chạy cho xong mấy round kia luôn cho đủ trọn gói rồi update lên version mới thôi" — làm nốt cả 2 cycle queued (D + E) trong một run fullstack, release một bản mới sau khi pass toàn bộ gates.
 
-Hai vấn đề:
-
-1. **Bug theme**: Results grid (AG Grid `ag-theme-quartz`) render trắng/light mặc dù webview đang ở VS Code dark theme. Root cause: `ag-theme-quartz.css` set cứng `--ag-background-color: #fff` (line 11) và các input AG Grid dùng UA-default (nền trắng) — `webview/styles.css` chỉ override sizing vars (`--ag-row-height`...), không override màu. Webview đã có sẵn bộ `--vscode-*` CSS vars (styles.css đã dùng 58 lần).
-2. **Excel-like filter**: hiện tại mỗi cột chỉ có floating text filter (1 ô text chạy contains) + quick search box. User muốn filter kiểu Excel: menu filter per-column với nhiều điều kiện (Contains / Equals / Starts With / Not Equal…) + kết hợp AND/OR.
-
-Success: mở VSDB Results trên VS Code dark → grid nền tối, chữ sáng, header/menu/input filter đều theo theme (và tự theo light theme nếu user đổi theme — KHÔNG hard-code đen). Mỗi cột có nút menu filter với đầy đủ điều kiện kiểu Excel Text/Number Filters. Quick search box giữ nguyên. Load-more không rơi vòng lặp khi column filter đang active.
+- **Cycle D** — Results grid edit mode + export (yêu cầu gốc 2026-08-22):
+  - Inline cell edit; **Cmd/Ctrl+Enter commit 1 lần (batch)** — không auto-commit từng cell.
+  - Paste từ Excel (TSV) vào vùng chọn; auto-ignore dòng/cột thừa (outside grid bounds).
+  - Export toolbar: TSV / CSV / XML / JSON / **SQL Inserts** / **SQL Insert Multirow** / **SQL Updates** / **Where Clause** (SQL modes có thêm Header checkbox + To Clipboard / Export to file) + Header checkbox (include column names) + To Clipboard / Export to file.
+  - Save chỉnh sửa theo PK; khi bảng **không PK**: PostgreSQL dùng `ctid` (kèm warning banner), adapters khác ref sử edit.
+  - **WHERE/ORDER BY bar**: input WHERE + ORDER BY, nút Re-Run áp vào query gốc.
+  - Toolbar grid: Refresh / Add Row / Delete Row / Undo / CSV toggle / Commit.
+- **Cycle E** — Run `.sh` button: mở file `.sh` → nút Run chạy nội dung script như chạy full file trong terminal (Integrated Terminal).
 
 ## §2 Scope
 
-**In-scope**
-- `webview/styles.css`: map AG Grid theme tokens → `--vscode-*` (kèm fallback cho browser smoke harness).
-- `webview/main.ts`: column filter defs kiểu Excel (`agTextColumnFilter` / `agNumberColumnFilter` + `filterParams`), biến `colFilterActive` gate load-more, footer `filtered` flag tính cả column filter.
-- `package.json` version 1.3.2 + `README.md` Results grid bullet.
-- Test: 2 file test mới theo pattern `src/ui/__tests__/webviewBundle.test.ts`.
+**In:**
+- `webview/main.ts` — edit model (dirty cells, add/delete row, undo), paste TSV handler, export menu (8 format + header toggle + clipboard/file), WHERE/ORDER BY bar, toolbar buttons, commit shortcut Cmd/Ctrl+Enter, PK/ctid warning banner.
+- `src/ui/resultsGridModel.ts` — pure logic: edit-state reducer, TSV parse, SQL/CSV/XML/JSON serializers, WHERE/ORDER BY composer. (testable, no DOM)
+- `src/ui/messages.ts` + `src/ui/resultsPanel.ts` + `src/extension.ts` — message protocol mở rộng (save edits, export file, refresh-with-clause, run-script).
+- `src/adapters/types.ts` + adapters (postgres/mysql/mssql) — build UPDATE/INSERT/DELETE theo PK/ctid, hỗ trợ `runScript` cho file terminal.
+- `src/ui/codeLensProvider.ts` (hoặc toolbar trong extension.ts) — Run .sh button.
+- Version bump 1.3.2 → **1.4.0** (minor: feature release), README, CHANGELOG nếu có.
 
-**Out-of-scope**
-- AG Grid Enterprise / Set Filter (checkbox list) — xem §3.
-- Đổi search box, pagination, column pinning UX mới.
-- Queued (cycle sau): "Results panel: AI assist tab" (giữ trong INDEX.md).
-
-**Wave constraint**: W1 = TASK-401 (styles.css) ∥ TASK-402 (main.ts) — file disjoint. W2 = TASK-403 (package.json + README).
+**Out:**
+- Enterprise AG Grid (set filter, …) — Community only.
+- Edit trên result của nhiều statement cùng lúc (chỉ tab active).
+- Edit khi result set là aggregate/window (no PK, non-postgres) — warning, ref sử.
 
 ## §3 Approach
 
-### (a) Theme — map root tokens, để quartz tự derive
+Paste: `paste` event trên grid host → parse TSV (split `\n` / `\t`) → tĩnh widen selection (chỉ trong bounds) → mark dirty. Excel cells thừa (ngoài grid) silently ignored; dòng thiếu cell → pad empty string.
 
-`webview/styles.css` import SAU `ag-theme-quartz.css` trong bundle (main.ts:21-23 → esbuild giữ thứ tự import) nên rule `.ag-theme-quartz {...}` ở styles.css thắng cascade cùng specificity. Quartz v36 derive phần lớn màu từ 4 root token bằng `color-mix` (đã verify trong `ag-theme-quartz.css`):
 
-| AG Grid var | Map tới | Derived tự động nhờ root |
-|---|---|---|
-| `--ag-background-color` | `var(--vscode-editor-background, #1e1e1e)` | header bg (mix 2%), menu bg (3%), panel bg, odd-row, tooltip, control panel |
-| `--ag-foreground-color` | `var(--vscode-foreground, #cccccc)` | border (mix 15%), secondary-border, header text (secondary-foreground), icon color, chip |
-| `--ag-active-color` | `var(--vscode-focusBorder, #007fd4)` | row hover (mix 12%), selected row (mix 8%), checkbox checked, input focus border |
-| `--ag-header-column-resize-handle-color` | `var(--vscode-panel-border, #3c3c3c)` | (không derive từ 3 root trên — map trực tiếp) |
+Export: pure serializer trong `resultsGridModel.ts` (input: columns, rows, options) → trả string → webview copy (`vscodeApi.postMessage({type:'copy'…})`) hoặc host writes file (`showSaveDialog` + `writeFile`). SQL modes thêm option `includeHeader` (Header checkbox) — SQL Inserts/Multirow/Updates ignore header (structure fixed); TSV/CSV/XML/JSON dùng header khi checked.
 
-**Input rule riêng (quan trọng nhất — đây là chỗ "trắng" lộ rõ nhất):** floating-filter inputs + filter menu inputs là `<input>`/`<textarea>` thật → UA stylesheet mặc định nền trắng chữ đen. Thêm rule specificity cao hơn element-rule của quartz:
+WHERE/ORDER BY bar: 2 input + nút Re-Run → post `{type:'requery', index, where, orderBy}` → host rebuild query `SELECT * FROM (<original>) sub WHERE … ORDER BY …` → chạy lại qua QueryRunner (limit cũ) → state mới.
 
-```css
-.ag-theme-quartz input.ag-input-field-input,
-.ag-theme-quartz textarea.ag-input-field-input {
-  background-color: var(--vscode-input-background, #2b2b2b);
-  color: var(--vscode-input-foreground, #cccccc);
-  border-color: var(--vscode-input-border, #3c3c3c);
-}
-```
+Run .sh: extension.ts đăng ký command `vsdb.runScript` (title "Run Script") + button (editor title) hiện khi `languageId === 'shellscript'` → `vscode.window.createTerminal({ name:'VSDB Script' })` → `terminal.sendText(fullFileContent)` → `terminal.show()`. "Như chạy full file" = gửi nguyên nội dung file vào terminal — giống paste file vào shell, không tạo tmp file, không `bash -c`.
 
-Fallback colors là dark (`#1e1e1e`/`#cccccc`/`#2b2b2b`) để `.cache/webview-repro/aggrid.html` (body `#1e1e1e`) render đúng dark khi smoke test ngoài VS Code. Trong VS Code mọi `--vscode-*` đều được define → fallback không bao giờ dùng → light theme user vẫn thấy light grid (đúng yêu cầu "theo theme VS Code tôi dùng", không hard-code đen).
+## §4 Test Plan (TDD)
 
-Rejected: `ag-theme-quartz-auto` (dark qua `prefers-color-scheme` OS — không phải VS Code theme, sai semantic); copy toàn bộ `ag-theme-quartz-dark` (không theo được light theme); map 20+ token riêng lẻ (thừa — color-mix đã derive).
+| # | Layer | Test | Expected |
+|---|-------|------|----------|
+| 1 | unit (resultsGridModel) | `parseTsvPaste` happy: 2x3 TSV → 2 rows 3 cells | exact arrays |
+| 2 | unit | `parseTsvPaste` edge: dòng cuối `\n` rỗng, cell có quote `"a\tb"`, CRLF | strip empty trailing line; quoted tab preserved |
+| 3 | unit | `parseTsvPaste` edge: row nhiều cells hơn grid columns | executor-layer clip theo grid bounds (hàm trả full, caller clip) |
+| 4 | unit | `serializeTsv/Csv` header on/off, comma-in-cell quoting | CSV quote + escape `"`;
+| 5 | unit | `serializeXml/Json` | well-formed, values escaped |
+| 6 | unit | `serializeSqlInserts` + multirow | `INSERT INTO t (cols) VALUES (...);` single + multirow gộp |
+| 7 | unit | `serializeSqlUpdates` | `UPDATE t SET c=v WHERE pk=…;` per row |
+| 8 | unit | `serializeWhereClause` | `WHERE pk1=v1 AND pk2=v2` đúng loại literal (string quote, number bare, null → `IS NULL`) |
+| 9 | unit | edit reducer: markDirty/undo/commit batch | dirty set đúng, undo pop stack, commit clear |
+| 10 | unit | `composeRequery` | SELECT wrapper + WHERE/ORDER BY inject an toàn |
+| 11 | unit | `buildSaveStatements` postgres ctid khi no PK | `UPDATE t SET … WHERE ctid='(0,1)'` + warning flag |
+| 12 | unit | `buildSaveStatements` mysql/mssql no PK | trả null + reason "no_pk" (ref sử edit) |
+| 13 | integration (jsdom) | webview edit flow: set cell value → dirty; Cmd+Enter → postMessage saveEdits 1 lần | posted payload đúng shape |
+|  eval | integration | paste event simulate → dirty cells đúng vùng | mark correct cells |
+|  eval | integration | export click → message copy/file với đúng serializer output | message shape |
+| 14 | integration (extension) | runScript command + editor title button | terminal created, sendText gọi với full content |
+| 15 | regression | full suite existing (232) vẫn pass | 0 fail |
 
-### (b) Filter UX — Excel Text/Number Filters bằng Community
-
-AG Grid **Set Filter (checkbox list per column) là ENTERPRISE-only** — bị từ chối vì: (1) licence thương phí vi phạm constraint MIT/Community-only của repo, (2) bundle Enterprise từ CDN vi phạm webview CSP. Trong Community, tương đương hành vi *Excel Text Filters* là `agTextColumnFilter` / `agNumberColumnFilter` với `filterOptions` tường minh + multi-condition AND/OR (`maxNumConditions: 2`) — chính là dropdown Excel "Text Filters → Contains / Equals / Begins With…" khi mở menu header.
-
-Thiết kế trong `renderGrid()` (main.ts:419-435):
-- `spec.kind === "number"` → `filter: "agNumberColumnFilter"`, `filterParams: { filterOptions: ["equals","notEqual","lessThan","lessThanOrEqual","greaterThan","greaterThanOrEqual","inRange","blank","notBlank"], defaultOption: "equals", maxNumConditions: 2, debounceMs: 200 }`
-- kind string/boolean → `filter: "agTextColumnFilter"`, `filterParams: { filterOptions: ["contains","notContains","equals","notEqual","startsWith","endsWith","blank","notBlank"], defaultOption: "contains", maxNumConditions: 2, debounceMs: 200, caseSensitive: false }`
-- Giữ `floatingFilter: true` (hàng filter nhanh trên đầu) + search box (user: filter hay hơn, nhưng search giữ làm phụ).
-
-**Gate load-more khi column filter active (bug mới do feature này mở ra):** `quickFilterActive` (main.ts:123) chỉ track search box. Khi column filter lược bớt row hiển thị, `onBodyScroll` (main.ts:597) thấy "near bottom" → `dispatchLoadMore` → append thêm → vẫn filtered → lặp vô hạn fetch. Fix:
-- Thêm `let colFilterActive = false;`
-- Hook `onFilterChanged` trên grid (event option của `createGrid`, main.ts:493-515): `colFilterActive = api.isColumnFilterPresent()` (GridApi v36 method, đã verify `gridApi.d.ts:867`; quick filter không set cờ này).
-- Gate 3 chỗ: `__checkLoadMore` (main.ts:551), `dispatchLoadMore` (main.ts:580), `onBodyScroll` (main.ts:597): thêm `|| colFilterActive`.
-- Reset `colFilterActive = false` khi: grid recreate (tab switch / first render — filter model mất theo grid) và branch `statementReset || columnsChanged` (main.ts:519, columnDefs swap → filter không còn hợp lệ).
-- Footer (main.ts:641): `const filtered = displayed !== loaded && (quickFilterActive || colFilterActive);`
-
-### (c) Test strategy
-
-`tsconfig` exclude `webview/` → lỗi TS trong webview chỉ bắt được qua esbuild compile + bundle test (pattern đã có: `src/ui/__tests__/webviewBundle.test.ts` eval `dist/webview.js` trong jsdom). TASK-401 test trên artifact `dist/webview.css` (CSS custom properties không cascade được trong jsdom `getComputedStyle` → assert trực tiếp trên shipped bundle: mapping present + đúng thứ tự cascade sau quartz defaults). TASK-402 test hành vi qua `window.__vsdb.gridApi.setFilterModel(...)` + `window.__vsdbCheckLoadMoreForHost()`.
-
-## §4 Test Plan
-
-| Type | Test Name | Expected |
-|---|---|---|
-| happy (401) | dist/webview.css chứa 4 mapping `--ag-*` → `--vscode-*` kèm fallback | mỗi var xuất hiện đúng 1 lần trong block override |
-| edge-1 (401) | Thứ tự cascade: block override nằm SAU base quartz trong dist/webview.css | `indexOf(quartz base) < indexOf(override)` — sai thứ tự = override thua cascade |
-| edge-2 (401) | Input rule `.ag-input-field-input` map `--vscode-input-background/foreground` | present — chống bug input trắng (UA default) |
-| happy (402) | Column filter `setFilterModel({name:{filterType:"text",type:"contains",filter:"beta"}})` | displayed = 1, footer text "1 of 3" |
-| happy (402) | Number filter `setFilterModel({id:{filterType:"number",type:"greaterThan",filter:2}})` | displayed = đúng subset số dòng thỏa điều kiện |
-| edge-1 (402) | Batched (50 loaded / rowCount 1000) + column filter active + gọi `__vsdbCheckLoadMoreForHost()` | KHÔNG post `{type:"loadMore"}` — chặn vòng lặp fetch |
-| edge-2 (402) | Clear filter (`setFilterModel(null)`) → checkLoadMore | loadMore ĐƯỢC post lại (transition on→off) |
-| regression (402) | Cùng edge-1 chạy trên code hiện tại | RED: loadMore bị post khi filter active (bug repro) |
-| happy (403) | version == 1.3.2, README bullet Results grid cập nhật (theme + Excel-style filter) | pass |
-| boundary (403) | Full suite `npx vitest run` | 19+ files / 222+ tests pass (regression net cho cả cycle) |
+Edge cases khác loại: (a) empty/quoted TSV, (b) boundary commit-with-no-edits (no-op, không post), (c) null literal SQL, (d) no-PK non-postgres.
 
 ## §5 Verification Commands
 
-Scripts có thật trong `package.json`: `compile` (esbuild), `typecheck` (tsc --noEmit), `test` (vitest run). Không có lint script — N/A. Lưu ý: `typecheck` KHÔNG cover `webview/` (tsconfig exclude) — webview được verify qua `compile` (esbuild parse lỗi là fail) + bundle test.
+```bash
+npm run compile
+npx vitest run
+npm run typecheck
+```
 
-- TASK-401: `npm run compile && npx vitest run src/ui/__tests__/webviewTheme.test.ts && npm run typecheck`
-- TASK-402: `npm run compile && npx vitest run src/ui/__tests__/webviewFilters.test.ts src/ui/__tests__/webviewBundle.test.ts && npm run typecheck`
-- TASK-403: `npm run compile && npx vitest run` + version/README asserts (xem task file)
-
-Wave boundary (W2): full `npx vitest run` bắt buộc — regression net.
+Browser smoke (release gate): `.cache/webview-repro/aggrid.html` — edit 1 cell → dirty indicator, Cmd+Enter → 1 postMessage, paste TSV → dirty vùng, export CSV → clipboard message đúng, WHERE input → requery message đúng.
 
 ## §6 Acceptance Criteria
 
-- [ ] Grid + header + filter menu + floating filter input theo VS Code theme (dark user → dark; không hard-code) — TASK-401
-- [ ] Mỗi cột dữ liệu có menu filter đa điều kiện kiểu Excel (text/number theo `ColumnSpec.kind`), AND/OR ≤2 conditions — TASK-402
-- [ ] Column filter active → load-more bị chặn; clear filter → hoạt động lại; footer "X of Y" đúng khi column filter active — TASK-402
-- [ ] Quick search box + floating filter row hành vi cũ không đổi (bundle test cũ vẫn pass) — TASK-402
-- [ ] Version 1.3.2, README Results grid bullet cập nhật, full suite pass — TASK-403
+- [ ] Edit/paste/undo hoạt động trên grid thật (browser smoke).
+- [ ] Cmd+Enter post đúng 1 message saveEdits chứa mọi dirty cells.
+- [ ] Export 8 format + header toggle + clipboard/file đúng output serializer.
+- [ ] PK/ctid save; no-PK non-postgres hiện warning + ref sử.
+- [ ] WHERE/ORDER BY re-run query.
+- [ ] Run .sh button chạy full file trong terminal.
+- [ ] Full suite pass (232+ mới), typecheck, compile, browser smoke pass.
+- [ ] Version 1.4.0, README, release v1.4.0 với VSIX.
 
-## §7 Task Split
+## §7 Task split
 
-| ID | Title | Size | Deps | Wave | Files owns |
-|---|---|---|---|---|---|
-| TASK-401 | Grid theme theo VS Code (CSS var mapping) | S | none | 1 | webview/styles.css, src/ui/__tests__/webviewTheme.test.ts (new) |
-| TASK-402 | Excel-like column filters + colFilterActive gating | M | none | 1 | webview/main.ts, src/ui/__tests__/webviewFilters.test.ts (new) |
-| TASK-403 | Version 1.3.2 + README + full-suite boundary | S | 401, 402 | 2 | package.json, README.md |
+- **TASK-501** (P0, M) — Edit model + paste TSV + undo + toolbar (add/delete/undo/CSV toggle) trong `src/ui/resultsGridModel.ts` (pure) + wire vào `webview/main.ts`.
+- **TASK-502** (P0, M) — Export: serializers (8 format) trong `src/ui/resultsGridModel.ts` + export toolbar UI + clipboard/file path qua host.
+- **TASK-503** (P0, L) — Save edits: message protocol + adapters buildSaveStatements (PK/ctid/no-PK) + warning banner + Commit button flow.
+- **TASK-504** (P1, S) — WHERE/ORDER BY bar + requery flow.
+- **TASK-505** (P1, S) — Run .sh button (extension.ts + terminal).
+- **TASK-506** (P1, S, W3 boundary) — Version 1.4.0 + README + full-suite gate.
 
-## Planner Self-Audit
-Checklist: 12/12 pass
-Fixed during audit: nothing
-Known gaps: none — visual verification cuối (mở VS Code thật) thuộc về user sau khi install vsix; smoke trong pipeline dùng .cache/webview-repro/aggrid.html + bundle tests (harness có sẵn từ cycle A).
+Waves (file-disjoint): W1: 501, 502, 505 (501/502 đụng resultsGridModel.ts nhưng là append-only sections khác nhau — reviewer chia shared file note; 505 chỉ extension.ts). W2: 503 (depends 501 edit state + 502 message shape). W3: 504, 506 (504 depends 501 UI harness; 506 boundary full suite).
 
-## Planner Report
-PLANNER_MODEL: unic/unic-smart
+Thật ra 501+502 cùng `resultsGridModel.ts` → move 502 xuống W2, 503 W3, 504 W4, 506 W5? Không — quá nhiều wave. Gộp: **W1: 501+505** (disjoint), **W2: 502** (resultsGridModel tiếp), **W3: 503**, **W4: 504**, **W5: 506** (boundary). 5 waves + review mỗi task. Chuẩn RULES: 1 commit/wave.
 
-## Plan Review Log
-
-### Round 1 — 2026-08-22 · unic/unic-smart
-Status: Approved
-
-COMPLETENESS:
-  - none — đủ 7 mục; task files TASK-401/402/403 có đủ 7 fields (ID/Title/Priority/Size/Deps/Wave/Files owns); test plan mỗi task ≥ happy + 2 edge khác loại (401: content + cascade-order; 402: loop-block + clear-transition + RED regression)
-CONSISTENCY:
-  - none — mọi claim đối chiếu code OK: main.ts:123 quickFilterActive, :493 createGrid, :550 __checkLoadMore, :578 dispatchLoadMore, :592 onBodyScroll, :519 columnsChanged branch, :641 footer; `isColumnFilterPresent()` đúng tại gridApi.d.ts:867 và quick filter không set cờ (isQuickFilterPresent riêng, :939); onFilterChanged là public event hợp lệ v36; quartz derive (header/menu/panel/border/hover/selected) từ đúng 4 root token qua color-mix (ag-theme-quartz.css:8-110); styles.css import SAU quartz (main.ts:21-23) → cascade cùng specificity thắng
-CLARITY:
-  - none — filterParams ghi tường minh theo kind (text vs number vs boolean→text), maxNumConditions/caseSensitive/debounceMs rõ; Community-only (Set Filter = Enterprise) ghi rõ kèm 2 lý do; không lint script là thật trong package.json → N/A hợp lệ
-SCOPE:
-  - none — W1 = 401 (styles.css + webviewTheme.test.ts) ∥ 402 (main.ts + webviewFilters.test.ts) file-disjoint; W2 = 403 (package.json + README.md) tách đúng
-YAGNI:
-  - none — 4 root token + 1 input rule là tối thiểu đúng (đã reject map 20+ token thừa vì color-mix tự derive); input rule dùng specificity cao hơn rule UA-white, đúng chỗ bug lộ rõ nhất
-
-NOTES: 2 minor non-blocking cho executor: (1) §3(b) reset `colFilterActive = false` cứng trong branch `statementReset || columnsChanged` (main.ts:519) — nếu colId sống sót qua columnDefs swap, AG Grid giữ filter model mà không phát filterChanged → footer đếm lệch đến lần filter kế tiếp; nên gán `colFilterActive = gridApi.isColumnFilterPresent()` sau `setGridOption("columnDefs", …)` thay vì hard false. (2) Input rule set `border-color` nhưng quartz không set border-style/width cho `.ag-input-field-input` (ag-theme-quartz.css:239-263 chỉ min-height/radius/padding) — background/color vẫn fix đúng bug trắng, border có thể không hiện (cosmetic).
-
-## Plan Review Log
-
-### Round 1 — findings applied without re-review (2026-08-22 · orchestrator unic/unic-smart)
-- Round 1 (PlanRevC, unic-smart): **Approved** — 0 blocking, 2 minor executor notes (colFilterActive re-poll sau columnDefs swap; input border cần border-style/width) → đã ghi chú vào TASK-402 Action.
-- Post-approval additions (user reports 2+3, same cycle C scope, same files):
-  - Double-checkbox mỗi dòng (user report #3): thêm Fix #3 vào TASK-402 Goal + test cases 6,7 — bỏ colDef `__select__`, dùng v36 `rowSelection.selectionColumnDef`.
-  - Queued cycle D (user report #2 — edit/paste/export/ctid): ghi vào INDEX queued section, KHÔNG vào cycle C.
+Planner self-audit: scope D+E lớn nhưng tách task sạch theo layer (pure model → UI wire → host/adapter → release); mọi test đều bite (serializer sai → diff string; reducer sai → state sai; integration giả postMessage). Kebab/dirty-map approach là cách AG Grid Community chuẩn (không Enterprise row editing). Giữ theme Theming API (không CSS legacy). Cmd+Enter commit batching khớp yêu cầu "commit 1 lần".
