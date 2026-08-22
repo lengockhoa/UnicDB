@@ -327,6 +327,264 @@ export function formatCell(v: unknown): string {
   return String(v);
 }
 
+// ---- Export serializers (TASK-502) ----------------------------------------
+//
+// Pure functions — no DOM, no vscode. The webview bundle imports these and
+// posts the rendered text to the host (Copy → existing `copy` message;
+// Export to file → new `exportFile` message that the host writes to disk).
+//
+// Output is deterministic (row order matches input order) and uses the
+// canonical cell string from formatCell so what the user sees on screen is
+// what they export.
+
+/**
+ * Quote-escape for SQL string literals. Single-quotes are doubled per
+ * ANSI SQL. Embedded `\n` → escape sequence so a SQL viewer renders the
+ * break; the round-trippable literal is the host's concern, not ours.
+ */
+export function sqlLiteral(v: unknown): string {
+  if (v === null || v === undefined) return "NULL";
+  if (typeof v === "number") {
+    if (Number.isNaN(v) || !Number.isFinite(v)) return "NULL";
+    return String(v);
+  }
+  if (typeof v === "boolean") return v ? "TRUE" : "FALSE";
+  if (typeof v === "bigint") return v.toString();
+  if (v instanceof Date) return `'${v.toISOString().replace(/'/g, "''")}'`;
+  const s = String(v);
+  // Escape backslash + single-quote + newline/tab/carriage-return.
+  const escaped = s
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "''")
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(/\t/g, "\\t");
+  return `'${escaped}'`;
+}
+
+/** CSV escape per RFC4180: if the cell contains `,`, `"`, `\r`, or `\n`,
+ * wrap in `"…"` and double every internal `"`. Otherwise return as-is. */
+function csvEscape(v: unknown): string {
+  if (v === null || v === undefined) return "";
+  const s = formatCell(v);
+  if (/[",\r\n]/.test(s)) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
+/** XML escape for element text content. */
+function xmlEscape(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+export type ExportFormat =
+  | "tsv"
+  | "csv"
+  | "xml"
+  | "json"
+  | "sql-inserts"
+  | "sql-inserts-multirow"
+  | "sql-updates"
+  | "sql-where";
+
+export interface SerializeOptions {
+  includeHeader: boolean;
+  tableName: string;
+  pkColumns: string[];
+  /** When set, sql-where uses these rows instead of `rows`. Other formats
+   * ignore this — they always operate on the full dataset. */
+  selectedRows?: unknown[][];
+}
+
+function headerLine(
+  columns: string[],
+  cells: (v: unknown) => string,
+  joiner: string,
+  includeHeader: boolean,
+): string[] {
+  return includeHeader ? [columns.map(cells).join(joiner)] : [];
+}
+
+function dataLines(
+  rows: unknown[][],
+  cells: (v: unknown) => string,
+  joiner: string,
+): string[] {
+  return rows.map((row) => row.map(cells).join(joiner));
+}
+
+/** Serialize to TSV — tab-separated with optional header. Uses formatCell
+ * so bigint/Date/null render the same on screen as in the export. */
+export function serializeTsv(
+  columns: string[],
+  rows: unknown[][],
+  opts: SerializeOptions,
+): string {
+  const out = [
+    ...headerLine(columns, formatCell, "\t", opts.includeHeader),
+    ...dataLines(rows, formatCell, "\t"),
+  ];
+  return out.join("\n");
+}
+
+/** Serialize to CSV — RFC4180 with optional header. */
+export function serializeCsv(
+  columns: string[],
+  rows: unknown[][],
+  opts: SerializeOptions,
+): string {
+  const out = [
+    ...headerLine(columns, csvEscape, ",", opts.includeHeader),
+    ...dataLines(rows, csvEscape, ","),
+  ];
+  return out.join("\n");
+}
+
+/** Serialize to XML — root `<rows>` with one `<row>` per record. */
+export function serializeXml(
+  columns: string[],
+  rows: unknown[][],
+  opts: SerializeOptions,
+): string {
+  const decl = '<?xml version="1.0" encoding="UTF-8"?>';
+  const body = rows
+    .map((row) => {
+      const cells = columns
+        .map((c, j) => `<${c}>${xmlEscape(formatCell(row[j] ?? null))}</${c}>`)
+        .join("");
+      return `<row>${cells}</row>`;
+    })
+    .join("");
+  void opts; // opts unused for XML — included for API symmetry
+  return `${decl}\n<rows>${body}</rows>`;
+}
+
+/** Serialize to JSON — `{ columns, rows }`. null preserved as null. */
+export function serializeJson(
+  columns: string[],
+  rows: unknown[][],
+  opts: SerializeOptions,
+): string {
+  void opts; // unused — included for API symmetry
+  return JSON.stringify({ columns, rows });
+}
+
+/** Serialize to INSERT statements. `multirow=true` emits ONE INSERT with
+ * comma-separated tuples; otherwise one INSERT per row. */
+export function serializeSqlInserts(
+  columns: string[],
+  rows: unknown[][],
+  opts: SerializeOptions & { multirow?: boolean },
+): string {
+  if (rows.length === 0) return "";
+  const colList = columns.join(", ");
+  if (opts.multirow) {
+    const tuples = rows.map((row) => `(${row.map(sqlLiteral).join(", ")})`);
+    return `INSERT INTO ${opts.tableName} (${colList}) VALUES ${tuples.join(", ")};`;
+  }
+  return rows
+    .map((row) => {
+      const vals = row.map(sqlLiteral).join(", ");
+      return `INSERT INTO ${opts.tableName} (${colList}) VALUES (${vals});`;
+    })
+    .join("\n");
+}
+
+/** Serialize to UPDATE statements — SET on non-PK columns, WHERE on PK. */
+export function serializeSqlUpdates(
+  columns: string[],
+  rows: unknown[][],
+  opts: SerializeOptions,
+): string {
+  if (rows.length === 0) return "";
+  if (opts.pkColumns.length === 0) {
+    throw new Error(
+      "serializeSqlUpdates: pkColumns must be non-empty (no PK → use sql-where)",
+    );
+  }
+  const pkSet = new Set(opts.pkColumns);
+  const setCols = columns.filter((c) => !pkSet.has(c));
+  if (setCols.length === 0) {
+    throw new Error(
+      "serializeSqlUpdates: every column is a PK — nothing to SET",
+    );
+  }
+  return rows
+    .map((row) => {
+      const setClause = setCols
+        .map((c) => {
+          const i = columns.indexOf(c);
+          return `${c}=${sqlLiteral(row[i])}`;
+        })
+        .join(", ");
+      const whereClause = opts.pkColumns
+        .map((c) => {
+          const i = columns.indexOf(c);
+          return `${c}=${sqlLiteral(row[i])}`;
+        })
+        .join(" AND ");
+      return `UPDATE ${opts.tableName} SET ${setClause} WHERE ${whereClause};`;
+    })
+    .join("\n");
+}
+
+/** Serialize to a WHERE clause fragment — per-row AND groups joined with
+ * OR. When no PK is supplied, falls back to all columns AND'd per row
+ * (documented inline in the toolbar tooltip). When `selectedRows` is
+ * undefined or empty, falls back to all rows. Returns "" if there are
+ * no rows. */
+export function serializeWhereClause(
+  columns: string[],
+  rows: unknown[][],
+  opts: SerializeOptions,
+): string {
+  const useRows =
+    opts.selectedRows && opts.selectedRows.length > 0 ? opts.selectedRows : rows;
+  if (useRows.length === 0) return "";
+  const keyCols = opts.pkColumns.length > 0 ? opts.pkColumns : columns;
+  const groups = useRows.map((row) => {
+    const parts = keyCols.map((c) => {
+      const i = columns.indexOf(c);
+      return `${c}=${sqlLiteral(row[i])}`;
+    });
+    return `(${parts.join(" AND ")})`;
+  });
+  return `WHERE ${groups.join(" OR ")}`;
+}
+
+/** Dispatch entry point — used by the webview export menu and the host
+ * message handler. */
+export function serializeExport(
+  format: ExportFormat,
+  columns: string[],
+  rows: unknown[][],
+  opts: SerializeOptions,
+): string {
+  switch (format) {
+    case "tsv":
+      return serializeTsv(columns, rows, opts);
+    case "csv":
+      return serializeCsv(columns, rows, opts);
+    case "xml":
+      return serializeXml(columns, rows, opts);
+    case "json":
+      return serializeJson(columns, rows, opts);
+    case "sql-inserts":
+      return serializeSqlInserts(columns, rows, opts);
+    case "sql-inserts-multirow":
+      return serializeSqlInserts(columns, rows, { ...opts, multirow: true });
+    case "sql-updates":
+      return serializeSqlUpdates(columns, rows, opts);
+    case "sql-where":
+      return serializeWhereClause(columns, rows, opts);
+  }
+}
+
+
 // ---- EditState + TSV paste (TASK-501) --------------------------------------
 //
 // Pure-logic edit model — no DOM / ag-grid imports. Consumed by webview/main.ts
@@ -480,6 +738,12 @@ export function applyPasteToDirty(
   for (let r = 0; r < parsed.length; r++) {
     if (r >= n) break;
     const targetRow = targetRowIds ? targetRowIds[r] : anchorRow + r;
+    if (targetRow < 0) continue;
+    // Dense-path clip (TASK-502 R4 inherited): when targetRowIds is not
+    // supplied, the computed `targetRow = anchorRow + r` may exceed the
+    // grid's rowCount even though `r < n` (= rowCount). The old formula
+    // silently stamped into non-existent rows. Drop the write instead.
+    if (!targetRowIds && targetRow >= rowCount) continue;
     if (targetRow < 0) continue;
     const row = parsed[r];
     for (let c = 0; c < row.length; c++) {

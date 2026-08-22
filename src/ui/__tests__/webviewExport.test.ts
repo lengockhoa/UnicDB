@@ -1,0 +1,337 @@
+// src/ui/__tests__/webviewExport.test.ts
+// TASK-502 — bundle-eval integration test for the export UI toolbar
+// (format select + Header checkbox + To Clipboard + Export to file buttons).
+//
+// Loads dist/webview.js (built via `npm run compile`) into jsdom, stubs
+// acquireVsCodeApi + ResizeObserver + matchMedia, then dispatches state
+// messages and asserts the toolbar wiring.
+//
+// Mirrors the bundle pattern from src/ui/__tests__/webviewFilters.test.ts.
+// If dist/webview.js is missing, all tests are skipped with an explanatory
+// message — `npm run compile` must run first.
+// @vitest-environment jsdom
+import type { GridApi } from "ag-grid-community";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { beforeAll, describe, expect, it } from "vitest";
+
+// ---- minimal DOM stubs for AG Grid browser APIs ---------------------------
+type ResizeObserverLike = {
+  observe(): void;
+  unobserve(): void;
+  disconnect(): void;
+};
+
+type MediaQueryListLike = {
+  matches: boolean;
+  media: string;
+  onchange: null;
+  addListener(): void;
+  removeListener(): void;
+  addEventListener(): void;
+  removeEventListener(): void;
+  dispatchEvent(): boolean;
+};
+
+beforeAll(() => {
+  const g = globalThis as unknown as {
+    ResizeObserver?: unknown;
+    matchMedia?: unknown;
+  };
+  if (typeof g.ResizeObserver === "undefined") {
+    g.ResizeObserver = class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    } as unknown as typeof ResizeObserverLike;
+  }
+  if (typeof g.matchMedia === "undefined") {
+    const factory = (query: string): MediaQueryListLike => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener(): void {},
+      removeListener(): void {},
+      addEventListener(): void {},
+      removeEventListener(): void {},
+      dispatchEvent(): boolean {
+        return false;
+      },
+    });
+    g.matchMedia = factory;
+  }
+});
+
+// ---- bundle loading --------------------------------------------------------
+
+const distPath = resolve(process.cwd(), "dist", "webview.js");
+const bundleSrc = existsSync(distPath) ? readFileSync(distPath, "utf8") : null;
+
+interface VsdbGlobals {
+  gridApi?: GridApi;
+}
+
+interface VsdbApi {
+  postMessage: (msg: unknown) => void;
+}
+
+function loadBundle(): {
+  received: Array<Record<string, unknown>>;
+  root: HTMLDivElement;
+} {
+  if (!bundleSrc) {
+    throw new Error(
+      "dist/webview.js missing — run `npm run compile` before this test",
+    );
+  }
+
+  document.body.innerHTML = '<div id="vsdb-root" class="vsdb-webview"></div>';
+  const root = document.getElementById("vsdb-root") as HTMLDivElement;
+
+  const received: Array<Record<string, unknown>> = [];
+  const api: VsdbApi = {
+    postMessage: (msg) => {
+      received.push(msg as Record<string, unknown>);
+    },
+  };
+  (globalThis as unknown as { acquireVsCodeApi: () => VsdbApi }).acquireVsCodeApi =
+    () => api;
+
+  (0, eval)(bundleSrc);
+
+  return { received, root };
+}
+
+function dispatchState(msg: Record<string, unknown>): void {
+  window.dispatchEvent(new MessageEvent("message", { data: msg }));
+}
+
+function threeRowsState(): Record<string, unknown> {
+  return {
+    type: "state",
+    header: "test.sql",
+    busy: false,
+    results: [
+      {
+        index: 0,
+        sql: "SELECT * FROM t",
+        status: "done",
+        result: {
+          columns: ["id", "name"],
+          rows: [
+            [1, "alpha"],
+            [2, "beta"],
+            [3, "gamma"],
+          ],
+          rowCount: 3,
+          durationMs: 1,
+        },
+        durationMs: 1,
+      },
+    ],
+  };
+}
+
+// ---- tests ----------------------------------------------------------------
+
+const itIfBundle = it.runIf(bundleSrc !== null);
+const describeIfBundle = describe.runIf(bundleSrc !== null);
+
+describeIfBundle("webview/main.ts export toolbar (TASK-502)", () => {
+  itIfBundle(
+    "1. toolbar renders a format <select> with 8 options",
+    () => {
+      const { root, received } = loadBundle();
+      dispatchState(threeRowsState());
+      void received;
+
+      const select = root.querySelector(
+        ".vsdb-export-format",
+      ) as HTMLSelectElement | null;
+      expect(select).toBeTruthy();
+      const opts = Array.from(select!.options).map((o) => o.value);
+      expect(opts).toEqual([
+        "tsv",
+        "csv",
+        "xml",
+        "json",
+        "sql-inserts",
+        "sql-inserts-multirow",
+        "sql-updates",
+        "sql-where",
+      ]);
+    },
+  );
+
+  itIfBundle(
+    "2. Header checkbox enabled for tsv/csv/xml/json, disabled for SQL modes",
+    () => {
+      const { root, received } = loadBundle();
+      dispatchState(threeRowsState());
+      void received;
+
+      const select = root.querySelector(
+        ".vsdb-export-format",
+      ) as HTMLSelectElement | null;
+      const headerCb = root.querySelector(
+        ".vsdb-export-header",
+      ) as HTMLInputElement | null;
+      expect(select).toBeTruthy();
+      expect(headerCb).toBeTruthy();
+
+      // Default TSV → enabled, unchecked.
+      expect(headerCb!.disabled).toBe(false);
+
+      // Switch to CSV → still enabled.
+      select!.value = "csv";
+      select!.dispatchEvent(new Event("change"));
+      expect(headerCb!.disabled).toBe(false);
+
+      // Switch to JSON → still enabled.
+      select!.value = "json";
+      select!.dispatchEvent(new Event("change"));
+      expect(headerCb!.disabled).toBe(false);
+
+      // Switch to XML → still enabled.
+      select!.value = "xml";
+      select!.dispatchEvent(new Event("change"));
+      expect(headerCb!.disabled).toBe(false);
+
+      // SQL modes → disabled + unchecked.
+      for (const sqlFmt of [
+        "sql-inserts",
+        "sql-inserts-multirow",
+        "sql-updates",
+        "sql-where",
+      ]) {
+        select!.value = sqlFmt;
+        select!.dispatchEvent(new Event("change"));
+        expect(headerCb!.disabled, sqlFmt).toBe(true);
+        expect(headerCb!.checked, sqlFmt).toBe(false);
+      }
+    },
+  );
+
+  itIfBundle(
+    "3. Copy button posts `{type:'copy', text}` with TSV (default), Header off → no header line",
+    () => {
+      const { root, received } = loadBundle();
+      dispatchState(threeRowsState());
+      void received;
+
+      const copyBtn = root.querySelector(
+        ".vsdb-export-copy",
+      ) as HTMLButtonElement | null;
+      expect(copyBtn).toBeTruthy();
+      copyBtn!.click();
+
+      const copyMsg = received.filter((m) => m.type === "copy");
+      expect(copyMsg.length).toBe(1);
+      const t = (copyMsg[0] as { text: string }).text;
+      // Header off (default) → first line is "1\talpha" (no "id\tname" line).
+      expect(t.split("\n")[0]).toBe("1\talpha");
+      expect(t).not.toContain("id\tname");
+      void root;
+    },
+  );
+
+  itIfBundle(
+    "4. Copy button with Header checked → header line is included",
+    () => {
+      const { root, received } = loadBundle();
+      dispatchState(threeRowsState());
+      void received;
+
+      const headerCb = root.querySelector(
+        ".vsdb-export-header",
+      ) as HTMLInputElement | null;
+      headerCb!.checked = true;
+      headerCb!.dispatchEvent(new Event("change"));
+
+      const copyBtn = root.querySelector(
+        ".vsdb-export-copy",
+      ) as HTMLButtonElement | null;
+      copyBtn!.click();
+
+      const copyMsg = received.filter((m) => m.type === "copy");
+      expect(copyMsg.length).toBe(1);
+      const t = (copyMsg[0] as { text: string }).text;
+      expect(t.split("\n")[0]).toBe("id\tname");
+      expect(t).toContain("1\talpha");
+      void root;
+    },
+  );
+
+  itIfBundle(
+    "5. Export-to-file button posts `{type:'exportFile', format, text}`",
+    () => {
+      const { root, received } = loadBundle();
+      dispatchState(threeRowsState());
+      void received;
+
+      const select = root.querySelector(
+        ".vsdb-export-format",
+      ) as HTMLSelectElement | null;
+      select!.value = "csv";
+      select!.dispatchEvent(new Event("change"));
+
+      const exportBtn = root.querySelector(
+        ".vsdb-export-file",
+      ) as HTMLButtonElement | null;
+      expect(exportBtn).toBeTruthy();
+      exportBtn!.click();
+
+      const exportMsgs = received.filter((m) => m.type === "exportFile");
+      expect(exportMsgs.length).toBe(1);
+      const m = exportMsgs[0] as { format: string; text: string };
+      expect(m.format).toBe("csv");
+      // CSV header off (default) → first line is "1,alpha".
+      expect(m.text.split("\n")[0]).toBe("1,alpha");
+      void root;
+    },
+  );
+
+  itIfBundle(
+    "6. sql-where export includes selected rows via WHERE clause",
+    () => {
+      const { root, received } = loadBundle();
+      dispatchState(threeRowsState());
+      void received;
+
+      // Select row 0 + row 2 via the grid API (AG Grid auto-selects when
+      // rowSelection.checkboxes is true).
+      const api = (window as unknown as { __vsdb?: { gridApi?: GridApi } })
+        .__vsdb?.gridApi;
+      expect(api).toBeTruthy();
+      api!.forEachNode((node) => {
+        if (node.data && (node.data.__rowId === 0 || node.data.__rowId === 2)) {
+          node.setSelected(true);
+        }
+      });
+
+      const select = root.querySelector(
+        ".vsdb-export-format",
+      ) as HTMLSelectElement | null;
+      select!.value = "sql-where";
+      select!.dispatchEvent(new Event("change"));
+
+      const exportBtn = root.querySelector(
+        ".vsdb-export-file",
+      ) as HTMLButtonElement | null;
+      exportBtn!.click();
+
+      const exportMsgs = received.filter((m) => m.type === "exportFile");
+      expect(exportMsgs.length).toBe(1);
+      const m = exportMsgs[0] as { format: string; text: string };
+      expect(m.format).toBe("sql-where");
+      expect(m.text).toContain("WHERE");
+      // No PK columns on the test table → fallback to all-cols AND.
+      // Selected rows: id=1 alpha, id=3 gamma → "id=1 AND name='alpha'" OR
+      // "id=3 AND name='gamma'".
+      expect(m.text).toBe(
+        "WHERE (id=1 AND name='alpha') OR (id=3 AND name='gamma')",
+      );
+      void root;
+    },
+  );
+});

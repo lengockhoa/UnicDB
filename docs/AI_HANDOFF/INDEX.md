@@ -16,7 +16,7 @@ W5: 506 (version boundary — full suite)
 |----|-------|----------|------|--------|-------|----------|------|
 | TASK-501 | Grid edit model + paste TSV + undo + toolbar | P0 | M | done | executor/feature-implementer | unic-smart | `docs/AI_HANDOFF/tasks/TASK-501.md` |
 | TASK-505 | Run .sh button (terminal) | P1 | S | done | executor/feature-implementer | unic-smart | `docs/AI_HANDOFF/tasks/TASK-505.md` |
-| TASK-502 | Export serializers + toolbar (8 format) | P0 | M | ready | - | - | `docs/AI_HANDOFF/tasks/TASK-502.md` |
+| TASK-502 | Export serializers + toolbar (8 format) | P0 | M | pending_review | executor/feature-implementer | - | `docs/AI_HANDOFF/tasks/TASK-502.md` |
 | TASK-503 | Save edits (PK/ctid) + Commit flow | P0 | L | ready | - | - | `docs/AI_HANDOFF/tasks/TASK-503.md` |
 | TASK-504 | WHERE/ORDER BY bar + requery | P1 | S | ready | - | - | `docs/AI_HANDOFF/tasks/TASK-504.md` |
 | TASK-506 | Version 1.4.0 + README + full-suite boundary | P1 | S | ready | - | - | `docs/AI_HANDOFF/tasks/TASK-506.md` |

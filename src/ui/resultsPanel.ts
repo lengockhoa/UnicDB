@@ -23,7 +23,7 @@
 // Phụ thuộc: vscode (UI-only).
 import * as vscode from "vscode";
 import type { QueryRunner, StatementResult } from "../core/queryRunner";
-import type { HostMessage, WebviewMessage } from "./messages";
+import type { HostMessage, WebviewMessage, ExportFileMessage } from "./messages";
 
 export interface ResultsPanelOptions {
   /** QueryRunner instance (để loadMore / cancel). */
@@ -210,6 +210,9 @@ export class ResultsPanel {
         // Copy text do webview build sẵn (tab-separated). Ghi vào clipboard.
         await vscode.env.clipboard.writeText(msg.text);
         break;
+      case "exportFile":
+        await this.handleExportFile(msg.format, msg.text);
+        break;
       case "ready":
         // Send initial state khi webview ready.
         this.postMessage({
@@ -221,6 +224,33 @@ export class ResultsPanel {
         break;
     }
   }
+
+  /**
+   * TASK-502 — Export-to-file handler. Show a save dialog with a sensible
+   * default file name based on the format, then UTF-8-encode the payload
+   * and write via workspace.fs. Cancellation (user closed the dialog) is
+   * a silent no-op — the webview does not expect any reply message.
+   *
+   * Format → default extension:
+   *   tsv|csv|xml|json → results.<ext>
+   *   sql-*            → results.sql
+   */
+  private async handleExportFile(
+    format: ExportFileMessage["format"],
+    text: string,
+  ): Promise<void> {
+    const ext = format.startsWith("sql-") ? "sql" : format;
+    const uri = await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.file(`results.${ext}`),
+      filters:
+        ext === "sql"
+          ? { SQL: ["sql"], "All Files": ["*"] }
+          : { [format.toUpperCase()]: [ext], "All Files": ["*"] },
+    });
+    if (!uri) return; // user cancelled
+    await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(text));
+  }
+
 
   /**
    * Lấy extension URI (dùng cho asWebviewUri). Trả về static placeholder

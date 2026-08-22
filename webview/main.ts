@@ -48,8 +48,10 @@ import {
   EditState,
   parseTsvPaste,
   applyPasteToDirty,
+  serializeExport,
   type ColumnSpec,
   type ResultsGridModel,
+  type ExportFormat,
 } from "../src/ui/resultsGridModel";
 
 // AG Grid v36 modular API — register all-community so createGrid initializes.
@@ -90,8 +92,9 @@ interface StatementResult {
 type LoadMoreMsg = { type: "loadMore"; index: number };
 type CancelMsg = { type: "cancel" };
 type CopyMsg = { type: "copy"; text: string };
+type ExportFileMsg = { type: "exportFile"; format: ExportFormat; text: string };
 type ReadyMsg = { type: "ready" };
-type WebviewMsg = LoadMoreMsg | CancelMsg | CopyMsg | ReadyMsg;
+type WebviewMsg = LoadMoreMsg | CancelMsg | CopyMsg | ExportFileMsg | ReadyMsg;
 
 // ---- Acquire VS Code API ---------------------------------------------------
 
@@ -257,6 +260,10 @@ interface PersistentDom {
   deleteRowBtn: HTMLButtonElement;
   undoBtn: HTMLButtonElement;
   csvToggleBtn: HTMLButtonElement;
+  exportFormat: HTMLSelectElement;
+  exportHeader: HTMLInputElement;
+  exportCopyBtn: HTMLButtonElement;
+  exportFileBtn: HTMLButtonElement;
   searchInput: HTMLInputElement;
   tabs: HTMLDivElement;
   /** Slot where the active panel renders. The grid host and messages live
@@ -391,6 +398,63 @@ function buildPersistentDom(): PersistentDom {
   csvToggleBtn.title = "Toggle CSV preview (raw values vs formatted)";
   csvToggleBtn.addEventListener("click", () => onCsvToggleClick());
   toolbar.appendChild(csvToggleBtn);
+
+  // TASK-502 — export toolbar. The format <select> + Header checkbox + Copy
+  // and Export-to-file buttons live between the CSV toggle and the search
+  // input so they sit next to the other transform actions. The Header
+  // checkbox is disabled for SQL modes whose structure is fixed.
+  const exportFormat = document.createElement("select");
+  exportFormat.className = "vsdb-export-format vsdb-btn";
+  for (const fmt of [
+    "tsv",
+    "csv",
+    "xml",
+    "json",
+    "sql-inserts",
+    "sql-inserts-multirow",
+    "sql-updates",
+    "sql-where",
+  ] as const) {
+    const opt = document.createElement("option");
+    opt.value = fmt;
+    opt.textContent = fmt;
+    exportFormat.appendChild(opt);
+  }
+  exportFormat.value = "tsv";
+  exportFormat.title = "Export format";
+  toolbar.appendChild(exportFormat);
+
+  const exportHeader = document.createElement("input");
+  exportHeader.type = "checkbox";
+  exportHeader.className = "vsdb-export-header";
+  exportHeader.title = "Include header row (TSV/CSV/XML/JSON only)";
+  toolbar.appendChild(exportHeader);
+
+  const exportCopyBtn = document.createElement("button");
+  exportCopyBtn.textContent = "Copy";
+  exportCopyBtn.className = "vsdb-btn vsdb-export-copy";
+  exportCopyBtn.title = "Copy serialized export to clipboard";
+  exportCopyBtn.addEventListener("click", () => onExportCopyClick());
+  toolbar.appendChild(exportCopyBtn);
+
+  const exportFileBtn = document.createElement("button");
+  exportFileBtn.textContent = "Export to file";
+  exportFileBtn.className = "vsdb-btn vsdb-export-file";
+  exportFileBtn.title = "Save serialized export to a file";
+  exportFileBtn.addEventListener("click", () => onExportFileClick());
+  toolbar.appendChild(exportFileBtn);
+
+  // Toggle Header checkbox enable/disable based on format — SQL modes have
+  // a fixed structure (INSERT column list, UPDATE SET list, WHERE groups)
+  // so a header checkbox has no meaning and is forced off.
+  const updateExportHeaderState = (): void => {
+    const v = exportFormat.value;
+    const isSql = v.startsWith("sql-");
+    exportHeader.disabled = isSql;
+    exportHeader.checked = isSql ? false : exportHeader.checked;
+  };
+  exportFormat.addEventListener("change", updateExportHeaderState);
+  updateExportHeaderState();
   const searchInput = document.createElement("input");
   searchInput.type = "text";
   searchInput.placeholder = "Search…";
@@ -474,6 +538,10 @@ function buildPersistentDom(): PersistentDom {
     deleteRowBtn,
     undoBtn,
     csvToggleBtn,
+    exportFormat,
+    exportHeader,
+    exportCopyBtn,
+    exportFileBtn,
     searchInput,
     tabs,
     panel,
@@ -1159,6 +1227,86 @@ function onCsvToggleClick(): void {
     valueFormatter: (p: { value: unknown }) => formatDataCell(p.value),
   }));
   gridApi.setGridOption("columnDefs", next);
+}
+
+/** TASK-502 — read the current export settings from the toolbar and the
+ * active statement result. Returns null if no statement is rendered. */
+function readExportInput():
+  | {
+      format: ExportFormat;
+      includeHeader: boolean;
+      columns: string[];
+      rows: unknown[][];
+      pkColumns: string[];
+      tableName: string;
+      selectedRows: unknown[][];
+    }
+  | null {
+  if (!dom) return null;
+  const select = dom.exportFormat;
+  const headerCb = dom.exportHeader;
+  const format = select.value as ExportFormat;
+  const includeHeader = headerCb.checked;
+  const r = currentStatement;
+  if (!r || !r.result) return null;
+  // sql-where uses the grid's selection (rendered model + AG Grid selection);
+  // other formats always use the statement rows (full result set).
+  const selected: unknown[][] = [];
+  if (format === "sql-where" && gridApi) {
+    const selNodes = gridApi.getSelectedRows() as Array<Record<string, unknown>>;
+    if (selNodes.length > 0) {
+      for (const obj of selNodes) {
+        const row: unknown[] = [];
+        for (const s of currentSpecs) {
+          row.push(obj[s.field]);
+        }
+        selected.push(row);
+      }
+    }
+  }
+  return {
+    format,
+    includeHeader,
+    columns: r.result.columns,
+    rows: r.result.rows,
+    pkColumns: [],
+    tableName: "results",
+    selectedRows: selected,
+  };
+}
+
+function onExportCopyClick(): void {
+  const input = readExportInput();
+  if (!input) return;
+  const text = serializeExport(
+    input.format,
+    input.columns,
+    input.rows,
+    {
+      includeHeader: input.includeHeader,
+      tableName: input.tableName,
+      pkColumns: input.pkColumns,
+      selectedRows: input.selectedRows,
+    },
+  );
+  postToHost({ type: "copy", text });
+}
+
+function onExportFileClick(): void {
+  const input = readExportInput();
+  if (!input) return;
+  const text = serializeExport(
+    input.format,
+    input.columns,
+    input.rows,
+    {
+      includeHeader: input.includeHeader,
+      tableName: input.tableName,
+      pkColumns: input.pkColumns,
+      selectedRows: input.selectedRows,
+    },
+  );
+  postToHost({ type: "exportFile", format: input.format, text });
 }
 
 function copySelectionToHost(): void {

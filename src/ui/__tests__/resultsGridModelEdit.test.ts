@@ -167,4 +167,26 @@ describe("applyPasteToDirty", () => {
     expect(s.dirtyCount).toBe(1);
     expect(s.snapshot()[0].value).toBe("a");
   });
+  it("8c. dense path: targetRow beyond rowCount is clipped (TASK-502 R4 inherited)", () => {
+    // anchorRow=2, rowCount=3, parsed has 3 rows starting at anchor → last
+    // computed targetRow is 4 which exceeds rowCount=3 → must be dropped, not
+    // stamped into a non-existent row. Pre-R4 dense formula did not clip
+    // because the loop bound `n` was a separate variable; targetRow used the
+    // formula `anchorRow + r` without per-row bound check.
+    const s = new EditState();
+    const parsed = [
+      ["x1"],
+      ["x2"],
+      ["x3"],
+    ];
+    applyPasteToDirty(s, /* anchorRow */ 2, /* anchorCol */ 0, parsed, /* colCount */ 1, /* rowCount */ 3);
+    // Only targetRow 2 → value "x1" should land; x2/x3 must be dropped.
+    expect(s.dirtyCount).toBe(1);
+    const snap = s.snapshot();
+    expect(snap[0].rowId).toBe(2);
+    expect(snap[0].colIndex).toBe(0);
+    expect(snap[0].value).toBe("x1");
+    expect(snap.find((e) => e.rowId === 3)).toBeUndefined();
+    expect(snap.find((e) => e.rowId === 4)).toBeUndefined();
+  });
 });

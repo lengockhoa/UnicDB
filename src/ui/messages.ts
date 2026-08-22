@@ -50,8 +50,13 @@ export interface CopyMessage {
   text: string;
 }
 
+export interface ExportFileMessage {
+  type: "exportFile";
+  format: "tsv" | "csv" | "xml" | "json" | "sql-inserts" | "sql-inserts-multirow" | "sql-updates" | "sql-where";
+  text: string;
+}
+
 export interface ReadyMessage {
   type: "ready";
 }
-
-export type WebviewMessage = LoadMoreMessage | CancelMessage | CopyMessage | ReadyMessage;
+export type WebviewMessage = LoadMoreMessage | CancelMessage | CopyMessage | ExportFileMessage | ReadyMessage;
