@@ -23,13 +23,16 @@
 //     switching to Messages) — the grid host is detached and re-attached as a
 //     single child of the panel rather than destroyed, so the AG Grid instance
 //     stays in the live DOM.
-import "ag-grid-community/styles/ag-grid.css";
-import "ag-grid-community/styles/ag-theme-quartz.css";
+// NOTE: no ag-grid stylesheet imports — the JS Theming API (themeQuartz
+// below) generates its own CSS at runtime. Importing ag-grid.css alongside
+// triggers AG Grid error #106 (Theming API + Legacy Themes conflict) and the
+// grid refuses to render. Only our own overrides are imported.
 import "./styles.css";
 import {
   createGrid,
   AllCommunityModule,
   ModuleRegistry,
+  themeQuartz,
   type BodyScrollEvent,
   type FilterChangedEvent,
 } from "ag-grid-community";
@@ -268,7 +271,9 @@ function buildPersistentDom(): PersistentDom {
   );
 
   const gridHost = document.createElement("div");
-  gridHost.className = "ag-theme-quartz";
+  // Theme class is managed by the JS Theming API (themeQuartz) — no legacy
+  // `ag-theme-quartz` class (that is the legacy-CSS system, error #106 pair).
+  gridHost.className = "vsdb-ag-host";
   gridHost.style.flex = "1";
   gridHost.style.width = "100%";
   gridHost.style.minHeight = "0";
@@ -524,8 +529,18 @@ function renderGrid(): void {
     // Fresh grid → any previous column filter no longer applies.
     colFilterActive = false;
     gridApi = createGrid(gridHost, {
-      columnDefs: colDefs,
+      // VS Code theme follow (TASK-401 fix round 2): AG v36 paints the grid
+      // via the JS Theming API (inline sheet + element-level vars), NOT via
+      // the quartz stylesheet — CSS overrides on .ag-theme-quartz lose the
+      // cascade to element-level vars. Bind theme params to VS Code vars.
+      theme: themeQuartz.withParams({
+        backgroundColor: "var(--vscode-editor-background, #1e1e1e)",
+        foregroundColor: "var(--vscode-foreground, #cccccc)",
+        accentColor: "var(--vscode-focusBorder, #007fd4)",
+        borderColor: "var(--vscode-panel-border, #3c3c3c)",
+      }),
       rowData: rowsToObjects(r.result.rows, specs),
+      columnDefs: colDefs,
       rowSelection: {
         mode: "multiRow",
         // v36 selection column is auto-created when checkboxes/headerCheckbox

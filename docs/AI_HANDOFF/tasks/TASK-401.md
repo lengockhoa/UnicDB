@@ -128,3 +128,13 @@ FINDINGS:
     - webview/styles.css fallback colors là dark-only (#1e1e1e...) — đúng spec task (kèm dark fallback; VS Code luôn inject --vscode-* nên fallback hầu như không dùng). Không cần sửa.
 NEXT_STATUS_FOR_INDEX: approved_minor
 NOTES: CSS mapping đúng 4 token spec, không map thêm; input rule có đủ border-color/style/width; sizing vars cũ giữ nguyên (diff 0 deletion). Selector `ag-input-field-input` unique trong dist nên regex test #3 khớp đúng ruleset.
+
+## Executor Report (fix round 2 — orchestrator direct)
+
+- EXECUTOR_TOOL: claude-code (omp session)
+- EXECUTOR_MODEL: unic/unic-smart
+- Root cause vòng 1 sai phương pháp: AG v36 KHÔNG paint grid từ stylesheet quartz — nó dùng JS Theming API (inline stylesheet + element-level CSS vars). CSS override `.ag-theme-quartz { --ag-background-color: ... }` thua cascade trước element-level vars → grid vẫn trắng. Browser probe chứng minh: `--ag-background-color` resolve #1e1e1e nhưng `.ag-root-wrapper` vẫn rgb(255,255,255).
+- Fix: (1) `theme: themeQuartz.withParams({backgroundColor/foregroundColor/accentColor/borderColor: "var(--vscode-*, #fallback)"})` trong createGrid; (2) XÓA import ag-grid.css + ag-theme-quartz.css (chúng trigger AG error #106 "Theming API and Legacy Themes are both used" → grid refuse render); (3) host class đổi thành `vsdb-ag-host` (neutral); (4) styles.css giữ input UA-override (vscode input vars) + sizing vars trên `.vsdb-ag-host`; (5) webviewTheme.test.ts rewrite assert theme params trong dist/webview.js + no-legacy-css trong dist/webview.css; agGridSmoke css assertion update tương ứng.
+- Cùng lúc phát hiện + fix: `rowData` bị mất khỏi createGrid options (không rõ exec nào làm rơi — có thể merge conflict giữa 2 waves) → grid 0 rows. Restore + regression được 15 tests hiện có cover (bundle tests sẽ fail ngay nếu rowData mất).
+- Verification fresh: `npm run compile` ✓; `npx vitest run` → 21 files / 232 tests pass ✓; `npm run typecheck` exit 0 ✓.
+- Browser smoke (headless Chromium, `.cache/webview-repro/aggrid.html` + vscode dark vars stub): rwBg rgb(30,30,30)=#1e1e1e ✓; header text #cccccc ✓; 31 rows render ✓; 1 selection-checkbox/row ✓; filter contains → footer "0 of 50" ✓; clear → 50 ✓; append 120 rows + grid alive ✓.

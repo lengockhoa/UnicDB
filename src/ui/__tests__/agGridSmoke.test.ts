@@ -116,10 +116,11 @@ describe("ag-grid-community smoke (TASK-201)", () => {
     }
   });
 
-  it("dist/webview.css contains ag-grid quartz + root CSS prefixes (happy)", () => {
+  it("dist/webview.css: legacy quartz theme NOT bundled; Theming API generates CSS at runtime (fix round 2)", () => {
     const cssPath = resolve(process.cwd(), "dist", "webview.css");
     const css = readFileSync(cssPath, "utf8");
-    expect(css).toMatch(/\.ag-theme-quartz/);
-    expect(css).toMatch(/\.ag-root/);
+    // Legacy quartz stylesheet must NOT be bundled (AG error #106 conflict).
+    expect(css).not.toMatch(/\.ag-theme-quartz\s*,\s*\.ag-theme-quartz-dark/);
+    expect(css).toMatch(/\.vsdb-ag-host/);
   });
 });

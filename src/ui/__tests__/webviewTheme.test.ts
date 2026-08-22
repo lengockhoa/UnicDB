@@ -1,87 +1,66 @@
 // src/ui/__tests__/webviewTheme.test.ts
-// TASK-401 — CSS var mapping `--ag-*` → `--vscode-*` in dist/webview.css.
+// TASK-401 (fix round 2) — VS Code theme binding via the AG Grid JS Theming
+// API. AG v36 paints the grid from `themeQuartz.withParams(...)` passed to
+// `createGrid`; the generated stylesheet + element-level vars BEAT any CSS
+// overrides on a `.ag-theme-quartz` class (which is the legacy system and
+// conflicts with the API — AG error #106). So the assertions target:
 //
-// Reads the bundled CSS artifact produced by `npm run compile` (esbuild
-// concatenates webview/styles.css into dist/webview.css via the import in
-// webview/main.ts). If the artifact is missing, the test is skipped with an
-// explanatory message — same pattern as src/ui/__tests__/webviewBundle.test.ts.
+//   1. dist/webview.js  — theme params bound to --vscode-* CSS variables.
+//   2. dist/webview.css — no legacy quartz stylesheet bundled; input rules
+//      (UA-stylesheet override for dark themes) on the neutral host class.
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const distPath = resolve(process.cwd(), "dist", "webview.css");
-const css = existsSync(distPath) ? readFileSync(distPath, "utf8") : null;
+const jsPath = resolve(process.cwd(), "dist", "webview.js");
+const cssPath = resolve(process.cwd(), "dist", "webview.css");
+const js = existsSync(jsPath) ? readFileSync(jsPath, "utf8") : null;
+const css = existsSync(cssPath) ? readFileSync(cssPath, "utf8") : null;
 
-const itIfCss = it.runIf(css !== null);
-const describeIfCss = describe.runIf(css !== null);
+const itIfBuilt = it.runIf(js !== null && css !== null);
+const describeIfBuilt = describe.runIf(js !== null && css !== null);
 
-describeIfCss("webview/styles.css theme mapping (TASK-401)", () => {
-  itIfCss(
-    "maps the 4 quartz root tokens to --vscode-* with fallbacks",
-    () => {
-      const expectations: Array<[string, RegExp]> = [
-        [
-          "--ag-background-color",
-          /--ag-background-color:\s*var\(--vscode-editor-background,\s*#1e1e1e\)/,
-        ],
-        [
-          "--ag-foreground-color",
-          /--ag-foreground-color:\s*var\(--vscode-foreground,\s*#cccccc\)/,
-        ],
-        [
-          "--ag-active-color",
-          /--ag-active-color:\s*var\(--vscode-focusBorder,\s*#007fd4\)/,
-        ],
-        [
-          "--ag-header-column-resize-handle-color",
-          /--ag-header-column-resize-handle-color:\s*var\(--vscode-panel-border,\s*#3c3c3c\)/,
-        ],
-      ];
-      for (const [name, re] of expectations) {
-        expect(css!, name).toMatch(re);
-      }
-    },
-  );
+describeIfBuilt("VS Code theme via Theming API (TASK-401 fix round 2)", () => {
+  itIfBuilt("theme params bind --vscode-* vars with dark-safe fallbacks", () => {
+    expect(js!, "themeQuartz imported").toMatch(/themeQuartz/);
+    expect(js!).toMatch(
+      /backgroundColor:\s*"var\(--vscode-editor-background,\s*#1e1e1e\)"/,
+    );
+    expect(js!).toMatch(
+      /foregroundColor:\s*"var\(--vscode-foreground,\s*#cccccc\)"/,
+    );
+    expect(js!).toMatch(
+      /accentColor:\s*"var\(--vscode-focusBorder,\s*#007fd4\)"/,
+    );
+    expect(js!).toMatch(
+      /borderColor:\s*"var\(--vscode-panel-border,\s*#3c3c3c\)"/,
+    );
+  });
 
-  itIfCss(
-    "override block sits AFTER any base quartz `--ag-background-color: #fff` so cascade wins",
-    () => {
-      const baseIdx = css!.indexOf("--ag-background-color: #fff");
-      const overrideIdx = css!.indexOf(
-        "--ag-background-color: var(--vscode-editor-background",
-      );
-      // Base token must be present (from ag-theme-quartz.css) so the assertion
-      // is meaningful. If the base index is -1, fall back to asserting the
-      // override simply exists in the bundle.
-      if (baseIdx === -1) {
-        expect(overrideIdx).toBeGreaterThan(-1);
-        return;
-      }
-      expect(overrideIdx).toBeGreaterThan(baseIdx);
-    },
-  );
+  itIfBuilt("legacy ag-grid stylesheets NOT bundled (error #106 pair)", () => {
+    // The legacy quartz stylesheet defines this var list — its presence means
+    // someone re-added the stylesheet import alongside the theme API.
+    expect(css!).not.toMatch(/--ag-checkbox-unchecked-color:\s*color-mix/);
+    expect(js!).not.toMatch(/styles\/ag-grid\.css/);
+    expect(js!).not.toMatch(/styles\/ag-theme-quartz\.css/);
+  });
 
-  itIfCss(
-    "input rule declares --vscode-input-background, --vscode-input-foreground, --vscode-input-border together",
-    () => {
-      // The input ruleset must contain all 3 declarations and target both
-      // input.ag-input-field-input and textarea.ag-input-field-input.
-      const re = /\.ag-theme-quartz\s+input\.ag-input-field-input[\s\S]*?\.ag-theme-quartz\s+textarea\.ag-input-field-input\s*\{([^}]*)\}/;
-      const match = css!.match(re);
-      expect(match, "input ruleset not found in bundled CSS").not.toBeNull();
-      const body = match![1];
-      expect(body).toMatch(
-        /background-color:\s*var\(--vscode-input-background,\s*#2b2b2b\)/,
-      );
-      expect(body).toMatch(
-        /color:\s*var\(--vscode-input-foreground,\s*#cccccc\)/,
-      );
-      // border-color alone doesn't render — must accompany style + width.
-      expect(body).toMatch(
-        /border-color:\s*var\(--vscode-input-border,\s*#3c3c3c\)/,
-      );
-      expect(body).toMatch(/border-style:\s*solid/);
-      expect(body).toMatch(/border-width:\s*1px/);
-    },
-  );
+  itIfBuilt("input rules override UA white inputs on dark themes (host class)", () => {
+    const re =
+      /\.vsdb-ag-host\s+input\.ag-input-field-input[\s\S]*?\.vsdb-ag-host\s+textarea\.ag-input-field-input\s*\{([^}]*)\}/;
+    const match = css!.match(re);
+    expect(match, "input ruleset not found in bundled CSS").not.toBeNull();
+    const body = match![1];
+    expect(body).toMatch(
+      /background-color:\s*var\(--vscode-input-background,\s*#2b2b2b\)/,
+    );
+    expect(body).toMatch(
+      /color:\s*var\(--vscode-input-foreground,\s*#cccccc\)/,
+    );
+    expect(body).toMatch(
+      /border-color:\s*var\(--vscode-input-border,\s*#3c3c3c\)/,
+    );
+    expect(body).toMatch(/border-style:\s*solid/);
+    expect(body).toMatch(/border-width:\s*1px/);
+  });
 });
