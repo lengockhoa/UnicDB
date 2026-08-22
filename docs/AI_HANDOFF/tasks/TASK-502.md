@@ -311,3 +311,23 @@ Test Files  1 failed (1)
 - **Real-engine verification**: R2.updates.3 pipes the emitted output through `sqlite3 :memory:` — the test fails if sqlite emits a parse error. The pre-fix `UPDATE t WHERE (id=1)` failed this probe with `near "WHERE": syntax error`; the post-fix output (`-- row N skipped…` only) passes cleanly. R2.xml.1-4 use jsdom's DOMParser in `application/xml` mode (initialize JSDOM with `<?xml version="1.0"?><root/>`, then `parseFromString(text, "application/xml")`) — bad XML returns a `<parsererror>` root, which we detect and throw on. The reviewer's minor #2 is satisfied: a real parser, not substring match.
 - **IndexMap minor (reviewer R2 minor #3)**: both `serializeSqlUpdates` and `serializeWhereClause` now build a `colIdx: Map<string, number>` once per call, dropping the O(n²) `columns.indexOf(c)` per column. Missing PK columns silently skip instead of emitting `col=NULL`.
 - **Contract preserved**: `serializeExport` signature + `ExportFormat` union + `exportFile` message all unchanged.
+
+## Reviewer Verdict (Round 3)
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run src/ui/__tests__/resultsGridModelExport.test.ts src/ui/__tests__/webviewExport.test.ts && npm run typecheck
+  result: compile OK (esbuild); 46 pass / 0 fail (39 + 7); typecheck exit 0; full suite 25 files / 309 pass (shared resultsGridModel.ts regression net)
+BLOCKER_PROBES (independent of shipped tests; probe file deleted after run):
+  - XML: serializeXml with cols [`a&b<c>"d"`, `tot'al`, `2nd "x"`, `he said "hi"&<ok>`, `nl\n\tname`] → Python ElementTree (not jsdom) parsed OK; attribute names round-trip exactly (`&quot;`/`&apos;`/`&amp;`/`&lt;`/`&gt;`); whitespace names normalize per XML spec 3.3.3 (well-formed, not lossy quotes). R2 blocker #1 FIXED.
+  - SQL: empty-PK (1-col, 2 rows) and all-cols-PK outputs contain ZERO `UPDATE` statements (line-anchored check) — only `-- row N skipped: no non-key columns to update` comments; happy path still `UPDATE t SET v='x' WHERE id=1;`. Full output (skip comments + happy UPDATE + CREATE/BEGIN/COMMIT) executed cleanly on sqlite3 :memory: (exit 0, no parse error). R2 blocker #2 FIXED.
+TEST_PLAN_COVERAGE: all-followed — R2 added 4 hostile-name DOMParser tests + 4 skip-comment tests incl. sqlite round-trip; R1/R0 suites intact (39 + 7 pass fresh)
+FINDINGS:
+  critical: (none)
+  important: (none)
+  minor:
+    - src/ui/resultsGridModel.ts:501 (serializeSqlUpdates) — unknown-PK-col rows degrade to `WHERE ()` / empty-parens group; unreachable from the webview (readExportInput passes pkColumns: []), TASK-503 supplies real PKs; note for W3.
+NEXT_STATUS_FOR_INDEX: done
+NOTES: Round-2 blockers verified fixed with probes independent of the executor's own tests (ElementTree + sqlite3 vs jsdom + shipped assertions); no new defects introduced — sqlLiteral/xmlEscape/serializeSqlInserts unchanged in R2 diff.
