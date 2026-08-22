@@ -1,7 +1,7 @@
 # TASK-504 — WHERE/ORDER BY bar + requery
 
-- Status: `changes_requested`
-- Owner: `Exec504`
+- Status: `approved_minor`
+- Owner: `Fix504R2`
 - Reviewer: `unic-smart`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §7
 
@@ -270,3 +270,26 @@ ISSUES:
   - The integration test (queryRunner.integration.test.ts) was updated for the new pickResult contract (rowCount=null on initial batch). It runs under `vitest.integration.config.ts` (excluded from default runs) — update brings it in line.
 HANDOFF_TO_REVIEWER: yes
 NEXT: ready for review.
+
+## Reviewer Verdict (Round 3 — confirmation)
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code (Fix504R2)
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run src/ui/__tests__/resultsGridModelRequery.test.ts src/ui/__tests__/webviewRequery.test.ts src/ui/__tests__/resultsPanelRequery.test.ts && npm run typecheck && npx vitest run
+  result: PASS — 29/29 targeted, typecheck 0 errors, full suite 388/388 (34 files)
+TEST_PLAN_COVERAGE: all-followed — all 4 R2 findings covered; real RED_OUTPUT with assertion diffs present
+PROBES (independent, jsdom bundle + real QueryRunner; all 8 passed, files deleted after capture):
+  P1: ORDER BY equal-count requery → grid re-rendered [3,2,1] (was stale [1,2,3] pre-fix).
+  P2: row-growing requery → fresh [10,11,12,13], no stale-prefix mix.
+  P3: requery via panel on REAL QueryRunner → panel loadMore dispatch served NEW cursor rows [[10],[11],[12],[100]]; old cursor fetchBatch called exactly once (never re-read).
+  P4: `SELECT 'a;b' AS x FROM t` + WHERE → runner received `SELECT * FROM (SELECT 'a;b' AS x FROM t) vsdb_sub WHERE x IS NOT NULL` (literal intact).
+  P5: pickResult batched-with-full-initial-batch → rowCount=null; footer shows "load more"; `__checkLoadMore` hook dispatched `{type:'loadMore', index:0}`.
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/ui/resultsGridModel.ts:858 — wrap branch uses `sql.trimEnd()` and does NOT strip a trailing `;` (only the both-empty branch does); `composeRequery("SELECT 1;", "a>0", "")` → `…(SELECT 1;) vsdb_sub…` = syntax error. Unreachable in-product (r.sql always comes from splitStatements text, which excludes the trailing `;` — statementParser Test #1); applying stripTrailingSemicolon to the wrap branch too would be defense-in-depth.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: All 3 R2 criticals + 2 importants verified fixed with independent end-to-end probes; grid reset, cursor adoption, and loadMore-offer all behave correctly. Handoff allowed.

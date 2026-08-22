@@ -18,11 +18,11 @@ W5: 506 (version boundary — full suite)
 | TASK-505 | Run .sh button (terminal) | P1 | S | done | executor/feature-implementer | unic-smart | `docs/AI_HANDOFF/tasks/TASK-505.md` |
 | TASK-502 | Export serializers + toolbar (8 format) | P0 | M | done | executor/feature-implementer | unic-smart | `docs/AI_HANDOFF/tasks/TASK-502.md` |
 | TASK-503 | Save edits (PK/ctid) + Commit flow | P0 | L | approved_minor | executor/feature-implementer | unic-smart | `docs/AI_HANDOFF/tasks/TASK-503.md` |
-| TASK-504 | WHERE/ORDER BY bar + requery | P1 | S | pending_review | Fix504R2 | unic-smart | `docs/AI_HANDOFF/tasks/TASK-504.md` |
+| TASK-504 | WHERE/ORDER BY bar + requery | P1 | S | approved_minor | Fix504R2 | unic-smart | `docs/AI_HANDOFF/tasks/TASK-504.md` |
 | TASK-506 | Version 1.4.0 + README + full-suite boundary | P1 | S | ready | - | - | `docs/AI_HANDOFF/tasks/TASK-506.md` |
 
 ## Queued (future cycles)
 
 - AI assist tab (user 2026-08-22, chưa spec chi tiết).
 
-Updated: 2026-08-23 · TASK-504 fix round 2 → pending_review
+Updated: 2026-08-23 · TASK-504 round 3 → approved_minor
