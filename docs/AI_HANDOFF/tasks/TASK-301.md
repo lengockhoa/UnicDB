@@ -55,14 +55,62 @@ npx vitest run src/adapters/__tests__/postgres.test.ts
 
 ## Acceptance Criteria
 
-- [ ] Interface (types.ts) + 3 adapter impl, typecheck pass
-- [ ] 6 test cases pass (RED trước khi implement)
-- [ ] Không COUNT(*) / TABLE_ROWS scan-full ở bất kỳ đâu
+- [x] Interface (types.ts) + 3 adapter impl, typecheck pass
+- [x] 6 test cases pass (RED trước khi implement)
+- [x] Không COUNT(*) / TABLE_ROWS scan-full ở bất kỳ đâu
 
 ## Executor Report
 
-(executor điền)
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: Exec301 (feature-implementer)
+SUMMARY: Added `estimateTableRows(schema, table): Promise<number | null>` to DbAdapter interface and implemented for all 3 adapters (Postgres pg_class.reltuples, MySQL information_schema.TABLES.TABLE_ROWS, MSSQL sys.partitions SUM). 6 mock-based unit tests added in new file `src/adapters/__tests__/postgres.test.ts` using `vi.mock('pg')`.
+TEST_PLAN_FOLLOWED: inline (task §Test Cases — 6 cases, vi.mock('pg') pattern)
+FILES_CHANGED:
+  - src/adapters/types.ts: added `estimateTableRows` to DbAdapter interface (after listColumns, before testConnection).
+  - src/adapters/postgres.ts: added `estimateTableRows` impl using existing `this.query` helper + pg_class/pg_namespace catalog query; try/catch → null; reltuples<0 or 0-rows → null.
+  - src/adapters/mysql.ts: added `estimateTableRows` impl using `information_schema.TABLES.TABLE_ROWS` with `TABLE_TYPE = 'BASE TABLE'`; null/0-rows → null.
+  - src/adapters/mssql.ts: added `estimateTableRows` impl using `sys.partitions` SUM joined to sys.tables/sys.schemas; index_id IN (0,1); null SUM → null.
+  - src/adapters/__tests__/postgres.test.ts (NEW): 6 test cases via `vi.mock('pg')` with queue-driven fake Pool.
+  - docs/AI_HANDOFF/INDEX.md: TASK-301 status ready → in_progress (this run) → pending_review (after report).
+TESTS_ADDED:
+  - src/adapters/__tests__/postgres.test.ts:
+    - happy: pg: reltuples=176 → estimateTableRows('qas','api_po_log') resolves 176
+    - happy: pg: reltuples=1234567 resolves 1234567
+    - edge: pg: reltuples=-1 (chưa ANALYZE) resolves null
+    - edge: pg: query trả 0 row resolves null, không throw
+    - edge: pg: client query reject resolves null, không throw
+    - edge: pg: reltuples=0 resolves 0
+VERIFICATION:
+  command: npm run typecheck
+  result: PASS (exit 0, no errors)
+  output_excerpt: |
+    > vsdb@1.3.0 typecheck
+    > tsc --noEmit
+  command: npx vitest run src/adapters/__tests__/postgres.test.ts
+  result: 6 passed (6)
+  output_excerpt: |
+     RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+     ✓ src/adapters/__tests__/postgres.test.ts  (6 tests) 1ms
+     Test Files  1 passed (1)
+          Tests  6 passed (6)
+RED_OUTPUT (captured before implementation):
+  command: npx vitest run src/adapters/__tests__/postgres.test.ts
+  result: 6 failed (6) — all "TypeError: adapter.estimateTableRows is not a function"
+  output_excerpt: |
+     FAIL  src/adapters/__tests__/postgres.test.ts > PostgresAdapter — estimateTableRows (TASK-301) > happy: reltuples=176 → resolves 176
+    TypeError: adapter.estimateTableRows is not a function
+     ❯ src/adapters/__tests__/postgres.test.ts:97:34
+     … (6 identical-style failures, one per test case)
+      Test Files  1 failed (1)
+           Tests  6 failed (6)
+ISSUES: none
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for review
 
 ## Reviewer Verdict
 
+
 (reviewer điền)
+

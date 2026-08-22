@@ -243,6 +243,30 @@ export class MySqlAdapter implements DbAdapter {
     });
   }
 
+  async estimateTableRows(
+    schema: string,
+    table: string,
+  ): Promise<number | null> {
+    try {
+      const result = await this.query(
+        `SELECT TABLE_ROWS AS row_estimate
+           FROM information_schema.TABLES
+          WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+            AND TABLE_TYPE = 'BASE TABLE'`,
+        [schema, table],
+      );
+      const rows = result.rows;
+      if (!Array.isArray(rows) || rows.length === 0) return null;
+      const raw = (rows[0] as Record<string, unknown>).row_estimate;
+      if (raw === null || raw === undefined) return null;
+      const value = typeof raw === "string" ? Number(raw) : Number(raw);
+      if (!Number.isFinite(value) || value < 0) return null;
+      return value;
+    } catch {
+      return null;
+    }
+  }
+
   private async executeText(sql: string): Promise<QueryResult> {
     const result = await this.query(sql);
     const columns = result.fields?.map((field) => field.name) ?? [];

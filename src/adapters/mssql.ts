@@ -298,6 +298,31 @@ export class MsSqlAdapter implements DbAdapter {
     }));
   }
 
+  async estimateTableRows(
+    schema: string,
+    table: string,
+  ): Promise<number | null> {
+    try {
+      const result = await this.execute(
+        `SELECT SUM(p.rows) AS row_count
+           FROM sys.partitions p
+           JOIN sys.tables t ON t.object_id = p.object_id
+           JOIN sys.schemas s ON s.schema_id = t.schema_id
+          WHERE s.name = ${this.literal(schema)}
+            AND t.name = ${this.literal(table)}
+            AND p.index_id IN (0, 1)`,
+      );
+      if (result.rows.length === 0) return null;
+      const raw = result.rows[0][0];
+      if (raw === null || raw === undefined) return null;
+      const value = typeof raw === "string" ? Number(raw) : Number(raw);
+      if (!Number.isFinite(value) || value < 0) return null;
+      return value;
+    } catch {
+      return null;
+    }
+  }
+
   private createConnection(): Connection {
     const ssl = resolveSslOptions(this.cfg);
     return new Connection({

@@ -72,7 +72,60 @@ npx vitest run src/ui/__tests__/schemaTree.test.ts
 
 ## Executor Report
 
-(executor điền)
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: -
+SUMMARY: Added row-count badges (lazy fetch via DbAdapter.estimateTableRows, formatRows locale 'en', separate rowCountCache map + in-flight guard) and filter engine (setFilter/getFilter, case-insensitive substring, root kept, schemas/categories Expanded when active, badge from unfiltered list, no-match node) to SchemaTreeProvider. 10 new tests added; all 33 schemaTree tests + 218 total project tests pass; typecheck clean.
+TEST_PLAN_FOLLOWED: task §Test Cases (10 cases)
+FILES_CHANGED:
+  - src/ui/schemaTree.ts: rowCountCache Map<string, CacheEntry<number>> + rowCountFetching Set, filterText/setFilter/getFilter/matchesFilter, fetchRowCount fire-and-forget, formatRows export, getRoot keeps connections always, getSchemaNodesForConnection + getCategoriesForSchema Expanded when filter active, getCategoryChildren caches unfiltered + filters output + emits no-match node, getColumnChildren filters output, refresh/dispose clear rowCountCache + rowCountFetching
+  - src/ui/__tests__/schemaTree.test.ts: import formatRows; makeFakeAdapter/estimateTableRows mock; 10 new tests in "SchemaTreeProvider — TASK-302 row-count badges + filter engine"
+TESTS_ADDED:
+  - src/ui/__tests__/schemaTree.test.ts: formatRows(176) === '176' (happy)
+  - src/ui/__tests__/schemaTree.test.ts: formatRows(1234567) === '1.2M' locale pinned 'en' (happy)
+  - src/ui/__tests__/schemaTree.test.ts: getCategoryChildren tables → sau microtask table node description = '176', label giữ nguyên (happy)
+  - src/ui/__tests__/schemaTree.test.ts: setFilter('po_log') tables gồm api_po_log + users → chỉ api_po_log được trả về (happy, ancestors expanded)
+  - src/ui/__tests__/schemaTree.test.ts: estimateTableRows resolves null → description giữ schema fallback 'qas' (edge)
+  - src/ui/__tests__/schemaTree.test.ts: filter 'ZZZ' → 'No matches for "ZZZ"' node (edge)
+  - src/ui/__tests__/schemaTree.test.ts: setFilter('') xóa filter → full list trả về (edge)
+  - src/ui/__tests__/schemaTree.test.ts: filter 'PO_LOG' uppercase match api_po_log (edge, case-insensitive)
+  - src/ui/__tests__/schemaTree.test.ts: root connections luôn giữ khi filter active (không bị drop theo tên) (edge)
+  - src/ui/__tests__/schemaTree.test.ts: category badge vẫn = tổng objects unfiltered khi filter active lọc bớt output (regression)
+VERIFICATION:
+  command: npm run typecheck && npx vitest run src/ui/__tests__/schemaTree.test.ts && npx vitest run
+  result: typecheck 0 errors / vitest schemaTree 33 pass / vitest full 218 pass
+  output_excerpt: |
+    > vsdb@1.3.0 typecheck
+    > tsc --noEmit
+    (no output)
+
+     ✓ src/ui/__tests__/schemaTree.test.ts  (33 tests) 20ms
+     Test Files  1 passed (1)
+          Tests  33 passed (33)
+
+     Test Files  19 passed (19)
+          Tests  218 passed (218)
+
+RED_OUTPUT (before implementation):
+  ❯ src/ui/__tests__/schemaTree.test.ts  (33 tests | 9 failed) 17ms
+    ❯ formatRows(176) === '176' (happy) → formatRows is not a function
+    ❯ formatRows(1234567) === '1.2M' locale pinned 'en' (happy) → formatRows is not a function
+    ❯ getCategoryChildren tables → sau microtask table node description = '176', label giữ nguyên (happy)
+      → expected 'app' to be '176' // Object.is equality
+    ❯ setFilter('po_log') tables gồm api_po_log + users → chỉ api_po_log được trả về (happy, ancestors expanded)
+      → provider.setFilter is not a function
+    ❯ filter 'ZZZ' → 'No matches for "ZZZ"' node (edge) → provider.setFilter is not a function
+    ❯ setFilter('') xóa filter → full list trả về (edge) → provider.setFilter is not a function
+    ❯ filter 'PO_LOG' uppercase match api_po_log (edge, case-insensitive) → provider.setFilter is not a function
+    ❯ root connections luôn giữ khi filter active (không bị drop theo tên) (edge) → provider.setFilter is not a function
+    ❯ category badge vẫn = tổng objects unfiltered khi filter active lọc bớt output (regression)
+      → provider.setFilter is not a function
+    Tests  9 failed | 24 passed (33)
+
+ISSUES: Test 'estimateTableRows resolves null → description giữ schema fallback 'qas' (edge)' was technically green before implementation because table node description already initialized as t.schema fallback — but the spec requires the async fetch path to NOT overwrite description on null. Implementation now satisfies both: sync fallback + guard in fetchRowCount.considered.
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for review
 
 ## Reviewer Verdict
 

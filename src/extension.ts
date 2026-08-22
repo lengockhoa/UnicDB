@@ -152,6 +152,35 @@ export async function activate(
     vscode.commands.registerCommand("vsdb.refreshSchema", () => tree.refresh()),
   );
 
+  // 11. vsdb.filterSchemaTree — open input box, apply filter (TASK-303).
+  disposables.push(
+    vscode.commands.registerCommand("vsdb.filterSchemaTree", async () => {
+      const text = await vscode.window.showInputBox({
+        prompt: "Filter schemas, tables, columns, routines…",
+        placeHolder: "Filter…",
+        value: tree.getFilter(),
+      });
+      if (text === undefined) return;
+      tree.setFilter(text);
+      await vscode.commands.executeCommand(
+        "setContext",
+        "vsdb.schemaTreeFilterActive",
+        text.length > 0,
+      );
+    }),
+  );
+
+  // 12. vsdb.clearSchemaTreeFilter — clear filter (TASK-303).
+  disposables.push(
+    vscode.commands.registerCommand("vsdb.clearSchemaTreeFilter", async () => {
+      tree.setFilter("");
+      await vscode.commands.executeCommand(
+        "setContext",
+        "vsdb.schemaTreeFilterActive",
+        false,
+      );
+    }),
+  );
   // 11. vsdb.selectConnectionFromTree — click connection node → set active.
   // (Không thuộc 10 command khai báo trong package.json; command này được trigger
   // từ TreeItem.command trên connection node. StatusBar + tree badges auto-update

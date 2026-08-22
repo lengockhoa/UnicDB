@@ -337,5 +337,87 @@ describe("Spec test #5 — runQuery without connection prompts QuickPick with 'A
   });
 });
 
+// =============================================================================
+// TASK-303: filter command + view/title menu.
+// =============================================================================
+import * as fs from "node:fs";
+import { SchemaTreeProvider } from "./ui/schemaTree";
+
+const pkgJson = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf-8"),
+);
+
+describe("TASK-303 — filter command + view/title menu", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+    state.registeredTreeDataProviders.clear();
+    state.createdStatusBarItems.length = 0;
+    state.createdWebviewPanels.length = 0;
+    state.createdTreeViews.length = 0;
+    state.registeredCodeLensProviders.length = 0;
+    state.onDidChangeConfigSubscribers.length = 0;
+    state.workspaceFolders = undefined;
+    state.activeEditor = undefined;
+  });
+
+  it("package.json contributes khai báo 2 command mới với icon + menu entries đúng when", () => {
+    const commands = pkgJson.contributes.commands as Array<{
+      command: string;
+      title: string;
+      icon: string;
+    }>;
+    const filterCmd = commands.find((c) => c.command === "vsdb.filterSchemaTree");
+    const clearCmd = commands.find((c) => c.command === "vsdb.clearSchemaTreeFilter");
+    expect(filterCmd).toBeDefined();
+    expect(filterCmd!.title).toBe("Filter Schema Tree");
+    expect(filterCmd!.icon).toBe("$(filter)");
+    expect(clearCmd).toBeDefined();
+    expect(clearCmd!.title).toBe("Clear Schema Tree Filter");
+    expect(clearCmd!.icon).toBe("$(close)");
+
+    const viewTitle = pkgJson.contributes.menus["view/title"] as Array<{
+      command: string;
+      when: string;
+      group: string;
+    }>;
+    const filterMenu = viewTitle.find((m) => m.command === "vsdb.filterSchemaTree");
+    const clearMenu = viewTitle.find((m) => m.command === "vsdb.clearSchemaTreeFilter");
+    expect(filterMenu).toBeDefined();
+    expect(filterMenu!.when).toBe("view == vsdb.schemaTree");
+    expect(filterMenu!.group).toBe("navigation");
+    expect(clearMenu).toBeDefined();
+    expect(clearMenu!.when).toBe(
+      "view == vsdb.schemaTree && vsdb.schemaTreeFilterActive",
+    );
+    expect(clearMenu!.group).toBe("navigation");
+  });
+
+  it("register 2 command mới: vsdb.filterSchemaTree + vsdb.clearSchemaTreeFilter", () => {
+    const ctx = makeCtx();
+    activate(ctx as never);
+    expect(state.registeredCommands.has("vsdb.filterSchemaTree")).toBe(true);
+    expect(state.registeredCommands.has("vsdb.clearSchemaTreeFilter")).toBe(true);
+  });
+
+  it("showInputBox trả undefined (Esc) → setFilter KHÔNG được gọi", async () => {
+    const ctx = makeCtx();
+    activate(ctx as never);
+
+    const setFilterSpy = vi.spyOn(SchemaTreeProvider.prototype, "setFilter");
+    const showInputBoxSpy = vi.mocked(vscodeMock.window.showInputBox);
+    showInputBoxSpy.mockResolvedValueOnce(undefined);
+
+    const fn = state.registeredCommands.get("vsdb.filterSchemaTree");
+    expect(fn).toBeDefined();
+    await fn!();
+
+    expect(showInputBoxSpy).toHaveBeenCalled();
+    expect(setFilterSpy).not.toHaveBeenCalled();
+
+    setFilterSpy.mockRestore();
+  });
+});
+
 // Avoid path-imports lint complaints.
 void path;

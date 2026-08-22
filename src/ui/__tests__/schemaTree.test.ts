@@ -90,6 +90,7 @@ import {
   SchemaTreeProvider,
   generateSelectForTable,
   qualifiedName,
+  formatRows,
 } from "../schemaTree";
 import { ConnectionManager } from "../../core/connectionManager";
 
@@ -107,7 +108,6 @@ function makeCfg(overrides: Partial<ConnectionConfig> = {}): ConnectionConfig {
     ...overrides,
   };
 }
-
 function makeFakeAdapter(opts: {
   schemas?: Array<{ name: string }>;
   tables?: Array<{ name: string; schema: string }>;
@@ -115,6 +115,9 @@ function makeFakeAdapter(opts: {
   routines?: Array<{ name: string; kind: "function" | "procedure"; schema: string }>;
   columns?: ColumnInfo[];
   throw?: boolean;
+  /** Optional override for estimateTableRows. Receives (schema, table) and
+   * returns Promise<number | null>. Defaults to resolving null. */
+  estimateTableRowsImpl?: (schema: string, table: string) => Promise<number | null>;
 } = {}) {
   const listSchemas = vi.fn().mockImplementation(() => {
     if (opts.throw) throw new Error("connect failed");
@@ -148,6 +151,11 @@ function makeFakeAdapter(opts: {
     listViews,
     listRoutines,
     listColumns,
+    estimateTableRows: vi.fn().mockImplementation((schema: string, table: string) =>
+      opts.estimateTableRowsImpl
+        ? opts.estimateTableRowsImpl(schema, table)
+        : Promise.resolve<number | null>(null),
+    ),
     testConnection: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -735,5 +743,254 @@ describe("SchemaTreeProvider — DataGrip-style root behavior", () => {
     expect(vi.mocked(ThemeIcon).mock.calls.at(-1)?.[1]).toBeUndefined();
     expect(itemA.iconPath).toBeDefined();
     expect(itemB.iconPath).toBeDefined();
+  });
+});
+
+// =============================================================================
+// TASK-302 — row-count badges + filter engine.
+// 10 cases từ task file.
+// =============================================================================
+
+describe("SchemaTreeProvider — TASK-302 row-count badges + filter engine", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.emitters = [];
+    state.treeItemCalls = [];
+    state.workspaceFolders = undefined;
+  });
+
+  it("formatRows(176) === '176' (happy)", () => {
+    expect(formatRows(176)).toBe("176");
+  });
+
+  it("formatRows(1234567) === '1.2M' locale pinned 'en' (happy)", () => {
+    expect(formatRows(1234567)).toBe("1.2M");
+  });
+
+  it("getCategoryChildren tables → sau microtask table node description = '176', label giữ nguyên (happy)", async () => {
+    const { mgr, adapter } = setupTree({
+      schemas: [{ name: "app" }],
+      tables: [
+        { name: "users", schema: "app" },
+        { name: "orders", schema: "app" },
+      ],
+      estimateTableRowsImpl: async (schema, table) => {
+        if (table === "users") return 176;
+        if (table === "orders") return 42;
+        return null;
+      },
+    });
+    await mgr.addConnection(makeCfg({ id: "rc1", name: "RC1" }), "p");
+    await mgr.setActive("rc1");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    const cats = await provider.getChildren(schemas[0]);
+    const tablesNode = cats[0];
+    const tables = await provider.getChildren(tablesNode);
+
+    expect(tables).toHaveLength(2);
+    expect(tables.map((t) => t.label)).toEqual(["users", "orders"]);
+    // Wait for async fetch + onDidChangeTreeData.
+    const waitImmediate = () => {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      setImmediate(resolve);
+      return promise;
+    };
+    await waitImmediate();
+    await waitImmediate();
+
+    const users = tables.find((t) => t.label === "users")!;
+    expect(users.label).toBe("users"); // label không đổi
+    expect(users.description).toBe("176");
+    // estimateTableRows được gọi với đúng (schema, table).
+    expect(adapter.estimateTableRows).toHaveBeenCalled();
+  });
+
+  it("setFilter('po_log') tables gồm api_po_log + users → chỉ api_po_log được trả về (happy, ancestors expanded)", async () => {
+    const { mgr } = setupTree({
+      schemas: [{ name: "app" }],
+      tables: [
+        { name: "api_po_log", schema: "app" },
+        { name: "users", schema: "app" },
+      ],
+    });
+    await mgr.addConnection(makeCfg({ id: "f1", name: "F1" }), "p");
+    await mgr.setActive("f1");
+    const provider = new SchemaTreeProvider(mgr);
+
+    provider.setFilter("po_log");
+    expect(provider.getFilter()).toBe("po_log");
+
+    const root = await provider.getChildren(undefined);
+    // Root: connections LUÔN giữ khi filter active.
+    expect(root).toHaveLength(1);
+    expect(root[0].contextValue).toBe("connection");
+
+    const schemas = await provider.getChildren(root[0]);
+    // Schemas luôn giữ (children cần query mới biết match).
+    expect(schemas).toHaveLength(1);
+    expect(schemas[0].contextValue).toBe("schema");
+    expect(schemas[0].collapsible).toBe(2); // Expanded
+
+    const cats = await provider.getChildren(schemas[0]);
+    // Categories: luôn hiển thị, expanded.
+    const tablesNode = cats.find((c) => c.label === "Tables")!;
+    expect(tablesNode.collapsible).toBe(2); // Expanded
+
+    const tables = await provider.getChildren(tablesNode);
+    expect(tables.map((t) => t.label)).toEqual(["api_po_log"]);
+  });
+
+  it("estimateTableRows resolves null → description giữ schema fallback 'qas' (edge)", async () => {
+    const { mgr } = setupTree({
+      schemas: [{ name: "qas" }],
+      tables: [{ name: "api_log", schema: "qas" }],
+      estimateTableRowsImpl: async () => null,
+    });
+    await mgr.addConnection(makeCfg({ id: "nullr", name: "NullR" }), "p");
+    await mgr.setActive("nullr");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    const cats = await provider.getChildren(schemas[0]);
+    const tables = await provider.getChildren(cats[0]);
+
+    expect(tables).toHaveLength(1);
+    const apiLog = tables[0];
+    expect(apiLog.label).toBe("api_log");
+    expect(apiLog.description).toBe("qas"); // fallback
+
+    // Wait for async fetch + onDidChangeTreeData.
+    const waitImmediate = () => {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      setImmediate(resolve);
+      return promise;
+    };
+    await waitImmediate();
+    await waitImmediate();
+
+    // Description KHÔNG đổi → vẫn 'qas'.
+    expect(apiLog.description).toBe("qas");
+  });
+
+  it("filter 'ZZZ' → 'No matches for \"ZZZ\"' node (edge)", async () => {
+    const { mgr } = setupTree({
+      schemas: [{ name: "app" }],
+      tables: [{ name: "users", schema: "app" }],
+    });
+    await mgr.addConnection(makeCfg({ id: "n1", name: "N1" }), "p");
+    await mgr.setActive("n1");
+    const provider = new SchemaTreeProvider(mgr);
+
+    provider.setFilter("ZZZ");
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    const cats = await provider.getChildren(schemas[0]);
+    const tablesNode = cats.find((c) => c.label === "Tables")!;
+    const tables = await provider.getChildren(tablesNode);
+
+    expect(tables).toHaveLength(1);
+    expect(tables[0].label).toBe("No matches for 'ZZZ'");
+    expect(tables[0].contextValue).toBe("empty-add");
+    expect(tables[0].collapsible).toBe(0); // None
+  });
+
+  it("setFilter('') xóa filter → full list trả về (edge)", async () => {
+    const { mgr } = setupTree({
+      schemas: [{ name: "app" }],
+      tables: [
+        { name: "api_po_log", schema: "app" },
+        { name: "users", schema: "app" },
+      ],
+    });
+    await mgr.addConnection(makeCfg({ id: "cl1", name: "CL1" }), "p");
+    await mgr.setActive("cl1");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const fetchTables = async () => {
+      const root = await provider.getChildren(undefined);
+      const schemas = await provider.getChildren(root[0]);
+      const cats = await provider.getChildren(schemas[0]);
+      const tablesNode = cats.find((c) => c.label === "Tables")!;
+      return provider.getChildren(tablesNode);
+    };
+
+    provider.setFilter("po_log");
+    let tables = await fetchTables();
+    expect(tables.map((t) => t.label)).toEqual(["api_po_log"]);
+
+    provider.setFilter("");
+    expect(provider.getFilter()).toBe("");
+    tables = await fetchTables();
+    expect(tables.map((t) => t.label)).toEqual(["api_po_log", "users"]);
+  });
+
+  it("filter 'PO_LOG' uppercase match api_po_log (edge, case-insensitive)", async () => {
+    const { mgr } = setupTree({
+      schemas: [{ name: "app" }],
+      tables: [{ name: "api_po_log", schema: "app" }],
+    });
+    await mgr.addConnection(makeCfg({ id: "ci1", name: "CI1" }), "p");
+    await mgr.setActive("ci1");
+    const provider = new SchemaTreeProvider(mgr);
+
+    provider.setFilter("PO_LOG");
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    const cats = await provider.getChildren(schemas[0]);
+    const tablesNode = cats.find((c) => c.label === "Tables")!;
+    const tables = await provider.getChildren(tablesNode);
+
+    expect(tables.map((t) => t.label)).toEqual(["api_po_log"]);
+  });
+
+  it("root connections luôn giữ khi filter active (không bị drop theo tên) (edge)", async () => {
+    const stubMgr = {
+      listConnections: () => [
+        makeCfg({ id: "x", name: "X" }),
+        makeCfg({ id: "y", name: "Y" }),
+      ],
+      getActive: () => null,
+      onDidChangeActive: () => ({ dispose: () => {} }),
+    };
+    const provider = new SchemaTreeProvider(stubMgr as never);
+
+    provider.setFilter("zzzzz_no_match");
+    const root = await provider.getChildren(undefined);
+    expect(root).toHaveLength(2); // Cả 2 connections giữ, không bị filter.
+    expect(root.map((n) => n.contextValue)).toEqual(["connection", "connection"]);
+  });
+
+  it("category badge vẫn = tổng objects unfiltered khi filter active lọc bớt output (regression)", async () => {
+    const { mgr } = setupTree({
+      schemas: [{ name: "app" }],
+      tables: [
+        { name: "api_po_log", schema: "app" },
+        { name: "users", schema: "app" },
+        { name: "orders", schema: "app" },
+      ],
+    });
+    await mgr.addConnection(makeCfg({ id: "bg1", name: "BG1" }), "p");
+    await mgr.setActive("bg1");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    const cats = await provider.getChildren(schemas[0]);
+    const tablesNode = cats.find((c) => c.label === "Tables")!;
+
+    // First fetch: badge = '3' từ list unfiltered.
+    await provider.getChildren(tablesNode);
+    expect(tablesNode.description).toBe("3");
+
+    // Apply filter → chỉ api_po_log match.
+    provider.setFilter("po_log");
+    const filtered = await provider.getChildren(tablesNode);
+    expect(filtered.map((t) => t.label)).toEqual(["api_po_log"]);
+    // Badge KHÔNG đổi — vẫn tổng unfiltered.
+    expect(tablesNode.description).toBe("3");
   });
 });

@@ -72,6 +72,19 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
   /** Cache lazy-loaded children theo node key. Node key = `connectionId|category|objectKey`. */
   private cache = new Map<string, CacheEntry<VsdbNode[]>>();
 
+  /**
+   * Cache riêng cho row counts. Tách khỏi `cache` (typed `VsdbNode[]`)
+   * vì entry khác type (number), tránh `as any` và giữ key namespace sạch.
+   * Key: `rowcount|${conn.id}|${schema}|${table}`, TTL = CACHE_TTL_MS.
+   */
+  private rowCountCache = new Map<string, CacheEntry<number>>();
+
+  /** In-flight guard chống double-fetch row count khi node re-render. */
+  private rowCountFetching = new Set<string>();
+
+  /** Filter text hiện tại ('' = không filter). Case-insensitive substring match trên label. */
+  private filterText = "";
+
   /** Track active-change subscription so we can dispose it. */
   private activeSub: { dispose(): void } | null = null;
 
@@ -86,6 +99,8 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
   /** Dispose: drop cache and active subscription. Manager owns adapters (closes them). */
   dispose(): void {
     this.cache.clear();
+    this.rowCountCache.clear();
+    this.rowCountFetching.clear();
     if (this.activeSub) {
       this.activeSub.dispose();
       this.activeSub = null;
@@ -109,7 +124,27 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
   /** Public API cho extension.ts gọi khi user bấm Refresh. */
   refresh(): void {
     this.cache.clear();
+    this.rowCountCache.clear();
+    this.rowCountFetching.clear();
     this._onDidChangeTreeData.fire(undefined);
+  }
+
+  /** Set filter text (case-insensitive substring match trên label). '' = tắt filter. */
+  setFilter(text: string): void {
+    if (this.filterText === text) return;
+    this.filterText = text;
+    this._onDidChangeTreeData.fire(undefined);
+  }
+
+  /** Filter text hiện tại ('' = không filter). */
+  getFilter(): string {
+    return this.filterText;
+  }
+
+  /** Case-insensitive substring match. */
+  private matchesFilter(label: string): boolean {
+    if (this.filterText === "") return true;
+    return label.toLowerCase().includes(this.filterText.toLowerCase());
   }
 
   getTreeItem(node: VsdbNode): vscode.TreeItem {
@@ -168,6 +203,9 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
   private getRoot(): VsdbNode[] {
     // Empty state do viewsWelcome trong package.json render ("No connections yet.
     // [Add Connection]"), không cần placeholder node trong tree.
+    // Root: connections LUÔN giữ kể cả khi filter active — connections là
+    // ancestor containers, filter áp cho object names (schema/table/view/...),
+    // không phải connection names.
     return this.mgr.listConnections().map((c) => ({
       label: c.name,
       icon: DRIVER_ICONS[c.driver] ?? "database",
@@ -232,12 +270,16 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
           },
         ];
       } else {
+        const filterActive = this.filterText !== "";
         children = schemas.map((s) => ({
           label: s.name,
           icon: "symbol-namespace",
           tooltip: `${conn.name} / ${s.name}`,
           contextValue: "schema",
-          collapsible: vscode.TreeItemCollapsibleState.Collapsed,
+          // Filter active: expand schema để user thấy được match sâu bên trong.
+          collapsible: filterActive
+            ? vscode.TreeItemCollapsibleState.Expanded
+            : vscode.TreeItemCollapsibleState.Collapsed,
           meta: { connection: conn, schema: s.name },
         }));
       }
@@ -264,27 +306,30 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
     const conn = node.meta?.connection;
     const schema = node.meta?.schema;
     if (!conn || !schema) return [];
-    const collapsed = vscode.TreeItemCollapsibleState.Collapsed;
+    // Filter active: expand category để user thấy match bên trong mà không cần click.
+    const collapsible = this.filterText !== ""
+      ? vscode.TreeItemCollapsibleState.Expanded
+      : vscode.TreeItemCollapsibleState.Collapsed;
     return [
       {
         label: "Tables",
         icon: "table",
         contextValue: "category",
-        collapsible: collapsed,
+        collapsible,
         meta: { connection: conn, schema, category: "tables" },
       },
       {
         label: "Views",
         icon: "eye",
         contextValue: "category",
-        collapsible: collapsed,
+        collapsible,
         meta: { connection: conn, schema, category: "views" },
       },
       {
         label: "Routines",
         icon: "symbol-function",
         contextValue: "category",
-        collapsible: collapsed,
+        collapsible,
         meta: { connection: conn, schema, category: "routines" },
       },
     ];
@@ -298,119 +343,193 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
     const schema = node.meta?.schema;
     if (!conn || !category || !schema) return [];
     const key = `category|${conn.id}|${schema}|${category}`;
+    const filterActive = this.filterText !== "";
 
-    // Cache check.
+    // Cache check — cache LUÔN chứa list UNFILTERED (nếu có filter, lọc ở
+    // output trước khi return). Đảm bảo badge = tổng unfiltered + filter chỉ
+    // ảnh hưởng output array, không ảnh hưởng cache count.
     const cached = this.cache.get(key);
-    if (cached && cached.expiresAt > Date.now()) {
-      return cached.data;
-    }
-
-    // Lazy: load via manager (cho active connection) hoặc getAdapterFor() cho non-active.
-    let adapter: DbAdapter;
-    try {
-      adapter = await this.getAdapterFor(conn);
-    } catch (err) {
-      // Adapter throw → trả về error node, tree không crash.
-      const message = err instanceof Error ? err.message : String(err);
-      const errNode: VsdbNode = {
-        label: `Connect failed: ${message}`,
-        icon: "error",
-        contextValue: "error",
-        collapsible: vscode.TreeItemCollapsibleState.None,
-      };
-      this.cache.set(key, {
-        data: [errNode],
-        expiresAt: Date.now() + CACHE_TTL_MS,
-      });
-      return [errNode];
-    }
-
     let children: VsdbNode[];
-    try {
-      if (category === "tables") {
-        const tables = await adapter.listTables(schema);
-        children = tables.map((t) => ({
-          label: t.name,
-          description: t.schema,
-          tooltip: `${t.schema}.${t.name}`,
-          contextValue: "table",
-          collapsible: vscode.TreeItemCollapsibleState.Collapsed,
-          meta: {
-            connection: conn,
-            category: "columns",
-            objectKey: `${conn.id}.${t.schema}.${t.name}`,
-            schema: t.schema,
-            objectName: t.name,
-          },
-          command: {
-            command: "vsdb.copyQualifiedName",
-            title: "Copy qualified name",
-            arguments: [qualifiedName({ table: t.name, schema: t.schema })],
-          },
-        }));
-      } else if (category === "views") {
-        const views = await adapter.listViews(schema);
-        children = views.map((v) => ({
-          label: v.name,
-          description: v.schema,
-          tooltip: `${v.schema}.${v.name}`,
-          contextValue: "view",
-          collapsible: vscode.TreeItemCollapsibleState.None,
-          meta: {
-            connection: conn,
-            schema: v.schema,
-            objectName: v.name,
-          },
-          command: {
-            command: "vsdb.copyQualifiedName",
-            title: "Copy qualified name",
-            arguments: [qualifiedName({ table: v.name, schema: v.schema })],
-          },
-        }));
-      } else {
-        const routines = await adapter.listRoutines(schema);
-        children = routines.map((r) => ({
-          label: r.name,
-          description: r.kind,
-          tooltip: `${r.schema}.${r.name} (${r.kind})`,
-          contextValue: "routine",
-          collapsible: vscode.TreeItemCollapsibleState.None,
-          meta: {
-            connection: conn,
-            schema: r.schema,
-            objectName: r.name,
-          },
-          command: {
-            command: "vsdb.copyQualifiedName",
-            title: "Copy qualified name",
-            arguments: [qualifiedName({ table: r.name, schema: r.schema })],
-          },
-        }));
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      children = [
-        {
+    if (cached && cached.expiresAt > Date.now()) {
+      children = cached.data;
+    } else {
+      // Lazy: load via manager (cho active connection) hoặc getAdapterFor() cho non-active.
+      let adapter: DbAdapter;
+      try {
+        adapter = await this.getAdapterFor(conn);
+      } catch (err) {
+        // Adapter throw → trả về error node, tree không crash.
+        const message = err instanceof Error ? err.message : String(err);
+        const errNode: VsdbNode = {
           label: `Connect failed: ${message}`,
           icon: "error",
           contextValue: "error",
           collapsible: vscode.TreeItemCollapsibleState.None,
-        },
-      ];
+        };
+        this.cache.set(key, {
+          data: [errNode],
+          expiresAt: Date.now() + CACHE_TTL_MS,
+        });
+        return [errNode];
+      }
+
+      let raw: VsdbNode[];
+      try {
+        if (category === "tables") {
+          const tables = await adapter.listTables(schema);
+          raw = tables.map((t) => ({
+            label: t.name,
+            description: t.schema,
+            tooltip: `${t.schema}.${t.name}`,
+            contextValue: "table",
+            collapsible: vscode.TreeItemCollapsibleState.Collapsed,
+            meta: {
+              connection: conn,
+              category: "columns",
+              objectKey: `${conn.id}.${t.schema}.${t.name}`,
+              schema: t.schema,
+              objectName: t.name,
+            },
+            command: {
+              command: "vsdb.copyQualifiedName",
+              title: "Copy qualified name",
+              arguments: [qualifiedName({ table: t.name, schema: t.schema })],
+            },
+          }));
+        } else if (category === "views") {
+          const views = await adapter.listViews(schema);
+          raw = views.map((v) => ({
+            label: v.name,
+            description: v.schema,
+            tooltip: `${v.schema}.${v.name}`,
+            contextValue: "view",
+            collapsible: vscode.TreeItemCollapsibleState.None,
+            meta: {
+              connection: conn,
+              schema: v.schema,
+              objectName: v.name,
+            },
+            command: {
+              command: "vsdb.copyQualifiedName",
+              title: "Copy qualified name",
+              arguments: [qualifiedName({ table: v.name, schema: v.schema })],
+            },
+          }));
+        } else {
+          const routines = await adapter.listRoutines(schema);
+          raw = routines.map((r) => ({
+            label: r.name,
+            description: r.kind,
+            tooltip: `${r.schema}.${r.name} (${r.kind})`,
+            contextValue: "routine",
+            collapsible: vscode.TreeItemCollapsibleState.None,
+            meta: {
+              connection: conn,
+              schema: r.schema,
+              objectName: r.name,
+            },
+            command: {
+              command: "vsdb.copyQualifiedName",
+              title: "Copy qualified name",
+              arguments: [qualifiedName({ table: r.name, schema: r.schema })],
+            },
+          }));
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        raw = [
+          {
+            label: `Connect failed: ${message}`,
+            icon: "error",
+            contextValue: "error",
+            collapsible: vscode.TreeItemCollapsibleState.None,
+          },
+        ];
+      }
+
+      children = raw;
+
+      // DataGrip-like count badge: cập nhật description + re-render sau khi load.
+      // Badge tính từ list UNFILTERED → set TRƯỚC filter để tránh stale sau clear.
+      const isError = children.length === 1 && children[0].contextValue === "error";
+      if (!isError) {
+        node.description = String(children.length);
+        this._onDidChangeTreeData.fire(node);
+      }
+
+      // Cache unfiltered list (cho filter sau này + lần sau getChildren).
+      this.cache.set(key, {
+        data: children,
+        expiresAt: Date.now() + CACHE_TTL_MS,
+      });
+
+      // Row count fetch fire-and-forget chỉ cho tables.
+      if (category === "tables" && !isError) {
+        for (const tNode of children) {
+          if (tNode.contextValue !== "table") continue;
+          const tSchema = tNode.meta?.schema;
+          const tName = tNode.meta?.objectName;
+          if (!tSchema || !tName) continue;
+          this.fetchRowCount(tNode, conn, tSchema, tName);
+        }
+      }
     }
 
-    // DataGrip-like count badge: cập nhật description + re-render sau khi load.
-    const isError = children.length === 1 && children[0].contextValue === "error";
-    if (!isError) {
-      node.description = String(children.length);
-      this._onDidChangeTreeData.fire(node);
+    // Filter output. Empty match → node "No matches for '<q>'".
+    if (filterActive) {
+      const filtered = children.filter((c) => this.matchesFilter(c.label));
+      if (filtered.length === 0) {
+        return [
+          {
+            label: `No matches for '${this.filterText}'`,
+            contextValue: "empty-add",
+            collapsible: vscode.TreeItemCollapsibleState.None,
+          },
+        ];
+      }
+      return filtered;
     }
-
-    this.cache.set(key, {
-      data: children,
-      expiresAt: Date.now() + CACHE_TTL_MS,
-    });
     return children;
+  }
+
+  /**
+   * Fire-and-forget fetch row count cho 1 table node.
+   * - Cache hit: set description sync.
+   * - Cache miss + in-flight: skip (đã có promise đang chạy).
+   * - Cache miss + not in-flight: gọi adapter.estimateTableRows, update description
+   *   khi count != null (giữ schema fallback khi null). Fire change event.
+   */
+  private fetchRowCount(
+    tNode: VsdbNode,
+    conn: ConnectionConfig,
+    schema: string,
+    table: string,
+  ): void {
+    const key = `rowcount|${conn.id}|${schema}|${table}`;
+    const cached = this.rowCountCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) {
+      tNode.description = formatRows(cached.data);
+      this._onDidChangeTreeData.fire(tNode);
+      return;
+    }
+    if (this.rowCountFetching.has(key)) return;
+    this.rowCountFetching.add(key);
+
+    this.getAdapterFor(conn)
+      .then((adapter) => adapter.estimateTableRows(schema, table))
+      .then((count) => {
+        this.rowCountFetching.delete(key);
+        if (count === null) return; // giữ schema fallback, không ghi đè
+        this.rowCountCache.set(key, {
+          data: count,
+          expiresAt: Date.now() + CACHE_TTL_MS,
+        });
+        tNode.description = formatRows(count);
+        this._onDidChangeTreeData.fire(tNode);
+      })
+      .catch(() => {
+        this.rowCountFetching.delete(key);
+      });
   }
 
   // ---- Table columns ------------------------------------------------------
@@ -478,6 +597,21 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
       data,
       expiresAt: Date.now() + CACHE_TTL_MS,
     });
+
+    // Filter output khi filter active.
+    if (this.filterText !== "") {
+      const filtered = data.filter((c) => this.matchesFilter(c.label));
+      if (filtered.length === 0) {
+        return [
+          {
+            label: `No matches for '${this.filterText}'`,
+            contextValue: "empty-add",
+            collapsible: vscode.TreeItemCollapsibleState.None,
+          },
+        ];
+      }
+      return filtered;
+    }
     return data;
   }
 }
@@ -490,6 +624,18 @@ export function qualifiedName(p: {
   schema: string;
 }): string {
   return p.schema && p.schema.length > 0 ? `${p.schema}.${p.table}` : p.table;
+}
+
+/**
+ * Format row count theo notation compact.
+ * Pin locale 'en' để deterministic (Intl trên máy user có thể là vi/ja/...).
+ * Examples: 176 → '176'; 1234567 → '1.2M'.
+ */
+export function formatRows(n: number): string {
+  return new Intl.NumberFormat("en", {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(n);
 }
 
 /**

@@ -305,6 +305,29 @@ export class PostgresAdapter implements DbAdapter {
     });
   }
 
+  async estimateTableRows(
+    schema: string,
+    table: string,
+  ): Promise<number | null> {
+    try {
+      const res = await this.query<{ row_estimate: string | number }>(
+        `SELECT c.reltuples::bigint AS row_estimate
+           FROM pg_class c
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = $1 AND c.relname = $2
+            AND c.relkind IN ('r','p')`,
+        [schema, table],
+      );
+      if (res.rows.length === 0) return null;
+      const raw = res.rows[0].row_estimate;
+      const value = typeof raw === "string" ? Number(raw) : raw;
+      if (!Number.isFinite(value) || value < 0) return null;
+      return value;
+    } catch {
+      return null;
+    }
+  }
+
   // ---- Helpers --------------------------------------------------------------
 
   private async query<T = any>(

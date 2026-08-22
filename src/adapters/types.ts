@@ -95,6 +95,11 @@ export interface DbAdapter {
   listViews(schema?: string): Promise<ViewInfo[]>;
   listRoutines(schema?: string): Promise<RoutineInfo[]>;
   listColumns(table: string, schema?: string): Promise<ColumnInfo[]>;
+  /**
+   * Row estimate cho table từ planner/catalog metadata (không scan).
+   * Null = unknown (chưa analyze / lỗi / không tồn tại).
+   */
+  estimateTableRows(schema: string, table: string): Promise<number | null>;
   testConnection(): Promise<void>;
 }
 

@@ -72,8 +72,8 @@ code --install-extension vsdb-<version>.vsix
 - **Schema Explorer** cây: connection → schema → Tables / Views / Routines (có số lượng) → table / view / column / routine.
   - Hiển thị **mọi schema** bạn truy cập được, không chỉ schema mặc định (`public` / `dbo` / database đang connect).
   - Setting `vsdb.hideSystemSchemas` (default `true`): ẩn schema hệ thống (`pg_catalog`, `information_schema`, `mysql`, `sys`...); tắt nếu muốn xem hết.
-  - Click phải table/view → `Generate SELECT`, `Copy Qualified Name` (dùng đúng `schema.table`, kể cả schema khác mặc định).
-- **Refresh metadata**: nút refresh trên title bar của panel **VSDB** (chạy `VSDB: Refresh Schema`) reload lại schema cache từ server — dùng sau khi bạn tạo/xoá table ở bên ngoài VS Code mà không muốn tạo connection mới.
+  - **Row count badge**: mỗi table hiện ước tính số dòng (từ planner statistics — nhanh, không scan bảng lớn; bảng chưa analyze hiển thị schema name).
+  - **Tree filter**: nút filter trên title bar panel **VSDB** → gõ text lọc schemas/tables/views/routines/columns theo tên (không phân biệt hoa thường); nút ✕ hiện khi filter đang bật để xóa.
 - **Results grid (AG Grid Community)**: xem kết quả trong panel **VSDB Results** với sort / filter per column, quick search, multi-row selection + copy (Ctrl+C), và row count hiển thị ở footer của panel.
 
 ---
