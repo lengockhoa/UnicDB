@@ -1,121 +1,110 @@
-# PLAN — Cycle K: AI DB-assist
+# PLAN — Cycle L: omp agent integration (RPC bridge)
 
 ## §1 Intent
 
-Đưa AI core (cycle J) xuống đất: agent có thể **đọc** schema và chạy **SQL read-only** trên DB đã connect, và user có nơi nói chuyện với agent — chat panel trong extension. Quyết định binding (autonomy — không hỏi lại):
-
-- Read-only tuyệt đối ở tool layer: chỉ SELECT/SHOW/EXPLAIN/WITH…SELECT; chặn multi-statement và `INTO`.
-- Tools nhận adapter qua **injected factory** (hàm lấy adapter đang chọn từ ConnectionManager) — không global state.
-- Không streaming (render markdown final text); Stop qua AbortController.
-- PG-only runtime; mysql/mssql thiếu method → tool trả error message rõ ràng, không crash.
-- Privacy không đổi: mọi request chỉ tới baseUrl user cấu hình; apiKey không rời SecretStorage.
+Gắn oh-my-pi (omp) agent vào VSDB extension để nâng chất lượng AI assist: agent có tool surface đầy đủ (read/grep/edit/LSP…) + model routing của omp, trong khi DB tools (read-only) vẫn do VSDB kiểm soát qua host-tool bridge. Nâng cấp bằng 1 lệnh: extension kiểm tra `omp --version` khi chạy; thiếu/lỗi版本 → fallback về AI path hiện có (cycle J/K) + thông báo 1 lần với lệnh install `curl -fsSL https://omp.sh/install | sh` / update `omp update`. User chọn (P0): research + triển khai luôn trong một run.
 
 ## §2 Scope
 
-In: `src/ai/tools/` (registry + introspection tools + SQL tool + schema-context formatter), `src/ui/aiChatPanel*.ts` + `webview/aiChatPanelMain.ts` (house webview pattern như newTableForm), wiring `src/extension.ts` + `package.json` (command `vsdb.aiChat` + editor/title menu), README AI DB-assist + guardrails section, tests unit (fake adapter + fake provider) — không cần PG container (adapter thật đã có integration test riêng ở cycle I).
+In: `src/ai/omp/` (rpc.ts JSONL client, process.ts spawn/health/restart, hostTools.ts set_host_tools bridge, detect.ts version check + fallback decision), chat panel thêm engine switch (omp | builtin), README section (yêu cầu omp, install/update 1 lệnh, security note: omp mode cho agent workspace access), tests unit với fake child_process/stdio. Fallback path KHÔNG bị sửa hành vi (regression).
 
-Out: streaming UI, DML/DDL bất kỳ dạng nào, write tools, mysql/mssql introspection implementation, telemetry, Anthropic protocol, multi-connection chat sessions.
+Out: ACP/approval UI (ghi follow-up), bundling omp vào .vsix, Bun runtime, sửa omp本身, session-history browsing UI, streaming text_delta vào builtin path (builtin vẫn final-text như cũ).
 
-## §3 Approach — interface freeze (match src/ai/agent.ts + adapters/types.ts hiện có, NGUYÊN VĂN)
+## §3 Approach — interface freeze
 
-- `AgentTool` (frozen cycle J): `{ name: string; description: string; parameters: JSONSchema; execute(args): Promise<string> }` — tools mới implement đúng shape này.
-- `ToolRegistry` (frozen): `{ list(): AgentTool[]; get(name): AgentTool|undefined }`.
-- `runAgent(input: AgentInput, deps: AgentDeps, callbacks?)` — dùng nguyên vẹn; Cycle K chỉ truyền registry thật thay vì `EMPTY_TOOL_REGISTRY`.
-
-New (Cycle K sở hữu):
+Từ research (docs/AI_HANDOFF/queue/OMP-INTEGRATION-research.md) + code hiện có:
 
 ```ts
-export type AdapterFactory = () => Promise<DbAdapter | null>  // async: ConnectionManager.getAdapter() async-lazy (F2)
-// src/ai/tools/registry.ts
-export class DbToolRegistry implements ToolRegistry            // register(tool), list(), get(name)
-export function createDbTools(adapterFactory: AdapterFactory): DbToolRegistry
-// src/ai/tools/sqlTool.ts
-export function createSqlTool(adapterFactory: AdapterFactory): AgentTool   // name: "run_sql" — consumes runQuery cursor (F1)
-export function isReadOnlySql(sql: string): { ok: boolean; reason?: string }
-// src/ai/tools/schemaTools.ts
-export function createListTablesTool(adapterFactory): AgentTool            // "list_tables"
-export function createDescribeTableTool(adapterFactory): AgentTool         // "describe_table"
-// src/ai/tools/schemaContext.ts
-export function formatSchemaContext(tables: TableInfo[], details: TableDetail[], budgetChars: number): string
-// src/ui/aiChatPanel.ts
-export interface ChatAbortToken { aborted: boolean }                       // F4: token, không AbortController
-export class AiChatPanel { constructor(ctx, deps: AgentDeps, adapterFactory: AdapterFactory, style?); show(): void; dispose(): void }
+// src/ai/omp/rpc.ts (T1) — pure JSONL framing over injected stdio pair
+export interface RpcTransport { write(line: string): void; onLine(cb: (line: string) => void): void; close(): void }
+export class OmpRpcClient {
+  constructor(transport: RpcTransport)
+  request(cmd: Record<string, unknown>): Promise<Record<string, unknown>>   // id-correlated RpcResponse
+  onEvent(cb: (ev: Record<string, unknown>) => void): void                 // AgentSessionEvent stream
+  handleHostToolCall(handler: (call: { id: string; name: string; arguments: unknown }) => Promise<unknown>): void
+  dispose(): void
+}
+// src/ai/omp/process.ts (T1)
+export interface OmpProcessOptions { ompPath?: string; cwd: string; extraArgs?: string[] }
+export class OmpProcess {
+  constructor(opts: OmpProcessOptions, spawnFn?: typeof import("child_process").spawn)  // spawn injectable for tests
+  start(): Promise<{ rpc: OmpRpcClient; version: string }>
+  onExit(cb: (code: number | null) => void): void
+  kill(): void
+}
+// src/ai/omp/hostTools.ts (T2)
+export function hostToolDefsFromRegistry(registry: ToolRegistry): Record<string, unknown>[] // set_host_tools payload
+export function createHostToolExecutor(registry: ToolRegistry): (name: string, args: unknown) => Promise<string>
+// src/ai/omp/detect.ts (T3)
+export const MIN_OMP_VERSION = "17.0.0"
+export function compareVersions(a: string, b: string): number
+export async function detectOmp(execFn?: (cmd: string) => Promise<string>): Promise<{ available: boolean; path?: string; version?: string; ok: boolean; reason?: string }>
+// src/ui/aiChatPanel.ts (T4) — engine switch; builtin path untouched behaviorally
 ```
 
-Luồng: user mở panel → gõ câu hỏi → host build system prompt (schema context qua formatter, budget ~8k chars) → `runAgent({messages, tools: createDbTools(adapterFactory)}, deps, callbacks)` (**tools trên AgentInput** — agent.ts:100-103) → onStep đẩy "thinking/tool" bubbles → finalText render markdown (bỏ qua nếu token.aborted). Stop = ChatAbortToken. `run_sql` consume `runQuery().cursor.fetchBatch(50)+close()` vì PG single-SELECT trả results:[] (postgres.ts:156-169).
-Mỗi task có bảng test riêng (xem task file). Tổng: happy path mỗi tool; ≥2 edge khác loại (guard: DML/multi-statement/INTO; factory null; budget cắt; args JSON sai; adapter throw → error string); regression (runAgent vẫn chạy được với registry thật 2 tool + fake provider loop tool-call 2 bước rồi trả lời — integration seam của cả cycle J+K).
-
-## §5 Verification Commands
-
-- TASK-001/002: `npx vitest run src/ai/tools/__tests__/<file>.test.ts && npx tsc --noEmit`
-- TASK-003/004: `npm run compile && npx vitest run src/ui/__tests__/aiChatPanel*.test.ts <wiring tests> && npx tsc --noEmit`
-- Wave boundary (orchestrator): full `npx vitest run` + `npm run compile`.
+Kiến trúc: panel hỏi `detectOmp()` → ok ⇒ `OmpProcess.start()` → rpc client + `set_host_tools` (defs từ DbToolRegistry + createSqlTool — read-only guard vẫn chạy trong VSDB) → `prompt` RpcCommand → stream AgentSessionEvent (message_update/text_delta) vào webview bubbles → host_tool_call → executor (guard + adapter) → host_tool_result. omp thiếu/cũ/crash ⇒ banner + builtin engine (hiện trạng).
 
 ## §4 Test Plan (TDD)
 
-Mỗi task có bảng test riêng (xem task file). Tổng: happy path mỗi tool; ≥2 edge khác loại (guard: DML/multi-statement/INTO/writable-CTE; factory null; budget cắt; adapter throw → error string); regression (runAgent chạy với registry thật 2 tool + fake provider tool-loop 2 bước — seam cycle J+K; run_sql DROP TABLE không bao giờ tới adapter).
+Mỗi task bảng test riêng. Tổng quan: happy (RPC roundtrip qua fake transport; host tool call→result; detect ok); edge khác loại (malformed JSONL line bỏ qua; RpcResponse error → reject; version cũ → ok=false; process exit → onExit + restart; host tool unknown/throw → error result string; registry trống); regression (builtin engine path vẫn chạy nguyên — test chat panel builtin hiện có không đổi; read-only guard vẫn chặn DROP TABLE khi gọi QUA host-tool bridge).
+
+## §5 Verification Commands
+
+- TASK-001/002: `npx vitest run src/ai/omp/__tests__/ && npx tsc --noEmit`
+- TASK-003: `npx vitest run src/ai/omp/__tests__/detect.test.ts && npx tsc --noEmit`
+- TASK-004: `npm run compile && npx vitest run src/ui/__tests__/aiChatPanel.test.ts src/ui/__tests__/aiChatOmp.test.ts src/extension.test.ts && npx tsc --noEmit`
+- Wave boundary: full `npx vitest run` + `npm run compile`.
 
 ## §6 Acceptance
 
-- Chat panel mở từ command palette, hỏi schema → agent gọi list_tables/describe_table, trả lời có thật từ fake adapter trong test.
-- `run_sql` với INSERT/UPDATE/DELETE/DROP/; /INTO bị chặn tại tool layer với reason.
-- Không active connection → agent trả lời "no active connection", không crash.
-- Full suite xanh + tsc sạch; README có section guardrails; không telemetry; apiKey không xuất hiện trong bất kỳ message/log mới nào.
+- omp có mặt (máy này 18.0.1): panel chạy engine omp, tool DB gọi qua bridge với read-only guard còn nguyên (DROP TABLE qua host tool vẫn bị chặn — test chứng minh).
+- omp vắng mặt/cũ: detect → fallback builtin, có notification 1 lần với lệnh install/update đúng từ research; builtin behavior không đổi (tests cũ xanh).
+- Process crash giữa chừng: onExit → panel báo + nút restart (spawn lại với --continue nếu có session).
+- README: section yêu cầu omp + install/update 1 lệnh + security note.
+- Full suite + compile + tsc sạch; không telemetry; apiKey không xuất hiện trong omp path (omp tự đọc config riêng).
 
 ## §7 Task split
 
-Theo INDEX.md đã scaffold: T1 registry+introspection tools (wave 1) · T2 sql tool + context formatter (wave 1) · T3 chat panel webview (wave 2) · T4 integration + guardrails + README (wave 3). Dependencies: T3 sau T1+T2; T4 sau T3.
+Theo INDEX: T1 rpc+process (wave 1) · T2 hostTools bridge (wave 1) · T3 detect+fallback (wave 2) · T4 panel engine switch + UX + README (wave 3).
 
-## Planner Self-Audit
-
-- Freeze list so từng ký tự với src/ai/agent.ts:16-62 và adapters/types.ts:89-114 — đọc trực tiếp, không từ trí nhớ.
-- Registry thật là consumers của EMPTY_TOOL_REGISTRY seam — cycle J test #empty-registry vẫn pass (không sửa file cycle J).
-- Read-only guard ở tool layer (không phải adapter) vì adapter.runQuery là đường产品 cho user; AI path phải có chốt riêng.
-- Budget cap formatter chống prompt blowup với schema lớn.
-- Không hỏi user thêm — mọi quyết định nằm ở §1.
+## Planner Report
+PLANNER_MODEL: unic-smart (orchestrator session; planner subagent died mid-run earlier this cycle — plan authored directly, P2.5 independent review is the gate)
 
 ## Plan Review Log
 
-### Round 1 — 2026-08-23 · unic/unic-smart (PlanRev-K, independent context)
-
-Status: **Issues Found** — 2 Critical / 5 Important / 2 Minor. The frozen §3 declarations that mirror existing source (`AgentTool`/`ToolRegistry`/`AgentInput`/`AgentDeps`/`runAgent`, `DbAdapter.listTables/listTableDetail`, `TableInfo`/`TableDetail`) match `src/ai/agent.ts` and `src/adapters/types.ts` verbatim — no drift there. Findings below are where the plan diverges from real runtime behavior or hides cross-wave rework.
+### Round 1 — 2026-08-23 · unic-smart (PlanRev-L, independent P2.5)
+Status: Issues Found — verdict CHANGES-REQUESTED (plan-level; do not start executors until findings 1–4 folded into task specs)
 
 COMPLETENESS:
-  - none (every task has Target Files / frozen Spec / happy + ≥2 distinct-class edges + regression / Test Files / Verification Commands incl. `npx tsc --noEmit` — project has no lint script, typecheck covers it — / Acceptance / Interfaces Consumes-Produces)
+  - none (all tasks have Goal/Target/Test Cases/Verification/Acceptance/Interfaces; ≥2 distinct edge cases per task; all files < 80 lines)
 CONSISTENCY:
-  - F2 (AbortController claim vs token design), F7 (runAgent call shape vs frozen signature)
+  - 1–3 below: frozen RPC shapes contradict the real omp 18.0.1 wire protocol (verified live: `omp://rpc.md` + binary probes on this machine, omp/18.0.1)
 CLARITY:
-  - F3 (wiring symbols), F6 (INTO-scan scope)
+  - 5–6 below (test expectations ambiguous/stale)
 SCOPE:
-  - none (read-only tool-layer guard, PG-only, no streaming/DML/telemetry; no cycle J file appears in any Target Files)
+  - none (wave file ownership non-overlapping: T1 rpc.ts/process.ts, T2 hostTools.ts, T3 detect.ts, T4 consumers; builtin path protected)
 YAGNI:
-  - none
+  - none (omp optional, fallback keeps cycle J/K intact)
 
-FINDINGS (numbered):
+VERDICT: CHANGES-REQUESTED
+FINDINGS (numbered, severity in brackets):
+  1. [CRITICAL] TASK-004 frozen command frames use wrong discriminator + fields: spec sends `{command:"prompt", prompt: text}`, `{command:"set_host_tools", tools}`, `{command:"abort"}`. Real RpcCommand is `{type:"prompt", message: string}`, `{type:"set_host_tools", tools: RpcHostToolDefinition[]}`, `{type:"abort"}` — discriminator key is `type`, prompt payload field is `message`. Implemented-to-spec, every omp turn fails at dispatch. T1's `request(cmd: Record<string, unknown>)` passthrough is fine; T4 §Spec must be rewritten to the real shapes.
+  2. [CRITICAL] TASK-001 frozen `RpcResponse {id: number; success; error?: {message, code?}; result?}` mismatches the real outbound frame `{type: "response", id?: string, command: string, success: boolean, data?: ..., error?: string, code?: string}`. Response detection must be `type === "response"` (not "has id"); payload is `data` not `result`; error is a plain string; unknown commands respond with `id: undefined`. Unit tests over fake frames will go GREEN while the client cannot interop — fix the frozen interface + test #1/#3 frame fixtures to wire shapes (also: use string ids).
+  3. [IMPORTANT] Host-tool callback/result frames: real outbound `{type:"host_tool_call", id, toolCallId, toolName, arguments}` — field is `toolName`, not `name`; real completion frame `{type:"host_tool_result", id, result: {content:[{type:"text",text:"…"}]}, isError?: true}`. T1/T4 spec `{id, result|error}` omits the `type` field, the content-block wrapper, and the `isError` error channel; T2's plain-string executor return must be wrapped by the bridge. Map `toolName`→`name` when invoking T2's executor.
+  4. [IMPORTANT] Turn-completion semantics: T4 treats any `agent_end` as done and prompt-response success as sufficient. Real spec: `prompt` success ≠ completion (`data.agentInvoked`); non-terminal `agent_end` with `isTerminal: false` exists — completion is `agent_end` with `isTerminal !== false` (or `prompt_result`/`agentInvoked:false` for local-only prompts). Fold into T4 §Spec + add an edge test (agent_end isTerminal:false must not post done).
+  5. [MINOR] TASK-002 test #6 expected column "reject reason string" is ambiguous: `run_sql` guard RESOLVES with the reason string (never rejects; guard runs before `factory()`, so adapter.runQuery is indeed never called). Rephrase: "resolves to read-only rejection reason string; fake adapter.runQuery not called" so the executor doesn't write `expects.rejects`.
+  6. [MINOR] TASK-004 test #7 cites "19/19 cũ" — `src/ui/__tests__/aiChatPanel.test.ts` currently has 11 tests; stale count. Drop the number (keep "toàn bộ tests cycle K xanh").
+  7. [MINOR] `--yolo` is an undocumented hidden flag in omp 18.0.1 (help lists `--approval-mode=yolo` / `--auto-approve`; bare `--yolo` still parses, verified exit 0). Pin the documented `--approval-mode=yolo` in T1 argv + test #8 to survive future flag removal.
 
-Critical:
-1. **run_sql reads rows from `runQuery()` but PostgresAdapter routes single SELECT through a server cursor and returns `results: []` + `batched`** — src/adapters/postgres.ts:156-169: "Statement đơn, bắt đầu bằng SELECT, không có `;` → DECLARE CURSOR, trả về QueryResult rỗng + BatchedQuery". TASK-002's flow (`adapter.runQuery(sql)` → slice 50 → `{columns, rows, rowCount, truncated}`) returns an empty payload for the cycle's PRIMARY path: every real PG SELECT. Tests won't catch it — fake adapters return inline rows. Fix: spec run_sql to consume `RunResult`: if `batched` present, `fetchBatch()` until ≥50 rows or EOF, then ALWAYS `close()`; else read `results[0]`. Add edge test "cursor-shaped RunResult → tool still returns columns/rows".
-2. **`AdapterFactory = () => DbAdapter | null` (sync) is unwirable against the real ConnectionManager.** No `getActiveAdapter()` exists; the only accessors are `getActive(): ConnectionConfig | null` (connectionManager.ts:182) and async lazy `getAdapter(): Promise<DbAdapter>` (:274-309). The cached `currentAdapter` is private AND nulled by the 10-min idle timer while `currentActiveId` persists — a sync snapshot can hand the agent a closed adapter. TASK-004's "getActiveAdapter() nếu có" references a nonexistent method. Fix before wave 1: freeze `type AdapterFactory = () => Promise<DbAdapter | null>`; tools await it inside `execute`; no-connection = null (or getAdapter rejection) → "No active connection…" string.
+VERIFIED-GOOD (no action): event names message_update / text_delta (nested in `assistantMessageEvent`) / agent_end are real; `omp --version` → `omp/18.0.1` (T1/T3 parse assumption correct); `--mode rpc --cwd --continue --no-session --no-lsp` all exist; interface freeze matches real code (AgentTool/ToolRegistry src/ai/agent.ts:9-21, AdapterFactory async src/ai/tools/types.ts, createDbTools+createSqlTool shapes, AiChatPanelOptions options-object src/ui/aiChatPanel.ts:48-60, extension wiring src/extension.ts:361); T2 defs `{name, description, parameters}` match RpcHostToolDefinition; verification commands all runnable (`npx vitest run`, `npx tsc --noEmit`, `npm run compile` scripts exist; no lint script); read-only guard via bridge is genuinely unbypassable (guard inside tool.execute before factory()).
 
-Important:
-3. TASK-004 wiring sketch uses nonexistent `loadAiConfig` and wrong shape `cfg.settings.method`/`cfg.settings.timeoutMs`. Real: `AiConfigStore.loadConfig(): Promise<AiConfig|null>` (src/ai/config.ts:61); `AiConfig extends AiSettings` flat — use `cfg.baseUrl/apiKey/method/timeoutMs`. As sketched, wiring throws at command time (`cfg.settings` undefined → TypeError).
-4. Stop overpromised: PLAN §1/§3 say "Stop qua AbortController" but `runAgent` takes no signal (callbacks = onStep/onError only). TASK-003's token is the implementable design — align PLAN wording. Also T3 spec must gate the FINAL assistant post on `!token.aborted` (currently only subsequent onStep is skipped); otherwise a late resolve posts a stale answer after Stop.
-5. `AdapterFactory` lives in T1's registry.ts while T2 (same wave) imports it — tolerable as a type-only import, but combined with F2's forced signature change it is a cross-wave coordination hazard. Fix: move the type to `src/ai/tools/types.ts` (add to T1 Target Files as owner) so the F2 async change lands in one frozen file both waves import.
-6. Read-only guard has a writable-CTE hole: `WITH x AS (INSERT … RETURNING *) SELECT …` starts with `with`, passes the first-keyword check, and executes DML — breaking §1 "Read-only tuyệt đối". Fix: for `with`-led statements reject if the body contains word-boundary `insert|update|delete|merge` (same class of scan as the existing `into` check); add an edge test. Also state explicitly that the ` into ` scan applies to ALL branches — the spec's parenthetical reads as with-only while test #4 (`SELECT * INTO t2`) implies unconditional.
-7. PLAN §3 flow line `runAgent(msgs, deps, { tools: createDbTools(adapterFactory) })` puts `tools` in the callbacks slot — the real signature is `runAgent(input: AgentInput, deps, callbacks?)` with `tools` on `input` (agent.ts:100-103). TASK-003 already has the correct form; fix the PLAN line so an executor reading §3 isn't misled.
+REQUIRED REWORK: fold findings 1–4 into TASK-001/TASK-004 frozen specs (shapes now verified — cite them verbatim), optionally add a T4 acceptance smoke against real omp gated on availability (skipped when absent) so envelope drift can never again pass green.
 
-Minor:
-8. TASK-003 package.json note "activationEvents main已有的 đủ (onCommand)" is garbled and contradicts house pattern (all 18 commands listed explicitly in activationEvents). Decide: add `"onCommand:vsdb.aiChat"` like its siblings.
-9. PLAN §3 says budget "~8k chars" but TASK-003 never pins the constant the host passes to `formatSchemaContext` — pin `budgetChars = 8000` in the T3 spec so executors don't pick arbitrary values.
-
-NOTES: Plan review only — no executor report, so no model-isolation check applies. F1/F2 are frozen-interface changes that must land in PLAN.md + TASK-001/002 before wave 1 starts; recommend one quick re-review after the planner applies them.
-
-### Round 2 — disposition (planner, 2026-08-23)
-- F1 (Critical) FIXED: TASK-002 spec giờ bắt buộc cursor flow (fetchBatch(50)+close trong finally), fallback run.results chỉ khi không có cursor; test #1/#1b/#7 cover.
-- F2 (Critical) FIXED: AdapterFactory là async () => Promise<DbAdapter|null>, frozen trong src/ai/tools/types.ts (đã tạo sẵn — executors không tạo lại).
-- F3 (Important) FIXED: TASK-004 wiring dùng new AiConfigStore(ctx).loadConfig() + flat cfg.baseUrl/apiKey/method/timeoutMs (không loadAiConfig, không cfg.settings.*).
-- F4 (Important) FIXED: Stop = ChatAbortToken (export từ aiChatPanel.ts), gate assistant final post trên !token.aborted; TASK-003 spec + test #4 cập nhật.
-- F5 (Important) FIXED: AdapterFactory sống ở src/ai/tools/types.ts — T1 và T2 import, không ai sở hữu chéo.
-- F6 (Important) FIXED: isReadOnlySql chặn writable-CTE (with-body chứa insert|update|delete|merge word-boundary) + INTO scan unconditional; test #4 thêm case WITH…INSERT.
-- F7 (Important) FIXED: PLAN §3 ghi đúng runAgent({messages, tools}, deps, callbacks) — tools trên AgentInput (agent.ts:100-103).
-- Minor (2): chấp nhận — (a) comment trong TASK-001 "run_sql do TASK-002 register ở caller" đã explicit; (b) budget ~8k chars giữ nguyên như heuristic.
+### Round 2 — findings applied (planner, 2026-08-23, live-probe verified)
+- F1 [C] FIXED: TASK-004 giờ dùng real frames `{type:"prompt",message}` / `{type:"set_host_tools",tools}` / `{type:"abort"}` — live-probed trên omp 18.0.1 (transcript của run này: ready frame, response envelope `{type:"response",command,success,...}`, agent_start/message_update/agent_end thật).
+- F2 [C] FIXED: TASK-004 §REAL protocol facts normative — response envelope KHÔNG có id; correlation qua command + 1-in-flight serialization (bắt buộc, có test #4).
+- F3 [I] FIXED: host_tool_call dùng `toolName`; TASK-001 spec viết đúng host_tool_result shape `{content:[{type:"text",text}],isError}`.
+- F4 [I] FIXED: TASK-004 gate turn-completion trên `agent_end` (isTerminal !== false), không dựa response success; edge test thêm.
+- F5 [M] FIXED: TASK-002 test #6 ghi rõ guard resolve reason string (không throw).
+- F6 [M] FIXED: TASK-004 regression #7 bỏ "19/19" stale — dùng "mọi test cycle K".
+- F7 [M] FIXED: TASK-001 argv dùng `--approval-mode yolo` documented thay `--yolo` hidden.

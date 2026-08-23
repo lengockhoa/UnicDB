@@ -1,153 +1,58 @@
-# TASK-004 — Agent↔panel integration + guardrails + README
+# TASK-004 — Chat panel omp engine switch + install/update UX + README
 
 ## Goal
-Nối `vsdb.aiChat` vào extension.ts với deps thật (AiConfigStore + createProviderClient + connection-manager adapterFactory), test end-to-end bằng fake fetch, document guardrails.
+Panel chọn engine: detectOmp ok ⇒ omp RPC mode (spawn process, set_host_tools, stream events, host-tool executor); không ok ⇒ builtin như cũ + notification 1 lần với install/update hint. README document story.
 
 ## Target Files
-- `src/extension.ts` (sửa: register command tạo AiChatPanel với deps thật), `src/extension.test.ts` (thêm test wiring)
-- `README.md` (section AI DB-assist + guardrails)
-- Tests: `src/ui/__tests__/aiChatE2e.test.ts` (mới — fake fetch 2-step tool loop)
+- `src/ui/aiChatPanel.ts` (sửa — thêm engine mode, KHÔNG đổi builtin behavior), `src/ui/aiChatPanelMessages.ts` (thêm streaming/step messages nếu cần)
+- `src/extension.ts` (sửa — truyền deps omp: detectOmp + OmpProcess factory injectable)
+- `README.md` (section "AI engine: oh-my-pi (optional)")
+- Tests: `src/ui/__tests__/aiChatOmp.test.ts` (mới), `src/ui/__tests__/aiChatPanel.test.ts` (chỉ thêm regression — builtin path nguyên)
 
-## Spec (frozen — F3: dùng API thật)
+## Spec (frozen)
 ```ts
-// extension.ts wiring (nguyên tắc):
-const store = new AiConfigStore(ctx);            // src/ai/config.ts (cycle J)
-const deps: AgentDeps = {
-  loadConfig: () => store.loadConfig(),          // → AiConfig | null — FLAT shape: cfg.baseUrl, cfg.apiKey, cfg.method, cfg.timeoutMs, cfg.maxSteps, cfg.models (KHÔNG có cfg.settings.*)
-  complete: (cfg, role, req) =>
-    createProviderClient({ baseUrl: cfg.baseUrl, apiKey: cfg.apiKey, method: cfg.method, timeoutMs: cfg.timeoutMs }).complete(req),
-};
-// adapterFactory: async () => DbAdapter | null — resolve từ ConnectionManager instance hiện có trong extension.ts
-// (getAdapter() async-lazy; null khi chưa connect). GUARD: chỉ trả adapter khi active connection là postgres.
-const adapterFactory: AdapterFactory = async () => { /* connectionManager active postgres adapter else null */ };
+// aiChatPanel.ts — new optional constructor field (options object pattern, cycle K):
+export interface AiChatPanelOptions { /* existing fields */ omp?: {
+  detect: () => Promise<OmpDetection>;
+  spawn: (cwd: string) => Promise<{ rpc: OmpRpcClient; version: string; onExit(cb: (code: number | null) => void): void; kill(): void }>;
+  toolDefs: () => Record<string, unknown>[];
+  toolExecutor: (name: string, args: unknown) => Promise<string>;
+} }
 ```
-- E2E test seam: inject fetch fake qua createProviderClient options; adapter fake qua adapterFactory; kịch bản: user "list tables" → provider trả tool_call list_tables → tool chạy trên fake adapter → provider trả answer → assert finalText chứa bảng fake + runQuery KHÔNG BAO GIỜ được gọi với DML (regression guard).
-- Guardrail regression: kịch bản thứ hai — model cố gọi `run_sql` với `DROP TABLE` → tool trả reject reason, vòng lặp tiếp tục, adapter.runQuery chỉ thấy SELECT nếu có.
-- README: section "AI Chat & DB tools" — read-only promise (chỉ SELECT/SHOW/EXPLAIN/WITH sạch), mọi request chỉ tới baseUrl cấu hình, không telemetry, apiKey chỉ trong SecretStorage; hướng dẫn mở AI Settings trước nếu chưa config.
-- Khi `loadConfig()` null (chưa set AI Settings): command hiện info message "Configure AI settings first" + mở AI Settings form — không crash.
+- Engine resolution khi panel show lần đầu (cache trong panel): detect ok ⇒ omp mode; else builtin + post `{type:"engine", name:"builtin", hint: install/update hint}` một lần.
+- omp send flow: rpc.request({ type: "set_host_tools", tools: toolDefs() }) một lần khi start → mỗi user msg rpc.request({ type: "prompt", message: text }) + onEvent streaming (message_update assistantMessageEvent text_delta → post `{type:"delta", text}`). **Turn completion KHÔNG dựa vào response success** — response chỉ xác nhận nhận lệnh; gate trên event `agent_end` (isTerminal !== false) → post assistant final + done. Host tool call wire vào rpc.handleHostToolCall với mapping toolName→executor.
+- Stop trong omp mode: rpc.request({ type: "abort" }) + token gating như cũ; isTerminal:false agent_end KHÔNG kết thúc turn (test edge).
+- Process exit giữa chừng: onExit → post error bubble "omp session ended (code N)" + `{type:"engine", name:"builtin"}` fallback cho turn hiện tại KHÔNG TỰ Ý respawn (nút retry của user sẽ re-detect).
+- Builtin path: mọi test cycle K phải còn xanh nguyên (regression net).
+- `src/extension.ts`: build omp spawn closure từ OmpProcess + hostToolDefsFromRegistry/createHostToolExecutor với adapterFactory POSTGRES-only như cycle K; inject như options.omp — test qua fake (không spawn thật).
+- README: yêu cầu omp >= 17.0.0 (optional), install 1 lệnh `curl -fsSL https://omp.sh/install | sh`, update `omp update`; VSDB extension tự nâng cấp qua lệnh install-vsdb.sh có sẵn (không đổi); security note: omp mode cho agent quyền tool workspace (read/edit/bash scoped cwd) — DB access vẫn read-only qua host tools.
 
 ## Test Cases
 | # | Loại | Tên | Expected |
 |---|------|-----|----------|
-| 1 | happy E2E | 2-step tool loop qua registry thật | finalText chứa kết quả từ fake adapter |
-| 2 | regression | model gọi run_sql DROP TABLE | tool reject string; runQuery không nhận DML |
-| 3 | edge (unconfigured) | loadConfig resolve null | info message + mở settings form; không crash |
-| 4 | edge (offline) | fetch fake trả 500 | error bubble ProviderError message (đã scrub), panel sống |
-| 5 | wiring | extension.ts register vsdb.aiChat | command xuất hiện trong subscriptions; dispose sạch |
+| 1 | happy | detect ok + fake spawn + fake rpc | set_host_tools gửi 1 lần với defs; prompt gửi text; delta events post; assistant final + done |
+| 2 | happy | host_tool_call qua fake rpc | toolExecutor gọi với name/args; result frame viết lại transport |
+| 3 | edge (not installed) | detect → not-installed | builtin engine chạy như cũ (runAgent path); engine message với install hint 1 lần |
+| 4 | edge (old version) | detect → version-too-old | builtin + hint update |
+| 5 | edge (crash) | fake onExit(1) giữa turn | error bubble + fallback builtin cho turn hiện tại; không respawn tự động |
+| 6 | edge (abort/terminal) | send rồi stop: `{type:"abort"}` gửi, delta sau bị gate, done posted. VÀ agent_end với isTerminal=false không kết thúc turn |
+| 7 | regression | builtin suite cycle K nguyên vẹn | mọi test cycle K của aiChatPanel (11 host hiện có sau fix round K) + toàn suite xanh |
 
 ## Test Files
-`src/ui/__tests__/aiChatE2e.test.ts`, `src/extension.test.ts` (thêm)
+`src/ui/__tests__/aiChatOmp.test.ts`, `src/ui/__tests__/aiChatPanel.test.ts` (regression additions only)
 
 ## Verification Commands
 ```
-npm run compile && npx vitest run src/ui/__tests__/aiChatE2e.test.ts src/extension.test.ts src/ui/__tests__/aiChatPanel.test.ts && npx tsc --noEmit
+npm run compile && npx vitest run src/ui/__tests__/aiChatOmp.test.ts src/ui/__tests__/aiChatPanel.test.ts src/extension.test.ts && npx tsc --noEmit
 ```
 
 ## Acceptance
-- [ ] 5 test PASS RED→GREEN (output thật)
-- [ ] README section guardrails tồn tại (README-contract test kiểu cycle J T4 — encouraged)
-- [ ] Không telemetry mới; apiKey không xuất hiện thêm chỗ nào
-- [ ] Full suite + compile + tsc sạch (orchestrator wave boundary)
-
-
-## Executor Report
-
-### RED Output
-
-```
-FAIL  src/extension.test.ts > TASK-004 — vsdb.aiChat wiring > Test #5 — vsdb.aiChat được register trong subscriptions sau activate()
-AssertionError: expected false to be true // Object.is equality
- ❯ src/extension.test.ts:960:57
-    960|     expect(state.registeredCommands.has("vsdb.aiChat")).toBe(true);
-
-FAIL  src/extension.test.ts > TASK-004 — vsdb.aiChat wiring > Test #5b — dispose() sạch: deactivate() không throw sau khi gọi vsdb.aiChat
-AssertionError: expected undefined not to be undefined
- ❯ src/extension.test.ts:969:16
-    969|     expect(fn).toBeDefined();
-
-FAIL  src/extension.test.ts > TASK-004 — vsdb.aiChat wiring > Test #3 — loadConfig() resolve null → info message + mở AI Settings form; không crash
-AssertionError: expected undefined not to be undefined
- ❯ src/extension.test.ts:985:16
-    985|     expect(fn).toBeDefined();
-```
-
-3 RED tests in `src/extension.test.ts` confirmed: `vsdb.aiChat` was not registered
-in `state.registeredCommands` (extension.ts activate() lacked the wiring).
-
-### GREEN Output
-
-```
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
- ✓ src/ui/__tests__/aiChatPanel.test.ts  (9 tests) 5ms
- ✓ src/ui/__tests__/aiChatE2e.test.ts  (3 tests) 5ms
- ✓ src/extension.test.ts  (33 tests) 79ms
-
- Test Files  3 passed (3)
-      Tests  45 passed (45)
-```
-
-Plus full `src/ai` + `src/ui` sweep (395 tests / 39 files, 5.83s) — all pass.
-
-### EXECUTOR_MODEL
-unic-code
-
-### FILES_CHANGED
-- `src/extension.ts` — register `vsdb.aiChat` (spec wiring: `AiConfigStore(ctx)`,
-  `createProviderClient` per `complete()`, `adapterFactory` resolves active
-  POSTGRES adapter else null); `commandOpenAiChat` does unconfigured fallback
-  (`loadConfig` null → info + `executeCommand("vsdb.openAiSettings")`); `aiChatPanel`
-  cached/disposed.
-- `src/extension.test.ts` — 3 new tests under `TASK-004 — vsdb.aiChat wiring`:
-  Test #5 (registered), Test #5b (deactivate clean), Test #3 (unconfigured fallback).
-- `src/ui/__tests__/aiChatE2e.test.ts` (new) — 3 E2E tests against REAL
-  `runAgent` + REAL `createProviderClient({fetch})`: happy 2-step, DML regression
-  (DROP TABLE → tool reject, runQuery never sees DML), offline 500 (ProviderError
-  scrubbed, apiKey never in error).
-- `README.md` — feature bullet "AI Chat & DB tools (1.5.x)" + dedicated section
-  "AI Chat & DB tools" under `## AI` documenting guardrails, read-only promise,
-  egress contract, apiKey hygiene, unconfigured fallback.
-
-### TESTS_ADDED
-- `src/ui/__tests__/aiChatE2e.test.ts` — 3 tests (happy 2-step, DML regression,
-  offline 500)
-- `src/extension.test.ts` — 3 tests (TASK-004 — vsdb.aiChat wiring describe)
-
-### VERIFICATION
-- `npm run compile` → success (esbuild, 128ms, dist/* populated)
-- `npx vitest run src/ui/__tests__/aiChatE2e.test.ts src/extension.test.ts src/ui/__tests__/aiChatPanel.test.ts`
-  → 45/45 pass, exit 0
-- `npx tsc --noEmit` → clean (no errors)
-
-### ISSUES
-None — all acceptance criteria met. Note: `AiChatPanel` constructor takes
-options object (`{extensionUri, deps, adapterFactory}`); the existing
-`aiChatPanel.test.ts` calls it with 3 positional args (works under esbuild
-type-stripped vitest but is technically wrong per TypeScript). Not in this
-task's scope — kept frozen.
-
-### HANDOFF_TO_REVIEWER
-yes — wiring live, all 5 tests green.
+- [ ] 7 test PASS RED→GREEN (output thật)
+- [ ] Không spawn thật omp trong tests (mọi thứ fake/inject)
+- [ ] Builtin behavior unchanged (regression #7)
+- [ ] README section có install + update + security note
+- [ ] `npx tsc --noEmit` + compile sạch
 
 ## Interfaces
-- Consumes: tất cả T1-T3 productions; `AiConfigStore.loadConfig()` + flat `AiConfig` fields + `createProviderClient` (frozen cycle J); `AdapterFactory` async (src/ai/tools/types.ts).
-- Produces: `(none)` — final consumer. README contract cho QA.
-
-## Reviewer Verdict
-
-VERDICT: APPROVED-WITH-MINOR
-REVIEWER_MODEL: unic-smart
-EXECUTOR_MODEL: unic-code
-VERIFICATION_RERUN:
-  command: npm run compile && npx vitest run src/ui/__tests__/aiChatE2e.test.ts src/extension.test.ts src/ui/__tests__/aiChatPanel.test.ts && npx tsc --noEmit
-  result: compile OK / 45 pass / 0 fail; tsc --noEmit clean
-TEST_PLAN_COVERAGE: all-followed (5/5 cases: happy E2E, DML regression, unconfigured, offline-500, wiring+dispose; ≥2 edge cases present)
-FINDINGS:
-  critical:
-    - none
-  important:
-    - none
-  minor:
-    - README.md:127 — "form Settings → Save với apiKey trống" does NOT disable AI: aiSettingsForm.ts:146-159 refuses empty-key save when nothing is stored, or silently reuses the stored key when one exists; AiConfigStore.clear() (src/ai/config.ts:111) has no production caller. Delete that clause — only "Clear Secret Storage" works as written.
-    - src/extension.test.ts:960-961 — Test #5's `ctx.subscriptions.length > 0` is tautological (activate() pushes many disposables); comment claims it proves the aiChat handler is subscribed. Tighten to assert the specific disposable or drop the assert.
-NEXT_STATUS_FOR_INDEX: approved_minor
-NOTES: RED evidence covers the 3 behavior-changing wiring tests; the 3 E2E tests exercise pre-existing T1-T3 seams (nothing to be RED). Read-only guard, POSTGRES-only adapterFactory, per-call adapter resolution, apiKey scrub, and cycle-J file immutability (empty diff c890557..HEAD on src/ai/{settings,config,provider,agent}.ts) all verified in code.
+- Consumes: T1 `OmpRpcClient`/`OmpProcess`, T2 defs/executor, T3 `detectOmp`/hints, cycle K panel/registry/adapterFactory.
+- Produces: `(none)` — final consumer.

@@ -1,14 +1,14 @@
 # INDEX
 
-Cycle: K — AI DB-assist (queued per AI-CORE-spec cycle K+ mandate)
+Cycle: L — omp agent integration (RPC bridge) + one-command install/update story
 
 | Task | Title | Wave | Depends | Status |
 |------|-------|------|---------|--------|
-| TASK-001 | DB tool registry + introspection tools | 1 | - | approved_minor (rev: unic-smart) |
-| TASK-002 | SQL read-only executor tool + schema→context formatter | 1 | - | approved_minor (rev round 1: unic-smart) |
-| TASK-003 | AI Chat panel webview + host wiring | 2 | 001,002 | approved (rev round 1: unic-smart) |
-| TASK-004 | Agent↔panel integration + guardrails + README | 3 | 003 | approved_minor (reviewer: unic-smart) |
+| TASK-001 | omp RPC client + process lifecycle (pure) | 1 | - | ready |
+| TASK-002 | Host-tool bridge (set_host_tools ↔ ToolRegistry) | 1 | - | ready |
+| TASK-003 | omp detection/version check + fallback engine switch | 2 | - | ready |
+| TASK-004 | Chat panel omp mode + install/update UX + README | 3 | 001,002,003 | ready |
 
-Waves: 1 = TASK-001,002 (parallel; T1 owns src/ai/tools/registry+introspect, T2 owns src/ai/tools/sqlTool+context — no shared files) → 2 = TASK-003 → 3 = TASK-004.
+Waves: 1 = TASK-001,002 parallel (T1 owns src/ai/omp/rpc.ts + process.ts, T2 owns src/ai/omp/hostTools.ts — no shared files beyond frozen src/ai/tools/types.ts) → 2 = TASK-003 → 3 = TASK-004.
 
-Scope guards: read-only SQL only (SELECT/SHOW/EXPLAIN enforced), no DML/DDL pass-through; tools get connected-adapter via injected provider (no global); streaming optional NOT included; context budget cap.
+Scope guards: omp optional — absence/old-version/crash MUST degrade to existing cycle-J/K AI; DB tools stay read-only in VSDB hands (host_tool bridge, never omp's own SQL); no Bun dependency; apiKey flow unchanged when using non-omp path; omp mode uses omp's own provider config (no apiKey handling in bridge).
