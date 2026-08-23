@@ -45,10 +45,34 @@ npx vitest run src/ai/omp/__tests__/detect.test.ts && npx tsc --noEmit
 ```
 
 ## Acceptance
-- [ ] 6 test PASS RED→GREEN (output thật)
-- [ ] Không import vscode; không exec thật khi execFn provided
-- [ ] `npx tsc --noEmit` sạch
+- [x] 6 test PASS RED→GREEN (output thật)
+- [x] Không import vscode; không exec thật khi execFn provided
+- [x] `npx tsc --noEmit` sạch
 
 ## Interfaces
 - Consumes: `(none)`.
 - Produces: `detectOmp`, `compareVersions`, `MIN_OMP_VERSION`, `OMP_INSTALL_HINT`, `OMP_UPDATE_HINT`, `OmpDetection` (T4 consume).
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: ExecL-T003
+SUMMARY: Implemented `src/ai/omp/detect.ts` (MIN_OMP_VERSION/OMP_INSTALL_HINT/OMP_UPDATE_HINT constants, semantic `compareVersions` with non-numeric tail tolerance, and `detectOmp(execFn?)` returning `OmpDetection`) per frozen spec. TDD: 6-case RED (module-not-found) → GREEN 11/11 passing.
+TEST_PLAN_FOLLOWED: task §Test Cases (all 6 cases present + 5 supplementary assertions: equality, numeric ordering, constants)
+FILES_CHANGED:
+  - src/ai/omp/detect.ts: new — detectOmp + compareVersions + constants + OmpDetection
+  - src/ai/omp/__tests__/detect.test.ts: new — 11 tests across 3 describe blocks
+TESTS_ADDED:
+  - src/ai/omp/__tests__/detect.test.ts: "detectOmp — frozen contract" (4 cases: happy/ENOENT/old/garbage), "compareVersions — frozen contract" (4 cases: 17.0.1<17.10.0, 18>17.99.99, equal, non-numeric tail), "constants — frozen values" (3 cases)
+VERIFICATION:
+  command: `npx vitest run src/ai/omp/__tests__/detect.test.ts && npx tsc --noEmit`
+  result: 11 pass / 0 fail; tsc exit 0
+  output_excerpt: |
+    ✓ src/ai/omp/__tests__/detect.test.ts  (11 tests) 5ms
+    Test Files  1 passed (1)
+         Tests  11 passed (11)
+ISSUES: none
+HANDOFF_TO_REVIEWER: yes — main-tree files are additive (no shared mutation risk with T001/T002)
+NEXT: ready for review
