@@ -80,3 +80,32 @@ Keys render INSIDE the parens (table constraints) → one CREATE statement = one
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Executor Report
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: -
+SUMMARY: Implemented src/core/ddl/createTable.ts (TableSpec/ColumnSpec/KeySpec + quoteIdent, UUID_DEFAULT_EXPR, CREATED_AT_DEFAULT_EXPR, defaultColumnSpecs, generateCreateTable, specErrors) and 9-case test suite under src/core/__tests__/ddlCreateTable.test.ts. Pure module (no vscode/async/IO). Renderer quotes every column/table identifier per canonical fixture SQL; `quoteIdent` exported per contract.
+TEST_PLAN_FOLLOWED: task §Test Cases (all 9)
+FILES_CHANGED:
+  - src/core/ddl/createTable.ts: new — exports contract, mandatory-defaults factory, renderer, validator.
+  - src/core/__tests__/ddlCreateTable.test.ts: new — 9 tests (1-9 per §Test Cases).
+TESTS_ADDED:
+  - src/core/__tests__/ddlCreateTable.test.ts: TASK-001 — CREATE TABLE generator (1-9).
+VERIFICATION:
+  command: cd .worktrees/task-001 && npx vitest run src/core/__tests__/ddlCreateTable.test.ts && npx tsc --noEmit
+  result: vitest 9/9 pass, tsc clean (exit 0, no diagnostics)
+  output_excerpt: |
+    ✓ src/core/__tests__/ddlCreateTable.test.ts  (9 tests) 2ms
+    Test Files  1 passed (1)
+         Tests  9 passed (9)
+RED_OUTPUT: |
+  Failed Suites 1
+   FAIL  src/core/__tests__/ddlCreateTable.test.ts
+  Error: Failed to load url ../ddl/createTable (resolved id: ../ddl/createTable) in src/core/__tests__/ddlCreateTable.test.ts. Does the file exist?
+   Test Files  1 failed (1)
+        Tests  no tests
+ISSUES: none
+HANDOFF_TO_REVIEWER: yes — task is in handoff batch 1, reviewer subagent expected
+NEXT: ready for review

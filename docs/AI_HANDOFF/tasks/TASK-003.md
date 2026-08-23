@@ -66,6 +66,40 @@ npx vitest run src/core/__tests__/ddlAlterTable.test.ts && npx tsc --noEmit
 ### 2026-08-23 · planner · unic/unic-smart
 Constraint DROP uses introspected conname (always present in pg). Order renames→adds→drops→column alters→key drops satisfies PG dependency order for common cases (key explicitly dropped regardless of its column's fate).
 
+
+---
+
+## Executor Report
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: Exec-T003
+SUMMARY: Implemented pure ALTER TABLE diff engine (`diffTable`, `normalizeDefaultExpr`, `AlterPlan`) plus 14 unit tests. Rename-aware via `ColumnSpec.originalName`; reorder-only and identical specs emit zero statements; schema-change refused with `Schema change is not supported`. Pure module: no vscode, no I/O, no Date/random.
+TEST_PLAN_FOLLOWED: task §Test Cases (10 cases → 14 test() bodies covering all)
+FILES_CHANGED:
+  - `.worktrees/task-003/src/core/ddl/createTable.ts` (new): placeholder type-only Contract exports (TASK-001 owns; flagged as placeholder for orchestrator drop-in)
+  - `.worktrees/task-003/src/core/ddl/alterTable.ts` (new): pure diff engine — `diffTable`, `normalizeDefaultExpr`, `quoteIdent`, `specErrors`, helpers
+  - `.worktrees/task-003/src/core/__tests__/ddlAlterTable.test.ts` (new): 14 vitest tests covering all §Test Cases
+TESTS_ADDED:
+  - `src/core/__tests__/ddlAlterTable.test.ts`: 14 tests across rename+add+drop-key ordered (#1), type+default+nullability (#2), default removed (#3), table rename last (#4), identical→empty (#5), reorder-only→empty (#5b), rename+type no DROP+ADD (#6), invalid after blocks (#7), schema change refused (#8), key identity unnamed (#9), normalizeDefaultExpr (#10 with 4 sub-cases)
+VERIFICATION:
+  command: `npx vitest run src/core/__tests__/ddlAlterTable.test.ts && npx tsc --noEmit`
+  result: 14 pass / 0 fail (vitest), tsc no errors, both exit 0
+  output_excerpt: |
+    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-003
+     ✓ src/core/__tests__/ddlAlterTable.test.ts  (14 tests) 3ms
+     Test Files  1 passed (1)
+          Tests  14 passed (14)
+    ---EXIT:0
+    ===TSC===
+    ---EXIT:0
+ISSUES:
+  - Placeholder createTable.ts adds `name?:string` to primaryKey variant so the spec's test #1 (which references `users_pkey` as named PK) type-checks. Practical — TASK-002's introspection also produces named PKs via conname. Final state depends on TASK-001's resolution.
+  - `quoteIdent` always-quote rendering chosen to match TASK-001 test expectations (`"id"` everywhere); the "quote iff..." rule in TASK-001 spec is a necessary-but-not-sufficient description.
+  - `normalizeDefaultExpr` strips ALL internal whitespace (not just collapses) to satisfy test #10's `a+b` ≡ `a + b` requirement while also handling the wrapping-paren + trim cases.
+  - Helpers (`quoteIdent`, `specErrors`) intentionally duplicated inline in alterTable.ts so it compiles standalone against the placeholder. Orchestrator will drop-in TASK-001's createTable.ts and these helpers stay behavior-matching.
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for review — rename path verified, no DROP+ADD emitted for renames (#6 explicit assertion in test).
 <!--
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
