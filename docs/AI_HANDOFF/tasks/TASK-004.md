@@ -159,3 +159,20 @@ FINDINGS:
   minor: none
 NEXT_STATUS_FOR_INDEX: changes_requested
 NOTES: All 5 round-1 defects are genuinely fixed and tested; the only blocker is the collateral escapeHtml regression above — a 2-line restore, no test churn needed.
+
+## Reviewer Verdict (re-review round 2)
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic/unic-smart (matches handoff.reviewer.model)
+EXECUTOR_MODEL: unic-code (FixL-T004; differs from reviewer — isolation OK)
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run src/ui/__tests__/aiChatOmp.test.ts src/ui/__tests__/aiChatPanel.test.ts src/extension.test.ts && npx tsc --noEmit
+  result: 56/56 pass, compile clean, tsc clean
+ROUND-1 R1 FINDING: closed — webview/aiChatPanelMain.ts escapeHtml restores all 5 cases in order (& → &amp;, < → &lt;, > → &gt;, " → &quot;, ' → &#39;) with no fall-through; verified verbatim in dist/aiChatPanel.js lines 13-23 (recompiled during verification). Both `&`→`>` corruption and unescaped `<` in innerHTML are gone; round-1 fixes (delta/engine rendering, thinking filter, crash semantics, buffer reset) all still intact.
+TEST_PLAN_COVERAGE: all-followed — original 7 cases + 3 R4.5 regressions + 2 new round-2 tests (bundle source asserts all 5 entity cases + no `case "&": case ">":` fall-through; built dist asserts &amp;/&lt;/&gt; present). Diff 7a3d6b6..2c6326b touches only webview/aiChatPanelMain.ts (+3) and src/ui/__tests__/aiChatOmp.test.ts (+24) — everything else unchanged.
+FINDINGS:
+  critical: none
+  important: none
+  minor: none
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Cycle L TASK-004 complete after 2 fix rounds; 5 important defects from round 1 all closed and pinned by regression tests. Ready for merge.
