@@ -77,11 +77,14 @@ code --install-extension vsdb-<version>.vsix
   - **Tree filter**: nút filter trên title bar panel **VSDB** → gõ text lọc schemas/tables/views/routines/columns theo tên (không phân biệt hoa thường); nút ✕ hiện khi filter đang bật để xóa.
 - **Refresh metadata**: nút refresh trên title bar của panel **VSDB** (chạy `VSDB: Refresh Schema`) reload lại schema cache từ server — dùng sau khi bạn tạo/xoá table ở bên ngoài VS Code mà không muốn tạo connection mới.
 
-- **Results grid (AG Grid Community)**: xem kết quả trong panel **VSDB Results** — theme tự theo VS Code (dark/light); sort; **filter per-column kiểu Excel** (Text/Number Filters: Contains / Equals / Starts With…, kết hợp AND/OR tối đa 2 điều kiện) + quick search; multi-row selection + copy (Ctrl+C); row count ở footer.
+- **Results grid (AG Grid Community)**: xem kết quả trong panel **VSDB Results** — theme tự theo VS Code (dark/light); sort; **Excel-style set filter per column** (mở menu filter của 1 cột → danh sách checkbox giá trị distinct, ô tìm nhanh phía trên, hàm `(Select All)` / `(Blanks)`; dữ liệu lớn render qua AG Grid Set Filter native) + quick search; multi-row selection + copy (Ctrl+C); row count ở footer.
 - **Grid edit mode (1.4.0)**: sửa cell trực tiếp trên grid, **paste từ Excel (TSV)** vào vùng chọn (tự cắt ô thừa), Add/Delete Row, Undo, toggle CSV raw view; **Cmd/Ctrl+Enter commit một lần** (batch) — UPDATE theo PK (PostgreSQL không PK dùng `ctid` kèm warning; MySQL/MSSQL không PK từ chối + banner), lỗi SQL hiện banner và giữ edit để retry.
 - **Export toolbar (1.4.0)**: TSV / CSV / XML / JSON / SQL Inserts / SQL Insert Multirow / SQL Updates / Where Clause — SQL mode theo dialect; **Header checkbox** (TSV/CSV/XML/JSON); **To Clipboard** hoặc **Export to file**.
 - **WHERE/ORDER BY bar (1.4.0)**: gán điều kiện WHERE / ORDER BY rồi **Re-Run** — wrap query gốc thành subquery, grid reset và load-more chạy trên cursor mới.
 - **Run .sh (1.4.0)**: mở file `.sh` → nút **Run** trên editor title gửi toàn bộ nội dung file vào Integrated Terminal (như paste cả file vào shell).
+- **Toolbar icons (1.5.0)**: title bar của panel **VSDB** (refresh / filter) và **VSDB Results** (copy / quick search / export / re-run) gọn trên một hàng icon-only — đỡ chiếm chiều ngang webview, label ẩn khi đủ rộng.
+- **Destructive statement guard (1.5.0)**: trước khi submit, VSDB quét statement — `DELETE có WHERE` → modal confirm thường; `DELETE không WHERE` / `TRUNCATE` / `DROP` / `UPDATE không WHERE` → modal đỏ "CỰC KỲ NGUY HIỂM" hiện FULL statement, user phải bấm **Vẫn chạy (nguy hiểm)**; Cancel huỷ cả lô. Setting `vsdb.confirmDestructive` (default `true`) tắt guard khi cần.
+- **Run .sh CodeLens (1.5.0)**: file `.sh` mở trong editor có CodeLens `▶ Run` ngay dòng đầu — chạy toàn bộ nội dung file vào Integrated Terminal (giống SQL CodeLens); setting `vsdb.showRunLensSh` (default `true`); fix kèm: extension giờ kích hoạt đúng khi mở file `.sh` và palette gọi `Run Script` không còn bắn `\n` vào terminal trống.
 
 ---
 ## Khắc phục sự cố (Troubleshooting)
