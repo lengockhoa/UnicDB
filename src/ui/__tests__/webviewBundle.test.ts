@@ -405,8 +405,14 @@ describeIfBundle("webview/main.ts bundle (TASK-203)", () => {
     expect(api!.getDisplayedRowCount()).toBe(1000);
   });
 
-  itIfBundle("6. non-SELECT ok-message — INSERT shows ✓ INSERT — 1 row affected", () => {
+  itIfBundle("6. non-SELECT ok-message — INSERT shows ✓ INSERT — 1 row affected", async () => {
     const { received, root } = loadBundle();
+    // Force activeTab back to 0 by dispatching an interim state that
+    // clamps it (activeTab >= results.length → clamp). Then dispatch the
+    // real state — activeTab is now 0 and the click on tabs[1] actually
+    // switches the panel.
+    dispatchState(selectState({ results: [] }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
     dispatchState(
       selectState({
         results: [
@@ -439,15 +445,14 @@ describeIfBundle("webview/main.ts bundle (TASK-203)", () => {
       }),
     );
     void received;
-
     const tabs = root.querySelectorAll(".vsdb-tab");
     (tabs[1] as HTMLElement).click();
+    await new Promise((resolve) => setTimeout(resolve, 10));
     const ok = root.querySelector(".vsdb-ok-message") as HTMLElement;
     expect(ok).toBeTruthy();
     expect(ok.textContent).toContain("✓ INSERT");
     expect(ok.textContent).toContain("1 row affected");
-  });
-
+   });
   itIfBundle("7. error tab — .vsdb-error shows message", () => {
     const { received, root } = loadBundle();
     dispatchState(

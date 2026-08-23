@@ -49,6 +49,10 @@ import {
   parseTsvPaste,
   applyPasteToDirty,
   serializeExport,
+  buildSetFilterEntries,
+  setFilterPass,
+  selectedKeysFromModel,
+  type SetFilterEntry,
   type ColumnSpec,
   type ResultsGridModel,
   type ExportFormat,
@@ -756,7 +760,6 @@ function renderActivePanel(): void {
   // the wrap to the panel restores the grid GUI to the live DOM.
   panel.innerHTML = "";
   panel.appendChild(dom.gridWrap);
-  dom.gridWrap.style.display = "flex";
   renderGrid();
 }
 
@@ -768,6 +771,337 @@ function teardownGridWrap(): void {
   dom.gridWrap.style.display = "none";
   setCurrentStatement(null);
 }
+
+ // ---- TASK-602: SetFilterComponent ------------------------------------------
+// Excel-style checkbox set-filter replacing the TASK-402 text/number filter.
+// Implements AG Grid's IFilterComp interface for v36 Community: init,
+// getGui, isFilterActive, doesFilterPass, getModel, setModel. Model
+// shape: `{ values: string[] }` (display strings; "(Blanks)" literal for
+// blanks) or `null` when inactive.
+//
+// Counts and entry lists are derived from the CURRENTLY LOADED rows via
+// `buildSetFilterEntries` (TASK-601 helper) — see plan-review note about
+// accepted under-count on partially-loaded batched results.
+//
+// Search input narrows the visible list; Select All toggles only visible
+// entries (Excel parity). Live apply on every checkbox change — no Apply
+// button. Footer-left status: "All" / "N of M"; footer-right Clear + Close.
+
+/** Shape of the filter model produced + consumed by SetFilterComponent. */
+interface SetFilterModel {
+  values: string[];
+}
+
+/** AG Grid param shape this component reads (structural — see
+ *  node_modules/ag-grid-community IFilterParams for full contract). */
+interface SetFilterParams {
+  getValue: (node: { data: unknown }) => unknown;
+  api: GridApi;
+  filterChangedCallback: () => void;
+}
+
+class SetFilterComponent {
+  private params: SetFilterParams | null = null;
+  private model: SetFilterModel | null = null;
+  /** Current checkbox state, keyed by entry display. Always reflects every
+   *  loaded value — even entries hidden by the search box keep their state
+   *  (Select All toggles only the visible ones; the hidden ones survive). */
+  private checked = new Set<string>();
+  /** Last computed entries from `buildSetFilterEntries`. Recomputed on
+   *  every `init` + after `setModel` to pick up the latest grid state. */
+  private entries: SetFilterEntry[] = [];
+  private searchText = "";
+
+  private readonly root = document.createElement("div");
+  private readonly searchInput = document.createElement("input");
+  private readonly selectAllCheckbox = document.createElement("input");
+  private readonly listEl = document.createElement("div");
+  private readonly statusEl = document.createElement("span");
+  private readonly clearBtn = document.createElement("button");
+  private readonly closeBtn = document.createElement("button");
+
+  constructor() {
+    this.root.className = "vsdb-setfilter";
+    this.searchInput.type = "search";
+    this.searchInput.className = "vsdb-setfilter-search";
+    this.searchInput.placeholder = "Search…";
+    this.searchInput.addEventListener("input", () => this.onSearchChanged());
+    this.selectAllCheckbox.type = "checkbox";
+    this.selectAllCheckbox.className = "vsdb-setfilter-selectall";
+    this.selectAllCheckbox.addEventListener("change", () =>
+      this.onSelectAllChanged(),
+    );
+    this.listEl.className = "vsdb-setfilter-list";
+    this.statusEl.className = "vsdb-setfilter-status";
+    this.clearBtn.type = "button";
+    this.clearBtn.className = "vsdb-setfilter-clear";
+    this.clearBtn.textContent = "Clear";
+    this.clearBtn.addEventListener("click", () => this.onClear());
+    this.closeBtn.type = "button";
+    this.closeBtn.className = "vsdb-setfilter-close";
+    this.closeBtn.textContent = "Close";
+    this.closeBtn.addEventListener("click", () => this.onClose());
+
+    const searchRow = document.createElement("div");
+    searchRow.className = "vsdb-setfilter-search-row";
+    searchRow.appendChild(this.searchInput);
+
+    const selectAllRow = document.createElement("div");
+    selectAllRow.className = "vsdb-setfilter-selectall-row";
+    const selectAllLabel = document.createElement("label");
+    selectAllLabel.className = "vsdb-setfilter-selectall-label";
+    selectAllLabel.appendChild(this.selectAllCheckbox);
+    selectAllLabel.appendChild(document.createTextNode("Select All"));
+    selectAllRow.appendChild(selectAllLabel);
+
+    const footerRow = document.createElement("div");
+    footerRow.className = "vsdb-setfilter-footer";
+    footerRow.appendChild(this.statusEl);
+    const footerRight = document.createElement("div");
+    footerRight.className = "vsdb-setfilter-footer-right";
+    footerRight.appendChild(this.clearBtn);
+    footerRight.appendChild(this.closeBtn);
+    footerRow.appendChild(footerRight);
+
+    this.root.appendChild(searchRow);
+    this.root.appendChild(selectAllRow);
+    this.root.appendChild(this.listEl);
+    this.root.appendChild(footerRow);
+  }
+
+  init(params: SetFilterParams): void {
+    this.params = params;
+    this.recomputeEntries();
+    this.applyCheckedFromModel();
+    this.render();
+  }
+
+  getGui(): HTMLElement {
+    return this.root;
+  }
+
+  isFilterActive(): boolean {
+    return this.model !== null;
+  }
+
+  doesFilterPass(params: {
+    data: Record<string, unknown>;
+    node: { data: Record<string, unknown> };
+  }): boolean {
+    if (this.model === null) return true;
+    const value =
+      params && params.data && Object.prototype.hasOwnProperty.call(params.data, "__rowId")
+        ? this.readCellValue(params.data)
+        : undefined;
+    const keys = selectedKeysFromModel(this.entries, this.model.values);
+    return setFilterPass(value, keys);
+  }
+
+  getModel(): SetFilterModel | null {
+    return this.model;
+  }
+
+  setModel(model: SetFilterModel | null | undefined): void {
+    if (model === null || model === undefined) {
+      this.model = null;
+    } else if (
+      typeof model === "object" &&
+      "values" in model &&
+      Array.isArray((model as { values: unknown }).values)
+    ) {
+      this.model = { values: [...(model as { values: string[] }).values] };
+    } else {
+      // Defensive: unrecognised payload (AG Grid may pass `undefined` during
+      // filter-wrapper initialisation or a column swap) → deactivate the
+      // filter rather than crash on `.values`.
+      this.model = null;
+    }
+    this.recomputeEntries();
+    this.applyCheckedFromModel();
+    this.render();
+  }
+  destroy(): void {
+    this.params = null;
+  }
+
+  /** Triggered by AG Grid when the filter's host element is removed from
+   *  the screen (popup close). We do NOT clear `model` here — Excel keeps
+   *  the user's selections across close/reopen. */
+  afterGuiDetached(): void {
+    /* no-op */
+  }
+
+  /** Recompute entries from currently-loaded rows. Called on init + setModel. */
+  private recomputeEntries(): void {
+    if (!this.params) {
+      this.entries = [];
+      return;
+    }
+    const values: unknown[] = [];
+    this.params.api.forEachNode((node) => {
+      if (!node.data) return;
+      values.push(this.readCellValue(node.data as Record<string, unknown>));
+    });
+    this.entries = buildSetFilterEntries(values);
+  }
+
+  private readCellValue(data: Record<string, unknown>): unknown {
+    if (!this.params) return undefined;
+    // Reuse the grid-provided getValue to honour colDef.valueGetter /
+    // valueFormatter overrides if any are added later.
+    return this.params.getValue({
+      data,
+    } as unknown as { data: unknown });
+  }
+
+  /** Sync the per-display checkbox Set to match `model.values`. Empty
+   *  model = ALL selected (Excel's "no filter" state — visually all
+   *  boxes are checked, model is null/inactive). */
+  private applyCheckedFromModel(): void {
+    this.checked.clear();
+    if (this.model === null || this.model.values.length === 0) {
+      // No filter active (Excel shows every box UNCHECKED; status reads
+      // "All"). User opts in to specific values; commit() then emits the
+      // active subset.
+      return;
+    }
+    for (const v of this.model.values) this.checked.add(v);
+  }
+
+  /** Re-render the list + status from current `entries`, `checked`,
+   *  `searchText`. Preserves checkbox state for hidden entries. */
+  private render(): void {
+    const needle = this.searchText.trim().toLowerCase();
+    this.listEl.innerHTML = "";
+    let visibleCount = 0;
+    let checkedVisibleCount = 0;
+
+    for (const entry of this.entries) {
+      const row = document.createElement("label");
+      row.className = "vsdb-setfilter-entry";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.className = "vsdb-setfilter-entry-checkbox";
+      cb.checked = this.checked.has(entry.display);
+      cb.addEventListener("change", () =>
+        this.onEntryChanged(entry.display, cb.checked),
+      );
+      const label = document.createElement("span");
+      label.className = "vsdb-setfilter-label";
+      label.textContent = entry.display;
+      const count = document.createElement("span");
+      count.className = "vsdb-setfilter-count";
+      count.textContent = String(entry.count);
+      // Right-align within a flex row — same effect as the CSS
+      // `.vsdb-setfilter-count { margin-left: auto }` rule, applied
+      // inline so jsdom-based tests can assert the computed value
+      // (jsdom doesn't apply external stylesheets).
+      count.style.marginLeft = "auto";
+      row.appendChild(cb);
+      row.appendChild(label);
+      row.appendChild(count);
+      const matches =
+        needle === "" || entry.display.toLowerCase().includes(needle);
+      if (!matches) {
+        row.classList.add("vsdb-setfilter-entry-hidden");
+      } else {
+        visibleCount += 1;
+        if (cb.checked) checkedVisibleCount += 1;
+      }
+      this.listEl.appendChild(row);
+    }
+
+    // Status: "All" when no filter active (model === null OR values empty),
+    // "N of M" when a subset is checked (active filter), "None" when the
+    // user has unchecked everything (filter is active but shows 0 rows).
+    const total = this.entries.length;
+    if (total === 0) {
+      this.statusEl.textContent = "All";
+    } else if (this.checked.size === 0) {
+      this.statusEl.textContent = `${total} of ${total}`;
+    } else if (this.checked.size === total) {
+      this.statusEl.textContent = "All";
+    } else {
+      this.statusEl.textContent = `${this.checked.size} of ${total}`;
+    }
+
+    // Select All checkbox state: checked if every VISIBLE entry is
+    // checked; indeterminate if some visible are checked; unchecked
+    // otherwise. Hidden entries don't influence the master toggle.
+    if (visibleCount === 0) {
+      this.selectAllCheckbox.checked = false;
+      this.selectAllCheckbox.indeterminate = false;
+    } else if (checkedVisibleCount === visibleCount) {
+      this.selectAllCheckbox.checked = true;
+      this.selectAllCheckbox.indeterminate = false;
+    } else if (checkedVisibleCount === 0) {
+      this.selectAllCheckbox.checked = false;
+      this.selectAllCheckbox.indeterminate = false;
+    } else {
+      this.selectAllCheckbox.checked = false;
+      this.selectAllCheckbox.indeterminate = true;
+    }
+  }
+
+  private onSearchChanged(): void {
+    this.searchText = this.searchInput.value;
+    this.render();
+  }
+
+  private onEntryChanged(display: string, checked: boolean): void {
+    if (checked) this.checked.add(display);
+    else this.checked.delete(display);
+    this.commit();
+    this.render();
+  }
+
+  private onSelectAllChanged(): void {
+    const needle = this.searchText.trim().toLowerCase();
+    const visibleDisplays: string[] = [];
+    for (const entry of this.entries) {
+      const matches =
+        needle === "" || entry.display.toLowerCase().includes(needle);
+      if (matches) visibleDisplays.push(entry.display);
+    }
+    if (this.selectAllCheckbox.checked) {
+      for (const d of visibleDisplays) this.checked.add(d);
+    } else {
+      for (const d of visibleDisplays) this.checked.delete(d);
+    }
+    this.commit();
+    this.render();
+  }
+
+  private onClear(): void {
+    this.model = null;
+    this.checked.clear();
+    // Restore "all checked" visual state — Excel shows every box ticked
+    // when the filter is inactive.
+    for (const e of this.entries) this.checked.add(e.display);
+    this.params?.filterChangedCallback();
+    this.render();
+  }
+
+  private onClose(): void {
+    // AG Grid's popup close handler is wired through the wrapper; we just
+    // notify the grid. The popup will hide automatically.
+    this.params?.filterChangedCallback();
+  }
+
+  /** Push the current checkbox state into the model + notify the grid. */
+  private commit(): void {
+    const total = this.entries.length;
+    if (this.checked.size === total && total > 0) {
+      // Every value selected → filter is a no-op. Excel reports the
+      // filter as inactive in this state, so the grid shows all rows.
+      this.model = null;
+    } else {
+      this.model = { values: Array.from(this.checked) };
+    }
+    this.params?.filterChangedCallback();
+  }
+}
+
 
 function renderGrid(): void {
   if (!dom) return;
@@ -829,64 +1163,35 @@ function renderGrid(): void {
   const specs: ColumnSpec[] = inferColumns(r.result.columns, r.result.rows);
   currentSpecs = specs;
 
-  // Build AG Grid column defs from specs. Each column gets an Excel-like
-  // column filter: text/number filter + AND/OR (up to 2 conditions) and a
-  // debounced input. Floating filter
-  // row stays enabled so users can type in place.
+  // TASK-602: per-column Excel-style checkbox set filter (custom AG Grid
+  // component class, not the v32 `agTextColumnFilter`/`agNumberColumnFilter`
+  // — those were the TASK-402 text/number inputs we replaced). The panel
+  // itself lives inside the column-menu popup, so the floating-filter row
+  // is no longer needed and stays disabled.
   const baseCols = specs.map((spec) => {
-    const isNumber = spec.kind === "number";
     return {
       field: spec.field,
       headerName: spec.headerName,
       sortable: true,
-      filter: isNumber ? "agNumberColumnFilter" : "agTextColumnFilter",
-      filterParams: isNumber
-        ? {
-            filterOptions: [
-              "equals",
-              "notEqual",
-              "lessThan",
-              "lessThanOrEqual",
-              "greaterThan",
-              "greaterThanOrEqual",
-              "inRange",
-              "blank",
-              "notBlank",
-            ],
-            defaultOption: "equals",
-            maxNumConditions: 2,
-            debounceMs: 200,
-          }
-        : {
-            filterOptions: [
-              "contains",
-              "notContains",
-              "equals",
-              "notEqual",
-              "startsWith",
-              "endsWith",
-              "blank",
-              "notBlank",
-            ],
-            defaultOption: "contains",
-            maxNumConditions: 2,
-            debounceMs: 200,
-            caseSensitive: false,
-          },
+      filter: SetFilterComponent,
       resizable: true,
-      floatingFilter: true,
+      floatingFilter: false,
       // TASK-501: cells are editable (cellValueChanged → editState.markDirty).
       // valueFormatter is rebuilt when csvMode flips (toggleCsv) so the user
+      // sees raw vs formatted values.
       editable: true,
       valueFormatter: (p: { value: unknown }) => formatDataCell(p.value),
-      cellStyle: (isNumber
-        ? { textAlign: "right" as const, fontVariantNumeric: "tabular-nums" }
-        : {
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }) as CellStyle,
-
+      cellStyle:
+        spec.kind === "number"
+          ? {
+              textAlign: "right" as const,
+              fontVariantNumeric: "tabular-nums",
+            }
+          : {
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            },
     };
   });
   // AG Grid v36 auto-creates a selection column from rowSelection. We do NOT
@@ -1681,6 +1986,7 @@ render();
 (window as unknown as { __vsdb: unknown }).__vsdb = {
   render,
   postToHost,
+  getActiveTab: () => activeTab,
   formatCell,
   get gridApi(): GridApi | null {
     return gridApi;

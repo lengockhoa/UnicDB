@@ -46,6 +46,14 @@ terminal. Version 1.5.0 + README updated; full suite green.
   (`src/extension.test.ts`, `src/ui/__tests__/codeLensProvider.test.ts`,
   `src/scaffold.test.ts`).
 - Version 1.5.0, README bullets, release-notes file.
+- **Mid-cycle addition (TASK-606)**: destructive-SQL confirm guard — new pure
+  detector `src/core/dangerousStatement.ts` + guard at `runStatements()`
+  (`src/extension.ts`) + setting `vsdb.confirmDestructive` (`package.json`,
+  default true). DELETE w/ WHERE → amber modal; DELETE w/o WHERE / TRUNCATE /
+  DROP / UPDATE w/o WHERE → red modal ("Vẫn chạy (nguy hiểm)"); cancel aborts
+  the whole run. Files disjoint from 602/603 → Wave 3 ∥ TASK-603; must land
+  before TASK-604 (both touch `package.json`). Full spec:
+  `docs/AI_HANDOFF/tasks/TASK-606.md`.
 
 **Out-of-scope**
 - Host-side results behavior (`src/ui/resultsPanel.ts`, query runner) — no

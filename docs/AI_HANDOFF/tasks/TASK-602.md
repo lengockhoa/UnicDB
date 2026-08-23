@@ -90,3 +90,29 @@ text row belonged to the replaced text filter.
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: Exec602
+SUMMARY: Replaced per-column text/number filter with Excel-style checkbox set-filter (custom AG Grid Community component). All 8 new panel tests + 7 migrated regression tests + 8 bundle tests green. Full suite 417/417; typecheck clean.
+TEST_PLAN_FOLLOWED: task §4 — implemented all 8 test cases (1-7 happy/edge + 8 component roundtrip) and migrated webviewFilters tests 1/3/4/5/7/8 to {values:…} model.
+FILES_CHANGED:
+  - webview/main.ts: added SetFilterComponent class (init/getGui/isFilterActive/doesFilterPass/getModel/setModel/destroy/afterGuiDetached); wired `filter: SetFilterComponent` + `floatingFilter:false` in colDefs; added getActiveTab to __vsdb test seam; imports buildSetFilterEntries/setFilterPass/selectedKeysFromModel from resultsGridModel.
+  - webview/styles.css: added .vsdb-setfilter* panel styles (search row, Select All row, list with hidden entries, label+count row, footer with status/Clear/Close) using VS Code CSS vars.
+  - src/ui/__tests__/webviewSetFilter.test.ts: (new) 8 tests covering panel DOM, setFilterModel, (Blanks), case-variant merge, search+SelectAll, Clear roundtrip, multi-column AND, getModel/setModel roundtrip.
+  - src/ui/__tests__/webviewFilters.test.ts: migrated 7 tests from {filterType:'text',type:'contains',filter:…} to {values:['name-1' | 'beta']}; test 6 converted to async + reset activeTab via interim empty-results dispatch + click tabs[1].
+  - src/ui/__tests__/webviewBundle.test.ts: test 6 converted to async + interim activeTab reset (parallel-test order makes module-scoped activeTab leak).
+TESTS_ADDED:
+  - src/ui/__tests__/webviewSetFilter.test.ts: 1-8 (panel + integration).
+VERIFICATION:
+  command: cd .worktrees/task-602 && npm run compile && npx vitest run src/ui/__tests__/webviewSetFilter.test.ts src/ui/__tests__/webviewFilters.test.ts src/ui/__tests__/webviewBundle.test.ts && npm run typecheck && npx vitest run
+  result: target 23/23 pass; typecheck exit 0; full suite 417/417 pass (36 files)
+  output_excerpt: |
+    Test Files  36 passed (36)
+    Tests  417 passed (417)
+ISSUES: none — clean cutover (no ag-grid-enterprise added, no shim). Inline marginLeft on count cell so jsdom getComputedStyle returns "auto" without external stylesheet. Note: webviewFilters test 6 and webviewBundle test 6 now require interim activeTab reset (parallel test execution shares module-scoped state); documented inline.
+HANDOFF_TO_REVIEWER: yes — all 8 task §4 test cases covered, regression gates (loadMore + columnsChanged) preserved, typecheck + full suite green.
+NEXT: ready for review.

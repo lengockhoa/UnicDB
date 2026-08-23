@@ -24,9 +24,9 @@ Gates: compile OK · typecheck OK · 34 files / 388 tests · browser smoke grid 
 | TASK-603 | Icon toolbar one row + requery-bar icons | P0 | M | ready | - | - | `docs/AI_HANDOFF/tasks/TASK-603.md` |
 | TASK-604 | Release 1.5.0 boundary (version + README + full suite) | P1 | S | ready | - | - | `docs/AI_HANDOFF/tasks/TASK-604.md` |
 | TASK-605 | Run .sh fix (activation + guard) + CodeLens ▶ Run | P0 | M | ready | - | - | `docs/AI_HANDOFF/tasks/TASK-605.md` |
+| TASK-606 | Confirm guard DELETE/TRUNCATE/DROP/UPDATE (danger modal) | P0 | M | ready | - | - | `docs/AI_HANDOFF/tasks/TASK-606.md` |
 
 ## Queued (future cycles)
 
 - AI assist tab (user 2026-08-22, chưa spec chi tiết).
-
-Updated: 2026-08-23 · Cycle 2026-08-23-G planned (release 1.5.0): set filter + icon toolbar + Run .sh fix — 5 tasks ready. Queued: AI assist tab (needs user spec).
+Updated: 2026-08-23 · Cycle 2026-08-23-G planned (release 1.5.0): set filter + icon toolbar + Run .sh fix — 6 tasks ready (606 mid-cycle: destructive-SQL confirm guard, W3 ∥ 603). Queued: AI assist tab (needs user spec).

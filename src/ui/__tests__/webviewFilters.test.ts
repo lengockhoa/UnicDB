@@ -199,17 +199,18 @@ describeIfBundle("webview/main.ts bundle (TASK-402)", () => {
       const api = getGridApi();
       expect(api).toBeTruthy();
 
+      // TASK-602 migration: per-column text filter → set-filter model.
       api!.setFilterModel({
-        name: { filterType: "text", type: "contains", filter: "beta" },
+        name: { values: ["beta"] },
       });
-      await flushGridEvents();
-      expect(api!.getDisplayedRowCount()).toBe(1);
+       await flushGridEvents();
+       expect(api!.getDisplayedRowCount()).toBe(1);
 
-      const footer = root.querySelector(".vsdb-grid-footer") as HTMLElement;
-      expect(footer).toBeTruthy();
-      expect(footer.textContent).toMatch(/1 of 3/);
-    },
-  );
+       const footer = root.querySelector(".vsdb-grid-footer") as HTMLElement;
+       expect(footer).toBeTruthy();
+       expect(footer.textContent).toMatch(/1 of 3/);
+     },
+   );
 
   itIfBundle(
     "6. regression — exactly 1 .ag-selection-checkbox per row, no __select__ header column",
@@ -255,9 +256,8 @@ describeIfBundle("webview/main.ts bundle (TASK-402)", () => {
 
       const api = getGridApi();
       expect(api).toBeTruthy();
-
       api!.setFilterModel({
-        name: { filterType: "text", type: "contains", filter: "beta" },
+        name: { values: ["beta"] },
       });
       await flushGridEvents();
       const displayed = api!.getDisplayedRowCount();
@@ -293,8 +293,10 @@ describeIfBundle("webview/main.ts bundle (TASK-402)", () => {
       expect(api).toBeTruthy();
 
       // Apply a column filter that excludes everything matching.
+      // TASK-602 migration: text filter → set filter. Selecting only
+      // "name-1" excludes every other entry → all rows hidden, gate holds.
       api!.setFilterModel({
-        name: { filterType: "text", type: "contains", filter: "name-1" },
+        name: { values: ["name-1"] },
       });
       await flushGridEvents();
 
@@ -324,7 +326,7 @@ describeIfBundle("webview/main.ts bundle (TASK-402)", () => {
 
       // First — gate it.
       api!.setFilterModel({
-        name: { filterType: "text", type: "contains", filter: "name-1" },
+        name: { values: ["name-1"] },
       });
       await flushGridEvents();
       received.length = 0;
@@ -361,9 +363,9 @@ describeIfBundle("webview/main.ts bundle (TASK-402)", () => {
 
       const api = getGridApi();
       expect(api).toBeTruthy();
-
+      // TASK-602: set-filter — selecting only "name-1" keeps loadMore gated.
       api!.setFilterModel({
-        name: { filterType: "text", type: "contains", filter: "name-1" },
+        name: { values: ["name-1"] },
       });
       await flushGridEvents();
       received.length = 0;
@@ -388,9 +390,9 @@ describeIfBundle("webview/main.ts bundle (TASK-402 fix round 1)", () => {
       const api = getGridApi();
       expect(api).toBeTruthy();
 
-      // Activate a column filter.
+      // TASK-602 migration: text filter → set filter.
       api!.setFilterModel({
-        name: { filterType: "text", type: "contains", filter: "name-1" },
+        name: { values: ["name-1"] },
       });
       await flushGridEvents();
       expect(api!.isColumnFilterPresent()).toBe(true);
