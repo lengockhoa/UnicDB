@@ -83,3 +83,27 @@ VERIFICATION:
 ISSUES: none
 HANDOFF_TO_REVIEWER: yes
 NEXT: ready for review (Rev-T004-2) — reviewer must differ from unic-code per handoff policy
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: ExecL-T004
+EXECUTION ISOLATION: OK — executor unic-code, reviewer unic-smart (differs per handoff.reviewer.model)
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run src/ui/__tests__/aiChatOmp.test.ts src/ui/__tests__/aiChatPanel.test.ts src/extension.test.ts && npx tsc --noEmit
+  result: 51/51 pass, compile clean, tsc clean
+TEST_PLAN_COVERAGE: partial — case #2 asserts executor+result-frame via fake, but cases #1/#6 never assert the panel-to-webview `delta` contract against the real renderer; no case catches that thinking_delta leaks (fake only feeds text_delta); no case asserts single-`done` on crash.
+FINDINGS:
+  important:
+    - file: webview/aiChatPanelMain.ts:236-245 — host posts `{type:"delta"}` and `{type:"engine"}` but the webview message switch has no case for either: both messages are silently dropped by the renderer (verified in dist/aiChatPanel.js — zero occurrences of "delta"/"engine"). The spec's streaming UX (delta text + install hint surfaced) is dead on arrival in the real panel; only the mocked postMessage tests see it. Fix: handle `delta` (append to a streaming bubble) and `engine` (render hint) in the webview switch, or drop both host messages.
+    - file: src/ui/aiChatPanel.ts:452-461 — `handleOmpEvent` never checks `assistantMessageEvent.type`. Live-probed omp 18.0.1 (2026-08-23, `--mode rpc --no-session`): thinking events also carry a `delta` field — `{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","delta":"The user is asking me to reply with..."}}` observed in a real turn. The panel appends every `delta` to `session.buffer` and posts it, so the final assistant message contains model chain-of-thought (thinking) interleaved with the actual text. Fix: only append/post when `assistantMessageEvent.type === "text_delta"`.
+    - file: src/ui/aiChatPanel.ts:420-436 — crash handler (onExit) posts `error` + `done` but never sets `this.turnDonePosted = true`. The in-flight `runOmpTurn` (resolver fired at line 434) then posts assistant + a SECOND `done` after the crash's `done`. The turn-boundary contract ("done = no further assistant/step/error") is broken on every crash: user sees crash error + done, then a stale assistant bubble (from the accumulated buffer, which includes leaked thinking) + done again. Fix: set `turnDonePosted = true` in the onExit handler before posting.
+    - file: src/ui/aiChatPanel.ts:452-461 — `session.buffer` is never reset between turns (only initialized at spawn, line 416). Turn 2's assistant final contains turn 1's accumulated text (plus turn 1's leaked thinking). Live probe: each assistant turn produces its own message_start/message_update/message_end cycle; nothing on the wire resets the buffer. Fix: clear `session.buffer = ""` at the start of each omp turn.
+    - file: src/ui/aiChatPanel.ts:417-437 — spec: "onExit → post error bubble + `{type:"engine", name:"builtin"}` fallback" — the crash handler sets `this.engine = "builtin"` (line 424) but never posts the engine message, so the webview never learns omp mode ended. (Currently masked by the missing webview handling above, but the spec'd UX contract is violated.) Fix: post `{type:"engine", name:"builtin"}` in the onExit handler.
+  minor:
+    - file: src/ui/aiChatPanel.ts:236 — `{ ...(hint !== null ? { hint } : {}) }` is needlessly indirect; `hint: hint ?? undefined` reads cleaner and behaves identically.
+    - file: src/ui/aiChatPanel.ts:326-330 — `runOmpTurn`'s `_registry` param is built unconditionally in `handleSend` even for omp turns; build it only for the builtin branch or drop the param.
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: 5 important findings are user-visible: thinking leakage is a correctness/privacy defect (chain-of-thought rendered to end user), stale-buffer duplication and double-done break the chat transcript on every second turn and every crash. The webview gap means the spec'd streaming UX does not exist at runtime despite green tests.

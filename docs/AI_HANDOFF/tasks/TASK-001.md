@@ -95,3 +95,24 @@ VERIFICATION:
 ISSUES: none
 HANDOFF_TO_REVIEWER: yes — wave 1 handoff (TASK-001)
 NEXT: ready for review
+
+## Reviewer Verdict
+
+VERDICT: CRITICAL
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/ai/omp/__tests__/rpc.test.ts src/ai/omp/__tests__/process.test.ts && npx tsc --noEmit
+  result: 9 pass / 0 fail; tsc exit 0 (PASS — but suite never exercises the broken production path)
+TEST_PLAN_COVERAGE: all-followed (9/9 cases implemented, fresh GREEN); RED evidence absent from report (no RED_OUTPUT field)
+FINDINGS:
+  critical:
+    - file: src/ai/omp/process.ts:181-186 — createLineTransport().write is a NO-OP. The only production caller (src/extension.ts:366-367) calls proc.start() with no transport arg, so every frame OmpRpcClient writes (prompt / abort / set_host_tools / host_tool_result) is silently discarded; omp never receives any command. Expected: default transport write must forward to the child's stdin.
+    - file: src/ai/omp/process.ts:59 — stdio:["ignore","pipe","pipe"] closes the child's stdin at birth; omp treats stdin EOF as terminate (empirically confirmed: bare `echo '<json>' | omp --mode rpc ... --no-session` exits 0). Child exits immediately → exit handler disposes the rpc → ALL requests reject "disposed". Reproduced live against real omp binary with the exact production wiring: start() resolves (ready + version omp/18.0.1), then first request rejects "disposed" after 0 ms. Control experiment with stdio ["pipe",...] and write→child.stdin works end-to-end (ready → set_host_tools → prompt → agent_end with 2 messages). Fix: spawn with piped stdin, wire transport write→child.stdin.write, close→child.stdin.end, guard EPIPE after child exit; add a behavioral test asserting written frames reach child stdin (process.test.ts #8 currently only asserts `captured.opts).toBeDefined()` — too weak to catch this).
+  important:
+    - file: src/ai/omp/process.ts:82-84 — spawnLike.on("error") only disposes rpc; spawn failure (omp missing) surfaces solely via the 10s waitReady timeout instead of rejecting start() promptly. Expected: forward child "error" to reject the pending waitReady/start.
+    - file: docs/AI_HANDOFF/tasks/TASK-001.md (Executor Report) — no RED_OUTPUT field: no evidence the 9 tests were RED before implementation. Re-run TDD cycle and paste real failing output.
+  minor:
+    - file: src/ai/omp/rpc.ts:126-133 — dispose() drains the queue via send(), leaving this.pending set to an already-rejected entry; harmless (disposed guard) but misleading state.
+NEXT_STATUS_FOR_INDEX: critical_block
+NOTES: rpc.ts itself is protocol-faithful (live-probed: no correlation id, command+order correlation, abort response without data field, non-response frames → onEvent); the defect is confined to OmpProcess's default transport. TASK-004 approved on top of a fake-rpc seam, so the integration break was invisible to its tests — re-review TASK-004 panel flow after the fix.
