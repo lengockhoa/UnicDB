@@ -1,9 +1,14 @@
 // webview/aiChatPanelMain.ts — TASK-003
 // Webview entry cho AiChatPanel — bubbles host messages, minimal input +
-// Send / Stop / Clear buttons, minimal markdown rendering (no CDN).
+// Send / Stop / Clear buttons, minimal markdown rendering (no CDN), and a
+// text-only ACP permission request renderer (TEXT RENDERING ONLY — never
+// innerHTML or any markdown interpreter for untrusted host text).
 //
-// SECURITY: webview only ever POSTS send/stop/clear to host. It NEVER
-// receives apiKey material.
+// SECURITY: webview only ever POSTS send/stop/clear/permission_response to
+// host. It NEVER receives apiKey material. Permission requests carry a
+// host-generated opaque requestId + opaque optionIds; the webview echoes
+// them verbatim or denies (no optionId field on the wire). The webview
+// yields AT MOST ONE response per visible request.
 
 declare const acquireVsCodeApi: undefined | (() => {
   postMessage: (msg: unknown) => void;
@@ -44,6 +49,14 @@ interface EngineMsg {
   name: "omp" | "builtin";
   hint?: string;
 }
+/** ACP permission request — host-generated opaque requestId, opaque optionIds,
+ * and tool name/detail that MUST be rendered as plain text only. */
+interface PermissionRequestMsg {
+  type: "permission_request";
+  requestId: string;
+  tool: { id: string; name: string; detail: string };
+  options: Array<{ optionId: string; label: string }>;
+}
 type HostMsg =
   | InitMsg
   | StepMsg
@@ -51,7 +64,8 @@ type HostMsg =
   | ErrorMsg
   | DoneMsg
   | DeltaMsg
-  | EngineMsg;
+  | EngineMsg
+  | PermissionRequestMsg;
 
 // ---- State -----------------------------------------------------------------
 interface State {
@@ -95,6 +109,9 @@ function escapeHtml(s: string): string {
  *  - line breaks (blank line → new paragraph)
  * Returns HTML with all user content escaped first, then markdown syntax
  * re-introduced through the controlled replacement set above.
+ *
+ * NOTE: this is ONLY used for the agent's own assistant bubble — never
+ * for permission tool/option labels.
  */
 function renderMarkdown(text: string): string {
   const escaped = escapeHtml(text);
@@ -216,6 +233,16 @@ function appendAssistant(text: string, markdown: boolean): void {
   thread.scrollTop = thread.scrollHeight;
 }
 
+function appendError(message: string): void {
+  const thread = document.getElementById("thread");
+  if (!thread) return;
+  const div = document.createElement("div");
+  div.className = "vsdb-chat-bubble vsdb-chat-error";
+  div.textContent = message;
+  thread.appendChild(div);
+  thread.scrollTop = thread.scrollHeight;
+}
+
 /** Append an incremental text fragment to the current assistant bubble.
  * If no assistant bubble is open, create one. Used for omp streaming —
  * the host posts `{type:"delta",text}` and the final assistant message
@@ -265,6 +292,118 @@ function applyEngine(msg: EngineMsg): void {
 function applyInit(msg: InitMsg): void {
   state.hasHistory = msg.hasHistory;
 }
+
+// ---- Permission request rendering (text-only) -----------------------------
+
+/** Host-generated request IDs that the webview is currently holding open.
+ * A request leaves the set exactly once — when the user picks Allow, picks
+ * Deny, the host replaces the request, or the panel is reset. Late / duplicate
+ * / replaced IDs find no membership and emit no second response. */
+const pendingPermissionRequests = new Set<string>();
+
+/** Minimal CSS.escape polyfill (jsdom doesn't ship one). */
+function cssEscape(s: string): string {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(s);
+  }
+  return s.replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`);
+}
+
+/** Get the DOM element backing a pending permission request by its host ID. */
+function permissionCard(requestId: string): HTMLDivElement | null {
+  const thread = document.getElementById("thread");
+  if (!thread) return null;
+  return thread.querySelector<HTMLDivElement>(
+    `.vsdb-chat-permission[data-request-id="${cssEscape(requestId)}"]`,
+  );
+}
+
+/** Render one host permission request. Every label / detail / option is
+ * rendered via DOM text nodes (element.textContent) — never innerHTML, never
+ * a markdown interpreter. The card is keyed by the opaque requestId so we can
+ * find and dispose it later. */
+function renderPermissionRequest(msg: PermissionRequestMsg): void {
+  const thread = document.getElementById("thread");
+  if (!thread) return;
+  // If the host reuses an in-flight ID, dispose the previous card so we emit
+  // no double response for the same request.
+  const existing = permissionCard(msg.requestId);
+  if (existing) {
+    disposePermissionCard(existing, false);
+  }
+  const card = document.createElement("div");
+  card.className = "vsdb-chat-permission";
+  card.dataset.requestId = msg.requestId;
+
+  const header = document.createElement("div");
+  header.className = "vsdb-chat-permission-header";
+  header.textContent = "Permission required";
+  card.appendChild(header);
+
+  const toolId = document.createElement("div");
+  toolId.className = "vsdb-chat-permission-tool-id";
+  toolId.textContent = msg.tool.id;
+  card.appendChild(toolId);
+
+  const toolName = document.createElement("div");
+  toolName.className = "vsdb-chat-permission-tool-name";
+  toolName.textContent = msg.tool.name;
+  card.appendChild(toolName);
+
+  const toolDetail = document.createElement("div");
+  toolDetail.className = "vsdb-chat-permission-tool-detail";
+  toolDetail.textContent = msg.tool.detail;
+  card.appendChild(toolDetail);
+
+  const actions = document.createElement("div");
+  actions.className = "vsdb-chat-permission-actions";
+  for (const opt of msg.options) {
+    const btn = document.createElement("button");
+    btn.className =
+      opt.optionId === "deny"
+        ? "vsdb-chat-secondary vsdb-chat-permission-deny"
+        : "vsdb-chat-primary vsdb-chat-permission-allow";
+    btn.textContent = opt.label;
+    btn.dataset.optionId = opt.optionId;
+    btn.addEventListener("click", () => {
+      if (!pendingPermissionRequests.has(msg.requestId)) return;
+      pendingPermissionRequests.delete(msg.requestId);
+      const wire: { type: "permission_response"; requestId: string; optionId?: string } = {
+        type: "permission_response",
+        requestId: msg.requestId,
+      };
+      if (opt.optionId !== "deny") wire.optionId = opt.optionId;
+      post(wire);
+      card.remove();
+    });
+    actions.appendChild(btn);
+  }
+  card.appendChild(actions);
+  pendingPermissionRequests.add(msg.requestId);
+  thread.appendChild(card);
+  thread.scrollTop = thread.scrollHeight;
+}
+
+/** Tear down a card without emitting any response (used for host-driven
+ * replacement and panel reset). */
+function disposePermissionCard(
+  card: HTMLDivElement,
+  emitDeny: boolean,
+): void {
+  const requestId = card.dataset.requestId;
+  if (!requestId) {
+    card.remove();
+    return;
+  }
+  if (pendingPermissionRequests.has(requestId)) {
+    pendingPermissionRequests.delete(requestId);
+    if (emitDeny) {
+      post({ type: "permission_response", requestId });
+    }
+  }
+  card.remove();
+}
+
 // ---- Wire host messages ----------------------------------------------------
 window.addEventListener("message", (ev: MessageEvent) => {
   const msg = ev.data as HostMsg;
@@ -299,6 +438,9 @@ window.addEventListener("message", (ev: MessageEvent) => {
       return;
     case "done":
       setBusy(false);
+      return;
+    case "permission_request":
+      renderPermissionRequest(msg);
       return;
   }
 });

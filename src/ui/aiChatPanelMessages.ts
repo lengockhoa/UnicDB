@@ -5,7 +5,8 @@
 //
 // SECURITY: aiChatPanel NEVER carries apiKey material. Errors surface message
 // strings only (provider scrubs upstream). The host may post `step` labels
-// and `assistant` text; the webview may request send/stop/clear.
+// and `assistant` text; the webview may request send/stop/clear and may
+// respond to permission requests with one opaque {requestId, optionId?}.
 
 import type { ChatMessage } from "../ai/provider";
 
@@ -57,9 +58,23 @@ export interface AiChatPanelEngine {
   hint?: string;
 }
 
-/** Turn boundary: host promises no further assistant/step/error for this turn. */
-export interface AiChatPanelDone {
-  type: "done";
+/** A single permission choice the user may grant for an ACP server request.
+ * The `requestId` is a host-generated opaque token; the webview must echo it
+ * back verbatim when the user picks an option (or denies). The webview never
+ * invents or rewrites IDs — it only renders names + details verbatim as text
+ * and emits the literal ID it was given. */
+export interface AiChatPanelPermissionRequest {
+  type: "permission_request";
+  requestId: string;
+  tool: {
+    id: string;
+    name: string;
+    detail: string;
+  };
+  options: Array<{
+    optionId: string;
+    label: string;
+  }>;
 }
 
 export type AiChatPanelHostMessage =
@@ -69,7 +84,8 @@ export type AiChatPanelHostMessage =
   | AiChatPanelAssistant
   | AiChatPanelError
   | AiChatPanelEngine
-  | AiChatPanelDone;
+  | AiChatPanelDone
+  | AiChatPanelPermissionRequest;
 
 // ---- Webview → Host --------------------------------------------------------
 
@@ -94,11 +110,22 @@ export interface AiChatPanelClear {
   type: "clear";
 }
 
+/** Webview answered a single host `permission_request`. `requestId` is the
+ * opaque ID the host posted. If the user picked an option, `optionId` is its
+ * opaque ID; if the user denied (or the request timed out / was replaced),
+ * `optionId` is omitted entirely from the wire — never undefined/null. */
+export interface AiChatPanelPermissionResponse {
+  type: "permission_response";
+  requestId: string;
+  optionId?: string;
+}
+
 export type AiChatPanelWebviewMessage =
   | AiChatPanelReady
   | AiChatPanelSend
   | AiChatPanelStop
-  | AiChatPanelClear;
+  | AiChatPanelClear
+  | AiChatPanelPermissionResponse;
 
 // ---- Internal host helpers (not webview-bound) ----------------------------
 
