@@ -1,6 +1,6 @@
 Command: handoff-fullstack
-Goal: Cycle J — AI core (config + provider + agent foundation)
+Goal: Cycle K — AI DB-assist (tools + chat panel)
 Base: main
-Phase: done
-Cursor: released — 4/4 approved, pushed 2f83f2c (8 commits), worktrees/branches clean
-Next: Cycle K candidates — AI DB-assist tools (tool registry fill), streaming UI, chat panel
+Phase: P4
+Cursor: plan committed c890557 (review F1-F7 applied; AdapterFactory frozen in src/ai/tools/types.ts)
+Next: wave 1 — TASK-001 + TASK-002 parallel worktrees
