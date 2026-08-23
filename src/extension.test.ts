@@ -182,7 +182,7 @@ vi.mock("vscode", () => {
 });
 
 import { activate, deactivate } from "./extension";
-
+import { AcpProcess } from "./ai/omp/acpProcess";
 function makeCtx() {
   const subscriptions: Array<{ dispose: () => void }> = [];
   return {
@@ -995,5 +995,59 @@ describe("TASK-004 — vsdb.aiChat wiring", () => {
       (c) => c[0] === "vsdb.openAiSettings",
     );
     expect(called).toBe(true);
+  });
+});
+
+// =============================================================================
+// TASK-002 — AcpProcess module is importable + extension activation still
+// completes (no regression to the existing 12 + tree + CodeLens wiring).
+// AcpProcess is intentionally NOT wired into activate() yet — TASK-004 will
+// consume it from the panel; legacy rpc.ts/process.ts remain in place.
+// =============================================================================
+describe("TASK-002 — AcpProcess importable + extension activation regression", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+  });
+
+  it("AcpProcess module is exported and constructible", () => {
+    expect(typeof AcpProcess).toBe("function");
+    expect(
+      new AcpProcess(
+        {
+          ompPath: "omp",
+          cwd: "/tmp/proj",
+          supportCwdFlag: true,
+          execFn: async () => "omp/18.0.1\n",
+        },
+        () => {
+          throw new Error("not used");
+        },
+      ),
+    ).toBeDefined();
+  });
+
+  it("activate() still registers every command and deactivate() does not throw (TASK-002 regression)", async () => {
+    const ctx = makeCtx();
+    activate(ctx as never);
+    // All commands through TASK-005 + TASK-004 must still be present.
+    const expected = [
+      "vsdb.runQuery",
+      "vsdb.addConnection",
+      "vsdb.editConnection",
+      "vsdb.deleteConnection",
+      "vsdb.selectConnection",
+      "vsdb.cancelQuery",
+      "vsdb.generateSelect",
+      "vsdb.copyQualifiedName",
+      "vsdb.refreshSchema",
+      "vsdb.openAiSettings",
+      "vsdb.aiChat",
+      "vsdb.runScript",
+    ];
+    for (const id of expected) {
+      expect(state.registeredCommands.has(id)).toBe(true);
+    }
+    await expect(deactivate()).resolves.not.toThrow();
   });
 });
