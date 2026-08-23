@@ -149,3 +149,24 @@ ISSUES:
   - Minor cleanup: removed `nullableOf` wrapper (only call site, was `!!c.nullable` — inlined per project no-tiny-functions rule).
 HANDOFF_TO_REVIEWER: yes
 NEXT: ready for review
+
+## Reviewer Verdict (re-review round 1)
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code (Exec-Fix1A)
+EXECUTION_COMMITS: 58a56b8 (wave A — DDL stack), range 688839d..HEAD
+VERIFICATION_RERUN:
+  command: npx vitest run src/core/__tests__/ddlAlterTable.test.ts && npx tsc --noEmit
+  result: 18 pass / 0 fail; tsc exit 0 (fresh re-run by reviewer)
+ROUND1_FINDINGS_RESOLUTION:
+  - important (ADD COLUMN missing NOT NULL/DEFAULT) — RESOLVED. alterTable.ts:298-306 now composes `"name" type [NOT NULL] [DEFAULT <renderDefault(...)>]`, importing the canonical `renderDefault` from createTable.ts:97 (single source of truth, no local re-implementation of literal quoting). Clause order matches generateCreateTable (createTable.ts:146-151). Two R1 regression tests cover bare-literal (`DEFAULT 'pending'`, with exact full-statement equality) and function-call (`DEFAULT now()` bare, quoted form explicitly rejected).
+  - minor (FK ADD CONSTRAINT references qualification) — RESOLVED. renderAddConstraint (alterTable.ts:216-243) now takes `schema` (passed `before.schema` at the sole call site, alterTable.ts:371) and delegates to new `renderReferenceTarget` (alterTable.ts:196-210): already-qualified → per-part quoted, bare + non-empty schema → `"schema"."table"`, empty schema → bare quoted. Byte-identical semantics to createTable.ts:186-192. Two R1 regression tests cover both paths, including the no-double-prefix case.
+REGRESSION_CHECK: none found. Rename path (#6), reorder-only (#5b), key identity (#9), normalizeDefaultExpr (#10) all still pass; schema-change refusal, invalid-after blocking, and table-rename-last ordering untouched by the diff. Diff is additive (35 insertions / 18 deletions) with `nullableOf` inlined (was `!!c.nullable` at one call site — equivalent semantics, `?? true` normalization applied consistently to both sides of the nullability compare).
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/core/ddl/alterTable.ts:196-210 — `renderReferenceTarget` duplicates createTable's inline FK target logic (createTable.ts:186-192) rather than sharing one helper; behaviorally identical today, slight future-drift risk. Non-blocking; a follow-up could hoist it into createTable.ts alongside `renderDefault` and re-export.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Both R1 findings resolved with test coverage; verification re-run clean. Model isolation OK (executor unic-code ≠ reviewer unic-smart per handoff.reviewer.model).

@@ -9,12 +9,12 @@ Cycle history: A (AG Grid), B (edit/paste/undo), C, D+E (v1.4.0 grid edit/save/e
 
 | ID | Title | Priority | Size | Status | Owner | Reviewer | File |
 |----|-------|----------|------|--------|-------|----------|------|
-| TASK-001 | Pure CREATE TABLE generator (src/core/ddl/createTable.ts) | P0 | M | changes_requested | - | unic-smart | tasks/TASK-001.md |
-| TASK-002 | pg_catalog introspection → TableSpec (src/core/ddl/pgIntrospect.ts) | P0 | M | approved_minor | - | unic-smart | tasks/TASK-002.md |
-| TASK-003 | Pure ALTER diff engine (src/core/ddl/alterTable.ts) | P0 | M | changes_requested | - | unic-smart | tasks/TASK-003.md |
-| TASK-004 | Table designer webview + host (create + modify modes) | P0 | L | approved_minor | - | unic-smart | tasks/TASK-004.md |
-| TASK-005 | Extension wiring: menus, commands, utilities, refresh + reveal | P0 | L | critical_block | - | unic-smart | tasks/TASK-005.md |
-| TASK-006 | PG integration tests (VSDB_IT=1) + docs (CODE_MAP, README) | P0 | M | changes_requested | - | unic-smart | tasks/TASK-006.md |
+| TASK-001 | Pure CREATE TABLE generator (src/core/ddl/createTable.ts) | P0 | M | done | - | unic-smart | tasks/TASK-001.md |
+| TASK-002 | pg_catalog introspection → TableSpec (src/core/ddl/pgIntrospect.ts) | P0 | M | done | - | unic-smart | tasks/TASK-002.md |
+| TASK-003 | Pure ALTER diff engine (src/core/ddl/alterTable.ts) | P0 | M | done | - | unic-smart | tasks/TASK-003.md |
+| TASK-004 | Table designer webview + host (create + modify modes) | P0 | L | done | - | unic-smart | tasks/TASK-004.md |
+| TASK-005 | Extension wiring: menus, commands, utilities, refresh + reveal | P0 | L | done | - | unic-smart | tasks/TASK-005.md |
+| TASK-006 | PG integration tests (VSDB_IT=1) + docs (CODE_MAP, README) | P0 | M | done | - | unic-smart | tasks/TASK-006.md |
 
 Waves: 1 = TASK-001,002,003 (parallel) → 2 = TASK-004 → 3 = TASK-005 → 4 = TASK-006.
 

@@ -157,3 +157,25 @@ ISSUES:
   - Constraint-name re-keying in test #4 (rename `pk_regen_src_<run>` → `pk_<dst>`) is still required — constraint names live at schema scope, not table scope.
 HANDOFF_TO_REVIEWER: yes
 NEXT: ready for review — wave A DDL stack changes (PK dedupe, default quoting, ADD COLUMN clauses, FK refs qualification, confkeycols parsing) all green on live PG.
+
+## Reviewer Verdict (re-review round 1)
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npm run compile && VSDB_IT=1 VSDB_PG_HOST=127.0.0.1 VSDB_PG_PORT=5433 npx vitest run -c vitest.integration.config.ts src/adapters/__tests__/ddl.integration.test.ts && npx vitest run src/__tests__/releaseHygiene.test.ts && npx tsc --noEmit
+  result: 0 fail (esbuild OK; 6/6 integration vs live PG @5433 in 10.2s; 3/3 releaseHygiene; tsc clean)
+R1_FINDINGS_RESOLUTION:
+  - critical#2 double-PK: RESOLVED — createTable.ts:146-150 suppresses inline PRIMARY KEY when a primaryKey KeySpec exists; test #4 (ddl.integration.test.ts:446-478) now feeds rowsToSpec output verbatim into generateCreateTable (isPrimaryKey still set by pgIntrospect.ts:249, not stripped) → real product path guarded, passes vs live PG.
+  - critical#1 bind params: RESOLVED (wave B, same review range) — introspectTable (tableCommands.ts:139-141) routes via adapter.listTableDetail; PostgresAdapter.listTableDetail (postgres.ts:344-361) binds [schema, table]; regression test at tableCommands.test.ts:487-513.
+  - important confkeycols text[] literal: RESOLVED — pgIntrospect.ts parseTextArray inside rowsToSpec (pgIntrospect.ts:202); test FK assertion no longer parses literal at call site (ddl.integration.test.ts:~300).
+  - critical#3 README false claims: RESOLVED — README.md:91 now "copy vào clipboard" (matches tableCommands.ts:287 clipboard-only); :92 "mở trong tab SQL untitled" (matches tableCommands.ts:343-347 openTextDocument, no auto-run).
+TEST_PLAN_COVERAGE: all-followed — 6/6 unchanged in count; no test weakening (only the isPrimaryKey strip + stale comment removed).
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - ddl.integration.test.ts:448-460 — key-renaming in test #4 (pk_regen_src_<run> → pk_<dst>) remains necessary because constraint names are schema-scoped; if a future task introduces name-templating in Copy CREATE DDL, revisit. Non-blocking.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Round-1 criticals were all real and all fixed at the correct layer (product code, not test surgery). Constraint-name re-keying in test #4 is legitimately test-scoped, not masking.

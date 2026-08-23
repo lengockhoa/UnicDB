@@ -185,3 +185,24 @@ VERIFICATION:
 ISSUES: Wave A landed as 58a56b8 on main (createTable.ts PK dedupe + renderDefault, alterTable.ts ADD COLUMN clauses + FK ref schema, pgIntrospect.ts confkeycols text[] parser, ddl.integration.test.ts un-masked, README fix). All 5 critical+important+minor reviewer findings addressed.
 HANDOFF_TO_REVIEWER: yes — fresh 96/96 unit + 6/6 integration PASS in this turn
 NEXT: ready for review (file-based handoff per cycle conventions)
+
+## Reviewer Verdict (re-review round 1)
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code (Exec-T005 round 0, Exec-Fix1B round 1 — both differ from reviewer)
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run src/extension.test.ts src/ui/__tests__/tableCommands.test.ts src/ui/__tests__/schemaTree.test.ts src/ui/__tests__/newTableForm.test.ts src/core/__tests__/sampleData.test.ts && npx tsc --noEmit
+  result: 109 pass / 0 fail; compile + tsc clean (exit 0)
+  extra: live PG (127.0.0.1:5433) — ddl.integration.test.ts 6/6 PASS + reviewer-authored one-off smoke of PostgresAdapter.listTableDetail (production entry, bypassing unit fakes): 4 columns + PK returned bound via $1/$2; rowsToSpec → generateCreateTable → re-executed on live PG with exactly 1 PRIMARY KEY. Temp test deleted after run.
+ROUND-1 FINDINGS RESOLVED:
+  critical: RESOLVED — introspectTable (tableCommands.ts:143-144) now calls adapter.listTableDetail(schema, table); DbAdapter.listTableDetail added (types.ts:121); PostgresAdapter binds via private query() → pool.query(sql,[schema,table]) (postgres.ts:336-356), non-cursor shape; mysql.ts:276 / mssql.ts:303 throw NotImplementedError; R1 tests assert exact listTableDetailCalls args + 0 runCalls.
+  important: RESOLVED ×3 — getParent full chain (schemaTree.ts:696-769, column meta carries connection/schema/objectKey); newTable guard accepts category "columns" (tableCommands.ts:175-179); double-PK fixed via createTable dedupe, covered by unit R1 test + my live re-execute smoke.
+  minor: RESOLVED ×2 — zero console.* in tableCommands.ts (grep verified + logSpy test); runDdl(sql, spec) passes spec.name (no SQL regex), newTableForm.handleSubmit passes spec.
+POST-MERGE TEST REPAIRS: legitimate — newTableForm.test.ts 2-arg assertion matches new contract; tableCommands `tables` fixture needed because findTableNode → adapter.listTables must return the table for reveal (not masking); `ready` dispatch drives NewTableForm lazy loadSpec lifecycle so refresh/reveal/message assertions are real. No real bugs masked.
+FINDINGS:
+  critical: none
+  important: none
+  minor: none (NOTES-level: NotImplementedError ctor message "TASK-004 will add it" is stale for this call-site — pre-existing shared error class, cosmetic)
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Round-1 critical was production-only (unit fakes masked it); this re-review verified the exact production entry live on PG, including DDL re-execution. Nothing outstanding.

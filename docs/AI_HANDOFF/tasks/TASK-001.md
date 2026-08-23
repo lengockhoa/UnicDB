@@ -157,3 +157,27 @@ ISSUES:
   - `renderDefault` exported from createTable.ts (TASK-001 contract listed only named originals — renderDefault is additive but allows alterTable.ts to reuse the same DEFAULT clause rule, eliminating drift).
 HANDOFF_TO_REVIEWER: yes
 NEXT: ready for review
+
+## Reviewer Verdict (re-review round 1)
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/core/__tests__/ddlCreateTable.test.ts src/core/__tests__/pgIntrospect.test.ts && npx tsc --noEmit
+  result: 30 pass / 0 fail (16 createTable + 14 pgIntrospect); tsc exit 0
+ROUND1_FINDINGS_STATUS:
+  important#1 (PK dedupe) — RESOLVED: createTable.ts:143 `hasPrimaryKeyKey` guard suppresses inline `PRIMARY KEY` when a primaryKey KeySpec exists; regression test asserts exactly one PK clause + `CONSTRAINT "users_pkey" PRIMARY KEY ("id")`; original Test Case 4 (inline-only) still passes.
+  important#2 (literal default quoting) — RESOLVED: createTable.ts:97 `renderDefault` per spec §33; `pending`→`'pending'`, `now()`/uuid_in bare, `true/false/null` bare PG literals, pre-quoted preserved, `42`→`'42'`; 6 quoting tests. Reused by alterTable.ts:291 (drift eliminated).
+  T2 spot-check (pgIntrospect confkeycols, shared file) — CORRECT: `parseTextArray` (pgIntrospect.ts:135-189) handles array passthrough, `{a,b}` literal split with quoted-element/escaped-quote handling, defensive fallbacks; wired at :216; 2 tests (single + multi-element) pass.
+TEST_PLAN_COVERAGE: all-followed — 9 original + 7 regression tests present and passing
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/core/ddl/createTable.ts:97 — `renderDefault` is an additive export beyond the §Spec contract ("Exports match contract exactly"); executor flagged it in ISSUES and alterTable.ts reuses it — acceptable, but contract doc should record it.
+    - src/core/ddl/createTable.ts:67 — carry-over round-1 minor: `[A-Z]` test unreachable after `^[a-z0-9_]+$` on :66 (cosmetic; behavior correct via charset test).
+    - src/core/__tests__/ddlCreateTable.test.ts:254 — file lacks trailing newline; pgIntrospect.test.ts:325 has doubled blank line (cosmetic).
+    - src/core/__tests__/pgIntrospect.test.ts:299 — `type: "int" as unknown as never` double-coercion on an unused field; harmless but awkward vs sibling row shape.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Model isolation OK (executor unic-code ≠ reviewer unic-smart). Both round-1 important findings fixed at source with executable regression coverage; working tree clean vs commit 58a56b8 for all reviewed files.
