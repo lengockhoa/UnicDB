@@ -49,3 +49,28 @@ npx vitest run src/ai/omp/__tests__/hostTools.test.ts && npx tsc --noEmit
 ## Interfaces
 - Consumes: `ToolRegistry`/`AgentTool` (frozen), `createDbTools`/`createSqlTool`/`AdapterFactory` (cycle K).
 - Produces: `hostToolDefsFromRegistry`, `createHostToolExecutor` (T4 consume; T1's OmpRpcClient.handleHostToolCall consumes executor shape).
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: ExecL-T002
+SUMMARY: Created src/ai/omp/hostTools.ts with hostToolDefsFromRegistry (passthrough {name, description, parameters} per AgentTool) and createHostToolExecutor (lockstep error policy: unknown tool → "Unknown tool: …", non-object args → "Invalid tool arguments", tool throw → "Tool failed: <msg>", success returns the execute string verbatim). 7 RED→GREEN vitest tests cover defs shape, list_tables success, unknown tool, invalid args (string/number/null), tool throw, run_sql DROP TABLE regression (runQuery never called, guard reason returned), and SELECT 1 cursor path (fetchBatch + close fired, JSON rows).
+TEST_PLAN_FOLLOWED: inline §Test Cases 1-7
+FILES_CHANGED:
+  - src/ai/omp/hostTools.ts: new — bridge functions
+  - src/ai/omp/__tests__/hostTools.test.ts: new — 7 vitest tests
+TESTS_ADDED:
+  - src/ai/omp/__tests__/hostTools.test.ts: 7 it() cases (defs passthrough; list_tables success; unknown tool; invalid args x3; throw wraps; DROP TABLE regression; SELECT cursor path)
+VERIFICATION:
+  command: npx vitest run src/ai/omp/__tests__/hostTools.test.ts && npx tsc --noEmit
+  result: 7 pass / 0 fail (exit 0); tsc clean
+  output_excerpt: |
+    ✓ src/ai/omp/__tests__/hostTools.test.ts  (7 tests) 4ms
+    Test Files  1 passed (1)
+         Tests  7 passed (7)
+ISSUES: none
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for review (cycle L wave 1 sibling TASK-001 owns src/ai/omp/rpc.ts + process.ts; no shared file overlap)
+

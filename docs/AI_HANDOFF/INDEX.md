@@ -4,8 +4,8 @@ Cycle: L — omp agent integration (RPC bridge) + one-command install/update sto
 
 | Task | Title | Wave | Depends | Status |
 |------|-------|------|---------|--------|
-| TASK-001 | omp RPC client + process lifecycle (pure) | 1 | - | ready |
-| TASK-002 | Host-tool bridge (set_host_tools ↔ ToolRegistry) | 1 | - | ready |
+| TASK-001 | omp RPC client + process lifecycle (pure) | 1 | - | pending_review |
+| TASK-002 | Host-tool bridge (set_host_tools ↔ ToolRegistry) | 1 | - | pending_review |
 | TASK-003 | omp detection/version check + fallback engine switch | 2 | - | ready |
 | TASK-004 | Chat panel omp mode + install/update UX + README | 3 | 001,002,003 | ready |
 

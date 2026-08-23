@@ -67,4 +67,31 @@ npx vitest run src/ai/omp/__tests__/rpc.test.ts src/ai/omp/__tests__/process.tes
 
 ## Interfaces
 - Consumes: `(none)`.
-- Produces: `OmpRpcClient`, `RpcTransport`, `OmpProcess`, `OmpProcessOptions` (T2/T4 consume).
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+SUMMARY: Implemented `OmpRpcClient` (waitReady, 1-in-flight request, onEvent, handleHostToolCall) and `OmpProcess` (injectable spawn/exec, argv matches spec, version parse). 9/9 tests GREEN, tsc clean.
+TEST_PLAN_FOLLOWED: task §4 (9 cases)
+FILES_CHANGED:
+  - src/ai/omp/rpc.ts: new — OmpRpcClient + RpcTransport
+  - src/ai/omp/process.ts: new — OmpProcess + spawn/exec injection
+  - src/ai/omp/__tests__/rpc.test.ts: new — 7 tests
+  - src/ai/omp/__tests__/process.test.ts: new — 2 tests
+TESTS_ADDED:
+  - src/ai/omp/__tests__/rpc.test.ts: waitReady, prompt roundtrip, error reject, 1-in-flight serialize, malformed ignore, host_tool_call happy, host_tool_call throw
+  - src/ai/omp/__tests__/process.test.ts: OmpProcess start argv + version, child exit → onExit + rpc disposed
+VERIFICATION:
+  command: npx vitest run src/ai/omp/__tests__/rpc.test.ts src/ai/omp/__tests__/process.test.ts && npx tsc --noEmit
+  result: 9 pass / 0 fail / exit 0
+  output_excerpt: |
+    ✓ src/ai/omp/__tests__/process.test.ts  (2 tests) 2ms
+    ✓ src/ai/omp/__tests__/rpc.test.ts  (7 tests) 3ms
+    Test Files  2 passed (2)
+         Tests  9 passed (9)
+ISSUES: none
+HANDOFF_TO_REVIEWER: yes — wave 1 handoff (TASK-001)
+NEXT: ready for review
