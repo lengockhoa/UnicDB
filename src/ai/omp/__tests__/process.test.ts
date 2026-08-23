@@ -215,7 +215,7 @@ describe("OmpProcess", () => {
       "/tmp/proj",
     ]);
     expect(captured.opts).toBeDefined();
-    expect(result.version).toBe("omp/18.0.1");
+    expect(result.version).toBe("18.0.1");
     expect(result.rpc).toBeInstanceOf(OmpRpcClient);
 
     void result;

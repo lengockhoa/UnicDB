@@ -114,9 +114,9 @@ export class OmpProcess {
     let version = "unknown";
     try {
       const raw = await this.execFn(`${ompPath} --version`);
-      const match = raw.match(/omp\/\S+/);
-      if (match !== null && match[0] !== undefined) {
-        version = match[0];
+      const match = raw.match(/omp\/(\S+)/);
+      if (match !== null && match[1] !== undefined) {
+        version = match[1];
       }
     } catch {
       /* keep default */
