@@ -255,6 +255,11 @@
           "maximum": 10000,
           "description": "Số rows tải về mỗi lần (Load 500 more)."
         },
+        "vsdb.confirmDestructive": {
+          "type": "boolean",
+          "default": true,
+          "description": "Hỏi xác nhận trước khi chạy câu lệnh phá hoại (DELETE/UPDATE không WHERE, TRUNCATE, DROP)."
+        },
         "vsdb.hideSystemSchemas": {
           "type": "boolean",
           "default": true,

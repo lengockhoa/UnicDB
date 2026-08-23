@@ -153,3 +153,56 @@ Wave note: TASK-606 chạy Wave 3 song song TASK-603 (files disjoint). TASK-604
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+## Executor Report
+
+```
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: feature-implementer (Exec606)
+SUMMARY: Thêm detector thuần `dangerousStatement.ts` (mask literal/comment/dollar-quote,
+  scan keyword depth-0 với CTE prelude rule) + guard `confirmDangerousStatements()` gọi ở
+  đầu `runStatements()` trước `panel.setBusy(true)`, cùng setting `vsdb.confirmDestructive`
+  (default true). Cancel huỷ cả lô; red tier thắng amber.
+TEST_PLAN_FOLLOWED: task §Test Cases A1–A8 + B9–B15 (đủ, không cắt case)
+FILES_CHANGED:
+  - src/core/dangerousStatement.ts: NEW — analyzeStatement/guardTier + masker.
+  - src/core/__tests__/dangerousStatement.test.ts: NEW — A1–A8.
+  - src/extension.ts: import detector; guard call ở đầu runStatements (trước setBusy);
+    confirmDangerousStatements() + capDetail() + RED/AMBER_DETAIL_CAP.
+  - src/extension.test.ts: state.confirmDestructive + config mock key; describe
+    "TASK-606 — destructive confirm guard" (B9–B15).
+  - package.json: contributes.configuration.properties["vsdb.confirmDestructive"]
+    = { type: boolean, default: true } (sau vsdb.batchSize).
+TESTS_ADDED:
+  - src/core/__tests__/dangerousStatement.test.ts: A1 delete+where amber, A2 truncate
+    (2 form) red, A3 drop red, A4 update no-where red / where none, A5 literal+comment
+    masking, A6 CTE delete, A7 case + leading comment, A8 dollar-quote body → other.
+  - src/extension.test.ts: B9 amber Run→run, B10 truncate cancel→no run/no busy,
+    B11 red confirm→run, B12 setting false→no modal, B13 mixed batch cancel huỷ cả lô,
+    B14 SELECT không hỏi, B15 manifest setting.
+VERIFICATION:
+  command: npx vitest run src/core/__tests__/dangerousStatement.test.ts src/extension.test.ts && npm run typecheck
+  result: 33 pass / 0 fail; tsc --noEmit exit 0
+  output_excerpt: |
+    ✓ src/core/__tests__/dangerousStatement.test.ts  (8 tests) 2ms
+    ✓ src/extension.test.ts  (25 tests) 56ms
+     Test Files  2 passed (2)
+          Tests  33 passed (33)
+    > vsdb@1.4.1 typecheck
+    > tsc --noEmit
+  command: npm test (full suite)
+  result: 37 files / 432 tests pass, 0 fail
+  output_excerpt: |
+     Test Files  37 passed (37)
+          Tests  432 passed (432)
+RED_EVIDENCE: trước implement — dangerousStatement.test.ts FAIL collect (module chưa tồn tại,
+  loadAndTransform error); extension.test.ts 5 failed (B9/B10/B11/B13 "expected spy to be
+  called 1 times, but got 0 times" vì chưa có modal; B15 "expected undefined not to be
+  undefined" vì package.json chưa có key). Sau implement: 33/33 pass.
+ISSUES: `npm test` toàn cục cần `npm run compile` trước — describe webview asset đọc
+  dist/webview.css (pre-existing, không liên quan TASK-606; chạy compile rồi suite full xanh).
+HANDOFF_TO_REVIEWER: yes — code change có guard destructive, cần review verdict.
+NEXT: ready for review
+```
+

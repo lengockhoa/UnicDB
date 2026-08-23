@@ -387,6 +387,91 @@ function render(): void {
   // Panel content — re-render based on active tab.
   renderActivePanel();
 }
+// TASK-603 — icon-button helper. Each toolbar/requery button is a 26px-tall
+// square with an inline 16×16 SVG (stroke="currentColor") and a
+// title+aria-label for screen readers. No visible text, no icon font.
+function makeIconButton(
+  className: string,
+  title: string,
+  svgPath: string,
+  onClick: () => void,
+  svgAttrs: string = "",
+): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.className = `vsdb-btn ${className}`.trim();
+  btn.title = title;
+  btn.setAttribute("aria-label", title);
+  btn.innerHTML =
+    `<svg viewBox="0 0 16 16" width="16" height="16" ` +
+    `xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" ` +
+    `stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ` +
+    `aria-hidden="true" focusable="false"` +
+    (svgAttrs ? " " + svgAttrs : "") +
+    `>${svgPath}</svg>`;
+  btn.addEventListener("click", onClick);
+  return btn;
+}
+
+function makeToolbarSep(): HTMLSpanElement {
+  const sep = document.createElement("span");
+  sep.className = "vsdb-toolbar-sep";
+  sep.setAttribute("aria-hidden", "true");
+  return sep;
+}
+
+// Per-button SVG paths. All paths fit the 0 0 16 16 viewBox; stroke or fill
+// comes from the <svg> element (currentColor) so they adapt to the host
+// button's color token. Each path keeps `currentColor` semantics.
+const ICON_CANCEL =
+  // stop (red X) — square with a centered X.
+  '<rect x="3" y="3" width="10" height="10" rx="1" />' +
+  '<path d="M5.5 5.5 L10.5 10.5 M10.5 5.5 L5.5 10.5" />';
+const ICON_REFRESH =
+  // circular arrow — arc with an arrowhead.
+  '<path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" />' +
+  '<path d="M13.5 3.5 V6.5 H10.5" />';
+const ICON_ADD_ROW =
+  // plus above two row lines.
+  '<path d="M8 3 V8 M5.5 5.5 H10.5" />' +
+  '<path d="M3 11 H13" />' +
+  '<path d="M3 13.5 H13" />';
+const ICON_DELETE_ROW =
+  // trash — lid + body + handle.
+  '<path d="M3 5 H13" />' +
+  '<path d="M5 5 V13 a1 1 0 0 0 1 1 h4 a1 1 0 0 0 1 -1 V5" />' +
+  '<path d="M6 5 V3.5 a0.5 0.5 0 0 1 0.5 -0.5 h3 a0.5 0.5 0 0 1 0.5 0.5 V5" />' +
+  '<path d="M6.8 7.5 V11.5" />' +
+  '<path d="M9.2 7.5 V11.5" />';
+const ICON_UNDO =
+  // curved arrow left.
+  '<path d="M3.5 8 H10 a3 3 0 0 1 0 6 H8" />' +
+  '<path d="M3.5 5.5 L3.5 10.5 L6.5 8 Z" fill="currentColor" stroke="none" />';
+const ICON_COMMIT =
+  // check mark.
+  '<path d="M3.5 8.5 L6.5 11.5 L12.5 4.5" />';
+const ICON_CSV =
+  // small table grid.
+  '<rect x="3" y="3" width="10" height="10" rx="1" />' +
+  '<path d="M3 6.5 H13" />' +
+  '<path d="M3 9.5 H13" />' +
+  '<path d="M6 3 V13" />' +
+  '<path d="M9.5 3 V13" />';
+const ICON_COPY =
+  // two overlapping rounded rects.
+  '<rect x="4.5" y="4.5" width="8" height="8" rx="1" />' +
+  '<path d="M3.5 11.5 V5 a1.5 1.5 0 0 1 1.5 -1.5 H11.5" />';
+const ICON_EXPORT_FILE =
+  // down arrow into a tray.
+  '<path d="M8 3 V9.5" />' +
+  '<path d="M5.5 7 L8 9.5 L10.5 7" />' +
+  '<path d="M3 12 V13 a1 1 0 0 0 1 1 h8 a1 1 0 0 0 1 -1 V12" />';
+const ICON_REQUERY =
+  // play (right-pointing triangle).
+  '<path d="M5 3.5 L12.5 8 L5 12.5 Z" fill="currentColor" stroke="none" />';
+const ICON_CLEAR =
+  // X (cross) — same shape family as Cancel but neutral.
+  '<path d="M4.5 4.5 L11.5 11.5" />' +
+  '<path d="M11.5 4.5 L4.5 11.5" />';
 
 function buildPersistentDom(): PersistentDom {
   const header = document.createElement("div");
@@ -395,65 +480,79 @@ function buildPersistentDom(): PersistentDom {
   const toolbar = document.createElement("div");
   toolbar.className = "vsdb-toolbar";
 
-  const cancelBtn = document.createElement("button");
-  cancelBtn.textContent = "Cancel";
-  cancelBtn.className = "vsdb-btn vsdb-btn-danger";
-  cancelBtn.addEventListener("click", () => postToHost({ type: "cancel" }));
+  // TASK-603 — all toolbar buttons are icon buttons (16×16 inline SVG,
+  // currentColor stroke, title + aria-label, no visible text). Two
+  // `.vsdb-toolbar-sep` dividers mark the query│edit│export groups. The
+  // search input is the last child so flex-shrink keeps it compact while
+  // the fixed-size icon buttons stay on a single non-wrapping row.
+
+  // Query group
+  const cancelBtn = makeIconButton(
+    "vsdb-btn-danger",
+    "Cancel",
+    ICON_CANCEL,
+    () => postToHost({ type: "cancel" }),
+  );
   toolbar.appendChild(cancelBtn);
 
-  // TASK-501: edit / paste / undo toolbar. Add Row / Delete Row operate on
-  // local edit state only — TASK-503 will read the snapshot and post the
-  // save payload. Refresh is a local-only reset of the dirty map.
-  const refreshBtn = document.createElement("button");
-  refreshBtn.textContent = "Refresh";
-  refreshBtn.className = "vsdb-btn";
-  refreshBtn.title = "Discard dirty edits and refresh the local grid view";
-  refreshBtn.addEventListener("click", () => onRefreshClick());
+  const refreshBtn = makeIconButton(
+    "",
+    "Refresh — discard dirty edits and refresh the local grid view",
+    ICON_REFRESH,
+    () => onRefreshClick(),
+  );
   toolbar.appendChild(refreshBtn);
 
-  const addRowBtn = document.createElement("button");
-  addRowBtn.textContent = "Add Row";
-  addRowBtn.className = "vsdb-btn";
-  addRowBtn.title = "Append a blank row to the result (TASK-503 will save)";
-  addRowBtn.addEventListener("click", () => onAddRowClick());
+  toolbar.appendChild(makeToolbarSep());
+
+  // Edit group
+  const addRowBtn = makeIconButton(
+    "",
+    "Add Row — append a blank row to the result (TASK-503 will save)",
+    ICON_ADD_ROW,
+    () => onAddRowClick(),
+  );
   toolbar.appendChild(addRowBtn);
 
-  const deleteRowBtn = document.createElement("button");
-  deleteRowBtn.textContent = "Delete Row";
-  deleteRowBtn.className = "vsdb-btn";
-  deleteRowBtn.title = "Mark the currently focused row as deleted (TASK-503 will save)";
-  deleteRowBtn.addEventListener("click", () => onDeleteRowClick());
+  const deleteRowBtn = makeIconButton(
+    "",
+    "Delete Row — mark the currently focused row as deleted (TASK-503 will save)",
+    ICON_DELETE_ROW,
+    () => onDeleteRowClick(),
+  );
   toolbar.appendChild(deleteRowBtn);
 
-  const undoBtn = document.createElement("button");
-  undoBtn.textContent = "Undo";
-  undoBtn.className = "vsdb-btn";
-  undoBtn.title = "Undo the last cell edit";
-  undoBtn.addEventListener("click", () => onUndoClick());
+  const undoBtn = makeIconButton(
+    "",
+    "Undo — undo the last cell edit",
+    ICON_UNDO,
+    () => onUndoClick(),
+  );
   toolbar.appendChild(undoBtn);
+
   // TASK-503 — Commit button (and Cmd/Ctrl+Enter keyboard shortcut).
   // Posts a single saveEdits batch with every dirty cell. No-op when the
   // dirty map is empty — we don't post a no-op message and don't disable
   // the button (the user can still trigger one; the handler short-circuits).
-  const commitBtn = document.createElement("button");
-  commitBtn.textContent = "Commit";
-  commitBtn.className = "vsdb-btn vsdb-commit";
-  commitBtn.title = "Save all dirty edits to the database (Cmd/Ctrl+Enter)";
-  commitBtn.addEventListener("click", () => onCommitClick());
+  const commitBtn = makeIconButton(
+    "vsdb-commit",
+    "Commit — save all dirty edits to the database (Cmd/Ctrl+Enter)",
+    ICON_COMMIT,
+    () => onCommitClick(),
+  );
   toolbar.appendChild(commitBtn);
 
-
-  const csvToggleBtn = document.createElement("button");
-  csvToggleBtn.textContent = "CSV";
-  csvToggleBtn.className = "vsdb-btn";
-  csvToggleBtn.title = "Toggle CSV preview (raw values vs formatted)";
-  csvToggleBtn.addEventListener("click", () => onCsvToggleClick());
+  const csvToggleBtn = makeIconButton(
+    "",
+    "CSV — toggle CSV preview (raw values vs formatted)",
+    ICON_CSV,
+    () => onCsvToggleClick(),
+  );
   toolbar.appendChild(csvToggleBtn);
 
-  // TASK-502 — export toolbar. The format <select> + Header checkbox + Copy
-  // and Export-to-file buttons live between the CSV toggle and the search
-  // input so they sit next to the other transform actions. The Header
-  // checkbox is disabled for SQL modes whose structure is fixed.
+  toolbar.appendChild(makeToolbarSep());
+
+  // Export group (format <select> + Header checkbox + Copy + Export-to-file)
   const exportFormat = document.createElement("select");
   exportFormat.className = "vsdb-export-format vsdb-btn";
   for (const fmt of [
@@ -481,19 +580,23 @@ function buildPersistentDom(): PersistentDom {
   exportHeader.title = "Include header row (TSV/CSV/XML/JSON only)";
   toolbar.appendChild(exportHeader);
 
-  const exportCopyBtn = document.createElement("button");
-  exportCopyBtn.textContent = "Copy";
-  exportCopyBtn.className = "vsdb-btn vsdb-export-copy";
-  exportCopyBtn.title = "Copy serialized export to clipboard";
-  exportCopyBtn.addEventListener("click", () => onExportCopyClick());
+  const exportCopyBtn = makeIconButton(
+    "vsdb-export-copy",
+    "Copy — copy serialized export to clipboard",
+    ICON_COPY,
+    () => onExportCopyClick(),
+  );
   toolbar.appendChild(exportCopyBtn);
 
-  const exportFileBtn = document.createElement("button");
-  exportFileBtn.textContent = "Export to file";
-  exportFileBtn.className = "vsdb-btn vsdb-export-file";
-  exportFileBtn.title = "Save serialized export to a file";
-  exportFileBtn.addEventListener("click", () => onExportFileClick());
+  const exportFileBtn = makeIconButton(
+    "vsdb-export-file",
+    "Export to file — save serialized export to a file",
+    ICON_EXPORT_FILE,
+    () => onExportFileClick(),
+  );
   toolbar.appendChild(exportFileBtn);
+
+  // searchInput is appended below (last child).
 
   // Toggle Header checkbox enable/disable based on format — SQL modes have
   // a fixed structure (INSERT column list, UPDATE SET list, WHERE groups)
@@ -646,20 +749,22 @@ function buildPersistentDom(): PersistentDom {
   requeryOrderBy.placeholder = "e.g. created_at DESC";
   requeryOrderBy.className = "vsdb-requery-input vsdb-requery-order";
   requeryBar.appendChild(requeryOrderBy);
-  const requeryRunBtn = document.createElement("button");
-  requeryRunBtn.textContent = "Re-Run";
-  requeryRunBtn.className = "vsdb-btn vsdb-requery-run";
-  requeryRunBtn.title = "Re-run the active statement with the WHERE / ORDER BY filter";
-  requeryRunBtn.addEventListener("click", () => onRequeryClick());
+  const requeryRunBtn = makeIconButton(
+    "vsdb-requery-run",
+    "Re-Run — re-run the active statement with the WHERE / ORDER BY filter",
+    ICON_REQUERY,
+    () => onRequeryClick(),
+  );
   requeryBar.appendChild(requeryRunBtn);
-  const requeryClearBtn = document.createElement("button");
-  requeryClearBtn.textContent = "Clear";
-  requeryClearBtn.className = "vsdb-btn vsdb-requery-clear";
-  requeryClearBtn.title = "Clear the WHERE and ORDER BY inputs";
-  requeryClearBtn.addEventListener("click", () => {
-    requeryWhere.value = "";
-    requeryOrderBy.value = "";
-  });
+  const requeryClearBtn = makeIconButton(
+    "vsdb-requery-clear",
+    "Clear — clear the WHERE and ORDER BY inputs",
+    ICON_CLEAR,
+    () => {
+      requeryWhere.value = "";
+      requeryOrderBy.value = "";
+    },
+  );
   requeryBar.appendChild(requeryClearBtn);
   gridWrap.appendChild(requeryBar);
   gridWrap.appendChild(saveBanner);

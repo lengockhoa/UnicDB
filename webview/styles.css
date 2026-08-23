@@ -24,11 +24,17 @@
   margin-bottom: 8px;
 }
 
-/* --- Toolbar --- */
+/* --- Toolbar (TASK-603: single non-wrapping icon row) ---
+ * `flex-wrap: nowrap` is pinned structurally — the test 4 assertion reads
+ * this regex from the source. Removing it would let buttons wrap at narrow
+ * widths and the structural guarantee would be lost.
+ */
 .vsdb-toolbar {
   display: flex;
-  gap: 8px;
+  flex-wrap: nowrap;
   align-items: center;
+  gap: 4px;
+  min-width: 0;
   margin-bottom: 8px;
 }
 
@@ -36,11 +42,25 @@
   background: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
   border: 1px solid var(--vscode-button-border, transparent);
-  padding: 4px 10px;
+  padding: 3px 6px;
   border-radius: 2px;
   cursor: pointer;
   font-size: inherit;
   font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  min-width: 26px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+/* Toolbar buttons: 16×16 inline SVG icons, currentColor. */
+.vsdb-btn svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+  pointer-events: none;
 }
 .vsdb-btn:hover:not(:disabled) {
   background: var(--vscode-button-hoverBackground);
@@ -52,12 +72,45 @@
 .vsdb-btn-danger {
   background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
   border-color: var(--vscode-inputValidation-errorBorder, #be1100);
+  color: var(--vscode-inputValidation-errorForeground, #f48771);
 }
 
-/* --- Search input (AG Grid quick filter) --- */
+/* Group divider between query│edit and edit│export. 1px wide vertical
+ * rule that respects the current foreground color at low opacity so it
+ * reads as a separator in both light and dark themes. */
+.vsdb-toolbar-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 2px 2px;
+  background: var(--vscode-panel-border, #444);
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+
+/* Export format <select> + Header checkbox: compact height so they line
+ * up with the 24-26px icon buttons. */
+.vsdb-export-format {
+  min-height: 24px;
+  padding: 2px 4px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 2px;
+  font-size: inherit;
+  font-family: inherit;
+  flex-shrink: 0;
+}
+.vsdb-export-header {
+  margin: 0;
+  flex-shrink: 0;
+}
+
+/* --- Search input (AG Grid quick filter) — flex 0 1 180px so it shrinks
+ * to 120px min while icon buttons stay fixed. */
 .vsdb-search-input {
-  flex: 1;
-  padding: 4px 8px;
+  flex: 0 1 180px;
+  min-width: 120px;
+  padding: 3px 6px;
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border, transparent);

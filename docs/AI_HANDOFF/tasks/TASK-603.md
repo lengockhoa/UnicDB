@@ -83,3 +83,36 @@ keeps working.
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+---
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: Exec603
+SUMMARY: Converted all 9 toolbar buttons + 2 requery-bar buttons to inline-SVG icon buttons (16×16, currentColor, title+aria-label, no visible text), pinned `.vsdb-toolbar` to `flex-wrap: nowrap` with 2 `.vsdb-toolbar-sep` group dividers and a last-child search input, and tightened `.vsdb-btn` to a 24-26px compact size with a 16×16 svg sizing rule. Handlers, class contracts, and message shapes are byte-identical to the pre-change behavior.
+TEST_PLAN_FOLLOWED: inline (RED→GREEN: wrote webviewToolbar.test.ts covering the 5 test cases in §Test Cases first, confirmed 5/5 RED, then implemented, then re-ran to 5/5 GREEN)
+FILES_CHANGED:
+  - webview/main.ts: added `makeIconButton` + `makeToolbarSep` helpers and 11 ICON_* path constants; replaced the 9 toolbar button constructors and the 2 requery-bar button constructors with icon versions; inserted 2 `.vsdb-toolbar-sep` dividers; preserved all click handlers and class contracts.
+  - webview/styles.css: rewrote `.vsdb-toolbar` (flex-wrap:nowrap, gap 4px, min-width:0), `.vsdb-btn` (compact 24-26px flex-center, flex-shrink:0), added `.vsdb-btn svg` 16×16 sizing rule, added `.vsdb-toolbar-sep` divider, compacted `.vsdb-export-format` / `.vsdb-export-header`, set `.vsdb-search-input` to `flex:0 1 180px; min-width:120px`.
+  - src/ui/__tests__/webviewToolbar.test.ts: NEW — 5 tests covering icons, single-row layout (with 2 separators + last-child search), CSS `flex-wrap:nowrap` + svg sizing regex, requery-bar icons, and click-handler behavior preservation.
+TESTS_ADDED:
+  - src/ui/__tests__/webviewToolbar.test.ts: 1. every .vsdb-btn has inline svg + currentColor + non-empty title/aria-label + empty text; 2. icon buttons still post cancel/saveEdits/copy/exportFile and CSV toggle stays clickable; 3. flat children + 2 .vsdb-toolbar-sep + search is last + query│edit│export order; 4. styles.css pins flex-wrap:nowrap + .vsdb-btn svg sizing rule; 5. requery-bar Re-Run + Clear are icon buttons; click posts requery message; Clear empties inputs.
+VERIFICATION:
+  command: npm test
+  result: 422 pass / 0 fail / exit 0
+  output_excerpt: |
+    Test Files  37 passed (37)
+         Tests  422 passed (422)
+  command: npm run typecheck
+  result: 0 errors / exit 0
+  output_excerpt: |
+    > vsdb@1.4.1 typecheck
+    > tsc --noEmit
+  command: npx vitest run src/ui/__tests__/webviewToolbar.test.ts src/ui/__tests__/webviewExport.test.ts src/ui/__tests__/webviewEdit.test.ts src/ui/__tests__/webviewSaveEdits.test.ts src/ui/__tests__/webviewRequery.test.ts src/ui/__tests__/webviewSetFilter.test.ts src/ui/__tests__/webviewBundle.test.ts
+  result: 52 pass / 0 fail / exit 0
+ISSUES: none. The Cancel button starts `disabled` in jsdom (busy state is undefined at first render) so a literal `.click()` is a no-op in jsdom; the new test uses a `clickButton()` helper that dispatches a bubbling `MouseEvent('click')` to exercise the handler-attachment contract independently of the disabled flag (presentation is unchanged for real users — disabled clicks do nothing in real browsers too). All five §Test Cases covered. No existing test needed text-assertion adjustment — the existing webviewExport/webviewEdit/webviewSaveEdits/webviewRequery suites already use class selectors, not button text.
+HANDOFF_TO_REVIEWER: yes — single-task, all sources under one worktree, no cross-task dependencies, ready for verdict.
+NEXT: ready for review. Reviewer should re-run the targeted webview suite + typecheck to confirm. Recommend a maintainer manual browser smoke at a narrow width to verify the single-row layout visually before TASK-604 bumps the version.

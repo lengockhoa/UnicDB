@@ -35,6 +35,8 @@ const state = {
   registeredCodeLensProviders: [] as Array<{ language: unknown }>,
   onDidChangeConfigSubscribers: [] as Array<(e: { affectsConfiguration: (s: string) => boolean }) => void>,
   workspaceFolders: undefined as unknown,
+  // TASK-606: giá trị setting vsdb.confirmDestructive (undefined = default true).
+  confirmDestructive: undefined as boolean | undefined,
   configurationChangeEmitter: new FakeEventEmitter<unknown>(),
   // Active editor stub (cho runQuery/generateSelect tests).
   activeEditor: undefined as unknown as {
@@ -119,6 +121,7 @@ vi.mock("vscode", () => {
         get: <T>(key: string): T | undefined => {
           if (key === "showRunLens") return true as T;
           if (key === "batchSize") return 500 as T;
+          if (key === "confirmDestructive") return state.confirmDestructive as T;
           return undefined;
         },
       })),
@@ -680,6 +683,186 @@ describe("TASK-505 — runScript command + terminal reuse", () => {
     expect(state.createdTerminals.length).toBe(1);
     const term = state.createdTerminals[0];
     expect(term.sendText).toHaveBeenCalledWith("SELECT 1;\n\n");
+  });
+});
+
+// =============================================================================
+// TASK-606: destructive confirm guard (DELETE/TRUNCATE/DROP/UPDATE).
+// =============================================================================
+import type { MockInstance } from "vitest";
+
+/** Arg shape thực tế của showWarningMessage modal (overload vscode không mô tả được). */
+type WarnCall = [string, { modal: boolean; detail: string }, ...string[]];
+
+describe("TASK-606 — destructive confirm guard", () => {
+  let runSpy: MockInstance;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+    state.registeredTreeDataProviders.clear();
+    state.createdStatusBarItems.length = 0;
+    state.createdWebviewPanels.length = 0;
+    state.createdTreeViews.length = 0;
+    state.registeredCodeLensProviders.length = 0;
+    state.onDidChangeConfigSubscribers.length = 0;
+    state.workspaceFolders = undefined; // ⇒ ConnectionManager dùng globalState
+    state.activeEditor = undefined;
+    state.createdTerminals.length = 0;
+    state.confirmDestructive = undefined; // default → true
+    vi.resetModules();
+  });
+
+  /** ctx với active connection seeded qua globalState (không đi qua SecretStorage). */
+  function makeSeededCtx() {
+    const ctx = makeCtx();
+    ctx.globalState.get = vi.fn((key: string) => {
+      if (key === "vsdb.connections") {
+        return [
+          {
+            id: "c1",
+            name: "c",
+            driver: "postgres",
+            host: "h",
+            port: 5432,
+            user: "u",
+            database: "d",
+          },
+        ];
+      }
+      if (key === "vsdb.activeConnection") return "c1";
+      return undefined;
+    }) as never;
+    return ctx;
+  }
+
+  function setEditor(sql: string, selection?: { start: number; end: number }) {
+    state.activeEditor = {
+      document: {
+        languageId: "sql",
+        getText: () => sql,
+        offsetAt: (p: unknown) => (p as { character: number }).character,
+      },
+      selection: selection
+        ? {
+            isEmpty: false,
+            active: { line: 0, character: selection.end },
+            start: { line: 0, character: selection.start },
+            end: { line: 0, character: selection.end },
+          }
+        : {
+            isEmpty: true,
+            active: { line: 0, character: 0 },
+            start: { line: 0, character: 0 },
+            end: { line: 0, character: 0 },
+          },
+      insertSnippet: vi.fn().mockResolvedValue(undefined),
+    };
+  }
+
+  async function activateFresh606() {
+    const ctx = makeSeededCtx();
+    // Dynamic import cố ý: vi.resetModules() vừa drop cache, cần instance mới
+    // của cả extension lẫn queryRunner để spy prototype đúng class đang dùng.
+    const runnerMod = await import("./core/queryRunner");
+    runSpy = vi
+      .spyOn(runnerMod.QueryRunner.prototype, "run")
+      .mockResolvedValue([]);
+    const mod = await import("./extension");
+    await mod.activate(ctx as never);
+    return ctx;
+  }
+
+  const warnSpy = () => vi.mocked(vscodeMock.window.showWarningMessage);
+  const warnCalls = () => warnSpy().mock.calls as unknown as WarnCall[];
+
+  it("B9 — DELETE có WHERE + bấm 'Run' → modal amber rồi chạy", async () => {
+    await activateFresh606();
+    setEditor("DELETE FROM t WHERE id = 1;");
+    warnSpy().mockResolvedValueOnce("Run");
+
+    await state.registeredCommands.get("vsdb.runQuery")!();
+
+    expect(warnSpy()).toHaveBeenCalledTimes(1);
+    const [msg, opts, ...items] = warnCalls()[0];
+    expect(msg).toMatch(/DELETE/i);
+    expect(opts.modal).toBe(true);
+    expect(opts.detail).toContain("DELETE FROM t WHERE id = 1");
+    expect(items).toContain("Run");
+    expect(runSpy).toHaveBeenCalled();
+  });
+
+  it("B10 — TRUNCATE red + cancel → KHÔNG chạy, không setBusy", async () => {
+    await activateFresh606();
+    setEditor("TRUNCATE TABLE t;");
+    warnSpy().mockResolvedValueOnce(undefined);
+
+    await state.registeredCommands.get("vsdb.runQuery")!();
+
+    expect(warnSpy()).toHaveBeenCalledTimes(1);
+    const [msg, opts, ...items] = warnCalls()[0];
+    expect(msg).toMatch(/NGUY HIỂM/);
+    expect(opts.modal).toBe(true);
+    expect(opts.detail).toContain("TRUNCATE TABLE t");
+    expect(items).toContain("Vẫn chạy (nguy hiểm)");
+    expect(runSpy).not.toHaveBeenCalled();
+    // Không vào busy state → webview panel chưa được tạo.
+    expect(state.createdWebviewPanels.length).toBe(0);
+  });
+
+  it("B11 — DELETE không WHERE + confirm đỏ → chạy", async () => {
+    await activateFresh606();
+    setEditor("DELETE FROM t;");
+    warnSpy().mockResolvedValueOnce("Vẫn chạy (nguy hiểm)");
+
+    await state.registeredCommands.get("vsdb.runQuery")!();
+
+    expect(warnCalls()[0][0]).toMatch(/NGUY HIỂM/);
+    expect(runSpy).toHaveBeenCalled();
+  });
+
+  it("B12 — confirmDestructive=false → bỏ qua guard, chạy ngay", async () => {
+    state.confirmDestructive = false;
+    await activateFresh606();
+    setEditor("DELETE FROM t;");
+
+    await state.registeredCommands.get("vsdb.runQuery")!();
+
+    expect(warnSpy()).not.toHaveBeenCalled();
+    expect(runSpy).toHaveBeenCalled();
+  });
+
+  it("B13 — mixed batch SELECT + TRUNCATE, cancel → huỷ cả lô", async () => {
+    await activateFresh606();
+    const sql = "SELECT 1; TRUNCATE t;";
+    setEditor(sql, { start: 0, end: sql.length });
+    warnSpy().mockResolvedValueOnce(undefined);
+
+    await state.registeredCommands.get("vsdb.runQuery")!();
+
+    expect(warnSpy()).toHaveBeenCalledTimes(1);
+    expect(warnCalls()[0][0]).toMatch(/NGUY HIỂM/);
+    expect(runSpy).not.toHaveBeenCalled();
+  });
+
+  it("B14 — SELECT thường không bị hỏi", async () => {
+    await activateFresh606();
+    setEditor("SELECT 1;");
+
+    await state.registeredCommands.get("vsdb.runQuery")!();
+
+    expect(warnSpy()).not.toHaveBeenCalled();
+    expect(runSpy).toHaveBeenCalled();
+  });
+
+  it("B15 — package.json khai báo vsdb.confirmDestructive default true", () => {
+    const props = pkgJson.contributes.configuration.properties as Record<
+      string,
+      { type: string; default: unknown }
+    >;
+    expect(props["vsdb.confirmDestructive"]).toBeDefined();
+    expect(props["vsdb.confirmDestructive"].type).toBe("boolean");
+    expect(props["vsdb.confirmDestructive"].default).toBe(true);
   });
 });
 

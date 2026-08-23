@@ -14,6 +14,7 @@ import {
 import { VsdbCodeLensProvider } from "./ui/codeLensProvider";
 import { ConnectionForm } from "./ui/connectionForm";
 import { sqlToRun } from "./core/statementParser";
+import { analyzeStatement, guardTier } from "./core/dangerousStatement";
 import type { ConnectionConfig } from "./config/types";
 import type { ParsedStatement } from "./config/types";
 
@@ -309,6 +310,11 @@ async function runStatements(
   panel: ResultsPanel,
   statements: ParsedStatement[],
 ): Promise<void> {
+  // TASK-606 — Confirm guard TRƯỚC mọi side-effect (kể cả busy state): cancel
+  // huỷ toàn bộ lô, không statement nào được submit.
+  if (!(await confirmDangerousStatements(statements))) {
+    return;
+  }
   const active = mgr.getActive();
   const header = `Run at ${new Date().toISOString()} — ${active ? `${active.driver}@${active.host}/${active.database}` : "no connection"}`;
   panel.setBusy(true);
@@ -325,6 +331,58 @@ async function runStatements(
   } finally {
     panel.setBusy(false);
   }
+}
+
+/** Cap detail modal để dialog không tràn (VS Code không scroll detail). */
+const RED_DETAIL_CAP = 2000;
+const AMBER_DETAIL_CAP = 500;
+
+/**
+ * TASK-606 — Hỏi lại user trước khi chạy statement phá hoại.
+ * Trả `true` = proceed, `false` = user cancel (huỷ CẢ LÔ).
+ * Tier đỏ (DELETE/UPDATE không WHERE, mọi TRUNCATE/DROP) thắng tier amber.
+ */
+async function confirmDangerousStatements(
+  statements: ParsedStatement[],
+): Promise<boolean> {
+  const enabled =
+    vscode.workspace
+      .getConfiguration("vsdb")
+      .get<boolean>("confirmDestructive") ?? true;
+  if (!enabled) return true;
+
+  const red: string[] = [];
+  const amber: string[] = [];
+  for (const stmt of statements) {
+    const tier = guardTier(analyzeStatement(stmt.text));
+    if (tier === "red") red.push(stmt.text.trim());
+    else if (tier === "amber") amber.push(stmt.text.trim());
+  }
+
+  if (red.length > 0) {
+    const picked = await vscode.window.showWarningMessage(
+      "VSDB: CỰC KỲ NGUY HIỂM — câu lệnh sẽ XÓA SẠCH DỮ LIỆU (DELETE không WHERE / TRUNCATE / DROP). Kiểm tra lại query!",
+      { modal: true, detail: capDetail(red, RED_DETAIL_CAP) },
+      "Vẫn chạy (nguy hiểm)",
+    );
+    return picked === "Vẫn chạy (nguy hiểm)";
+  }
+
+  if (amber.length > 0) {
+    const picked = await vscode.window.showWarningMessage(
+      "VSDB: DELETE có điều kiện — chạy câu lệnh này?",
+      { modal: true, detail: capDetail(amber, AMBER_DETAIL_CAP) },
+      "Run",
+    );
+    return picked === "Run";
+  }
+
+  return true;
+}
+
+function capDetail(texts: string[], cap: number): string {
+  const joined = texts.join("\n\n");
+  return joined.length <= cap ? joined : `${joined.slice(0, cap)}…`;
 }
 
 async function promptToAddConnectionOrSelect(): Promise<void> {
