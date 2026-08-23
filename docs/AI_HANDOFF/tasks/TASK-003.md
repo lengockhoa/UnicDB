@@ -139,3 +139,68 @@ npx vitest run src/ai/__tests__/agent.test.ts && npx tsc --noEmit
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Executor Report
+- Status: `done`
+- EXECUTOR_MODEL: unic/unic-code
+- EXECUTOR_SUBAGENT: -
+- Worktree: `.worktrees/task-003` @ `e61a7bd` (branch `handoff/task-003`)
+
+### RED → GREEN
+
+**RED (agent.ts absent)** — pasted verbatim:
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-003
+
+ ❯ src/ai/__tests__/agent.test.ts  (0 test)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/ai/__tests__/agent.test.ts [ src/ai/__tests__/agent.test.ts ]
+Error: Failed to load url ../agent (resolved id: ../agent) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-003/src/ai/__tests__/agent.test.ts. Does the file exist?
+ ❯ loadAndTransform ../../node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17
+
+ Test Files  1 failed (1)
+      Tests  no tests
+```
+
+**GREEN (after implementing src/ai/agent.ts)** — pasted verbatim:
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-003
+
+ ✓ src/ai/__tests__/agent.test.ts  (12 tests) 5ms
+
+ Test Files  1 passed (1)
+      Tests  12 passed (12)
+```
+RED: 12 failed (suite-load failure due to missing module). GREEN: 12 pass / 0 fail.
+
+### Files changed
+- `src/ai/agent.ts` (new, 167 lines) — `runAgent` + `AgentTool` / `ToolRegistry` / `EMPTY_TOOL_REGISTRY` / `AgentInput` / `AgentDeps` / `AgentStep` / `AgentRunResult` / `AgentCallbacks` per §Spec. Pure module: type-only imports from `./settings` + `./provider`, zero vscode, zero fetch, zero console.
+- `src/ai/__tests__/agent.test.ts` (new, 280 lines) — 12 tests covering §Test Cases 1–12 verbatim.
+
+### Verification
+```
+npx vitest run src/ai/__tests__/agent.test.ts && npx tsc --noEmit
+# VITEST_EXIT=0  TSC_EXIT=0
+```
+
+### Spec adherence
+1. `loadConfig()` called exactly once per run; null → throw `AI is not configured`. (test #7)
+2. Vision guard runs BEFORE any `deps.complete` call; message `Role "<role>" does not support vision`. (test #6)
+3. Step loop bounded by `input.maxSteps ?? cfg.maxSteps`, clamped ≥1. Tool-calling step appends BOTH assistant msg AND all tool results in one `step.messages`; loop continues with the next iteration carrying all of them in `history`. (tests #2, #5, #8, #9, #11)
+4. Error policy: missing tool → `Unknown tool: <name>`; bad JSON → `Invalid tool arguments`; thrown execute → `Tool failed: <msg>` and raw Error fed to optional `onError` (never re-thrown). Loop never aborts. (tests #8, #9, #10)
+5. Budget exhaustion → `stoppedOnBudget: true`, `finalText` = last no-tool-call assistant text or `""`. (test #5)
+6. `onStep(step)` fires once per step AFTER the step's messages array is complete (assistant + tool results). (test #10)
+7. `EMPTY_TOOL_REGISTRY` (`list() []`, `get() undefined`) → request gets `tools: []`. (test #12)
+8. Fresh config snapshot per run — verified by changing config between two `runAgent` calls. (test #4)
+
+### ISSUES
+- **Wave-1 signature mismatch (no edit needed):** the task spec mentioned wave-1 exports `loadAiConfig` / `createProviderClient`; wave-1 actually exposes `AiConfigStore.loadConfig(): Promise<AiConfig | null>` and a provider factory `createProviderClient(opts)` returning a single-arg `complete(req)` closure. The TASK-003 spec's `AgentDeps` (three-arg `complete(cfg, role, req)`, `loadConfig(): Promise<AiConfig | null>`) is the cycle-J contract and matches the types from `settings.ts`/`provider.ts` exactly; the `createProviderClient` adapter is out of scope (wiring lives in TASK-004). **No wave-1 file was modified.**
+- **Test #10 — `onError` payload interpretation:** spec §Loop-4 says `onError fires for swallowed tool errors` without specifying payload shape. Implementation passes the **raw thrown Error** (preserves original message and stack); the result message string is `Tool failed: <msg>` per §Loop-1d. Test asserts `errArg.message === "kaboom"` (raw). This matches the natural reading of "the swallowed error" and gives downstream UI the original stack.
+
+### HANDOFF_TO_REVIEWER
+yes — all 12 §Test Cases PASS, typecheck clean, branch `handoff/task-003` at `e61a7bd` contains only `src/ai/agent.ts` and `src/ai/__tests__/agent.test.ts`.
+
+### NEXT
+ready for review (Rev-T003).
