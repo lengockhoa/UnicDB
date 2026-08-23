@@ -276,3 +276,24 @@ VERIFICATION:
 ISSUES: none. RED failures discriminate the work cleanly (4 of 5 — icon existence on toolbar buttons, 2 separator dividers, `flex-wrap: nowrap` regex in CSS, requery-bar empty-text check). Test 2 (handler-behavior preservation) passes against both plan-commit and HEAD sources — that's expected and correct: plan-commit preserves the click handlers (the icon refactor only swaps DOM content), so test 2 alone cannot discriminate; tests 1/3/4/5 cover the presentation changes. All five §Test Cases covered.
 HANDOFF_TO_REVIEWER: yes — single-task, all sources under one worktree, no cross-task dependencies, ready for verdict.
 NEXT: ready for review. Reviewer can re-run the same commands above to confirm GREEN; the RED-output paste is now real (re-run in this turn against plan-commit, not asserted). No follow-up needed in this task.
+
+## Reviewer Verdict (fix round 1)
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic-code (Fix603)
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run && npm run typecheck
+  result: compile OK (esbuild complete); 38 files / 439 pass / 0 fail; typecheck 0 errors
+TEST_PLAN_COVERAGE: all-followed — §Test Cases 1-5 in webviewToolbar.test.ts; case 6 via full suite (export/edit/saveEdits/requery/setFilter/bundle all green)
+RED_EVIDENCE_CHECK:
+  - Pasted RED output is REAL: all 4 assertion sites match on-disk test source exactly (220:61 svg, 315:76 seps, 350:89 nowrap regex, 378:39 textContent) and failures are content-discriminating ('Re-Run' text present = plan-commit sources), 4 failed / 1 passed as claimed.
+  - Test 2 passing in RED run is expected — plan-commit preserves handlers; discrimination carried by tests 1/3/4/5.
+  - Production code untouched this round: 8a7fbed's webview/main.ts delta is only TASK-602 scope (gridWrap display restore + hidePopupMenu); styles.css delta contains no toolbar/btn/svg/sep lines. Working tree clean vs HEAD.
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - docs/AI_HANDOFF/tasks/TASK-603.md — round-0 reviewer verdict was never appended to the file (outcome only in INDEX); kept as-is since this fix-round verdict supersedes it.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Evidence-only fix round verified clean; 439 vs executor's 437 tests delta is Fix602's +2 setFilter regression tests in the shared tree, not a 603 change.

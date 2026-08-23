@@ -550,12 +550,13 @@ describeIfBundle("webview/main.ts bundle — TASK-602 set-filter panel", () => {
         ),
       );
       await flushGridEvents();
-
       const gridWrap = root.querySelector(".vsdb-grid-host") as HTMLElement;
       expect(gridWrap).toBeTruthy();
-      // Either inline style is empty (CSS governs, "flex") or it's a
-      // non-'none' value. The bug: style.display remains 'none' after
-      // renderActivePanel re-mounts the wrap.
+      // jsdom reflects the inline style. After the fix the wrap's inline
+      // display is "" (CSS class governs: `display: flex`); before the fix
+      // teardownGridWrap()'s `display: "none"` survives re-mount, so the
+      // grid stays invisible across tab switches.
+      expect(gridWrap.style.display).not.toBe("none");
     },
   );
 
