@@ -261,7 +261,8 @@ describe("rowsToSpec", () => {
     expect(pk.columns).toEqual(["col_b", "col_a"]);
   });
 
-  it("FK schema prefix stripped: hr.departments → departments", () => {
+describe("rowsToSpec — text[] confkeycols literal handling (R1)", () => {
+  it("parses node-pg-style '{id_ref}' string literal into ['id_ref']", () => {
     const cols: PgColumnRow[] = [
       {
         column_name: "dept_id",
@@ -270,21 +271,58 @@ describe("rowsToSpec", () => {
         column_default: null,
       },
     ];
+    // node-pg returns text[] as a stringified literal unless a custom type
+    // parser is registered. rowsToSpec must transparently parse it.
     const cons: PgConstraintRow[] = [
       {
-        conname: "fk_test",
+        conname: "fk_parsed",
         contype: "f",
         conkey: [1],
-        confrelidname: "hr.departments",
-        confkeycols: ["id"],
-        consrc: "FOREIGN KEY (dept_id) REFERENCES hr.departments(id)",
+        confrelidname: "public.departments",
+        // simulate the literal-string-as-array shape node-pg produces.
+        confkeycols: "{id_ref}" as unknown as string[] | null,
+        consrc: "FOREIGN KEY (dept_id) REFERENCES public.departments(id_ref)",
       },
     ];
-    const spec = rowsToSpec("public", "test", cols, cons);
+    const spec = rowsToSpec("public", "t", cols, cons);
     const fk = findKey(spec.keys, "foreignKey");
     expect(fk.references.table).toBe("departments");
-    expect(fk.references.columns).toEqual(["id"]);
+    expect(fk.references.columns).toEqual(["id_ref"]);
   });
+
+  it("parses '{a,b}' multi-element literal into ['a','b']", () => {
+    const cols: PgColumnRow[] = [
+      {
+        column_name: "a",
+        format_type: "int",
+        is_nullable: "YES",
+        column_default: null,
+      },
+      {
+        column_name: "b",
+        type: "int" as unknown as never, // unused second col
+        format_type: "int",
+        is_nullable: "YES",
+        column_default: null,
+      },
+    ];
+    // Build per the existing test convention with extra fields coerced.
+    const cons: PgConstraintRow[] = [
+      {
+        conname: "fk_multi",
+        contype: "f",
+        conkey: [1],
+        confrelidname: "public.departments",
+        confkeycols: "{id_a,id_b}" as unknown as string[] | null,
+        consrc: "FOREIGN KEY (a) REFERENCES public.departments(id_a, id_b)",
+      },
+    ];
+    const spec = rowsToSpec("public", "t", cols, cons);
+    const fk = findKey(spec.keys, "foreignKey");
+    expect(fk.references.columns).toEqual(["id_a", "id_b"]);
+  });
+});
+
 
   it("empty constraints → keys:[]", () => {
     const spec = rowsToSpec(

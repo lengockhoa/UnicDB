@@ -177,6 +177,93 @@ describe("TASK-003 #6 — rename + type diff never emits DROP+ADD", () => {
   });
 });
 
+// =============================== Fix-round-1 regressions ==================
+describe("TASK-003 R1 — ADD COLUMN includes NOT NULL + DEFAULT (TASK-001 clause order)", () => {
+  it("new column with NOT NULL + DEFAULT bare-literal → type, NOT NULL, DEFAULT 'literal' in that order", () => {
+    const before: TableSpec = spec("t", "public", [col("id", "bigint")]);
+    const after: TableSpec = {
+      ...before,
+      columns: [
+        col("id", "bigint"),
+        // newly-added column with NOT NULL + DEFAULT 'pending'
+        {
+          name: "status",
+          type: "varchar",
+          nullable: false,
+          default: "pending",
+        },
+      ],
+    };
+    const plan = diffTable(before, after);
+    expect(plan.errors).toEqual([]);
+    expect(plan.statements).toEqual([
+      'ALTER TABLE "public"."t" ADD COLUMN "status" varchar NOT NULL DEFAULT \'pending\';',
+    ]);
+  });
+
+  it("new column with DEFAULT 'now()' (function-call) → DEFAULT emitted bare, single quoted form rejected", () => {
+    const before: TableSpec = spec("t", "public", [col("id", "bigint")]);
+    const after: TableSpec = {
+      ...before,
+      columns: [
+        col("id", "bigint"),
+        {
+          name: "expired_at",
+          type: "varchar",
+          nullable: true,
+          default: "now()",
+        },
+      ],
+    };
+    const plan = diffTable(before, after);
+    expect(plan.errors).toEqual([]);
+    const stmt = plan.statements[0];
+    expect(stmt).toContain("DEFAULT now()");
+    expect(stmt).not.toContain("DEFAULT 'now()'");
+  });
+});
+
+describe("TASK-003 R1 — FK ADD CONSTRAINT references schema-qualification parity", () => {
+  it("bare references.table + non-empty schema → 'schema'.'table'", () => {
+    const before: TableSpec = spec("t", "public", [col("dept_id", "int")]);
+    const after: TableSpec = {
+      ...before,
+      keys: [
+        {
+          kind: "foreignKey",
+          name: "fk_x",
+          columns: ["dept_id"],
+          references: { table: "departments", columns: ["id"] },
+        },
+      ],
+    };
+    const plan = diffTable(before, after);
+    expect(plan.errors).toEqual([]);
+    const stmt = plan.statements.find((s) => s.includes("FOREIGN KEY"))!;
+    expect(stmt).toContain('REFERENCES "public"."departments" ("id")');
+  });
+
+  it("already-qualified references.table 'hr.departments' → 'hr'.'departments' (no double prefix)", () => {
+    const before: TableSpec = spec("t", "public", [col("dept_id", "int")]);
+    const after: TableSpec = {
+      ...before,
+      keys: [
+        {
+          kind: "foreignKey",
+          name: "fk_x",
+          columns: ["dept_id"],
+          references: { table: "hr.departments", columns: ["id"] },
+        },
+      ],
+    };
+    const plan = diffTable(before, after);
+    expect(plan.errors).toEqual([]);
+    const stmt = plan.statements.find((s) => s.includes("FOREIGN KEY"))!;
+    expect(stmt).toContain('REFERENCES "hr"."departments" ("id")');
+    expect(stmt).not.toContain('"public"."hr"');
+  });
+});
+
 describe("TASK-003 #7 — invalid after blocks", () => {
   it("empty name + duplicate cols → errors contain both; statements empty", () => {
     const before: TableSpec = spec("t", "public", [col("x", "int")]);

@@ -126,3 +126,26 @@ FINDINGS:
     - src/core/__tests__/ddlAlterTable.test.ts — no test covers new-column clause rendering (follows from the important finding; add with the fix).
 NEXT_STATUS_FOR_INDEX: changes_requested
 NOTES: Model isolation OK (executor unic-code ≠ reviewer unic-smart, matches handoff.reviewer.model). Merge to canonical createTable.ts contract verified clean (types + specErrors imported, placeholder gone). One important defect: ADD COLUMN drops NOT NULL/DEFAULT — fix is small and localized to the ADD loop.
+
+
+## Executor Report (fix round 1)
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: Exec-Fix1A
+SUMMARY: Resolved the one important finding (ADD COLUMN must include NOT NULL + DEFAULT per TASK-001 clause order) and the minor FK ADD CONSTRAINT schema-qualification parity finding. ADD COLUMN now emits `"name" type [NOT NULL] [DEFAULT <renderDefault>]` matching createTable.ts. FK ADD CONSTRAINT references now qualify a bare `references.table` with the source table's `schema`, matching createTable parity.
+TEST_PLAN_FOLLOWED: task §Test Cases + R1 regressions (4 new tests)
+FILES_CHANGED:
+  - .worktrees/fix1-ddl/src/core/ddl/alterTable.ts: ADD COLUMN renders NOT NULL + DEFAULT (id via shared `renderDefault` from createTable.ts); new `renderReferenceTarget` helper + `renderAddConstraint` now takes the table's `schema` for FK REFERENCES parity with createTable.ts; inlined `nullableOf` (single-call site, no longer a tiny helper)
+  - .worktrees/fix1-ddl/src/core/__tests__/ddlAlterTable.test.ts: +4 regression tests for ADD COLUMN clause composition and FK schema-qualification (both bare and already-qualified paths)
+TESTS_ADDED:
+  - ddlAlterTable.test.ts: "R1 — ADD COLUMN with NOT NULL + DEFAULT 'literal' in clause order"; "R1 — ADD COLUMN with DEFAULT 'now()' (function-call)"; "R1 — FK ADD CONSTRAINT references schema-qualification — bare references.table"; "R1 — FK ADD CONSTRAINT references schema-qualification — already-qualified"
+VERIFICATION:
+  command: npx vitest run src/core/__tests__/ddlAlterTable.test.ts && npx tsc --noEmit
+  result: 18/18 pass / tsc clean
+  output_excerpt: |
+    ✓ src/core/__tests__/ddlAlterTable.test.ts  (18 tests)
+ISSUES:
+  - Minor cleanup: removed `nullableOf` wrapper (only call site, was `!!c.nullable` — inlined per project no-tiny-functions rule).
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for review

@@ -78,6 +78,49 @@ export function defaultColumnSpecs(tableName: string): ColumnSpec[] {
   ];
 }
 
+/**
+ * Render a DEFAULT expression according to spec §33:
+ *
+ *   - Function-call / expression tokens (those containing `(` OR operators /
+ *     whitespace) pass through verbatim — `DEFAULT now()`, `DEFAULT uuid_in(...)`.
+ *   - Bare-literal tokens (plain identifier `^[A-Za-z_][A-Za-z0-9_]*$` or
+ *     numeric literal) are single-quoted so a user-typed identifier like
+ *     `pending` becomes `DEFAULT 'pending'` and PG does not misinterpret it
+ *     as a column reference.
+ *   - Boolean / null literals (`true`, `false`, `null`, case-insensitive)
+ *     pass through bare because PG treats them as valid scalar literals and
+ *     type-coerces them to column type at insert time.
+ *   - If a user has already wrapped the literal in single quotes, the value
+ *     doesn't match the bare-token pattern (it contains `'`) and is emitted
+ *     bare — i.e. `DEFAULT 'pending'` stays as written.
+ */
+export function renderDefault(raw: string): string {
+  const trimmed = raw.trim();
+
+  // Function-call / parenthesized / multi-token expression → emit bare.
+  if (trimmed.includes("(")) return trimmed;
+  // Whitespace or any operator-punctuation marks → emit bare (it's an
+  // expression like `a + b`, `now() AT TIME ZONE ...`).
+  if (/[\s,+\-*/%<>=!~&|^?:]/.test(trimmed)) return trimmed;
+
+  // PG accepts bare boolean/null literals; preserve unquoted.
+  const lower = trimmed.toLowerCase();
+  if (lower === "true" || lower === "false" || lower === "null") {
+    return trimmed;
+  }
+
+  // Bare identifier word → single-quote it.
+  if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(trimmed)) {
+    return `'${trimmed.replace(/'/g, "''")}'`;
+  }
+  // Bare numeric literal → single-quote it (text→int/bigint PG coercion works).
+  if (/^[0-9]+(\.[0-9]+)?$/.test(trimmed)) {
+    return `'${trimmed}'`;
+  }
+  // Fallback: emit bare (covers things like `::regclass`, casts, etc.).
+  return trimmed;
+}
+
 export function generateCreateTable(spec: TableSpec): string {
   const errors = specErrors(spec);
   if (errors.length > 0) {
@@ -93,14 +136,19 @@ export function generateCreateTable(spec: TableSpec): string {
   const ifNotExists = spec.ifNotExists ? "IF NOT EXISTS " : "";
   const lines: string[] = [];
 
+  // If the spec carries a primaryKey KeySpec, the table-level constraint
+  // already declares the PK; suppress the inline `PRIMARY KEY` per column to
+  // avoid PG `multiple primary keys for table`. Inline wins only when no
+  // primaryKey KeySpec is present (per §Test Case 4).
+  const hasPrimaryKeyKey = spec.keys.some((k) => k.kind === "primaryKey");
+
   for (const col of spec.columns) {
     const parts: string[] = [`"${col.name}" ${col.type}`];
     if (col.nullable === false) parts.push("NOT NULL");
     if (col.default !== undefined && col.default !== "") {
-      const trimmed = col.default.trim();
-      parts.push(`DEFAULT ${trimmed}`);
+      parts.push(`DEFAULT ${renderDefault(col.default)}`);
     }
-    if (col.isPrimaryKey) parts.push("PRIMARY KEY");
+    if (col.isPrimaryKey && !hasPrimaryKeyKey) parts.push("PRIMARY KEY");
     lines.push("    " + parts.join(" "));
   }
 

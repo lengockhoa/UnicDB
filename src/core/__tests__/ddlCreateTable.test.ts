@@ -139,4 +139,116 @@ describe("TASK-001 — CREATE TABLE generator", () => {
     expect(m).not.toBeNull();
     expect(m![1].length).toBeLessThanOrEqual(63);
   });
+
+  // ---- Regression tests for fix round 1 review findings ----
+
+  it("PK dedupe: isPrimaryKey + primaryKey KeySpec → exactly ONE PRIMARY KEY clause (executable)", () => {
+    // RowsToSpec sets BOTH isPrimaryKey on the id column AND a primaryKey
+    // KeySpec (TASK-002). Re-emitting must collapse to a single PK clause —
+    // either inline OR table-level — never both. Per Round-1 reviewer the
+    // KeySpec wins (table-level CONSTRAINT … PRIMARY KEY).
+    const sql = generateCreateTable({
+      name: "users",
+      schema: "public",
+      columns: [
+        { name: "id", type: "bigint", isPrimaryKey: true, nullable: false },
+        { name: "code", type: "varchar", nullable: true },
+      ],
+      keys: [
+        { kind: "primaryKey", columns: ["id"], name: "users_pkey" },
+      ],
+    });
+    // Inline PRIMARY KEY absent (KeySpec wins).
+    expect(sql).not.toMatch(/\"id\" bigint PRIMARY KEY/);
+    // Exactly one PRIMARY KEY in the SQL (table-level).
+    const pkMatches = sql.match(/PRIMARY KEY/g) ?? [];
+    expect(pkMatches.length).toBe(1);
+    // Executability check: the whole statement parses as CREATE TABLE with
+    // the canonical fixture shape (no duplicate PK).
+    expect(sql).toContain('CONSTRAINT "users_pkey" PRIMARY KEY ("id")');
+    expect(sql.startsWith('CREATE TABLE "public"."users" (')).toBe(true);
+  });
+
+  it("default quoting: bare identifier 'pending' → DEFAULT 'pending'", () => {
+    const sql = generateCreateTable({
+      name: "orders",
+      schema: "public",
+      columns: [
+        {
+          name: "status",
+          type: "varchar",
+          default: "pending",
+          nullable: true,
+        },
+      ],
+      keys: [],
+    });
+    expect(sql).toContain("DEFAULT 'pending'");
+  });
+
+  it("default quoting: function call 'now()' passes through bare", () => {
+    const sql = generateCreateTable({
+      name: "orders",
+      schema: "public",
+      columns: [
+        { name: "expired_at", type: "varchar", default: "now()", nullable: true },
+      ],
+      keys: [],
+    });
+    expect(sql).toContain("DEFAULT now()");
+    // No spurious quoting.
+    expect(sql).not.toContain("DEFAULT 'now()'");
+  });
+
+  it("default quoting: boolean literal 'true' passes through bare (PG accepted)", () => {
+    const sql = generateCreateTable({
+      name: "users",
+      schema: "public",
+      columns: [
+        { name: "active", type: "boolean", default: "true", nullable: false },
+      ],
+      keys: [],
+    });
+    expect(sql).toContain("DEFAULT true");
+    expect(sql).not.toContain("DEFAULT 'true'");
+  });
+
+  it("default quoting: pre-quoted literal stays as written", () => {
+    const sql = generateCreateTable({
+      name: "users",
+      schema: "public",
+      columns: [
+        {
+          name: "status",
+          type: "varchar",
+          default: "'pending'",
+          nullable: true,
+        },
+      ],
+      keys: [],
+    });
+    expect(sql).toContain("DEFAULT 'pending'");
+  });
+
+  it("default quoting: numeric literal 42 → DEFAULT '42'", () => {
+    const sql = generateCreateTable({
+      name: "users",
+      schema: "public",
+      columns: [
+        { name: "qty", type: "integer", default: "42", nullable: true },
+      ],
+      keys: [],
+    });
+    expect(sql).toContain("DEFAULT '42'");
+  });
+
+  it("default quoting: uuid_in(...) expression passes through bare", () => {
+    const sql = generateCreateTable({
+      name: "users",
+      schema: "public",
+      columns: defaultColumnSpecs("users"),
+      keys: [],
+    });
+    expect(sql).toContain("DEFAULT uuid_in(overlay(overlay(md5(");
+  });
 });

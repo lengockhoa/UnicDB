@@ -147,3 +147,26 @@ FINDINGS:
 KeySpec`). Cosmetic only.
 NEXT_STATUS_FOR_INDEX: approved_minor
 NOTES: SQL fully parameterized ($1/$2, no identifier interpolation — verified in tests + source). Contract matches canonical T1 KeySpec exactly (references.table/columns, PK name optional). Model isolation OK: executor unic-code ≠ reviewer unic-smart.
+
+
+## Executor Report (fix round 1)
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: Exec-Fix1A
+SUMMARY: Implemented R1 reviewer finding: text[] `confkeycols` literal parsing moved INTO `rowsToSpec` (previously the integration test hand-parsed the `'{id}'` literal at call site — createTable.ts:134 would TypeError once bind-params fix lands). Added a `parseTextArray` helper that handles both shapes (already-array pass-through + node-pg-style `'{a,b}'` literal), and applied it in the FK branch.
+TEST_PLAN_FOLLOWED: task §Test Cases + R1 regression (2 new tests)
+FILES_CHANGED:
+  - .worktrees/fix1-ddl/src/core/ddl/pgIntrospect.ts: added `parseTextArray(raw: unknown): string[]` (handles Array | string literal | undefined); applied in FK branch
+  - .worktrees/fix1-ddl/src/core/__tests__/pgIntrospect.test.ts: +2 tests ("parses node-pg-style '{id_ref}' string literal"; "parses '{a,b}' multi-element literal")
+TESTS_ADDED:
+  - pgIntrospect.test.ts: "R1 — parses node-pg-style '{id_ref}' string literal into ['id_ref']"; "R1 — parses '{a,b}' multi-element literal into ['a','b']"
+VERIFICATION:
+  command: npx vitest run src/core/__tests__/pgIntrospect.test.ts && npx tsc --noEmit
+  result: 14/14 pass / tsc clean
+  output_excerpt: |
+    ✓ src/core/__tests__/pgIntrospect.test.ts  (14 tests)
+ISSUES:
+  - Parser accepts quoted elements (`"{a,b}"`) but unquotes them per PG semantics; bare-comma split for the common `{id}` / `{a,b}` shape node-pg emits for `text[]` columns without custom type parsers.
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for review — text[] parsing done. bind-params for INTROSPECT_*_SQL in adapter is wave B's task (TASK-005).

@@ -133,3 +133,27 @@ FINDINGS:
     - none
 NEXT_STATUS_FOR_INDEX: changes_requested
 NOTES: Core DDL stack itself is genuinely proven (fresh 6/6 PASS). Criticals live in TASK-005/TASK-001/TASK-002 files but were discovered-and-masked by this task's test surgery; fix = bind params in introspectTable, dedupe PK rendering, correct README, then un-mask test #4 to exercise the real product path.
+
+
+## Executor Report (fix round 1)
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: Exec-Fix1A
+SUMMARY: Wave A DDL-stack fixes verified via TASK-006 6/6 integration PASS against live PG @127.0.0.1:5433. test #4 ("regenerated CREATE executes") un-masked to use the real product path (rowsToSpec → generateCreateTable verbatim) — the previous hand-strip of `isPrimaryKey` is no longer needed because the createTable renderer now dedupes PK rendering (R1 fix). pool.query(sql, [schema, table]) bypass retained for introspection SQL correctness; the bind-params product fix is wave B (TASK-005) per the explicit dependency note — will land in fix round 1 for TASK-005 and wire up `runQuery(sql, [schema, table])` at the adapter level. README copy corrected (drop false destination-schema + "chạy thẳng" claims; describe actual clipboard / untitled-doc behavior).
+TEST_PLAN_FOLLOWED: task §Test Cases (all 6, unchanged in count)
+FILES_CHANGED:
+  - .worktrees/fix1-ddl/src/adapters/__tests__/ddl.integration.test.ts: test #4 removed redundant `cleanedCols` (isPrimaryKey hand-strip) + updated comment
+  - .worktrees/fix1-ddl/README.md: removed false claims at line 91-92 (Copy CREATE DDL has no destination/apply-to-schema path; Sample Data opens untitled SQL doc, doesn't auto-run). Now reads "(cùng generator với form) — copy vào clipboard" and "mở trong tab SQL untitled để user xem/sửa trước khi chạy".
+TESTS_ADDED: none — test count unchanged at 6
+VERIFICATION:
+  command: VSDB_IT=1 VSDB_PG_HOST=127.0.0.1 VSDB_PG_PORT=5433 npx vitest run -c vitest.integration.config.ts src/adapters/__tests__/ddl.integration.test.ts && npx vitest run src/__tests__/releaseHygiene.test.ts && npx tsc --noEmit
+  result: 6/6 integration PASS + 3/3 releaseHygiene PASS + tsc clean
+  output_excerpt: |
+    ✓ src/adapters/__tests__/ddl.integration.test.ts  (6 tests) 10174ms
+    ✓ src/__tests__/releaseHygiene.test.ts  (3 tests) 3ms
+ISSUES:
+  - bind-params at the adapter level (runQuery(sql, params)) NOT fixed here — that's wave B's TASK-005 scope. To coordinate: TASK-006's pool.query(sql, [schema, table]) at ddl.integration.test.ts:102-105 / :106-109 is intentionally explicit and remains the correctness anchor. The unit-level assertion for `runQuery` receiving parameterized values is queued to land on the tableCommands.unit surface once wave B's bind-params fix is in.
+  - Constraint-name re-keying in test #4 (rename `pk_regen_src_<run>` → `pk_<dst>`) is still required — constraint names live at schema scope, not table scope.
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for review — wave A DDL stack changes (PK dedupe, default quoting, ADD COLUMN clauses, FK refs qualification, confkeycols parsing) all green on live PG.

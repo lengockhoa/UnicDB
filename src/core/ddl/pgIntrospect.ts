@@ -122,8 +122,53 @@ function stripSchemaPrefix(qname: string): string {
 }
 
 /**
- * Map pg_catalog rows → TableSpec.
- *
+ * Parse a PostgreSQL text[] literal as returned by node-pg without a custom
+ * type parser (e.g. "{id,name}"), or pass through if already an array.
+ * Defensive: malformed input → [rawString] so downstream type checks fail
+ * loudly instead of silently passing `undefined` through.
+ */
+function parseTextArray(raw: unknown): string[] {
+  if (Array.isArray(raw)) return raw.map((s) => String(s));
+  if (typeof raw !== "string") return [];
+  const s = raw.trim();
+  if (s === "" || s === "{}") return [];
+  // Strip outer braces if present.
+  const inner = s.startsWith("{") && s.endsWith("}")
+    ? s.slice(1, -1)
+    : s;
+  if (inner === "") return [];
+  // Quoted elements may contain escaped quotes / commas inside; the
+  // minimum useful split for pg_constraint.confkeycols is
+  // comma-separated bare identifiers — split on unquoted commas.
+  const parts: string[] = [];
+  let buf = "";
+  let inQuote = false;
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (ch === '"') {
+      inQuote = !inQuote;
+      continue;
+    }
+    if (ch === "," && !inQuote) {
+      parts.push(stripQuotes(buf));
+      buf = "";
+      continue;
+    }
+    buf += ch;
+  }
+  parts.push(stripQuotes(buf));
+  return parts.filter((p) => p !== "");
+
+  function stripQuotes(v: string): string {
+    const t = v.trim();
+    if (t.length >= 2 && t.startsWith('"') && t.endsWith('"')) {
+      return t.slice(1, -1).replace(/""/g, '"');
+    }
+    return t;
+  }
+}
+
+/**
  * - Columns preserve input order (attnum asc).
  * - Every column carries originalName === name.
  * - PK member columns carry isPrimaryKey:true (out-of-band property).
@@ -171,7 +216,7 @@ export function rowsToSpec(
       const refTable = con.confrelidname
         ? stripSchemaPrefix(con.confrelidname)
         : "";
-      const refCols = con.confkeycols ?? [];
+      const refCols = parseTextArray(con.confkeycols);
       const fk: KeySpec = {
         kind: "foreignKey",
         columns: cols,

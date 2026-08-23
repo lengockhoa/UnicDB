@@ -130,3 +130,30 @@ FINDINGS:
     - src/core/__tests__/ddl.integration.test.ts:162 — (downstream, FYI for TASK-006) `default: "true"` only exercises the non-quoted branch that happens to be valid PG; once T1 quoting lands, add a bare-literal default to the integration fixture.
 NEXT_STATUS_FOR_INDEX: changes_requested
 NOTES: Model isolation OK (unic-code ≠ unic-smart). Both important findings verified against live PG at 127.0.0.1:5433 and traced through merged downstream callers; core renderer/validator themselves are correct for the 9 planned cases.
+
+
+## Executor Report (fix round 1)
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: Exec-Fix1A
+SUMMARY: Resolved both important findings from R4 reviewer — PK dedupe (inline `isPrimaryKey` suppressed when a `primaryKey` KeySpec exists; KeySpec renders the table-level constraint) + bare-literal DEFAULT quoting (`pending` → `'pending'`; `now()` → bare; `true` → bare boolean literal; numeric `42` → `'42'`; pre-quoted stays as written). Both fixes verified against live PG via 6/6 TASK-006 integration tests (test #4 un-masked, no longer hand-strips isPrimaryKey).
+TEST_PLAN_FOLLOWED: task §Test Cases + 7 regression tests added for R1 findings
+FILES_CHANGED:
+  - .worktrees/fix1-ddl/src/core/ddl/createTable.ts: added `renderDefault` helper + PK-dedupe guard; both fixes centralized, with tests
+  - .worktrees/fix1-ddl/src/core/__tests__/ddlCreateTable.test.ts: +7 tests (PK dedupe single-PK render; `pending`/`now()`/`true`/`'pending'`/`42`/`uuid_in(...)` quoting)
+TESTS_ADDED:
+  - ddlCreateTable.test.ts: "PK dedupe: isPrimaryKey + primaryKey KeySpec → exactly ONE PRIMARY KEY clause (executable)"; "default quoting: bare identifier 'pending'"; "default quoting: function call 'now()' passes through bare"; "default quoting: boolean literal 'true'"; "default quoting: pre-quoted literal stays as written"; "default quoting: numeric literal 42 → DEFAULT '42'"; "default quoting: uuid_in(...) expression passes through bare"
+VERIFICATION:
+  command: npx vitest run src/core/__tests__/ddlCreateTable.test.ts src/core/__tests__/ddlAlterTable.test.ts src/core/__tests__/pgIntrospect.test.ts && VSDB_IT=1 VSDB_PG_HOST=127.0.0.1 VSDB_PG_PORT=5433 npx vitest run -c vitest.integration.config.ts src/adapters/__tests__/ddl.integration.test.ts && npx tsc --noEmit
+  result: 48 unit pass / 6 integration pass / tsc exit 0
+  output_excerpt: |
+    ✓ src/core/__tests__/ddlCreateTable.test.ts  (16 tests)
+    ✓ src/core/__tests__/ddlAlterTable.test.ts  (18 tests)
+    ✓ src/core/__tests__/pgIntrospect.test.ts  (14 tests)
+    ✓ src/adapters/__tests__/ddl.integration.test.ts  (6 tests)
+ISSUES:
+  - "true" / "false" / "null" preserved as bare literals (case-insensitive) — `DEFAULT true` for boolean columns stays valid PG per reviewer note about preserving `'true'` literals.
+  - `renderDefault` exported from createTable.ts (TASK-001 contract listed only named originals — renderDefault is additive but allows alterTable.ts to reuse the same DEFAULT clause rule, eliminating drift).
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for review

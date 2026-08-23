@@ -5,12 +5,8 @@
 // ./createTable (TASK-001 canonical). Rendering helpers are local because
 // ALTER output always double-quotes identifiers.
 //
-// Compares before → after TableSpecs and emits ordered PostgreSQL ALTER
-// statements. Renames are detected via ColumnSpec.originalName so the engine
-// never emits DROP+ADD for a renamed column.
-
 import type { TableSpec, ColumnSpec, KeySpec } from "./createTable";
-import { specErrors } from "./createTable";
+import { renderDefault, specErrors } from "./createTable";
 
 // Local rendering helpers (always-quote style).
 
@@ -193,11 +189,31 @@ function normalizeTypeForCompare(t: string): string {
   return t.replace(/\s+/g, "").toLowerCase();
 }
 
-function nullableOf(c: ColumnSpec): boolean {
-  return !!c.nullable;
+/** Schema-qualify a references.table for FK ADD CONSTRAINT, matching the
+ *  canonical CREATE renderer (createTable.ts):
+ *  - already-qualified "a.b" → "a"."b"
+ *  - bare "b" + non-empty schema → "<schema>"."b"
+ *  - bare "b" + empty schema → "b"
+ */
+function renderReferenceTarget(
+  referencesTable: string,
+  schema: string,
+): string {
+  if (referencesTable.includes(".")) {
+    return referencesTable
+      .split(".")
+      .map((p) => alwaysQuote(p))
+      .join(".");
+  }
+  if (schema !== "") return `${alwaysQuote(schema)}.${alwaysQuote(referencesTable)}`;
+  return alwaysQuote(referencesTable);
 }
 
-function renderAddConstraint(t: string, k: KeySpec): string {
+function renderAddConstraint(
+  t: string,
+  k: KeySpec,
+  schema: string,
+): string {
   switch (k.kind) {
     case "primaryKey":
       return `ALTER TABLE ${t} ADD PRIMARY KEY (${k.columns
@@ -216,11 +232,7 @@ function renderAddConstraint(t: string, k: KeySpec): string {
     case "foreignKey": {
       const name = k.name ? `CONSTRAINT ${alwaysQuote(k.name)} ` : "";
       const cols = k.columns.map((c) => alwaysQuote(c)).join(",");
-      const parts = k.references.table.split(".");
-      const last = parts.pop()!;
-      const refQualified = `${alwaysQuote(parts.join("."))}.${alwaysQuote(
-        last,
-      )}`;
+      const refQualified = renderReferenceTarget(k.references.table, schema);
       const refCols = k.references.columns.map((c) => alwaysQuote(c)).join(",");
       return `ALTER TABLE ${t} ADD ${name}FOREIGN KEY (${cols}) REFERENCES ${refQualified} (${refCols});`;
     }
@@ -270,10 +282,16 @@ export function diffTable(
     }
   }
 
-  // 4. ADD COLUMN for newly added columns
+  // 4. ADD COLUMN for newly added columns. Clause order matches the CREATE
+  // renderer: `"name" type [NOT NULL] [DEFAULT <expr>]`.
   for (const c of newColumns) {
+    const parts: string[] = [`${alwaysQuote(c.name)} ${c.type}`];
+    if (c.nullable === false) parts.push("NOT NULL");
+    if (c.default !== undefined && c.default !== "") {
+      parts.push(`DEFAULT ${renderDefault(c.default)}`);
+    }
     statements.push(
-      `ALTER TABLE ${t} ADD COLUMN ${alwaysQuote(c.name)} ${c.type};`,
+      `ALTER TABLE ${t} ADD COLUMN ${parts.join(" ")};`,
     );
   }
 
@@ -323,8 +341,7 @@ export function diffTable(
         );
       }
     }
-    // Nullability change
-    if (nullableOf(beforeCol) !== nullableOf(afterCol)) {
+    if ((beforeCol.nullable ?? true) !== (afterCol.nullable ?? true)) {
       const verb = afterCol.nullable ? "DROP NOT NULL" : "SET NOT NULL";
       statements.push(
         `ALTER TABLE ${t} ALTER COLUMN ${alwaysQuote(afterCol.name)} ${verb};`,
@@ -350,7 +367,7 @@ export function diffTable(
   for (let j = 0; j < after.keys.length; j++) {
     if (matchedAfter.has(j)) continue;
     const ak = after.keys[j];
-    statements.push(renderAddConstraint(t, ak));
+    statements.push(renderAddConstraint(t, ak, before.schema));
   }
 
   // 8. Table rename LAST

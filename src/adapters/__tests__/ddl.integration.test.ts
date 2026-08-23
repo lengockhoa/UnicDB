@@ -441,23 +441,14 @@ describe.skipIf(!IT)("DDL — integration (PostgresAdapter)", () => {
         ],
       };
       await runSql(adapter, generateCreateTable(baseSpec));
-
       const introspected = await introspect(adapter, "public", srcTable);
-      // rowsToSpec sets BOTH isPrimaryKey on the column AND a primaryKey
-      // KeySpec; re-emitting as-is would render the PK twice and PG would
-      // reject with "multiple primary keys". Drop the inline flag.
-      // Also: hand-named constraints (e.g. pk_regen_src_<suffix>) live in
-      // pg_constraint at schema scope, not table scope — using the same
-      // name for the destination table would collide on a shared schema.
-      // Re-key PK + unique under the destination table name.
-      const cleanedCols: ColumnSpec[] = introspected.columns.map((c) => {
-        if (introspected.keys.some((k) => k.kind === "primaryKey")) {
-          const { isPrimaryKey: _drop, ...rest } = c;
-          void _drop;
-          return rest;
-        }
-        return c;
-      });
+      // product path: rowsToSpec → generateCreateTable verbatim. The
+      // createTable renderer now dedupes PK rendering (R1 fix — when a
+      // primaryKey KeySpec is present, the inline `isPrimaryKey` does NOT
+      // also render `PRIMARY KEY`), so this no longer emits the
+      // double-PK bug. We still re-key PK + unique under the destination
+      // table because constraint names are schema-scoped and the
+      // introspected names contain the source-table suffix.
       const renamedKeys: KeySpec[] = introspected.keys.map((k) => {
         switch (k.kind) {
           case "primaryKey":
@@ -479,7 +470,6 @@ describe.skipIf(!IT)("DDL — integration (PostgresAdapter)", () => {
       const regenSpec: TableSpec = {
         ...introspected,
         name: dstTable,
-        columns: cleanedCols,
         keys: renamedKeys,
       };
       const sql = generateCreateTable(regenSpec);
