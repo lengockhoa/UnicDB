@@ -55,3 +55,62 @@ npm run compile && npx vitest run src/ui/__tests__/aiChatPanel.test.ts src/ui/__
 ## Interfaces
 - Consumes: `runAgent({messages, tools}, deps, callbacks)` (frozen — tools trên AgentInput), `createDbTools`/`AdapterFactory` async (T1+src/ai/tools/types.ts), `createSqlTool`/`formatSchemaContext` (T2).
 - Produces: `AiChatPanel`, `ChatAbortToken`, message contract trên (T4 wiring consume).
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: ExecK-T003
+SUMMARY: Built AiChatPanel host + webview + tests. 17 tests green (9 host + 8 bundle). Spec frozen contract (messages, ChatAbortToken, registry=createDbTools+createSqlTool) implemented; CSP/dispose parity with aiSettingsForm; no apiKey reaches webview; stop uses token semantics (not AbortController).
+TEST_PLAN_FOLLOWED: inline — task spec §Test Cases table mapped 1:1 to aiChatPanel.test.ts (#1 init, #2 send→runAgent+posts, #3 null-factory, #4 stop, #5 error, #6 lifecycle) plus #7 bundle existence in aiChatPanelBundle.test.ts; 3 sub-cases added for stricter guards (#3b empty text, #4b onStep gating, #6b clear). All RED output captured by vi.mock("vscode") + vi.mock("../../ai/agent") harness; GREEN reached after implementing AiChatPanel + webview.
+FILES_CHANGED:
+  - src/ui/aiChatPanelMessages.ts: new — frozen 2-way message contract (HostMsg union: init/step/assistant/error/done; WebviewMsg union: ready/send/stop/clear).
+  - src/ui/aiChatPanel.ts: new — AiChatPanel class + ChatAbortToken + AiChatPanelOptions; per-turn registry = createDbTools(adapterFactory).register(createSqlTool(adapterFactory)); buildMessages uses formatSchemaContext from T2; stop flips token.aborted; onStep gated by token; settle skips assistant+history if aborted but always posts done; clear resets history + posts init.
+  - webview/aiChatPanelMain.ts: new — minimal markdown renderer (no CDN), bubbles, Send/Stop/Clear buttons, capture-phase user echo before send clears field.
+  - esbuild.js: aiChatPanelConfig entry added (entryPoints webview/aiChatPanelMain.ts → dist/aiChatPanel.js); wired into watch + build arrays.
+  - package.json: vsdb.aiChat command added (title "VSDB: AI Chat", icon $(comment-discussion), category VSDB) + onCommand:vsdb.aiChat activationEvent.
+  - src/ui/__tests__/aiChatPanel.test.ts: new — 9 host tests with vi.mock("vscode") + vi.mock("../../ai/agent") harness.
+  - src/ui/__tests__/aiChatPanelBundle.test.ts: new — 8 jsdom bundle tests for webview/aiChatPanelMain.ts.
+TESTS_ADDED:
+  - src/ui/__tests__/aiChatPanel.test.ts: #1 ready→init, #2 send→runAgent registry+posts order, #3 null-factory context, #3b empty text, #4 send-then-stop assistant suppression, #4b onStep gating after abort, #5 runAgent reject → error+done, #6 show-twice reveal, #6b clear re-init.
+  - src/ui/__tests__/aiChatPanelBundle.test.ts: #1 bundle exists after compile, #2 init renders input+Send/Stop/Clear, #3 send posts {type,text}, #4 empty Send no-op, #5 stop posts {type:stop}, #6 clear posts {type:clear}, #7 no apiKey in any outbound, #8 markdown assistant render.
+VERIFICATION:
+  command: npm run compile && npx vitest run src/ui/__tests__/aiChatPanel.test.ts src/ui/__tests__/aiChatPanelBundle.test.ts && npx tsc --noEmit
+  result: 0 exit / 17 of 17 pass / tsc clean
+  output_excerpt: |
+    > vsdb@1.5.1 compile
+    > node esbuild.js
+      dist/aiChatPanel.js       5.2kb
+      dist/aiChatPanel.js.map  10.8kb
+      ...
+    esbuild: build complete
+
+     RUN  v1.6.1
+     ✓ src/ui/__tests__/aiChatPanel.test.ts  (9 tests) 4ms
+     ✓ src/ui/__tests__/aiChatPanelBundle.test.ts  (8 tests) 18ms
+
+     Test Files  2 passed (2)
+          Tests  17 passed (17)
+
+    (tsc --noEmit produced no output → 0 errors.)
+ISSUES: none
+HANDOFF_TO_REVIEWER: yes — task spec §Acceptance items all met (7+ test cases pass with fresh output, src/ai/* untouched, CSP+dispose parity, stop is token-based not AbortController).
+NEXT: ready for review.
+
+RED_OUTPUT (verbatim, captured at first run before impl):
+
+  ❯ src/ui/__tests__/aiChatPanel.test.ts  (0 test)
+  ⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+  FAIL  src/ui/__tests__/aiChatPanel.test.ts [ src/ui/__tests__/aiChatPanel.test.ts ]
+  Error: Failed to load url ../aiChatPanel (resolved id: ../aiChatPanel) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-003/src/ui/__tests__/aiChatPanel.test.ts. Does the file exist?
+   � loadAndTransform ../../node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17
+  Test Files  1 failed (1)
+       Tests  no tests
+
+GREEN_OUTPUT (verbatim, after impl):
+
+  ✓ src/ui/__tests__/aiChatPanel.test.ts  (9 tests) 4ms
+  ✓ src/ui/__tests__/aiChatPanelBundle.test.ts  (8 tests) 18ms
+  Test Files  2 passed (2)
+       Tests  17 passed (17)

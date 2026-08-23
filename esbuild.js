@@ -4,6 +4,7 @@
 // resolution from webview/main.ts (see ag-grid-community/styles/* and
 // ./styles.css imports). dist/webview.css is the bundled output, not a copy.
 // TASK-004: added newTableFormConfig (DataGrip-style designer dialog).
+// TASK-003 (AI Chat panel): added aiChatPanelConfig.
 const esbuild = require("esbuild");
 
 const watch = process.argv.includes("--watch");
@@ -70,6 +71,18 @@ const aiSettingsFormConfig = {
   minify,
   logLevel: "info",
 };
+/** @type {import('esbuild').BuildOptions} */
+const aiChatPanelConfig = {
+  entryPoints: ["webview/aiChatPanelMain.ts"],
+  outfile: "dist/aiChatPanel.js",
+  bundle: true,
+  platform: "browser",
+  format: "iife",
+  target: "es2022",
+  sourcemap: !minify,
+  minify,
+  logLevel: "info",
+};
 
 async function run() {
   if (watch) {
@@ -78,7 +91,8 @@ async function run() {
     const ctx3 = await esbuild.context(connectionFormConfig);
     const ctx4 = await esbuild.context(newTableFormConfig);
     const ctx5 = await esbuild.context(aiSettingsFormConfig);
-    await Promise.all([ctx1.watch(), ctx2.watch(), ctx3.watch(), ctx4.watch(), ctx5.watch()]);
+    const ctx6 = await esbuild.context(aiChatPanelConfig);
+    await Promise.all([ctx1.watch(), ctx2.watch(), ctx3.watch(), ctx4.watch(), ctx5.watch(), ctx6.watch()]);
     console.log("esbuild: watching...");
   } else {
     await Promise.all([
@@ -87,6 +101,7 @@ async function run() {
       esbuild.build(connectionFormConfig),
       esbuild.build(newTableFormConfig),
       esbuild.build(aiSettingsFormConfig),
+      esbuild.build(aiChatPanelConfig),
     ]);
     console.log("esbuild: build complete");
   }
