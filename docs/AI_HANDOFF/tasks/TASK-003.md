@@ -104,3 +104,25 @@ NEXT: ready for review — rename path verified, no DROP+ADD emitted for renames
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_TOOL: claude-code
+EXECUTOR_SUBAGENT: Exec-T003
+VERIFICATION_RERUN:
+  command: npx vitest run src/core/__tests__/ddlAlterTable.test.ts && npx tsc --noEmit
+  result: 14 pass / 0 fail; tsc exit 0
+TEST_PLAN_COVERAGE: all-followed (10 cases → 14 tests, incl. ≥2 edge; renames, reorder-only, empty plan, schema refusal, normalizeDefaultExpr all asserted)
+FINDINGS:
+  critical: none
+  important:
+    - src/core/ddl/alterTable.ts:274-278 — ADD COLUMN renders only `"name" type` and silently drops the new column's DEFAULT and NOT NULL clauses. Spec item 2 requires TASK-001 clause order; canonical clause composition is `createTable.ts:89-96` (`"${name}" ${type}` + `NOT NULL` + `DEFAULT <trimmed>`). Reachable from the primary modify-mode flow: `webview/newTableFormMain.ts:386-395` always sets `default` + `nullable` on every edited/new column, so a new column with NOT NULL DEFAULT 'x' yields `ADD COLUMN "x" integer;` — data-shape divergence between preview and DB. Fix: compose the ADD COLUMN clause with `c.default !== undefined && c.default !== ""` → `DEFAULT ${c.default.trim()}` and `c.nullable === false` → `NOT NULL` (after the type, TASK-001 order), and add a unit test: modify-mode new column `{name:"x",type:"integer",nullable:false,default:"'z'"}` → exactly `ALTER TABLE "public"."t" ADD COLUMN "x" integer DEFAULT 'z' NOT NULL;`.
+  minor:
+    - src/core/ddl/alterTable.ts:216-225 — ADD CONSTRAINT FOREIGN KEY renders a schema-less `references.table` as bare `"tbl"`; canonical CREATE path (createTable.ts:128-133) qualifies it with `spec.schema`. Divergent REFERENCES rendering between CREATE and ALTER ADD for the same KeySpec.
+    - src/core/ddl/alterTable.ts:21 — local `alwaysQuote` duplicates quoting logic and is now imported cross-module (src/ui/tableCommands.ts:28); consider re-homing beside canonical `quoteIdent` to prevent drift.
+    - src/core/__tests__/ddlAlterTable.test.ts — no test covers new-column clause rendering (follows from the important finding; add with the fix).
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Model isolation OK (executor unic-code ≠ reviewer unic-smart, matches handoff.reviewer.model). Merge to canonical createTable.ts contract verified clean (types + specErrors imported, placeholder gone). One important defect: ADD COLUMN drops NOT NULL/DEFAULT — fix is small and localized to the ADD loop.

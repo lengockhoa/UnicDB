@@ -109,3 +109,24 @@ RED_OUTPUT: |
 ISSUES: none
 HANDOFF_TO_REVIEWER: yes — task is in handoff batch 1, reviewer subagent expected
 NEXT: ready for review
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/core/__tests__/ddlCreateTable.test.ts && npx tsc --noEmit
+  result: 9 pass / 0 fail; tsc exit 0, no diagnostics
+TEST_PLAN_COVERAGE: all-followed — 9/9 test cases implemented, RED_OUTPUT contains real failing-suite output (module-not-found before implementation), GREEN verified by fresh re-run
+FINDINGS:
+  critical: none
+  important:
+    - src/core/ddl/createTable.ts:103-110 — inline-PK duplication unguarded: spec §34 says "key list must not duplicate it" (inline `isPrimaryKey:true` column + `primaryKey` KeySpec). Renderer emits both (`"id" bigint PRIMARY KEY` line 106 + `PRIMARY KEY ("id")` table constraint), producing `multiple primary keys for table` — reproduced on live PG 5433. Reachable in prod: `copyCreateDdl` (src/ui/tableCommands.ts:289-291) runs generateCreateTable on rowsToSpec output, which sets BOTH isPrimaryKey and a primaryKey KeySpec (src/core/ddl/pgIntrospect.ts:199-201 + :153-159); TASK-006's integration test had to hand-strip the inline flag (src/adapters/__tests__/ddl.integration.test.ts:446-461) to work around this. Fix: when any column has isPrimaryKey, drop primaryKey keys whose columns ⊆ those inline-PK columns (or skip inline rendering when a table PK covers them) — either single source of PK truth, and add a test: spec with isPrimaryKey col + primaryKey key on same column → SQL contains exactly one PK.
+    - src/core/ddl/createTable.ts:96-100 — bare-literal default quoting rule unimplemented: spec §33 "Defaults bare unless bare-literal token (number/identifier-safe word) → single-quoted". Renderer emits `DEFAULT ${trimmed}` always-bare. A webview-typed default `pending` (newTableFormMain.ts:392 passes raw input) renders `DEFAULT pending` → PG rejects with `cannot use column reference in DEFAULT expression` — reproduced on live PG 5433. TASK-006 integration uses `default: "true"` (ddl.integration.test.ts:162) — `DEFAULT true` happens to be a valid PG boolean literal, masking the bug in integration. Fix: single-quote the default iff it matches /^[A-Za-z0-9_]+$/ or is numeric (preserve existing exprs verbatim), + test: `{default:"pending"}` → `DEFAULT 'pending'`, `{default:"42"}` → `DEFAULT 42` or `'42'` per spec intent (number bare per §33), `UUID_DEFAULT_EXPR` stays bare.
+  minor:
+    - src/core/ddl/createTable.ts:60-68 — quoteIdent dead-branch order: `[A-Z]` test (line 67) is unreachable for names passing /^[a-z0-9_]+$/ on line 66; spec's `MyCol→"MyCol"` is only satisfied via line 66's charset test. Harmless but the reserved-word lookup lowercases (line 64) so `Order→"Order"` works; reorder or comment.
+    - src/core/ddl/createTable.ts:24-29 — KeySpec union: `check` variant lacks a `columns` field; webview KeySpec interface (newTableFormMain.ts:17-25) declares `columns?: string[]` on all kinds and `expr?: string` — webview check-key without `expr` is a TS error at bundle time? No — webview declares its own local interface, no cross-type constraint; drift is cosmetic only.
+    - src/core/__tests__/ddl.integration.test.ts:162 — (downstream, FYI for TASK-006) `default: "true"` only exercises the non-quoted branch that happens to be valid PG; once T1 quoting lands, add a bare-literal default to the integration fixture.
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Model isolation OK (unic-code ≠ unic-smart). Both important findings verified against live PG at 127.0.0.1:5433 and traced through merged downstream callers; core renderer/validator themselves are correct for the 9 planned cases.

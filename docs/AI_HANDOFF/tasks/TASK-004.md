@@ -109,3 +109,25 @@ RED_OUTPUT:
 ISSUES: none
 HANDOFF_TO_REVIEWER: yes — task ready for review; spec contract holds; reviewer should focus on syncIdColumn break-condition semantics + OK-button gating logic.
 NEXT: ready for review
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: claude-sonnet-4-5
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run src/ui/__tests__/newTableForm.test.ts src/ui/__tests__/newTableFormBundle.test.ts && npx tsc --noEmit
+  result: 13 pass / 0 fail (tsc clean, exit 0)
+TEST_PLAN_COVERAGE: all-followed — 12 §Test Cases map 1-1 (host #1-#7 + reveal, bundle #8-#12); RED_OUTPUT contains real failing output; no lint script in repo (verified)
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - webview/newTableFormMain.ts:389 — wireColumnEdit `commit()` rebuilds the ColumnSpec without `originalName`, so a modify-mode column rename made through the edit form loses its rename marker. pgIntrospect.rowsToSpec sets `originalName` on every column (pgIntrospect.ts:198), the loaded spec carries it into the webview, and the first edit strips it; diffTable (alterTable.ts:118-146) then pairs by new name → emits DROP COLUMN + ADD COLUMN instead of RENAME COLUMN — data loss on a rename the user intended. Host test #2 passes only because it constructs the renamed spec manually. Fix: spread `...c` in the commit object (or copy `originalName: c.originalName`) at line 389; add a bundle test driving modify-mode rename and asserting `originalName` survives in the posted specChanged.
+    - src/ui/newTableForm.ts:201 — `lastPreviewSql === ""` is the empty sentinel, but in modify mode with zero diff the sentinel is the literal string "No changes detected." (line 177): OK stays enabled and a direct `submit` message would call `runDdl("No changes detected.")`. The webview gate (emptyModify, newTableFormMain.ts:508) protects the shipped path; harden the host guard to also return when `lastPreviewSql === "No changes detected."`.
+    - webview/newTableFormMain.ts:137 — the load-error banner reads `(spec as unknown as {loadError?}).loadError`, but the host sends `loadError` on the init message (newTableForm.ts:150), not on the spec; applyInit (line 479) never copies it onto `spec`, so the banner never renders after a loadSpec failure. Fix: store `msg.loadError` in a module var in the message listener and branch on it in render().
+    - webview/newTableFormMain.ts:457,502 — `refreshOkButton` is declared twice (function-declaration hoisting keeps only the second); the first definition is dead code — delete it.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Executor-noted edge (manual id-column rename stops auto-rename tracking forever) is per task §Spec by design — severity none. CSP mirrors ConnectionForm exactly (default-src 'none', script-src cspSource, no unsafe-inline scripts); preview computed host-side via specErrors/generateCreateTable/diffTable only; dispose + reveal-on-reshow mirror the reference pattern. Recommend the originalName fix (first minor) before TASK-005 ships modify-mode renames to users.

@@ -125,3 +125,25 @@ RED_OUTPUT (excerpt):
 ISSUES: None
 HANDOFF_TO_REVIEWER: yes — fresh 91/91 PASS in this turn
 NEXT: ready for review (file-based handoff per cycle conventions)
+
+## Reviewer Verdict
+
+VERDICT: CRITICAL
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run src/extension.test.ts src/ui/__tests__/tableCommands.test.ts src/ui/__tests__/schemaTree.test.ts src/core/__tests__/sampleData.test.ts && npx tsc --noEmit
+  result: 91 pass / 0 fail; compile + tsc clean (exit 0)
+TEST_PLAN_COVERAGE: all-followed (13/13 test cases present; RED_OUTPUT has real failing output)
+FINDINGS:
+  critical:
+    - file: src/ui/tableCommands.ts:145-147 — introspectTable sends $1/$2-placeholder SQL through runQuery(sql), which binds no params. Verified against live PG (127.0.0.1:5433): `there is no parameter $1`. Also this SQL is a single ";"-free SELECT, so PostgresAdapter.runQuery (src/adapters/postgres.ts:157-161) routes it to the batched-cursor path returning `{results: [], batched}` — `results[0]?.rows` is [] even if params were bound. modifyTable, copyCreateDdl, generateSampleData all fail in production. DbAdapter has no public param path (query() private, postgres.ts:333). Fix: add a parameterized introspect path (e.g. adapter method taking params, or bind schema/table via pool.query like TASK-006's test does at ddl.integration.test.ts:102-107) and make the fake adapter's runQuery honor the real RunResult contract.
+  important:
+    - file: src/ui/schemaTree.ts:704 — revealTableNode calls treeView.reveal but SchemaTreeProvider implements no getParent(); vscode d.ts: "This method should be implemented in order to access TreeView.reveal API" — reveal throws and is silently swallowed by the catch, so refresh+reveal never reveals in the real extension. Fix: implement getParent() on SchemaTreeProvider (connection→null, schema→connection, category→schema, table→category, column→table).
+    - file: src/ui/tableCommands.ts:180 — newTable menu is offered on viewItem == table (package.json when-clause) but table nodes carry meta.category === "columns" (schemaTree.ts:398), so the guard rejects them with the misleading "open the Tables category" message. Fix: accept category "columns" (table node) in addition to "tables".
+    - file: src/ui/tableCommands.ts:203-215 — copyCreateDdl: rowsToSpec sets BOTH column.isPrimaryKey and a primaryKey KeySpec; generateCreateTable renders both → `multiple primary keys for table ... are not allowed` on re-execution (verified live on PG; TASK-006 test works around the same issue at ddl.integration.test.ts:446-449). Fix: strip inline isPrimaryKey when a primaryKey KeySpec exists before generateCreateTable.
+  minor:
+    - file: src/ui/tableCommands.ts:204,206,208,212,217,253,255,257 — leftover DEBUG console.log statements in production runDdl paths; remove.
+    - file: src/ui/tableCommands.ts:209 — created-table name recovered by regexing the SQL string; pass spec.name through runDdl instead (form already knows it).
+NEXT_STATUS_FOR_INDEX: critical_block
+NOTES: Unit suite (91/91) passes but the fake adapter masks two production-only failures (unbound $1/$2 + cursor-path result shape); recommend one live-PG smoke of modifyTable/copyCreateDdl after fix. Guard order, schema-via-node.meta, quoting/injection safety (alwaysQuote, generated literals), menus/activationEvents/IDs all verified correct.

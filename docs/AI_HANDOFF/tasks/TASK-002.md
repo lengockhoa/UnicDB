@@ -127,3 +127,23 @@ EXIT=0   # no output, no errors
 
 ### Issues
 - None blocking. Minor contract divergence noted (PK `name`, FK `references` vs `refTable`/`refColumns`) — orchestrator resolution plan and review will resolve against TASK-001.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/core/__tests__/pgIntrospect.test.ts && npx tsc --noEmit
+  result: 13 pass / 0 fail; tsc exit 0
+TEST_PLAN_COVERAGE: all-followed — 8/8 required cases present; RED_OUTPUT is real (module-not-found failure pasted), GREEN pasted
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/core/ddl/pgIntrospect.ts:145 — attnum resolution is positional (index+1), not read from a returned attnum column. Breaks if rows arrive unordered (ORDER BY at :57 prevents this for the shipped SQL) or a dropped column leaves an attnum gap (WHERE at :55-56 filters them). Note: if any caller passes rows NOT produced by INTROSPECT_COLUMNS_SQL, conkey gaps resolve to "#N" placeholders (line 153/162/170). Safe for TASK-006's real-PG path; document or return attnum explicitly if reused elsewhere.
+    - src/core/ddl/pgIntrospect.ts:112 — normalizeCheckExpr strips ALL wrapping outer paren layers (spec said ONE); stricter than spec, still passes test #2's second case because the paren-walk stops at inner-balanced parens. Behavior is a superset of spec and correct for `((length(name) > 0))` → `length(name) > 0`; acceptable divergence, already noted by executor.
+    - src/core/__tests__/pgIntrospect.test.ts:1-19 — unused local `ColumnWithExtras` alias is defined but only used via casts; import line has odd formatting (`ColumnSpec,
+KeySpec`). Cosmetic only.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: SQL fully parameterized ($1/$2, no identifier interpolation — verified in tests + source). Contract matches canonical T1 KeySpec exactly (references.table/columns, PK name optional). Model isolation OK: executor unic-code ≠ reviewer unic-smart.
