@@ -20,6 +20,15 @@
 - `src/adapters/`, `src/config/` — adapter/config helpers.
 - `webview/` — webview UI: `main.ts` (AG Grid Community v36 custom IFilter + edit/requery/export), `styles.css` (incl. `.vsdb-setfilter*`), `connectionFormMain.ts`.
 - `scripts/build.sh` — compile + package vsix; `install-vsdb.sh` — install từ vsix.
+## DDL Stack (PostgreSQL Table Designer — cycles I/II)
+
+- `src/core/ddl/createTable.ts` — pure CREATE TABLE generator: `TableSpec`, `ColumnSpec`, `KeySpec`, `generateCreateTable`, `defaultColumnSpecs`, `specErrors`, `UUID_DEFAULT_EXPR`, `CREATED_AT_DEFAULT_EXPR`.
+- `src/core/ddl/alterTable.ts` — pure ALTER TABLE diff engine: `diffTable(before, after) → AlterPlan`, renames detected via `originalName`.
+- `src/core/ddl/pgIntrospect.ts` — `INTROSPECT_COLUMNS_SQL` + `INTROSPECT_CONSTRAINTS_SQL` (parameterised) + `rowsToSpec(schema, table, colRows, conRows) → TableSpec`.
+- `src/core/ddl/sampleData.ts` — `generateSampleInserts(spec, n) → string` multi-row VALUES by column-type family.
+- `src/ui/newTableForm.ts` + `src/ui/newTableFormMessages.ts` — host-side New Table form data model + i18n messages (latter is pure data).
+- `webview/newTableFormMain.ts` — webview logic for the New Table form: column/key rows, SQL preview, Apply via postMessage.
+
 
 ## Key Files
 

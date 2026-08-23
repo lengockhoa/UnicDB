@@ -85,6 +85,13 @@ code --install-extension vsdb-<version>.vsix
 - **Toolbar icons (1.5.0)**: title bar của panel **VSDB** (refresh / filter) và **VSDB Results** (copy / quick search / export / re-run) gọn trên một hàng icon-only — đỡ chiếm chiều ngang webview, label ẩn khi đủ rộng.
 - **Destructive statement guard (1.5.0)**: trước khi submit, VSDB quét statement — `DELETE có WHERE` → modal confirm thường; `DELETE không WHERE` / `TRUNCATE` / `DROP` / `UPDATE không WHERE` → modal đỏ "CỰC KỲ NGUY HIỂM" hiện FULL statement, user phải bấm **Vẫn chạy (nguy hiểm)**; Cancel huỷ cả lô. Setting `vsdb.confirmDestructive` (default `true`) tắt guard khi cần.
 - **Run .sh CodeLens (1.5.0)**: file `.sh` mở trong editor có CodeLens `▶ Run` ngay dòng đầu — chạy toàn bộ nội dung file vào Integrated Terminal (giống SQL CodeLens); setting `vsdb.showRunLensSh` (default `true`); fix kèm: extension giờ kích hoạt đúng khi mở file `.sh` và palette gọi `Run Script` không còn bắn `\n` vào terminal trống.
+- **Table Designer (PostgreSQL)**: panel Schema Explorer → click phải table (hoặc command palette `VSDB: New Table…` / `VSDB: Modify Table…`) mở form tạo/sửa:
+  - **New Table…**: form thêm cột (name/type/default/NOT NULL), PK / UNIQUE / FK / CHECK, preview SQL live, một nút Apply chạy `CREATE TABLE` qua connection đang chọn.
+  - **Modify Table…**: introspect schema hiện tại → sửa → diff engine phát sinh `ALTER TABLE` (rename/add/drop column, SET/DROP NOT NULL, SET/DROP DEFAULT, ADD/DROP constraint) chạy một loạt qua `runQuery`.
+  - **Copy CREATE DDL**: introspect table rồi re-emit `CREATE TABLE` (dùng cùng generator với form), kèm tên đích tùy chọn — copy vào clipboard hoặc apply sang schema khác.
+  - **Generate Sample Data…**: chèn N dòng `INSERT … VALUES` theo kiểu cột (int/varchar/date/uuid/json) — chạy thẳng qua connection.
+  - **Analyze / Vacuum**: phát lệnh `ANALYZE` / `VACUUM` (PostgreSQL-only) để cập nhật planner stats / thu dọn dead tuples; nút này không hiện với MySQL/MSSQL.
+
 
 ---
 ## Khắc phục sự cố (Troubleshooting)
