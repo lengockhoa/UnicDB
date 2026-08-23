@@ -1,6 +1,6 @@
 Command: handoff-fullstack
 Goal: Cycle M — replace Cycle L yolo RPC bridge with approval-aware ACP bridge
 Base: main
-Phase: P2
-Cursor: Cycle L archived (3ab2711); ACP research written; PlanM handoff planner spawned for Cycle M
-Next: review PLAN/INDEX/ACTIVE/TASKs once PlanM yields, then independent P2.5 plan review gate
+Phase: P4
+Cursor: plan approved and committed 3ab2711 with live ACP probe evidence appended; re-review approved
+Next: wave 1 — TASK-001 ACP client/probe + TASK-003 permission message protocol

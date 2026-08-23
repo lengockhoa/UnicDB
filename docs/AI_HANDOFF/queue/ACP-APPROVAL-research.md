@@ -21,3 +21,10 @@ ACP is a rewrite of the omp bridge layer, not a drop-in mode: custom RPC frames 
 - ACP session lifecycle and persistence must be explicit; do not assume RPC `--no-session` flags apply.
 - Permission requests require correlation, timeout, panel disposal/stop handling, and default-deny fail-safe behavior.
 - Only user-visible agent workspace tool permissions are ACP-approved. VSDB DB access remains read-only under existing guardrails; no API key crosses the ACP path.
+
+## Live probe evidence (2026-08-23)
+
+- `omp acp` accepted JSON-RPC `initialize` with `{ protocolVersion: 1, clientCapabilities: {}, clientInfo: { name, version } }` and returned protocol version, agent information, auth methods, and capabilities.
+- The server emitted no `initialized` notification after that response; the client may send `{ method: "initialized", params: {} }` as a notification.
+- `omp acp --cwd <workspace>` accepted initialization. Child-process `cwd` remains the mandatory workspace boundary; `--cwd` is optional compatibility behavior.
+- Guessed `session/create` is invalid: the server replied with `-32603`, `Unknown ACP ext method: session/create`. Cycle M must source the real session method and envelope from installed ACP schema rather than inventing one.
