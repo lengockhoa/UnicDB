@@ -71,3 +71,41 @@ npm run compile && npx vitest run src/ui/__tests__/newTableForm.test.ts src/ui/_
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: claude-sonnet-4-5 (via omp Exec-T004)
+EXECUTOR_SUBAGENT: Exec-T004
+SUMMARY: Implemented NewTableForm host (src/ui/newTableForm.ts + messages), DataGrip-style webview (webview/newTableFormMain.ts), esbuild registration, host + bundle tests; create init from defaultColumnSpecs + syncIdColumn tracking; modify mode previews diffTable output; OK executes lastPreviewSql via runDdl callback; errors surfaced in-webview.
+TEST_PLAN_FOLLOWED: task §Test Cases (12 cases mapped 1-1 to spec)
+FILES_CHANGED:
+  - src/ui/newTableFormMessages.ts: new — typed protocol (init/ready/specChanged/cancel/submit/preview)
+  - src/ui/newTableForm.ts: new — host class NewTableForm + Options (extensionUri, mode, schema, originalTableName?, loadSpec?, runDdl)
+  - webview/newTableFormMain.ts: new — designer webview (left COLUMNS/KEYS sections + +−↑↓ toolbar, right edit pane, bottom `<pre id="sql-preview">` + errors + Cancel/OK, table-name input + syncIdColumn rename tracking, Escape → cancel)
+  - webview/styles.css: append TASK-004 designer CSS rules (.vsdb-designer, .vsdb-designer-section, .vsdb-designer-edit, .vsdb-designer-toolbar, #sql-preview, .vsdb-designer-errors, .vsdb-designer-actions, .vsdb-designer-load-error)
+  - esbuild.js: add newTableFormConfig → dist/newTableForm.js (webview entry) + wire into run() (watch + build)
+  - src/ui/__tests__/newTableForm.test.ts: new — 8 host tests (mirror connectionForm.test.ts pattern: vscode mock, panel + handler capture, condition polling)
+  - src/ui/__tests__/newTableFormBundle.test.ts: new — 5 jsdom bundle tests after `npm run compile` (describeIfBundle guard), dispatches `init` MessageEvent to bundle
+TESTS_ADDED:
+  - src/ui/__tests__/newTableForm.test.ts: #1 create init+preview, #2 modify loadSpec+diff, #3 submit→runDdl+dispose, #4 runDdl rejects→not disposed, #5 invalid spec (3 dup cols)→errors+no-op, #6 cancel→disposed, #7 loadSpec rejects→init loadError+later specChanged answers, #8 show() twice→reveal
+  - src/ui/__tests__/newTableFormBundle.test.ts: #8 DOM zones+counts on init, #9 live preview+id tracking on rename, #10 OK disabled on errors, #11 Escape→cancel, #12 tracking breaks on manual id rename
+VERIFICATION:
+  command: npm run compile && npx vitest run src/ui/__tests__/newTableForm.test.ts src/ui/__tests__/newTableFormBundle.test.ts && npx tsc --noEmit
+  result: 13 pass / 0 fail / exit 0 (tsc clean)
+  output_excerpt: |
+    ✓ src/ui/__tests__/newTableForm.test.ts  (8 tests) 5ms
+    ✓ src/ui/__tests__/newTableFormBundle.test.ts  (5 tests) 58ms
+    Test Files  2 passed (2)
+         Tests  13 passed (13)
+RED_OUTPUT:
+  Initial RED (test file references missing src/ui/newTableForm.ts):
+    ❯ src/ui/__tests__/newTableForm.test.ts  (0 test)
+    ⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯�⎯⎯⎯
+     FAIL  src/ui/__tests__/newTableForm.test.ts
+    Error: Failed to load url ../newTableForm ... Does the file exist?
+  GREEN after host + webview + esbuild entry added; 13/13 pass after `npm run compile`.
+ISSUES: none
+HANDOFF_TO_REVIEWER: yes — task ready for review; spec contract holds; reviewer should focus on syncIdColumn break-condition semantics + OK-button gating logic.
+NEXT: ready for review
