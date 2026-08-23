@@ -33,7 +33,7 @@ Updated: 2026-08-23 · Cycle 2026-08-23-G DONE — released v1.5.0. Queued: AI a
 
 <!-- Cycle 2026-08-23-H: carry-over hardening (EXPLAIN ANALYZE guard, codepoint cap, lock hygiene) + release v1.5.1. -->
 
-| TASK-701 | EXPLAIN ANALYZE prelude trong danger guard | P0 | S | ready | - | - | `docs/AI_HANDOFF/tasks/TASK-701.md` |
-| TASK-702 | capDetail cắt an toàn code point | P1 | S | ready | - | - | `docs/AI_HANDOFF/tasks/TASK-702.md` |
-| TASK-703 | Release hygiene: lock version + test pin | P1 | S | ready | - | - | `docs/AI_HANDOFF/tasks/TASK-703.md` |
-| TASK-704 | Release 1.5.1 boundary (version + notes + git release) | P0 | S | ready | - | - | `docs/AI_HANDOFF/tasks/TASK-704.md` |
+| TASK-701 | EXPLAIN ANALYZE prelude trong danger guard | P0 | S | approved_minor | - | unic-smart | `docs/AI_HANDOFF/tasks/TASK-701.md` |
+| TASK-702 | capDetail cắt an toàn code point | P1 | S | approved_minor | - | unic-smart | `docs/AI_HANDOFF/tasks/TASK-702.md` |
+| TASK-703 | Release hygiene: lock version + test pin | P1 | S | approved | - | unic-smart | `docs/AI_HANDOFF/tasks/TASK-703.md` |
+| TASK-704 | Release 1.5.1 boundary (version + notes + git release) | P0 | S | approved_minor | - | unic-smart | `docs/AI_HANDOFF/tasks/TASK-704.md` |

@@ -83,4 +83,17 @@ HANDOFF_TO_REVIEWER: yes
 NEXT: ready for review
 ## Reviewer Verdict
 
-(chưa có)
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic-code (Exec701)
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run src/core/__tests__/dangerousStatement.test.ts && npm run typecheck (+ full npx vitest run, shared code)
+  result: compile OK · 15/15 pass · tsc clean · full suite 453/453 pass
+TEST_PLAN_COVERAGE: all-followed — 7/7 cases implemented verbatim with real assertions (kind + hasWhere + tier)
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/core/dangerousStatement.ts:170 — comment typo: "`analyzeStatement` (Postgres)" should read "`ANALYZE`" (the EXPLAIN modifier keyword); current text confuses readers by naming a function that is not involved here.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: RED claims plausible: pre-fix first depth-0 token `explain` maps to no DML kind → cases 1,2,3,4,6 fail exactly as reported, 5 & 7 pass pre-fix. Non-EXPLAIN path untouched (sawExplain stays false; A1–A8 + 453-test suite green). hasWhere still derived from full masked text.
