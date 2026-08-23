@@ -563,16 +563,12 @@ function buildPersistentDom(): PersistentDom {
     },
     true, // capture — see comment above
   );
-  // TASK-503 — Cmd/Ctrl+Enter keyboard shortcut. AG Grid does not surface
-  // its own shortcut for this — we wire it ourselves. The shortcut only
-  // commits when the dirty map is non-empty (no-op otherwise, see
+  // TASK-503 — Cmd/Ctrl+Enter commit shortcut. AG Grid surfaces no such
+  // shortcut itself, so we wire it on the grid wrap. Fix R1: when focus is
+  // in an editable text input (filter box, quick-search, etc.) we MUST NOT
+  // capture the keystroke — that would swallow the user's local typing and
+  // trigger a save unexpectedly. No-op when the dirty map is empty (see
   // onCommitClick).
-  // TASK-503 Fix R1 — Cmd/Ctrl+Enter keyboard shortcut. AG Grid does not
-  // surface its own shortcut for this — we wire it ourselves. The shortcut
-  // only commits when the dirty map is non-empty (no-op otherwise, see
-  // onCommitClick). When focus is in an editable text input (filter box,
-  // quick-search, etc.) we MUST NOT capture the keystroke — that would
-  // swallow the user's local typing and trigger a save unexpectedly.
   gridWrap.addEventListener(
     "keydown",
     (ev) => {

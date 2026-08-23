@@ -480,6 +480,7 @@ export class ResultsPanel {
     }
 
     this.setBusy(true);
+    const refreshStart = Date.now();
     const errors: string[] = [];
     try {
       for (const stmt of built.statements) {
@@ -510,7 +511,10 @@ export class ResultsPanel {
         next[index] = {
           ...r,
           result: freshResult,
-          durationMs: r.durationMs,
+          // Deferred minor (v1.4.1): elapsed ms of the refresh run — was
+          // `r.durationMs` (the ORIGINAL query's duration), so the footer
+          // showed a stale number after commit.
+          durationMs: Date.now() - refreshStart,
         };
         this.lastResults = next;
         this.postMessage({

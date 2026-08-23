@@ -373,6 +373,14 @@ export function buildSaveStatements(
     }
   }
 
+  // Insert-marked rows, precomputed once — the loop below used
+  // `edits.some(...)` PER row (O(rows×edits)); with a large save batch
+  // that's quadratic. Same semantics, linear now (dynamic numeric-key
+  // membership → Set per project rule).
+  const insertRowIds = new Set<number>();
+  for (const e of edits) {
+    if (isNewRowMarker(e.value)) insertRowIds.add(e.rowId);
+  }
   // ---- 3) Cell edits → one UPDATE per row --------------------------------
   const editsByRow = new Map<number, EditEntry[]>();
   for (const e of edits) {
@@ -398,16 +406,13 @@ export function buildSaveStatements(
       ],
     };
   }
-
   for (const rowId of sortedRowIds) {
     const rowEdits = editsByRow.get(rowId);
     if (!rowEdits) continue;
     // Rows with an INSERT marker are already addressed by the INSERT; skip
-    // the redundant UPDATE.
-    const hasInsert = edits.some(
-      (e) => e.rowId === rowId && isNewRowMarker(e.value),
-    );
-    if (hasInsert) continue;
+    // the redundant UPDATE. insertRowIds is precomputed above the loop —
+    // the old per-row `edits.some(...)` scan was O(rows×edits).
+    if (insertRowIds.has(rowId)) continue;
 
     const cols: string[] = [];
     const vals: unknown[] = [];

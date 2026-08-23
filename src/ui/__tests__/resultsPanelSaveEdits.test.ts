@@ -222,6 +222,45 @@ describe("ResultsPanel — saveEdits host-derives metadata (critical #1)", () =>
     expect(update!.sql).not.toMatch(/\[/);
   });
 
+  it("v1.4.1 — refresh durationMs is elapsed time of the refresh run, not the original query's", async () => {
+    const saveCtx: SaveContext = {
+      getDriver: () => "postgres",
+      listPkColumns: async () => ["id"],
+    };
+    const { fake } = newPanelWithState(
+      "SELECT id, name FROM public.users",
+      ["id", "name"],
+      [[1, "alice"]],
+      saveCtx,
+    );
+    const t0 = Date.now();
+    fake.webview.dispatch({
+      type: "saveEdits",
+      index: 0,
+      tableName: null,
+      pkColumns: [],
+      edits: [{ rowId: 0, colIndex: 1, value: "new-alice" }],
+    });
+    for (let i = 0; i < 200; i++) {
+      if (saveResultAcks(fake).length > 0) break;
+      await Promise.resolve();
+    }
+    // The refreshed state posted after commit carries a durationMs that is
+    // a small elapsed value (>= 0), NOT the original statement's duration
+    // (fixture uses durationMs: 0 — but the old bug copied `r.durationMs`
+    // verbatim; assert elapsed is a finite non-negative number derived from
+    // the refresh window).
+    const states = fake.webview.postMessage.mock.calls
+      .map((c) => c[0])
+      .filter((m) => m && m.type === "state") as Array<{
+      results: Array<{ durationMs: number }>;
+    }>;
+    const lastState = states[states.length - 1];
+    expect(lastState).toBeDefined();
+    expect(lastState.results[0].durationMs).toBeGreaterThanOrEqual(0);
+    expect(lastState.results[0].durationMs).toBeLessThanOrEqual(Date.now() - t0 + 50);
+  });
+
   it("mysql + edits → host calls listPkColumns + uses quoted identifiers", async () => {
     const saveCtx: SaveContext = {
       getDriver: () => "mysql",

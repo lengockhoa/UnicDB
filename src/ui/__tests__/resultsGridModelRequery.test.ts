@@ -145,4 +145,14 @@ describe("composeRequery — literal-preserving (Fix Round 2 important #1)", () 
     const out = composeRequery(sql, "", "");
     expect(out).toBe("SELECT 'a;b' AS x FROM t");
   });
+
+  it("trailing `;` is stripped from the WRAPPED inner statement too (v1.4.1 defense-in-depth)", () => {
+    const sql = "SELECT 'a;b' AS x FROM t;";
+    const out = composeRequery(sql, "x IS NOT NULL", "");
+    // The trailing `;` must not nest inside the subquery — interior
+    // literal `;` survives, only the terminator goes.
+    expect(out).toBe(
+      "SELECT * FROM (SELECT 'a;b' AS x FROM t) vsdb_sub WHERE x IS NOT NULL",
+    );
+  });
 });

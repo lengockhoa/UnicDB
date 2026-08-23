@@ -852,8 +852,11 @@ export function composeRequery(
   if (!w && !o) {
     return stripTrailingSemicolon(sql);
   }
-  // Otherwise use sql verbatim (preserve interior `;` inside literals).
-  const inner = sql.trimEnd();
+  // Otherwise wrap the statement verbatim (interior `;` inside literals
+  // stays intact) — strip only a TRAILING `;` so the wrap doesn't nest a
+  // stray terminator (defense-in-depth: callers run splitStatements
+  // upstream, but this fn must be safe standalone).
+  const inner = stripTrailingSemicolon(sql).trimEnd();
   const whereClause = w ? ` WHERE ${w}` : "";
   const orderClause = o ? ` ORDER BY ${o}` : "";
   return `SELECT * FROM (${inner}) vsdb_sub${whereClause}${orderClause}`;
