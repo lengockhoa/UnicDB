@@ -197,3 +197,25 @@ DETERMINISM: PASS — no real timers/network in tests; host tests use fake vscod
 NEXT_STATUS_FOR_INDEX: changes_requested
 NOTES: Only blocker is the missing #13 README-contract test (trivial: one test reading README.md asserting SecretStorage + single-endpoint egress + no-telemetry). README prose itself is accurate; all security/pattern checks passed on fresh re-run. Executor should add the test and re-submit — no code changes needed.
 ```
+
+## Reviewer Verdict (re-review round 1)
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code
+FIX_COMMIT: 9bca9f3 (diff 40adbc2..9bca9f3)
+ROUND_1_FINDING_STATUS:
+  - important #1 (Test Case #13 README-contract test missing): RESOLVED — src/ui/__tests__/aiSettingsForm.test.ts:425-441 adds `AiSettingsForm — README privacy contract` describe block; reads README.md via node:fs/promises, asserts all 4 claims (SecretStorage, baseUrl-egress, no-telemetry, no-log). Assertions bind to the strong normative phrases at README.md:101-103, not weakened.
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run src/ui/__tests__/aiSettingsForm.test.ts src/ui/__tests__/aiSettingsFormBundle.test.ts src/extension.test.ts && npx tsc --noEmit
+  result: 45 passed / 0 failed (was 44; +1 new README contract test); compile OK; tsc --noEmit exit 0
+TEST_PLAN_COVERAGE: all-followed — Test Cases #1-#13 now covered (11 host + 4 bundle + 30 extension tests).
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/ui/__tests__/aiSettingsForm.test.ts:429 — test reads `README.md` CWD-relative; house pattern (src/__tests__/releaseHygiene.test.ts:14) resolves `path.resolve(__dirname, "..", "..")`. Vitest root is repo root so it resolves correctly today; robust to `vitest run` from repo root only, not from a nested cwd. Cosmetic.
+MUTATION_CHECK: PASS — temporarily weakening README.md (SecretStorage→RedactedStorage, `không telemetry`→removed) made exactly the new contract test fail (1 failed | 10 passed); README restored, worktree clean for README.md.
+DETERMINISM: PASS — file read is synchronous-once, no timers/network; single assertion chain; deterministic.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Round-1 blocker resolved exactly as requested — one test, no production code touched. All round-1 minor findings (webview validator duplication, extension.ts comment/promise-hop, testResult protocol reuse) remain as previously noted for cycle K; none blocking.

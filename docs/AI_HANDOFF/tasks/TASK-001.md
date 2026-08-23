@@ -183,3 +183,23 @@ FINDINGS:
     - src/ai/config.ts:117-119 — `static defaults()` is not in the frozen §Spec contract and has no callers (repo-wide grep: zero uses). Remove or get it specced.
 NEXT_STATUS_FOR_INDEX: changes_requested
 NOTES: Core contract (types, messages, ordering, cache-free load, apiKey hygiene, zero vscode in settings.ts) verified clean; only the malformed-model-entry validation gap blocks.
+
+## Reviewer Verdict (re-review round 1)
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic/unic-smart (config: unic-smart — match)
+EXECUTOR_MODEL: unic/unic-code (≠ reviewer — isolation OK)
+VERIFICATION_RERUN:
+  command: npx vitest run src/ai/__tests__/settings.test.ts src/ai/__tests__/config.test.ts && npx tsc --noEmit
+  result: 15 pass / 0 fail; tsc exit 0; shell exit 0
+ROUND1_RESOLUTION:
+  - important/null-role — FIXED: src/ai/settings.ts:97 guard is now `!m || typeof m !== "object" || typeof m.modelId !== "string" || m.modelId.trim() === ""` → null/non-object role and non-string modelId yield `Model is required for role: <role>`. Regression test #4b present (src/ai/__tests__/settings.test.ts:111-116, covers `work: null` + `modelId: 42`). Half-save unreachable for this input: AiConfigStore.save (src/ai/config.ts:81-88) runs aiSettingsErrors FIRST and throws before secrets.store.
+  - minor/static-defaults — NOT addressed: config.ts:121 `static defaults()` still has zero repo callers. Stays minor, non-blocking.
+TEST_PLAN_COVERAGE: all-followed (13 spec cases + #9b + new #4b regression = 15)
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/ai/config.ts:121 — `static defaults()` off-contract, zero callers; remove in a later cleanup pass.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Fix commit 9bca9f3 resolves the round-1 validation gap exactly as requested; only the pre-existing cosmetic defaults() remains.
