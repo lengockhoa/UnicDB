@@ -17,16 +17,16 @@ Gates: compile OK · typecheck OK · 34 files / 388 tests · browser smoke grid 
 | TASK-504 | WHERE/ORDER BY bar + requery | P1 | S | done | - | unic-smart | `docs/AI_HANDOFF/tasks/TASK-504.md` |
 | TASK-506 | Version 1.4.0 + README + full-suite boundary | P1 | S | done | - | unic/unic-smart | `docs/AI_HANDOFF/tasks/TASK-506.md` |
 
-<!-- Cycle 2026-08-23-G — release 1.5.0 (webview UI polish + Run .sh fix). Wave 1: 601 ∥ 605 · Wave 2: 602 · Wave 3: 603 · Wave 4: 604. -->
+<!-- Cycle 2026-08-23-G: DONE — released v1.5.0 (commit 3785e84, tag v1.5.0). Gates: compile OK · typecheck OK · 34 files / 388 tests. -->
 
-| TASK-601 | Set-filter pure logic (entries + pass + model) | P0 | S | approved | unic/unic-smart | - | `docs/AI_HANDOFF/tasks/TASK-601.md` |
-| TASK-602 | Excel checkbox set-filter component (webview) | P0 | M | approved | unic/unic-smart | - | `docs/AI_HANDOFF/tasks/TASK-602.md` |
-| TASK-603 | Icon toolbar one row + requery-bar icons | P0 | M | approved | unic-smart | - | `docs/AI_HANDOFF/tasks/TASK-603.md` |
-| TASK-604 | Release 1.5.0 boundary (version + README + full suite) | P1 | S | approved_minor | - | unic/unic-smart | `docs/AI_HANDOFF/tasks/TASK-604.md` |
-| TASK-605 | Run .sh fix (activation + guard) + CodeLens ▶ Run | P0 | M | approved_minor | unic/unic-smart | - | `docs/AI_HANDOFF/tasks/TASK-605.md` |
-| TASK-606 | Confirm guard DELETE/TRUNCATE/DROP/UPDATE (danger modal) | P0 | M | approved_minor | unic/unic-smart | - | `docs/AI_HANDOFF/tasks/TASK-606.md` |
+| TASK-601 | Set-filter pure logic (entries + pass + model) | P0 | S | done | - | unic-smart | `docs/AI_HANDOFF/tasks/TASK-601.md` |
+| TASK-602 | Excel checkbox set-filter component (webview) | P0 | M | done | - | unic-smart | `docs/AI_HANDOFF/tasks/TASK-602.md` |
+| TASK-603 | Icon toolbar one row + requery-bar icons | P0 | M | done | - | unic-smart | `docs/AI_HANDOFF/tasks/TASK-603.md` |
+| TASK-604 | Release 1.5.0 boundary (version + README + full suite) | P1 | S | done | - | unic/unic-smart | `docs/AI_HANDOFF/tasks/TASK-604.md` |
+| TASK-605 | Run .sh fix (activation + guard) + CodeLens ▶ Run | P0 | M | done | - | unic/unic-smart | `docs/AI_HANDOFF/tasks/TASK-605.md` |
+| TASK-606 | Confirm guard DELETE/TRUNCATE/DROP/UPDATE (danger modal) | P0 | M | done | - | unic/unic-smart | `docs/AI_HANDOFF/tasks/TASK-606.md` |
 
 ## Queued (future cycles)
 
 - AI assist tab (user 2026-08-22, chưa spec chi tiết).
-Updated: 2026-08-23 · Cycle 2026-08-23-G planned (release 1.5.0): set filter + icon toolbar + Run .sh fix — 6 tasks ready (606 mid-cycle: destructive-SQL confirm guard, W3 ∥ 603). Queued: AI assist tab (needs user spec).
+Updated: 2026-08-23 · Cycle 2026-08-23-G DONE — released v1.5.0. Queued: AI assist tab (needs user spec).
