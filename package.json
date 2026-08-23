@@ -1,6 +1,6 @@
 {
   "name": "vsdb",
-  "displayName": "VSDB — Run SQL from VS Code",
+  "displayName": "VSDB \u2014 Run SQL from VS Code",
   "description": "Run SQL against PostgreSQL, MySQL/MariaDB and SQL Server directly from VS Code. Cmd+Enter (macOS) / Ctrl+Enter (Win/Linux) executes the selected statement.",
   "version": "1.5.1",
   "publisher": "lengockhoa",
@@ -46,7 +46,13 @@
     "onCommand:vsdb.runScript",
     "onLanguage:shellscript",
     "onCommand:vsdb.runStatement",
-    "onView:vsdb.schemaTree"
+    "onView:vsdb.schemaTree",
+    "onCommand:vsdb.newTable",
+    "onCommand:vsdb.modifyTable",
+    "onCommand:vsdb.copyCreateDdl",
+    "onCommand:vsdb.generateSampleData",
+    "onCommand:vsdb.analyzeTable",
+    "onCommand:vsdb.vacuumTable"
   ],
   "contributes": {
     "commands": [
@@ -127,6 +133,42 @@
         "title": "VSDB: Run Script",
         "category": "VSDB",
         "icon": "$(play)"
+      },
+      {
+        "command": "vsdb.newTable",
+        "title": "New Table\u2026",
+        "category": "VSDB",
+        "icon": "$(add)"
+      },
+      {
+        "command": "vsdb.modifyTable",
+        "title": "Modify Table\u2026",
+        "category": "VSDB",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "vsdb.copyCreateDdl",
+        "title": "Copy CREATE DDL",
+        "category": "VSDB",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "vsdb.generateSampleData",
+        "title": "Generate Sample Data\u2026",
+        "category": "VSDB",
+        "icon": "$(file-text)"
+      },
+      {
+        "command": "vsdb.analyzeTable",
+        "title": "Analyze Table",
+        "category": "VSDB",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "vsdb.vacuumTable",
+        "title": "Vacuum Table",
+        "category": "VSDB",
+        "icon": "$(trash)"
       }
     ],
     "keybindings": [
@@ -187,6 +229,36 @@
           "command": "vsdb.deleteConnection",
           "when": "view == vsdb.schemaTree && viewItem == connection",
           "group": "vsdb"
+        },
+        {
+          "command": "vsdb.newTable",
+          "when": "view == vsdb.schemaTree && (viewItem == schema || viewItem == category || viewItem == table)",
+          "group": "vsdb"
+        },
+        {
+          "command": "vsdb.modifyTable",
+          "when": "view == vsdb.schemaTree && viewItem == table",
+          "group": "vsdb"
+        },
+        {
+          "command": "vsdb.copyCreateDdl",
+          "when": "view == vsdb.schemaTree && viewItem == table",
+          "group": "vsdb"
+        },
+        {
+          "command": "vsdb.generateSampleData",
+          "when": "view == vsdb.schemaTree && viewItem == table",
+          "group": "vsdb"
+        },
+        {
+          "command": "vsdb.analyzeTable",
+          "when": "view == vsdb.schemaTree && viewItem == table",
+          "group": "vsdb"
+        },
+        {
+          "command": "vsdb.vacuumTable",
+          "when": "view == vsdb.schemaTree && viewItem == table",
+          "group": "vsdb"
         }
       ],
       "view/title": [
@@ -241,24 +313,24 @@
         "vsdb.showRunLens": {
           "type": "boolean",
           "default": true,
-          "description": "Hiển thị CodeLens ▶ Run phía trên mỗi SQL statement trong file .sql."
+          "description": "Hi\u1ec3n th\u1ecb CodeLens \u25b6 Run ph\u00eda tr\u00ean m\u1ed7i SQL statement trong file .sql."
         },
         "vsdb.showRunLensSh": {
           "type": "boolean",
           "default": true,
-          "description": "Hiển thị CodeLens ▶ Run ở đầu file .sh (shellscript)."
+          "description": "Hi\u1ec3n th\u1ecb CodeLens \u25b6 Run \u1edf \u0111\u1ea7u file .sh (shellscript)."
         },
         "vsdb.batchSize": {
           "type": "number",
           "default": 500,
           "minimum": 50,
           "maximum": 10000,
-          "description": "Số rows tải về mỗi lần (Load 500 more)."
+          "description": "S\u1ed1 rows t\u1ea3i v\u1ec1 m\u1ed7i l\u1ea7n (Load 500 more)."
         },
         "vsdb.confirmDestructive": {
           "type": "boolean",
           "default": true,
-          "description": "Hỏi xác nhận trước khi chạy câu lệnh phá hoại (DELETE/UPDATE không WHERE, TRUNCATE, DROP)."
+          "description": "H\u1ecfi x\u00e1c nh\u1eadn tr\u01b0\u1edbc khi ch\u1ea1y c\u00e2u l\u1ec7nh ph\u00e1 ho\u1ea1i (DELETE/UPDATE kh\u00f4ng WHERE, TRUNCATE, DROP)."
         },
         "vsdb.hideSystemSchemas": {
           "type": "boolean",

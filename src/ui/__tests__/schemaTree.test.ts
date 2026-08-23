@@ -91,6 +91,8 @@ import {
   generateSelectForTable,
   qualifiedName,
   formatRows,
+  revealTableNode,
+  registerSchemaTreeProvider,
 } from "../schemaTree";
 import { ConnectionManager } from "../../core/connectionManager";
 
@@ -1007,5 +1009,140 @@ describe("SchemaTreeProvider — TASK-302 row-count badges + filter engine", () 
     provider.setFilter("po_log");
     const filteredSchemas = await provider.getChildren(root[0]);
     expect(filteredSchemas[0].collapsible).toBe(2); // transient filter view: Expanded
+  });
+});
+
+// =============================================================================
+// TASK-005 — findTableNode + revealTableNode. findTableNode locates a VsdbNode
+// (contextValue === "table", meta.objectName) by (conn, schema, table); returns
+// null nếu absent. revealTableNode wraps treeView.reveal(node, {select:true,
+// expand:false}) và nuốt throw (node có thể đã bị dispose / tree đang refresh).
+// =============================================================================
+describe("SchemaTreeProvider — TASK-005 findTableNode + revealTableNode", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.emitters = [];
+    state.treeItemCalls = [];
+  });
+
+  it("findTableNode trả table node từ fake adapter listing (contextValue 'table', meta.objectName)", async () => {
+    const { mgr } = setupTree({
+      schemas: [{ name: "public" }],
+      tables: [{ name: "users", schema: "public" }],
+    });
+    await mgr.addConnection(makeCfg({ id: "c1", name: "Local" }), "p");
+    await mgr.setActive("c1");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const cfg = mgr.listConnections()[0];
+    const found = await provider.findTableNode(cfg, "public", "users");
+    expect(found).not.toBeNull();
+    if (!found) throw new Error("expected table node");
+    expect(found.contextValue).toBe("table");
+    expect(found.meta?.objectName).toBe("users");
+    expect(found.meta?.schema).toBe("public");
+  });
+
+  it("findTableNode trả null khi table absent (chưa được list)", async () => {
+    const { mgr } = setupTree({
+      schemas: [{ name: "public" }],
+      tables: [],
+    });
+    await mgr.addConnection(makeCfg({ id: "c1", name: "Local" }), "p");
+    await mgr.setActive("c1");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const cfg = mgr.listConnections()[0];
+    const found = await provider.findTableNode(cfg, "public", "missing");
+    expect(found).toBeNull();
+  });
+
+  it("revealTableNode gọi treeView.reveal({select:true, expand:false})", async () => {
+    const { mgr } = setupTree({
+      schemas: [{ name: "public" }],
+      tables: [{ name: "users", schema: "public" }],
+    });
+    await mgr.addConnection(makeCfg({ id: "c1", name: "Local" }), "p");
+    await mgr.setActive("c1");
+    const provider = new SchemaTreeProvider(mgr);
+    registerSchemaTreeProvider(provider);
+
+    const cfg = mgr.listConnections()[0];
+    const treeView = {
+      reveal: vi.fn(),
+      dispose: vi.fn(),
+    };
+    await revealTableNode(
+      treeView as unknown as TreeView<unknown>,
+      cfg,
+      "public",
+      "users",
+    );
+    expect(treeView.reveal).toHaveBeenCalledTimes(1);
+    const [revealedNode, opts] = treeView.reveal.mock.calls[0];
+    expect(revealedNode).toBeDefined();
+    let contextValue: string | undefined;
+    if (
+      revealedNode !== undefined &&
+      revealedNode !== null &&
+      typeof revealedNode === "object" &&
+      "contextValue" in revealedNode
+    ) {
+      const cv = (revealedNode as { contextValue: unknown }).contextValue;
+      if (typeof cv === "string") contextValue = cv;
+    }
+    expect(contextValue).toBe("table");
+    expect(opts).toEqual({ select: true, expand: false });
+  });
+
+  it("revealTableNode nuốt throw (tree đã dispose)", async () => {
+    const { mgr } = setupTree({
+      schemas: [{ name: "public" }],
+      tables: [{ name: "users", schema: "public" }],
+    });
+    await mgr.addConnection(makeCfg({ id: "c1", name: "Local" }), "p");
+    await mgr.setActive("c1");
+    const provider = new SchemaTreeProvider(mgr);
+    registerSchemaTreeProvider(provider);
+
+    const cfg = mgr.listConnections()[0];
+    const treeView = {
+      reveal: vi.fn(() => {
+        throw new Error("disposed");
+      }),
+      dispose: vi.fn(),
+    };
+    await expect(
+      revealTableNode(
+        treeView as unknown as TreeView<unknown>,
+        cfg,
+        "public",
+        "users",
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it("revealTableNode với table absent → KHÔNG gọi reveal", async () => {
+    const { mgr } = setupTree({
+      schemas: [{ name: "public" }],
+      tables: [],
+    });
+    await mgr.addConnection(makeCfg({ id: "c1", name: "Local" }), "p");
+    await mgr.setActive("c1");
+    const provider = new SchemaTreeProvider(mgr);
+    registerSchemaTreeProvider(provider);
+
+    const cfg = mgr.listConnections()[0];
+    const treeView = {
+      reveal: vi.fn(),
+      dispose: vi.fn(),
+    };
+    await revealTableNode(
+      treeView as unknown as TreeView<unknown>,
+      cfg,
+      "public",
+      "missing",
+    );
+    expect(treeView.reveal).not.toHaveBeenCalled();
   });
 });

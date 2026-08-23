@@ -224,7 +224,7 @@ describe("extension.activate — wiring smoke", () => {
     state.createdTerminals.length = 0;
   });
 
-  it("register đủ 11 command theo package.json", () => {
+  it("register đủ 17 command theo package.json (11 cũ + 6 TASK-005)", () => {
     const ctx = makeCtx();
     activate(ctx as never);
     const expected = [
@@ -239,6 +239,12 @@ describe("extension.activate — wiring smoke", () => {
       "vsdb.refreshSchema",
       "vsdb.runStatement",
       "vsdb.runScript",
+      "vsdb.newTable",
+      "vsdb.modifyTable",
+      "vsdb.copyCreateDdl",
+      "vsdb.generateSampleData",
+      "vsdb.analyzeTable",
+      "vsdb.vacuumTable",
     ];
     for (const cmd of expected) {
       expect(state.registeredCommands.has(cmd)).toBe(true);
@@ -866,5 +872,46 @@ describe("TASK-606 — destructive confirm guard", () => {
   });
 });
 
+
+// =============================================================================
+// TASK-005 — extension wiring: 6 new commands + activationEvents + menus.
+// =============================================================================
+describe("TASK-005 — extension wiring smoke", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+  });
+
+  it("register đủ 6 command mới: vsdb.newTable/modifyTable/copyCreateDdl/generateSampleData/analyzeTable/vacuumTable", () => {
+    const ctx = makeCtx();
+    activate(ctx as never);
+    const six = [
+      "vsdb.newTable",
+      "vsdb.modifyTable",
+      "vsdb.copyCreateDdl",
+      "vsdb.generateSampleData",
+      "vsdb.analyzeTable",
+      "vsdb.vacuumTable",
+    ];
+    for (const cmd of six) {
+      expect(state.registeredCommands.has(cmd)).toBe(true);
+    }
+  });
+
+  it("package.json activationEvents có đủ 6 entry mới (onCommand)", () => {
+    const evts = pkgJson.activationEvents as string[];
+    const six = [
+      "onCommand:vsdb.newTable",
+      "onCommand:vsdb.modifyTable",
+      "onCommand:vsdb.copyCreateDdl",
+      "onCommand:vsdb.generateSampleData",
+      "onCommand:vsdb.analyzeTable",
+      "onCommand:vsdb.vacuumTable",
+    ];
+    for (const e of six) {
+      expect(evts).toContain(e);
+    }
+  });
+});
 // Avoid path-imports lint complaints.
 void path;

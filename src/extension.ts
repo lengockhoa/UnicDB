@@ -10,7 +10,9 @@ import {
   SchemaTreeProvider,
   generateSelectForTable,
   qualifiedName,
+  registerSchemaTreeProvider,
 } from "./ui/schemaTree";
+import { registerTableCommands } from "./ui/tableCommands";
 import { VsdbCodeLensProvider } from "./ui/codeLensProvider";
 import { ConnectionForm } from "./ui/connectionForm";
 import { sqlToRun } from "./core/statementParser";
@@ -48,10 +50,13 @@ export async function activate(
 
   // ---- Schema tree ----
   const tree = new SchemaTreeProvider(mgr);
+  registerSchemaTreeProvider(tree);
   const treeView = vscode.window.createTreeView("vsdb.schemaTree", {
     treeDataProvider: tree,
   });
   disposables.push(treeView);
+  // TASK-005 — 6 table-utility commands (New/Modify/Copy DDL/Sample Data/Analyze/Vacuum).
+  registerTableCommands({ mgr, tree, treeView, context });
 
   // ---- Status bar ----
   const statusBar = createStatusBar(mgr);

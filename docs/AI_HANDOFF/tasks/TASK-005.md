@@ -70,3 +70,58 @@ If testing via full `activate()` gets heavy, export `registerTableCommands(deps)
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+---
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: Exec-T005
+SUMMARY: Implemented TASK-005 extension wiring — 6 commands (newTable/modifyTable/copyCreateDdl/generateSampleData/analyzeTable/vacuumTable) + menus + activationEvents in package.json; src/ui/tableCommands.ts (registerTableCommands) wired into extension.ts activate(); SchemaTreeProvider extended with findTableNode + module-scoped revealTableNode; src/core/ddl/sampleData.ts pure generator (16 unit tests passing).
+TEST_PLAN_FOLLOWED: task §4 (Test Cases #1-13) — written first (RED: module-not-found), then GREEN after impl.
+FILES_CHANGED:
+  - package.json: +6 commands, +6 activationEvents, +6 view/item/context menus
+  - src/extension.ts: import registerSchemaTreeProvider + registerTableCommands; wire after tree creation
+  - src/ui/schemaTree.ts: +SchemaTreeProvider.findTableNode; +module-scoped registerSchemaTreeProvider/clearSchemaTreeProvider; +revealTableNode
+  - src/ui/tableCommands.ts: NEW — registerTableCommands(deps) with 6 command handlers, guards (postgres-only, category check, no-meta silent), introspectTable helper, alwaysQuote for analyze/vacuum
+  - src/core/ddl/sampleData.ts: NEW — generateSampleInserts(spec, n) pure generator (type-aware: int/numeric/float/varchar/boolean/date/timestamp/uuid/jsonb/default)
+  - src/core/__tests__/sampleData.test.ts: NEW — 16 unit tests
+  - src/ui/__tests__/tableCommands.test.ts: NEW — 9 unit tests (#5,#6,#7,#8,#9,#10,#11,#12,#13)
+  - src/ui/__tests__/schemaTree.test.ts: +5 tests in TASK-005 describe block (findTableNode x2, revealTableNode x3)
+  - src/extension.test.ts: +TASK-005 describe block (6 commands, 6 activationEvents)
+
+TESTS_ADDED:
+  - src/core/__tests__/sampleData.test.ts: 16 tests (multi-row INSERT, type variety, n=0/-5/1000, per-type dispatch, column-order)
+  - src/ui/__tests__/tableCommands.test.ts: 9 tests (newTable/modifyTable happy, mysql guard, views category guard, DDL failure, copyCreateDdl, generateSampleData InputBox 3/abc, analyze+vacuum SQL)
+  - src/ui/__tests__/schemaTree.test.ts: 5 tests (findTableNode hit/miss, revealTableNode reveal/throw/absent)
+  - src/extension.test.ts: 3 tests (17 commands, 6 new commands, 6 activationEvents)
+
+VERIFICATION:
+  command: npm run compile && npx vitest run src/extension.test.ts src/ui/__tests__/tableCommands.test.ts src/ui/__tests__/schemaTree.test.ts src/core/__tests__/sampleData.test.ts && npx tsc --noEmit
+  result: 91 passed / 0 fail; exit code 0
+  output_excerpt: |
+    ⚡ Done in 119ms
+    esbuild: build complete
+    ✓ src/core/__tests__/sampleData.test.ts  (16 tests) 4ms
+    ✓ src/ui/__tests__/schemaTree.test.ts  (39 tests) 26ms
+    ✓ src/ui/__tests__/tableCommands.test.ts  (9 tests) 5ms
+    ✓ src/extension.test.ts  (27 tests) 61ms
+    Test Files  4 passed (4)
+         Tests  91 passed (91)
+    tsc --noEmit: clean (no output)
+
+RED_OUTPUT (excerpt):
+    FAIL  src/core/__tests__/sampleData.test.ts
+      Error: Failed to load url ../ddl/sampleData
+    FAIL  src/ui/__tests__/tableCommands.test.ts
+      Error: Failed to load url ../../core/ddl/sampleData (registered through tableCommands)
+    FAIL  src/ui/__tests__/schemaTree.test.ts > TASK-005 findTableNode + revealTableNode
+      TypeError: revealTableNode is not a function / findTableNode is not a function
+    FAIL  src/extension.test.ts > TASK-005 — extension wiring smoke
+      AssertionError: expected false to be true (commands/activationEvents missing)
+
+ISSUES: None
+HANDOFF_TO_REVIEWER: yes — fresh 91/91 PASS in this turn
+NEXT: ready for review (file-based handoff per cycle conventions)

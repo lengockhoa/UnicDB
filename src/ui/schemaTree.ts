@@ -624,9 +624,88 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
     }
     return data;
   }
+  /**
+   * TASK-005 — Locate the table node for (conn, schema, table).
+   * Reuses the same path getCategoryChildren uses (adapter.listTables).
+   * Returns null khi table không có trong schema / adapter fail.
+   */
+  async findTableNode(
+    conn: ConnectionConfig,
+    schema: string,
+    table: string,
+  ): Promise<VsdbNode | null> {
+    let adapter: DbAdapter;
+    try {
+      adapter = await this.getAdapterFor(conn);
+    } catch {
+      return null;
+    }
+    let tables;
+    try {
+      tables = await adapter.listTables(schema);
+    } catch {
+      return null;
+    }
+    const hit = tables.find((t) => t.name === table && t.schema === schema);
+    if (!hit) return null;
+    return {
+      label: hit.name,
+      description: hit.schema,
+      tooltip: `${hit.schema}.${hit.name}`,
+      contextValue: "table",
+      collapsible: vscode.TreeItemCollapsibleState.Collapsed,
+      meta: {
+        connection: conn,
+        category: "columns",
+        objectKey: `${conn.id}.${hit.schema}.${hit.name}`,
+        schema: hit.schema,
+        objectName: hit.name,
+      },
+      command: {
+        command: "vsdb.copyQualifiedName",
+        title: "Copy qualified name",
+        arguments: [qualifiedName({ table: hit.name, schema: hit.schema })],
+      },
+    };
+  }
 }
 
 // ---- Public utilities -------------------------------------------------------
+
+/**
+ * TASK-005 — Module-scoped reference to the singleton SchemaTreeProvider,
+ * set once by extension.ts at activate(). revealTableNode below uses it to
+ * locate the table node without taking an extra dependency arg.
+ */
+let _activeProvider: SchemaTreeProvider | null = null;
+export function registerSchemaTreeProvider(p: SchemaTreeProvider): void {
+  _activeProvider = p;
+}
+export function clearSchemaTreeProvider(): void {
+  _activeProvider = null;
+}
+
+/**
+ * TASK-005 — Reveal a table node in the schema tree after a DDL operation.
+ * findTableNode may return null nếu absent (tree đang refresh / table vừa drop);
+ * trong trường hợp đó → no-op. reveal() có thể throw nếu node đã dispose /
+ * tree đã đóng → nuốt để caller không phải xử lý.
+ */
+export async function revealTableNode(
+  treeView: vscode.TreeView<unknown>,
+  conn: ConnectionConfig,
+  schema: string,
+  table: string,
+): Promise<void> {
+  if (!_activeProvider) return;
+  const node = await _activeProvider.findTableNode(conn, schema, table);
+  if (!node) return;
+  try {
+    await treeView.reveal(node, { select: true, expand: false });
+  } catch {
+    // Node có thể đã dispose / tree đã refresh → bỏ qua, command vẫn OK.
+  }
+}
 
 /** Trả về schema.name hoặc name nếu schema rỗng. */
 export function qualifiedName(p: {
