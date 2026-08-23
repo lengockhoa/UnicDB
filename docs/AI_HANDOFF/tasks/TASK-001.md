@@ -164,3 +164,22 @@ ISSUES: Test file naming — assignment prompt used aiSettings.test.ts/aiConfig.
 HANDOFF_TO_REVIEWER: yes — task ready, INDEX row set to pending_review.
 
 NEXT: ready for review (Rev-T001).
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic/unic-smart (config: unic-smart — match)
+EXECUTOR_MODEL: unic/unic-code (≠ reviewer — isolation OK)
+VERIFICATION_RERUN:
+  command: npx vitest run src/ai/__tests__/settings.test.ts src/ai/__tests__/config.test.ts && npx tsc --noEmit
+  result: 14 pass / 0 fail; tsc exit 0
+TEST_PLAN_COVERAGE: all-followed (13 spec cases + #9b empty-apiKey supplement; RED_OUTPUT shows real failed-suite load errors)
+FINDINGS:
+  critical:
+    - none
+  important:
+    - src/ai/settings.ts:96-98 — models-role entries that exist but are null/non-object (e.g. `models: { work: null, smart: {…} }`) produce ZERO validation errors: guard is `m && typeof m.modelId === "string" && m.modelId.trim() === ""`, so non-string/absent modelId silently passes. Reproduced: aiSettingsErrors → []; then AiConfigStore.save (src/ai/config.ts:101-111) throws `TypeError: Cannot read properties of null (reading 'modelId')` AFTER `secrets.store` succeeded — apiKey persisted, settings not (half-save, violates the normative "validate FIRST ⇒ persist nothing" invariant, and loadSettings re-validation lets the same malformed shape through from a corrupted globalState). Fix: in aiSettingsErrors, for each role require an object with a string modelId — entry missing/non-object/modelId non-string ⇒ push `Model is required for role: <role>`; add edge test `models:{work:null,smart:valid}` → non-empty errors AND save() persists nothing.
+  minor:
+    - src/ai/config.ts:117-119 — `static defaults()` is not in the frozen §Spec contract and has no callers (repo-wide grep: zero uses). Remove or get it specced.
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Core contract (types, messages, ordering, cache-free load, apiKey hygiene, zero vscode in settings.ts) verified clean; only the malformed-model-entry validation gap blocks.

@@ -422,3 +422,20 @@ describe("AiSettingsForm — cancel", () => {
     expect(store.save).not.toHaveBeenCalled();
   });
 });
+
+// =============================================================================
+// R1 fix regression: README privacy/egress contract (task Test Case #13).
+// README must name SecretStorage, the single-endpoint egress promise, and the
+// no-telemetry/no-log statement — this test fails if the section is deleted
+// or weakened, keeping docs and code honest.
+// =============================================================================
+describe("AiSettingsForm — README privacy contract", () => {
+  it("README AI section names SecretStorage, single-endpoint egress, no telemetry/no log", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const readme = await readFile("README.md", "utf8");
+    expect(readme).toMatch(/SecretStorage/);
+    expect(readme).toMatch(/baseUrl user cấu hình|`baseUrl`/);
+    expect(readme).toMatch(/không telemetry|no telemetry|no analytics/i);
+    expect(readme).toMatch(/không xuất hiện trong|logs|error message/i);
+  });
+});

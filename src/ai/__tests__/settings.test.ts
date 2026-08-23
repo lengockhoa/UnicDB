@@ -58,6 +58,19 @@ describe("ai/settings — defaults + validation + helpers", () => {
     );
   });
 
+  function base2(): AiSettings {
+    return {
+      baseUrl: "http://localhost:8080/v1",
+      method: "responses",
+      timeoutMs: 10000,
+      maxSteps: 10,
+      models: {
+        work: { modelId: "m", vision: true },
+        smart: { modelId: "m", vision: false },
+      },
+    };
+  }
+
   it("Test #4 — bounds inclusive", () => {
     const base: AiSettings = {
       baseUrl: "http://localhost:8080/v1",
@@ -75,7 +88,6 @@ describe("ai/settings — defaults + validation + helpers", () => {
     expect(aiSettingsErrors(tLower)).toContain(
       "Timeout must be between 1000 and 600000 ms",
     );
-
     const tUpper: AiSettings = { ...base, timeoutMs: 600001 };
     expect(aiSettingsErrors(tUpper)).toContain(
       "Timeout must be between 1000 and 600000 ms",
@@ -85,7 +97,6 @@ describe("ai/settings — defaults + validation + helpers", () => {
     expect(aiSettingsErrors(sLower)).toContain(
       "Max steps must be between 1 and 100",
     );
-
     const sUpper: AiSettings = { ...base, maxSteps: 101 };
     expect(aiSettingsErrors(sUpper)).toContain(
       "Max steps must be between 1 and 100",
@@ -95,6 +106,13 @@ describe("ai/settings — defaults + validation + helpers", () => {
     expect(
       aiSettingsErrors({ ...base, timeoutMs: 600000, maxSteps: 100 }),
     ).toEqual([]);
+  });
+
+  it("Test #4b (R1 fix regression) — null/non-object role entry or non-string modelId is rejected", () => {
+    const bad1 = { ...base2(), models: { work: null, smart: { modelId: "m", vision: false } } } as unknown as AiSettings;
+    expect(aiSettingsErrors(bad1)).toContain("Model is required for role: work");
+    const bad2 = { ...base2(), models: { work: { modelId: 42, vision: true }, smart: { modelId: "m", vision: false } } } as unknown as AiSettings;
+    expect(aiSettingsErrors(bad2)).toContain("Model is required for role: work");
   });
 
   it("Test #5 — apiKey must not be stored in settings (defense-in-depth)", () => {

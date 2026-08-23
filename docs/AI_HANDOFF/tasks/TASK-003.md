@@ -204,3 +204,27 @@ yes — all 12 §Test Cases PASS, typecheck clean, branch `handoff/task-003` at 
 
 ### NEXT
 ready for review (Rev-T003).
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_TOOL: claude-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/ai/__tests__/agent.test.ts && npx tsc --noEmit
+  result: 12 pass / 0 fail · tsc exit 0 (fresh re-run on main tree @ HEAD)
+TEST_PLAN_COVERAGE: all-followed — 12/12 §Test Cases present in src/ai/__tests__/agent.test.ts; edge coverage (budget exhaustion #5, vision guard #6, unconfigured #7, unknown tool #8, bad args + throwing tool #9) exceeds minTestsEdgeCase=2; RED_OUTPUT contains real suite-load failure output, not a bare claim.
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/ai/agent.ts:150-154 — `req` never passes `temperature`/`maxOutputTokens`; frozen §Spec loop-3a mentions optional `temperature` but leaves it unspecified — behavior matches spec-as-testable (test #1 asserts modelId/messages only). No action this cycle.
+    - src/ai/agent.ts:147,167,195 — `finalText` on budget-cap returns last no-tool-call text, but per loop order that value can only come from a prior capped run's state (within one run, a no-tool-call reply always returns early); dead-but-spec-correct, matches frozen wording. No action.
+    - src/ai/__tests__/agent.test.ts:4-13 — imports include unused-in-body type `AgentInput`-adjacent helpers (e.g. `AgentStep` used once, `MockedFn` shapes fine); harmless, tsc clean. No action.
+MODEL_ISOLATION: PASS — executor unic/unic-code ≠ reviewer unic/unic-smart (config handoff.reviewer.model=unic-smart honored).
+SECURITY_INVARIANTS: PASS — apiKey never referenced, logged, serialized, or included in any error path in agent.ts/test file; no vscode import, no fetch, no console.*; no telemetry; egress is caller's deps.complete concern (TASK-002 scrubbed snippets). Config re-read per run via deps.loadConfig() (test #4 proves 2 calls / 2 snapshots).
+SCOPE: PASS — wave-2 commit f964397 touches only TASK-003.md, INDEX.md, RUN.md, src/ai/agent.ts, src/ai/__tests__/agent.test.ts; zero wave-1 file edits; no DB tools / streaming / chat UI / Anthropic protocol.
+DETERMINISM: PASS — no real timers, no network (deps injected), no vscode mock needed (pure module).
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Clean implementation of the frozen contract; the two minor items are observations, not change requests. Executor's onError raw-Error interpretation (raw Error, not the wrapped result string) is the sound reading and is explicitly asserted in test #10.

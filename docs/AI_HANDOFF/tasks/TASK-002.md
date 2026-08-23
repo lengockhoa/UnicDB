@@ -174,3 +174,23 @@ NEXT: Reviewer picks up from docs/AI_HANDOFF/INDEX.md pending_review row.
 ```
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code (differs — isolation OK)
+VERIFICATION_RERUN:
+  command: npx vitest run src/ai/__tests__/provider.test.ts && npx tsc --noEmit
+  result: 15 pass / 0 fail; tsc exit 0 (no errors)
+TEST_PLAN_COVERAGE: all-followed — 13/13 spec cases implemented (+2 builder regression tests); RED_OUTPUT contains real failing-run summary (15 failed), GREEN re-verified fresh by reviewer
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - src/ai/provider.ts:186-191 — dead ternary: both non-string branches of `text` return `""`, so `message?.content == null ? "" : ""` is weightless; collapse to `typeof message?.content === "string" ? message.content : ""`.
+    - src/ai/__tests__/provider.test.ts:258-263 — test #8's abort listener throws inside `addEventListener` (swallowed, never reaches the promise) and `aborter` is never wired to the client's controller; the timeout path is actually exercised only by the immediate AbortError throw below it. Delete the listener block + misleading "end-to-end" comment — the throw alone is the deterministic test.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Spec-exact exports, apiKey only in Authorization header + scrub (never in thrown messages), real AbortController with signal asserted in #1, no vscode/src-ai/console usage (grep-verified), responses↔chat mapping provider-only, deterministic tests (no real timers/network). Spec asked "trailing-slash baseUrl" only — buildUrl skips whitespace trim by design (settings.normalizeBaseUrl owns that upstream), fine per frozen contract.

@@ -92,7 +92,7 @@ export function aiSettingsErrors(s: AiSettings): string[] {
     }
     for (const role of AI_MODEL_ROLES) {
       const m = models[role];
-      if (m && typeof m.modelId === "string" && m.modelId.trim() === "") {
+      if (!m || typeof m !== "object" || typeof m.modelId !== "string" || m.modelId.trim() === "") {
         errors.push(`Model is required for role: ${role}`);
       }
     }

@@ -174,3 +174,26 @@ NEXT: ready for review
 
 ## Reviewer Verdict
 (Phase 4 reviewer append below.)
+```
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_TOOL: claude-code
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run src/ui/__tests__/aiSettingsForm.test.ts src/ui/__tests__/aiSettingsFormBundle.test.ts src/extension.test.ts && npx tsc --noEmit
+  result: 44 passed / 0 failed; compile OK; tsc --noEmit exit 0
+TEST_PLAN_COVERAGE: partial — Test Case #13 (README contract, REQUIRED per §Test Cases) has NO test anywhere: no test file reads README.md for the AI/SecretStorage/egress/no-telemetry statements (releaseHygiene.test.ts only checks the vsix install pattern; extension.test.ts only greps package.json). Cases #1-#12 are covered by the 17 new tests. Executor's TEST_PLAN_FOLLOWED claim "all 13 covered" is therefore inaccurate.
+FINDINGS:
+  important:
+    - docs/AI_HANDOFF/tasks/TASK-004.md §Test Cases #13 — required "README contains the AI section naming SecretStorage, single-endpoint egress, no-telemetry/no-log" test was never written. The README content itself IS present and accurate (README.md:96-109 names SecretStorage, "mọi AI request chỉ đi tới baseUrl", "không telemetry", scrubApiKey); only the enforcing test is missing. Fix: add a small test reading README.md asserting /SecretStorage/ + /baseUrl/ + /không telemetry/ (or English equivalents).
+  minor:
+    - webview/aiSettingsFormMain.ts:108-147 — validation is a hand-copied mirror of src/ai/settings.ts aiSettingsErrors. settings.ts is deliberately vscode-free ("webview-importable" per its header), so importing it in the webview entry was possible; the duplication is a drift risk if the host validator changes. Acceptable for this cycle (host re-validates authoritatively at aiSettingsForm.ts:158-167,231-238), but note it for cycle K.
+    - src/extension.ts:26-33 — the edit deleted the doc comment "Cached \"VSDB Script\" terminal instance (TASK-505). Reused while alive." above runScriptTerminal (now a bare let). Cosmetic only; restore the comment.
+    - src/extension.ts:287-299 — the .then(r => { void role; return r; }) dance adds an extra promise hop just to swallow `role`; passing (req) => createProviderClient({...}).complete(req) directly (ignoring the 2nd param) is simpler and identical. Cosmetic.
+    - src/ui/aiSettingsForm.ts:199 — handleTest resolves the stored key BEFORE checking `testing` guard ordering is fine, but an error message from aiSettingsErrors[0] posted as type "testResult" in a SAVE context (aiSettingsForm.ts:163-166, 174-182) is a slight protocol overload; webview handles it (setStatus err) so behavior is correct — just note the message-type reuse.
+SECURITY_CHECKS: PASS — init never carries apiKey (host posts {settings, hasApiKey} only, aiSettingsForm.ts:141-142; test asserts no "apiKey" key + no "sk-1" in JSON); empty key + stored ⇒ loadApiKey reuse (aiSettingsForm.ts:170-186); empty key + nothing stored ⇒ save refused with "API key is required" (no store.write); provider errors surface err.message only (ProviderError scrubs apiKey in bodySnippet, provider.ts:387); complete seam re-creates client per call from submitted cfg (no stale key); no telemetry anywhere in diff; all egress via createProviderClient → configured baseUrl only.
+PATTERN_PARITY: PASS — panel lifecycle/reveal-on-reshow/dispose mirror newTableForm.ts:65-105 exactly (same createWebviewPanel options incl. retainContextWhenHidden + localResourceRoots dist, same onDidDispose cleanup); CSP identical to newTableForm/connectionForm (default-src 'none', style-src cspSource 'unsafe-inline', script-src cspSource); esbuild entry in both watch (ctx5) and build arrays; package.json contributes.commands + activationEvents consistent with existing commands; bundle test uses the house (0, eval)(bundleSrc) + acquireVsCodeApi stub pattern and skips-with-message when dist missing (runIf).
+DETERMINISM: PASS — no real timers/network in tests; host tests use fake vscode mock + until() polling; bundle tests use jsdom + eval of compiled dist; no flakiness sources observed.
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Only blocker is the missing #13 README-contract test (trivial: one test reading README.md asserting SecretStorage + single-endpoint egress + no-telemetry). README prose itself is accurate; all security/pattern checks passed on fresh re-run. Executor should add the test and re-submit — no code changes needed.
+```
