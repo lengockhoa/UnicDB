@@ -43,11 +43,32 @@ export interface AiChatPanelDone {
   type: "done";
 }
 
+export interface AiChatPanelDelta {
+  type: "delta";
+  /** Incremental text from an in-flight assistant message (omp streaming). */
+  text: string;
+}
+
+/** Engine mode announcement — emitted exactly once when panel first resolves engine. */
+export interface AiChatPanelEngine {
+  type: "engine";
+  name: "omp" | "builtin";
+  /** Hint shown to user when engine is not omp (install/update instructions). */
+  hint?: string;
+}
+
+/** Turn boundary: host promises no further assistant/step/error for this turn. */
+export interface AiChatPanelDone {
+  type: "done";
+}
+
 export type AiChatPanelHostMessage =
   | AiChatPanelInit
   | AiChatPanelStep
+  | AiChatPanelDelta
   | AiChatPanelAssistant
   | AiChatPanelError
+  | AiChatPanelEngine
   | AiChatPanelDone;
 
 // ---- Webview → Host --------------------------------------------------------

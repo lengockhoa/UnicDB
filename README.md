@@ -124,10 +124,20 @@ Mở Command Palette → `VSDB: AI Chat` → panel chat mở với multi-turn ag
 - **apiKey hygiene**: `apiKey` chỉ nằm trong **SecretStorage** (`vsdb.ai.apiKey`); được đọc theo từng request và gắn vào header `Authorization: Bearer …`. Provider `scrubApiKey` trước khi throw `ProviderError` — không bao giờ xuất hiện trong error message, response snippet, log, hay UI.
 - **Unconfigured fallback**: nếu chưa lưu AI Settings thì command hiện `VSDB: Configure AI settings first.` rồi tự mở `VSDB: Open AI Settings…` — không crash, không tạo panel với config rỗng.
 
-Khi muốn tắt hoàn toàn: gỡ AI Settings (Clear Secret Storage hoặc form Settings → Save với apiKey trống), hoặc disable extension activation event `onCommand:vsdb.aiChat` trong `package.json`.
+
+### AI engine: oh-my-pi (optional)
+
+Ngoài engine built-in (`runAgent` qua OpenAI-compatible backend), VSDB chat có thể dùng **oh-my-pi** (`omp`) làm engine agent thật — spawn process, RPC JSONL, stream events, host-tool bridge.
+
+- **Yêu cầu**: `omp >= 17.0.0`. Detect tự động ở lần đầu mở panel; nếu binary cũ / thiếu / không parse được version, panel announce `{engine:"builtin", hint: "omp install hint"}` một lần và dùng built-in như cũ.
+- **Install**: `curl -fsSL https://omp.sh/install | sh` (1 lần).
+- **Update**: `omp update` (để bump version khi task bump min-version).
+- **VSDB tự nâng cấp**: chạy lại `install-vsdb.sh` có sẵn (`curl -fsSL https://raw.githubusercontent.com/…/install-vsdb.sh | sh`) — extension update flow không cần đụng đến omp.
+- **Security note**: omp mode cho agent quyền workspace tools (read/edit/bash scoped cwd của active workspace) qua `set_host_tools` RPC. **DB access vẫn read-only** — VSDB chỉ host các tool `list_tables` / `describe_table` / `run_sql` (read-only guard trong `run_sql` giữ nguyên), omp không có tool bypass được read-only chokepoint. Agent có thể modify file SQL local ngoài workspace tool, nhưng database thật vẫn bất khả xâm phạm bởi DML/DDL.
+- **Crash fallback**: nếu process omp exit giữa turn, panel post error bubble + fallback builtin cho turn tiếp theo; không tự respawn — user retry re-detect.
 
 ---
-## Khắc phục sự cố (Troubleshooting)
+
 
 ### `code` CLI không tìm thấy khi cài
 
