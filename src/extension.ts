@@ -15,6 +15,7 @@ import { VsdbCodeLensProvider } from "./ui/codeLensProvider";
 import { ConnectionForm } from "./ui/connectionForm";
 import { sqlToRun } from "./core/statementParser";
 import { analyzeStatement, guardTier } from "./core/dangerousStatement";
+import { truncateAtBoundary } from "./core/text";
 import type { ConnectionConfig } from "./config/types";
 import type { ParsedStatement } from "./config/types";
 
@@ -382,7 +383,7 @@ async function confirmDangerousStatements(
 
 function capDetail(texts: string[], cap: number): string {
   const joined = texts.join("\n\n");
-  return joined.length <= cap ? joined : `${joined.slice(0, cap)}…`;
+  return truncateAtBoundary(joined, cap);
 }
 
 async function promptToAddConnectionOrSelect(): Promise<void> {

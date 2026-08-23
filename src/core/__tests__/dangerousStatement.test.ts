@@ -59,3 +59,53 @@ describe("TASK-606 — analyzeStatement + guardTier", () => {
     expect(guardTier(a)).toBe("none");
   });
 });
+
+describe("TASK-701 — EXPLAIN prelude trong analyzeStatement", () => {
+  it("1 — EXPLAIN DELETE no-where → delete/hasWhere=false + red", () => {
+    const a = analyzeStatement("EXPLAIN DELETE FROM t");
+    expect(a).toEqual({ kind: "delete", hasWhere: false });
+    expect(guardTier(a)).toBe("red");
+  });
+
+  it("2 — EXPLAIN ANALYZE DELETE → red", () => {
+    const a = analyzeStatement("EXPLAIN ANALYZE DELETE FROM t");
+    expect(a).toEqual({ kind: "delete", hasWhere: false });
+    expect(guardTier(a)).toBe("red");
+  });
+
+  it("3 — EXPLAIN (ANALYZE, COSTS) parenthesized options → red", () => {
+    const a = analyzeStatement(
+      "EXPLAIN (ANALYZE, COSTS) UPDATE t SET a=1",
+    );
+    expect(a).toEqual({ kind: "update", hasWhere: false });
+    expect(guardTier(a)).toBe("red");
+  });
+
+  it("4 — EXPLAIN ANALYZE WITH c AS (SELECT 1) DELETE có WHERE → amber", () => {
+    const a = analyzeStatement(
+      "EXPLAIN ANALYZE WITH c AS (SELECT 1) DELETE FROM t WHERE x=1",
+    );
+    expect(a).toEqual({ kind: "delete", hasWhere: true });
+    expect(guardTier(a)).toBe("amber");
+  });
+
+  it("5 — EXPLAIN ANALYZE SELECT harmless → none", () => {
+    const a = analyzeStatement("EXPLAIN ANALYZE SELECT * FROM t");
+    expect(a).toEqual({ kind: "other", hasWhere: false });
+    expect(guardTier(a)).toBe("none");
+  });
+
+  it("6 — EXPLAIN ANALYZE UPDATE có WHERE → none", () => {
+    const a = analyzeStatement(
+      "EXPLAIN ANALYZE UPDATE t SET a=1 WHERE id=2",
+    );
+    expect(a).toEqual({ kind: "update", hasWhere: true });
+    expect(guardTier(a)).toBe("none");
+  });
+
+  it("7 — regression: DELETE FROM t không EXPLAIN vẫn red", () => {
+    const a = analyzeStatement("DELETE FROM t");
+    expect(a).toEqual({ kind: "delete", hasWhere: false });
+    expect(guardTier(a)).toBe("red");
+  });
+});

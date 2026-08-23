@@ -149,6 +149,7 @@ export function analyzeStatement(sql: string): StatementAnalysis {
   let kind: DangerousKind = "other";
   let depth = 0;
   let sawWith = false;
+  let sawExplain = false;
   const wordRe = /[A-Za-z_][A-Za-z0-9_]*|\(|\)/g;
   let m: RegExpExecArray | null;
   while ((m = wordRe.exec(masked)) !== null) {
@@ -164,6 +165,25 @@ export function analyzeStatement(sql: string): StatementAnalysis {
     if (depth > 0) continue;
 
     const lower = tok.toLowerCase();
+
+    // Prelude `EXPLAIN [ANALYZE|ANALYSE|VERBOSE] [(options...)]` ở depth 0:
+    // bỏ qua mọi modifier/option cho tới khi gặp statement thật.
+    // `analyzeStatement` (Postgres) hay `analyse`/`verbose` chỉ là phụ
+    // của EXPLAIN; cũng chấp nhận từ trong parens-options qua depth>0 ở trên.
+    if (!sawWith && !sawExplain) {
+      if (lower === "explain") {
+        sawExplain = true;
+        continue;
+      }
+    } else if (sawExplain) {
+      // Modifier EXPLAIN ở depth 0: analyze / analyse / verbose — bỏ qua.
+      if (lower === "analyze" || lower === "analyse" || lower === "verbose") {
+        continue;
+      }
+      // Hết modifier — chuyển sang xử lý bình thường.
+      sawExplain = false;
+    }
+
     if (!sawWith) {
       if (lower === "with") {
         // Sau `WITH`, phần CTE (tên + `AS (...)`) ở depth 0 xen kẽ parens —

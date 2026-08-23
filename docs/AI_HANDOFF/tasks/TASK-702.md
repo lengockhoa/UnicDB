@@ -50,6 +50,31 @@ npm run typecheck
 
 ## Executor Report
 
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: Exec702
+SUMMARY: Added truncateAtBoundary code-point-safe helper, wired capDetail to it, covered with 4 unit tests including an emoji-boundary case that fails RED against raw slice.
+TEST_PLAN_FOLLOWED: task §Test Cases (4 tests)
+FILES_CHANGED:
+  - src/core/text.ts (new): truncateAtBoundary walks `[...s]` code points, never returns a string with lone high/low surrogate.
+  - src/core/__tests__/text.test.ts (new): 4 cases — ASCII under cap, ASCII over cap, emoji-at-boundary (asserts no lone surrogate), cap=0.
+  - src/extension.ts: 2-line delta (1 import + 1 call site).
+TESTS_ADDED:
+  - src/core/__tests__/text.test.ts: TASK-702 — truncateAtBoundary (4 it blocks).
+VERIFICATION:
+  command: npm run compile && npx vitest run src/core/__tests__/text.test.ts src/core/__tests__/dangerousStatement.test.ts && npm run typecheck
+  result: 12 passed / 0 fail; esbuild build complete; tsc --noEmit clean
+  output_excerpt: |
+    ✓ src/core/__tests__/text.test.ts  (4 tests) 1ms
+    ✓ src/core/__tests__/dangerousStatement.test.ts  (8 tests) 3ms
+    Test Files  2 passed (2)
+         Tests  12 passed (12)
+ISSUES: none
+HANDOFF_TO_REVIEWER: yes — clean 2-line extension.ts delta, full test pass, typecheck clean.
+NEXT: ready for reviewer
+
+## Reviewer Verdict
 (chưa có)
 
 ## Reviewer Verdict

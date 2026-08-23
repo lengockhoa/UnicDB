@@ -51,8 +51,36 @@ npm run typecheck
 
 ## Executor Report
 
-(chưa có)
-
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: Exec701
+SUMMARY: analyzeStatement now skips past `EXPLAIN [ANALYZE|ANALYSE|VERBOSE] [(opts)]` prelude at depth 0; kind + hasWhere derive from the real inner statement. 7/7 new tests green, 15/15 total in file.
+TEST_PLAN_FOLLOWED: task §4 — all 7 cases implemented verbatim
+FILES_CHANGED:
+  - src/core/dangerousStatement.ts: added sawExplain state + analyze/analyse/verbose skip + parenthesized options handled by existing depth tracking
+  - src/core/__tests__/dangerousStatement.test.ts: appended describe("TASK-701") with 7 cases
+TESTS_ADDED:
+  - src/core/__tests__/dangerousStatement.test.ts: cases 1–7 (EXPLAIN DELETE, EXPLAIN ANALYZE DELETE, EXPLAIN (ANALYZE,COSTS) UPDATE, EXPLAIN+CTE DELETE WHERE, EXPLAIN SELECT, EXPLAIN UPDATE WHERE, regression)
+VERIFICATION:
+  command: cd .worktrees/task-701 && npm run compile && npx vitest run src/core/__tests__/dangerousStatement.test.ts && npm run typecheck
+  result: esbuild OK; 15 passed (15); tsc --noEmit clean
+  output_excerpt: |
+    ✓ src/core/__tests__/dangerousStatement.test.ts  (15 tests) 4ms
+    Test Files  1 passed (1)
+         Tests  15 passed (15)
+    > vsdb@1.5.0 typecheck
+    > tsc --noEmit
+RED_OUTPUT (5 of 7 failed before fix):
+  - case 1: kind 'other' received, 'delete' expected
+  - case 2: kind 'other' received, 'delete' expected
+  - case 3: kind 'other' received, 'update' expected
+  - case 4: kind 'other' received, 'delete' expected
+  - case 6: kind 'other' received, 'update' expected
+  - case 5 (EXPLAIN SELECT) and case 7 (no-EXPLAIN regression) passed pre-fix, as expected
+ISSUES: none
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for review
 ## Reviewer Verdict
 
 (chưa có)
