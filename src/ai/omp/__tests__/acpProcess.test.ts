@@ -302,6 +302,56 @@ describe("AcpProcess", () => {
     handle.dispose();
   });
 
+  // TASK-004 fix round — child exit after handshake must dispose the
+  // AcpClient exactly once so the panel's onClose hook fires and pending
+  // permission requests are default-denied. Regression for the case where
+  // `this.acp` was never assigned and no `child.on("exit")` watchdog was
+  // registered post-handshake.
+  it("child exit after handshake disposes the AcpClient and fires onClose listeners", async () => {
+    const proc = new AcpProcess(
+      {
+        ompPath: "omp",
+        cwd: "/tmp/proj",
+        supportCwdFlag: true,
+        execFn: async () => "omp/18.0.1\n",
+      },
+      captureSpawn(child, captured),
+    );
+
+    let closeListenerFires = 0;
+    const startPromise = proc.start();
+    queueMicrotask(() => {
+      void (async () => {
+        await driveHandshake(child);
+      })();
+    });
+
+    const handle = await startPromise;
+    handle.acp.onClose(() => {
+      closeListenerFires += 1;
+    });
+
+    // Real exit path — must trigger disposeClient → acp.dispose → onClose.
+    child.emitChildExit(0);
+
+    // Drain microtasks so the exit listener and onClose drain run.
+    for (let i = 0; i < 12; i++) {
+      await Promise.resolve();
+    }
+
+    expect(closeListenerFires).toBe(1);
+
+    // Idempotent: second exit / manual disposeClient do not re-fire the
+    // listener (acpClient.onClose fires each registered cb exactly once).
+    child.emitChildExit(0);
+    for (let i = 0; i < 4; i++) {
+      await Promise.resolve();
+    }
+    expect(closeListenerFires).toBe(1);
+
+    handle.dispose();
+  });
+
   it("hostTools: createHostToolExecutor surfaces unknown tool / invalid args without throwing", async () => {
     const registry: ToolRegistry = {
       get: () => undefined,

@@ -30,4 +30,12 @@ For each significant action, append:
 - Review: 4/4 approved (701/702/704 approved_minor). 702 cần 1 vòng auto-fix — blocker chỉ là thiếu RED_OUTPUT paste; Fix702 temp-revert helper → capture real lone-surrogate failure → restore byte-identical.
 - Verification: full suite 40 files / 453 tests PASS; `tsc --noEmit` 0; `scripts/build.sh` → dist/vsdb-1.5.1.vsix 1576198 bytes.
 - Release: push main (356973d..0438762), tag v1.5.1, gh release + asset verified (`gh release view`).
+
+## 2026-08-24 — Cycle M: approval-aware omp ACP bridge
+
+- Action: replaced Cycle L's `omp --mode rpc --approval-mode yolo` integration with a JSON-RPC/NDJSON ACP bridge; user-facing ACP permissions now require explicit Allow/Deny in AI Chat and default-deny on timeout, stop, disposal, replacement, and process exit.
+- Files: `src/ai/omp/acp.ts`, `acpProcess.ts`, ACP tests; `src/ui/aiChatPanel.ts`, message/webview permission UI and ACP tests; `src/extension.ts`; removed legacy RPC/process bridge and its tests after caller migration.
+- Protocol evidence: live `omp acp` 18.0.1 probe established `initialize`, `initialized`, canonical `session/new`, session ID, and child `cwd`; unsafe guessed `session/create` was rejected and never shipped.
+- Review: 4/4 approved (TASK-004 approved_minor after fix round for real child-exit → default-deny lifecycle). Known minor: `hostTools.ts`/`detect.ts` are now orphaned; deferred rather than deleting fallback-related code outside this cycle.
+- Verification: full suite 751 passed / 2 opt-in availability smoke skipped; `npm run compile` and `npm run typecheck` clean.
 - Lesson lặp lại: copy-back bằng `git diff --name-only` + `ls-files` bỏ sót file gitignored (`.cache/release-notes-v1.5.1.md` ở cycle G) → cycle H copy tay notes ngay đầu và báo path trong report — không mất lần nữa.

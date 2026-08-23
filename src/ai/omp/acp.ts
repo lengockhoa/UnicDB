@@ -40,6 +40,9 @@ export interface AcpNotification {
   params: unknown;
 }
 
+/** Listener invoked when the underlying transport closes / the client disposes. */
+export type AcpCloseListener = () => void;
+
 export type AcpServerRequestHandler = (call: AcpServerRequest) => void | Promise<void>;
 export type AcpNotificationHandler = (n: AcpNotification) => void;
 
@@ -48,6 +51,7 @@ export class AcpClient {
   private readonly pending = new Map<number, PendingRequest>();
   private serverRequestHandler: AcpServerRequestHandler | null = null;
   private notificationHandler: AcpNotificationHandler | null = null;
+  private readonly closeListeners: AcpCloseListener[] = [];
   private nextClientId = 1;
   private disposed = false;
   private lineListener: ((line: string) => void) | null = null;
@@ -90,18 +94,55 @@ export class AcpClient {
     this.transport.write(JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n");
   }
 
+  /**
+   * Write a successful JSON-RPC result to the transport, keyed by the given
+   * server-originated request ID. Used by the panel's permission coordinator
+   * to settle `session/request_permission` with `{outcome: "selected", optionId}`
+   * or `{outcome: "cancelled"}`.
+   */
+  respond(id: unknown, result: unknown): void {
+    this.writeResponse(id, { jsonrpc: "2.0", id, result });
+  }
+
   /** Register handler for server-originated requests (frames with an `id`). */
   onServerRequest(handler: AcpServerRequestHandler): void {
     this.serverRequestHandler = handler;
   }
-
   /** Register handler for server-originated notifications (frames with no `id`). */
   onNotification(handler: AcpNotificationHandler): void {
     this.notificationHandler = handler;
   }
 
+  /**
+   * Register a listener that fires when the underlying transport closes or
+   * the client disposes. Used by the panel to detect process exit and
+   * default-deny any pending permission requests before the writer is gone.
+   * Listeners fire at most once per registration.
+   */
+  onClose(listener: AcpCloseListener): void {
+    if (this.disposed) {
+      // Already closed — fire immediately on a microtask so callers can
+      // register safely from within their setup path.
+      queueMicrotask(listener);
+      return;
+    }
+    this.closeListeners.push(listener);
+  }
+
   dispose(): void {
     if (this.disposed) return;
+    // Drain close listeners BEFORE marking the client disposed. Listeners
+    // (e.g. the panel's permission coordinator) need to write final
+    // responses on the transport — once `disposed` is true, writeResponse
+    // silently drops every write.
+    const listeners = this.closeListeners.splice(0);
+    for (const cb of listeners) {
+      try {
+        cb();
+      } catch {
+        /* listener errors must not break the close path */
+      }
+    }
     this.disposed = true;
     for (const pend of this.pending.values()) {
       pend.reject(new Error("disposed"));

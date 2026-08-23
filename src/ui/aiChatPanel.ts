@@ -1,19 +1,36 @@
-// src/ui/aiChatPanel.ts — TASK-003
-// AiChatPanel — single-instance webview panel that hosts a multi-turn chat
-// against the AI agent. The webview only sends: ready, send, stop, clear.
-// The host builds the message list (system prompt + history + user msg),
-// wires the tool registry (createDbTools + register(createSqlTool)), and
-// runs runAgent with a ChatAbortToken gating final-assistant posting.
+// src/ui/aiChatPanel.ts — TASK-004 ACP permission coordinator + panel
+// session wiring.
 //
-// Stop semantics: per spec F4, we do NOT pass AbortController to runAgent
-// because the agent loop doesn't accept one. Instead the host holds a
-// `ChatAbortToken { aborted }` per turn:
-//   - stop message → token.aborted = true
-//   - runAgent onStep: if token.aborted → drop the step
-//   - runAgent settle: if token.aborted → skip assistant final; always
-//     post {type:"done"} to close the turn.
-//   - runAgent rejection due to abort: swallowed (already covered by the
-//     explicit error path / the done post).
+// AiChatPanel — single-instance webview panel that hosts a multi-turn chat
+// against the AI agent. The webview only sends: ready, send, stop, clear,
+// permission_response. The host builds the message list (system prompt +
+// history + user msg), wires the tool registry (createDbTools +
+// register(createSqlTool)), and runs runAgent with a ChatAbortToken gating
+// final-assistant posting.
+//
+// Engine modes:
+//   - "builtin" — runAgent via direct provider. Used when no acp deps or
+//     when the ACP session has terminated (fallback per spec).
+//   - "acp"     — spawn omp acp; stream session/update.agent_message_chunk
+//                 as assistant deltas; surface server-side
+//                 session/request_permission as opaque-ID host requests and
+//                 reply with one ACP result per server request.
+//
+// Stop / dispose / replacement / process exit / timeout semantics:
+//   - Incoming `stop` flips ChatAbortToken and cancels every pending
+//     permission request with a one-shot cancelled ACP result.
+//   - Panel dispose, replacement send, process exit, and the per-request
+//     timeout all do the same: every outstanding opaque ID is settled
+//     exactly once with `outcome:"cancelled"`.
+//
+// Permission security contract (TASK-003 + TASK-004):
+//   - requestId is host-generated opaque; never derived from server data.
+//   - To allow, the webview must echo the SAME requestId AND a listed
+//     optionId. Anything else (unknown requestId, unlisted optionId,
+//     duplicate response, late response) is treated as deny.
+//   - Tool/detail/option text is rendered verbatim as plain text — no
+//     innerHTML, no markdown.
+//   - apiKey never crosses either direction of the wire.
 //
 // Mirror pattern (aiSettingsForm / newTableForm): CSP strict, reveal-on-
 // reshow, dispose parity, no apiKey ever sent to webview.
@@ -31,18 +48,11 @@ import { createDbTools } from "../ai/tools/registry";
 import { createSqlTool } from "../ai/tools/sqlTool";
 import { formatSchemaContext } from "../ai/tools/schemaContext";
 import type { TableInfo, TableDetail } from "../adapters/types";
+import type { AcpProcessHandle } from "../ai/omp/acpProcess";
 import {
-  detectOmp,
-  OMP_INSTALL_HINT,
-  OMP_UPDATE_HINT,
-  type OmpDetection,
-} from "../ai/omp/detect";
-import { OmpProcess } from "../ai/omp/process";
-import type { OmpRpcClient } from "../ai/omp/rpc";
-import {
-  hostToolDefsFromRegistry,
-  createHostToolExecutor,
-} from "../ai/omp/hostTools";
+  type AcpServerRequest,
+  type AcpNotification,
+} from "../ai/omp/acp";
 import type {
   AiChatPanelHostMessage,
   AiChatPanelWebviewMessage,
@@ -52,26 +62,27 @@ const PANEL_ID = "vsdb.aiChatPanel";
 
 const SCHEMA_CONTEXT_BUDGET = 8000; // chars
 const SCHEMA_CONTEXT_TABLE_LIMIT = 30;
+const DEFAULT_PERMISSION_TIMEOUT_MS = 60_000;
+
+/** Optional second constructor arg used by tests to control permission timeout. */
+export interface AiChatPanelTuning {
+  /** Per-permission timeout (ms). Defaults to 60_000. */
+  permissionTimeoutMs?: number;
+}
 
 export interface ChatAbortToken {
   aborted: boolean;
 }
 
 /**
- * Optional omp engine dependencies. When provided, the panel will detect omp,
- * spawn an RPC session, and stream through it. When absent (or detection fails),
- * the panel falls back to the built-in agent loop exactly as cycle K specified.
+ * ACP engine dependencies. When provided, the panel spawns `omp acp` via
+ * `start()`, streams assistant message chunks as deltas, and surfaces server
+ * permission requests as host `permission_request` messages keyed by opaque
+ * IDs. When absent (or `start()` rejects), the panel falls back to the
+ * built-in agent loop.
  */
-export interface OmpPanelDeps {
-  detect: () => Promise<OmpDetection>;
-  spawn: (cwd: string) => Promise<{
-    rpc: OmpRpcClient;
-    version: string;
-    onExit(cb: (code: number | null) => void): void;
-    kill(): void;
-  }>;
-  toolDefs: () => Record<string, unknown>[];
-  toolExecutor: (name: string, args: unknown) => Promise<string>;
+export interface AcpPanelDeps {
+  start(ompPath: string, cwd: string): Promise<AcpProcessHandle>;
 }
 
 export interface AiChatPanelOptions {
@@ -86,9 +97,12 @@ export interface AiChatPanelOptions {
    * connection). Spec: factory null → context is empty, no throw.
    */
   adapterFactory: AdapterFactory;
-  /** Optional omp engine deps — see OmpPanelDeps. */
-  omp?: OmpPanelDeps;
+  /** Optional ACP engine deps. When absent, panel runs builtin only. */
+  acp?: AcpPanelDeps;
+  /** Optional tuning for tests (permission timeout, etc). */
+  tuning?: AiChatPanelTuning;
 }
+
 /** Per-turn input assembly — system prompt + history + user msg. */
 async function buildMessages(
   factory: AdapterFactory,
@@ -122,15 +136,28 @@ async function buildMessages(
   return [{ role: "system", content: systemPrompt }, ...history, userMsg];
 }
 
-/** Resolved engine state, computed lazily on first show. */
+/** Engine state, computed lazily on first show. */
 type EngineKind = "omp" | "builtin";
 
-interface OmpSession {
-  rpc: OmpRpcClient;
-  version: string;
+interface PendingPermission {
+  serverId: unknown;
+  requestId: string;
+  optionIds: Set<string>;
+  /** Settled exactly once. Prevents duplicate / late ACP writes. */
+  settled: boolean;
+  timeoutHandle: NodeJS.Timeout;
+}
+
+interface AcpSession {
+  handle: AcpProcessHandle;
   /** Accumulated assistant text for the current turn. */
   buffer: string;
-  kill(): void;
+  /** Active permission requests keyed by host requestId. */
+  pending: Map<string, PendingPermission>;
+  /** Monotonic counter for host-generated opaque requestIds. */
+  bumpRequestSeq(): number;
+  /** Disposal teardown — cancels timers + drops references. */
+  dispose(): void;
 }
 
 export class AiChatPanel {
@@ -142,18 +169,21 @@ export class AiChatPanel {
   private history: ChatMessage[] = [];
   /** Cached engine resolution — set on first show; reused on every turn. */
   private engine: EngineKind | null = null;
-  /** Engine hint posted once on first ready. */
-  private engineHint: string | null = null;
-  /** Cached omp session — created on first omp-mode send. */
-  private omp: OmpSession | null = null;
-  /** Per-turn set_host_tools sent flag — sent exactly once per session lifetime. */
-  private hostToolsSent = false;
-  /** Set once per omp turn when done was posted (by exit handler or settle). */
+  /** Cached ACP session — created on first acp-mode send. */
+  private acpSession: AcpSession | null = null;
+  /** Set once per ACP turn when done was posted. */
   private turnDonePosted = false;
-  /** Resolvers for in-flight omp turns — fired by agent_end or onExit. */
-  private ompTurnResolvers: Array<() => void> = [];
+  /** Resolvers for in-flight ACP turns — fired by settle path. */
+  private acpTurnResolvers: Array<() => void> = [];
+  private permissionTimeoutMs: number;
 
-  constructor(private readonly options: AiChatPanelOptions) {}
+  constructor(
+    private readonly options: AiChatPanelOptions,
+    tuning: AiChatPanelTuning = {},
+  ) {
+    this.permissionTimeoutMs =
+      tuning.permissionTimeoutMs ?? DEFAULT_PERMISSION_TIMEOUT_MS;
+  }
 
   show(): void {
     if (this.panel) {
@@ -188,7 +218,10 @@ export class AiChatPanel {
   }
 
   dispose(): void {
-    this.killOmpSession();
+    // Cancel every pending permission request with one cancelled ACP
+    // result per server request before tearing the session down.
+    this.cancelAllPending();
+    this.disposeAcpSession();
     this.panel?.dispose();
     this.panel = null;
     for (const d of this.disposables) d.dispose();
@@ -211,63 +244,44 @@ export class AiChatPanel {
       case "clear":
         this.handleClear();
         return;
+      case "permission_response":
+        this.handlePermissionResponse(msg.requestId, msg.optionId);
+        return;
     }
   }
 
   private async handleReady(): Promise<void> {
     if (this.engine === null) {
-      await this.resolveEngine();
-      const resolvedEngine: EngineKind = this.engine ?? "builtin";
-      const hint = this.engineHint;
-      this.post({
-        type: "engine",
-        name: resolvedEngine,
-        hint: hint ?? undefined,
-      });
+      // Default to builtin if no acp deps — keeps the regression path.
+      const wireEngine: "omp" | "builtin" = this.options.acp === undefined ? "builtin" : "omp";
+      this.engine = this.options.acp === undefined ? "builtin" : "omp";
+      this.post({ type: "engine", name: wireEngine });
     }
     this.post({ type: "init", hasHistory: this.history.length > 0 });
-  }
-  /**
-   * Resolve engine on first ready. Cached in `this.engine` for the panel's
-   * lifetime — re-detection only happens if user explicitly resets. Detection
-   * never throws: a missing detect fn or a thrown detector → builtin.
-   */
-  private async resolveEngine(): Promise<void> {
-    if (this.options.omp === undefined) {
-      this.engine = "builtin";
-      return;
-    }
-    let detection: OmpDetection;
-    try {
-      detection = await this.options.omp.detect();
-    } catch {
-      detection = { available: false, ok: false, reason: "spawn-failed" };
-    }
-    if (detection.ok) {
-      this.engine = "omp";
-      this.engineHint = null;
-      return;
-    }
-    this.engine = "builtin";
-    this.engineHint = engineHintFor(detection.reason);
   }
 
   private async handleSend(text: string): Promise<void> {
     const trimmed = text.trim();
     if (trimmed.length === 0) return;
 
-    // Fresh token for this turn.
+    // Fresh token for this turn. Also: a replacement send cancels any
+    // outstanding permission requests from the previous turn before we
+    // start the new one. Default-deny is mandatory.
+    this.cancelAllPending();
     this.token = { aborted: false };
     this.turnDonePosted = false;
 
     const userMsg: ChatMessage = { role: "user", content: trimmed };
 
-    if (this.engine === "omp") {
-      await this.runOmpTurn(trimmed, userMsg);
+    if (this.engine === "builtin") {
+      await this.runBuiltinTurn(userMsg);
       return;
     }
 
-    // Per-turn registry — list_tables + describe_table + run_sql.
+    await this.runAcpTurn(trimmed, userMsg);
+  }
+
+  private async runBuiltinTurn(userMsg: ChatMessage): Promise<void> {
     const registry = createDbTools(this.options.adapterFactory);
     registry.register(createSqlTool(this.options.adapterFactory));
 
@@ -280,15 +294,6 @@ export class AiChatPanel {
       onStep: (step) => this.onStep(step),
     };
 
-    await this.runTurn(messages, registry, callbacks, userMsg);
-  }
-
-  private async runTurn(
-    messages: ChatMessage[],
-    registry: ToolRegistry,
-    callbacks: AgentCallbacks,
-    userMsg: ChatMessage,
-  ): Promise<void> {
     const token = this.token;
     try {
       const result = await runAgent(
@@ -308,13 +313,10 @@ export class AiChatPanel {
         };
         this.history = [...this.history, userMsg, assistantMsg];
       }
-      // If aborted, history is intentionally NOT extended — the partial
-      // turn is discarded so a fresh user prompt can be issued.
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.post({ type: "error", message });
     } finally {
-      // Always close the turn; webview re-enables Send on done.
       this.post({ type: "done" });
     }
   }
@@ -328,25 +330,25 @@ export class AiChatPanel {
     }
   }
 
-  private async runOmpTurn(
+  private async runAcpTurn(
     text: string,
     userMsg: ChatMessage,
   ): Promise<void> {
-    const omp = this.options.omp;
-    if (omp === undefined) {
-      // Shouldn't happen — engine is "omp" only when deps present — but degrade.
+    const acp = this.options.acp;
+    if (acp === undefined) {
+      // Shouldn't happen — engine is "acp" only when deps present — but degrade.
       this.engine = "builtin";
-      this.post({ type: "error", message: "omp engine unavailable; falling back" });
+      this.post({ type: "error", message: "ACP engine unavailable; falling back" });
       this.post({ type: "done" });
       return;
     }
 
-    let session: OmpSession;
+    let session: AcpSession;
     try {
-      session = await this.ensureOmpSession();
+      session = await this.ensureAcpSession();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.post({ type: "error", message: `omp session failed: ${message}` });
+      this.post({ type: "error", message: `ACP session failed: ${message}` });
       this.post({ type: "done" });
       this.engine = "builtin";
       return;
@@ -359,26 +361,17 @@ export class AiChatPanel {
     session.buffer = "";
 
     try {
-      if (!this.hostToolsSent) {
-        await session.rpc.request({ type: "set_host_tools", tools: omp.toolDefs() });
-        this.hostToolsSent = true;
-      }
-      await session.rpc.request({ type: "prompt", message: text });
-      // The turn ends on agent_end event (isTerminal !== false) — handled
-      // by the event listener installed in ensureOmpSession. Nothing to
-      // await here: the listener will post {assistant, done}.
-      // We DO need to keep this method alive until the listener fires; the
-      // listener resolves `turnDone` once terminal arrives.
+      await session.handle.acp.request("session/prompt", {
+        sessionId: session.handle.sessionId,
+        prompt: [{ type: "text", text }],
+      });
       await new Promise<void>((resolve) => {
-        this.ompTurnResolvers.push(() => {
+        this.acpTurnResolvers.push(() => {
           aborted = token?.aborted === true;
           resolve();
         });
       });
 
-      // Even when aborted, post the partial assistant + done so the webview
-      // re-enables Send. History is NOT extended in that case — the partial
-      // turn is discarded.
       if (!this.turnDonePosted) {
         const finalText = session.buffer;
         this.post({ type: "assistant", text: finalText, markdown: true });
@@ -405,105 +398,233 @@ export class AiChatPanel {
     }
   }
 
-  private async ensureOmpSession(): Promise<OmpSession> {
-    if (this.omp !== null) return this.omp;
-    const omp = this.options.omp;
-    if (omp === undefined) {
-      throw new Error("omp deps not configured");
+  private async ensureAcpSession(): Promise<AcpSession> {
+    if (this.acpSession !== null) return this.acpSession;
+    const acp = this.options.acp;
+    if (acp === undefined) {
+      throw new Error("acp deps not configured");
     }
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-    const handle = await omp.spawn(cwd);
-    const session: OmpSession = {
-      rpc: handle.rpc,
-      version: handle.version,
+    const cwd =
+      vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+    const handle = await acp.start("omp", cwd);
+    const pending = new Map<string, PendingPermission>();
+    let nextRequestSeq = 0;
+    const session: AcpSession = {
+      handle,
       buffer: "",
-      kill: () => handle.kill(),
+      pending,
+      bumpRequestSeq: () => ++nextRequestSeq,
+      dispose: () => {
+        // Cancel timers + drop references; do NOT cancel the server requests
+        // here — that's cancelAllPending()'s job. This is the "tear down
+        // local bookkeeping" hook.
+        for (const p of pending.values()) {
+          clearTimeout(p.timeoutHandle);
+        }
+        pending.clear();
+      },
     };
-    // Register exit listener — single source of truth for crash handling.
-    handle.onExit((code) => {
-      if (this.omp !== session) return;
-      this.omp = null;
-      this.hostToolsSent = false;
-      this.engine = "builtin";
-      // If a turn is in flight, settle it. Mark turnDonePosted BEFORE firing
-      // resolvers so runOmpTurn's `if (!this.turnDonePosted)` guards don't
-      // re-post a stale assistant bubble + a second `done` on top of the
-      // error + done we just posted.
-      this.turnDonePosted = true;
-      const resolvers = this.ompTurnResolvers.splice(0);
-      this.post({
-        type: "error",
-        message: `omp session ended (code ${code ?? "unknown"})`,
+    // Wire notification handler — session/update streams assistant text.
+    handle.acp.onNotification((n: AcpNotification) =>
+      this.handleAcpNotification(session, n),
+    );
+    // Wire server request handler — every session/request_permission is
+    // mirrored to the webview as a host permission_request with an opaque
+    // ID; responses are correlated by that opaque ID.
+    handle.acp.onServerRequest((call: AcpServerRequest) =>
+      this.handleAcpServerRequest(session, call),
+    );
+    // Process-exit signal: AcpClient exposes an `onClose(cb)` hook that fires
+    // when the underlying transport closes / the client is disposed. On that
+    // signal we cancel every pending request with a cancelled result.
+    const acpClient = handle.acp as unknown as {
+      onClose?: (cb: () => void) => void;
+    };
+    if (typeof acpClient.onClose === "function") {
+      acpClient.onClose.call(handle.acp, () => {
+        if (this.acpSession !== session) return;
+        this.cancelAllPending();
       });
-      this.post({ type: "done" });
-      // Spec: onExit also surfaces the engine fallback so the webview learns
-      // omp mode ended; without this, the panel's engine state and the
-      // webview's displayed banner drift apart.
-      this.post({ type: "engine", name: "builtin" });
-      for (const r of resolvers) r();
-    });
-
-    // Subscribe to all non-response events.
-    handle.rpc.onEvent((ev) => this.handleOmpEvent(session, ev));
-
-    // Wire host-tool call handler.
-    const toolExecutor = omp.toolExecutor;
-    handle.rpc.handleHostToolCall(async (call) => {
-      return await toolExecutor(call.toolName, call.arguments);
-    });
-
-    this.omp = session;
+    }
+    this.acpSession = session;
     return session;
   }
 
-  private handleOmpEvent(session: OmpSession, ev: Record<string, unknown>): void {
-    const type = ev["type"];
-    if (type === "message_update") {
+  private handleAcpNotification(
+    session: AcpSession,
+    n: AcpNotification,
+  ): void {
+    if (n.method !== "session/update") return;
+    const params = n.params;
+    if (params === null || typeof params !== "object") return;
+    const update = (params as { update?: unknown }).update;
+    if (update === null || typeof update !== "object") return;
+    const sessionUpdate = (update as { sessionUpdate?: unknown }).sessionUpdate;
+    if (sessionUpdate === "agent_message_chunk") {
       if (this.token?.aborted) return;
-      const inner = ev["assistantMessageEvent"] as
-        | { type?: string; delta?: string }
-        | undefined;
-      // ONLY `text_delta` is rendered. omp emits `thinking_delta` (chain-of-
-      // thought) with the same shape; that MUST never appear in the assistant
-      // stream — reasoning is internal model state, not user-facing text.
-      if (inner?.type !== "text_delta") return;
-      const delta = inner.delta;
+      const delta = (update as { delta?: unknown }).delta;
       if (typeof delta === "string" && delta.length > 0) {
         session.buffer += delta;
         this.post({ type: "delta", text: delta });
       }
       return;
     }
-    if (type === "agent_end") {
-      // isTerminal === false → not a real turn end; just an interim checkpoint.
-      if (ev["isTerminal"] === false) return;
-      // Settle the in-flight turn.
-      const resolvers = this.ompTurnResolvers.splice(0);
-      // Final assistant + done are posted by runOmpTurn on settle; we only
-      // unblock here.
+    // agent_thought_chunk + every other update kind: deliberately ignored
+    // (TASK-004 §3: agent_thought_chunk must never render or surface).
+    if (sessionUpdate === "agent_thought_chunk") return;
+    if (sessionUpdate === "agent_end" || sessionUpdate === "turn_complete") {
+      // Terminal marker — settle in-flight turn.
+      const resolvers = this.acpTurnResolvers.splice(0);
       for (const r of resolvers) r();
       return;
     }
-    // Other events (step, etc.) ignored — handled via host_tool_call for tools.
+    // Other update kinds: ignore.
+  }
+
+  private handleAcpServerRequest(
+    session: AcpSession,
+    call: AcpServerRequest,
+  ): void {
+    if (call.method !== "session/request_permission") {
+      // Unknown server request — reply with a JSON-RPC method-not-found so
+      // the server can move on without waiting on us.
+      call.respondError(-32601, `unsupported server request: ${call.method}`);
+      return;
+    }
+    const params = call.params;
+    if (params === null || typeof params !== "object") {
+      call.respondError(-32602, "session/request_permission params required");
+      return;
+    }
+    const p = params as {
+      sessionId?: unknown;
+      toolCall?: { id?: unknown; name?: unknown; detail?: unknown };
+      options?: Array<{ optionId?: unknown; label?: unknown }>;
+    };
+    const toolCall = p.toolCall;
+    const options = Array.isArray(p.options) ? p.options : [];
+    const toolName = typeof toolCall?.name === "string" ? toolCall.name : "";
+    const toolId = typeof toolCall?.id === "string" ? toolCall.id : "";
+    const toolDetail =
+      typeof toolCall?.detail === "string" ? toolCall.detail : "";
+    const optionEntries: Array<{ optionId: string; label: string }> = [];
+    const optionIdSet = new Set<string>();
+    for (const opt of options) {
+      const id = typeof opt.optionId === "string" ? opt.optionId : "";
+      const label = typeof opt.label === "string" ? opt.label : "";
+      if (id.length === 0) continue;
+      optionEntries.push({ optionId: id, label });
+      optionIdSet.add(id);
+    }
+
+    const seq = session.bumpRequestSeq();
+    const requestId = `req-${Date.now().toString(36)}-${seq.toString(36)}`;
+    const pending: PendingPermission = {
+      serverId: call.id,
+      requestId,
+      optionIds: optionIdSet,
+      settled: false,
+      timeoutHandle: setTimeout(() => {
+        // Default-deny on timeout — one cancelled ACP result.
+        this.cancelPending(requestId);
+      }, this.permissionTimeoutMs),
+    };
+    session.pending.set(requestId, pending);
+
+    this.post({
+      type: "permission_request",
+      requestId,
+      tool: { id: toolId, name: toolName, detail: toolDetail },
+      options: optionEntries,
+    });
+  }
+
+  /**
+   * Apply a single webview permission response. Only one ACP result is
+   * written per pending entry — duplicate / late / unknown / unlisted-option
+   * responses are ignored.
+   */
+  private handlePermissionResponse(
+    requestId: string,
+    optionId: string | undefined,
+  ): void {
+    const session = this.acpSession;
+    if (session === null) return;
+    const pending = session.pending.get(requestId);
+    if (pending === undefined || pending.settled) return;
+    // Settle exactly once. We mark settled BEFORE writing to be safe in
+    // case the write triggers a re-entrant path.
+    pending.settled = true;
+    clearTimeout(pending.timeoutHandle);
+    const serverId = pending.serverId;
+    session.pending.delete(requestId);
+
+    // Allow requires a listed optionId; anything else (no optionId, unknown
+    // optionId) is treated as deny — both paths write exactly one result.
+    const isAllow =
+      typeof optionId === "string" && pending.optionIds.has(optionId);
+    if (isAllow) {
+      session.handle.acp.respond(serverId, {
+        outcome: { outcome: "selected", optionId: optionId as string },
+      });
+      return;
+    }
+    session.handle.acp.respond(serverId, {
+      outcome: { outcome: "cancelled" },
+    });
+  }
+
+  /**
+   * Cancel every pending permission request with a one-shot cancelled ACP
+   * result. Used on stop, dispose, replacement, and process exit. Each
+   * pending entry writes at most one result (idempotent).
+   */
+  private cancelAllPending(): void {
+    const session = this.acpSession;
+    if (session === null) return;
+    for (const requestId of Array.from(session.pending.keys())) {
+      this.cancelPending(requestId);
+    }
+  }
+
+  private cancelPending(requestId: string): void {
+    const session = this.acpSession;
+    if (session === null) return;
+    const pending = session.pending.get(requestId);
+    if (pending === undefined || pending.settled) return;
+    pending.settled = true;
+    clearTimeout(pending.timeoutHandle);
+    const serverId = pending.serverId;
+    session.pending.delete(requestId);
+    try {
+      session.handle.acp.respond(serverId, {
+        outcome: { outcome: "cancelled" },
+      });
+    } catch {
+      // Process may have exited; the cancelled result is best-effort.
+    }
   }
 
   private handleStop(): void {
     if (this.token) this.token.aborted = true;
-    if (this.engine === "omp" && this.omp !== null) {
-      // Fire-and-forget abort — error during send is non-fatal.
-      void this.omp.rpc.request({ type: "abort" }).catch(() => undefined);
+    if (this.engine === "omp" && this.acpSession !== null) {
+      this.cancelAllPending();
     }
   }
 
-  private killOmpSession(): void {
-    if (this.omp !== null) {
+  private disposeAcpSession(): void {
+    if (this.acpSession !== null) {
       try {
-        this.omp.kill();
+        this.acpSession.dispose();
       } catch {
         /* ignore */
       }
-      this.omp = null;
-      this.hostToolsSent = false;
+      try {
+        this.acpSession.handle.dispose();
+      } catch {
+        /* ignore */
+      }
+      this.acpSession = null;
     }
   }
 
@@ -543,18 +664,3 @@ export class AiChatPanel {
     </html>`;
   }
 }
-
-function engineHintFor(reason: string | undefined): string {
-  if (reason === "version-too-old") {
-    return `omp installed but version too old. Update with: \`${OMP_UPDATE_HINT}\`.`;
-  }
-  if (reason === "version-unknown") {
-    return `omp version unknown. Update with: \`${OMP_UPDATE_HINT}\`.`;
-  }
-  if (reason === "spawn-failed") {
-    return `omp found but failed to run. Update or reinstall: \`${OMP_UPDATE_HINT}\`.`;
-  }
-  // not-installed (default)
-  return `omp is not installed. Install with: \`${OMP_INSTALL_HINT}\`.`;
-}
-

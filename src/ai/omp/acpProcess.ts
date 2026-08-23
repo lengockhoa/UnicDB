@@ -132,6 +132,26 @@ export class AcpProcess {
     if (handlers.onNotification !== undefined) acp.onNotification(handlers.onNotification);
     if (handlers.onServerRequest !== undefined) acp.onServerRequest(handlers.onServerRequest);
 
+    // Post-handshake child-exit watchdog: when the real `omp acp` process
+    // exits after handshake, dispose the AcpClient exactly once. The client's
+    // onClose listeners (e.g. the panel's permission coordinator) fire
+    // BEFORE the transport is closed, so they still get one shot at writing
+    // the cancelled result on a writable transport. This is the production
+    // default-deny path for "process exit" — without it, the only thing that
+    // ever settles a pending permission is the unrelated 60s timeout.
+    let exited = false;
+    const onChildExit = (_code: number | null): void => {
+      if (exited) return;
+      exited = true;
+      this.disposeClient();
+    };
+    spawnLike.on("exit", onChildExit);
+
+    // Bind the client to the handle so disposeClient() can actually dispose
+    // it. Previously this.acp was never assigned, so the post-exit dispose
+    // was a no-op and the panel's onClose hook never fired on real exit.
+    this.acp = acp;
+
     try {
       const initResult = (await Promise.race([
         acp.request("initialize", {

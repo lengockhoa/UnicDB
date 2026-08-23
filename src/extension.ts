@@ -23,16 +23,8 @@ import { AiSettingsForm } from "./ui/aiSettingsForm";
 import { createProviderClient } from "./ai/provider";
 import type { AdapterFactory } from "./ai/tools/types";
 import type { AgentDeps } from "./ai/agent";
-import { AiChatPanel, type OmpPanelDeps } from "./ui/aiChatPanel";
-import { OmpProcess } from "./ai/omp/process";
-import {
-  hostToolDefsFromRegistry,
-  createHostToolExecutor,
-} from "./ai/omp/hostTools";
-import { detectOmp } from "./ai/omp/detect";
-import { createDbTools } from "./ai/tools/registry";
-import { createSqlTool } from "./ai/tools/sqlTool";
-import type { ToolRegistry } from "./ai/agent";
+import { AiChatPanel, type AcpPanelDeps } from "./ui/aiChatPanel";
+import { AcpProcess } from "./ai/omp/acpProcess";
 import type { ConnectionConfig } from "./config/types";
 import type { ParsedStatement } from "./config/types";
 let disposables: vscode.Disposable[] = [];
@@ -352,35 +344,24 @@ function commandOpenAiSettings(aiStore: AiConfigStore): void {
 }
 
 /**
- * TASK-004 — Build the OmpPanelDeps closure that AiChatPanel consumes in
- * omp mode. Wires OmpProcess (spawn + rpc) with hostToolDefsFromRegistry and
- * createHostToolExecutor over the cycle-K tool registry. The active adapter
- * (POSTGRES-only per cycle K) is consulted lazily inside spawn; the host
- * tools always come from the same DbToolRegistry so the read-only guard
- * stays the single chokepoint for DB access.
+ * TASK-004 — Build the AcpPanelDeps closure that AiChatPanel consumes in
+ * ACP mode. Wires AcpProcess (spawn + handshake) and surfaces the
+ * AcpProcessHandle to the panel's permission coordinator. The session/prompt
+ * call is server-driven from this point; tool definitions are registered
+ * out-of-band by the ACP server, so no toolDefs/toolExecutor callbacks are
+ * needed here. The DB access boundary is unchanged — still via the
+ * createDbTools + createSqlTool registry, but invoked from the host's own
+ * agent loop (builtin mode) when ACP falls back.
  */
-function buildOmpDeps(adapterFactory: AdapterFactory): OmpPanelDeps {
+function buildAcpDeps(): AcpPanelDeps {
   return {
-    detect: () => detectOmp(),
-    spawn: async (cwd: string) => {
-      const proc = new OmpProcess({ cwd });
-      const handle = await proc.start();
-      return {
-        rpc: handle.rpc,
-        version: handle.version,
-        onExit: (cb) => proc.onExit(cb),
-        kill: () => proc.kill(),
-      };
-    },
-    toolDefs: () => {
-      const registry = createDbTools(adapterFactory);
-      registry.register(createSqlTool(adapterFactory));
-      return hostToolDefsFromRegistry(registry);
-    },
-    toolExecutor: (name: string, args: unknown) => {
-      const registry = createDbTools(adapterFactory);
-      registry.register(createSqlTool(adapterFactory));
-      return createHostToolExecutor(registry)(name, args);
+    start: async (ompPath: string, cwd: string) => {
+      const proc = new AcpProcess({
+        ompPath,
+        cwd,
+        supportCwdFlag: true,
+      });
+      return await proc.start();
     },
   };
 }
@@ -402,12 +383,11 @@ async function commandOpenAiChat(
       extensionUri: extensionUriForForm,
       deps,
       adapterFactory,
-      omp: buildOmpDeps(adapterFactory) ?? undefined,
+      acp: buildAcpDeps(),
     });
   }
   aiChatPanel.show();
 }
-
 async function runQueryFromEditor(
   mgr: ConnectionManager,
   runner: QueryRunner,
