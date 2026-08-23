@@ -1,6 +1,6 @@
 Command: handoff-fullstack
-Goal: Cycle D+E — grid edit/paste/export/save + WHERE bar + Run .sh; release v1.4.0
+Goal: Cycle F (v1.4.1) — 4 deferred minors từ review D+E
 Base: main
-Phase: DONE — released v1.4.0
-Cursor: main @ bdbd7b5, tag v1.4.0 pushed, GitHub release asset vsdb-1.4.0.vsix live (all 6 tasks done: 501/505/502/503/504 approved, 506 gates 388 tests)
-Next: queued — AI assist tab (chưa spec); thấy bug thì mở cycle mới
+Phase: DONE — released v1.4.1
+Cursor: main @ 35edae7, tag v1.4.1 pushed, asset vsdb-1.4.1.vsix live (orchestrator direct, waived — 2 logic fixes có test, 2 comment/defense fixes)
+Next: chỉ còn AI assist tab trong INDEX queued (chưa spec) — cần yêu cầu từ user

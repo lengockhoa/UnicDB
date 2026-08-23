@@ -20,6 +20,5 @@ Gates: compile OK · typecheck OK · 34 files / 388 tests · browser smoke grid 
 ## Queued (future cycles)
 
 - AI assist tab (user 2026-08-22, chưa spec chi tiết).
-- Known deferred minors: saveEdits refresh durationMs epoch bug (TASK-503 scope); delete-loop O(rows×cols); composeRequery trailing-`;` defense-in-depth; batched pickResult refresh.
 
-Updated: 2026-08-22 · cycle 2026-08-22-D+E (released v1.4.0)
+Updated: 2026-08-23 · v1.4.1 released — deferred minors (durationMs, O(n²) save batch, trailing-`;` strip, comment dedup) all cleared; remaining queued item needs a user spec.
