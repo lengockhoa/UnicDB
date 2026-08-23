@@ -14,4 +14,4 @@ Cycle history: A (AG Grid), B (edit/paste/undo), C, D+E (grid edit/save/export/r
 | TASK-003 | Agent loop: config-driven routing + tool registry + step budget (src/ai/agent.ts) | P0 | L | ready | - | - | tasks/TASK-003.md |
 | TASK-004 | AI Settings form (webview) + extension wiring + README privacy | P0 | L | ready | - | - | tasks/TASK-004.md |
 
-Waves: 1 = TASK-001,002 (parallel) → 2 = TASK-003 → 3 = TASK-004.
+Waves: 1 = TASK-001,002 (parallel — T1 owns src/ai/settings.ts+config.ts, T2 owns src/ai/provider.ts standalone, no shared files) → 2 = TASK-003 → 3 = TASK-004.

@@ -1,15 +1,16 @@
 # ACTIVE
 
-Cycle: I   Date: 2026-08-23   Base: main
-Goal: DataGrip-style table designer for PostgreSQL (New Table…, Modify Table…, Copy CREATE DDL, Generate Sample Data…, Analyze/Vacuum on the schema tree)
-Tasks: 6 total (TASK-001..006; waves 1:[001,002,003] 2:[004] 3:[005] 4:[006])
+Cycle: J   Date: 2026-08-23   Base: main
+Goal: AI Core foundation — config storage (SecretStorage + globalState) + OpenAI-compatible provider + agent loop (multi-turn, tool seam) + AI Settings form
+Tasks: 4 total (TASK-001..004; waves 1:[001,002] 2:[003] 3:[004])
 Status: planning_done — ready for executor
 
 Notes:
-- PostgreSQL only; non-postgres nodes → Information "…: PostgreSQL connections only".
-- PG for integration: 127.0.0.1:5433 vsdb/vsdb/vsdb (orchestrator-managed, VSDB_IT=1).
-- Cycle J queued (AI core) — spec at docs/AI_HANDOFF/queue/AI-CORE-spec.md.
+- Pure modules: src/ai/settings.ts (no vscode), src/ai/provider.ts + src/ai/agent.ts (no vscode, injected fetch/config/registry). Interface freeze list in PLAN.md §3.
+- Scope guards cycle J: NO DB tools (empty ToolRegistry seam), NO streaming, NO chat panel, NO Anthropic protocol. Method enum: 'responses' | 'chat/completions'; roles: work (vision) + smart.
+- Unit tests only — fake vscode (connectionManager.test.ts pattern), fake fetch, fake registry. No PG container, no network.
+- Security: apiKey → SecretStorage `vsdb.ai.apiKey` only; never logged/serialized; agent re-reads config per run (no stale cache).
 
 Kết quả gần nhất:
 - v1.5.1 (2026-08-23-H): EXPLAIN ANALYZE guard, emoji-safe modal, lock sync. 453 tests.
-- v1.5.0 (2026-08-23-G): set filter, icon toolbar, Run .sh lens, destructive confirm.
+- Cycle I (2026-08-23, table designer): 6 tasks done; plan archived trong archive/.
