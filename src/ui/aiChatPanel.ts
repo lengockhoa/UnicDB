@@ -222,7 +222,7 @@ export class AiChatPanel {
       this.post({
         type: "engine",
         name: resolvedEngine,
-        ...(hint !== null ? { hint } : {}),
+        hint: hint ?? undefined,
       });
     }
     this.post({ type: "init", hasHistory: this.history.length > 0 });
@@ -256,10 +256,6 @@ export class AiChatPanel {
     const trimmed = text.trim();
     if (trimmed.length === 0) return;
 
-    // Per-turn registry — list_tables + describe_table + run_sql.
-    const registry = createDbTools(this.options.adapterFactory);
-    registry.register(createSqlTool(this.options.adapterFactory));
-
     // Fresh token for this turn.
     this.token = { aborted: false };
     this.turnDonePosted = false;
@@ -267,9 +263,13 @@ export class AiChatPanel {
     const userMsg: ChatMessage = { role: "user", content: trimmed };
 
     if (this.engine === "omp") {
-      await this.runOmpTurn(trimmed, registry, userMsg);
+      await this.runOmpTurn(trimmed, userMsg);
       return;
     }
+
+    // Per-turn registry — list_tables + describe_table + run_sql.
+    const registry = createDbTools(this.options.adapterFactory);
+    registry.register(createSqlTool(this.options.adapterFactory));
 
     const messages = await buildMessages(
       this.options.adapterFactory,
@@ -330,7 +330,6 @@ export class AiChatPanel {
 
   private async runOmpTurn(
     text: string,
-    _registry: ToolRegistry,
     userMsg: ChatMessage,
   ): Promise<void> {
     const omp = this.options.omp;
@@ -354,6 +353,10 @@ export class AiChatPanel {
     }
     const token = this.token;
     let aborted = false;
+
+    // Reset per-turn buffer so this turn's assistant text doesn't accumulate
+    // over previous turn's text (which would leak thinking across turns).
+    session.buffer = "";
 
     try {
       if (!this.hostToolsSent) {
@@ -422,13 +425,21 @@ export class AiChatPanel {
       this.omp = null;
       this.hostToolsSent = false;
       this.engine = "builtin";
-      // If a turn is in flight, settle it.
+      // If a turn is in flight, settle it. Mark turnDonePosted BEFORE firing
+      // resolvers so runOmpTurn's `if (!this.turnDonePosted)` guards don't
+      // re-post a stale assistant bubble + a second `done` on top of the
+      // error + done we just posted.
+      this.turnDonePosted = true;
       const resolvers = this.ompTurnResolvers.splice(0);
       this.post({
         type: "error",
         message: `omp session ended (code ${code ?? "unknown"})`,
       });
       this.post({ type: "done" });
+      // Spec: onExit also surfaces the engine fallback so the webview learns
+      // omp mode ended; without this, the panel's engine state and the
+      // webview's displayed banner drift apart.
+      this.post({ type: "engine", name: "builtin" });
       for (const r of resolvers) r();
     });
 
@@ -452,7 +463,11 @@ export class AiChatPanel {
       const inner = ev["assistantMessageEvent"] as
         | { type?: string; delta?: string }
         | undefined;
-      const delta = inner?.delta;
+      // ONLY `text_delta` is rendered. omp emits `thinking_delta` (chain-of-
+      // thought) with the same shape; that MUST never appear in the assistant
+      // stream — reasoning is internal model state, not user-facing text.
+      if (inner?.type !== "text_delta") return;
+      const delta = inner.delta;
       if (typeof delta === "string" && delta.length > 0) {
         session.buffer += delta;
         this.post({ type: "delta", text: delta });

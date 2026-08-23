@@ -32,7 +32,26 @@ interface ErrorMsg {
 interface DoneMsg {
   type: "done";
 }
-type HostMsg = InitMsg | StepMsg | AssistantMsg | ErrorMsg | DoneMsg;
+/** Incremental assistant text from omp streaming — appended to the current
+ assistant bubble in real time. */
+interface DeltaMsg {
+  type: "delta";
+  text: string;
+}
+/** Engine mode announcement — emitted on first ready (and on crash fallback). */
+interface EngineMsg {
+  type: "engine";
+  name: "omp" | "builtin";
+  hint?: string;
+}
+type HostMsg =
+  | InitMsg
+  | StepMsg
+  | AssistantMsg
+  | ErrorMsg
+  | DoneMsg
+  | DeltaMsg
+  | EngineMsg;
 
 // ---- State -----------------------------------------------------------------
 interface State {
@@ -41,20 +60,17 @@ interface State {
 }
 const state: State = { busy: false, hasHistory: false };
 
+const root = document.getElementById("vsdb-root") as HTMLDivElement;
+
 // ---- vscode bridge ---------------------------------------------------------
 function post(msg: unknown): void {
   vscodeApi?.postMessage(msg);
 }
 
-const root = document.getElementById("vsdb-root") as HTMLDivElement;
-
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => {
     switch (c) {
       case "&":
-        return "&amp;";
-      case "<":
-        return "&lt;";
       case ">":
         return "&gt;";
       case '"':
@@ -197,20 +213,55 @@ function appendAssistant(text: string, markdown: boolean): void {
   thread.scrollTop = thread.scrollHeight;
 }
 
-function appendError(message: string): void {
+/** Append an incremental text fragment to the current assistant bubble.
+ * If no assistant bubble is open, create one. Used for omp streaming —
+ * the host posts `{type:"delta",text}` and the final assistant message
+ * then arrives when the turn ends.
+ */
+function appendDelta(text: string): void {
   const thread = document.getElementById("thread");
   if (!thread) return;
-  const div = document.createElement("div");
-  div.className = "vsdb-chat-bubble vsdb-chat-error";
-  div.textContent = `Error: ${message}`;
-  thread.appendChild(div);
+  let bubble = thread.querySelector<HTMLDivElement>(
+    ".vsdb-chat-bubble.vsdb-chat-assistant.vsdb-chat-streaming",
+  );
+  if (!bubble) {
+    bubble = document.createElement("div");
+    bubble.className =
+      "vsdb-chat-bubble vsdb-chat-assistant vsdb-chat-streaming";
+    thread.appendChild(bubble);
+  }
+  // Streaming content is plain text; full markdown render happens on the
+  // terminal assistant message. Append the escaped fragment and scroll.
+  bubble.appendChild(document.createTextNode(text));
   thread.scrollTop = thread.scrollHeight;
+}
+
+/** Show / replace the engine banner (omp active, or builtin fallback with hint). */
+function applyEngine(msg: EngineMsg): void {
+  const root = document.getElementById("vsdb-root");
+  if (!root) return;
+  let banner = document.getElementById("engineBanner");
+  if (banner) banner.remove();
+  banner = document.createElement("div");
+  banner.id = "engineBanner";
+  banner.className = `vsdb-chat-engine vsdb-chat-engine-${msg.name}`;
+  const label =
+    msg.name === "omp"
+      ? "Engine: oh-my-pi (omp) — streaming"
+      : `Engine: builtin${msg.hint ? ` — ${msg.hint}` : ""}`;
+  banner.textContent = label;
+  // Insert at the top of the thread (before any chat bubbles).
+  const thread = document.getElementById("thread");
+  if (thread && thread.parentNode === root) {
+    root.insertBefore(banner, thread);
+  } else {
+    root.prepend(banner);
+  }
 }
 
 function applyInit(msg: InitMsg): void {
   state.hasHistory = msg.hasHistory;
 }
-
 // ---- Wire host messages ----------------------------------------------------
 window.addEventListener("message", (ev: MessageEvent) => {
   const msg = ev.data as HostMsg;
@@ -221,7 +272,23 @@ window.addEventListener("message", (ev: MessageEvent) => {
     case "step":
       appendStep(msg.label);
       return;
+    case "delta":
+      appendDelta(msg.text);
+      return;
+    case "engine":
+      applyEngine(msg);
+      return;
     case "assistant":
+      // Final assistant message: replace any open streaming bubble with a
+      // rendered markdown version. If no streaming bubble exists, render a
+      // new one (builtin path).
+      {
+        const thread = document.getElementById("thread");
+        const streaming = thread?.querySelector(
+          ".vsdb-chat-bubble.vsdb-chat-assistant.vsdb-chat-streaming",
+        );
+        if (streaming) streaming.remove();
+      }
       appendAssistant(msg.text, msg.markdown);
       return;
     case "error":

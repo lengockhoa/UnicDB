@@ -696,8 +696,214 @@ describe("AiChatPanel — builtin regression (no omp deps)", () => {
     const engineMsgs = postedMessages(p).filter(isEngine);
     expect(engineMsgs).toHaveLength(1);
     expect(engineMsgs[0]?.name).toBe("builtin");
-    // No hint because no omp intent at all — install hint is reserved for
-    // detection failure cases.
     expect(engineMsgs[0]?.hint).toBeUndefined();
+  });
+});
+
+// =============================================================================
+// Regression (R4.5 — Reviewer findings 2/3/4/5):
+//   R-thinking: a thinking_delta frame from omp MUST NOT appear in any
+//                posted message. Chain-of-thought must never reach the
+//                webview (privacy + correctness).
+//   R-crash:    onExit mid-turn posts exactly ONE done. The crash handler
+//                sets turnDonePosted BEFORE firing resolvers, so runOmpTurn
+//                does not re-post a stale assistant bubble + second done.
+//   R-twoturns: session.buffer is reset per turn. Two consecutive omp turns
+//                do NOT concatenate turn 1's text into turn 2's assistant.
+// =============================================================================
+describe("AiChatPanel — omp regression R4.5", () => {
+  it("R-thinking: thinking_delta frame is NOT posted (never reaches webview)", async () => {
+    const detection: OmpDetection = { available: true, ok: true, version: "18.0.1" };
+    const { deps: ompDeps, sessions } = makeFakeOmpDeps(detection);
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      omp: ompDeps,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+
+    handler({ type: "send", text: "think" });
+    await until(() => sessions.length > 0);
+    const session = sessions[0] as SpawnedSession;
+    expect(session).toBeDefined();
+    await until(() =>
+      session.written.some((w) => w.includes('"type":"prompt"')),
+    );
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    // Feed interleaved thinking_delta and text_delta. The thinking frame
+    // must be dropped on the floor; only the text frame is posted.
+    session.handle.feedEvent({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_delta",
+        delta: "Reasoning about the user's intent…",
+      },
+    });
+    session.handle.feedEvent({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "Hi" },
+    });
+    session.handle.feedEvent({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_delta",
+        delta: "More reasoning that must not leak.",
+      },
+    });
+    session.handle.feedEvent({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: " there" },
+    });
+    session.handle.feedEvent({ type: "agent_end", isTerminal: true });
+
+    await until(() => postedMessages(p).some(isAssistant));
+    await until(() => postedMessages(p).some(isDone));
+
+    const allPosted = JSON.stringify(postedMessages(p));
+    expect(allPosted).not.toMatch(/Reasoning about/);
+    expect(allPosted).not.toMatch(/must not leak/);
+
+    // Only text_delta frames appear as `delta` messages, in order.
+    const deltas = postedMessages(p).filter(isDelta) as DeltaMsg[];
+    expect(deltas.map((d) => d.text).join("")).toBe("Hi there");
+
+    // Final assistant is the text only — no thinking leakage.
+    const assistants = postedMessages(p).filter(isAssistant) as AssistantMsg[];
+    expect(assistants[0]?.text).toBe("Hi there");
+  });
+
+  it("R-crash: onExit mid-turn posts exactly ONE done + ONE error + NO stale assistant", async () => {
+    const detection: OmpDetection = { available: true, ok: true, version: "18.0.1" };
+    const { deps: ompDeps, sessions } = makeFakeOmpDeps(detection);
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      omp: ompDeps,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+
+    handler({ type: "send", text: "go" });
+    await until(() => sessions.length > 0);
+    const session = sessions[0] as SpawnedSession;
+    expect(session).toBeDefined();
+    await until(() =>
+      session.written.some((w) => w.includes('"type":"prompt"')),
+    );
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    // Accumulate some text so the buffer is non-empty — this is the
+    // "stale bubble" that should NOT appear after the crash's done.
+    session.handle.feedEvent({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "partial" },
+    });
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    // Crash mid-turn.
+    session.handle.fireExit(1);
+
+    // Settle: error + done + engine=builtin fallback.
+    await until(() => postedMessages(p).some(isError));
+    await until(() => postedMessages(p).some(isDone));
+    // Allow resolvers + finally-block to drain.
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+
+    // Exactly ONE done. The fix sets turnDonePosted BEFORE firing
+    // resolvers, so runOmpTurn's `if (!this.turnDonePosted)` guards
+    // skip re-posting a second done.
+    const dones = postedMessages(p).filter(isDone);
+    expect(dones.length).toBe(1);
+
+    // Exactly ONE error (the crash error).
+    const errs = postedMessages(p).filter(isError) as ErrorMsg[];
+    expect(errs.length).toBe(1);
+    expect(errs[0]?.message).toMatch(/ended/i);
+
+    // NO stale assistant bubble from runOmpTurn's finally-block.
+    // The crash handler posted done itself; runOmpTurn must NOT then
+    // post an assistant final + second done.
+    const assistantsAfterCrash = postedMessages(p).filter(isAssistant);
+    expect(assistantsAfterCrash.length).toBe(0);
+
+    // The engine=builtin fallback IS posted (Finding 5).
+    const engineBuiltins = (postedMessages(p).filter(isEngine) as EngineMsg[]).filter(
+      (e) => e.name === "builtin",
+    );
+    // At least one — the initial ready may have been omp=ok, then crash
+    // downgrades to builtin.
+    expect(engineBuiltins.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("R-twoturns: two consecutive omp turns do NOT concatenate turn 1 text", async () => {
+    const detection: OmpDetection = { available: true, ok: true, version: "18.0.1" };
+    const { deps: ompDeps, sessions } = makeFakeOmpDeps(detection);
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      omp: ompDeps,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+
+    // --- Turn 1 ---
+    handler({ type: "send", text: "first" });
+    await until(() => sessions.length > 0);
+    const session = sessions[0] as SpawnedSession;
+    expect(session).toBeDefined();
+    await until(() =>
+      session.written.some((w) => w.includes('"type":"prompt"')),
+    );
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    session.handle.feedEvent({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "turn1-answer" },
+    });
+    session.handle.feedEvent({ type: "agent_end", isTerminal: true });
+    await until(() => postedMessages(p).filter(isAssistant).length >= 1);
+    await until(() => postedMessages(p).filter(isDone).length >= 1);
+    const t1Assistants = postedMessages(p).filter(isAssistant) as AssistantMsg[];
+    expect(t1Assistants[t1Assistants.length - 1]?.text).toBe("turn1-answer");
+
+    // --- Turn 2 ---
+    handler({ type: "send", text: "second" });
+    // Wait for the second prompt frame on the wire (proves runOmpTurn started).
+    await until(() => {
+      const prompts = session.handle.allWritten().filter((f) => f["type"] === "prompt");
+      return prompts.length >= 2;
+    });
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    session.handle.feedEvent({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "turn2-answer" },
+    });
+    session.handle.feedEvent({ type: "agent_end", isTerminal: true });
+    await until(() => postedMessages(p).filter(isAssistant).length >= 2);
+    await until(() => postedMessages(p).filter(isDone).length >= 2);
+    const t2Assistants = postedMessages(p).filter(isAssistant) as AssistantMsg[];
+    expect(t2Assistants[t2Assistants.length - 1]?.text).toBe("turn2-answer");
+
+    // The final assistant bubble must contain ONLY turn 2 text. The fix
+    // clears session.buffer = "" at the start of every omp turn.
+    expect(t2Assistants[t2Assistants.length - 1]?.text).not.toMatch(/turn1/);
   });
 });

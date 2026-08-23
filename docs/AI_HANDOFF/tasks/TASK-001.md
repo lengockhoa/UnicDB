@@ -115,4 +115,37 @@ FINDINGS:
   minor:
     - file: src/ai/omp/rpc.ts:126-133 — dispose() drains the queue via send(), leaving this.pending set to an already-rejected entry; harmless (disposed guard) but misleading state.
 NEXT_STATUS_FOR_INDEX: critical_block
+
+## Executor Report (fix round 1)
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+SUMMARY: Wired default OmpProcess transport bidirectionally — switched spawn stdio to ["pipe","pipe","pipe"], piped stdin through createLineTransport so writes actually reach omp, surfaced spawn 'error' via Promise.race so start() rejects promptly when omp is missing. Added 2 regression tests proving bidirectional byte flow and error rejection through the default transport. 11/11 PASS, tsc clean.
+TEST_PLAN_FOLLOWED: task §4 (9 cases) + 2 regression tests for reviewer critical #1 (stdio+stdin wiring) and important #2 (spawn error rejection).
+FILES_CHANGED:
+  - src/ai/omp/process.ts: SpawnLike gains stdin field; spawn stdio=["pipe","pipe","pipe"] (was ["ignore",...]); spawnLike exposes stdin; createLineTransport takes (stdin, stdout) and forwards write→stdin.write + close→stdin.end with EPIPE guard; spawn 'error' rejects start() via Promise.race([waitReady, startError]).
+  - src/ai/omp/__tests__/process.test.ts: added FakeWritable/FakeReadable/EventEmitterFakeChild helpers; added 2 regression tests — "default transport wires child stdin<->stdout bidirectionally (no injected transport)" and "start() rejects when spawn emits 'error' (e.g. omp missing)".
+TESTS_ADDED:
+  - src/ai/omp/__tests__/process.test.ts:default transport wires child stdin<->stdout bidirectionally (no injected transport) — asserts stdio=["pipe","pipe","pipe"], that rpc.request(prompt) writes the framed JSON to child.stdin, that a response frame on stdout resolves the pending request, and that rpc.dispose() ends stdin.
+  - src/ai/omp/__tests__/process.test.ts:start() rejects when spawn emits 'error' (e.g. omp missing) — asserts start() rejects with the spawn error message, not "disposed".
+VERIFICATION:
+  command: npx vitest run src/ai/omp/__tests__/rpc.test.ts src/ai/omp/__tests__/process.test.ts && npx tsc --noEmit
+  result: 11 pass / 0 fail; tsc exit 0
+  output_excerpt: |
+    ✓ src/ai/omp/__tests__/process.test.ts  (4 tests) 3ms
+    ✓ src/ai/omp/__tests__/rpc.test.ts  (7 tests) 4ms
+    Test Files  2 passed (2)
+         Tests  11 passed (11)
+RED_OUTPUT (regression tests on BROKEN production, captured by reverting fix then re-running):
+    ❯ src/ai/omp/__tests__/process.test.ts > OmpProcess > default transport wires child stdin<->stdout bidirectionally (no injected transport)
+      → expected [ 'ignore', 'pipe', 'pipe' ] to deeply equal [ 'pipe', 'pipe', 'pipe' ]
+      ❯ src/ai/omp/__tests__/process.test.ts > OmpProcess > start() rejects when spawn emits 'error' (e.g. omp missing)
+        → Test timed out in 5000ms.
+      Test Files  1 failed (1)
+           Tests  2 failed | 2 passed (4)
+ISSUES: minor reviewer finding (rpc.ts:126-133 dispose queue drain) left as-is per instructions ("minor only if trivial") — harmless disposed-guard state.
+HANDOFF_TO_REVIEWER: yes — wave-2 fix round
+NEXT: ready for review
 NOTES: rpc.ts itself is protocol-faithful (live-probed: no correlation id, command+order correlation, abort response without data field, non-response frames → onEvent); the defect is confined to OmpProcess's default transport. TASK-004 approved on top of a fake-rpc seam, so the integration break was invisible to its tests — re-review TASK-004 panel flow after the fix.

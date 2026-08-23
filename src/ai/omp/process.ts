@@ -22,6 +22,7 @@ export interface OmpProcessOptions {
 }
 
 interface SpawnLike {
+  stdin: NodeJS.WritableStream;
   stdout: NodeJS.ReadableStream;
   stderr: NodeJS.ReadableStream;
   on(ev: "exit", cb: (code: number | null) => void): void;
@@ -62,10 +63,13 @@ export class OmpProcess {
       args.push(...this.opts.extraArgs);
     }
     const child = this.spawnFn(ompPath, args, {
-      stdio: ["ignore", "pipe", "pipe"],
+      // Pipe stdin so omp receives prompt/abort/host_tool_result frames;
+      // stdio:"ignore" closes stdin at birth → omp treats EOF as terminate.
+      stdio: ["pipe", "pipe", "pipe"],
       cwd: this.opts.cwd,
     });
     const spawnLike: SpawnLike = {
+      stdin: child.stdin,
       stdout: child.stdout,
       stderr: child.stderr,
       on: ((ev: string, cb: (...args: unknown[]) => void): void => {
@@ -92,15 +96,20 @@ export class OmpProcess {
       }
       this.disposeRpc();
     });
-    spawnLike.on("error", () => {
-      this.disposeRpc();
+    // Forward spawn 'error' (e.g. omp missing → ENOENT) so waitReady/start
+    // rejects promptly instead of waiting 10s for the ready timeout.
+    const startError = new Promise<never>((_, reject) => {
+      spawnLike.on("error", (err) => {
+        reject(err);
+        this.disposeRpc();
+      });
     });
 
     const rpcTransport: RpcTransport =
-      transport ?? createLineTransport(spawnLike.stdout);
+      transport ?? createLineTransport(spawnLike.stdin, spawnLike.stdout);
     const rpc = new OmpRpcClient(rpcTransport);
     this.rpc = rpc;
-    await rpc.waitReady();
+    await Promise.race([rpc.waitReady(), startError]);
 
     let version = "unknown";
     try {
@@ -160,7 +169,10 @@ function defaultExecFn(cmd: string): Promise<string> {
   });
 }
 
-function createLineTransport(stdout: NodeJS.ReadableStream): RpcTransport {
+function createLineTransport(
+  stdin: NodeJS.WritableStream,
+  stdout: NodeJS.ReadableStream,
+): RpcTransport {
   const listeners = new Set<(line: string) => void>();
   let buffer = "";
   stdout.setEncoding("utf8");
@@ -177,18 +189,32 @@ function createLineTransport(stdout: NodeJS.ReadableStream): RpcTransport {
       }
     }
   });
+  let closed = false;
   return {
-    write: (_line: string) => {
-      /* Writing back to the child is handled by the OS pipe when the caller
-       * pipes stdin through spawn. The OmpRpcClient writes go to whatever
-       * transport was passed to start(); in real use this would be a writer
-       * that targets the child process's stdin, which we don't model here. */
+    write: (line: string) => {
+      if (closed) {
+        return;
+      }
+      try {
+        stdin.write(line);
+      } catch {
+        /* EPIPE after child exit — drop silently; rpc.dispose will fire soon. */
+      }
     },
     onLine: (cb: (line: string) => void) => {
       listeners.add(cb);
     },
     close: () => {
+      if (closed) {
+        return;
+      }
+      closed = true;
       listeners.clear();
+      try {
+        stdin.end();
+      } catch {
+        /* best-effort */
+      }
     },
   };
 }

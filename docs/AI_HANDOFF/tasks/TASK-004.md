@@ -107,3 +107,38 @@ FINDINGS:
     - file: src/ui/aiChatPanel.ts:326-330 — `runOmpTurn`'s `_registry` param is built unconditionally in `handleSend` even for omp turns; build it only for the builtin branch or drop the param.
 NEXT_STATUS_FOR_INDEX: changes_requested
 NOTES: 5 important findings are user-visible: thinking leakage is a correctness/privacy defect (chain-of-thought rendered to end user), stale-buffer duplication and double-done break the chat transcript on every second turn and every crash. The webview gap means the spec'd streaming UX does not exist at runtime despite green tests.
+
+## Executor Report (fix round 1)
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: FixL-T004
+SUMMARY: Fixed all 5 important + 2 minor reviewer findings — webview now renders `delta` (streaming bubble append) + `engine` (banner with install/update hint); handleOmpEvent filters on `assistantMessageEvent.type === "text_delta"` so thinking_delta never reaches session.buffer or posted messages; crash handler (onExit) sets turnDonePosted BEFORE firing resolvers + posts `{type:"engine",name:"builtin"}` fallback; session.buffer reset to "" at start of each omp turn; cleaned hint field shorthand + dropped unused _registry param.
+TEST_PLAN_FOLLOWED: task §4 (7 cases) + inline R4.5 regression cases (R-thinking, R-crash, R-twoturns)
+FINDINGS_FIXED:
+  - webview/aiChatPanelMain.ts — added DeltaMsg + EngineMsg to HostMsg union; appendDelta() opens a `.vsdb-chat-streaming` assistant bubble and appends escaped text fragments; applyEngine() mounts an `engineBanner` div (blue for omp, yellow for builtin with hint); listener switch now handles `delta` + `engine`; assistant case removes the streaming bubble before re-rendering markdown.
+  - webview/styles.css — added .vsdb-chat-engine/.vsdb-chat-engine-omp/.vsdb-chat-engine-builtin/.vsdb-chat-thread/.vsdb-chat-bubble/.vsdb-chat-user/.vsdb-chat-assistant/.vsdb-chat-step/.vsdb-chat-error/.vsdb-chat-input/.vsdb-chat-actions CSS rules.
+  - src/ui/aiChatPanel.ts — handleOmpEvent now bails out when inner.type !== "text_delta" (Finding 2 — thinking_delta filtered); onExit sets `this.turnDonePosted = true` BEFORE splicing resolvers + posting error/done (Finding 3 — no second done, no stale assistant); onExit now posts `{type:"engine", name:"builtin"}` after done (Finding 5 — webview learns engine fell back); runOmpTurn resets `session.buffer = ""` at start of every turn (Finding 4 — no accumulation across turns); handleReady uses `hint: hint ?? undefined` (minor 1); handleSend no longer builds the DB tool registry for omp turns and runOmpTurn dropped the `_registry` param (minor 2).
+FILES_CHANGED:
+  - src/ui/aiChatPanel.ts: handleOmpEvent type-filter; onExit turnDonePosted + engine=builtin post; runOmpTurn session.buffer reset + dropped _registry; handleSend defers registry build until builtin branch; handleReady hint shorthand.
+  - webview/aiChatPanelMain.ts: DeltaMsg/EngineMsg interfaces + HostMsg union; appendDelta/applyEngine helpers; listener switch `delta`/`engine` cases; assistant case strips streaming bubble.
+  - webview/styles.css: chat panel CSS (engine banner, bubbles, thread, input, actions).
+  - src/ui/__tests__/aiChatOmp.test.ts: added 3 regression tests under "AiChatPanel — omp regression R4.5" describe block (R-thinking / R-crash / R-twoturns).
+TESTS_ADDED:
+  - src/ui/__tests__/aiChatOmp.test.ts:
+    - R-thinking: thinking_delta frame is NOT posted (asserts no "Reasoning about" / "must not leak" in postedMessages + final assistant text is "Hi there" only)
+    - R-crash: onExit mid-turn posts exactly ONE done + ONE error + NO stale assistant + engine=builtin fallback present
+    - R-twoturns: two consecutive omp turns — final assistant bubble is "turn2-answer" only (no "turn1" leakage)
+VERIFICATION:
+  command: npm run compile && npx vitest run src/ui/__tests__/aiChatOmp.test.ts src/ui/__tests__/aiChatPanel.test.ts src/extension.test.ts && npx tsc --noEmit
+  result: 54/54 pass; tsc clean; compile clean
+  output_excerpt: |
+    ✓ src/ui/__tests__/aiChatPanel.test.ts  (11 tests) 6ms
+    ✓ src/ui/__tests__/aiChatOmp.test.ts  (10 tests) 9ms
+    ✓ src/extension.test.ts                 (33 tests) 86ms
+    Test Files  3 passed (3)
+         Tests  54 passed (54)
+ISSUES: none
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for review — reviewer must differ from unic-code per handoff.reviewer.model policy

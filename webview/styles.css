@@ -782,3 +782,93 @@
   font-size: 12px;
   margin-bottom: 8px;
 }
+
+/* AI chat panel — engine banner + bubbles */
+.vsdb-chat-engine {
+  padding: 4px 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  border-radius: 2px;
+  background: var(--vscode-editorWidgetBackground, #252526);
+  color: var(--vscode-foreground, #cccccc);
+}
+.vsdb-chat-engine-omp {
+  border-left: 3px solid var(--vscode-textLink-foreground, #3794ff);
+}
+.vsdb-chat-engine-builtin {
+  border-left: 3px solid var(--vscode-inputValidation-warningBorder, #cca700);
+}
+.vsdb-chat-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.vsdb-chat-bubble {
+  padding: 6px 10px;
+  border-radius: 6px;
+  max-width: 95%;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+.vsdb-chat-user {
+  align-self: flex-end;
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #ffffff);
+}
+.vsdb-chat-assistant {
+  align-self: flex-start;
+  background: var(--vscode-editorWidgetBackground, #252526);
+  color: var(--vscode-foreground, #cccccc);
+}
+.vsdb-chat-assistant.vsdb-chat-streaming {
+  white-space: pre-wrap;
+}
+.vsdb-chat-step {
+  align-self: flex-start;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground, #8c8c8c);
+  font-style: italic;
+}
+.vsdb-chat-error {
+  align-self: flex-start;
+  background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
+  color: var(--vscode-errorForeground, #f48771);
+}
+.vsdb-chat-input {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.vsdb-chat-input textarea {
+  resize: vertical;
+  min-height: 60px;
+  font-family: inherit;
+  background: var(--vscode-input-background, #3c3c3c);
+  color: var(--vscode-input-foreground, #cccccc);
+  border: 1px solid var(--vscode-input-border, #3c3c3c);
+  padding: 6px;
+}
+.vsdb-chat-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.vsdb-chat-actions button {
+  padding: 4px 12px;
+  background: var(--vscode-button-secondaryBackground, #3a3d41);
+  color: var(--vscode-button-secondaryForeground, #cccccc);
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+}
+.vsdb-chat-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.vsdb-chat-primary {
+  background: var(--vscode-button-background, #0e639c) !important;
+  color: var(--vscode-button-foreground, #ffffff) !important;
+}
