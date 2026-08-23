@@ -1,17 +1,14 @@
-# Handoff Task Index
+# INDEX
 
-<!--
-Status values (xem RULES.md §Status state machine):
-ready | in_progress | pending_review | changes_requested | critical_block | approved | approved_minor | done | blocked | needs_breakdown
+Cycle: K — AI DB-assist (queued per AI-CORE-spec cycle K+ mandate)
 
-Cycle history: A (AG Grid), B (edit/paste/undo), C, D+E (grid edit/save/export/requery), F, G, H — Plans archived trong archive/. Cycle I (2026-08-23, table designer) done.
--->
+| Task | Title | Wave | Depends | Status |
+|------|-------|------|---------|--------|
+| TASK-001 | DB tool registry + introspection tools | 1 | - | ready |
+| TASK-002 | SQL read-only executor tool + schema→context formatter | 1 | - | ready |
+| TASK-003 | AI Chat panel webview + host wiring | 2 | 001,002 | ready |
+| TASK-004 | Agent↔panel integration + guardrails + README | 3 | 003 | ready |
 
-| ID | Title | Priority | Size | Status | Owner | Reviewer | File |
-|----|-------|----------|------|--------|-------|----------|------|
-| TASK-001 | AI config storage: SecretStorage + workspace config + reload (src/ai/config.ts) | P0 | M | approved_minor | Exec-T001-2 | unic/unic-smart | tasks/TASK-001.md |
-| TASK-002 | OpenAI-compatible provider client (src/ai/provider.ts) | P0 | M | approved_minor | Exec-T002-2 | unic/unic-smart | tasks/TASK-002.md |
-| TASK-003 | Agent loop: config-driven routing + tool registry + step budget (src/ai/agent.ts) | P0 | L | approved | Exec-T003-2 | unic/unic-smart | tasks/TASK-003.md |
-| TASK-004 | AI Settings form (webview) + extension wiring + README privacy | P0 | L | approved | Exec-T004-2 | unic/unic-smart | tasks/TASK-004.md |
+Waves: 1 = TASK-001,002 (parallel; T1 owns src/ai/tools/registry+introspect, T2 owns src/ai/tools/sqlTool+context — no shared files) → 2 = TASK-003 → 3 = TASK-004.
 
-Waves: 1 = TASK-001,002 (parallel — T1 owns src/ai/settings.ts+config.ts, T2 owns src/ai/provider.ts standalone, no shared files) → 2 = TASK-003 → 3 = TASK-004.
+Scope guards: read-only SQL only (SELECT/SHOW/EXPLAIN enforced), no DML/DDL pass-through; tools get connected-adapter via injected provider (no global); streaming optional NOT included; context budget cap.
