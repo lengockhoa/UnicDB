@@ -192,3 +192,23 @@ ISSUES:
   - Minor (per reviewer): `BatchedQuery.fetchBatch()` interface takes no arg; 50-row cap is applied via `slice` after fetch — unchanged.
 HANDOFF_TO_REVIEWER: yes
 NEXT: pending_review (orchestrator: set INDEX row to `pending_review`, RevK-T002 picks up)
+
+## Reviewer Verdict (re-review round 1)
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code (FixK-T002)
+VERIFICATION_RERUN:
+  command: npx vitest run src/ai/tools/__tests__/sqlTool.test.ts src/ai/tools/__tests__/schemaContext.test.ts && npx tsc --noEmit
+  result: 40 pass / 0 fail; tsc exit 0 (fresh rerun at 26302db)
+ROUND1_FINDING_RESOLUTION: resolved — EXPLAIN ANALYZE/ANALYSE/VERBOSE + parenthesized-options wrapping DELETE/UPDATE/INSERT/CREATE TABLE AS/REFRESH MV/DROP/TRUNCATE/MERGE/COPY/GRANT, and writable-CTE / SELECT…INTO behind EXPLAIN, all now reject (verified by direct adversarial probe of the real guard, 26 vectors, plus 23 regression tests). EXPLAIN SELECT/WITH-clean/(FORMAT, COSTS)/SHOW/comment-prefixed still pass — no over-blocking.
+TEST_PLAN_COVERAGE: all-followed (17 pre-existing + 23 new EXPLAIN its; real expect()s)
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - file: src/ai/tools/sqlTool.ts:150-186 — nested `EXPLAIN EXPLAIN ANALYZE DELETE FROM t` is accepted by the guard (verified by probe) but is a parse error in PostgreSQL itself (gram.y ExplainableStmt has no ExplainStmt alternative) — never executes on PG; on MySQL/MSSQL EXPLAIN is not an allowed first keyword in that shape either. Cosmetic fail-closed gap, no write path; optionally reject "explain" as inner keyword in a future round.
+    - file: src/ai/tools/sqlTool.ts:36-49 — dollar-quote `SELECT $$into$$` still false-rejects INTO (fail-closed); documented, acceptable.
+    - file: src/ai/tools/sqlTool.ts:99-130 — side-effecting SELECT functions (pg_terminate_backend) pass; out of scope for this guard (T4 guardrails/agent policy).
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Blocking round-1 hole verified closed with grammar evidence; attack suite found no new write path. Handoff allowed.

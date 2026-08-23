@@ -165,3 +165,21 @@ VERIFICATION:
 ISSUES: none
 HANDOFF_TO_REVIEWER: yes — both important findings fixed; 2 regression tests prove wiring is genuine; retainContextWhenHidden matches house forms.
 NEXT: ready for review (R4.5 round 2).
+
+## Reviewer Verdict (re-review round 1)
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: FixK-T003
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run src/ui/__tests__/aiChatPanel.test.ts src/ui/__tests__/aiChatPanelBundle.test.ts && npx tsc --noEmit
+  result: 19 pass / 0 fail / tsc clean (EXIT=0)
+TEST_PLAN_COVERAGE: all-followed — round-1 important findings 1+2 fixed; R1/R2 regression tests assert adapterFactory consulted (factory invoked + adapter.listTables called) and exact deps instance reaches runAgent (reference identity passedDeps === deps, loadConfig/complete same refs)
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - file: docs/AI_HANDOFF/tasks/TASK-003.md:22 — frozen spec block still shows positional `(ctx, deps, adapterFactory, style?)`; shipped form is options-object (documented in Executor Report + round-1 verdict; extension.ts:361 consumes object form). Non-blocking; refresh frozen spec on next touch.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: All 9 constructions options-object (verified via grep, no positional caller remains in src/); retainContextWhenHidden:true at src/ui/aiChatPanel.ts:116 matching house forms; diff confined to 2 task files, no behavior drift elsewhere (src/ai/* untouched).
