@@ -1,4 +1,7 @@
-Cycle: 2026-08-23-G   Date: 2026-08-23   Base: main
-Goal: Release 1.5.0 — Excel checkbox set filter + icon single-row toolbar (+requery-bar icons) + Run .sh fix with ▶ Run CodeLens
-Tasks: 6 total
-Status: released — v1.5.0 tag + vsdb-1.5.0.vsix (1.58MB) at github.com/lengockhoa/VSDB/releases/tag/v1.5.0, main 3785e84
+# ACTIVE
+
+Cycle hiện tại: (none — cycle H đóng 2026-08-23, released v1.5.1)
+
+Kết quả gần nhất:
+- v1.5.1 (2026-08-23-H): EXPLAIN ANALYZE guard, emoji-safe modal, lock sync. 453 tests.
+- v1.5.0 (2026-08-23-G): set filter, icon toolbar, Run .sh lens, destructive confirm.
