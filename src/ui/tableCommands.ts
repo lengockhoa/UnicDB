@@ -26,11 +26,7 @@ import {
   defaultColumnSpecs,
 } from "../core/ddl/createTable";
 import { alwaysQuote } from "../core/ddl/alterTable";
-import {
-  INTROSPECT_COLUMNS_SQL,
-  INTROSPECT_CONSTRAINTS_SQL,
-  rowsToSpec,
-} from "../core/ddl/pgIntrospect";
+import { rowsToSpec } from "../core/ddl/pgIntrospect";
 import { generateSampleInserts } from "../core/ddl/sampleData";
 import { NewTableForm } from "./newTableForm";
 import {
@@ -141,28 +137,24 @@ async function introspectTable(
   columns: PgColumnRowInput[];
   constraints: PgConstraintRowInput[];
 }> {
+  // Path: adapter.listTableDetail(schema, table) — PostgresAdapter bind $1/$2
+  // qua pool.query. runQuery single-SELECT sẽ route qua cursor (trả empty)
+  // và không bind params → production fail (fix round 1 CRITICAL #1).
   const adapter = await mgr.getAdapterFor(conn);
-  const colsRes = await adapter.runQuery(INTROSPECT_COLUMNS_SQL(schema, table));
-  const consRes = await adapter.runQuery(
-    INTROSPECT_CONSTRAINTS_SQL(schema, table),
-  );
-  const columns: PgColumnRowInput[] = (colsRes.results[0]?.rows ?? []).map(
-    (r) => ({
-      column_name: r[0] as string,
-      format_type: r[1] as string,
-      is_nullable: r[2] as "YES" | "NO",
-      column_default: r[3] as string | null,
-    }),
-  );
-  const constraints: PgConstraintRowInput[] = (
-    consRes.results[0]?.rows ?? []
-  ).map((r) => ({
-    conname: r[0] as string,
-    contype: r[1] as "p" | "u" | "f" | "c",
-    conkey: r[2] as number[],
-    confrelidname: r[3] as string | null,
-    confkeycols: r[4] as string[] | null,
-    consrc: r[5] as string,
+  const detail = await adapter.listTableDetail(schema, table);
+  const columns: PgColumnRowInput[] = detail.columns.map((r) => ({
+    column_name: r.column_name,
+    format_type: r.format_type,
+    is_nullable: r.is_nullable,
+    column_default: r.column_default,
+  }));
+  const constraints: PgConstraintRowInput[] = detail.constraints.map((r) => ({
+    conname: r.conname,
+    contype: r.contype as "p" | "u" | "f" | "c",
+    conkey: r.conkey,
+    confrelidname: r.confrelidname,
+    confkeycols: r.confkeycols,
+    consrc: r.consrc,
   }));
   return { columns, constraints };
 }
@@ -176,8 +168,13 @@ export function registerTableCommands(deps: RegisterDeps): void {
     vscode.commands.registerCommand("vsdb.newTable", async (arg?: unknown) => {
       const resolved = resolveTableNode(arg);
       if (!resolved) return;
-      // Category check: chỉ accept "tables" (Views/Routines → Information).
-      if (resolved.category && resolved.category !== "tables") {
+      // Category check: accept "tables" (Tables category node) HOẶC "columns"
+      // (table node đã mở rộng → category children). Views/Routines → Information.
+      if (
+        resolved.category &&
+        resolved.category !== "tables" &&
+        resolved.category !== "columns"
+      ) {
         void vscode.window.showInformationMessage(
           "New Table: open the Tables category to create a table.",
         );
@@ -199,22 +196,17 @@ export function registerTableCommands(deps: RegisterDeps): void {
           columns: defaultColumnSpecs(initialName),
           keys: [],
         }),
-        runDdl: async (sql: string) => {
+        runDdl: async (sql: string, spec) => {
           try {
-            console.log('DEBUG runDdl: start', sql.slice(0, 30));
             await runDdl(mgr, conn, sql);
-            console.log('DEBUG runDdl: after runQuery');
             tree.refresh();
-            console.log('DEBUG runDdl: after refresh');
-            const m = sql.match(/CREATE TABLE\s+(?:"[^"]+"\.)?"([^"]+)"/i);
-            const createdName = m ? m[1] : initialName;
+            // spec.name từ form (KHÔNG regex SQL string — fix round 1 minor).
+            const createdName = spec.name;
             await revealTableNode(treeView, conn, schema, createdName);
-            console.log('DEBUG runDdl: after reveal');
             void vscode.window.showInformationMessage(
               `Created ${schema}.${createdName}`,
             );
           } catch (err) {
-            console.log('DEBUG runDdl: caught error', err);
             const msg = err instanceof Error ? err.message : String(err);
             void vscode.window.showErrorMessage(`New Table failed: ${msg}`);
           }
@@ -248,13 +240,10 @@ export function registerTableCommands(deps: RegisterDeps): void {
           );
           return rowsToSpec(schema, table, columns, constraints);
         },
-        runDdl: async (sql: string) => {
+        runDdl: async (sql: string, _spec) => {
           try {
-            console.log('DEBUG runDdl: start', sql.slice(0, 30));
             await runDdl(mgr, conn, sql);
-            console.log('DEBUG runDdl: after runQuery');
             tree.refresh();
-            console.log('DEBUG runDdl: after refresh');
             await revealTableNode(treeView, conn, schema, table);
             void vscode.window.showInformationMessage(
               `Modified ${schema}.${table}`,

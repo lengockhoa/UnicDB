@@ -147,3 +147,41 @@ FINDINGS:
     - file: src/ui/tableCommands.ts:209 — created-table name recovered by regexing the SQL string; pass spec.name through runDdl instead (form already knows it).
 NEXT_STATUS_FOR_INDEX: critical_block
 NOTES: Unit suite (91/91) passes but the fake adapter masks two production-only failures (unbound $1/$2 + cursor-path result shape); recommend one live-PG smoke of modifyTable/copyCreateDdl after fix. Guard order, schema-via-node.meta, quoting/injection safety (alwaysQuote, generated literals), menus/activationEvents/IDs all verified correct.
+
+
+## Executor Report (fix round 1)
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: Exec-Fix1B
+SUMMARY: Fix round 1 wave B for TASK-005. All 5 reviewer findings addressed: (1) introspectTable now binds schema/table via adapter.listTableDetail (PostgresAdapter.pool.query) — added DbAdapter.listTableDetail interface method, implemented in postgres.ts (parameterized via existing private `query` helper), MySQL/MSSQL throw NotImplementedError. (2) SchemaTreeProvider.getParent() implemented (connection→null, schema→connection, category→schema, table→category, column→table) + getColumnChildren now carries connection/schema/objectKey so column parent lookup works. (3) newTable guard accepts meta.category === "columns" (table node) in addition to "tables". (4) copyCreateDdl double-PK fixed by wave A's createTable.ts PK dedupe; verified via rowsToSpec→generateCreateTable test. (5) Removed all DEBUG console.logs in runDdl paths; pass spec.name via newTableForm runDdl(sql, spec) signature (no SQL regex recovery).
+TEST_PLAN_FOLLOWED: inline — RED tests written first, then GREEN via implementation; all previous 91 tests preserved + 5 new R1 regression tests.
+FILES_CHANGED:
+  - src/adapters/types.ts: +DbAdapter.listTableDetail method, +TableDetail interface (TableInfo/ViewInfo imports restored)
+  - src/adapters/postgres.ts: +import INTROSPECT_*_SQL + TableDetail; +async listTableDetail(schema, table) using private query() helper for parameterized pool.query
+  - src/adapters/mysql.ts: +import TableDetail type + NotImplementedError value; +async listTableDetail throws NotImplementedError("mysql")
+  - src/adapters/mssql.ts: same MySQL pattern with "mssql" message
+  - src/ui/schemaTree.ts: +getParent(node) — full ancestor chain (connection/schema/category/table/column); getColumnChildren now carries connection/schema/objectKey in column meta so column→table parent lookup works
+  - src/ui/tableCommands.ts: introspectTable now calls adapter.listTableDetail (no runQuery SQL); newTable guard accepts category === "columns"; removed 6 DEBUG console.logs; newTable runDdl uses spec.name instead of regex; modifyTable runDdl signature updated to (sql, _spec)
+  - src/ui/newTableForm.ts: runDdl signature changed from (sql) to (sql, spec); handleSubmit passes spec to runDdl
+  - src/ui/__tests__/tableCommands.test.ts: REWRITTEN — fake adapter now supports listTableDetail (with listTableDetailUnsupported flag), initialTables seed, listTableDetailCalls tracking; +5 R1 regression tests (listTableDetail bind params ×2, newTable accepts table node, PK dedupe via rowsToSpec→generateCreateTable, no DEBUG logs + spec.name pass-through)
+  - src/ui/__tests__/schemaTree.test.ts: +R1 regression block — getParent() test for all 5 ancestor relations (5 tests)
+TESTS_ADDED:
+  - src/ui/__tests__/tableCommands.test.ts: 5 R1 regression tests (listTableDetail×2, newTable columns-category, PK dedupe, no-DEBUG+spec.name)
+  - src/ui/__tests__/schemaTree.test.ts: 5 getParent tests (connection→null, schema→conn, category→schema, table→category, column→table)
+VERIFICATION:
+  command: npm run compile && npx vitest run src/extension.test.ts src/ui/__tests__/tableCommands.test.ts src/ui/__tests__/schemaTree.test.ts src/core/__tests__/sampleData.test.ts && npx tsc --noEmit
+  result: 96 pass / 0 fail; compile + tsc clean (exit 0)
+  output_excerpt: |
+    ✓ src/core/__tests__/sampleData.test.ts  (16 tests) 5ms
+    ✓ src/ui/__tests__/tableCommands.test.ts  (9 tests) 7ms
+    ✓ src/ui/__tests__/schemaTree.test.ts  (44 tests) 25ms
+    ✓ src/extension.test.ts  (27 tests) 62ms
+    Test Files  4 passed (4)
+    Tests  96 passed (96)
+  command: VSDB_IT=1 VSDB_PG_HOST=127.0.0.1 VSDB_PG_PORT=5433 npx vitest run -c vitest.integration.config.ts src/adapters/__tests__/ddl.integration.test.ts
+  result: 6 pass / 0 fail; live PG smoke (10.4s)
+ISSUES: Wave A landed as 58a56b8 on main (createTable.ts PK dedupe + renderDefault, alterTable.ts ADD COLUMN clauses + FK ref schema, pgIntrospect.ts confkeycols text[] parser, ddl.integration.test.ts un-masked, README fix). All 5 critical+important+minor reviewer findings addressed.
+HANDOFF_TO_REVIEWER: yes — fresh 96/96 unit + 6/6 integration PASS in this turn
+NEXT: ready for review (file-based handoff per cycle conventions)

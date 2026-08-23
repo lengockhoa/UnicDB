@@ -100,12 +100,43 @@ export interface DbAdapter {
    * Null = unknown (chưa analyze / lỗi / không tồn tại).
    */
   estimateTableRows(schema: string, table: string): Promise<number | null>;
+  /**
+   * One-shot introspection: trả columns + constraints cho (schema, table) qua
+   * parameterized SQL. PostgresAdapter.pool.query(sql, [schema, table]) bind
+   * $1/$2 an toàn — không phải regex SQL. Tách khỏi runQuery vì runQuery
+   * single-SELECT route qua cursor (trả empty results).
+   *
+   * MySQL/MSSQL chưa implement → throw NotImplementedError. Caller guard
+   * driver === "postgres" trước khi gọi.
+   */
+  listTableDetail(schema: string, table: string): Promise<TableDetail>;
   testConnection(): Promise<void>;
 }
 
 /**
+ * Result shape cho adapter.listTableDetail. Row format giữ stringly-typed cho
+ * pg_catalog (pgIntrospect map sang TableSpec sau).
+ */
+export interface TableDetail {
+  columns: Array<{
+    column_name: string;
+    format_type: string;
+    is_nullable: "YES" | "NO";
+    column_default: string | null;
+  }>;
+  constraints: Array<{
+    conname: string;
+    contype: string;
+    conkey: number[];
+    confrelidname: string | null;
+    confkeycols: string[] | null;
+    consrc: string;
+  }>;
+}
+
+/**
  * Error báo hiệu driver chưa được implement trong task này.
- * Factory ném lỗi này khi user chọn driver chưa được TASK-003 hỗ trợ.
+ * Factory ném lỗi này khi user chọn driver chưa TASK-003 hỗ trợ.
  */
 export class NotImplementedError extends Error {
   constructor(driver: string) {

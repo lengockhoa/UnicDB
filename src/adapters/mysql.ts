@@ -6,16 +6,18 @@ import type { Connection as CoreConnection, Query } from "mysql2";
 import type { ConnectionConfig } from "../config/types";
 import { resolveSslOptions } from "../core/sslOptions";
 import { splitStatements } from "../core/statementParser";
-import type {
-  BatchedQuery,
-  ColumnInfo,
-  DbAdapter,
-  QueryResult,
-  RoutineInfo,
-  SchemaInfo,
-  RunResult,
-  TableInfo,
-  ViewInfo,
+import {
+  NotImplementedError,
+  type BatchedQuery,
+  type ColumnInfo,
+  type DbAdapter,
+  type QueryResult,
+  type RoutineInfo,
+  type SchemaInfo,
+  type RunResult,
+  type TableInfo,
+  type ViewInfo,
+  type TableDetail,
 } from "./types";
 const SYSTEM_SCHEMAS: Record<string, true> = {
   mysql: true,
@@ -265,6 +267,14 @@ export class MySqlAdapter implements DbAdapter {
     } catch {
       return null;
     }
+  }
+
+  async listTableDetail(_schema: string, _table: string): Promise<TableDetail> {
+    // MySQL adapter does not implement table-detail introspection (TASK-005
+    // wires only Postgres; the editor guards driver === "postgres" before
+    // calling). Throw so the contract is satisfied and the regression test
+    // verifies caller-side guard.
+    throw new NotImplementedError("mysql");
   }
 
   private async executeText(sql: string): Promise<QueryResult> {

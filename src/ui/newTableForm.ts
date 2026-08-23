@@ -27,8 +27,12 @@ export interface NewTableFormOptions {
   originalTableName?: string;
   /** Modify mode: introspect → TableSpec. Create mode: không cần. */
   loadSpec?: () => Promise<TableSpec>;
-  /** Execute SQL: TASK-005 wires vào adapter.runQuery. */
-  runDdl: (sql: string) => Promise<void>;
+  /**
+   * Execute SQL: TASK-005 wires vào adapter.runQuery.
+   * Spec truyền kèm để caller có thể dùng spec.name thay vì regex SQL
+   * cho reveal + notification (fix round 1).
+   */
+  runDdl: (sql: string, spec: TableSpec) => Promise<void>;
 }
 
 export class NewTableForm {
@@ -200,7 +204,7 @@ export class NewTableForm {
     if (errors.length > 0) return;
     if (this.lastPreviewSql === "") return;
     try {
-      await this.options.runDdl(this.lastPreviewSql);
+      await this.options.runDdl(this.lastPreviewSql, spec);
       this.dispose();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

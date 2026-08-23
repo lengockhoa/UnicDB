@@ -293,7 +293,7 @@ describe("NewTableForm — submit / cancel / errors", () => {
     handler({ type: "submit", spec });
     await until(() => runDdl.mock.calls.length > 0);
     expect(runDdl).toHaveBeenCalledTimes(1);
-    expect(runDdl).toHaveBeenCalledWith(previewSql);
+    expect(runDdl).toHaveBeenCalledWith(previewSql, spec);
     await until(() => panel.dispose.mock.calls.length > 0);
     expect(panel.dispose).toHaveBeenCalled();
     form.dispose();

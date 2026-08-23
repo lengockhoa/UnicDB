@@ -2,16 +2,18 @@ import { Connection, Request } from "tedious";
 import type { ConnectionConfig } from "../config/types";
 import { resolveSslOptions } from "../core/sslOptions";
 import { splitStatements } from "../core/statementParser";
-import type {
-  BatchedQuery,
-  ColumnInfo,
-  DbAdapter,
-  QueryResult,
-  RoutineInfo,
-  SchemaInfo,
-  RunResult,
-  TableInfo,
-  ViewInfo,
+import {
+  NotImplementedError,
+  type BatchedQuery,
+  type ColumnInfo,
+  type DbAdapter,
+  type QueryResult,
+  type RoutineInfo,
+  type SchemaInfo,
+  type RunResult,
+  type TableInfo,
+  type ViewInfo,
+  type TableDetail,
 } from "./types";
 
 const BATCH_SIZE = 500;
@@ -296,6 +298,16 @@ export class MsSqlAdapter implements DbAdapter {
       nullable: Boolean(Number(row[2])),
       ...(Number(row[3]) === 1 ? { isPrimaryKey: true } : {}),
     }));
+  }
+
+  async listTableDetail(
+    _schema: string,
+    _table: string,
+  ): Promise<TableDetail> {
+    // SQL Server adapter does not implement table-detail introspection
+    // (TASK-005 wires only Postgres; the editor guards driver === "postgres"
+    // before calling). Throw to satisfy the DbAdapter contract.
+    throw new NotImplementedError("mssql");
   }
 
   async estimateTableRows(

@@ -600,7 +600,14 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
       tooltip: `${c.name}: ${c.dataType}${c.nullable ? "" : " NOT NULL"}${c.isPrimaryKey ? " PK" : ""}`,
       contextValue: "column",
       collapsible: vscode.TreeItemCollapsibleState.None,
-      meta: { column: { name: c.name, dataType: c.dataType } },
+      // Carry connection/schema/objectKey để getParent(column) → table hoạt
+      // động (fix round 1 getParent).
+      meta: {
+        connection: conn,
+        schema,
+        objectKey,
+        column: { name: c.name, dataType: c.dataType },
+      },
     }));
 
     this.cache.set(key, {
@@ -667,6 +674,103 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
         arguments: [qualifiedName({ table: hit.name, schema: hit.schema })],
       },
     };
+  }
+
+  /**
+   * getParent — bắt buộc cho vscode.TreeView.reveal() (vscode.d.ts):
+   * "This method should be implemented in order to access TreeView.reveal API".
+   * Trước fix: thiếu → reveal throw "Tree item not found" → try/catch nuốt →
+   * UI không reveal sau DDL. Sau fix: trả về ancestor đúng để vscode tìm được
+   * đường đi xuống node.
+   *
+   * Quan hệ (theo meta):
+   *   - connection → null (root)
+   *   - schema    → connection
+   *   - category  → schema
+   *   - table     → category (Tables/Views/Routines)
+   *   - column    → table (qua objectKey)
+   *
+   * Implementation: build parent node mỗi lần (cheap; chỉ khi reveal trigger).
+   * Nếu meta thiếu → null (giống connection root).
+   */
+  getParent(node: VsdbNode): VsdbNode | null {
+    const meta = node.meta;
+    if (!meta) return null;
+
+    if (node.contextValue === "connection") return null;
+
+    if (node.contextValue === "schema") {
+      const conn = meta.connection;
+      if (!conn) return null;
+      return {
+        label: conn.name,
+        icon: DRIVER_ICONS[conn.driver] ?? "database",
+        tooltip: `${conn.name}\n${conn.driver}@${conn.host}:${conn.port}/${conn.database}\nClick để đổi active connection`,
+        contextValue: "connection",
+        collapsible: vscode.TreeItemCollapsibleState.Expanded,
+        command: {
+          command: "vsdb.selectConnectionFromTree",
+          title: "Select as Active Connection",
+          arguments: [conn.id],
+        },
+        meta: { connection: conn },
+      };
+    }
+
+    if (node.contextValue === "category") {
+      const conn = meta.connection;
+      const schema = meta.schema;
+      if (!conn || !schema) return null;
+      return {
+        label: schema,
+        icon: "symbol-namespace",
+        tooltip: `${conn.name} / ${schema}`,
+        contextValue: "schema",
+        collapsible: vscode.TreeItemCollapsibleState.Collapsed,
+        meta: { connection: conn, schema },
+      };
+    }
+
+    if (node.contextValue === "table") {
+      const conn = meta.connection;
+      const schema = meta.schema;
+      if (!conn || !schema) return null;
+      // Parent = category node "Tables" (vì table nodes đều dưới Tables category).
+      return {
+        label: "Tables",
+        icon: "table",
+        contextValue: "category",
+        collapsible: vscode.TreeItemCollapsibleState.Collapsed,
+        meta: { connection: conn, schema, category: "tables" },
+      };
+    }
+
+    if (node.contextValue === "column") {
+      const conn = meta.connection;
+      const schema = meta.schema;
+      const objectKey = meta.objectKey;
+      if (!conn || !schema || !objectKey) return null;
+      // objectKey format: `${conn.id}.${schema}.${table}` → derive table name.
+      const parts = objectKey.split(".");
+      const tableName = parts.slice(2).join(".");
+      return {
+        label: tableName,
+        description: schema,
+        tooltip: `${schema}.${tableName}`,
+        contextValue: "table",
+        collapsible: vscode.TreeItemCollapsibleState.Collapsed,
+        meta: {
+          connection: conn,
+          category: "columns",
+          objectKey,
+          schema,
+          objectName: tableName,
+        },
+      };
+    }
+
+    // view / routine / column / error / empty-add → no parent (or unknown)
+    return null;
   }
 }
 

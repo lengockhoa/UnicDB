@@ -1146,3 +1146,82 @@ describe("SchemaTreeProvider — TASK-005 findTableNode + revealTableNode", () =
     expect(treeView.reveal).not.toHaveBeenCalled();
   });
 });
+
+// =============================================================================
+// R1 regression: TreeView.reveal() throws "Tree item not found" khi
+// SchemaTreeProvider chưa implement getParent() (vscode.d.ts: "This method
+// should be implemented in order to access TreeView.reveal API"). Trước fix:
+// reveal được nuốt bởi try/catch → command thành công nhưng UI không reveal.
+// Sau fix: getParent trả về ancestor phù hợp (connection→null, schema→conn,
+// category→schema, table→category, column→table) → reveal hoạt động.
+// =============================================================================
+describe("SchemaTreeProvider — R1 regression: getParent cho TreeView.reveal", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.emitters = [];
+    state.treeItemCalls = [];
+  });
+
+  it("connection node → getParent() = null (root)", async () => {
+    const { mgr } = setupTree({ schemas: [{ name: "public" }] });
+    await mgr.addConnection(makeCfg({ id: "c1" }), "p");
+    const provider = new SchemaTreeProvider(mgr);
+    const root = await provider.getChildren(undefined);
+    expect(provider.getParent(root[0])).toBeNull();
+  });
+
+  it("schema node → getParent() = connection", async () => {
+    const { mgr } = setupTree({ schemas: [{ name: "public" }] });
+    await mgr.addConnection(makeCfg({ id: "c1" }), "p");
+    const provider = new SchemaTreeProvider(mgr);
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    const parent = provider.getParent(schemas[0]);
+    expect(parent).not.toBeNull();
+    expect(parent?.contextValue).toBe("connection");
+  });
+
+  it("category node → getParent() = schema", async () => {
+    const { mgr } = setupTree({ schemas: [{ name: "public" }] });
+    await mgr.addConnection(makeCfg({ id: "c1" }), "p");
+    const provider = new SchemaTreeProvider(mgr);
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    const cats = await provider.getChildren(schemas[0]);
+    const parent = provider.getParent(cats[0]);
+    expect(parent?.contextValue).toBe("schema");
+  });
+
+  it("table node → getParent() = category (Tables)", async () => {
+    const { mgr } = setupTree({
+      schemas: [{ name: "public" }],
+      tables: [{ name: "users", schema: "public" }],
+    });
+    await mgr.addConnection(makeCfg({ id: "c1" }), "p");
+    const provider = new SchemaTreeProvider(mgr);
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    const cats = await provider.getChildren(schemas[0]);
+    const tables = await provider.getChildren(cats[0]);
+    const parent = provider.getParent(tables[0]);
+    expect(parent?.contextValue).toBe("category");
+    expect(parent?.label).toBe("Tables");
+  });
+
+  it("column node → getParent() = table", async () => {
+    const { mgr } = setupTree({
+      schemas: [{ name: "public" }],
+      tables: [{ name: "users", schema: "public" }],
+      columns: [{ name: "id", dataType: "bigint", nullable: false, isPrimaryKey: true }],
+    });
+    await mgr.addConnection(makeCfg({ id: "c1" }), "p");
+    const provider = new SchemaTreeProvider(mgr);
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    const cats = await provider.getChildren(schemas[0]);
+    const tables = await provider.getChildren(cats[0]);
+    const cols = await provider.getChildren(tables[0]);
+    const parent = provider.getParent(cols[0]);
+    expect(parent?.contextValue).toBe("table");
+  });
+});

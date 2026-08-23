@@ -37,9 +37,14 @@ import type {
   RoutineInfo,
   RunResult,
   SchemaInfo,
+  TableDetail,
   TableInfo,
   ViewInfo,
 } from "./types";
+import {
+  INTROSPECT_COLUMNS_SQL,
+  INTROSPECT_CONSTRAINTS_SQL,
+} from "../core/ddl/pgIntrospect";
 import { splitStatements } from "../core/statementParser";
 
 const DEFAULT_BATCH_SIZE = 500;
@@ -326,6 +331,35 @@ export class PostgresAdapter implements DbAdapter {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * listTableDetail — one-shot introspection cho (schema, table).
+   *
+   * Tách khỏi runQuery vì runQuery single-SELECT route qua cursor (trả empty
+   * results). Ở đây dùng `this.query()` (pool.query với params) — server bind
+   * $1/$2 an toàn (giống listColumns). MySQL/MSSQL adapter throw
+   * NotImplementedError (DbAdapter contract).
+   */
+  async listTableDetail(schema: string, table: string): Promise<TableDetail> {
+    const colsRes = await this.query<{
+      column_name: string;
+      format_type: string;
+      is_nullable: "YES" | "NO";
+      column_default: string | null;
+    }>(INTROSPECT_COLUMNS_SQL(schema, table), [schema, table]);
+    const consRes = await this.query<{
+      conname: string;
+      contype: string;
+      conkey: number[];
+      confrelidname: string | null;
+      confkeycols: string[] | null;
+      consrc: string;
+    }>(INTROSPECT_CONSTRAINTS_SQL(schema, table), [schema, table]);
+    return {
+      columns: colsRes.rows,
+      constraints: consRes.rows,
+    };
   }
 
   // ---- Helpers --------------------------------------------------------------
