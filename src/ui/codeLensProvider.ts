@@ -22,9 +22,11 @@ export class VsdbCodeLensProvider implements vscode.CodeLensProvider {
       if (e.affectsConfiguration("vsdb.showRunLens")) {
         this._onDidChangeCodeLenses.fire();
       }
+      if (e.affectsConfiguration("vsdb.showRunLensSh")) {
+        this._onDidChangeCodeLenses.fire();
+      }
     });
   }
-
   /** Dispose event emitters + config subscription. */
   dispose(): void {
     this.configSub.dispose();
@@ -34,6 +36,23 @@ export class VsdbCodeLensProvider implements vscode.CodeLensProvider {
   provideCodeLenses(
     document: vscode.TextDocument,
   ): vscode.CodeLens[] | Thenable<vscode.CodeLens[]> {
+    // Shellscript lens: 1 lens ở line 0, command vsdb.runScript, gated by showRunLensSh.
+    if (document.languageId === "shellscript") {
+      const cfgSh = vscode.workspace.getConfiguration("vsdb");
+      const showRunLensSh: boolean = cfgSh.get<boolean>("showRunLensSh") ?? true;
+      if (!showRunLensSh) return [];
+      const topRange = new vscode.Range(
+        new vscode.Position(0, 0),
+        new vscode.Position(0, 0),
+      );
+      const cmd: vscode.Command = {
+        command: "vsdb.runScript",
+        title: "$(play) Run",
+        arguments: [],
+      };
+      return [new vscode.CodeLens(topRange, cmd)];
+    }
+
     // Filter language: chỉ SQL.
     if (document.languageId !== "sql") return [];
 

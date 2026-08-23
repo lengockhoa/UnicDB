@@ -88,6 +88,12 @@ export async function activate(
       codeLens,
     ),
   );
+  context.subscriptions.push(
+    vscode.languages.registerCodeLensProvider(
+      { scheme: "file", language: "shellscript" },
+      codeLens,
+    ),
+  );
 
   state = { mgr, runner, panel, tree, codeLens, statusBar };
 
@@ -572,7 +578,14 @@ async function commandCopyQualifiedName(qualifiedOrNode?: unknown): Promise<void
  */
 async function commandRunScript(): Promise<void> {
   const editor = vscode.window.activeTextEditor;
-  const text = editor ? editor.document.getText() : "";
+  // TASK-605: no editor (palette invocation without open file) → warn, KHÔNG gửi text vào terminal.
+  if (!editor) {
+    void vscode.window.showWarningMessage(
+      "VSDB: open a .sh file to run",
+    );
+    return;
+  }
+  const text = editor.document.getText();
   // Terminal còn sống (exitStatus undefined) → reuse; ngược lại tạo mới.
   if (!runScriptTerminal || runScriptTerminal.exitStatus !== undefined) {
     runScriptTerminal = vscode.window.createTerminal({ name: "VSDB Script" });

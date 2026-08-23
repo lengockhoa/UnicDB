@@ -84,6 +84,87 @@ defect and the lens gives an independent, SQL-parity affordance. If the editor-t
 button still misbehaves in the user's VS Code after this, capture the developer-tools
 console for a follow-up cycle.
 
+
+---
+
+## Executor Report
+
+- Status: `done`
+- Owner: `Exec605` (unic/unic-code)
+- Run: 2026-08-23
+
+### Summary
+
+RED→GREEN TDD cho 4 defect + 1 feature mới:
+1. `package.json` thiếu `onCommand:vsdb.runScript` + `onLanguage:shellscript` — đã thêm.
+2. `package.json` thiếu `vsdb.showRunLensSh` config — đã thêm (boolean, default true).
+3. `src/extension.ts` `commandRunScript` thiếu no-editor guard — đã thêm (`showWarningMessage("VSDB: open a .sh file to run")` + early return, KHÔNG tạo terminal).
+4. `src/extension.ts` chỉ register CodeLens cho `sql` — đã thêm registration cho `shellscript`.
+5. `src/ui/codeLensProvider.ts` không có shellscript branch — đã thêm: 1 lens ở line 0, command `vsdb.runScript`, gated by `vsdb.showRunLensSh`, config listener mirror SQL pattern.
+
+### Test Plan Followed
+
+Inline (task file không có sẵn Test Plan; theo parent task instructions). Tests đã viết + confirm RED trước khi fix:
+
+| Test | File | RED trước fix? | GREEN sau fix? |
+|------|------|---------------|----------------|
+| #1 — activation events | `src/scaffold.test.ts` | YES | YES |
+| #2 — editor/title + icon + showRunLensSh config | `src/scaffold.test.ts` | YES | YES |
+| #3 — shellscript doc → 1 lens ở line 0 | `src/ui/__tests__/codeLensProvider.test.ts` | YES | YES |
+| #4 — showRunLensSh=false → [] cho shell; SQL path không ảnh hưởng | `src/ui/__tests__/codeLensProvider.test.ts` | n/a (no-op passes) | YES |
+| #5 — markdown → [] | `src/ui/__tests__/codeLensProvider.test.ts` | n/a (no-op passes) | YES |
+| #6 — config change showRunLensSh → fire CodeLens event | `src/ui/__tests__/codeLensProvider.test.ts` | YES | YES |
+| #6 — no-editor guard (runScript) | `src/extension.test.ts` | YES | YES |
+| #7 — TASK-505 handler suite (terminal reuse) | `src/extension.test.ts` | n/a | YES (all 5 sub-tests pass) |
+
+### Files Changed
+
+- `package.json` — activationEvents (+2), configuration (+1 property `vsdb.showRunLensSh`).
+- `src/extension.ts` — CodeLens registration cho `shellscript`; `commandRunScript` no-editor guard.
+- `src/ui/codeLensProvider.ts` — shellscript lens branch + `vsdb.showRunLensSh` config subscriber.
+- `src/extension.test.ts` — `showWarningMessage` mock; guard test (#6) + non-shell editor sanity test (#6b).
+- `src/ui/__tests__/codeLensProvider.test.ts` — added `showRunLensSh` config plumbing in mock + `Position` mock + flexible `Range` mock; tests #3-#6.
+- `src/scaffold.test.ts` — tests #1 + #2 cho manifest.
+
+### Tests Added
+
+- `src/ui/__tests__/codeLensProvider.test.ts`:
+  - Test #3 — shellscript → 1 lens ở line 0, command `vsdb.runScript`, title `$(play) Run`, no args
+  - Test #4 — `showRunLensSh=false` → `[]` cho shellscript; SQL path vẫn lens
+  - Test #5 (TASK-605) — `languageId=markdown` → `[]`
+  - Test #6 — config change `vsdb.showRunLensSh` trigger `_onDidChangeCodeLenses`
+- `src/scaffold.test.ts`:
+  - Test #1 (TASK-605) — activationEvents có `onCommand:vsdb.runScript` + `onLanguage:shellscript`
+  - Test #2 (TASK-605) — editor/title menu có `vsdb.runScript` (when chứa `shellscript`, group `navigation`); command có icon; `vsdb.showRunLensSh` config (type boolean, default true)
+- `src/extension.test.ts`:
+  - Test #6 — no active editor → `showWarningMessage` called, no `createTerminal`
+  - Test #6b — non-shell editor (sql) → vẫn gửi text như cũ (không guard theo language)
+
+### Verification
+
+Command: `npx vitest run src/extension.test.ts src/ui/__tests__/codeLensProvider.test.ts src/scaffold.test.ts`
+Result: 33/33 passed (3 files, 0 failed). Exit code 0.
+Excerpt:
+```
+✓ src/ui/__tests__/codeLensProvider.test.ts  (8 tests) 3ms
+✓ src/scaffold.test.ts  (7 tests) 171ms
+✓ src/extension.test.ts  (18 tests) 33ms
+Test Files  3 passed (3)
+     Tests  33 passed (33)
+```
+
+Command: `npm run typecheck`
+Result: clean (exit code 0, no errors).
+
+Full suite sanity: `npx vitest run` → 343 passed, 1 pre-existing fail (webviewTheme.test.ts cần `npm run compile` — không liên quan đến TASK-605).
+
+### Issues / Notes
+
+- Mock `Range` trong codeLens test đã được nâng cấp để chấp nhận cả hai signatures `Range(startPos, endPos)` (cho shellscript branch mới) lẫn `Range(line, char, line, char)` (giữ SQL test cũ hoạt động).
+- Mock `Position` mới được thêm vì shellscript branch dùng `new vscode.Position(0,0)` trực tiếp.
+- `onCommand:vsdb.runStatement` activation event đã có sẵn từ trước — KHÔNG xoá; chỉ chèn thêm 2 event mới.
+- Editor-title button wiring (`menus.editor/title` cho `vsdb.runScript` với `when: resourceLangId == shellscript`) đã có sẵn từ TASK-505, pinned bởi Test #2 mới.
+
 ---
 
 <!--

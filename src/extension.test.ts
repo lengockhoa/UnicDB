@@ -57,6 +57,7 @@ vi.mock("vscode", () => {
     EventEmitter: vi.fn().mockImplementation(() => new FakeEventEmitter<unknown>()),
     window: {
       showInformationMessage: vi.fn().mockResolvedValue(undefined),
+      showWarningMessage: vi.fn().mockResolvedValue(undefined),
       showErrorMessage: vi.fn().mockResolvedValue(undefined),
       showInputBox: vi.fn().mockResolvedValue(undefined),
       showQuickPick: vi.fn().mockResolvedValue(undefined),
@@ -628,6 +629,57 @@ describe("TASK-505 — runScript command + terminal reuse", () => {
     expect(secondTerm.sendText).toHaveBeenCalledTimes(1);
     expect(secondTerm.sendText.mock.calls[0][0]).toBe("echo first\n\n");
     expect(secondTerm.show).toHaveBeenCalled();
+  });
+
+  // ===== TASK-605 #6: no-editor guard =====
+
+  it("Test #6 — vsdb.runScript với NO active editor → showWarningMessage, KHÔNG tạo terminal", async () => {
+    const ctx = makeCtx();
+    await activateFresh(ctx);
+
+    state.activeEditor = undefined;
+
+    const fn = state.registeredCommands.get("vsdb.runScript");
+    expect(fn).toBeDefined();
+    await expect(fn!()).resolves.toBeUndefined();
+
+    const showWarningSpy = vi.mocked(
+      (vscodeMock.window as unknown as {
+        showWarningMessage: ReturnType<typeof vi.fn>;
+      }).showWarningMessage,
+    );
+    expect(showWarningSpy).toHaveBeenCalled();
+
+    // createTerminal KHÔNG được gọi.
+    expect(state.createdTerminals.length).toBe(0);
+  });
+
+  it("Test #6b — vsdb.runScript với editor không phải shellscript (sql) vẫn gửi text như cũ (không guard theo language)", async () => {
+    const ctx = makeCtx();
+    await activateFresh(ctx);
+
+    state.activeEditor = {
+      document: {
+        languageId: "sql",
+        getText: () => "SELECT 1;\n",
+        offsetAt: (_p: unknown) => 0,
+      },
+      selection: {
+        isEmpty: true,
+        active: { line: 0, character: 0 },
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: 0 },
+      },
+      insertSnippet: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const fn = state.registeredCommands.get("vsdb.runScript");
+    expect(fn).toBeDefined();
+    await fn!();
+
+    expect(state.createdTerminals.length).toBe(1);
+    const term = state.createdTerminals[0];
+    expect(term.sendText).toHaveBeenCalledWith("SELECT 1;\n\n");
   });
 });
 

@@ -43,6 +43,8 @@
     "onCommand:vsdb.generateSelect",
     "onCommand:vsdb.copyQualifiedName",
     "onCommand:vsdb.refreshSchema",
+    "onCommand:vsdb.runScript",
+    "onLanguage:shellscript",
     "onCommand:vsdb.runStatement",
     "onView:vsdb.schemaTree"
   ],
@@ -240,6 +242,11 @@
           "type": "boolean",
           "default": true,
           "description": "Hiển thị CodeLens ▶ Run phía trên mỗi SQL statement trong file .sql."
+        },
+        "vsdb.showRunLensSh": {
+          "type": "boolean",
+          "default": true,
+          "description": "Hiển thị CodeLens ▶ Run ở đầu file .sh (shellscript)."
         },
         "vsdb.batchSize": {
           "type": "number",

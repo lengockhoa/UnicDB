@@ -861,3 +861,108 @@ export function composeRequery(
   const orderClause = o ? ` ORDER BY ${o}` : "";
   return `SELECT * FROM (${inner}) vsdb_sub${whereClause}${orderClause}`;
 }
+
+// ---- Set filter (TASK-601) --------------------------------------------------
+// Pure-logic helpers backing the Excel-style set-filter UI (consumed by
+// TASK-602's custom filter component, and independently unit-testable). No
+// DOM, no ag-grid, no vscode — these accept whatever the caller extracts
+// from the grid and return data shapes ready to render or predicate against.
+//
+// Key normalization rules:
+//   - null / undefined / "" all collapse to a single sentinel key "(blanks)"
+//     with display "(Blanks)". The sentinel is always pinned LAST in the
+//     sorted entry list regardless of alphabetical position.
+//   - Everything else: key = String(v).toLowerCase(); display keeps the
+//     casing of the FIRST occurrence in the input (so "BUMD" + "bumd" shows
+//     as "BUMD" with count 2).
+//
+// Sort order: ascending case-insensitive (key-based), with the blanks
+// sentinel always last. Counts come from the loaded rows the caller hands
+// us — this is an accepted, documented under-count vs server truth.
+
+export interface SetFilterEntry {
+  key: string;
+  display: string;
+  count: number;
+}
+
+/** Sentinel key for the "(Blanks)" group. Exported so TASK-602 can pin it
+ * in the UI without re-hardcoding the literal. */
+export const SET_FILTER_BLANKS_KEY = "(blanks)";
+export const SET_FILTER_BLANKS_DISPLAY = "(Blanks)";
+
+/**
+ * Build the sorted list of checkbox entries from a column's values.
+ *
+ * Grouping is case-insensitive (key = lowercased string form). The
+ * `display` of each group keeps the casing of its FIRST occurrence so the
+ * UI shows e.g. "BUMD" even when later rows are typed as "bumd".
+ *
+ * null, undefined, and "" all collapse into ONE (Blanks) entry with
+ * combined count. Sort: ascending case-insensitive by key, with the
+ * blanks sentinel pinned last.
+ */
+export function buildSetFilterEntries(values: unknown[]): SetFilterEntry[] {
+  const order: string[] = [];
+  const display = new Map<string, string>();
+  const count = new Map<string, number>();
+
+  for (const v of values) {
+    const blank = v === null || v === undefined || v === "";
+    const key = blank ? SET_FILTER_BLANKS_KEY : String(v).toLowerCase();
+    if (!display.has(key)) {
+      order.push(key);
+      display.set(key, blank ? SET_FILTER_BLANKS_DISPLAY : String(v));
+    }
+    count.set(key, (count.get(key) ?? 0) + 1);
+  }
+
+  order.sort((a, b) => {
+    if (a === SET_FILTER_BLANKS_KEY) return 1;
+    if (b === SET_FILTER_BLANKS_KEY) return -1;
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
+
+  return order.map((k) => ({
+    key: k,
+    display: display.get(k)!,
+    count: count.get(k)!,
+  }));
+}
+
+/**
+ * Membership predicate: does `value` belong to the `selectedKeys` group?
+ * Uses the same normalization as `buildSetFilterEntries`. When
+ * `selectedKeys` is null the filter is INACTIVE — everything passes.
+ */
+export function setFilterPass(
+  value: unknown,
+  selectedKeys: Set<string> | null,
+): boolean {
+  if (selectedKeys === null) return true;
+  const blank = value === null || value === undefined || value === "";
+  const key = blank ? SET_FILTER_BLANKS_KEY : String(value).toLowerCase();
+  return selectedKeys.has(key);
+}
+
+/**
+ * Round-trip helper: convert a set-filter model's display-string list back
+ * to the normalized-key Set the predicate consumes. Unknown display
+ * strings are silently dropped (they're stale model state, e.g. a removed
+ * entry). `null` / `undefined` input means the filter is inactive and
+ * returns `null` (matches `setFilterPass`'s inactive contract).
+ */
+export function selectedKeysFromModel(
+  entries: SetFilterEntry[],
+  values: string[] | null | undefined,
+): Set<string> | null {
+  if (values === null || values === undefined) return null;
+  const byDisplay = new Map<string, string>();
+  for (const e of entries) byDisplay.set(e.display, e.key);
+  const out = new Set<string>();
+  for (const v of values) {
+    const key = byDisplay.get(v);
+    if (key !== undefined) out.add(key);
+  }
+  return out;
+}

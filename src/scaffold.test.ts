@@ -166,4 +166,38 @@ describe("scaffold", () => {
     expect(fs.existsSync(iconPath)).toBe(true);
     expect(fs.statSync(iconPath).size).toBeGreaterThan(0);
   });
+
+  // ===== TASK-605: Run .sh fix (activation events + shellscript config)  =====
+
+  it("Test #1 (TASK-605) — activationEvents có 'onCommand:vsdb.runScript' và 'onLanguage:shellscript'", () => {
+    const pkgPath = path.resolve(__dirname, "..", "package.json");
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+    const events: string[] = Array.isArray(pkg.activationEvents) ? pkg.activationEvents : [];
+    expect(events).toContain("onCommand:vsdb.runScript");
+    expect(events).toContain("onLanguage:shellscript");
+  });
+
+  it("Test #2 (TASK-605) — editor/title menu có vsdb.runScript cho shellscript + command có icon + showRunLensSh config", () => {
+    const pkgPath = path.resolve(__dirname, "..", "package.json");
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+
+    const editorTitle = pkg.contributes?.menus?.["editor/title"] ?? [];
+    const runScriptEntry = editorTitle.find(
+      (m: { command: string }) => m.command === "vsdb.runScript",
+    );
+    expect(runScriptEntry, "editor/title menu cần có vsdb.runScript").toBeTruthy();
+    expect(runScriptEntry.when).toMatch(/shellscript/);
+    expect(runScriptEntry.group).toBe("navigation");
+
+    const runScriptCmd = pkg.contributes.commands.find(
+      (c: { command: string }) => c.command === "vsdb.runScript",
+    );
+    expect(runScriptCmd).toBeTruthy();
+    expect(runScriptCmd.icon).toMatch(/^\$\(/);
+
+    const showRunLensSh = pkg.contributes.configuration?.properties?.["vsdb.showRunLensSh"];
+    expect(showRunLensSh, "vsdb.showRunLensSh config phải tồn tại").toBeTruthy();
+    expect(showRunLensSh.type).toBe("boolean");
+    expect(showRunLensSh.default).toBe(true);
+  });
 });

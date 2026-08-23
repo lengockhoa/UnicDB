@@ -76,3 +76,87 @@ not try to reach server truth here.
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: Exec601
+SUMMARY: Implemented `SetFilterEntry` type + `buildSetFilterEntries` + `setFilterPass` + `selectedKeysFromModel` (+ `SET_FILTER_BLANKS_KEY/DISPLAY` sentinels) in `src/ui/resultsGridModel.ts` as a new section, all pure logic with no DOM/ag-grid/vscode imports. Added `src/ui/__tests__/resultsGridModelSetFilter.test.ts` covering all 5 required test cases (groups/counts/sort/blanks-merge, blank-variant membership + inactive boundary, model round-trip, number grouping) — 11 assertions total.
+TEST_PLAN_FOLLOWED: task §Test Cases (all 5 cases + supporting cases for blank variant membership and empty-after-unknown)
+FILES_CHANGED:
+  - src/ui/resultsGridModel.ts: appended "---- Set filter (TASK-601) ----" section with SetFilterEntry interface, SET_FILTER_BLANKS_KEY/DISPLAY constants, and three exported functions (buildSetFilterEntries, setFilterPass, selectedKeysFromModel).
+  - src/ui/__tests__/resultsGridModelSetFilter.test.ts: NEW — 11 vitest assertions in 3 describe blocks.
+TESTS_ADDED:
+  - src/ui/__tests__/resultsGridModelSetFilter.test.ts: buildSetFilterEntries (3 tests: case-insensitive grouping+first-seen-casing+blanks-last, blank-variant merge, number grouping); setFilterPass (4 tests: case-insensitive match, blanks key match for null/undefined/'', non-match returns false, null selectedKeys → all pass); selectedKeysFromModel (4 tests: known display→key, null/undefined→null, ignores unknown, all-unknown→empty Set).
+VERIFICATION:
+  command: npx vitest run src/ui/__tests__/resultsGridModelSetFilter.test.ts
+  result: 11 pass / 0 fail / exit 0
+  output_excerpt: |
+    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-601
+     ✓ src/ui/__tests__/resultsGridModelSetFilter.test.ts  (11 tests) 2ms
+     Test Files  1 passed (1)
+          Tests  11 passed (11)
+  command: npm run typecheck
+  result: exit 0
+  output_excerpt: |
+    > vsdb@1.4.1 typecheck
+    > tsc --noEmit
+ISSUES: none
+HANDOFF_TO_REVIEWER: yes — full task scope implemented per §Test Cases + §Interfaces; pure logic, no DOM, ready for code-reviewer subagent.
+NEXT: ready for review
+
+### RED Output (pre-implementation, before edits)
+
+```
+RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-601
+filter:  src/ui/__tests__/resultsGridModelSetFilter.test.ts
+ Test Files  1 failed (1)
+      Tests  11 failed (11)
+   Duration  206ms
+
+FAIL  src/ui/__tests__/resultsGridModelSetFilter.test.ts > buildSetFilterEntries — groups + counts + sort > groups case-insensitively, first-seen casing for display, (Blanks) last
+TypeError: buildSetFilterEntries is not a function
+ ❯ src/ui/__tests__/resultsGridModelSetFilter.test.ts:25:12
+
+FAIL  src/ui/__tests__/resultsGridModelSetFilter.test.ts > buildSetFilterEntries — groups + counts + sort > merges null, undefined, and '' into a single (Blanks) entry
+TypeError: buildSetFilterEntries is not a function
+ ❯ src/ui/__tests__/resultsGridModelSetFilter.test.ts:36:12
+
+FAIL  src/ui/__tests__/resultsGridModelSetFilter.test.ts > buildSetFilterEntries — groups + counts + sort > groups number values by their string form
+TypeError: buildSetFilterEntries is not a function
+ ❯ src/ui/__tests__/resultsGridModelSetFilter.test.ts:46:12
+
+FAIL  src/ui/__tests__/resultsGridModelSetFilter.test.ts > setFilterPass — membership predicate > matches case-insensitively against the selected key
+TypeError: setFilterPass is not a function
+ ❯ src/ui/__tests__/resultsGridModelSetFilter.test.ts:54:12
+
+FAIL  src/ui/__tests__/resultsGridModelSetFilter.test.ts > setFilterPass — membership predicate > matches (blanks) key for null/undefined/empty values
+TypeError: setFilterPass is not a function
+ ❯ src/ui/__tests__/resultsGridModelSetFilter.test.ts:58:5
+
+FAIL  src/ui/__tests__/resultsGridModelSetFilter.test.ts > setFilterPass — membership predicate > returns false when selected key does not match
+TypeError: setFilterPass is not a function
+ ❯ src/ui/__tests__/resultsGridModelSetFilter.test.ts:65:12
+
+FAIL  src/ui/__tests__/resultsGridModelSetFilter.test.ts > setFilterPass — membership predicate > returns true for null selected (filter inactive → pass all)
+TypeError: setFilterPass is not a function
+ ❯ src/ui/__tests__/resultsGridModelSetFilter.test.ts:71:12
+
+FAIL  src/ui/__tests__/resultsGridModelSetFilter.test.ts > selectedKeysFromModel — display→key round-trip > maps a known display string to its normalized key
+TypeError: selectedKeysFromModel is not a function
+ ❯ src/ui/__tests__/resultsGridModelSetFilter.test.ts:74:12
+
+FAIL  src/ui/__tests__/resultsGridModelSetFilter.test.ts > selectedKeysFromModel — display→key round-trip > returns null for null/undefined input (inactive filter)
+TypeError: selectedKeysFromModel is not a function
+ ❯ src/ui/__tests__/resultsGridModelSetFilter.test.ts:74:12
+
+FAIL  src/ui/__tests__/resultsGridModelSetFilter.test.ts > selectedKeysFromModel — display→key round-trip > ignores display strings not present in entries
+TypeError: selectedKeysFromModel is not a function
+ ❯ src/ui/__tests__/resultsGridModelSetFilter.test.ts:79:12
+
+FAIL  src/ui/__tests__/resultsGridModelSetFilter.test.ts > selectedKeysFromModel — display→key round-trip > returns empty Set when every display string is unknown
+TypeError: selectedKeysFromModel is not a function
+ ❯ src/ui/__tests__/resultsGridModelSetFilter.test.ts:85:12
+```
