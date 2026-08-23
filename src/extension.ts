@@ -18,15 +18,18 @@ import { ConnectionForm } from "./ui/connectionForm";
 import { sqlToRun } from "./core/statementParser";
 import { analyzeStatement, guardTier } from "./core/dangerousStatement";
 import { truncateAtBoundary } from "./core/text";
+import { AiConfigStore } from "./ai/config";
+import { AiSettingsForm } from "./ui/aiSettingsForm";
+import { createProviderClient } from "./ai/provider";
 import type { ConnectionConfig } from "./config/types";
 import type { ParsedStatement } from "./config/types";
-
 // Track disposables for deactivate().
 let disposables: vscode.Disposable[] = [];
 let state: ExtensionState | null = null;
+/** Cached single-instance AiSettingsForm (TASK-004). Reused across calls. */
+let aiSettingsForm: AiSettingsForm | null = null;
 /** extensionUri capture ở activate() — dùng cho ConnectionForm webview resources. */
 let extensionUriForForm: vscode.Uri = vscode.Uri.file("/");
-/** Cached "VSDB Script" terminal instance (TASK-505). Reused while alive. */
 let runScriptTerminal: vscode.Terminal | null = null;
 
 interface ExtensionState {
@@ -236,9 +239,18 @@ export async function activate(
     vscode.commands.registerCommand("vsdb.runScript", () => commandRunScript()),
   );
 
+  // 15. vsdb.openAiSettings — TASK-004: open AI Settings form (single instance).
+  const aiStore = new AiConfigStore(context);
+  disposables.push(
+    vscode.commands.registerCommand("vsdb.openAiSettings", () =>
+      commandOpenAiSettings(aiStore),
+    ),
+  );
+
   // Dispose schemaTree + codeLens on deactivate to drop subscriptions + cache.
   context.subscriptions.push({ dispose: () => tree.dispose() });
   context.subscriptions.push({ dispose: () => codeLens.dispose() });
+  context.subscriptions.push({ dispose: () => aiSettingsForm?.dispose() });
 
   disposables.forEach((d) => context.subscriptions.push(d));
 }
@@ -253,11 +265,38 @@ export async function deactivate(): Promise<void> {
   }
   disposables = [];
   state = null;
+  aiSettingsForm = null;
 }
 
 // ---- Command implementations -----------------------------------------------
 
-/** Run from editor (Cmd+Enter / Ctrl+Enter / title button). */
+/**
+ * TASK-004 — vsdb.openAiSettings: open the AI Settings form (single instance).
+ * Reveals existing panel when present; builds a fresh one bound to the
+ * store + provider client otherwise.
+ */
+function commandOpenAiSettings(aiStore: AiConfigStore): void {
+  if (!aiSettingsForm) {
+    aiSettingsForm = new AiSettingsForm({
+      extensionUri: extensionUriForForm,
+      store: aiStore,
+      complete: (cfg, role, req) =>
+        createProviderClient({
+          baseUrl: cfg.baseUrl,
+          apiKey: cfg.apiKey,
+          method: cfg.method,
+          timeoutMs: cfg.timeoutMs,
+        }).complete(req).then((r) => {
+          // role is captured by the closure to be consistent with the
+          // AiSettingsFormOptions contract — currently the form always uses
+          // "work" for the test button smoke call.
+          void role;
+          return r;
+        }),
+    });
+  }
+  aiSettingsForm.show();
+}
 async function runQueryFromEditor(
   mgr: ConnectionManager,
   runner: QueryRunner,

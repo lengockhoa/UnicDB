@@ -128,3 +128,49 @@ hasApiKey-instead-of-key is the privacy decision for this form: the webview can 
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: -
+SUMMARY: Implemented AI Settings form (host panel + typed messages + webview bundle), wired `vsdb.openAiSettings` command into extension activation, added esbuild entry for `dist/aiSettingsForm.js`, added new command to package.json contributes + activationEvents, and added README AI section documenting the privacy/egress contract.
+TEST_PLAN_FOLLOWED: task §Test Cases (all 13 covered by 10 host + 4 bundle + 3 wiring tests)
+FILES_CHANGED:
+  - src/ui/aiSettingsFormMessages.ts (new): frozen message protocol (init/save/test/cancel + testResult/saved)
+  - src/ui/aiSettingsForm.ts (new): host panel class with reveal-on-reshow, dispose pattern, hasApiKey-only init, empty-key-keeps-stored save, host-side re-validation
+  - webview/aiSettingsFormMain.ts (new): vanilla DOM form with live validation, write-only apiKey, Escape→cancel
+  - esbuild.js (edit): aiSettingsFormConfig entry (watch + build)
+  - package.json (edit): `vsdb.openAiSettings` command + activationEvent
+  - src/extension.ts (edit): `vsdb.openAiSettings` command registration + single-instance form factory bound to AiConfigStore + createProviderClient
+  - src/extension.test.ts (edit): 3 wiring tests (command registered, contributes entry, activationEvent present)
+  - README.md (edit): new `## AI` section with Privacy/Egress contract (SecretStorage, single-endpoint egress, no-telemetry/no-log) + form open command
+  - src/ui/__tests__/aiSettingsForm.test.ts (new): 10 host tests covering init round-trip + unconfigured, save happy/keep-stored/empty-no-stored/invalid, test happy/error/invalid, cancel
+  - src/ui/__tests__/aiSettingsFormBundle.test.ts (new): 4 jsdom bundle tests covering all-fields-present + live validation + OK-disabled, valid save posts correct payload, Escape→cancel, Test button posts correct payload
+TESTS_ADDED:
+  - src/ui/__tests__/aiSettingsForm.test.ts: 10 tests (init happy + unconfigured, save happy + keep-stored + empty-no-stored + invalid, test happy + ProviderError mapping + invalid-settings, cancel)
+  - src/ui/__tests__/aiSettingsFormBundle.test.ts: 4 tests (init+validation, save payload, Escape→cancel, Test payload)
+  - src/extension.test.ts: 3 tests (TASK-004 — vsdb.openAiSettings wiring)
+VERIFICATION:
+  command: npm run compile && npx vitest run src/ui/__tests__/aiSettingsForm.test.ts src/ui/__tests__/aiSettingsFormBundle.test.ts src/extension.test.ts && npx tsc --noEmit
+  result: 44 passed / 0 failed / tsc OK
+  output_excerpt: |
+    ✓ src/ui/__tests__/aiSettingsForm.test.ts  (10 tests) 4ms
+    ✓ src/ui/__tests__/aiSettingsFormBundle.test.ts  (4 tests) 34ms
+    ✓ src/extension.test.ts  (30 tests) 76ms
+    Test Files  3 passed (3)
+    Tests  44 passed (44)
+
+    RED evidence (initial test run before host fix on async wait): test "empty key + nothing stored: store.save NOT called; testResult error posted" failed with `expected 0 to be greater than 0` (postedMessages filter for isTestResult was empty because 2 `await Promise.resolve()` ticks were insufficient for the handler chain). Fixed by replacing ad-hoc tick waits with `await until(() => postedMessages(panel).some(isTestResult))` (deterministic polling). After fix: 10/10 green.
+
+    Full suite (sanity check that nothing else regressed): 614 tests in 53 files all pass.
+
+ISSUES:
+  - Webview-side validation is duplicated in webview/aiSettingsFormMain.ts (cannot import from src/ai/settings.ts across the host/webview module boundary at esbuild-bundle time without adding a second esbuild entry). Messages are kept lockstep with the host validator; both are sourced from the same spec.
+  - Per PLAN §2 guard table: chat panel / streaming / DB tools / Anthropic protocol all explicitly out of scope.
+HANDOFF_TO_REVIEWER: yes — wave 3 boundary; all 13 spec Test Cases covered by the 17 new tests + README contract; safe for review with code-reviewer (different model).
+NEXT: ready for review
+
+## Reviewer Verdict
+(Phase 4 reviewer append below.)

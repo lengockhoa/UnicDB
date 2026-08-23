@@ -91,7 +91,21 @@ code --install-extension vsdb-<version>.vsix
   - **Copy CREATE DDL**: introspect table rồi re-emit `CREATE TABLE` (cùng generator với form) — copy vào clipboard.
   - **Generate Sample Data…**: chèn N dòng `INSERT … VALUES` theo kiểu cột (int/varchar/date/uuid/json) — mở trong tab SQL untitled để user xem/sửa trước khi chạy.
   - **Analyze / Vacuum**: phát lệnh `ANALYZE` / `VACUUM` (PostgreSQL-only) để cập nhật planner stats / thu dọn dead tuples; nút này không hiện với MySQL/MSSQL.
+- **AI Settings (1.5.x)**: chạy `VSDB: Open AI Settings…` từ Command Palette mở form cấu hình backend OpenAI-compatible (baseUrl, method `responses`/`chat/completions`, timeout, maxSteps, model id cho 2 role `work` (vision) + `smart`, apiKey). Nút **Test** smoke-fires một completion nhỏ để xác nhận endpoint thực sự sống trước khi agent dùng nó.
 
+---
+## AI
+
+### Privacy / Egress
+
+- **Storage**: settings (baseUrl, method, timeout, maxSteps, model ids) lưu trong **VS Code global state** của extension (`vsdb.ai.settings`); **apiKey** lưu trong **VS Code SecretStorage** (`vsdb.ai.apiKey`) — mã hoá qua OS keystore (macOS Keychain / Linux libsecret / Windows Credential Vault), không nằm trong settings JSON, không xuất hiện trong logs, errors, telemetry, hay clipboard.
+- **Egress contract**: **mọi** AI request chỉ đi tới `baseUrl` user cấu hình — không có third-party endpoint, không telemetry, không analytics, không fallback endpoint nào khác. Nếu `baseUrl` rỗng hoặc invalid thì provider fail ngay tại đầu vào — không tự ý gọi đi đâu khác.
+- **Key hygiene**: apiKey được đọc từ SecretStorage theo từng request (no cache). Nó được gắn vào header `Authorization: Bearer …` của HTTPS request tới `baseUrl` và KHÔNG được include trong bất kỳ error message, response body snippet, hay log nào — provider `scrubApiKey` trước khi throw `ProviderError`.
+- **Form webview**: form nhận `hasApiKey: boolean` chứ KHÔNG nhận apiKey; chỉ khi user bấm Save/Test thì giá trị ô mới được đẩy lên host (write-only). Nếu ô apiKey trống và đã có key lưu → form giữ nguyên key cũ.
+
+### Mở form
+
+Mở Command Palette → gõ `VSDB: Open AI Settings…` → điền các trường → bấm **Test** để smoke-fires provider → **Save** để lưu vào store.
 
 ---
 ## Khắc phục sự cố (Troubleshooting)

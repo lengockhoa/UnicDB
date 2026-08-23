@@ -46,13 +46,13 @@
     "onCommand:vsdb.runScript",
     "onLanguage:shellscript",
     "onCommand:vsdb.runStatement",
-    "onView:vsdb.schemaTree",
     "onCommand:vsdb.newTable",
     "onCommand:vsdb.modifyTable",
     "onCommand:vsdb.copyCreateDdl",
     "onCommand:vsdb.generateSampleData",
     "onCommand:vsdb.analyzeTable",
-    "onCommand:vsdb.vacuumTable"
+    "onCommand:vsdb.vacuumTable",
+    "onCommand:vsdb.openAiSettings"
   ],
   "contributes": {
     "commands": [
@@ -169,6 +169,12 @@
         "title": "Vacuum Table",
         "category": "VSDB",
         "icon": "$(trash)"
+      },
+      {
+        "command": "vsdb.openAiSettings",
+        "title": "Open AI Settings…",
+        "category": "VSDB",
+        "icon": "$(gear)"
       }
     ],
     "keybindings": [

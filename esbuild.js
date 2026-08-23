@@ -58,6 +58,18 @@ const newTableFormConfig = {
   minify,
   logLevel: "info",
 };
+/** @type {import('esbuild').BuildOptions} */
+const aiSettingsFormConfig = {
+  entryPoints: ["webview/aiSettingsFormMain.ts"],
+  outfile: "dist/aiSettingsForm.js",
+  bundle: true,
+  platform: "browser",
+  format: "iife",
+  target: "es2022",
+  sourcemap: !minify,
+  minify,
+  logLevel: "info",
+};
 
 async function run() {
   if (watch) {
@@ -65,7 +77,8 @@ async function run() {
     const ctx2 = await esbuild.context(webviewConfig);
     const ctx3 = await esbuild.context(connectionFormConfig);
     const ctx4 = await esbuild.context(newTableFormConfig);
-    await Promise.all([ctx1.watch(), ctx2.watch(), ctx3.watch(), ctx4.watch()]);
+    const ctx5 = await esbuild.context(aiSettingsFormConfig);
+    await Promise.all([ctx1.watch(), ctx2.watch(), ctx3.watch(), ctx4.watch(), ctx5.watch()]);
     console.log("esbuild: watching...");
   } else {
     await Promise.all([
@@ -73,6 +86,7 @@ async function run() {
       esbuild.build(webviewConfig),
       esbuild.build(connectionFormConfig),
       esbuild.build(newTableFormConfig),
+      esbuild.build(aiSettingsFormConfig),
     ]);
     console.log("esbuild: build complete");
   }

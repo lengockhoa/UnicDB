@@ -913,5 +913,34 @@ describe("TASK-005 — extension wiring smoke", () => {
     }
   });
 });
+
+// =============================================================================
+// TASK-004 — vsdb.openAiSettings command + activationEvent + contributes
+// =============================================================================
+describe("TASK-004 — vsdb.openAiSettings wiring", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+  });
+
+  it("registers vsdb.openAiSettings handler on activate", () => {
+    const ctx = makeCtx();
+    activate(ctx as never);
+    expect(state.registeredCommands.has("vsdb.openAiSettings")).toBe(true);
+  });
+
+  it("package.json contributes.commands declares vsdb.openAiSettings", () => {
+    const cmds = (pkgJson.contributes as { commands: Array<{ command: string }> })
+      .commands;
+    const entry = cmds.find((c) => c.command === "vsdb.openAiSettings");
+    expect(entry).toBeDefined();
+    expect(entry!.title).toMatch(/AI Settings/i);
+  });
+
+  it("package.json activationEvents contains onCommand:vsdb.openAiSettings", () => {
+    const evts = pkgJson.activationEvents as string[];
+    expect(evts).toContain("onCommand:vsdb.openAiSettings");
+  });
+});
 // Avoid path-imports lint complaints.
 void path;
