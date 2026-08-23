@@ -118,3 +118,24 @@ Error: Failed to load url ../sqlTool (resolved id: ../sqlTool) ...
  Duration  172ms
 ```
 tsc --noEmit: exit 0, no diagnostics.
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/ai/tools/__tests__/sqlTool.test.ts src/ai/tools/__tests__/schemaContext.test.ts && npx tsc --noEmit
+  result: 17 pass / 0 fail; tsc exit 0 (fresh rerun by reviewer)
+TEST_PLAN_COVERAGE: all-followed (8 rows → 17 its, real expect()s; RED output is real module-not-found)
+FINDINGS:
+  critical: none
+  important:
+    - file: src/ai/tools/sqlTool.ts:92-106 — `EXPLAIN ANALYZE <writable stmt>` BYPASSES the guard. Verified by calling the real isReadOnlySql: `EXPLAIN ANALYZE DELETE FROM t`, `EXPLAIN ANALYZE UPDATE t SET a=1`, `EXPLAIN ANALYZE CREATE TABLE t2 AS SELECT * FROM t`, and `EXPLAIN ANALYZE REFRESH MATERIALIZED VIEW mv` all return ok:true. PG semantics: ANALYZE causes the statement to actually EXECUTE (postgresql.org/docs/current/sql-explain.html: "ANALYZE ... causes the statement to be actually executed"), so this is a real write path (DML executed / table created / MV rebuilt), violating the task goal "chặn mọi thứ khác ở tool layer". Fix: when first keyword is explain, strip optional `ANALYZE|ANALYSE [ ( options... ) ]`, then require the next keyword ∈ {select, show, with} (WITH still subject to the writable-CTE + INTO scans). Add regression tests for the 4 payloads above.
+  minor:
+    - file: src/ai/tools/sqlTool.ts:70-73 — single `$` toggles dollar-quote state, so `SELECT $$into$$` is falsely rejected as INTO (PG $$...$$ quoted string content is skipped by src/core/statementParser.ts:278 but not here). False-positive only (fail-closed); acceptable to leave documented or align token rules.
+    - file: src/ai/tools/sqlTool.ts:135 — fetchBatch() takes no arg (interface frozen), spec prose said fetchBatch(50); 50-row cap applied after fetch (slice). Executor documented; no action.
+    - file: src/ai/tools/sqlTool.ts:92-95 — SELECT of side-effecting functions (e.g. `SELECT pg_terminate_backend(1)`) is inherently passable in any SELECT-only guard; leave to T4 guardrails/agent policy, note only.
+POSITIVE: multi-statement, comment-stripping, case, writable-CTE, unconditional INTO, cursor close-in-finally (incl. fetchBatch throw), fallback path, 50-row truncation, budget cut at table boundary (footer+separator accounting verified correct) — all verified clean by adversarial run. No vscode import. Cycle-J files untouched (git diff c890557..HEAD empty on src/ai/{settings,config,provider,agent}.ts). src/ai/tools/types.ts untouched.
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: One blocking guard bypass (EXPLAIN ANALYZE + write statement); schemaContext half is clean and shippable as-is.

@@ -87,3 +87,33 @@ VERIFICATION:
 ISSUES: none
 HANDOFF_TO_REVIEWER: yes — both files complete, target tests green, no shared-file conflicts.
 NEXT: ready for review (T002 owns sqlTool.ts + schemaContext.ts; no shared file with T1 besides frozen types.ts).
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: ExecK-T001
+EXECUTOR_TOOL: claude-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/ai/tools/__tests__/registry.test.ts src/ai/tools/__tests__/schemaTools.test.ts && npx tsc --noEmit
+  result: 7 pass / 0 fail; tsc exit 0 (fresh rerun, not executor output)
+TEST_PLAN_COVERAGE: all-followed — 7/7 cases implemented with real assertions; RED_OUTPUT is genuine vitest failure output (module-not-found on new files); typecheck script (`tsc --noEmit`) already in Verification Commands; no lint script exists in package.json
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - src/ai/tools/schemaTools.ts:48,77 — non-Error throw (e.g. adapter rejects with a string) yields "Tool failed: undefined" because `(err as Error).message` is undefined. agent.ts:101 uses `e instanceof Error ? e : new Error(String(e))`; tools should match that pattern (or use `err instanceof Error ? err.message : String(err)`). All current adapters throw Error subclasses, so this is latent robustness only — non-blocking.
+SPEC_CONFORMANCE:
+  - createDbTools registers ONLY list_tables + describe_table (run_sql correctly left to TASK-002) ✓
+  - Error strings exact: "No active connection…", "describe_table is only supported for PostgreSQL connections.", "Tool failed: <msg>" ✓
+  - JSON Schema real: describe_table has properties + required:[schema,table]; list_tables schema optional (no required) matches `schema?: string` ✓
+  - Adapter resolved per-call inside execute() — no stale reference held ✓
+  - No rethrow — agent loop continues ✓
+  - No vscode import in src/ai/tools/* ✓
+  - Frozen files untouched: git diff c890557..HEAD is empty on src/ai/{settings,config,provider,agent}.ts and src/ai/tools/types.ts ✓
+  - Test #7 drives the real registry through runAgent with a 2-step scripted fake provider (tool_calls → answer) and asserts finalText + tool-result messages ✓
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Clean implementation, faithful to frozen spec. Single latent minor (non-Error throw message loss) — safe to fix in a later cycle or fold into T004 integration pass.

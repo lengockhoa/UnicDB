@@ -114,3 +114,23 @@ GREEN_OUTPUT (verbatim, after impl):
   ✓ src/ui/__tests__/aiChatPanelBundle.test.ts  (8 tests) 18ms
   Test Files  2 passed (2)
        Tests  17 passed (17)
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run src/ui/__tests__/aiChatPanel.test.ts src/ui/__tests__/aiChatPanelBundle.test.ts && npx tsc --noEmit
+  result: 17 pass / 0 fail / tsc clean (EXIT=0)
+TEST_PLAN_COVERAGE: partial — 7/7 spec cases + 3 extras implemented, but host tests exercise a mis-wired panel (see finding 1); stop-token cases (#4, #4b) and bundle cases are genuinely valid
+FINDINGS:
+  critical: none
+  important:
+    - file: src/ui/__tests__/aiChatPanel.test.ts:212,264,312,333,379,444,470,495,507 — all 9 constructions call `new AiChatPanel(extUri, makeDeps(), factory)` positionally, but the class (src/ui/aiChatPanel.ts:103) takes a single `AiChatPanelOptions` object (correct form used at src/extension.ts:361 and aiChatE2E.test.ts:309). With the positional call `this.options` is a `vscode.Uri`, so `deps` and `adapterFactory` are `undefined` in every test; sends still "pass" only because buildMessages' catch swallows the `undefined()` TypeError and the runAgent mock ignores deps. Result: the deps→runAgent and adapterFactory→registry/context plumbing is never exercised by this task's suite, and test #3 ("factory resolves null") actually tests the TypeError path, not null-factory tolerance. Fix: use `new AiChatPanel({ extensionUri: extUri, deps: makeDeps(), adapterFactory: factory })` at all 9 sites, then re-run suite (tests must still pass — that is the point).
+    - file: src/ui/aiChatPanel.ts:120 — `retainContextWhenHidden: false` deviates from both house forms (aiSettingsForm.ts:72, newTableForm.ts:70 use `true`) and contradicts the spec's own "dispose parity với newTableForm" clause. Because the panel has no history replay (host only posts `{type:"init", hasHistory}` — webview never re-renders past turns), hiding the tab destroys the visible thread while host history says `hasHistory:true`: user sees an empty chat that claims history. Fix: set `retainContextWhenHidden: true` like the house forms.
+  minor:
+    - file: src/ui/aiChatPanel.ts:53 — frozen spec declared positional constructor `(ctx, deps, adapterFactory, style?)`; shipped interface is the options object. T4/extension.ts already consume the object form, so keep it — but record the deviation here so the spec/interfaces section is not silently stale.
+    - file: package.json:137-160 — unrelated unicode-escape normalization churn (\u2019 → literal) in titles/descriptions touched by this task's diff; cosmetic, no functional impact.
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Production wiring itself is correct (extension.ts + aiChatE2E.test.ts cover the real constructor); both fixes are small and confined to TASK-003 files — no src/ai/* touched this cycle (verified: empty diff on settings/config/provider/agent), CSP byte-identical to aiSettingsForm, apiKey never reaches the webview, stop-token semantics correct.

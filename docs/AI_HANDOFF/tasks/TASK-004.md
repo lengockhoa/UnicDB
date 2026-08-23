@@ -131,3 +131,23 @@ yes — wiring live, all 5 tests green.
 ## Interfaces
 - Consumes: tất cả T1-T3 productions; `AiConfigStore.loadConfig()` + flat `AiConfig` fields + `createProviderClient` (frozen cycle J); `AdapterFactory` async (src/ai/tools/types.ts).
 - Produces: `(none)` — final consumer. README contract cho QA.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run src/ui/__tests__/aiChatE2e.test.ts src/extension.test.ts src/ui/__tests__/aiChatPanel.test.ts && npx tsc --noEmit
+  result: compile OK / 45 pass / 0 fail; tsc --noEmit clean
+TEST_PLAN_COVERAGE: all-followed (5/5 cases: happy E2E, DML regression, unconfigured, offline-500, wiring+dispose; ≥2 edge cases present)
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - README.md:127 — "form Settings → Save với apiKey trống" does NOT disable AI: aiSettingsForm.ts:146-159 refuses empty-key save when nothing is stored, or silently reuses the stored key when one exists; AiConfigStore.clear() (src/ai/config.ts:111) has no production caller. Delete that clause — only "Clear Secret Storage" works as written.
+    - src/extension.test.ts:960-961 — Test #5's `ctx.subscriptions.length > 0` is tautological (activate() pushes many disposables); comment claims it proves the aiChat handler is subscribed. Tighten to assert the specific disposable or drop the assert.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: RED evidence covers the 3 behavior-changing wiring tests; the 3 E2E tests exercise pre-existing T1-T3 seams (nothing to be RED). Read-only guard, POSTGRES-only adapterFactory, per-call adapter resolution, apiKey scrub, and cycle-J file immutability (empty diff c890557..HEAD on src/ai/{settings,config,provider,agent}.ts) all verified in code.
