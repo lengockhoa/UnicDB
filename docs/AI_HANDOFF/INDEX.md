@@ -9,8 +9,8 @@ Cycle history: A (AG Grid), B (edit/paste/undo), C, D+E (grid edit/save/export/r
 
 | ID | Title | Priority | Size | Status | Owner | Reviewer | File |
 |----|-------|----------|------|--------|-------|----------|------|
-| TASK-001 | AI config storage: SecretStorage + workspace config + reload (src/ai/config.ts) | P0 | M | ready | - | - | tasks/TASK-001.md |
-| TASK-002 | OpenAI-compatible provider client (src/ai/provider.ts) | P0 | M | ready | - | - | tasks/TASK-002.md |
+| TASK-001 | AI config storage: SecretStorage + workspace config + reload (src/ai/config.ts) | P0 | M | pending_review | Exec-T001-2 | - | tasks/TASK-001.md |
+| TASK-002 | OpenAI-compatible provider client (src/ai/provider.ts) | P0 | M | pending_review | Exec-T002-2 | - | tasks/TASK-002.md |
 | TASK-003 | Agent loop: config-driven routing + tool registry + step budget (src/ai/agent.ts) | P0 | L | ready | - | - | tasks/TASK-003.md |
 | TASK-004 | AI Settings form (webview) + extension wiring + README privacy | P0 | L | ready | - | - | tasks/TASK-004.md |
 

@@ -1,6 +1,6 @@
 Command: handoff-fullstack
-Goal: Cycle I — DataGrip-style New Table + Modify Table + table utility menus (PG only)
+Goal: Cycle J — AI core (config + provider + agent foundation)
 Base: main
-Phase: done
-Cursor: released — 6/6 approved, pushed 7a620cb (10 commits), worktrees/branches clean, IT container removed
-Next: Cycle J queued (AI core — spec at docs/AI_HANDOFF/queue/AI-CORE-spec.md)
+Phase: P3
+Cursor: plan approved + committed 6a4557c; PLAN_COMMIT=6a4557c
+Next: wave 1 — TASK-001 + TASK-002 parallel (worktrees), then full-suite boundary check

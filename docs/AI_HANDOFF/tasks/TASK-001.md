@@ -116,3 +116,51 @@ Split pure `settings.ts` vs vscode `config.ts` keeps validations unit-testable A
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Executor Report
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: Exec-T001-2 (feature-implementer)
+
+SUMMARY: Implemented pure src/ai/settings.ts (types + validators + redact/normalization helpers, zero vscode import) and vscode-backed src/ai/config.ts (AiConfigStore over SecretStorage apiKey + globalState settings, secrets-first ordering, no cache). 14 tests across 2 files all pass; npx tsc --noEmit exit 0.
+
+TEST_PLAN_FOLLOWED: task Test Cases (13 numbered + 1 supplementary empty-apiKey check = 14 total) — happy paths and ordering/security edges explicitly required by spec.
+
+FILES_CHANGED:
+  - src/ai/settings.ts (new): pure types (AiCompletionMethod, AiModelRole, AiModelConfig, AiSettings, AiConfig), defaultAiSettings() literal, aiSettingsErrors() with exact spec messages + defense-in-depth apiKey rejection, normalizeBaseUrl() trim+strip-trail-slasher, redactAiConfig() strips apiKey only.
+  - src/ai/config.ts (new): KEY_AI_SETTINGS, KEY_AI_API_KEY, AiConfigStore with loadSettings() (null on missing/invalid), loadApiKey() (undefined on absent/error), loadConfig() (null when either side empty, fresh read every call), save() (validate then empty-key reject then secrets.store FIRST then globalState last with explicit 5-field copy that excludes apiKey by construction), clear() (idempotent).
+  - src/ai/__tests__/settings.test.ts (new): tests #1–#7 — defaults literal, no-error-when-valid, exact 5-error invalid case, bounds inclusive/exclusive, defense-in-depth apiKey-in-settings reject, normalizeBaseUrl table, redactAiConfig strips-only-apiKey.
+  - src/ai/__tests__/config.test.ts (new): tests #8–#13 — round-trip with apiKey-scrub assertions on globalState, invalid-save-persists-nothing, secret-store-reject-then-no-settings, unconfigured nulls, fresh-read after external secret mutation + corrupt-JSON null, clear empties both stores. Plus supplementary empty-apiKey rejection (Test #9b) for the spec's "Empty apiKey string ⇒ throw" rule.
+
+TESTS_ADDED:
+  - src/ai/__tests__/settings.test.ts: Test #1..#7 (7 cases)
+  - src/ai/__tests__/config.test.ts: Test #8..#13 + Test #9b (7 cases)
+
+VERIFICATION:
+  command: npx vitest run src/ai/__tests__/settings.test.ts src/ai/__tests__/config.test.ts && npx tsc --noEmit
+  result: 14 pass / 0 fail, tsc exit 0, shell exit 0
+  output_excerpt: |
+    ✓ src/ai/__tests__/settings.test.ts  (7 tests) 3ms
+    ✓ src/ai/__tests__/config.test.ts    (7 tests) 3ms
+    Test Files  2 passed (2)
+         Tests  14 passed (14)
+    exit=0
+
+RED_OUTPUT (initial — both modules missing, both suites failed to load):
+    RUN  v1.6.1 /.../.worktrees/task-001
+     ❯ src/ai/__tests__/config.test.ts  (0 test)
+     ❯ src/ai/__tests__/settings.test.ts  (0 test)
+    Failed Suites 2 (config + settings)
+     FAIL  src/ai/__tests__/config.test.ts
+    Error: Failed to load url ../config (resolved id: ../config) ... Does the file exist?
+     FAIL  src/ai/__tests__/settings.test.ts
+    Error: Failed to load url ../settings (resolved id: ../settings) ... Does the file exist?
+     Test Files  2 failed (2)
+          Tests  no tests
+
+ISSUES: Test file naming — assignment prompt used aiSettings.test.ts/aiConfig.test.ts; task file Spec uses settings.test.ts/config.test.ts. Followed the task-file spec (normative). Spec didn't define an updateSettings method — followed the 5 spec methods (loadSettings/loadApiKey/loadConfig/save/clear). Spec says "JSON of the 5 settings fields" for globalState — implemented as structured object (mirrors vsdb.connections pattern in ConnectionManager); loadSettings accepts both object and JSON-string forms for robustness.
+
+HANDOFF_TO_REVIEWER: yes — task ready, INDEX row set to pending_review.
+
+NEXT: ready for review (Rev-T001).

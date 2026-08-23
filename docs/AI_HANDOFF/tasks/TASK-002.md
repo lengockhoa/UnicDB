@@ -142,3 +142,35 @@ No `src/ai/*` imports keeps wave 1 parallel-safe (TASK-001 touches settings/conf
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Executor Report
+
+```
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: Exec-T002-2
+SUMMARY: Implemented src/ai/provider.ts (pure OpenAI-compatible fetch client, method switch chat/completions vs responses, AbortController timeout, ProviderError with apiKey-scrubbed snippets, vision content parts mapping) plus 15 vitest cases covering all 13 spec Test Cases.
+TEST_PLAN_FOLLOWED: inline — wrote 15 tests covering all 13 spec cases + 2 builder regression tests; ran RED then GREEN.
+FILES_CHANGED:
+  - src/ai/provider.ts (new): pure client, no vscode import, no src/ai/* import.
+  - src/ai/__tests__/provider.test.ts (new): 15 tests.
+TESTS_ADDED:
+  - src/ai/__tests__/provider.test.ts: chat request shape (#1), responses request shape (#2), chat parse text+finishReason (#3), chat parse tool_calls (#4), responses parse output_text (#5), responses parse function_call item (#6), vision both methods (#7), timeout abort (#8), 200 non-JSON (#9), apiKey scrub (#10), trailing-slash baseUrl (#11), empty/absent optionals (#12), connection refused (#13), buildChatCompletionsBody tool/assistant mapping (regression), buildResponsesBody system messages join (regression).
+VERIFICATION:
+  command: npx vitest run src/ai/__tests__/provider.test.ts && npx tsc --noEmit
+  result: 15 pass / 0 fail, tsc exit 0
+  RED_OUTPUT (vitest run on stub — all 15 fail with "not implemented"):
+    Test Files  1 failed (1)
+    Tests       15 failed (15)
+  GREEN_OUTPUT (vitest run on implementation):
+    RUN  v1.6.1
+     ✓ src/ai/__tests__/provider.test.ts  (15 tests) 7ms
+     Test Files  1 passed (1)
+          Tests  15 passed (15)
+ISSUES: none
+HANDOFF_TO_REVIEWER: yes — wave-1 deliverable ready for review.
+NEXT: Reviewer picks up from docs/AI_HANDOFF/INDEX.md pending_review row.
+```
+Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+-->
