@@ -209,7 +209,7 @@ describe("AiChatPanel — init", () => {
   it("#1 ready: posts init with hasHistory:false on first open", async () => {
     agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
     const factory: AdapterFactory = vi.fn(async () => null);
-    const panel = new AiChatPanel(extUri, makeDeps(), factory);
+    const panel = new AiChatPanel({ extensionUri: extUri, deps: makeDeps(), adapterFactory: factory });
     panel.show();
     const { panel: p, handler } = panelHarness();
     handler({ type: "ready" });
@@ -261,7 +261,7 @@ describe("AiChatPanel — send", () => {
     );
 
     const factory: AdapterFactory = vi.fn(async () => null);
-    const panel = new AiChatPanel(extUri, makeDeps(), factory);
+    const panel = new AiChatPanel({ extensionUri: extUri, deps: makeDeps(), adapterFactory: factory });
     panel.show();
     const { panel: p, handler } = panelHarness();
     handler({ type: "ready" });
@@ -309,7 +309,7 @@ describe("AiChatPanel — no connection", () => {
   it("#3 factory resolves null: system prompt OK, runAgent still called, no throw", async () => {
     agentState.runAgentMock.mockImplementation(async () => makeRunResult([], "fallback"));
     const factory: AdapterFactory = vi.fn(async () => null);
-    const panel = new AiChatPanel(extUri, makeDeps(), factory);
+    const panel = new AiChatPanel({ extensionUri: extUri, deps: makeDeps(), adapterFactory: factory });
     panel.show();
     const { panel: p, handler } = panelHarness();
     handler({ type: "ready" });
@@ -330,7 +330,7 @@ describe("AiChatPanel — no connection", () => {
   it("#3b empty text: send is a no-op, runAgent not called", async () => {
     agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
     const factory: AdapterFactory = vi.fn(async () => null);
-    const panel = new AiChatPanel(extUri, makeDeps(), factory);
+    const panel = new AiChatPanel({ extensionUri: extUri, deps: makeDeps(), adapterFactory: factory });
     panel.show();
     const { panel: p, handler } = panelHarness();
     handler({ type: "ready" });
@@ -376,7 +376,7 @@ describe("AiChatPanel — stop", () => {
     );
 
     const factory: AdapterFactory = vi.fn(async () => null);
-    const panel = new AiChatPanel(extUri, makeDeps(), factory);
+    const panel = new AiChatPanel({ extensionUri: extUri, deps: makeDeps(), adapterFactory: factory });
     panel.show();
     const { panel: p, handler } = panelHarness();
     handler({ type: "ready" });
@@ -441,7 +441,7 @@ describe("AiChatPanel — stop", () => {
       },
     );
     const factory: AdapterFactory = vi.fn(async () => null);
-    const panel = new AiChatPanel(extUri, makeDeps(), factory);
+    const panel = new AiChatPanel({ extensionUri: extUri, deps: makeDeps(), adapterFactory: factory });
     panel.show();
     const { panel: p, handler } = panelHarness();
     handler({ type: "ready" });
@@ -467,7 +467,7 @@ describe("AiChatPanel — error", () => {
       throw new Error("provider down");
     });
     const factory: AdapterFactory = vi.fn(async () => null);
-    const panel = new AiChatPanel(extUri, makeDeps(), factory);
+    const panel = new AiChatPanel({ extensionUri: extUri, deps: makeDeps(), adapterFactory: factory });
     panel.show();
     const { panel: p, handler } = panelHarness();
     handler({ type: "ready" });
@@ -492,7 +492,7 @@ describe("AiChatPanel — lifecycle", () => {
   it("#6 show twice: reveal on existing; createWebviewPanel only once", () => {
     agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
     const factory: AdapterFactory = vi.fn(async () => null);
-    const panel = new AiChatPanel(extUri, makeDeps(), factory);
+    const panel = new AiChatPanel({ extensionUri: extUri, deps: makeDeps(), adapterFactory: factory });
     panel.show();
     panel.show();
     panel.show();
@@ -504,7 +504,7 @@ describe("AiChatPanel — lifecycle", () => {
   it("#6b clear: posts init with hasHistory:false", async () => {
     agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
     const factory: AdapterFactory = vi.fn(async () => null);
-    const panel = new AiChatPanel(extUri, makeDeps(), factory);
+    const panel = new AiChatPanel({ extensionUri: extUri, deps: makeDeps(), adapterFactory: factory });
     panel.show();
     const { panel: p, handler } = panelHarness();
     handler({ type: "ready" });
@@ -515,5 +515,72 @@ describe("AiChatPanel — lifecycle", () => {
     const inits = postedMessages(p).filter(isInit);
     const lastInit = inits[inits.length - 1] as InitMsg;
     expect(lastInit.hasHistory).toBe(false);
+  });
+});
+
+// ============================================================================
+// Regression (R4.5 — Reviewer finding 1): deps + adapterFactory are truly
+// consumed. Previously the 9 constructions were positional `(extUri, deps,
+// factory)` against an options-object constructor; the TypeErrors from
+// `undefined()` were swallowed by buildMessages' try/catch and the runAgent
+// mock ignored deps, so the suite appeared green while the wiring was
+// broken. Assert now that send actually consults both: factory invoked for
+// schema context, and the deps handed to runAgent equal the deps we passed
+// in (loadConfig reference identity).
+// ============================================================================
+describe("AiChatPanel — wiring (regression R4.5)", () => {
+  it("R1 send consults adapterFactory for schema context (factory is invoked, not undefined)", async () => {
+    const adapter = {
+      listTables: vi.fn(async () => []),
+      listTableDetail: vi.fn(async () => ({ columns: [], constraints: [] })),
+    };
+    const factory: AdapterFactory = vi.fn(async () => adapter);
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], "ok"));
+
+    const deps = makeDeps();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps,
+      adapterFactory: factory,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "list tables" });
+    await until(() => postedMessages(p).some(isAssistant));
+
+    expect(factory).toHaveBeenCalled();
+    expect(adapter.listTables).toHaveBeenCalled();
+    // runAgent was handed the SAME deps instance (reference identity).
+    expect(agentState.runAgentMock).toHaveBeenCalledTimes(1);
+    const passedDeps = agentState.runAgentMock.mock.calls[0]?.[1] as AgentDeps;
+    expect(passedDeps).toBe(deps);
+  });
+
+  it("R2 send hands the real deps instance to runAgent (deps.loadConfig reachable)", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], "ok"));
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const deps = makeDeps();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps,
+      adapterFactory: factory,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "hi" });
+    await until(() => postedMessages(p).some(isAssistant));
+
+    expect(agentState.runAgentMock).toHaveBeenCalledTimes(1);
+    const passedDeps = agentState.runAgentMock.mock.calls[0]?.[1] as AgentDeps;
+    expect(passedDeps).toBe(deps);
+    expect(typeof passedDeps.loadConfig).toBe("function");
+    expect(typeof passedDeps.complete).toBe("function");
+    // The specific spies we made — same references, not stubs.
+    expect(passedDeps.loadConfig).toBe(deps.loadConfig);
+    expect(passedDeps.complete).toBe(deps.complete);
   });
 });

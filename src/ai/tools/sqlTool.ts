@@ -105,6 +105,24 @@ export function isReadOnlySql(sql: string): ReadOnlyCheck {
   const kw = firstKeyword(lower);
   if (!kw || !ALLOWED_FIRST[kw]) return { ok: false, reason: READ_ONLY_REASON };
 
+  // EXPLAIN may wrap a writable statement — in PostgreSQL, EXPLAIN ANALYZE
+  // actually executes the wrapped statement (DELETE/UPDATE/INSERT/DROP/CREATE/
+  // REFRESH/MERGE/TRUNCATE all mutate state). Reduce EXPLAIN to the inner
+  // statement by stripping the leading EXPLAIN plus optional ANALYZE|ANALYSE
+  // |VERBOSE and an optional parenthesized options list, then re-check that
+  // inner statement against the same guards. EXPLAIN SELECT/WITH…SELECT/SHOW
+  // remain allowed; anything else behind EXPLAIN is rejected.
+  if (kw === "explain") {
+    const inner = stripExplainPrefix(lower);
+    const innerKw = firstKeyword(inner);
+    if (!innerKw || !ALLOWED_FIRST[innerKw]) return { ok: false, reason: READ_ONLY_REASON };
+    if (innerKw === "with" && /\b(insert|update|delete|merge)\b/.test(inner)) {
+      return { ok: false, reason: WCTE_REASON };
+    }
+    if (/\binto\b/.test(inner)) return { ok: false, reason: INTO_REASON };
+    return { ok: true };
+  }
+
   // Writable CTE check (when first keyword is WITH) precedes the INTO scan:
   // `WITH x AS (INSERT INTO a …) SELECT …` contains INTO as part of INSERT,
   // not as a standalone INTO clause; the more specific reason wins.
@@ -116,6 +134,60 @@ export function isReadOnlySql(sql: string): ReadOnlyCheck {
   if (/\binto\b/.test(lower)) return { ok: false, reason: INTO_REASON };
 
   return { ok: true };
+}
+
+/**
+ * Strip a leading `EXPLAIN` plus optional modifier keywords
+ * (`ANALYZE` | `ANALYSE` | `VERBOSE`, repeatable in any order) and an
+ * optional parenthesized options list, returning the inner statement
+ * the EXPLAIN actually wraps. Whitespace between tokens is consumed.
+ * Does not validate token shape; callers re-check the inner result.
+ */
+function stripExplainPrefix(lower: string): string {
+  let i = 0;
+  const n = lower.length;
+  const isWordChar = (c: string) => /[a-zA-Z0-9_]/.test(c);
+  // Consume leading whitespace before EXPLAIN itself.
+  while (i < n && /\s/.test(lower[i] ?? "")) i++;
+  // Consume "explain".
+  if (lower.startsWith("explain", i) && !isWordChar(lower[i + 7] ?? "")) i += 7;
+  // Consume any number of ANALYZE|ANALYSE|VERBOSE tokens and an optional
+  // parenthesized options list, in any order.
+  while (i < n) {
+    while (i < n && /\s/.test(lower[i] ?? "")) i++;
+    if (lower.startsWith("analyze", i) && !isWordChar(lower[i + 7] ?? "")) {
+      i += 7;
+      continue;
+    }
+    if (lower.startsWith("analyse", i) && !isWordChar(lower[i + 7] ?? "")) {
+      i += 7;
+      continue;
+    }
+    if (lower.startsWith("verbose", i) && !isWordChar(lower[i + 7] ?? "")) {
+      i += 7;
+      continue;
+    }
+    if (lower[i] === "(") {
+      let depth = 0;
+      const start = i;
+      while (i < n) {
+        const c = lower[i] ?? "";
+        if (c === "(") depth++;
+        else if (c === ")") {
+          depth--;
+          if (depth === 0) {
+            i++;
+            break;
+          }
+        }
+        i++;
+      }
+      if (depth !== 0) i = start + 1; // unbalanced — bail, leave as-is
+      continue;
+    }
+    break;
+  }
+  return lower.slice(i);
 }
 
 export interface SqlResult {

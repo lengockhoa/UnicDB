@@ -127,6 +127,141 @@ describe("isReadOnlySql", () => {
     const sql = "-- comment\nSELECT * FROM t";
     expect(isReadOnlySql(sql)).toEqual({ ok: true });
   });
+
+  it("accepts EXPLAIN SELECT", () => {
+    expect(isReadOnlySql("EXPLAIN SELECT * FROM t")).toEqual({ ok: true });
+  });
+
+  it("accepts EXPLAIN ANALYZE SELECT", () => {
+    expect(isReadOnlySql("EXPLAIN ANALYZE SELECT * FROM t")).toEqual({ ok: true });
+  });
+
+  it("accepts EXPLAIN ANALYSE SELECT (British spelling)", () => {
+    expect(isReadOnlySql("EXPLAIN ANALYSE SELECT * FROM t")).toEqual({ ok: true });
+  });
+
+  it("accepts EXPLAIN WITH…SELECT", () => {
+    expect(isReadOnlySql("EXPLAIN WITH x AS (SELECT 1) SELECT * FROM x")).toEqual({ ok: true });
+  });
+
+  it("rejects EXPLAIN ANALYZE DELETE (PG actually executes the statement)", () => {
+    const r = isReadOnlySql("EXPLAIN ANALYZE DELETE FROM t");
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("Only SELECT/SHOW/EXPLAIN/WITH…SELECT are allowed (read-only)");
+  });
+
+  it("rejects EXPLAIN ANALYZE UPDATE", () => {
+    const r = isReadOnlySql("EXPLAIN ANALYZE UPDATE t SET a=1");
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("Only SELECT/SHOW/EXPLAIN/WITH…SELECT are allowed (read-only)");
+  });
+
+  it("rejects EXPLAIN ANALYZE INSERT", () => {
+    const r = isReadOnlySql("EXPLAIN ANALYZE INSERT INTO t VALUES (1)");
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("Only SELECT/SHOW/EXPLAIN/WITH…SELECT are allowed (read-only)");
+  });
+
+  it("rejects EXPLAIN ANALYZE CREATE TABLE AS SELECT", () => {
+    const r = isReadOnlySql("EXPLAIN ANALYZE CREATE TABLE t2 AS SELECT * FROM t");
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("Only SELECT/SHOW/EXPLAIN/WITH…SELECT are allowed (read-only)");
+  });
+
+  it("rejects EXPLAIN ANALYZE REFRESH MATERIALIZED VIEW", () => {
+    const r = isReadOnlySql("EXPLAIN ANALYZE REFRESH MATERIALIZED VIEW mv");
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("Only SELECT/SHOW/EXPLAIN/WITH…SELECT are allowed (read-only)");
+  });
+
+  it("rejects EXPLAIN (ANALYZE) DELETE (parenthesized options form)", () => {
+    const r = isReadOnlySql("EXPLAIN (ANALYZE) DELETE FROM t");
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("Only SELECT/SHOW/EXPLAIN/WITH…SELECT are allowed (read-only)");
+  });
+
+  it("rejects EXPLAIN DELETE (without ANALYZE, still a write)", () => {
+    const r = isReadOnlySql("EXPLAIN DELETE FROM t");
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("Only SELECT/SHOW/EXPLAIN/WITH…SELECT are allowed (read-only)");
+  });
+
+  it("rejects EXPLAIN UPDATE", () => {
+    const r = isReadOnlySql("EXPLAIN UPDATE t SET a=1");
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("Only SELECT/SHOW/EXPLAIN/WITH…SELECT are allowed (read-only)");
+  });
+
+  it("rejects EXPLAIN CREATE TABLE AS SELECT", () => {
+    const r = isReadOnlySql("EXPLAIN CREATE TABLE x AS SELECT 1");
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("Only SELECT/SHOW/EXPLAIN/WITH…SELECT are allowed (read-only)");
+  });
+
+  it("rejects EXPLAIN REFRESH MATERIALIZED VIEW", () => {
+    const r = isReadOnlySql("EXPLAIN REFRESH MATERIALIZED VIEW v");
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("Only SELECT/SHOW/EXPLAIN/WITH…SELECT are allowed (read-only)");
+  });
+
+  it("rejects EXPLAIN DROP TABLE", () => {
+    const r = isReadOnlySql("EXPLAIN DROP TABLE t");
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("Only SELECT/SHOW/EXPLAIN/WITH…SELECT are allowed (read-only)");
+  });
+
+  it("rejects EXPLAIN TRUNCATE", () => {
+    const r = isReadOnlySql("EXPLAIN TRUNCATE t");
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("Only SELECT/SHOW/EXPLAIN/WITH…SELECT are allowed (read-only)");
+  });
+
+  it("rejects EXPLAIN ANALYZE WITH…INSERT…SELECT (writable CTE behind EXPLAIN)", () => {
+    const sql =
+      "EXPLAIN ANALYZE WITH x AS (INSERT INTO a VALUES(1) RETURNING *) SELECT * FROM x";
+    const r = isReadOnlySql(sql);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe(
+      "Read-only violation: writable CTE (INSERT/UPDATE/DELETE/MERGE)",
+    );
+  });
+
+  it("rejects EXPLAIN SELECT…INTO (SELECT INTO behind EXPLAIN)", () => {
+    const r = isReadOnlySql("EXPLAIN SELECT * INTO t2 FROM t");
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("Read-only violation: INTO");
+  });
+
+  it("accepts EXPLAIN ANALYZE (FORMAT JSON) SELECT (parens-options form)", () => {
+    expect(isReadOnlySql("EXPLAIN ANALYZE (FORMAT JSON) SELECT * FROM t")).toEqual({
+      ok: true,
+    });
+  });
+
+  it("accepts EXPLAIN (FORMAT JSON, ANALYZE) SELECT (parens-first form)", () => {
+    expect(isReadOnlySql("EXPLAIN (FORMAT JSON, ANALYZE) SELECT * FROM t")).toEqual({
+      ok: true,
+    });
+  });
+
+  it("rejects EXPLAIN VERBOSE DELETE", () => {
+    const r = isReadOnlySql("EXPLAIN VERBOSE DELETE FROM t");
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("Only SELECT/SHOW/EXPLAIN/WITH…SELECT are allowed (read-only)");
+  });
+
+  it("rejects bare EXPLAIN with no statement", () => {
+    const r = isReadOnlySql("EXPLAIN");
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("Only SELECT/SHOW/EXPLAIN/WITH…SELECT are allowed (read-only)");
+  });
+
+  it("rejects EXPLAIN ANALYZE with -- comment wrapping a write", () => {
+    const sql = "-- comment\nEXPLAIN ANALYZE DELETE FROM t";
+    const r = isReadOnlySql(sql);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("Only SELECT/SHOW/EXPLAIN/WITH…SELECT are allowed (read-only)");
+  });
 });
 
 // ---- createSqlTool --------------------------------------------------------

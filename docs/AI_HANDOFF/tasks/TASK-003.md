@@ -134,3 +134,34 @@ FINDINGS:
     - file: package.json:137-160 — unrelated unicode-escape normalization churn (\u2019 → literal) in titles/descriptions touched by this task's diff; cosmetic, no functional impact.
 NEXT_STATUS_FOR_INDEX: changes_requested
 NOTES: Production wiring itself is correct (extension.ts + aiChatE2E.test.ts cover the real constructor); both fixes are small and confined to TASK-003 files — no src/ai/* touched this cycle (verified: empty diff on settings/config/provider/agent), CSP byte-identical to aiSettingsForm, apiKey never reaches the webview, stop-token semantics correct.
+
+## Executor Report (fix round 1)
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: FixK-T003
+SUMMARY: Fixed both reviewer findings. (1) All 9 host-test constructions rewrote from positional `(extUri, deps, factory)` to options-object `{ extensionUri, deps, adapterFactory }` so deps and adapterFactory are actually wired through `this.options`. Added 2 regression tests (R1, R2) asserting factory is consulted for schema context and the exact deps instance reaches runAgent (reference identity on `loadConfig`/`complete`). (2) `retainContextWhenHidden: false` → `true` for house parity with aiSettingsForm/newTableForm. Both original important findings resolved; minor notes left as-is (spec text already documents the options-object deviation; package.json unicode churn is unrelated cosmetic).
+TEST_PLAN_FOLLOWED: task §Test Cases (1-7) + reviewer finding 1 (rewire to options-object) + reviewer finding 2 (retainContextWhenHidden parity). 17 original tests + 2 new regression tests = 19 host+bundle.
+FILES_CHANGED:
+  - src/ui/aiChatPanel.ts: line 116 `retainContextWhenHidden: false` → `true` (parity with aiSettingsForm:72 / newTableForm:70).
+  - src/ui/__tests__/aiChatPanel.test.ts: 9× `new AiChatPanel(extUri, makeDeps(), factory)` → `new AiChatPanel({ extensionUri: extUri, deps: makeDeps(), adapterFactory: factory })` at lines 212, 264, 312, 333, 379, 444, 470, 495, 507. New describe block "AiChatPanel — wiring (regression R4.5)" with 2 tests (R1 adapterFactory consulted for schema context; R2 deps reference identity reaches runAgent).
+TESTS_ADDED:
+  - src/ui/__tests__/aiChatPanel.test.ts: R1 (factory invoked + adapter.listTables called → proves options.adapterFactory is wired, not undefined), R2 (runAgent received the exact deps object passed in — `passedDeps.loadConfig === deps.loadConfig` — proves options.deps is wired).
+VERIFICATION:
+  command: npm run compile && npx vitest run src/ui/__tests__/aiChatPanel.test.ts src/ui/__tests__/aiChatPanelBundle.test.ts && npx tsc --noEmit
+  result: 0 exit / 19 of 19 pass / tsc clean
+  output_excerpt: |
+    esbuild: build complete
+
+     RUN  v1.6.1
+     ✓ src/ui/__tests__/aiChatPanel.test.ts  (11 tests) 5ms
+     ✓ src/ui/__tests__/aiChatPanelBundle.test.ts  (8 tests) 19ms
+
+     Test Files  2 passed (2)
+          Tests  19 passed (19)
+
+    (tsc --noEmit produced no output → 0 errors.)
+ISSUES: none
+HANDOFF_TO_REVIEWER: yes — both important findings fixed; 2 regression tests prove wiring is genuine; retainContextWhenHidden matches house forms.
+NEXT: ready for review (R4.5 round 2).

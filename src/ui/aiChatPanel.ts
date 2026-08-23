@@ -113,7 +113,7 @@ export class AiChatPanel {
       vscode.ViewColumn.Active,
       {
         enableScripts: true,
-        retainContextWhenHidden: false,
+        retainContextWhenHidden: true,
         localResourceRoots: [
           vscode.Uri.joinPath(this.options.extensionUri, "dist"),
         ],

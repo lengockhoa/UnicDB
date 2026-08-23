@@ -139,3 +139,56 @@ FINDINGS:
 POSITIVE: multi-statement, comment-stripping, case, writable-CTE, unconditional INTO, cursor close-in-finally (incl. fetchBatch throw), fallback path, 50-row truncation, budget cut at table boundary (footer+separator accounting verified correct) — all verified clean by adversarial run. No vscode import. Cycle-J files untouched (git diff c890557..HEAD empty on src/ai/{settings,config,provider,agent}.ts). src/ai/tools/types.ts untouched.
 NEXT_STATUS_FOR_INDEX: changes_requested
 NOTES: One blocking guard bypass (EXPLAIN ANALYZE + write statement); schemaContext half is clean and shippable as-is.
+
+## Executor Report (fix round 1)
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: FixK-T002
+SUMMARY: Closed the EXPLAIN ANALYZE / CREATE TABLE AS / REFRESH MV bypass in `isReadOnlySql`. New helper `stripExplainPrefix` reduces an `EXPLAIN [ANALYZE|ANALYSE|VERBOSE] [(options)]` head to the inner statement; the inner is re-checked against the existing first-keyword / INTO / writable-CTE guards. EXPLAIN SELECT/WITH…SELECT/SHOW remain allowed; EXPLAIN ANALYZE wrapping DELETE/UPDATE/INSERT/CREATE/REFRESH/DROP/TRUNCATE/INSERT-in-CTE/SELECT…INTO all now reject. 23 new regression tests added (rejections + happy-parens-options + bare-EXPLAIN + comment-prefixed EXPLAIN); all 17 pre-existing tests stay green (40 total in the two files). Minor findings (dollar-quote INTO false-positive, side-effecting SELECT functions, frozen `fetchBatch(50)` signature): left as reviewer-documented.
+TEST_PLAN_FOLLOWED: inline (test cases #1-#8 in §Test Cases — pre-existing 17 its untouched, +23 EXPLAIN-fix its appended inside the `isReadOnlySql` describe block in src/ai/tools/__tests__/sqlTool.test.ts)
+FILES_CHANGED:
+  - src/ai/tools/sqlTool.ts: `isReadOnlySql` EXPLAIN branch + new `stripExplainPrefix` helper
+  - src/ai/tools/__tests__/sqlTool.test.ts: 23 new `it` blocks covering EXPLAIN ANALYZE/ANALYSE/VERBOSE write-verb rejection, parens-options form, comment-prefixed EXPLAIN, bare EXPLAIN, EXPLAIN-wrapping writable CTE / SELECT…INTO
+TESTS_ADDED:
+  - src/ai/tools/__tests__/sqlTool.test.ts (isReadOnlySql describe):
+    accepts EXPLAIN SELECT
+    accepts EXPLAIN ANALYZE SELECT
+    accepts EXPLAIN ANALYSE SELECT (British spelling)
+    accepts EXPLAIN WITH…SELECT
+    accepts EXPLAIN ANALYZE (FORMAT JSON) SELECT (parens-options form)
+    accepts EXPLAIN (FORMAT JSON, ANALYZE) SELECT (parens-first form)
+    rejects EXPLAIN ANALYZE DELETE (PG actually executes the statement)
+    rejects EXPLAIN ANALYZE UPDATE
+    rejects EXPLAIN ANALYZE INSERT
+    rejects EXPLAIN ANALYZE CREATE TABLE AS SELECT
+    rejects EXPLAIN ANALYZE REFRESH MATERIALIZED VIEW
+    rejects EXPLAIN (ANALYZE) DELETE (parenthesized options form)
+    rejects EXPLAIN DELETE (without ANALYZE, still a write)
+    rejects EXPLAIN UPDATE
+    rejects EXPLAIN CREATE TABLE AS SELECT
+    rejects EXPLAIN REFRESH MATERIALIZED VIEW
+    rejects EXPLAIN DROP TABLE
+    rejects EXPLAIN TRUNCATE
+    rejects EXPLAIN VERBOSE DELETE
+    rejects EXPLAIN ANALYZE WITH…INSERT…SELECT (writable CTE behind EXPLAIN)
+    rejects EXPLAIN SELECT…INTO (SELECT INTO behind EXPLAIN)
+    rejects bare EXPLAIN with no statement
+    rejects EXPLAIN ANALYZE with -- comment wrapping a write
+VERIFICATION:
+  command: npx vitest run src/ai/tools/__tests__/sqlTool.test.ts src/ai/tools/__tests__/schemaContext.test.ts
+  result: 40 pass / 0 fail (exit 0)
+  output_excerpt: |
+    ✓ src/ai/tools/__tests__/schemaContext.test.ts  (4 tests) 2ms
+    ✓ src/ai/tools/__tests__/sqlTool.test.ts  (36 tests) 6ms
+    Test Files  2 passed (2)
+         Tests  40 passed (40)
+  command2: npx tsc --noEmit
+  result2: exit 0 (no diagnostics)
+ISSUES:
+  - Minor (per reviewer): `SELECT $$into$$` is still rejected by the unconditional INTO scan; left as documented fail-closed (no dollar-quote skipping in `isReadOnlySql`).
+  - Minor (per reviewer): SELECT of side-effecting functions (`SELECT pg_terminate_backend(1)`) passes; out of scope for this guard.
+  - Minor (per reviewer): `BatchedQuery.fetchBatch()` interface takes no arg; 50-row cap is applied via `slice` after fetch — unchanged.
+HANDOFF_TO_REVIEWER: yes
+NEXT: pending_review (orchestrator: set INDEX row to `pending_review`, RevK-T002 picks up)
