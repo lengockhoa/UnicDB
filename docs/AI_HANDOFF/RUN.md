@@ -1,6 +1,6 @@
 Command: handoff-fullstack
-Goal: Cycle H — carry-over hardening (EXPLAIN ANALYZE guard, codepoint cap, lock hygiene) + release v1.5.1 lên git
+Goal: Cycle I — DataGrip-style New Table + Modify Table + table utility menus (Copy DDL, Sample Data, Analyze, Vacuum) for PostgreSQL schema tree
 Base: main
-Phase: done
-Cursor: released v1.5.1 (4/4 approved, pushed 0bf6bc8, tag+asset verified, worktrees clean)
-Next: fresh cycle on next request
+Phase: P2
+Cursor: P2 planner running with expanded scope (New Table + Modify + utility menus)
+Next: planner finishes PLAN.md/tasks/INDEX/ACTIVE → P2.5 plan review → P3 commit
