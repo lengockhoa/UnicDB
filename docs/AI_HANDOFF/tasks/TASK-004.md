@@ -142,3 +142,20 @@ VERIFICATION:
 ISSUES: none
 HANDOFF_TO_REVIEWER: yes
 NEXT: ready for review — reviewer must differ from unic-code per handoff.reviewer.model policy
+
+## Reviewer Verdict (re-review round 1)
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic-code
+EXECUTION ISOLATION: OK — executor unic-code, reviewer unic-smart (differs per handoff.reviewer.model)
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run src/ui/__tests__/aiChatOmp.test.ts src/ui/__tests__/aiChatPanel.test.ts src/extension.test.ts && npx tsc --noEmit
+  result: 54/54 pass, compile clean, tsc clean
+ROUND-1 FINDINGS: 5/5 closed in source — (1) webview `delta`/`engine` cases + appendDelta/applyEngine present in dist/aiChatPanel.js; (2) `inner?.type !== "text_delta"` guard, R-thinking asserts thinking absent + deltas join "Hi there"; (3) onExit sets turnDonePosted=true BEFORE splicing resolvers, R-crash asserts exactly 1 done / 1 error / 0 stale assistants; (4) session.buffer="" per turn, R-twoturns asserts turn-2 text only; (5) onExit posts {type:"engine",name:"builtin"}. 3 new regression tests are real (assert concrete posted-message shapes).
+FINDINGS:
+  important:
+    - file: webview/aiChatPanelMain.ts:72-76 — NEW regression introduced by fix round 842efaa: the diff deleted `case "&": return "&amp;"` and `case "<": return "&lt;"` from escapeHtml (present at be4626e). Shipped dist/aiChatPanel.js now has `case "&": case ">": return "&gt;"` — every `&` in assistant text renders as `>` (visible corruption on any SQL/answer containing `&`, both builtin and omp paths), and `<` falls to `default: return c`, passing through UNESCAPED into `div.innerHTML` in appendAssistant (markup/style injection into the webview; script exec stays blocked by CSP `script-src cspSource`, `style-src 'unsafe-inline'` allows injected `<style>`). Fix: restore both cases verbatim from be4626e.
+  minor: none
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: All 5 round-1 defects are genuinely fixed and tested; the only blocker is the collateral escapeHtml regression above — a 2-line restore, no test churn needed.

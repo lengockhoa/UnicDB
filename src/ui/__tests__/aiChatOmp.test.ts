@@ -907,3 +907,27 @@ describe("AiChatPanel — omp regression R4.5", () => {
     expect(t2Assistants[t2Assistants.length - 1]?.text).not.toMatch(/turn1/);
   });
 });
+
+// R4.5 round 2 regression: escapeHtml must escape &, <, > (round-1 fix accidentally
+// deleted the & and < cases — reviewer caught "&"→">" mapping + raw "<" in innerHTML).
+describe("aiChatPanel webview escapeHtml regression (fix round 2)", () => {
+  it("bundle source escapes all 5 entities", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const src = await readFile("webview/aiChatPanelMain.ts", "utf8");
+    const fn = src.slice(src.indexOf("function escapeHtml"));
+    expect(fn).toContain('case "&":');
+    expect(fn).toContain('return "&amp;";');
+    expect(fn).toContain('case "<":');
+    expect(fn).toContain('return "&lt;";');
+    expect(fn).toContain('return "&gt;";');
+    // No fall-through mapping & to &gt; anymore
+    expect(fn).not.toMatch(/case "&":\s*\ncase ">":/);
+  });
+  it("built dist contains all three entity replacements", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const dist = await readFile("dist/aiChatPanel.js", "utf8");
+    expect(dist).toContain("&amp;");
+    expect(dist).toContain("&lt;");
+    expect(dist).toContain("&gt;");
+  });
+});

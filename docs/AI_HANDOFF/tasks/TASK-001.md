@@ -149,3 +149,26 @@ ISSUES: minor reviewer finding (rpc.ts:126-133 dispose queue drain) left as-is p
 HANDOFF_TO_REVIEWER: yes — wave-2 fix round
 NEXT: ready for review
 NOTES: rpc.ts itself is protocol-faithful (live-probed: no correlation id, command+order correlation, abort response without data field, non-response frames → onEvent); the defect is confined to OmpProcess's default transport. TASK-004 approved on top of a fake-rpc seam, so the integration break was invisible to its tests — re-review TASK-004 panel flow after the fix.
+
+## Reviewer Verdict (re-review round 1)
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/ai/omp/__tests__/rpc.test.ts src/ai/omp/__tests__/process.test.ts && npx tsc --noEmit
+  result: 11 pass / 0 fail; tsc exit 0
+  live_smoke: VSDB_OMP_SMOKE=1 npx vitest run src/ai/omp/__tests__/ompLiveSmoke.test.ts — 1 pass in 4.2s (real omp 18.0.1 roundtrip via production default transport: start→ready→prompt→agent_end→kill)
+TEST_PLAN_COVERAGE: all-followed (9 task cases + 2 regression tests for round-1 critical #1 and important #2, with real RED_OUTPUT)
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/ai/omp/rpc.ts:126-133 — dispose() queue-drain state quirk (carry-over from round 1, harmless; disposed-guard covers it)
+ROUND1_RESOLUTION:
+  - critical (dead transport): FIXED — process.ts:66 stdio ["pipe","pipe","pipe"]; createLineTransport(stdin,stdout) write→stdin.write with EPIPE guard, close→stdin.end; line-split stdout intact. Independently confirmed at runtime by reviewer-run LIVE smoke through the default transport.
+  - important (spawn error → start() rejection): FIXED — Promise.race([waitReady, startError]) at process.ts:112; regression test with real RED evidence (timeout on broken code).
+  - important (missing RED_OUTPUT): FIXED — fix report includes real failing output (deep-equal mismatch + 5000ms timeout).
+  - version strip: FIXED — /omp\/(\S+)/ at process.ts:117; smoke asserts ^\d+\.\d+\.\d+$.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Round-1 critical was a genuine production-only break that unit seams could not see; the env-gated live smoke is the right permanent guard — consider promoting it to CI-with-omp-optional before deleting.
