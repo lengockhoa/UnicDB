@@ -865,6 +865,12 @@ function renderActivePanel(): void {
   // the wrap to the panel restores the grid GUI to the live DOM.
   panel.innerHTML = "";
   panel.appendChild(dom.gridWrap);
+  // Restore grid visibility after a previous teardownGridWrap() call set
+  // `display: none`. The CSS class `.vsdb-grid-host` defines `display: flex`
+  // — clearing the inline value lets the stylesheet govern again so the grid
+  // is visible when the statement tab is active (fix for the 6ebe1a2
+  // regression where the wrap stayed hidden on first real use).
+  dom.gridWrap.style.display = "";
   renderGrid();
 }
 
@@ -1188,9 +1194,10 @@ class SetFilterComponent {
   }
 
   private onClose(): void {
-    // AG Grid's popup close handler is wired through the wrapper; we just
-    // notify the grid. The popup will hide automatically.
-    this.params?.filterChangedCallback();
+    // AG Grid Community hosts custom-filter panels inside the column-menu
+    // popup. The Close button must dismiss that popup — without
+    // `hidePopupMenu()` the popup stays visible in the live webview.
+    this.params?.api.hidePopupMenu();
   }
 
   /** Push the current checkbox state into the model + notify the grid. */

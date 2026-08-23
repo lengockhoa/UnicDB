@@ -171,3 +171,22 @@ Full suite sanity: `npx vitest run` → 343 passed, 1 pre-existing fail (webview
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic/unic-smart (matches .ukit/storage/config.json handoff.reviewer.model)
+EXECUTOR_MODEL: unic/unic-code (differs from reviewer ✓); EXECUTOR_TOOL/EXECUTOR_SUBAGENT fields not in report
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/codeLensProvider.test.ts src/scaffold.test.ts src/extension.test.ts && npm run typecheck
+  result: 40 pass / 0 fail (8 lens + 7 scaffold + 25 extension); typecheck exit 0
+TEST_PLAN_COVERAGE: all-followed — 7/7 cases; RED authenticity independently verified (all 5 RED triggers absent at baseline 7b49cc4: onCommand:vsdb.runScript=0, onLanguage:shellscript=0, showRunLensSh=0, shellscript branch=0, guard+mock=0)
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - Executor Report — RED evidence is a per-test "YES" table, no pasted failing output; contract prefers real excerpts (TASK-301/501 pattern). Reviewer verified authenticity statically, so no re-run needed; future rounds paste output.
+    - TASK-605.md Goal — prose demands empty-document guard, but Test #7 requires the TASK-505 empty-doc test (sendText "\n" + terminal created) to pass UNCHANGED — mutually exclusive. Executor correctly favored the pinned test; plan text should be reconciled next cycle.
+    - src/extension.ts:641 — guard message "open a .sh file to run" though the command runs any-language docs (test #6b pins SQL editor still runs); wording only.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Implementation sound — activation events + shellscript lens + setting + guard all correct and tested; SQL lens path untouched (additive branch only, ordering before the sql filter is required and right). 606-slice changes in shared files excluded from this review.

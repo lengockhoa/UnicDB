@@ -116,3 +116,163 @@ VERIFICATION:
 ISSUES: none. The Cancel button starts `disabled` in jsdom (busy state is undefined at first render) so a literal `.click()` is a no-op in jsdom; the new test uses a `clickButton()` helper that dispatches a bubbling `MouseEvent('click')` to exercise the handler-attachment contract independently of the disabled flag (presentation is unchanged for real users — disabled clicks do nothing in real browsers too). All five §Test Cases covered. No existing test needed text-assertion adjustment — the existing webviewExport/webviewEdit/webviewSaveEdits/webviewRequery suites already use class selectors, not button text.
 HANDOFF_TO_REVIEWER: yes — single-task, all sources under one worktree, no cross-task dependencies, ready for verdict.
 NEXT: ready for review. Reviewer should re-run the targeted webview suite + typecheck to confirm. Recommend a maintainer manual browser smoke at a narrow width to verify the single-row layout visually before TASK-604 bumps the version.
+
+
+## Executor Report (fix round 1)
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: Fix603
+SUMMARY: Pure RED-evidence redo (no production changes). Reviewer flagged the original report had no pasted RED output; this round re-ran the RED cycle end-to-end: extracted plan-commit `webview/main.ts`+`styles.css` from 7b49cc4, swapped them into the worktree (kept the on-disk `src/ui/__tests__/webviewToolbar.test.ts`), compiled and ran the new test file → captured REAL 4/5 failures; restored the worktree's current sources, re-compiled and re-ran the targeted suite + full suite + typecheck → all green. Working tree is byte-identical to HEAD (verified `git status` clean, no production changes).
+TEST_PLAN_FOLLOWED: inline §Test Cases (5 cases). RED cycle re-run this turn against plan-commit sources — see RED_OUTPUT below.
+FILES_CHANGED:
+TESTS_ADDED: none — `src/ui/__tests__/webviewToolbar.test.ts` was added in round 0 (already on disk in this worktree) and was used unmodified for both the RED and GREEN runs.
+VERIFICATION:
+
+  pre-state: `webview/main.ts` and `webview/styles.css` overwritten with `git show 7b49cc4:<file>` output. `src/ui/__tests__/webviewToolbar.test.ts` kept as-is (the new test). `npm run compile` succeeded.
+  command: npx vitest run src/ui/__tests__/webviewToolbar.test.ts
+  result: 4 failed / 1 passed (5 total) — RED confirmed, exactly the 4 expected failures (test 2 — handler-behavior preservation — passes against plan-commit because handlers are unchanged in plan-commit; the other 4 discriminate the icon+layout+CSS work).
+  RED_OUTPUT: |
+    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-603-1
+
+     ❯ src/ui/__tests__/webviewToolbar.test.ts  (5 tests | 4 failed) 411ms
+       ❯ src/ui/__tests__/webviewToolbar.test.ts > webview/main.ts icon toolbar + single-row layout (TASK-603) > 1. every toolbar .vsdb-btn has an inline svg icon, currentColor stroke, non-empty title + aria-label, empty text
+         → button .vsdb-btn vsdb-btn-danger missing <svg>: expected null to be truthy
+       ❯ src/ui/__tests__/webviewToolbar.test.ts > webview/main.ts icon toolbar + single-row layout (TASK-603) > 3. single flex row: flat children, 2 separators, search is last, query│edit│export order
+         → expected exactly 2 .vsdb-toolbar-sep dividers: expected +0 to be 2 // Object.is equality
+       ❯ src/ui/__tests__/webviewToolbar.test.ts > webview/main.ts icon toolbar + single-row layout (TASK-603) > 4. styles.css pins .vsdb-toolbar to flex-wrap: nowrap (no wrap at any width)
+         → styles.css must pin .vsdb-toolbar flex-wrap: nowrap: expected false to be true // Object.is equality
+       ❯ src/ui/__tests__/webviewToolbar.test.ts > webview/main.ts icon toolbar + single-row layout (TASK-603) > 5. requery-bar Re-Run + Clear are icon buttons; click posts {type:'requery', where, orderBy} and Clear empties inputs
+         → expected 'Re-Run' to be '' // Object.is equality
+
+    ⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+     FAIL  src/ui/__tests__/webviewToolbar.test.ts > webview/main.ts icon toolbar + single-row layout (TASK-603) > 1. every toolbar .vsdb-btn has an inline svg icon, currentColor stroke, non-empty title + aria-label, empty text
+    AssertionError: button .vsdb-btn vsdb-btn-danger missing <svg>: expected null to be truthy
+
+    null
+
+    + Received:
+    false
+
+     ❯ src/ui/__tests__/webviewToolbar.test.ts:220:61
+        218|       for (const b of btns) {
+        219|         const svg = b.querySelector("svg");
+        220|         expect(svg, `button .${b.className} missing <svg>`).toBeTruthy…
+           |                                                             ^
+        221|         // currentColor for stroke or fill (Export-to-file uses fill o…
+        222|         const stroke = svg!.getAttribute("stroke");
+
+    ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+     FAIL  src/ui/__tests__/webviewToolbar.test.ts > webview/main.ts icon toolbar + single-row layout (TASK-603) > 3. single flex row: flat children, 2 separators, search is last, query│edit│export order
+    AssertionError: expected exactly 2 .vsdb-toolbar-sep dividers: expected +0 to be 2 // Object.is equality
+
+    + Received
+
+    + 0
+
+     ❯ src/ui/__tests__/webviewToolbar.test.ts:315:76
+        313|         (c) => c.classList.contains("vsdb-toolbar-sep"),
+        314|       );
+        315|       expect(seps.length, "expected exactly 2 .vsdb-toolbar-sep divide…
+           |                                                                            ^
+
+    ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+     FAIL  src/ui/__tests__/webviewToolbar.test.ts > webview/main.ts icon toolbar + single-row layout (TASK-603) > 4. styles.css pins .vsdb-toolbar to flex-wrap: nowrap (no wrap at any width)
+    AssertionError: styles.css must pin .vsdb-toolbar flex-wrap: nowrap: expected false to be true // Object.is equality
+
+    + Received
+
+    + false
+
+     ❯ src/ui/__tests__/webviewToolbar.test.ts:350:89
+        348|       // The rule MUST match. Wrapping would require removing this.
+        349|       const re = /\.vsdb-toolbar\s*\{[^}]*flex-wrap:\s*nowrap/;
+        350|       expect(re.test(stylesSrc), "styles.css must pin .vsdb-toolbar fl…
+           |                                                                                         ^
+        351|         true,
+        352|       );
+
+    ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+     FAIL  src/ui/__tests__/webviewToolbar.test.ts > webview/main.ts icon toolbar + single-row layout (TASK-603) > 5. requery-bar Re-Run + Clear are icon buttons; click posts {type:'requery', where, orderBy} and Clear empties inputs
+    AssertionError: expected 'Re-Run' to be '' // Object.is equality
+
+    + Received
+
+    + Re-Run
+
+     ❯ src/ui/__tests__/webviewToolbar.test.ts:378:39
+        376|       // Iconified: empty text, has svg, has title.
+        377|       for (const b of [runBtn!, clearBtn!]) {
+        378|         expect(b.textContent?.trim()).toBe("");
+           |                                       ^
+        379|         expect(b.querySelector("svg")).toBeTruthy();
+        380|         expect(b.title).not.toBe("");
+
+    ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+     Test Files  1 failed (1)
+          Tests  4 failed | 1 passed (5)
+       Start at  09:45:22
+       Duration  983ms (transform 26ms, setup 0ms, collect 23ms, tests 411ms, environment 339ms, prepare 37ms)
+
+  pre-state: `webview/main.ts` and `webview/styles.css` restored from saved /tmp/cur-main.ts and /tmp/cur-styles.css (byte-identical to HEAD — `git status` → `nothing to commit, working tree clean`). `npm run compile` succeeded.
+  command: npm run compile
+  result: 0 errors / exit 0
+  output_excerpt: |
+    > vsdb@1.5.0 compile
+    > node esbuild.js
+    ...
+      dist/webview.js        2.2mb ⚠️
+      dist/webview.css       8.6kb
+    esbuild: build complete
+
+  command: npx vitest run src/ui/__tests__/webviewToolbar.test.ts
+  result: 5 pass / 0 fail / exit 0
+  output_excerpt: |
+     ✓ src/ui/__tests__/webviewToolbar.test.ts  (5 tests) 395ms
+
+     Test Files  1 passed (1)
+          Tests  5 passed (5)
+       Start at  09:45:27
+       Duration  855ms
+
+  command: npx vitest run src/ui/__tests__/webviewToolbar.test.ts src/ui/__tests__/webviewExport.test.ts src/ui/__tests__/webviewEdit.test.ts src/ui/__tests__/webviewSaveEdits.test.ts src/ui/__tests__/webviewRequery.test.ts src/ui/__tests__/webviewSetFilter.test.ts src/ui/__tests__/webviewBundle.test.ts
+  result: 52 pass / 0 fail / exit 0
+  output_excerpt: |
+     ✓ src/ui/__tests__/webviewToolbar.test.ts      (5 tests)  916ms
+     ✓ src/ui/__tests__/webviewSaveEdits.test.ts    (4 tests) 1040ms
+     ✓ src/ui/__tests__/webviewRequery.test.ts      (6 tests) 1233ms
+     ✓ src/ui/__tests__/webviewExport.test.ts       (7 tests) 1229ms
+     ✓ src/ui/__tests__/webviewSetFilter.test.ts    (8 tests) 1631ms
+     ✓ src/ui/__tests__/webviewBundle.test.ts       (8 tests) 1735ms
+     ✓ src/ui/__tests__/webviewEdit.test.ts        (14 tests) 3117ms
+
+     Test Files  7 passed (7)
+          Tests  52 passed (52)
+       Duration  3.95s
+
+  command: npm run typecheck
+  result: 0 errors / exit 0
+  output_excerpt: |
+    > vsdb@1.5.0 typecheck
+    > tsc --noEmit
+
+  command: npx vitest run
+  result: 437 pass / 0 fail / exit 0 (full suite, 38 files)
+  output_excerpt: |
+     Test Files  38 passed (38)
+          Tests  437 passed (437)
+       Start at  09:45:38
+       Duration  5.75s
+
+  command: git status
+  result: `On branch handoff/task-603-1` / `nothing to commit, working tree clean` — no production changes, no staged changes.
+
+ISSUES: none. RED failures discriminate the work cleanly (4 of 5 — icon existence on toolbar buttons, 2 separator dividers, `flex-wrap: nowrap` regex in CSS, requery-bar empty-text check). Test 2 (handler-behavior preservation) passes against both plan-commit and HEAD sources — that's expected and correct: plan-commit preserves the click handlers (the icon refactor only swaps DOM content), so test 2 alone cannot discriminate; tests 1/3/4/5 cover the presentation changes. All five §Test Cases covered.
+HANDOFF_TO_REVIEWER: yes — single-task, all sources under one worktree, no cross-task dependencies, ready for verdict.
+NEXT: ready for review. Reviewer can re-run the same commands above to confirm GREEN; the RED-output paste is now real (re-run in this turn against plan-commit, not asserted). No follow-up needed in this task.

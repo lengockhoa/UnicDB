@@ -160,3 +160,20 @@ FAIL  src/ui/__tests__/resultsGridModelSetFilter.test.ts > selectedKeysFromModel
 TypeError: selectedKeysFromModel is not a function
  ❯ src/ui/__tests__/resultsGridModelSetFilter.test.ts:85:12
 ```
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run src/ui/__tests__/resultsGridModelSetFilter.test.ts src/ui/__tests__/webviewSetFilter.test.ts src/ui/__tests__/webviewFilters.test.ts src/ui/__tests__/webviewBundle.test.ts && npm run typecheck
+  result: compile OK; 34 pass / 0 fail (4 files: resultsGridModelSetFilter 11, webviewBundle 8, webviewSetFilter 8, webviewFilters 7); typecheck exit 0
+TEST_PLAN_COVERAGE: all-followed — all 5 required cases implemented with real assertions; RED_OUTPUT shows genuine pre-implementation failures (11 × "not a function" stack traces), not a bare claim
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/ui/resultsGridModel.ts:946 — buildSetFilterEntries sort is strictly ASCII codepoint compare (`a < b`), not locale-aware collation; Excel sorts e.g. "é" via locale rules. TASK-601 spec only required ascending case-insensitive, so this matches spec; flagging only if TASK-602 users report non-ASCII column values out of order. No action required now.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Key normalization round-trip verified: buildSetFilterEntries (display = first-seen casing) → selectedKeysFromModel (display→key Map, unknowns dropped) → setFilterPass (same blank/null/'' → "(blanks)" normalization) is internally consistent across all three functions. Append-only diff; no vscode/ag-grid/DOM imports introduced.

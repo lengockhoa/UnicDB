@@ -103,3 +103,23 @@ VERIFICATION:
 ISSUES: none
 HANDOFF_TO_REVIEWER: yes — all acceptance criteria 1-4 satisfied (version 1.5.0, README updated, release notes written, full suite+typecheck+compile green); criteria 5 (reviewer verdict) and 6 (no git commit/tag/release — maintainer-owned post-cycle) intentionally not exercised here
 NEXT: ready for review; maintainer post-cycle (scripts/build.sh → tag v1.5.0 → gh release create v1.5.0 dist/vsdb-1.5.0.vsix --notes-file .cache/release-notes-v1.5.0.md) deferred to orchestrator per task §Acceptance #6.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run && npm run typecheck
+  result: PASS — compile OK (dist/extension.js 4.6mb, dist/webview.js 2.2mb, dist/webview.css 8.6kb); vitest 38 files / 437 tests passed (0 fail); typecheck exit 0
+TEST_PLAN_COVERAGE: partial — tests 1-3 (compile/vitest/typecheck boundary gates) all green on re-run; test #4 (version+README consistency) done as manual readFileSync inspection in report, not automated — see minor finding 2
+FINDINGS:
+  critical:
+    - none
+  important:
+    - .cache/release-notes-v1.5.0.md — file is MISSING in the main tree post-merge. Executor wrote 1999 bytes into .worktrees/task-604/.cache/ (tool call 349e04f6 verified in transcript), but .cache/ is gitignored so the file never survived the worktree merge and the worktree is now removed. Maintainer's `gh release create --notes-file .cache/release-notes-v1.5.0.md` will fail at step 1. Fix: recreate the file at that path (content: 4 user-facing changes — Excel set filter, single-row icon toolbar, destructive guard with vsdb.confirmDestructive, Run .sh CodeLens + activation fix with vsdb.showRunLensSh; style matches release-notes-v1.4.1.md) or drop the `--notes-file` flag.
+  minor:
+    - src/scaffold.test.ts:169 — test #4 ("version+README consistency") was not automated despite a natural home: the TASK-605 tests at scaffold.test.ts:171-202 already parse package.json the same way. Add a sibling `it()` asserting pkg.version === "1.5.0" and README contains the set-filter + .sh-lens 1.5.0 bullets.
+    - package-lock.json:3 — root "version" stays "1.3.0" while package.json is 1.5.0. Pre-existing (stale since TASK-205 / 1.3.0; 1.4.0 and 1.4.1 cycles did not bump it either), not this task's regression. Fix opportunistically with `npm install --package-lock-only` at next release.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: README accuracy verified against source: set-filter claims match webviewSetFilter.test.ts + resultsGridModel.ts:883-958; vsdb.confirmDestructive at extension.ts:351 with modal "CỰC KỲ NGUY HIỂM"/"Vẫn chạy (nguy hiểm)" (extension.ts:364-366); vsdb.showRunLensSh at codeLensProvider.ts:42; toolbar icon-only claims match webviewToolbar.test.ts (flex-wrap: nowrap pinned). No stale "Text/Number Filters" wording remains. Model isolation OK (unic-smart ≠ unic-code). The release-notes gap is a process hole: planner should not place release artifacts in a gitignored dir — flagged for PLAN.md follow-up.

@@ -206,3 +206,22 @@ HANDOFF_TO_REVIEWER: yes — code change có guard destructive, cần review ver
 NEXT: ready for review
 ```
 
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/core/__tests__/dangerousStatement.test.ts src/extension.test.ts && npm run typecheck
+  result: 33 pass / 0 fail; tsc --noEmit exit 0
+TEST_PLAN_COVERAGE: all-followed — A1–A8 + B9–B15 present with real assertions; RED_EVIDENCE shows concrete pre-impl failures
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - src/core/dangerousStatement.ts:170-199 — `EXPLAIN ANALYZE DELETE FROM t` (no WHERE) classifies `other`/`none` because `explain` is the first depth-0 keyword and is not a DML/STARTER; Postgres EXECUTES the DELETE under EXPLAIN ANALYZE, so this destructive path skips the modal. Under-escalation only (same class as planner's accepted gaps, not in §Test Cases). Suggest for next cycle: add `explain` to a skip-list like `with`, or scan past `explain [analyze] [verbose]`.
+    - src/extension.ts:381-385 — `capDetail` slices mid-word/mid-multibyte-char at the cap; cosmetic (dialog still readable), could cut on last whitespace.
+NOTES: Detector masking (string/identifier/dollar-quote incl. `$tag$`, nested `/* */`) verified correct; CTE prelude rule works (A6); guard sits at head of `runStatements` before `panel.setBusy(true)` (src/extension.ts:312-318) covering both Cmd+Enter and CodeLens funnels; cancel aborts whole batch incl. mixed SELECT+TRUNCATE (B13); setting `vsdb.confirmDestructive` default true in package.json + `?? true` read; modal copy verbatim scary with explicit "Vẫn chạy (nguy hiểm)" button. Shared-path regression: full extension.test.ts (25 tests) green.

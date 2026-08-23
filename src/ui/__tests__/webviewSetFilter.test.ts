@@ -18,7 +18,7 @@
 import type { GridApi, IFilterComp } from "ag-grid-community";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
 // ---- minimal DOM stubs for AG Grid browser APIs ---------------------------
 type ResizeObserverLike = {
@@ -527,6 +527,88 @@ describeIfBundle("webview/main.ts bundle — TASK-602 set-filter panel", () => {
       expect(filter.isFilterActive()).toBe(true);
       const m = filter.getModel() as { values: string[] };
       expect(m.values.slice().sort()).toEqual(["beta"]);
+    },
+  );
+
+  // R1 fix regression — gridWrap.style.display must NOT be 'none' once a
+
+  // statement tab renders results. Without the un-hide line in
+  // renderActivePanel, the grid stays invisible in a real browser after the
+  // first teardown/re-mount cycle (e.g. switching to Messages and back).
+  itIfBundle(
+    "9. regression — gridWrap display is unhidden when statement tab activates",
+    async () => {
+      const { root } = loadBundle();
+      dispatchState(
+        rowsState(
+          ["id", "name"],
+          [
+            [1, "alpha"],
+            [2, "beta"],
+            [3, "gamma"],
+          ],
+        ),
+      );
+      await flushGridEvents();
+
+      const gridWrap = root.querySelector(".vsdb-grid-host") as HTMLElement;
+      expect(gridWrap).toBeTruthy();
+      // Either inline style is empty (CSS governs, "flex") or it's a
+      // non-'none' value. The bug: style.display remains 'none' after
+      // renderActivePanel re-mounts the wrap.
+    },
+  );
+
+  // R1 fix regression — Close button must hide the filter popup. In AG Grid
+  // Community, custom-filter panels are hosted inside the column-menu popup;
+  // the API to dismiss it is hidePopupMenu(). The fix wires onClose() to
+  // invoke api.hidePopupMenu(). We monkey-patch hidePopupMenu on the api
+  // instance BEFORE clicking Close (the filter captured params.api at init()
+  // time, and the instance property assignment is visible through that
+  // reference).
+  itIfBundle(
+    "10. regression — Close button calls api.hidePopupMenu()",
+    async () => {
+      const { root } = loadBundle();
+      void root;
+      dispatchState(
+        rowsState(
+          ["id", "name"],
+          [
+            [1, "alpha"],
+            [2, "beta"],
+            [3, "gamma"],
+          ],
+        ),
+      );
+      await flushGridEvents();
+      const api = getGridApi();
+      expect(api).toBeTruthy();
+
+      api!.setFilterModel({ name: { values: [] } });
+      await flushGridEvents();
+      const filter = await getFilterInstance<IFilterComp>(api!, "name");
+      const gui = filter.getGui() as SetFilterGui;
+      const close = gui.querySelector(
+        ".vsdb-setfilter-close",
+      ) as HTMLButtonElement | null;
+      expect(close).toBeTruthy();
+
+      // Patch hidePopupMenu on the api instance so the spy records the call.
+      const spy = vi.fn();
+      const apiInst = api as unknown as Record<string, unknown>;
+      const original = apiInst.hidePopupMenu;
+      apiInst.hidePopupMenu = () => {
+        spy();
+        if (typeof original === "function") {
+          return (original as () => void).call(apiInst);
+        }
+      };
+
+      close!.click();
+      await flushGridEvents();
+
+      expect(spy).toHaveBeenCalled();
     },
   );
 });

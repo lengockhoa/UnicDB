@@ -116,3 +116,40 @@ VERIFICATION:
 ISSUES: none — clean cutover (no ag-grid-enterprise added, no shim). Inline marginLeft on count cell so jsdom getComputedStyle returns "auto" without external stylesheet. Note: webviewFilters test 6 and webviewBundle test 6 now require interim activeTab reset (parallel test execution shares module-scoped state); documented inline.
 HANDOFF_TO_REVIEWER: yes — all 8 task §4 test cases covered, regression gates (loadMore + columnsChanged) preserved, typecheck + full suite green.
 NEXT: ready for review.
+
+---
+
+## Executor Report (fix round 1)
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: Fix602
+SUMMARY: Fixed 3 R1 reviewer findings — restored gridWrap display on tab re-activation, wired Close button to api.hidePopupMenu(), added missing .vsdb-setfilter* CSS rules. Added 2 regression tests (#9 gridWrap display, #10 Close→hidePopupMenu). RED confirmed both before fixes; GREEN after. Full suite 439/439; typecheck clean.
+TEST_PLAN_FOLLOWED: task §4 — extended test plan with 2 new regression tests for R1 fixable findings (gridWrap display restore; Close→hidePopupMenu). CSS rule audit done inline (jsdom can't catch missing rules; the rules themselves are the fix).
+FILES_CHANGED:
+  - webview/main.ts: in renderActivePanel() (around line 866) added `dom.gridWrap.style.display = "";` after appending the wrap to the panel — restores CSS-governed display after teardownGridWrap() set `display: none`. In SetFilterComponent.onClose() (around line 1196) replaced the no-op comment with `this.params?.api.hidePopupMenu();` to dismiss the column-menu popup.
+  - webview/styles.css: appended ~125 lines of `.vsdb-setfilter*` rules (root, search row, select-all row, list with scroll, entry row with hover, hidden entries, count right-aligned via margin-left:auto, footer status, footer-right with Clear + Close buttons styled to VS Code button-secondary vars).
+  - src/ui/__tests__/webviewSetFilter.test.ts: added test #9 ("regression — gridWrap display is unhidden when statement tab activates") asserting gridWrap.style.display !== "none" after first render; added test #10 ("regression — Close button calls api.hidePopupMenu()") monkey-patching hidePopupMenu on the api instance + clicking Close + asserting spy was called. Added `vi` to vitest imports.
+TESTS_ADDED:
+  - src/ui/__tests__/webviewSetFilter.test.ts: test #9 (gridWrap display restore), test #10 (Close→hidePopupMenu wiring).
+VERIFICATION:
+  command: npm run compile && npx vitest run src/ui/__tests__/webviewSetFilter.test.ts src/ui/__tests__/webviewFilters.test.ts src/ui/__tests__/webviewBundle.test.ts && npm run typecheck && npx vitest run
+  result: target 25/25 pass (10 set-filter + 7 filters + 8 bundle); typecheck exit 0; full suite 439/439 pass (38 files)
+  output_excerpt: |
+    ✓ src/ui/__tests__/webviewBundle.test.ts  (8 tests) 2078ms
+    ✓ src/ui/__tests__/webviewFilters.test.ts  (7 tests) 2172ms
+    ✓ src/ui/__tests__/webviewSetFilter.test.ts  (10 tests) 2342ms
+    Test Files  38 passed (38)
+    Tests  439 passed (439)
+
+RED output (pre-fix, from /tmp/red_output.txt):
+  ❯ src/ui/__tests__/webviewSetFilter.test.ts > 9. regression — gridWrap display is unhidden when statement tab activates
+    → expected 'none' not to be 'none' // Object.is equality
+  ❯ src/ui/__tests__/webviewSetFilter.test.ts > 10. regression — Close button calls api.hidePopupMenu()
+    → expected "spy" to be called at least once
+  Tests  2 failed | 8 passed (10)
+
+ISSUES: none — clean fix round, no API changes, no shims, no new modules. CSS rules use VS Code vars (with fallbacks). Note: test #10 relies on own-property shadowing of api.hidePopupMenu, which is stable for class instances and AG Grid's createGrid return type.
+HANDOFF_TO_REVIEWER: yes — all 3 R1 findings addressed; regression tests added with RED→GREEN verification; full suite + typecheck green.
+NEXT: ready for R1 review (re-verify Fix602 work).

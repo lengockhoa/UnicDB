@@ -441,3 +441,131 @@
   background: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
 }
+
+/* --- TASK-602 Excel-style set-filter panel -------------------------------
+ * Styles for the custom AG Grid Community filter (SetFilterComponent) —
+ * the panel rendered inside the column-menu popup. Without these rules,
+ * entries with `display:none` set by the search filter stay visible (no
+ * class rules to honour the toggle), the count cell loses its right-align,
+ * and the panel has no scroll / hover affordances. The grid renders the
+ * .vsdb-setfilter root inside its popup chrome; we only style from the
+ * component's own classes down.
+ */
+.vsdb-setfilter {
+  display: flex;
+  flex-direction: column;
+  min-width: 240px;
+  max-height: 360px;
+  font-size: 13px;
+  color: var(--vscode-foreground, #cccccc);
+  background: var(--vscode-editor-background, #1e1e1e);
+}
+
+.vsdb-setfilter-search-row {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--vscode-panel-border, #3c3c3c);
+}
+
+.vsdb-setfilter-search {
+  width: 100%;
+  padding: 4px 6px;
+  background: var(--vscode-input-background, #2b2b2b);
+  color: var(--vscode-input-foreground, #cccccc);
+  border: 1px solid var(--vscode-input-border, #3c3c3c);
+  border-radius: 2px;
+  box-sizing: border-box;
+}
+
+.vsdb-setfilter-selectall-row {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--vscode-panel-border, #3c3c3c);
+}
+
+.vsdb-setfilter-selectall-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.vsdb-setfilter-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 0;
+  /* Keep search-narrowed entries hidden via the component's class — jsdom
+   * tests rely on the inline `display:none` set in render(), so this rule
+   * only governs the visible (unhidden) case. */
+}
+
+.vsdb-setfilter-entry {
+  display: flex;
+  align-items: center;
+  padding: 2px 8px;
+  cursor: pointer;
+  user-select: none;
+  gap: 6px;
+}
+
+.vsdb-setfilter-entry:hover {
+  background: var(--vscode-list-hoverBackground, #2a2d2e);
+}
+
+.vsdb-setfilter-entry-hidden {
+  display: none;
+}
+
+.vsdb-setfilter-entry-checkbox {
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.vsdb-setfilter-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vsdb-setfilter-count {
+  /* Right-align the count cell within the flex row — same effect as the
+   * inline `margin-left:auto` the component also applies so jsdom
+   * getComputedStyle returns "auto" without the external stylesheet. */
+  margin-left: auto;
+  flex: 0 0 auto;
+  color: var(--vscode-descriptionForeground, #8a8a8a);
+}
+
+.vsdb-setfilter-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-top: 1px solid var(--vscode-panel-border, #3c3c3c);
+}
+
+.vsdb-setfilter-status {
+  color: var(--vscode-descriptionForeground, #8a8a8a);
+}
+
+.vsdb-setfilter-footer-right {
+  display: flex;
+  gap: 6px;
+}
+
+.vsdb-setfilter-clear,
+.vsdb-setfilter-close {
+  padding: 3px 10px;
+  background: var(--vscode-button-secondaryBackground, #3a3d41);
+  color: var(--vscode-button-secondaryForeground, #cccccc);
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.vsdb-setfilter-clear:hover,
+.vsdb-setfilter-close:hover {
+  background: var(--vscode-button-secondaryHoverBackground, #45494e);
+}

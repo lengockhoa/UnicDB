@@ -19,12 +19,12 @@ Gates: compile OK · typecheck OK · 34 files / 388 tests · browser smoke grid 
 
 <!-- Cycle 2026-08-23-G — release 1.5.0 (webview UI polish + Run .sh fix). Wave 1: 601 ∥ 605 · Wave 2: 602 · Wave 3: 603 · Wave 4: 604. -->
 
-| TASK-601 | Set-filter pure logic (entries + pass + model) | P0 | S | pending_review | - | - | `docs/AI_HANDOFF/tasks/TASK-601.md` |
-| TASK-602 | Excel checkbox set-filter component (webview) | P0 | M | pending_review | - | - | `docs/AI_HANDOFF/tasks/TASK-602.md` |
-| TASK-603 | Icon toolbar one row + requery-bar icons | P0 | M | pending_review | - | - | `docs/AI_HANDOFF/tasks/TASK-603.md` |
-| TASK-604 | Release 1.5.0 boundary (version + README + full suite) | P1 | S | pending_review | - | - | `docs/AI_HANDOFF/tasks/TASK-604.md` |
-| TASK-605 | Run .sh fix (activation + guard) + CodeLens ▶ Run | P0 | M | pending_review | - | - | `docs/AI_HANDOFF/tasks/TASK-605.md` |
-| TASK-606 | Confirm guard DELETE/TRUNCATE/DROP/UPDATE (danger modal) | P0 | M | pending_review | - | - | `docs/AI_HANDOFF/tasks/TASK-606.md` |
+| TASK-601 | Set-filter pure logic (entries + pass + model) | P0 | S | approved | unic/unic-smart | - | `docs/AI_HANDOFF/tasks/TASK-601.md` |
+| TASK-602 | Excel checkbox set-filter component (webview) | P0 | M | changes_requested | unic-smart | - | `docs/AI_HANDOFF/tasks/TASK-602.md` |
+| TASK-603 | Icon toolbar one row + requery-bar icons | P0 | M | changes_requested | unic-smart | - | `docs/AI_HANDOFF/tasks/TASK-603.md` |
+| TASK-604 | Release 1.5.0 boundary (version + README + full suite) | P1 | S | approved_minor | - | unic/unic-smart | `docs/AI_HANDOFF/tasks/TASK-604.md` |
+| TASK-605 | Run .sh fix (activation + guard) + CodeLens ▶ Run | P0 | M | approved_minor | unic/unic-smart | - | `docs/AI_HANDOFF/tasks/TASK-605.md` |
+| TASK-606 | Confirm guard DELETE/TRUNCATE/DROP/UPDATE (danger modal) | P0 | M | approved_minor | unic/unic-smart | - | `docs/AI_HANDOFF/tasks/TASK-606.md` |
 
 ## Queued (future cycles)
 

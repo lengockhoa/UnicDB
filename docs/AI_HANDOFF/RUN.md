@@ -1,6 +1,6 @@
 Command: handoff-fullstack
 Goal: Cycle G — set filter + toolbar icons + Run .sh CodeLens + DELETE/TRUNCATE confirm guard; release v1.5.0
 Base: main
-Phase: R1
-Cursor: all 4 waves done+committed (ee643a7); worktrees/branches clean; 604 gate 437/437
-Next: R2-R4 review 6 tasks (601,602,603,604,605,606) → R4.5 if needed → R5 push
+Phase: R4.5
+Cursor: fix round 1 running (602: 3 real bugs; 603: RED evidence redo); 601/604/605/606 approved(_minor)
+Next: copy-back + commit round 1 → re-review 602+603 → R5 push
