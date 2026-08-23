@@ -1,6 +1,6 @@
 Command: handoff-fullstack
-Goal: Cycle K — AI DB-assist (tools + chat panel)
+Goal: Cycle L — integrate oh-my-pi agent into VSDB extension, upgradeable via existing 1-command install/update
 Base: main
-Phase: done
-Cursor: released — 4/4 approved (2 after fix round 1), pushed 6e752c3, worktrees/branches clean
-Next: Cycle L — research + integrate oh my pi agent into VSDB extension (user request 2026-08-23); research phase first (docs/AI_HANDOFF/queue/)
+Phase: P2
+Cursor: P0 answered (research + implement in one run); wave 1 research agent running (scout, read-only)
+Next: read research file, write PLAN.md + tasks, P2.5 review, then implement waves
