@@ -51,4 +51,39 @@ npx vitest run src/ai/tools/__tests__/registry.test.ts src/ai/tools/__tests__/sc
 
 ## Interfaces
 - Consumes: `ToolRegistry`/`AgentTool` (src/ai/agent.ts — frozen), `AdapterFactory` (src/ai/tools/types.ts — frozen sẵn), `DbAdapter.listTables/listTableDetail` (src/adapters/types.ts).
-- Produces: `DbToolRegistry`, `createDbTools`, `createListTablesTool`, `createDescribeTableTool` (T2, T3, T4 consume).
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: ExecK-T001
+SUMMARY: Implemented `src/ai/tools/registry.ts` (`DbToolRegistry` + `createDbTools`) and `src/ai/tools/schemaTools.ts` (`createListTablesTool` + `createDescribeTableTool`) to frozen spec; 7/7 TDD cases pass; `npx tsc --noEmit` clean; no vscode imports; frozen cycle-J + types.ts files untouched.
+TEST_PLAN_FOLLOWED: task §4 — all 7 cases implemented as RED→GREEN (paste below).
+FILES_CHANGED:
+  - src/ai/tools/registry.ts (new): DbToolRegistry class (register/list/get) + createDbTools
+  - src/ai/tools/schemaTools.ts (new): createListTablesTool + createDescribeTableTool
+  - src/ai/tools/__tests__/registry.test.ts (new): tests #6 + #7
+  - src/ai/tools/__tests__/schemaTools.test.ts (new): tests #1–#5
+TESTS_ADDED:
+  - src/ai/tools/__tests__/registry.test.ts: "test #6 register/list/get", "test #7 createDbTools + runAgent 2-step loop"
+  - src/ai/tools/__tests__/schemaTools.test.ts: "test #1 list_tables happy", "test #2 describe_table happy", "test #3 null factory", "test #4 NotImplementedError", "test #5 generic Error"
+VERIFICATION:
+  command: npx vitest run src/ai/tools/__tests__/registry.test.ts src/ai/tools/__tests__/schemaTools.test.ts && npx tsc --noEmit
+  result: 7 pass / 0 fail, tsc exit 0
+  RED_OUTPUT_excerpt: |
+    FAIL src/ai/tools/__tests__/registry.test.ts [ src/ai/tools/__tests__/registry.test.ts ]
+    Error: Failed to load url ../registry (resolved id: ../registry) ...
+    FAIL src/ai/tools/__tests__/schemaTools.test.ts [ src/ai/tools/__tests__/schemaTools.test.ts ]
+    Error: Failed to load url ../schemaTools (resolved id: ../schemaTools) ...
+    Test Files  2 failed (2)
+         Tests  no tests
+  GREEN_OUTPUT_excerpt: |
+    RUN  v1.6.1
+     ✓ src/ai/tools/__tests__/schemaTools.test.ts  (5 tests) 3ms
+     ✓ src/ai/tools/__tests__/registry.test.ts  (2 tests) 3ms
+     Test Files  2 passed (2)
+          Tests  7 passed (7)
+ISSUES: none
+HANDOFF_TO_REVIEWER: yes — both files complete, target tests green, no shared-file conflicts.
+NEXT: ready for review (T002 owns sqlTool.ts + schemaContext.ts; no shared file with T1 besides frozen types.ts).

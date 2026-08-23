@@ -55,3 +55,66 @@ npx vitest run src/ai/tools/__tests__/sqlTool.test.ts src/ai/tools/__tests__/sch
 ## Interfaces
 - Consumes: `AgentTool` (frozen), `AdapterFactory` (src/ai/tools/types.ts — async, frozen), `DbAdapter.runQuery` + `BatchedQuery` (`fetchBatch`/`close`), `TableInfo`/`TableDetail`.
 - Produces: `createSqlTool`, `isReadOnlySql`, `formatSchemaContext` (T3 system prompt, T4 consume).
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: ExecK-T002
+SUMMARY: Implemented `createSqlTool` + `isReadOnlySql` in src/ai/tools/sqlTool.ts and `formatSchemaContext` in src/ai/tools/schemaContext.ts per F1 cursor flow + read-only guard spec; 17 TDD tests covering all 9 task rows + sub-cases. Implementation branch: handoff/task-002 (worktree .worktrees/task-002).
+TEST_PLAN_FOLLOWED: inline (test cases #1-#8 in §Test Cases split into 17 vitest `it` blocks — #4 split per-subcase, #7 split per-failure-mode)
+FILES_CHANGED:
+  - src/ai/tools/sqlTool.ts: new — AgentTool `run_sql` + `isReadOnlySql` guard
+  - src/ai/tools/schemaContext.ts: new — budget-capped renderer
+  - src/ai/tools/__tests__/sqlTool.test.ts: new — 13 tests
+  - src/ai/tools/__tests__/schemaContext.test.ts: new — 4 tests
+TESTS_ADDED:
+  - src/ai/tools/__tests__/sqlTool.test.ts: 13 (isReadOnlySql×6, createSqlTool×7)
+  - src/ai/tools/__tests__/schemaContext.test.ts: 4 (render, budget-cut+footer, empty-budget, PK/FK)
+VERIFICATION:
+  command: npx vitest run src/ai/tools/__tests__/sqlTool.test.ts src/ai/tools/__tests__/schemaContext.test.ts
+  result: 17 pass / 0 fail (exit 0)
+  output_excerpt: |
+    ✓ src/ai/tools/__tests__/schemaContext.test.ts  (4 tests) 2ms
+    ✓ src/ai/tools/__tests__/sqlTool.test.ts  (13 tests) 4ms
+    Test Files  2 passed (2)
+         Tests  17 passed (17)
+  command2: npx tsc --noEmit
+  result2: exit 0 (no diagnostics)
+ISSUES:
+  - BatchedQuery.fetchBatch() in src/adapters/types.ts takes 0 args, but spec §F1 prose says `fetchBatch(50)`. Code calls fetchBatch() per interface; test asserts `toHaveBeenCalledWith()` (no arg). No change to frozen types.ts.
+  - Guard ordering: writable-CTE check runs BEFORE unconditional INTO scan when first keyword is WITH, so `WITH x AS (INSERT INTO a …)` yields writable-CTE reason (more specific) instead of INTO. Spec accepts both reasons; test asserts writable-CTE.
+  - Test #6 budget computed dynamically as `indexOf("\n\nTable: public.orders") + 30` (vs spec example which had internal inconsistency); kept first table block + footer, dropped 2.
+HANDOFF_TO_REVIEWER: yes — files on handoff/task-002 worktree, awaiting orchestrator copy-back
+NEXT: ready for review
+
+### RED output (initial run, no implementation modules)
+```
+ RUN  v1.4.x /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-002
+
+ ❯ src/ai/tools/__tests__/schemaContext.test.ts  (0 test)
+ ❯ src/ai/tools/__tests__/sqlTool.test.ts  (0 test)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/ai/tools/__tests__/schemaContext.test.ts
+Error: Failed to load url ../schemaContext (resolved id: ../schemaContext) ...
+
+ FAIL  src/ai/tools/__tests__/sqlTool.test.ts
+Error: Failed to load url ../sqlTool (resolved id: ../sqlTool) ...
+
+ Test Files  2 failed (2)
+      Tests  no tests
+```
+
+### GREEN output (fresh)
+```
+ ✓ src/ai/tools/__tests__/schemaContext.test.ts  (4 tests) 2ms
+ ✓ src/ai/tools/__tests__/sqlTool.test.ts  (13 tests) 4ms
+ Test Files  2 passed (2)
+      Tests  17 passed (17)
+ Start at  20:52:55
+ Duration  172ms
+```
+tsc --noEmit: exit 0, no diagnostics.

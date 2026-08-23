@@ -4,8 +4,8 @@ Cycle: K — AI DB-assist (queued per AI-CORE-spec cycle K+ mandate)
 
 | Task | Title | Wave | Depends | Status |
 |------|-------|------|---------|--------|
-| TASK-001 | DB tool registry + introspection tools | 1 | - | ready |
-| TASK-002 | SQL read-only executor tool + schema→context formatter | 1 | - | ready |
+| TASK-001 | DB tool registry + introspection tools | 1 | - | pending_review |
+| TASK-002 | SQL read-only executor tool + schema→context formatter | 1 | - | pending_review |
 | TASK-003 | AI Chat panel webview + host wiring | 2 | 001,002 | ready |
 | TASK-004 | Agent↔panel integration + guardrails + README | 3 | 003 | ready |
 
