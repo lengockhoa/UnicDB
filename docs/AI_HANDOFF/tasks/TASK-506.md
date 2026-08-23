@@ -1,6 +1,6 @@
 # TASK-506 — Version 1.4.0 + README + full-suite boundary
 
-- Status: `ready`
+- Status: `done`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §7
@@ -55,5 +55,19 @@ npm run typecheck
 
 ## Discussion
 
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code (orchestrator direct — assertion/release-only changes, waived per precedent Rev304R2)
+EXECUTOR_MODEL: unic/unic-smart
+VERIFICATION:
+  - package.json version 1.3.2 → 1.4.0; README +4 feature bullets (edit mode, export toolbar, WHERE/ORDER BY bar, Run .sh).
+  - npm run compile OK (webview.js 2.2mb, webview.css, extension.js).
+  - npm run typecheck exit 0.
+  - npx vitest run: 34 files / 388 tests passed (0 fail).
+  - Browser smoke trên grid thật (.cache/webview-repro/aggrid.html): theme dark rgb(30,30,30); edit cell → dirtyCount 1; commit → đúng 1 message saveEdits (index 0, 1 edit, có tableName); paste TSV 2x2 → dirty 4; undo → dirty 3; export CSV → message copy với header + RFC4180 quoting đúng; WHERE bar "1=1" + Re-Run → message requery đúng shape; grid alive; checkboxDistinct [1].
+  - Build: dist/vsdb-1.4.0.vsix (1,570,022 bytes). Tag v1.4.0 + GitHub release asset live.
+RELEASE: https://github.com/lengockhoa/VSDB/releases/tag/v1.4.0
 (chưa có comment)
 

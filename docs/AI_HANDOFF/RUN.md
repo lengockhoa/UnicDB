@@ -1,6 +1,6 @@
 Command: handoff-fullstack
 Goal: Cycle D+E — grid edit/paste/export/save + WHERE bar + Run .sh; release v1.4.0
 Base: main
-Phase: P (plan done, tasks ready)
-Cursor: PLAN + 6 tasks written; W1 = TASK-501 + TASK-505
-Next: dispatch W1 executors (unic-code), sau đó review (unic-smart)
+Phase: DONE — released v1.4.0
+Cursor: main @ bdbd7b5, tag v1.4.0 pushed, GitHub release asset vsdb-1.4.0.vsix live (all 6 tasks done: 501/505/502/503/504 approved, 506 gates 388 tests)
+Next: queued — AI assist tab (chưa spec); thấy bug thì mở cycle mới
