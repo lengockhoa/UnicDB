@@ -21,6 +21,9 @@ import { truncateAtBoundary } from "./core/text";
 import { AiConfigStore } from "./ai/config";
 import { AiSettingsForm } from "./ui/aiSettingsForm";
 import { createProviderClient } from "./ai/provider";
+import type { AdapterFactory } from "./ai/tools/types";
+import type { AgentDeps } from "./ai/agent";
+import { AiChatPanel } from "./ui/aiChatPanel";
 import type { ConnectionConfig } from "./config/types";
 import type { ParsedStatement } from "./config/types";
 // Track disposables for deactivate().
@@ -28,6 +31,8 @@ let disposables: vscode.Disposable[] = [];
 let state: ExtensionState | null = null;
 /** Cached single-instance AiSettingsForm (TASK-004). Reused across calls. */
 let aiSettingsForm: AiSettingsForm | null = null;
+/** Cached single-instance AiChatPanel (TASK-004). Reused across calls. */
+let aiChatPanel: AiChatPanel | null = null;
 /** extensionUri capture ở activate() — dùng cho ConnectionForm webview resources. */
 let extensionUriForForm: vscode.Uri = vscode.Uri.file("/");
 let runScriptTerminal: vscode.Terminal | null = null;
@@ -247,6 +252,37 @@ export async function activate(
     ),
   );
 
+  // 16. vsdb.aiChat — TASK-004: AI chat panel with real deps.
+  // Spec: store.loadConfig() (flat AiConfig), createProviderClient per
+  // complete() call, adapterFactory resolves ConnectionManager's active
+  // POSTGRES adapter (else null). Unconfigured → info + open AI Settings.
+  const adapterFactory: AdapterFactory = async () => {
+    const active = mgr.getActive();
+    if (!active || active.driver !== "postgres") return null;
+    try {
+      return await mgr.getAdapter();
+    } catch {
+      // No password / testConnection fail → treat as no connection. Panel
+      // continues with empty schema context, never crashes.
+      return null;
+    }
+  };
+  const aiChatDeps: AgentDeps = {
+    loadConfig: () => aiStore.loadConfig(),
+    complete: (cfg, _role, req) =>
+      createProviderClient({
+        baseUrl: cfg.baseUrl,
+        apiKey: cfg.apiKey,
+        method: cfg.method,
+        timeoutMs: cfg.timeoutMs,
+      }).complete(req),
+  };
+  disposables.push(
+    vscode.commands.registerCommand("vsdb.aiChat", () =>
+      commandOpenAiChat(aiStore, adapterFactory, aiChatDeps),
+    ),
+  );
+
   // Dispose schemaTree + codeLens on deactivate to drop subscriptions + cache.
   context.subscriptions.push({ dispose: () => tree.dispose() });
   context.subscriptions.push({ dispose: () => codeLens.dispose() });
@@ -266,6 +302,8 @@ export async function deactivate(): Promise<void> {
   disposables = [];
   state = null;
   aiSettingsForm = null;
+  aiChatPanel?.dispose();
+  aiChatPanel = null;
 }
 
 // ---- Command implementations -----------------------------------------------
@@ -296,6 +334,37 @@ function commandOpenAiSettings(aiStore: AiConfigStore): void {
     });
   }
   aiSettingsForm.show();
+}
+
+/**
+ * TASK-004 — vsdb.aiChat: open the AI Chat panel (single instance).
+ * Spec:
+ *  - Unconfigured (loadConfig null) → info message + open AI Settings form.
+ *    Never crash, never construct the panel with bogus config.
+ *  - Configured → lazy-build AiChatPanel bound to the real deps + adapter
+ *    factory; reveal on subsequent calls.
+ */
+async function commandOpenAiChat(
+  aiStore: AiConfigStore,
+  adapterFactory: AdapterFactory,
+  deps: AgentDeps,
+): Promise<void> {
+  const cfg = await aiStore.loadConfig();
+  if (!cfg) {
+    void vscode.window.showInformationMessage(
+      "VSDB: Configure AI settings first.",
+    );
+    await vscode.commands.executeCommand("vsdb.openAiSettings");
+    return;
+  }
+  if (!aiChatPanel) {
+    aiChatPanel = new AiChatPanel({
+      extensionUri: extensionUriForForm,
+      deps,
+      adapterFactory,
+    });
+  }
+  aiChatPanel.show();
 }
 async function runQueryFromEditor(
   mgr: ConnectionManager,

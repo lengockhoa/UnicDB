@@ -92,6 +92,7 @@ code --install-extension vsdb-<version>.vsix
   - **Generate Sample Data…**: chèn N dòng `INSERT … VALUES` theo kiểu cột (int/varchar/date/uuid/json) — mở trong tab SQL untitled để user xem/sửa trước khi chạy.
   - **Analyze / Vacuum**: phát lệnh `ANALYZE` / `VACUUM` (PostgreSQL-only) để cập nhật planner stats / thu dọn dead tuples; nút này không hiện với MySQL/MSSQL.
 - **AI Settings (1.5.x)**: chạy `VSDB: Open AI Settings…` từ Command Palette mở form cấu hình backend OpenAI-compatible (baseUrl, method `responses`/`chat/completions`, timeout, maxSteps, model id cho 2 role `work` (vision) + `smart`, apiKey). Nút **Test** smoke-fires một completion nhỏ để xác nhận endpoint thực sự sống trước khi agent dùng nó.
+- **AI Chat & DB tools (1.5.x)**: chat panel `VSDB: AI Chat` từ Command Palette — multi-turn với agent loop. Agent có 3 tool: `list_tables`, `describe_table` (PostgreSQL only), và `run_sql`. **Read-only promise**: tool `run_sql` chỉ chấp nhận `SELECT` / `SHOW` / `EXPLAIN` / `WITH … SELECT` (CTE sạch). Mọi `INSERT` / `UPDATE` / `DELETE` / `DROP` / `TRUNCATE` / `MERGE` / `INTO` / writable CTE bị tool reject ngay lập tức với lý do cụ thể — `adapter.runQuery` không bao giờ nhận DML/DDL. Multi-statement cũng bị reject. Khi chưa `VSDB: Open AI Settings…` thì command `VSDB: AI Chat` hiện info "Configure AI settings first" và tự mở form settings.
 
 ---
 ## AI
@@ -106,6 +107,24 @@ code --install-extension vsdb-<version>.vsix
 ### Mở form
 
 Mở Command Palette → gõ `VSDB: Open AI Settings…` → điền các trường → bấm **Test** để smoke-fires provider → **Save** để lưu vào store.
+
+### AI Chat & DB tools
+
+Mở Command Palette → `VSDB: AI Chat` → panel chat mở với multi-turn agent. Agent có 3 tool:
+
+- `list_tables` — liệt kê `(schema, table)` cho adapter active.
+- `describe_table` — columns + constraints; chỉ hỗ trợ khi connection active là **PostgreSQL**.
+- `run_sql` — chạy **một** statement read-only (SELECT/SHOW/EXPLAIN/WITH…SELECT sạch) qua `adapter.runQuery`; trả về ≤ 50 rows JSON.
+
+**Guardrails (defense-in-depth)**:
+
+- **Read-only guard** trong `run_sql`: bất kỳ `INSERT/UPDATE/DELETE/DROP/TRUNCATE/MERGE/ALTER`, multi-statement, hoặc CTE có nhánh DML đều bị reject ngay tại tool — `adapter.runQuery` không bao giờ thấy DML. Ngay cả khi model "cố tình" gọi `run_sql` với `DROP TABLE …`, tool trả về reject reason, agent loop tiếp tục, và DB thật ngoài đời không bị ảnh hưởng.
+- **Adapter scope**: `run_sql` chỉ resolve qua connection active hiện tại (driver `postgres`); nếu chưa chọn connection hoặc driver không phải `postgres` → tool trả `"No active database connection."`, không throw.
+- **Egress**: mọi AI completion chỉ đi tới `baseUrl` bạn đã cấu hình — không third-party endpoint, không telemetry, không fallback.
+- **apiKey hygiene**: `apiKey` chỉ nằm trong **SecretStorage** (`vsdb.ai.apiKey`); được đọc theo từng request và gắn vào header `Authorization: Bearer …`. Provider `scrubApiKey` trước khi throw `ProviderError` — không bao giờ xuất hiện trong error message, response snippet, log, hay UI.
+- **Unconfigured fallback**: nếu chưa lưu AI Settings thì command hiện `VSDB: Configure AI settings first.` rồi tự mở `VSDB: Open AI Settings…` — không crash, không tạo panel với config rỗng.
+
+Khi muốn tắt hoàn toàn: gỡ AI Settings (Clear Secret Storage hoặc form Settings → Save với apiKey trống), hoặc disable extension activation event `onCommand:vsdb.aiChat` trong `package.json`.
 
 ---
 ## Khắc phục sự cố (Troubleshooting)

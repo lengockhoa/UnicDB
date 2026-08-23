@@ -49,6 +49,85 @@ npm run compile && npx vitest run src/ui/__tests__/aiChatE2e.test.ts src/extensi
 - [ ] Không telemetry mới; apiKey không xuất hiện thêm chỗ nào
 - [ ] Full suite + compile + tsc sạch (orchestrator wave boundary)
 
+
+## Executor Report
+
+### RED Output
+
+```
+FAIL  src/extension.test.ts > TASK-004 — vsdb.aiChat wiring > Test #5 — vsdb.aiChat được register trong subscriptions sau activate()
+AssertionError: expected false to be true // Object.is equality
+ ❯ src/extension.test.ts:960:57
+    960|     expect(state.registeredCommands.has("vsdb.aiChat")).toBe(true);
+
+FAIL  src/extension.test.ts > TASK-004 — vsdb.aiChat wiring > Test #5b — dispose() sạch: deactivate() không throw sau khi gọi vsdb.aiChat
+AssertionError: expected undefined not to be undefined
+ ❯ src/extension.test.ts:969:16
+    969|     expect(fn).toBeDefined();
+
+FAIL  src/extension.test.ts > TASK-004 — vsdb.aiChat wiring > Test #3 — loadConfig() resolve null → info message + mở AI Settings form; không crash
+AssertionError: expected undefined not to be undefined
+ ❯ src/extension.test.ts:985:16
+    985|     expect(fn).toBeDefined();
+```
+
+3 RED tests in `src/extension.test.ts` confirmed: `vsdb.aiChat` was not registered
+in `state.registeredCommands` (extension.ts activate() lacked the wiring).
+
+### GREEN Output
+
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+ ✓ src/ui/__tests__/aiChatPanel.test.ts  (9 tests) 5ms
+ ✓ src/ui/__tests__/aiChatE2e.test.ts  (3 tests) 5ms
+ ✓ src/extension.test.ts  (33 tests) 79ms
+
+ Test Files  3 passed (3)
+      Tests  45 passed (45)
+```
+
+Plus full `src/ai` + `src/ui` sweep (395 tests / 39 files, 5.83s) — all pass.
+
+### EXECUTOR_MODEL
+unic-code
+
+### FILES_CHANGED
+- `src/extension.ts` — register `vsdb.aiChat` (spec wiring: `AiConfigStore(ctx)`,
+  `createProviderClient` per `complete()`, `adapterFactory` resolves active
+  POSTGRES adapter else null); `commandOpenAiChat` does unconfigured fallback
+  (`loadConfig` null → info + `executeCommand("vsdb.openAiSettings")`); `aiChatPanel`
+  cached/disposed.
+- `src/extension.test.ts` — 3 new tests under `TASK-004 — vsdb.aiChat wiring`:
+  Test #5 (registered), Test #5b (deactivate clean), Test #3 (unconfigured fallback).
+- `src/ui/__tests__/aiChatE2e.test.ts` (new) — 3 E2E tests against REAL
+  `runAgent` + REAL `createProviderClient({fetch})`: happy 2-step, DML regression
+  (DROP TABLE → tool reject, runQuery never sees DML), offline 500 (ProviderError
+  scrubbed, apiKey never in error).
+- `README.md` — feature bullet "AI Chat & DB tools (1.5.x)" + dedicated section
+  "AI Chat & DB tools" under `## AI` documenting guardrails, read-only promise,
+  egress contract, apiKey hygiene, unconfigured fallback.
+
+### TESTS_ADDED
+- `src/ui/__tests__/aiChatE2e.test.ts` — 3 tests (happy 2-step, DML regression,
+  offline 500)
+- `src/extension.test.ts` — 3 tests (TASK-004 — vsdb.aiChat wiring describe)
+
+### VERIFICATION
+- `npm run compile` → success (esbuild, 128ms, dist/* populated)
+- `npx vitest run src/ui/__tests__/aiChatE2e.test.ts src/extension.test.ts src/ui/__tests__/aiChatPanel.test.ts`
+  → 45/45 pass, exit 0
+- `npx tsc --noEmit` → clean (no errors)
+
+### ISSUES
+None — all acceptance criteria met. Note: `AiChatPanel` constructor takes
+options object (`{extensionUri, deps, adapterFactory}`); the existing
+`aiChatPanel.test.ts` calls it with 3 positional args (works under esbuild
+type-stripped vitest but is technically wrong per TypeScript). Not in this
+task's scope — kept frozen.
+
+### HANDOFF_TO_REVIEWER
+yes — wiring live, all 5 tests green.
+
 ## Interfaces
 - Consumes: tất cả T1-T3 productions; `AiConfigStore.loadConfig()` + flat `AiConfig` fields + `createProviderClient` (frozen cycle J); `AdapterFactory` async (src/ai/tools/types.ts).
 - Produces: `(none)` — final consumer. README contract cho QA.

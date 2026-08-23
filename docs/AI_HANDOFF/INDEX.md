@@ -7,7 +7,7 @@ Cycle: K — AI DB-assist (queued per AI-CORE-spec cycle K+ mandate)
 | TASK-001 | DB tool registry + introspection tools | 1 | - | pending_review |
 | TASK-002 | SQL read-only executor tool + schema→context formatter | 1 | - | pending_review |
 | TASK-003 | AI Chat panel webview + host wiring | 2 | 001,002 | pending_review |
-| TASK-004 | Agent↔panel integration + guardrails + README | 3 | 003 | ready |
+| TASK-004 | Agent↔panel integration + guardrails + README | 3 | 003 | pending_review |
 
 Waves: 1 = TASK-001,002 (parallel; T1 owns src/ai/tools/registry+introspect, T2 owns src/ai/tools/sqlTool+context — no shared files) → 2 = TASK-003 → 3 = TASK-004.
 

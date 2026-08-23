@@ -944,3 +944,56 @@ describe("TASK-004 — vsdb.openAiSettings wiring", () => {
 });
 // Avoid path-imports lint complaints.
 void path;
+
+// =============================================================================
+// TASK-004 — vsdb.aiChat command wiring + unconfigured fallback.
+// =============================================================================
+describe("TASK-004 — vsdb.aiChat wiring", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+  });
+
+  it("Test #5 — vsdb.aiChat được register trong subscriptions sau activate()", () => {
+    const ctx = makeCtx();
+    activate(ctx as never);
+    expect(state.registeredCommands.has("vsdb.aiChat")).toBe(true);
+    // Command handler phải thuộc context.subscriptions (để dispose dọn dẹp).
+    expect(ctx.subscriptions.length).toBeGreaterThan(0);
+  });
+
+  it("Test #5b — dispose() sạch: deactivate() không throw sau khi gọi vsdb.aiChat", async () => {
+    const ctx = makeCtx();
+    activate(ctx as never);
+    const fn = state.registeredCommands.get("vsdb.aiChat");
+    expect(fn).toBeDefined();
+    // Gọi handler trước khi dispose — không crash, không throw.
+    await fn!();
+    await expect(deactivate()).resolves.not.toThrow();
+  });
+
+  it("Test #3 — loadConfig() resolve null → info message + mở AI Settings form; không crash", async () => {
+    const ctx = makeCtx();
+    // globalState.get trả undefined → loadSettings trả null → loadConfig trả null.
+    activate(ctx as never);
+    const showInfoSpy = vi.mocked(vscodeMock.window.showInformationMessage);
+    const executeCommandSpy = vi.mocked(vscodeMock.commands.executeCommand);
+    showInfoSpy.mockClear();
+    executeCommandSpy.mockClear();
+
+    const fn = state.registeredCommands.get("vsdb.aiChat");
+    expect(fn).toBeDefined();
+    await fn!();
+
+    // Phải hiện info + trigger openAiSettings.
+    expect(showInfoSpy).toHaveBeenCalled();
+    const infoArgs = showInfoSpy.mock.calls[0];
+    const infoText = (infoArgs?.[0] ?? "") as string;
+    expect(infoText.toLowerCase()).toMatch(/configure|ai|settings/i);
+    // Mở form settings qua executeCommand('vsdb.openAiSettings').
+    const called = executeCommandSpy.mock.calls.some(
+      (c) => c[0] === "vsdb.openAiSettings",
+    );
+    expect(called).toBe(true);
+  });
+});
