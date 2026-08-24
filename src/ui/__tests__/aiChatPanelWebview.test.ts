@@ -37,6 +37,7 @@ const compiled = execFileSync(
   { input: source, encoding: "utf8" },
 ).toString();
 
+
 interface VsdbApi {
   postMessage: (msg: unknown) => void;
 }
@@ -60,10 +61,39 @@ function makeHarness(): Harness {
   document.body.innerHTML =
     '<div id="vsdb-root" class="vsdb-form-body"></div>';
 
+  // Re-eval accumulates `window.addEventListener("message", ...)` handlers
+  // across previous tests (each IIFE evaluates a fresh closure), so the
+  // DOM ends up mutated N times for a single dispatch. Capture the latest
+  // handler the bundle installs this call, dispatch directly against it,
+  // and replace `addEventListener` after the bundle's install line to
+  // ignore any later additions.
+  const originalAdd = window.addEventListener.bind(window);
+  let latestMessageHandler: ((ev: MessageEvent) => void) | null = null;
+  (window as unknown as { addEventListener: typeof originalAdd }).addEventListener = ((
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: boolean | AddEventListenerOptions,
+  ) => {
+    if (type === "message") {
+      latestMessageHandler = listener as (ev: MessageEvent) => void;
+      return;
+    }
+    return originalAdd(type, listener, options);
+  }) as typeof originalAdd;
+
   // The bundle is a top-level IIFE that reads window/document directly.
   (0, eval)(compiled);
 
+  // Restore the original addEventListener so any code that runs in the
+  // rest of the test cannot accidentally re-arm another handler.
+  (window as unknown as { addEventListener: typeof originalAdd }).addEventListener =
+    originalAdd;
+
   const dispatch = (msg: Record<string, unknown>): void => {
+    if (latestMessageHandler) {
+      latestMessageHandler(new MessageEvent("message", { data: msg }));
+      return;
+    }
     window.dispatchEvent(new MessageEvent("message", { data: msg }));
   };
 
@@ -311,5 +341,80 @@ describe("AiChatPanelWebview — no apiKey crossing", () => {
     const all = JSON.stringify(posts);
     expect(all).not.toMatch(/api_?key/i);
     expect(all).not.toMatch(/sk-[a-z0-9]/i);
+  });
+});
+
+// ---- TASK-003 #5: engine banner label for builtin ------------------------
+describe("AiChatPanelWebview — engine banner (built-in streaming)", () => {
+  it('#5 builtin: banner text reads "Engine: builtin — streaming"', () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false });
+    h.dispatch({ type: "engine", name: "builtin" });
+    const banner = document.getElementById("engineBanner");
+    expect(banner).not.toBeNull();
+    expect(banner!.textContent).toBe("Engine: builtin — streaming");
+  });
+
+  it('#5b builtin with hint: banner text reads "Engine: builtin — <hint>", still ends with "— streaming"', () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false });
+    h.dispatch({ type: "engine", name: "builtin", hint: "no api key configured" });
+    const banner = document.getElementById("engineBanner");
+    expect(banner).not.toBeNull();
+    expect(banner!.textContent).toBe(
+      "Engine: builtin — no api key configured — streaming",
+    );
+    expect(banner!.textContent).toMatch(/— streaming$/);
+  });
+
+  it('#5c omp: banner text reads "Engine: oh-my-pi (omp) — streaming"', () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false });
+    h.dispatch({ type: "engine", name: "omp" });
+    const banner = document.getElementById("engineBanner");
+    expect(banner).not.toBeNull();
+    expect(banner!.textContent).toBe("Engine: oh-my-pi (omp) — streaming");
+  });
+});
+
+// ---- TASK-003 #7: regression — done/error de-streams open bubble ----------
+// delta(x) → done (no assistant) → delta(y): the second delta must open a NEW
+// bubble; without de-stream on done, the y is appended into the orphaned
+// streaming bubble that x created, merging the two turns' text.
+describe("AiChatPanelWebview — de-stream on done/error (regression F4)", () => {
+  it('#7 done de-streams: after delta(x)+done, no .vsdb-chat-streaming bubble; next delta(y) opens new bubble', () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false });
+    h.dispatch({ type: "delta", text: "x" });
+    // Verify the streaming bubble IS open before done (sanity).
+    expect(document.querySelector(".vsdb-chat-streaming")).not.toBeNull();
+    h.dispatch({ type: "done" });
+    // After done, streaming bubble must have been removed (de-streamed).
+    expect(document.querySelector(".vsdb-chat-streaming")).toBeNull();
+    // The x bubble still has its content visible (no text wipe).
+    const after = document.querySelectorAll(".vsdb-chat-bubble.vsdb-chat-assistant");
+    expect(after).toHaveLength(1);
+    expect(after[0]?.textContent).toBe("x");
+
+    // Second turn: delta(y) must open a NEW bubble, NOT merge into x.
+    h.dispatch({ type: "delta", text: "y" });
+    const allAfter2 = document.querySelectorAll(
+      ".vsdb-chat-bubble.vsdb-chat-assistant",
+    );
+    expect(allAfter2).toHaveLength(2);
+    expect(allAfter2[0]?.textContent).toBe("x");
+    expect(allAfter2[1]?.textContent).toBe("y");
+  });
+
+  it('#7b error de-streams: error path also removes the streaming class', () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false });
+    h.dispatch({ type: "delta", text: "x" });
+    expect(document.querySelector(".vsdb-chat-streaming")).not.toBeNull();
+    h.dispatch({ type: "error", message: "stream aborted" });
+    expect(document.querySelector(".vsdb-chat-streaming")).toBeNull();
+    // Error bubble is added; original text x stays visible.
+    const bubbles = document.querySelectorAll(".vsdb-chat-bubble");
+    expect(bubbles.length).toBeGreaterThanOrEqual(2);
   });
 });

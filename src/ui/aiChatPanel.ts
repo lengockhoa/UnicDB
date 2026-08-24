@@ -174,7 +174,12 @@ export class AiChatPanel {
   /** Set once per ACP turn when done was posted. */
   private turnDonePosted = false;
   /** Resolvers for in-flight ACP turns — fired by settle path. */
+  /** Resolvers for in-flight ACP turns — fired by settle path. */
   private acpTurnResolvers: Array<() => void> = [];
+  /** Per-turn AbortController for the built-in engine. Created in
+   * handleSend and aborted in handleStop so the streaming path sees the
+   * signal flip exactly when the user clicks Stop. ACP path ignores this. */
+  private currentAbort: AbortController | null = null;
   private permissionTimeoutMs: number;
 
   constructor(
@@ -270,6 +275,10 @@ export class AiChatPanel {
     this.cancelAllPending();
     this.token = { aborted: false };
     this.turnDonePosted = false;
+    // Per-turn AbortController for the builtin engine — `signal` flows
+    // straight through runAgent → deps.streamComplete so a mid-stream Stop
+    // cancels the SSE read. Aborted by handleStop().
+    this.currentAbort = new AbortController();
 
     const userMsg: ChatMessage = { role: "user", content: trimmed };
 
@@ -281,6 +290,17 @@ export class AiChatPanel {
     await this.runAcpTurn(trimmed, userMsg);
   }
 
+  /**
+   * Built-in engine turn.
+   * Wires the per-turn AbortController signal into runAgent (which routes
+   * to deps.streamComplete). Posts {type:"delta"}
+   * for each onText fragment;
+   * the existing finalize-on-not-aborted branch
+   * suppresses the final assistant message when the user clicked Stop.
+   * onStreamFallback mirrors agent's fallback notice to the webview with
+   * the literal "stream fallback" label so the UI surfaces why streaming
+   * wasn't used (provider offline / model doesn't support SSE).
+   */
   private async runBuiltinTurn(userMsg: ChatMessage): Promise<void> {
     const registry = createDbTools(this.options.adapterFactory);
     registry.register(createSqlTool(this.options.adapterFactory));
@@ -290,16 +310,31 @@ export class AiChatPanel {
       this.history,
       userMsg,
     );
+    const token = this.token;
+    const signal = this.currentAbort?.signal;
     const callbacks: AgentCallbacks = {
       onStep: (step) => this.onStep(step),
+      onText: (text) => {
+        // Gate at the boundary: a token flip in mid-stream means the user
+        // hit Stop — drop pending deltas so the bubble doesn't keep
+        // growing after we already committed to aborting.
+        if (token?.aborted) return;
+        this.post({ type: "delta", text });
+      },
+      onStreamFallback: () => {
+        // Panel owns the literal fallback label (no shared const with
+        // agent.ts — see TASK-003 §Interfaces). Rendered through the
+        // existing webview `step` case.
+        this.post({ type: "step", label: "stream fallback" });
+      },
     };
 
-    const token = this.token;
     try {
       const result = await runAgent(
         { messages, tools: registry },
         this.options.deps,
         callbacks,
+        signal,
       );
       if (!token?.aborted) {
         this.post({
@@ -314,12 +349,26 @@ export class AiChatPanel {
         this.history = [...this.history, userMsg, assistantMsg];
       }
     } catch (err) {
+      const aborted =
+        this.token?.aborted ||
+        (err instanceof Error && err.name === "AbortError");
+      if (aborted) {
+        // User-driven stop (token flipped) or upstream provider AbortError:
+        // the stop UX already surfaces a quiet "stopped" state via the
+        // webview's done/de-stream path. Never post an error bubble here.
+        return;
+      }
       const message = err instanceof Error ? err.message : String(err);
+      // Surface as-is. Provider / stream errors carry "stream" naturally
+      // (e.g. "provider stream failed"); the webview error case is a
       this.post({ type: "error", message });
     } finally {
       this.post({ type: "done" });
+      this.currentAbort = null;
     }
   }
+
+
 
   private onStep(step: AgentStep): void {
     if (this.token?.aborted) return;
@@ -607,11 +656,18 @@ export class AiChatPanel {
 
   private handleStop(): void {
     if (this.token) this.token.aborted = true;
+    if (this.engine === "builtin") {
+      // Flip the per-turn signal so any in-flight streamComplete sees the
+      // abort and stops reading from the SSE body. Agent-side emits the
+      // bare AbortError which onText-on-the-host-side won't get to handle
+      // (we suppress when token.aborted is true); the agent's runStep
+      // rethrows it so the runBuiltinTurn catch is skipped.
+      this.currentAbort?.abort();
+    }
     if (this.engine === "omp" && this.acpSession !== null) {
       this.cancelAllPending();
     }
   }
-
   private disposeAcpSession(): void {
     if (this.acpSession !== null) {
       try {

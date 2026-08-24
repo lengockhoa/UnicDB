@@ -266,6 +266,23 @@ function appendDelta(text: string): void {
   thread.scrollTop = thread.scrollHeight;
 }
 
+/** F4 regression helper — strip the streaming class from any open bubble
+ * so the NEXT delta opens a fresh bubble instead of appending into an
+ * orphaned one (causes text bleed across turns when the user stops mid-
+ * stream and starts a new turn without an `assistant` arrival). The bubble
+ * itself is kept so the user still sees whatever streamed before the stop
+ * (matches T3.2 — preserve partial text on stop). */
+function deStreamOpenBubble(): void {
+  const thread = document.getElementById("thread");
+  if (!thread) return;
+  const open = thread.querySelectorAll<HTMLDivElement>(
+    ".vsdb-chat-bubble.vsdb-chat-assistant.vsdb-chat-streaming",
+  );
+  for (const bubble of Array.from(open)) {
+    bubble.classList.remove("vsdb-chat-streaming");
+  }
+}
+
 /** Show / replace the engine banner (omp active, or builtin fallback with hint). */
 function applyEngine(msg: EngineMsg): void {
   const root = document.getElementById("vsdb-root");
@@ -278,7 +295,9 @@ function applyEngine(msg: EngineMsg): void {
   const label =
     msg.name === "omp"
       ? "Engine: oh-my-pi (omp) — streaming"
-      : `Engine: builtin${msg.hint ? ` — ${msg.hint}` : ""}`;
+      : msg.hint
+        ? `Engine: builtin — ${msg.hint} — streaming`
+        : `Engine: builtin — streaming`;
   banner.textContent = label;
   // Insert at the top of the thread (before any chat bubbles).
   const thread = document.getElementById("thread");
@@ -435,8 +454,12 @@ window.addEventListener("message", (ev: MessageEvent) => {
       return;
     case "error":
       appendError(msg.message);
+      deStreamOpenBubble();
       return;
     case "done":
+      // De-stream so the NEXT turn's delta opens a fresh bubble instead
+      // of appending into a left-open streaming bubble (F4 regression).
+      deStreamOpenBubble();
       setBusy(false);
       return;
     case "permission_request":

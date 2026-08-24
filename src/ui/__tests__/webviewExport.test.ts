@@ -13,7 +13,15 @@
 import type { GridApi } from "ag-grid-community";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
+
+// AG Grid's StateService debounces state dispatches with setTimeout(0). When
+// the suite grows, those timers can fire after the jsdom environment is torn
+// down ("window is not defined" unhandled error → non-zero exit). Drain them
+// while the environment is still alive.
+afterEach(async () => {
+  await new Promise((resolve) => setTimeout(resolve, 5));
+});
 
 // ---- minimal DOM stubs for AG Grid browser APIs ---------------------------
 type ResizeObserverLike = {

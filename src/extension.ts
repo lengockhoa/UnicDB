@@ -276,6 +276,13 @@ export async function activate(
         method: cfg.method,
         timeoutMs: cfg.timeoutMs,
       }).complete(req),
+    streamComplete: (cfg, _role, req, onText, signal) =>
+      createProviderClient({
+        baseUrl: cfg.baseUrl,
+        apiKey: cfg.apiKey,
+        method: cfg.method,
+        timeoutMs: cfg.timeoutMs,
+      }).streamComplete(req, { onText, signal }),
   };
   disposables.push(
     vscode.commands.registerCommand("vsdb.aiChat", () =>

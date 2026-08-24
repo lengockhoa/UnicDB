@@ -584,3 +584,329 @@ describe("AiChatPanel — wiring (regression R4.5)", () => {
     expect(passedDeps.complete).toBe(deps.complete);
   });
 });
+// ============================================================================
+// TASK-003 — Cases 1-4: builtin streaming wiring in panel.
+// Pins the runBuiltinTurn contract:
+//   - delta messages posted in order from onText
+//   - AbortController + signal gated on abort token
+//   - onStreamFallback → "{type:"step", label:"stream fallback"}" posted
+//   - apiKey never crosses the wire
+// ============================================================================
+describe("AiChatPanel — builtin streaming", () => {
+  // ---- helpers -------------------------------------------------------------
+
+  interface DeltaMsg {
+    type: "delta";
+    text: string;
+  }
+  function isDelta(m: unknown): m is DeltaMsg {
+    return !!m && typeof m === "object" && (m as { type?: string }).type === "delta";
+  }
+
+  interface EngineMsg {
+    type: "engine";
+    name: "omp" | "builtin";
+    hint?: string;
+  }
+  function isEngine(m: unknown): m is EngineMsg {
+    return !!m && typeof m === "object" && (m as { type?: string }).type === "engine";
+  }
+
+  /** Strip helper - find the engine banner posted via {type:'engine'}. */
+  function engineMsgFromPost(panel: MockPanel): EngineMsg | undefined {
+    return postedMessages(panel).find(isEngine);
+  }
+
+  // ---- Case #1: happy streaming --------------------------------------------
+  it('#1 happy: stream emits delta(a), delta(b), assistant(ab), done in order; history gains user+assistant', async () => {
+    const seenSignals: Array<AbortSignal | undefined> = [];
+    agentState.runAgentMock.mockImplementation(
+      async (
+        _input: unknown,
+        _deps: unknown,
+        callbacks?: {
+          onText?: (text: string) => void;
+        },
+        signal?: AbortSignal,
+      ) => {
+        seenSignals.push(signal);
+        callbacks?.onText?.("a");
+        callbacks?.onText?.("b");
+        return makeRunResult(
+          [
+            {
+              messages: [{ role: "assistant", content: "ab" }],
+              result: {
+                text: "ab",
+                toolCalls: [],
+                finishReason: "stop",
+                usage: { inputTokens: 0, outputTokens: 0 },
+              },
+            },
+          ],
+          "ab",
+        );
+      },
+    );
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "hello" });
+    await until(() => postedMessages(p).some(isDelta));
+    await until(() => postedMessages(p).some(isAssistant));
+    await until(() => postedMessages(p).some(isDone));
+
+    const posted = postedMessages(p);
+    const deltas = posted.filter(isDelta).map((d) => (d as DeltaMsg).text);
+    expect(deltas).toEqual(["a", "b"]);
+
+    const deltaIdx = posted.findIndex(isDelta);
+    const assistantIdx = posted.findIndex(isAssistant);
+    const doneIdx = posted.findIndex(isDone);
+    expect(deltaIdx).toBeGreaterThan(-1);
+    expect(assistantIdx).toBeGreaterThan(deltaIdx);
+    expect(doneIdx).toBeGreaterThan(assistantIdx);
+
+    // signal is plumbed through to runAgent as arg #4.
+    expect(agentState.runAgentMock).toHaveBeenCalledTimes(1);
+    expect(seenSignals).toHaveLength(1);
+    expect(seenSignals[0]).toBeDefined();
+    expect(seenSignals[0]?.aborted).toBe(false);
+  });
+
+  // ---- Case #2: stop mid-stream suppresses post-stop delta ----------------
+  it("#2 abort: stop fires between onText calls; post-stop delta NOT posted; assistant NOT posted; done posted", async () => {
+    const stopHook = {
+      fired: false as boolean,
+      runStop: null as null | (() => void),
+    };
+    agentState.runAgentMock.mockImplementation(
+      async (
+        _input: unknown,
+        _deps: unknown,
+        callbacks?: {
+          onText?: (text: string) => void;
+        },
+        signal?: AbortSignal,
+      ) => {
+        callbacks?.onText?.("x");
+        // Wait until the test fires stop (signal goes aborted).
+        await new Promise<void>((resolve) => {
+          stopHook.runStop = () => {
+            stopHook.fired = true;
+            resolve();
+          };
+        });
+        // After token aborted, the second text MUST NOT post.
+        if (!signal?.aborted) {
+          callbacks?.onText?.("y");
+        }
+        // Resolve with finalText; panel's post-loop reads token.aborted to
+        // decide whether to suppress assistant.
+        return makeRunResult(
+          [
+            {
+              messages: [{ role: "assistant", content: "xy" }],
+              result: {
+                text: "xy",
+                toolCalls: [],
+                finishReason: "stop",
+                usage: { inputTokens: 0, outputTokens: 0 },
+              },
+            },
+          ],
+          "xy",
+        );
+      },
+    );
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "stop me" });
+    await until(() => postedMessages(p).some(isDelta));
+
+    expect(stopHook.runStop).not.toBeNull();
+    // User clicks Stop. Panel must abort token AND signal before resolving
+    // the run.
+    handler({ type: "stop" });
+    stopHook.runStop!();
+
+    await until(() => postedMessages(p).some(isDone));
+    expect(stopHook.fired).toBe(true);
+
+    const posted = postedMessages(p);
+    const deltas = posted.filter(isDelta).map((d) => (d as DeltaMsg).text);
+    expect(deltas).toEqual(["x"]);
+    expect(posted.some(isAssistant)).toBe(false);
+    expect(posted.some(isDone)).toBe(true);
+
+    // The runAgent call MUST have received an AbortSignal that got aborted
+    // by the time resolve completed.
+    const signalArg = agentState.runAgentMock.mock.calls[0]?.[3] as
+      | AbortSignal
+      | undefined;
+    expect(signalArg).toBeDefined();
+    expect(signalArg?.aborted).toBe(true);
+  });
+  // ---- Case #2b: stop mid-stream with REAL AbortError -------------------
+  // Strengthens case #2 along two axes the prior mock allowed to pass:
+  //  (a) the mock used to self-gate on signal.aborted before firing the
+  //      post-stop onText, so the panel's token.aborted gate at
+  //      aiChatPanel.ts:321 was never exercised end-to-end. Fire onText
+  //      UNCONDITIONALLY and assert the panel still suppresses the delta.
+  //  (b) the catch at aiChatPanel.ts:351-355 used to post {type:"error"}
+  //      on every rejection including real AbortError from the provider.
+  //      Reproduce that path (runAgent rejects with AbortError after
+  //      token flip) and assert NO error bubble is posted — done still
+  //      posts in finally.
+  it("#2b abort: real AbortError after stop → NO error bubble; unconditional late onText suppressed; done posted", async () => {
+    const stopHook = { runStop: null as null | (() => void) };
+    agentState.runAgentMock.mockImplementation(
+      async (
+        _input: unknown,
+        _deps: unknown,
+        callbacks?: { onText?: (text: string) => void },
+      ) => {
+        callbacks?.onText?.("x");
+        // Wait until the test fires stop, then:
+        //  - fire onText UNCONDITIONALLY (mock no longer self-gates —
+        //    the panel's own token.aborted gate must do the work);
+        //  - reject with a real AbortError to exercise the catch path
+        //    (real upstream per agent.ts:177-182 rule 1).
+        await new Promise<void>((resolve) => {
+          stopHook.runStop = resolve;
+        });
+        callbacks?.onText?.("y"); // unconditional — panel must drop
+        const err = new Error("The operation was aborted");
+        err.name = "AbortError";
+        throw err;
+      },
+    );
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "stop me" });
+    await until(() => postedMessages(p).some(isDelta));
+
+    expect(stopHook.runStop).not.toBeNull();
+    handler({ type: "stop" });
+    stopHook.runStop!();
+
+    await until(() => postedMessages(p).some(isDone));
+
+    const posted = postedMessages(p);
+    // (a) unconditional late onText must be dropped by the panel's gate.
+    const deltas = posted.filter(isDelta).map((d) => (d as DeltaMsg).text);
+    expect(deltas).toEqual(["x"]);
+    // (b) AbortError thrown from runAgent must NOT surface as error bubble.
+    const errs = posted.filter(isError);
+    expect(errs).toEqual([]);
+    // done still arrives via finally.
+    expect(posted.some(isDone)).toBe(true);
+    // apiKey never on the wire.
+    expect(JSON.stringify(posted)).not.toMatch(/sk-/i);
+  });
+
+  // ---- Case #3: stream fallback ------------------------------------------
+  it('#3 fallback: onStreamFallback posts step {stream fallback}; assistant + done still post', async () => {
+    const agentStep: AgentStep = {
+      messages: [{ role: "assistant", content: "fallback-text" }],
+      result: {
+        text: "fallback-text",
+        toolCalls: [],
+        finishReason: "stop",
+        usage: { inputTokens: 0, outputTokens: 0 },
+      },
+    };
+    agentState.runAgentMock.mockImplementation(
+      async (
+        _input: unknown,
+        _deps: unknown,
+        callbacks?: {
+          onText?: (text: string) => void;
+          onStreamFallback?: () => void;
+          onStep?: (s: AgentStep) => void;
+        },
+      ) => {
+        callbacks?.onStreamFallback?.();
+        callbacks?.onStep?.(agentStep);
+        return makeRunResult([agentStep], "fallback-text");
+      },
+    );
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "go" });
+    await until(() => postedMessages(p).some(isAssistant));
+    await until(() => postedMessages(p).some(isDone));
+
+    const stepMsgs = postedMessages(p).filter(isStep);
+    // onStreamFallback's panel handler posts step "stream fallback";
+    // onStep's tool-name post only fires if a tool call is present — our
+    // fixture has none, so only the fallback step posts.
+    expect(stepMsgs.length).toBeGreaterThanOrEqual(1);
+    expect(stepMsgs.some((s) => (s as StepMsg).label === "stream fallback")).toBe(true);
+    expect(postedMessages(p).some(isAssistant)).toBe(true);
+    expect(postedMessages(p).some(isDone)).toBe(true);
+    // apiKey NEVER appears on the wire.
+    const all = JSON.stringify(postedMessages(p));
+    expect(all).not.toMatch(/sk-/i);
+  });
+
+  // ---- Case #4: stream + fallback both fail; error message names stream ---
+  it('#4 both fail: error posted with "stream" in message; panel alive; done posted', async () => {
+    agentState.runAgentMock.mockImplementation(async () => {
+      throw new Error("provider stream failed");
+    });
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "ping" });
+    await until(() => postedMessages(p).some(isError));
+    await until(() => postedMessages(p).some(isDone));
+
+    const errs = postedMessages(p).filter(isError);
+    expect(errs.length).toBeGreaterThan(0);
+    const firstErr = errs[0] as ErrorMsg;
+    expect(firstErr.message.toLowerCase()).toMatch(/stream/);
+    expect(p.disposed).toBe(false);
+    expect(postedMessages(p).some(isDone)).toBe(true);
+    const all = JSON.stringify(postedMessages(p));
+    expect(all).not.toMatch(/sk-/i);
+  });
+});

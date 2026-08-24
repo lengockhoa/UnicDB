@@ -182,6 +182,9 @@ vi.mock("vscode", () => {
 });
 
 import { activate, deactivate } from "./extension";
+
+// ---- helpers used by TASK-003 case #6 (declared above all uses) ------------
+const panelConstructorCalls: Array<unknown> = [];
 import { AcpProcess } from "./ai/omp/acpProcess";
 function makeCtx() {
   const subscriptions: Array<{ dispose: () => void }> = [];
@@ -1051,3 +1054,121 @@ describe("TASK-002 — AcpProcess importable + extension activation regression",
     await expect(deactivate()).resolves.not.toThrow();
   });
 });
+
+// =============================================================================
+// TASK-003 — extension wires `streamComplete` closure so the panel's
+// runAgent can call createProviderClient().streamComplete per turn with
+// (cfg, role, req, onText, signal). Verifies the closure shape end-to-end
+// through activate → commandOpenAiChat → AiChatPanel constructor mock →
+// deps.streamComplete call.
+// =============================================================================
+// TASK-003 — extension wires `streamComplete` closure so the panel's
+// runAgent can call createProviderClient().streamComplete per turn with
+// (cfg, role, req, onText, signal). The constructor is captured via a
+// hoisted `vi.mock("./ui/aiChatPanel", …)` factory; vi.resetModules() in
+// beforeEach makes extension.ts re-evaluate against the new mock per test.
+// =============================================================================
+vi.mock("./ui/aiChatPanel", () => ({
+  AiChatPanel: class {
+    constructor(opts: { deps: unknown }) {
+      panelConstructorCalls.push(opts);
+    }
+    show(): void {}
+    dispose(): void {}
+  },
+}));
+describe("TASK-003 — extension wires streamComplete for builtin streaming", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+    panelConstructorCalls.length = 0;
+    vi.resetModules();
+  });
+
+  it("#6 activate → vsdb.aiChat → AiChatPanel is constructed with deps whose streamComplete is a function (5-arg)", async () => {
+    const ext = await import("./extension");
+    const ctx = makeConfiguredCtx();
+    await ext.activate(ctx as never);
+    const fn = state.registeredCommands.get("vsdb.aiChat");
+    expect(fn).toBeDefined();
+    expect(state.registeredCommands.has("vsdb.aiChat")).toBe(true);
+
+    await fn!();
+
+    expect(panelConstructorCalls.length).toBeGreaterThan(0);
+    const opts = panelConstructorCalls[panelConstructorCalls.length - 1] as {
+      deps: {
+        loadConfig?: unknown;
+        complete?: unknown;
+        streamComplete?: unknown;
+      };
+    };
+    expect(typeof opts.deps.streamComplete).toBe("function");
+    expect(typeof opts.deps.loadConfig).toBe("function");
+    expect(typeof opts.deps.complete).toBe("function");
+  });
+
+  it("#6b deps.streamComplete accepts 5 args and wires a real provider-style call", async () => {
+    const ext = await import("./extension");
+    const ctx = makeConfiguredCtx();
+    await ext.activate(ctx as never);
+    const fn = state.registeredCommands.get("vsdb.aiChat");
+    expect(fn).toBeDefined();
+    await fn!();
+    const opts = panelConstructorCalls[panelConstructorCalls.length - 1] as {
+      deps: {
+        streamComplete: (
+          cfg: unknown,
+          role: unknown,
+          req: unknown,
+          onText: unknown,
+          signal: unknown,
+        ) => Promise<unknown>;
+      };
+    };
+
+    // Verify shape only — invoking would dispatch a fetch that would be
+    // network-rejected in jsdom and surface as an unhandled promise
+    // rejection. The 5-arg arity on the function is the contract surface.
+    expect(opts.deps.streamComplete.length).toBeGreaterThanOrEqual(5);
+    expect(opts.deps.streamComplete.name).not.toBe("");
+  });
+});
+function makeConfiguredCtx() {
+  const subscriptions: Array<{ dispose: () => void }> = [];
+  const settings = {
+    baseUrl: "http://example.test",
+    method: "chat/completions",
+    timeoutMs: 60_000,
+    maxSteps: 12,
+    models: {
+      work: { modelId: "gpt-test", vision: true },
+      smart: { modelId: "gpt-test", vision: false },
+    },
+  };
+  return {
+    subscriptions,
+    extensionUri: {
+      toString: () => "file:///ext",
+      fsPath: "/ext",
+      path: "/ext",
+      scheme: "file",
+    },
+    secrets: {
+      store: vi.fn().mockResolvedValue(undefined),
+      get: vi.fn().mockResolvedValue("sk-test-key"),
+      delete: vi.fn().mockResolvedValue(undefined),
+    },
+    workspaceState: {
+      get: vi.fn().mockReturnValue(undefined),
+      update: vi.fn().mockResolvedValue(undefined),
+    },
+    globalState: {
+      // Only the key path AiConfigStore reads returns a valid payload.
+      get: vi.fn((key: string) =>
+        key === "vsdb.ai.settings" ? settings : undefined,
+      ),
+      update: vi.fn().mockResolvedValue(undefined),
+    },
+  };
+}
