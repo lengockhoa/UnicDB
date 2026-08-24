@@ -300,9 +300,9 @@ interface PersistentDom {
    *  here. Cleared and re-populated on tab switch / state change, but the
    *  grid host (once created) is preserved as a single child. */
   panel: HTMLDivElement;
-  /** Persistent grid wrap that contains gridHost + requeryBar + saveBanner.
+  /** Persistent grid wrap that contains requeryBar + gridHost + gridFooter
+   *  + saveBanner (TASK-005 — requery bar moved above the grid host).
    *  Created once; re-attached to `panel` on every grid render. */
-  gridWrap: HTMLDivElement;
   /** Persistent grid footer. */
   gridFooter: HTMLDivElement;
   /** Persistent banner above the footer — shows save errors / no_pk warnings.
@@ -702,32 +702,13 @@ function buildPersistentDom(): PersistentDom {
     (ev) => onGridPaste(ev as ClipboardEvent),
     true,
   );
-
-  const gridHost = document.createElement("div");
-  // Theme class is managed by the JS Theming API (themeQuartz) — no legacy
-  // `ag-theme-quartz` class (that is the legacy-CSS system, error #106 pair).
-  gridHost.className = "vsdb-ag-host";
-  gridHost.style.flex = "1";
-  gridHost.style.width = "100%";
-  gridHost.style.minHeight = "0";
-  gridWrap.appendChild(gridHost);
-
-  const gridFooter = document.createElement("div");
-  gridFooter.className = "vsdb-grid-footer";
-  gridWrap.appendChild(gridFooter);
-  // TASK-503 — Persistent banner above the footer. Hidden by default;
-  // populated on saveResult (ok:false → show; ok:true → hide). Sits
-  // inside gridWrap so it scrolls with the grid panel.
-  const saveBanner = document.createElement("div");
-  saveBanner.className = "vsdb-save-banner vsdb-hidden";
-  saveBanner.setAttribute("hidden", "");
-  saveBanner.setAttribute("role", "alert");
-
-  // TASK-504 — WHERE/ORDER BY "Re-Run" bar. Sits inside the persistent
-  // gridWrap (above the footer) so it scrolls with the grid and survives
-  // every re-render alongside the grid host. The bar is NEVER recreated
-  // — only its inputs' values are read on click. A "Clear" button resets
-  // both inputs.
+  // TASK-504 / TASK-005 — WHERE/ORDER BY "Re-Run" bar. Sits inside the
+  // persistent gridWrap ABOVE the grid host (directly under the top
+  // toolbar/tabs, which are root-level siblings) so the filter inputs
+  // live next to the toolbar instead of below the table. Scrolling
+  // and re-render survival match the grid host. The bar is NEVER
+  // recreated — only its inputs' values are read on click. A "Clear"
+  // button resets both inputs.
   const requeryBar = document.createElement("div");
   requeryBar.className = "vsdb-requery-bar";
   requeryBar.setAttribute("data-vsdb-requery-bar", "");
@@ -767,6 +748,26 @@ function buildPersistentDom(): PersistentDom {
   );
   requeryBar.appendChild(requeryClearBtn);
   gridWrap.appendChild(requeryBar);
+  const gridHost = document.createElement("div");
+  // Theme class is managed by the JS Theming API (themeQuartz) — no legacy
+  // `ag-theme-quartz` class (that is the legacy-CSS system, error #106 pair).
+  gridHost.className = "vsdb-ag-host";
+  gridHost.style.flex = "1";
+  gridHost.style.width = "100%";
+  gridHost.style.minHeight = "0";
+  gridWrap.appendChild(gridHost);
+
+  const gridFooter = document.createElement("div");
+  gridFooter.className = "vsdb-grid-footer";
+  gridWrap.appendChild(gridFooter);
+  // TASK-503 — Persistent banner above the footer. Hidden by default;
+  // populated on saveResult (ok:false → show; ok:true → hide). Sits
+  // inside gridWrap so it scrolls with the grid panel.
+  const saveBanner = document.createElement("div");
+  saveBanner.className = "vsdb-save-banner vsdb-hidden";
+  saveBanner.setAttribute("hidden", "");
+  saveBanner.setAttribute("role", "alert");
+
   gridWrap.appendChild(saveBanner);
 
 

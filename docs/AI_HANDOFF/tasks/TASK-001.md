@@ -77,3 +77,44 @@ Design notes for executor: (1) statement must be `{ text, start: 0, end: text.le
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: W1-T001
+SUMMARY: Implemented `src/ui/browseCommands.ts` exporting `buildBrowseSelect` (per-dialect pg/mysql/mssql quoting, empty-schema unqualified form, no trailing `;`) and `registerBrowseCommands` wiring `vsdb.browseTableData` (resolve node → align active conn → setBusy(true) → runner.run with `{text, start: 0, end}` ParsedStatement → render onUpdate + final → finally setBusy(false); palette fallback shows information message and never calls runner.run). 9/9 cases pass.
+TEST_PLAN_FOLLOWED: task §4 (all 9 cases implemented in `src/ui/__tests__/browseCommands.test.ts`)
+FILES_CHANGED:
+  - src/ui/browseCommands.ts: new — buildBrowseSelect + registerBrowseCommands
+  - src/ui/__tests__/browseCommands.test.ts: new — 9 cases (#1–#9) covering builder + pipeline + alignment + error + 0-row
+TESTS_ADDED:
+  - src/ui/__tests__/browseCommands.test.ts: buildBrowseSelect (4 cases) + registerBrowseCommands (5 cases)
+VERIFICATION:
+  command: `cd .worktrees/task-001 && npm ci --silent && npx vitest run src/ui/__tests__/browseCommands.test.ts && npm run typecheck`
+  result: 9 pass / 0 fail; typecheck exit 0
+  output_excerpt: |
+    RED (test against missing module — captured before src/ui/browseCommands.ts existed):
+      RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-001
+       ❯ src/ui/__tests__/browseCommands.test.ts  (0 test)
+       ⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+       FAIL  src/ui/__tests__/browseCommands.test.ts
+       Error: Failed to load url ../browseCommands (resolved id: ../browseCommands)
+       in .../src/ui/__tests__/browseCommands.test.ts. Does the file exist?
+       Test Files  1 failed (1) | Tests  no tests
+
+    GREEN (after implementation):
+      RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-001
+       ✓ src/ui/__tests__/browseCommands.test.ts  (9 tests) 4ms
+       Test Files  1 passed (1) | Tests  9 passed (9)
+
+    typecheck:
+      > vsdb@1.6.0 typecheck
+      > tsc --noEmit
+      (exit 0, no output)
+ISSUES: Two mid-flight deviations from initial spec reading:
+  1. Initial impl quoted empty schema (`SELECT * FROM """t"`); refactored to skip schema entirely when empty (`SELECT * FROM "t"`). Per test #4 expected behavior.
+  2. Initial impl used `runner.getResults()` inside onUpdate; tests provide `vi.fn` runners without `getResults`. Switched to use the `current` array passed into the onUpdate callback. Mirrors the contract `runner.run(stmts, onUpdate(r => …))`.
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for review

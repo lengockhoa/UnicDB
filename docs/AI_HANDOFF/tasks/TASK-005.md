@@ -78,6 +78,30 @@ root) so grid-panel visibility keeps hiding it in empty state (case 3 depends on
 
 ---
 
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: W1-T005 (feature-implementer)
+SUMMARY: Moved the WHERE/ORDER BY requery bar construction block above the AG Grid host creation inside `buildPersistentDom` so the bar is gridWrap's first child — visible directly under the top toolbar/tabs, above the table. Footer, saveBanner, Re-Run/Clear handlers, requery message protocol, and resultsPanel host side all unchanged.
+TEST_PLAN_FOLLOWED: inline — TDD cycle followed: added 4 new layout assertions to the existing TASK-504 describe block (DOM order inside gridWrap, document order toolbar<bar<host, empty-state hidden, footer position). Saw RED on cases 5 & 6 before the move (asserted `idxRequery < idxHost`, returned 2 vs 0; document-order `cmp(bar,host)` returned 1 instead of -1). GREEN after relocation.
+FILES_CHANGED:
+  - webview/main.ts: relocated the requery-bar construction block (L731-769 in the prior version) above `gridHost` creation; updated the inline doc-comment to reflect the new position and added a TASK-005 note in `PersistentDom.gridWrap`.
+  - src/ui/__tests__/webviewRequery.test.ts: added tests 5, 6, 7, 8 inside the existing `describeIfBundle("webview/main.ts WHERE/ORDER BY requery bar (TASK-504)")` block covering the four required cases (DOM order, document order, empty state, footer position).
+TESTS_ADDED:
+  - src/ui/__tests__/webviewRequery.test.ts: "5. DOM order inside gridWrap: requery bar < grid host"; "6. Document order: toolbar < requery bar < grid host"; "7. Empty state: requery bar not visible (no active statement)"; "8. gridFooter is positioned after gridHost in gridWrap".
+VERIFICATION:
+  command: npm run compile && npx vitest run src/ui/__tests__/webviewRequery.test.ts && npm run typecheck
+  result: 10/10 pass (esbuild built dist/webview.js + dist/extension.js; vitest 6→10/10 passing including the 4 new TASK-005 cases; tsc --noEmit clean)
+  output_excerpt: |
+    ✓ src/ui/__tests__/webviewRequery.test.ts  (10 tests) 846ms
+    Test Files  1 passed (1)
+         Tests  10 passed (10)
+ISSUES: none
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for review (Phase 4)
+
 <!--
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.

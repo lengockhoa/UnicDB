@@ -97,4 +97,58 @@ branch anyway for safety.
 <!--
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
--->
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: -
+
+SUMMARY: Added Type `<select>` (varchar|numeric|boolean) in the column edit
+pane with per-type auto-fill Default (''/0/FALSE) and realType preservation
+on the wire. Host-loaded columns are marked `defaultOverridden` so
+modify-mode never injects defaults. Extracted pure helpers
+(`defaultColumnDefault`, `mapTypeToForm`) to
+`webview/newTableFormColumnHelpers.ts` and re-exported from
+`newTableFormMain.ts`.
+
+TEST_PLAN_FOLLOWED: task §4 (7 cases; test file splits into 8 vitest cases
+covering all required behaviors + extras for edge cases).
+
+FILES_CHANGED:
+  - webview/newTableFormMain.ts: imports helpers + re-exports; adds
+    `defaultOverridden: Set<number>` + `realTypes: Map<number, string>`;
+    renders `<select id="colType">` with exactly 3 options; new commit
+    preserves realType when selection maps to original form value; auto-fill
+    skipped for host-loaded columns; reindexTracking/swapTracking keep
+    tracking valid across remove/up/down; auto-init now respects
+    `data-vsdb-skip-auto-init` for source-level test isolation.
+  - webview/newTableFormColumnHelpers.ts (new): pure `mapTypeToForm` and
+    `defaultColumnDefault`.
+  - src/ui/__tests__/newTableFormColumnDefault.test.ts (new): jsdom
+    source-level tests; stubs acquireVsCodeApi; dynamic import (justified:
+    module-level state + lifecycle).
+
+TESTS_ADDED:
+  - src/ui/__tests__/newTableFormColumnDefault.test.ts: #1 dropdown 3 options,
+    #2 auto-fill + refresh, #3 manual override preserved, #4 modify-mode
+    no injection, #5a timestamp realType preserved, #5b jsonb intentional
+    change emits numeric, #6 defaultColumnDefault mapping, #7 mapTypeToForm
+    mapping.
+
+VERIFICATION:
+  command: npm run compile && npx vitest run src/ui/__tests__/newTableFormColumnDefault.test.ts && npm run typecheck
+  result: compile OK; vitest 8/8 pass (test file passed); typecheck clean
+    (no errors).
+  output_excerpt: |
+    esbuild: build complete
+    Test Files  1 passed (1)
+         Tests  8 passed (8)
+    > vsdb@1.6.0 typecheck
+    > tsc --noEmit
+
+ISSUES: none
+HANDOFF_TO_REVIEWER: yes — TASK-004 fully implemented; code changes left
+uncommitted in .worktrees/task-004 per harness rule.
+NEXT: ready for review

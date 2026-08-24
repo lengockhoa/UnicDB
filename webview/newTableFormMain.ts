@@ -8,6 +8,11 @@
 //     keep the id_<table> first-column auto-name in sync while user only edits
 //     the table-name input. A manual rename away from the auto value stops
 //     tracking forever (per task spec).
+// Pure helpers (re-exported for tests + host consumers).
+import { mapTypeToForm, defaultColumnDefault } from "./newTableFormColumnHelpers";
+export { mapTypeToForm, defaultColumnDefault };
+export type { FormType } from "./newTableFormColumnHelpers";
+
 declare const acquireVsCodeApi: undefined | (() => {
   postMessage: (msg: unknown) => void;
 });
@@ -61,6 +66,14 @@ let selectedKey: number | null = null;
 let idColumnTracking: { autoName: string } | null = null;
 let lastPreviewSql = "";
 let lastErrors: string[] = [];
+
+/** TASK-004: per-column tracking for default auto-fill + realType preservation.
+ *  - `defaultOverridden` chứa index của các column KHÔNG auto-fill:
+ *    host-loaded (modify mode) + bất kỳ column nào user manually sửa Default.
+ *  - `realTypes` map column index → wire type thực (giữ nguyên qua dropdown
+ *    nếu user không đổi selection). */
+const defaultOverridden = new Set<number>();
+const realTypes = new Map<number, string>();
 
 function post(msg: unknown): void {
   vscodeApi?.postMessage(msg);
@@ -196,17 +209,25 @@ function render(): void {
   document.getElementById("addColBtn")?.addEventListener("click", () => {
     spec = {
       ...spec,
-      columns: [...spec.columns, { name: `col_${spec.columns.length + 1}`, type: "varchar" }],
+      columns: [
+        ...spec.columns,
+        { name: `col_${spec.columns.length + 1}`, type: "varchar", default: "" },
+      ],
     };
-    selectedColumn = spec.columns.length - 1;
+    const newIdx = spec.columns.length - 1;
+    // New column: realType = initial form value, auto-fill applies.
+    realTypes.set(newIdx, "varchar");
+    selectedColumn = newIdx;
     renderColumnsList();
     renderEditPane();
     emitSpecChanged();
   });
   document.getElementById("removeColBtn")?.addEventListener("click", () => {
     if (selectedColumn === null) return;
-    const next = spec.columns.filter((_, i) => i !== selectedColumn);
+    const removed = selectedColumn;
+    const next = spec.columns.filter((_, i) => i !== removed);
     spec = { ...spec, columns: next };
+    reindexTracking(removed, -1);
     selectedColumn = null;
     renderColumnsList();
     renderEditPane();
@@ -217,6 +238,7 @@ function render(): void {
     const cols = spec.columns.slice();
     [cols[selectedColumn - 1], cols[selectedColumn]] = [cols[selectedColumn], cols[selectedColumn - 1]];
     spec = { ...spec, columns: cols };
+    swapTracking(selectedColumn - 1, selectedColumn);
     selectedColumn = selectedColumn - 1;
     renderColumnsList();
     emitSpecChanged();
@@ -226,6 +248,7 @@ function render(): void {
     const cols = spec.columns.slice();
     [cols[selectedColumn + 1], cols[selectedColumn]] = [cols[selectedColumn], cols[selectedColumn + 1]];
     spec = { ...spec, columns: cols };
+    swapTracking(selectedColumn, selectedColumn + 1);
     selectedColumn = selectedColumn + 1;
     renderColumnsList();
     emitSpecChanged();
@@ -338,10 +361,17 @@ function renderEditPane(): void {
   const pane = div("editPane");
   if (selectedColumn !== null) {
     const c = spec.columns[selectedColumn];
+    const formType = mapTypeToForm(c.type);
     pane.innerHTML = `
       <h3>Column</h3>
       <div class="vsdb-field"><label>Name</label><input id="colName" type="text" value="${escapeHtml(c.name)}" /></div>
-      <div class="vsdb-field"><label>Type</label><input id="colType" type="text" value="${escapeHtml(c.type)}" /></div>
+      <div class="vsdb-field"><label>Type</label>
+        <select id="colType">
+          <option value="varchar" ${formType === "varchar" ? "selected" : ""}>varchar</option>
+          <option value="numeric" ${formType === "numeric" ? "selected" : ""}>numeric</option>
+          <option value="boolean" ${formType === "boolean" ? "selected" : ""}>boolean</option>
+        </select>
+      </div>
       <div class="vsdb-field"><label>Default</label><input id="colDefault" type="text" value="${escapeHtml(c.default ?? "")}" /></div>
       <div class="vsdb-field"><label><input id="colNullable" type="checkbox" ${c.nullable === false ? "" : "checked"} /> Nullable</label></div>
       <div class="vsdb-field"><label><input id="colPrimaryKey" type="checkbox" ${c.isPrimaryKey ? "checked" : ""} /> Primary Key</label></div>
@@ -379,16 +409,22 @@ function renderEditPane(): void {
 
 function wireColumnEdit(c: ColumnSpec): void {
   const nameEl = input("colName");
-  const typeEl = input("colType");
+  const typeEl = select("colType");
   const defaultEl = input("colDefault");
   const nullableEl = input("colNullable") as HTMLInputElement;
   const pkEl = input("colPrimaryKey") as HTMLInputElement;
   function commit(): void {
     if (selectedColumn === null) return;
+    const selection = typeEl.value;
+    const realType = realTypes.get(selectedColumn) ?? selection;
+    const wireType = selection === mapTypeToForm(realType) ? realType : selection;
+    if (selection !== mapTypeToForm(realType)) {
+      realTypes.set(selectedColumn, wireType);
+    }
     const cols = spec.columns.slice();
     cols[selectedColumn] = {
       name: nameEl.value.trim(),
-      type: typeEl.value.trim(),
+      type: wireType,
       default: defaultEl.value,
       nullable: nullableEl.checked,
       isPrimaryKey: pkEl.checked,
@@ -397,9 +433,19 @@ function wireColumnEdit(c: ColumnSpec): void {
     renderColumnsList();
     emitSpecChanged();
   }
+  typeEl.addEventListener("change", () => {
+    if (selectedColumn !== null && !defaultOverridden.has(selectedColumn)) {
+      defaultEl.value = defaultColumnDefault(typeEl.value);
+    }
+    commit();
+  });
   nameEl.addEventListener("input", commit);
-  typeEl.addEventListener("input", commit);
-  defaultEl.addEventListener("input", commit);
+  defaultEl.addEventListener("input", () => {
+    if (selectedColumn !== null) {
+      defaultOverridden.add(selectedColumn);
+    }
+    commit();
+  });
   nullableEl.addEventListener("change", commit);
   pkEl.addEventListener("change", commit);
 }
@@ -445,6 +491,50 @@ function wireKeyEdit(k: KeySpec): void {
   exprEl.addEventListener("input", commit);
 }
 
+/** Reindex `defaultOverridden` + `realTypes` after column removed at index `removedIdx`.
+ *  Shifts all indices > removedIdx down by 1. */
+function reindexTracking(removedIdx: number, _delta: -1): void {
+  const nextOverridden = new Set<number>();
+  for (const idx of defaultOverridden) {
+    if (idx === removedIdx) continue;
+    nextOverridden.add(idx > removedIdx ? idx - 1 : idx);
+  }
+  defaultOverridden.clear();
+  for (const idx of nextOverridden) defaultOverridden.add(idx);
+  const nextReal = new Map<number, string>();
+  for (const [idx, t] of realTypes) {
+    if (idx === removedIdx) continue;
+    nextReal.set(idx > removedIdx ? idx - 1 : idx, t);
+  }
+  realTypes.clear();
+  for (const [idx, t] of nextReal) realTypes.set(idx, t);
+}
+
+/** Swap tracking entries for indices `a` <-> `b` (column reordering). */
+function swapTracking(a: number, b: number): void {
+  const aOver = defaultOverridden.has(a);
+  const bOver = defaultOverridden.has(b);
+  if (aOver && !bOver) {
+    defaultOverridden.delete(a);
+    defaultOverridden.add(b);
+  } else if (!aOver && bOver) {
+    defaultOverridden.delete(b);
+    defaultOverridden.add(a);
+  }
+  const aReal = realTypes.get(a);
+  const bReal = realTypes.get(b);
+  if (aReal !== undefined && bReal !== undefined) {
+    realTypes.set(a, bReal);
+    realTypes.set(b, aReal);
+  } else if (aReal !== undefined) {
+    realTypes.delete(a);
+    realTypes.set(b, aReal);
+  } else if (bReal !== undefined) {
+    realTypes.delete(b);
+    realTypes.set(a, bReal);
+  }
+}
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
@@ -452,27 +542,6 @@ function escapeHtml(s: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
-}
-
-function refreshOkButton(): void {
-  const ok = document.getElementById("okBtn") as HTMLButtonElement | null;
-  if (!ok) return;
-  const errored = lastErrors.length > 0;
-  const noSql = lastPreviewSql === "";
-  ok.disabled = errored || noSql;
-}
-
-function applyInit(msg: InitMsg): void {
-  mode = msg.mode;
-  spec = msg.spec;
-  if (mode === "create") {
-    // start tracking if first column matches default id_<tableName>
-    const first = spec.columns[0];
-    idColumnTracking = first && first.name === `id_${spec.name}` ? { autoName: first.name } : null;
-  } else {
-    idColumnTracking = null;
-  }
-  render();
 }
 
 window.addEventListener("message", (ev: MessageEvent) => {
@@ -499,6 +568,29 @@ window.addEventListener("message", (ev: MessageEvent) => {
   }
 });
 
+function applyInit(msg: InitMsg): void {
+  mode = msg.mode;
+  spec = msg.spec;
+  // TASK-004: seed per-column tracking. All host-loaded columns are
+  // "overridden" -> never auto-fill on type change (preserves modify-mode
+  // column defaults); realTypes maps each index -> wire type (used to
+  // preserve exotic types like `timestamp` / `jsonb` on the wire).
+  defaultOverridden.clear();
+  realTypes.clear();
+  spec.columns.forEach((col, idx) => {
+    realTypes.set(idx, col.type);
+    defaultOverridden.add(idx);
+  });
+  if (mode === "create") {
+    // start tracking if first column matches default id_<tableName>
+    const first = spec.columns[0];
+    idColumnTracking = first && first.name === `id_${spec.name}` ? { autoName: first.name } : null;
+  } else {
+    idColumnTracking = null;
+  }
+  render();
+}
+
 function refreshOkButton(): void {
   const ok = document.getElementById("okBtn") as HTMLButtonElement | null;
   if (!ok) return;
@@ -513,5 +605,10 @@ window.addEventListener("keydown", (ev: KeyboardEvent) => {
     post({ type: "cancel" });
   }
 });
-render();
-post({ type: "ready" });
+// Auto-init: tests can set `data-vsdb-skip-auto-init` on the root div to skip
+// the initial render + ready post (drive lifecycle manually via init msg).
+const __vsdbSkipAutoInit = root.dataset.vsdbSkipAutoInit === "true";
+if (!__vsdbSkipAutoInit) {
+  render();
+  post({ type: "ready" });
+}

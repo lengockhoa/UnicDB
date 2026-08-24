@@ -314,9 +314,110 @@ describeIfBundle("webview/main.ts WHERE/ORDER BY requery bar (TASK-504)", () => 
     expect(whereInput!.value).toBe("");
     expect(orderInput!.value).toBe("");
   });
+
+  // TASK-005 — layout: requery bar must sit ABOVE the AG Grid host (still
+  // inside gridWrap). Inside-document order: requery bar < grid host.
+  itIfBundle("5. DOM order inside gridWrap: requery bar < grid host", () => {
+    const { root } = loadBundle();
+    dispatchState(selectState());
+
+    const gridWrap = root.querySelector(".vsdb-grid-host") as HTMLElement | null;
+    expect(gridWrap).toBeTruthy();
+
+    const requeryBar = gridWrap!.querySelector(
+      "[data-vsdb-requery-bar]",
+    ) as HTMLElement | null;
+    const gridHost = gridWrap!.querySelector(".vsdb-ag-host") as HTMLElement | null;
+    expect(requeryBar).toBeTruthy();
+    expect(gridHost).toBeTruthy();
+
+    const children = Array.from(gridWrap!.children) as HTMLElement[];
+    const idxRequery = children.indexOf(requeryBar!);
+    const idxHost = children.indexOf(gridHost!);
+    expect(idxRequery).toBeGreaterThanOrEqual(0);
+    expect(idxHost).toBeGreaterThanOrEqual(0);
+    expect(idxRequery).toBeLessThan(idxHost);
+  });
+
+  // TASK-005 — layout: in document order, the requery bar must appear AFTER
+  // the toolbar + tabs (which are root-level siblings of gridWrap) and
+  // BEFORE the grid host (its first meaningful child).
+  itIfBundle("6. Document order: toolbar < requery bar < grid host", () => {
+    const { root } = loadBundle();
+    dispatchState(selectState());
+
+    const toolbar = root.querySelector(".vsdb-toolbar") as HTMLElement | null;
+    const requeryBar = root.querySelector(
+      "[data-vsdb-requery-bar]",
+    ) as HTMLElement | null;
+    const gridHost = root.querySelector(".vsdb-ag-host") as HTMLElement | null;
+    expect(toolbar).toBeTruthy();
+    expect(requeryBar).toBeTruthy();
+    expect(gridHost).toBeTruthy();
+
+    // document.body is the parent of root; walk siblings via compareDocumentPosition
+    const cmp = (a: Element, b: Element): number => {
+      const rel = a.compareDocumentPosition(b);
+      // 4 = DOCUMENT_POSITION_FOLLOWING
+      if (rel & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+      if (rel & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+      return 0;
+    };
+    expect(cmp(toolbar!, requeryBar!)).toBe(-1);
+    expect(cmp(requeryBar!, gridHost!)).toBe(-1);
+  });
+
+  // TASK-005 — edge (empty state): when no statement has been rendered the
+  // gridWrap stays hidden / detached, so the requery bar (a child of
+  // gridWrap) must not be visible to the user — it must not float outside
+  // gridWrap into the empty-state panel. After moving the bar above the
+  // grid host, it is still a child of gridWrap, so the empty-state hide
+  // rule keeps it hidden.
+  itIfBundle("7. Empty state: requery bar not visible (no active statement)", () => {
+    const { root } = loadBundle();
+    // Bundle is loaded (initial render runs) but we never dispatchState.
+    // The active tab is empty → panel shows the empty placeholder, and
+    // gridWrap is either detached or display:none.
+    const panel = root.querySelector(".vsdb-panel") as HTMLElement | null;
+    const requeryBar = root.querySelector(
+      "[data-vsdb-requery-bar]",
+    ) as HTMLElement | null;
+    expect(panel).toBeTruthy();
+    // No requery bar reachable through root → bar stays inside gridWrap
+    // which is NOT in the live DOM during empty state.
+    expect(requeryBar).toBeNull();
+  });
+  // TASK-005 — regression: footer placement unchanged — gridFooter sits
+  // BELOW the grid host (still inside gridWrap), and the saveBanner
+  // ordering relative to gridFooter is preserved (today: saveBanner is
+  // appended after gridFooter — keep that).
+  itIfBundle("8. gridFooter is positioned after gridHost in gridWrap", () => {
+    const { root } = loadBundle();
+    dispatchState(selectState());
+
+    const gridWrap = root.querySelector(".vsdb-grid-host") as HTMLElement | null;
+    expect(gridWrap).toBeTruthy();
+
+    const gridHost = gridWrap!.querySelector(".vsdb-ag-host") as HTMLElement | null;
+    const gridFooter = gridWrap!.querySelector(
+      ".vsdb-grid-footer",
+    ) as HTMLElement | null;
+    expect(gridHost).toBeTruthy();
+    expect(gridFooter).toBeTruthy();
+
+    const children = Array.from(gridWrap!.children) as HTMLElement[];
+    const idxHost = children.indexOf(gridHost!);
+    const idxFooter = children.indexOf(gridFooter!);
+    expect(idxHost).toBeGreaterThanOrEqual(0);
+    expect(idxFooter).toBeGreaterThanOrEqual(0);
+    // Footer must come AFTER the grid host (visually below it).
+    expect(idxFooter).toBeGreaterThan(idxHost);
+    // Footer must remain the LAST meaningful (non-banner) child of gridWrap
+    // — i.e. no requery bar inserted between gridHost and gridFooter.
+    expect(idxFooter).toBe(idxHost + 1);
+  });
 });
 
-// =============================================================================
 // Fix Round 2 — Critical #1: requery must reset the grid
 // =============================================================================
 //
