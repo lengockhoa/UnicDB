@@ -153,7 +153,7 @@
       },
       {
         "command": "vsdb.copyCreateDdl",
-        "title": "Copy CREATE DDL",
+        "title": "Copy Create Query",
         "category": "VSDB",
         "icon": "$(copy)"
       },

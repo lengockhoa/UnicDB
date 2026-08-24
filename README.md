@@ -88,7 +88,7 @@ code --install-extension vsdb-<version>.vsix
 - **Table Designer (PostgreSQL)**: panel Schema Explorer → click phải table (hoặc command palette `VSDB: New Table…` / `VSDB: Modify Table…`) mở form tạo/sửa:
   - **New Table…**: form thêm cột (name/type/default/NOT NULL), PK / UNIQUE / FK / CHECK, preview SQL live, một nút Apply chạy `CREATE TABLE` qua connection đang chọn.
   - **Modify Table…**: introspect schema hiện tại → sửa → diff engine phát sinh `ALTER TABLE` (rename/add/drop column, SET/DROP NOT NULL, SET/DROP DEFAULT, ADD/DROP constraint) chạy một loạt qua `runQuery`.
-  - **Copy CREATE DDL**: introspect table rồi re-emit `CREATE TABLE` (cùng generator với form) — copy vào clipboard.
+  - **Copy Create Query**: introspect table rồi re-emit `CREATE TABLE` (cùng generator với form) — copy vào clipboard.
   - **Generate Sample Data…**: chèn N dòng `INSERT … VALUES` theo kiểu cột (int/varchar/date/uuid/json) — mở trong tab SQL untitled để user xem/sửa trước khi chạy.
   - **Analyze / Vacuum**: phát lệnh `ANALYZE` / `VACUUM` (PostgreSQL-only) để cập nhật planner stats / thu dọn dead tuples; nút này không hiện với MySQL/MSSQL.
 - **AI Settings (1.5.x)**: chạy `VSDB: Open AI Settings…` từ Command Palette mở form cấu hình backend OpenAI-compatible (baseUrl, method `responses`/`chat/completions`, timeout, maxSteps, model id cho 2 role `work` (vision) + `smart`, apiKey). Nút **Test** smoke-fires một completion nhỏ để xác nhận endpoint thực sự sống trước khi agent dùng nó.

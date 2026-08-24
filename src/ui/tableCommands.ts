@@ -75,7 +75,7 @@ function resolveTableNode(arg: unknown): ResolvedTableNode | null {
 const COMMAND_TITLE: Record<string, string> = {
   newTable: "New Table",
   modifyTable: "Modify Table",
-  copyCreateDdl: "Copy CREATE DDL",
+  copyCreateDdl: "Copy Create Query",
   generateSampleData: "Generate Sample Data",
   analyzeTable: "Analyze Table",
   vacuumTable: "Vacuum Table",
@@ -293,7 +293,7 @@ export function registerTableCommands(deps: RegisterDeps): void {
         void vscode.window.setStatusBarMessage("VSDB: DDL copied", 2000);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        void vscode.window.showErrorMessage(`Copy CREATE DDL failed: ${msg}`);
+        void vscode.window.showErrorMessage(`Copy Create Query failed: ${msg}`);
       }
     }),
   );
