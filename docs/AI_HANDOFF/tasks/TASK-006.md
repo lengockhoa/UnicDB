@@ -186,3 +186,23 @@ ISSUES:
   - Bundle-based tests verified after `npm run compile`: AG Grid `getColumnState()` shows `hide: true` for the ctid colDef; `getAllDisplayedColumns()` excludes ctid; TSV export with header toggle strips ctid from header + every row.
 HANDOFF_TO_REVIEWER: yes — code review needed
 NEXT: ready for review
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic/unic-smart (configured unic-smart)
+EXECUTOR_MODEL: unic/unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/resultsPanel.test.ts src/ui/__tests__/resultsPanelSaveEdits.test.ts src/ui/__tests__/resultsGridModel.test.ts
+  result: 58 pass / 0 fail
+  command: npx tsc --noEmit
+  result: 0 errors
+  command: npm run compile && npx vitest run src/ui/__tests__/browseCommands.test.ts src/ui/__tests__/webviewBundle.test.ts src/ui/__tests__/webviewExport.test.ts
+  result: 31 pass / 0 fail
+TEST_PLAN_COVERAGE: all-followed
+FINDINGS:
+  critical: none
+  important: none
+  minor: none
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Model isolation passes. PG no-PK browse SQL projects ctid; the rebuilt webview hides it in AG Grid and excludes it from TSV export, while save tests confirm direct ctid addressing and fallback behavior.

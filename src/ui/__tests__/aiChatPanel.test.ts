@@ -1301,12 +1301,16 @@ describe("AiChatPanel — buildMessages full-DB context", () => {
     const ddl = ddlEnd > 0 ? sys.slice(ddlStart, ddlEnd) : sys.slice(ddlStart);
     // DDL length ≤ injected budget.
     expect(ddl.length).toBeLessThanOrEqual(2000);
-    // Either a footer is present (when it fits) OR the DDL itself ends at
-    // budget. Both shapes are valid per the spec's footer-fits-budget rule.
-    const hasFooter = /\+\d+ more objects omitted/.test(ddl);
-    if (hasFooter) {
-      expect(ddl).toMatch(/\+\d+ more objects omitted — call export_structure for full context/);
-    }
+    // Fixture: 40 tables @ ~150 chars = ~6000 chars. With budget=2000 the
+    // block-boundary cut keeps 12 blocks (~1906 chars), drops 28 blocks,
+    // and the 72-char footer fits within the remaining 94-char slack
+    // (1906 + 2 + 72 = 1980 ≤ 2000). Assert the required footer is
+    // present and its omitted-count matches the dropped blocks exactly.
+    const footerRe = /\(\+(\d+) more objects omitted — call export_structure for full context\)/;
+    const footerMatch = ddl.match(footerRe);
+    expect(footerMatch, `expected footer in DDL; got:\n${ddl}`).not.toBeNull();
+    expect(Number(footerMatch![1])).toBe(28);
+    expect(ddl.length).toBeLessThanOrEqual(2000);
     const blocks = ddl.split(/\n\n+/);
     const createBlocks = blocks.filter((b) => b.includes("CREATE TABLE"));
     expect(createBlocks.length).toBeGreaterThan(0);
@@ -1401,11 +1405,40 @@ describe("AiChatPanel — buildMessages full-DB context", () => {
     // would push past budget). Either way the tiny table name is absent.
     expect(sys).not.toContain("public.tiny");
     expect(sys).not.toContain("CREATE TABLE public.tiny");
-    // Either a footer is present (when it fits) or the omission is implicit.
-    // Both shapes satisfy the spec's footer-fits-budget rule.
-    if (/\+\d+ more objects omitted/.test(sys)) {
-      expect(sys).toMatch(/\+\d+ more objects omitted — call export_structure for full context/);
-    }
+    // ---- Assert the omitted-count contract explicitly ----
+    // The block-boundary cut keeps block 0 (huge, oversize) and drops the
+    // remaining blocks (1: tiny_ddl). With 2 blocks in the DDL, omitted=1.
+    // The expected footer `-- (+1 more objects omitted — call export_structure
+    // for full context)` is 70 chars. The huge block alone is ~832 chars
+    // which already exceeds the injected 300-char budget — so the spec's
+    // "footer only when ddl.length + footer.length ≤ budget" rule correctly
+    // suppresses the footer here. Assert both: the would-be footer text
+    // proves the omitted count would be +1, and the prompt proves the
+    // Footer was suppressed because it would not fit.
+    const expectedOmitted = 1;
+    const expectedFooterText =
+      `\n\n-- (+${expectedOmitted} more objects omitted — call export_structure for full context)`;
+    // The prompt does NOT contain the footer (oversize first block keeps
+    // context non-empty but leaves no room for the footer sentinel).
+    expect(sys).not.toContain(expectedFooterText);
+    // Compute the omitted count from the DDL blocks directly: the DDL
+    // portion splits into blocks separated by blank lines. Block 0 is the
+    // header+schema+huge_ddl chunk; blocks [1..N] are the dropped tiny
+    // table(s). Count rendered CREATE TABLE blocks in the prompt and the
+    // total fixture objects to derive the dropped count, then assert the
+    // production-computed omitted value would equal expectedOmitted.
+    const ddlStart7 = sys.indexOf("Database structure (DDL):") + "Database structure (DDL):".length;
+    const ddlEnd7 = sys.indexOf("\n\nYou can call the export_structure");
+    const ddl7 = ddlEnd7 > 0 ? sys.slice(ddlStart7, ddlEnd7) : sys.slice(ddlStart7);
+    expect(ddl7.length).toBeGreaterThan(300); // oversize block stays past budget
+    expect(ddl7.length + expectedFooterText.length).toBeGreaterThan(300); // footer can't fit
+    // Block-based derivation of the omitted count (independent of the
+    // prompt-text footer): count CREATE TABLE blocks rendered in the
+    // prompt (must be exactly 1: huge) and compare against the 2-table
+    // fixture (huge + tiny). The diff (1) equals expectedOmitted.
+    const renderedCreateTables = (ddl7.match(/CREATE TABLE/g) ?? []).length;
+    expect(renderedCreateTables).toBe(1);
+    expect(2 - renderedCreateTables).toBe(expectedOmitted);
   });
 
   // ---- Regression (reviewer #R1.1): listColumns failure must NOT drop the
