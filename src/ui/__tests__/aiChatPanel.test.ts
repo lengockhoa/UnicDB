@@ -252,8 +252,14 @@ describe("AiChatPanel — send", () => {
       async (
         _input: unknown,
         _deps: unknown,
-        callbacks?: { onStep?: (s: AgentStep) => void },
+        callbacks?: {
+          onStep?: (s: AgentStep) => void;
+          onToolCall?: (call: ToolCall) => void;
+        },
       ) => {
+        // TASK-002: live step is posted via onToolCall, not onStep.
+        // onStep still fires for end-of-step notification only.
+        callbacks?.onToolCall?.(toolCall);
         callbacks?.onStep?.(toolStep);
         callbacks?.onStep?.(finalStep);
         return makeRunResult([toolStep, finalStep], "answer");
@@ -354,9 +360,14 @@ describe("AiChatPanel — stop", () => {
       async (
         _input: unknown,
         _deps: unknown,
-        callbacks?: { onStep?: (s: AgentStep) => void },
+        callbacks?: {
+          onStep?: (s: AgentStep) => void;
+          onToolCall?: (call: ToolCall) => void;
+        },
       ) => {
         const toolCall: ToolCall = { id: "t1", name: "list_tables", argumentsJson: "{}" };
+        // TASK-002: live step fires via onToolCall.
+        callbacks?.onToolCall?.(toolCall);
         callbacks?.onStep?.({
           messages: [
             { role: "assistant", content: "", toolCalls: [toolCall] },
@@ -400,15 +411,15 @@ describe("AiChatPanel — stop", () => {
       async (
         _input: unknown,
         _deps: unknown,
-        callbacks?: { onStep?: (s: AgentStep) => void },
+        callbacks?: {
+          onStep?: (s: AgentStep) => void;
+          onToolCall?: (call: ToolCall) => void;
+        },
       ) => {
+        const callA: ToolCall = { id: "a", name: "list_tables", argumentsJson: "{}" };
         const step1: AgentStep = {
           messages: [
-            {
-              role: "assistant",
-              content: "",
-              toolCalls: [{ id: "a", name: "list_tables", argumentsJson: "{}" }],
-            },
+            { role: "assistant", content: "", toolCalls: [callA] },
             { role: "tool", toolCallId: "a", content: "[]" },
           ],
           result: {
@@ -418,15 +429,13 @@ describe("AiChatPanel — stop", () => {
             usage: { inputTokens: 0, outputTokens: 0 },
           },
         };
+        callbacks?.onToolCall?.(callA);
         callbacks?.onStep?.(step1);
         await secondGate;
+        const callB: ToolCall = { id: "b", name: "describe_table", argumentsJson: "{}" };
         const step2: AgentStep = {
           messages: [
-            {
-              role: "assistant",
-              content: "",
-              toolCalls: [{ id: "b", name: "describe_table", argumentsJson: "{}" }],
-            },
+            { role: "assistant", content: "", toolCalls: [callB] },
             { role: "tool", toolCallId: "b", content: "{}" },
           ],
           result: {
@@ -436,6 +445,7 @@ describe("AiChatPanel — stop", () => {
             usage: { inputTokens: 0, outputTokens: 0 },
           },
         };
+        callbacks?.onToolCall?.(callB);
         callbacks?.onStep?.(step2);
         return makeRunResult([step1, step2], "x");
       },
@@ -908,5 +918,276 @@ describe("AiChatPanel — builtin streaming", () => {
     expect(postedMessages(p).some(isDone)).toBe(true);
     const all = JSON.stringify(postedMessages(p));
     expect(all).not.toMatch(/sk-/i);
+  });
+});
+
+// ============================================================================
+// TASK-002 — Cases 6-9: live step lines in AiChatPanel.runBuiltinTurn.
+//   #6 one {type:"step"} per call BEFORE tool promise resolves; no
+//      duplicate from onStep (since onStep's tool branch was deleted).
+//   #7 stop mid-tool-run: after token flip, no further step posts; no
+//      error bubble; done still posted.
+//   #8 stream fallback: onStreamFallback still posts {type:"step",
+//      label:"stream fallback"} exactly once when stream pre-fails.
+//   #9 regression: assistant-only turn → no step message; ordering
+//      invariant stepIdx < assistantIdx still holds.
+// ============================================================================
+describe("AiChatPanel — TASK-002 live step lines", () => {
+  // ---- Case #6: live step during builtin turn -----------------------------
+  it("case #6 one step post per call, before tool resolve; no duplicate from onStep", async () => {
+    let resolveTool!: (v: AgentRunResult) => void;
+    const stepPosts: Array<{ idx: number; msg: unknown }> = [];
+    agentState.runAgentMock.mockImplementation(
+      async (
+        _input: unknown,
+        _deps: unknown,
+        callbacks?: {
+          onStep?: (s: AgentStep) => void;
+          onToolCall?: (call: ToolCall) => void;
+        },
+      ) => {
+        const toolCall: ToolCall = { id: "t1", name: "list_tables", argumentsJson: "{}" };
+        // Fire onToolCall exactly once, BEFORE the tool result lands.
+        callbacks?.onToolCall?.(toolCall);
+        const step: AgentStep = {
+          messages: [
+            { role: "assistant", content: "", toolCalls: [toolCall] },
+            { role: "tool", toolCallId: "t1", content: "[]" },
+          ],
+          result: {
+            text: "",
+            toolCalls: [],
+            finishReason: "tool_calls",
+            usage: { inputTokens: 0, outputTokens: 0 },
+          },
+        };
+        callbacks?.onStep?.(step);
+        return new Promise<AgentRunResult>((resolve) => {
+          resolveTool = resolve;
+        });
+      },
+    );
+
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "go" });
+    await until(() => postedMessages(p).some(isStep));
+    const stepsAfterFirst = postedMessages(p).filter(isStep);
+    // Exactly one step BEFORE the run resolves.
+    expect(stepsAfterFirst).toHaveLength(1);
+    expect((stepsAfterFirst[0] as StepMsg).label).toBe("list_tables");
+
+    // Now let the run resolve and assert no further step posts appear.
+    resolveTool(
+      makeRunResult(
+        [
+          {
+            messages: [
+              { role: "assistant", content: "", toolCalls: [{ id: "t1", name: "list_tables", argumentsJson: "{}" }] },
+              { role: "tool", toolCallId: "t1", content: "[]" },
+            ],
+            result: {
+              text: "",
+              toolCalls: [],
+              finishReason: "tool_calls",
+              usage: { inputTokens: 0, outputTokens: 0 },
+            },
+          },
+        ],
+        "answer",
+      ),
+    );
+    await until(() => postedMessages(p).some(isAssistant));
+    await until(() => postedMessages(p).some(isDone));
+
+    const allSteps = postedMessages(p).filter(isStep);
+    expect(allSteps).toHaveLength(1);
+    // Guard against regression: no duplicate from onStep's tool branch.
+    expect(allSteps.map((s) => (s as StepMsg).label)).toEqual(["list_tables"]);
+  });
+
+  // ---- Case #7: stop mid-tool-run ----------------------------------------
+  it("case #7 stop mid-tool-run: no further step posts; no error bubble; done posted", async () => {
+    let fireStop!: () => void;
+    const stopGate = new Promise<void>((resolve) => {
+      fireStop = resolve;
+    });
+    agentState.runAgentMock.mockImplementation(
+      async (
+        _input: unknown,
+        _deps: unknown,
+        callbacks?: {
+          onStep?: (s: AgentStep) => void;
+          onToolCall?: (call: ToolCall) => void;
+        },
+      ) => {
+        // First tool call — fires hook + step.
+        const c1: ToolCall = { id: "c1", name: "list_tables", argumentsJson: "{}" };
+        callbacks?.onToolCall?.(c1);
+        callbacks?.onStep?.({
+          messages: [
+            { role: "assistant", content: "", toolCalls: [c1] },
+            { role: "tool", toolCallId: "c1", content: "[]" },
+          ],
+          result: {
+            text: "",
+            toolCalls: [],
+            finishReason: "tool_calls",
+            usage: { inputTokens: 0, outputTokens: 0 },
+          },
+        });
+        // Wait until test flips the stop token. While we wait, simulate
+        // additional in-flight onToolCall/onStep after stop to verify the
+        // panel's gate suppresses them.
+        await stopGate;
+        const c2: ToolCall = { id: "c2", name: "describe_table", argumentsJson: "{}" };
+        callbacks?.onToolCall?.(c2);
+        callbacks?.onStep?.({
+          messages: [
+            { role: "assistant", content: "", toolCalls: [c2] },
+            { role: "tool", toolCallId: "c2", content: "{}" },
+          ],
+          result: {
+            text: "",
+            toolCalls: [],
+            finishReason: "tool_calls",
+            usage: { inputTokens: 0, outputTokens: 0 },
+          },
+        });
+        return makeRunResult([], "should-be-suppressed");
+      },
+    );
+
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "go" });
+    await until(() => postedMessages(p).some(isStep));
+
+    // User clicks Stop. Flip the abort token.
+    expect(typeof fireStop).toBe("function");
+    handler({ type: "stop" });
+    fireStop();
+
+    await until(() => postedMessages(p).some(isDone));
+    const posted = postedMessages(p);
+    const steps = posted.filter(isStep);
+    // Exactly the FIRST step posted (the one before stop). The c2 hook +
+    // onStep after stop must NOT produce posts.
+    expect(steps).toHaveLength(1);
+    expect((steps[0] as StepMsg).label).toBe("list_tables");
+
+    // No error bubble.
+    expect(posted.filter(isError)).toEqual([]);
+    // Assistant final was suppressed.
+    expect(posted.some(isAssistant)).toBe(false);
+    // done still posts via finally.
+    expect(posted.some(isDone)).toBe(true);
+  });
+
+  // ---- Case #8: stream fallback label still posts once --------------------
+  it("case #8 onStreamFallback posts {step, label:\"stream fallback\"} exactly once", async () => {
+    agentState.runAgentMock.mockImplementation(
+      async (
+        _input: unknown,
+        _deps: unknown,
+        callbacks?: {
+          onStreamFallback?: () => void;
+          onStep?: (s: AgentStep) => void;
+        },
+      ) => {
+        callbacks?.onStreamFallback?.();
+        callbacks?.onStep?.({
+          messages: [{ role: "assistant", content: "fb" }],
+          result: {
+            text: "fb",
+            toolCalls: [],
+            finishReason: "stop",
+            usage: { inputTokens: 0, outputTokens: 0 },
+          },
+        });
+        return makeRunResult([], "fb");
+      },
+    );
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "go" });
+    await until(() => postedMessages(p).some(isAssistant));
+    await until(() => postedMessages(p).some(isDone));
+
+    const fallback = postedMessages(p).filter(isStep).filter((s) => (s as StepMsg).label === "stream fallback");
+    expect(fallback).toHaveLength(1);
+  });
+
+  // ---- Case #9: assistant-only turn → no step; ordering invariant --------
+  it("case #9 assistant-only turn: no step posted; stepIdx<assistantIdx invariant holds (no onStep tool branch)", async () => {
+    agentState.runAgentMock.mockImplementation(
+      async (
+        _input: unknown,
+        _deps: unknown,
+        callbacks?: { onStep?: (s: AgentStep) => void },
+      ) => {
+        const step: AgentStep = {
+          messages: [{ role: "assistant", content: "just text" }],
+          result: {
+            text: "just text",
+            toolCalls: [],
+            finishReason: "stop",
+            usage: { inputTokens: 0, outputTokens: 0 },
+          },
+        };
+        callbacks?.onStep?.(step);
+        return makeRunResult([step], "just text");
+      },
+    );
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "plain" });
+    await until(() => postedMessages(p).some(isAssistant));
+    await until(() => postedMessages(p).some(isDone));
+
+    const posted = postedMessages(p);
+    // No step message at all (no tools called, no fallback).
+    expect(posted.filter(isStep)).toEqual([]);
+    // Ordering invariant: assistant comes before done (and stepIdx is
+    // -1 since no step posted). The prior stepIdx<assistantIdx check
+    // remains valid because we asserted posted.findIndex(isStep) === -1.
+    const stepIdx = posted.findIndex(isStep);
+    const assistantIdx = posted.findIndex(isAssistant);
+    const doneIdx = posted.findIndex(isDone);
+    expect(stepIdx).toBe(-1);
+    expect(assistantIdx).toBeGreaterThan(-1);
+    expect(doneIdx).toBeGreaterThan(assistantIdx);
   });
 });

@@ -354,6 +354,15 @@ export class AiChatPanel {
         // existing webview `step` case.
         this.post({ type: "step", label: "stream fallback" });
       },
+      onToolCall: (call) => {
+        // TASK-002: live per-tool step line. Fires BEFORE the tool
+        // executes so the UI shows progress on multi-tool turns. The
+        // abort-token gate is at the boundary — aborting suppresses
+        // further posts. Per spec, agent loop fires regardless of
+        // abort state; gating belongs to the consumer.
+        if (token?.aborted) return;
+        this.post({ type: "step", label: call.name || "tool" });
+      },
     };
 
     try {
@@ -388,6 +397,7 @@ export class AiChatPanel {
       const message = err instanceof Error ? err.message : String(err);
       // Surface as-is. Provider / stream errors carry "stream" naturally
       // (e.g. "provider stream failed"); the webview error case is a
+      // thin wrapper around the string.
       this.post({ type: "error", message });
     } finally {
       this.post({ type: "done" });
@@ -395,15 +405,11 @@ export class AiChatPanel {
     }
   }
 
-
-
-  private onStep(step: AgentStep): void {
-    if (this.token?.aborted) return;
-    const assistantMsg = step.messages.find((m) => m.role === "assistant");
-    const toolCall = assistantMsg?.toolCalls?.[0];
-    if (toolCall) {
-      this.post({ type: "step", label: toolCall.name });
-    }
+  private onStep(_step: AgentStep): void {
+    // TASK-002: live step lines are posted via onToolCall (fires per
+    // call, before execution). onStep still fires for end-of-step
+    // notification but no longer drives a webview post here — every
+    // call would have already posted via onToolCall.
   }
 
   private async runAcpTurn(

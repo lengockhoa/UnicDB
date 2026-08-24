@@ -302,3 +302,74 @@ describe("runAgent — stream opt-in (TASK-002)", () => {
     expect(deps.complete).not.toHaveBeenCalled();
   });
 });
+
+// ============================================================================
+// TASK-002 — Case #5: stream path interplay. With streamComplete wired,
+// deltas still stream AND onToolCall still fires exactly per call, in
+// order, before each tool executes. Stream path + per-tool hook must
+// cooperate. RED before impl: runAgent does not yet invoke onToolCall.
+// ============================================================================
+describe("runAgent — stream + onToolCall interplay (TASK-002 case #5)", () => {
+  it("case #5 stream path: deltas stream AND onToolCall fires exactly per call", async () => {
+    const onText = vi.fn();
+    const execOrder: string[] = [];
+    const onToolCall = vi.fn((call: ToolCall) => {
+      execOrder.push(`hook:${call.id}`);
+    });
+
+    const toolA: AgentTool = {
+      name: "a",
+      description: "a",
+      parameters: { type: "object", properties: {} },
+      execute: vi.fn(async () => {
+        execOrder.push("execA");
+        return "A";
+      }),
+    };
+    const toolB: AgentTool = {
+      name: "b",
+      description: "b",
+      parameters: { type: "object", properties: {} },
+      execute: vi.fn(async () => {
+        execOrder.push("execB");
+        return "B";
+      }),
+    };
+    const reg: ToolRegistry = {
+      list: () => [toolA, toolB],
+      get: (n) => (n === "a" ? toolA : n === "b" ? toolB : undefined),
+    };
+
+    let stepIdx = 0;
+    const streamImpl: StreamCompleteFn = async (_cfg, _role, _req, onTextFn, _signal) => {
+      const i = stepIdx++;
+      if (i === 0) {
+        // Tool step: two calls.
+        return resultOk("", [
+          { id: "c1", name: "a", argumentsJson: "{}" },
+          { id: "c2", name: "b", argumentsJson: "{}" },
+        ]);
+      }
+      // Final text step with 2 deltas.
+      onTextFn({ text: "do" });
+      onTextFn({ text: "ne" });
+      return resultOk("done");
+    };
+    const deps = makeStreamDeps({ streamCompleteImpl: streamImpl });
+
+    const out = await runAgent(
+      { messages: [textMsg("user", "u")], tools: reg },
+      deps,
+      { onText, onToolCall },
+    );
+
+    // Stream path: deltas surfaced exactly.
+    expect(onText.mock.calls.map((c) => c[0])).toEqual(["do", "ne"]);
+    // Hook fired twice, in order, before each execution.
+    expect(onToolCall).toHaveBeenCalledTimes(2);
+    expect(onToolCall.mock.calls.map((c) => c[0]?.id)).toEqual(["c1", "c2"]);
+    expect(execOrder).toEqual(["hook:c1", "execA", "hook:c2", "execB"]);
+    expect(out.finalText).toBe("done");
+    expect(out.stoppedOnBudget).toBe(false);
+  });
+});

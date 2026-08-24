@@ -81,4 +81,57 @@ Contract decision: the callback fires even when `signal` is aborted — abort ga
 the consumer (panel token), keeping the loop dumb and the hook testable. Executor must not
 add abort checks inside the loop. → @executor
 
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: ExecP-T002
+SUMMARY: Added additive onToolCall(call: ToolCall) callback to AgentCallbacks; fired once per call, in order, immediately before executeToolCall, regardless of abort state. Wired into runBuiltinTurn with token-gated post; deleted dead onStep tool branch so each call posts exactly once. Cases 1-9 PASS fresh.
+TEST_PLAN_FOLLOWED: task §4 (cases 1-9 in agent.test 1-4, agentStream 5, aiChatPanel 6-9)
+FILES_CHANGED:
+  - src/ai/agent.ts: AgentCallbacks.onToolCall added (line 89-93); for-of tool loop (line 259-264) calls callbacks?.onToolCall?.(call) immediately before executeToolCall. No other loop change.
+  - src/ui/aiChatPanel.ts: runBuiltinTurn callbacks (line 342-366) adds onToolCall with token-aborted gate; onStep (line 408-413) reduced to no-op comment (dead tool branch deleted). ACP path untouched.
+  - src/ai/__tests__/agent.test.ts: appended describe('runAgent — onToolCall callback (TASK-002)') with 4 cases.
+  - src/ai/__tests__/agentStream.test.ts: appended describe('runAgent — stream + onToolCall interplay (TASK-002 case #5)') with 1 case.
+  - src/ui/__tests__/aiChatPanel.test.ts: appended describe('AiChatPanel — TASK-002 live step lines') with cases 6-9; updated #2/#4/#4b fixtures to fire onToolCall (since deleted onStep branch).
+TESTS_ADDED:
+  - src/ai/__tests__/agent.test.ts: case #1 onToolCall fires once per call before execution in order; case #2 no tool calls → callback never fires; case #3 empty tool name → callback still fires; case #4 missing onToolCall backward-compat.
+  - src/ai/__tests__/agentStream.test.ts: case #5 stream + onToolCall interplay.
+  - src/ui/__tests__/aiChatPanel.test.ts: case #6 one step post per call before tool resolve; case #7 stop mid-tool-run; case #8 stream fallback label exactly once; case #9 assistant-only no step + ordering invariant.
+VERIFICATION:
+  command: npm run typecheck && npm test -- src/ai/__tests__/agent.test.ts src/ai/__tests__/agentStream.test.ts src/ui/__tests__/aiChatPanel.test.ts
+  result: 44 pass / 0 fail / exit 0
+  output_excerpt: |
+    ✓ src/ai/__tests__/agentStream.test.ts  (8 tests) 6ms
+    ✓ src/ai/__tests__/agent.test.ts  (16 tests) 7ms
+    ✓ src/ui/__tests__/aiChatPanel.test.ts  (20 tests) 8ms
+    Test Files  3 passed (3)
+         Tests  44 passed (44)
+RED EVIDENCE (verbatim from prior turn, before impl):
+  - src/ai/__tests__/agent.test.ts > case #1: expected spy called 2 times, but got 0 times
+  - src/ai/__tests__/agent.test.ts > case #3: expected spy called 1 times, but got 0 times
+  - src/ai/__tests__/agentStream.test.ts > case #5: expected spy called 2 times, but got 0 times
+  - src/ui/__tests__/aiChatPanel.test.ts > case #8: expected length 1 but got 2 (fallback fired twice in fixture; corrected to fire once — agent contract is once per fallback)
+ISSUES: none
+HANDOFF_TO_REVIEWER: yes — INDEX pending_review
+NEXT: ready for review
 ---
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code
+VERIFICATION_RERUN:
+  command: npm run typecheck && npm test -- src/ai/__tests__/agent.test.ts src/ai/__tests__/agentStream.test.ts src/ui/__tests__/aiChatPanel.test.ts
+  result: 44 pass / 0 fail (typecheck exit 0)
+TEST_PLAN_COVERAGE: all-followed (cases 1-9 present; RED evidence verbatim real — vitest spy-count assertions, case 8 fixture double-fire caught and correctly fixed per agent.ts:147 once-per-fallback contract)
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/ai/__tests__/agentStream.test.ts:375 — file ends without trailing newline ("\ No newline at end of file"); cosmetic, add newline next touch.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Loop change is exactly one line (agent.ts:265) before executeToolCall, no abort check in loop per planner decision; panel onStep tool branch fully deleted, token gate at consumer; case #2 ordering invariant (stepIdx>-1, assistantIdx>stepIdx) preserved against new fixture — not weakened; ACP path untouched.

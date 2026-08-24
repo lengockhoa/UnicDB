@@ -373,3 +373,127 @@ describe("runAgent — frozen contract", () => {
     expect(req.tools).toEqual([]);
   });
 });
+
+// ============================================================================
+// TASK-002 — Cases 1-4: onToolCall callback contract (RED before impl).
+//   #1 fires once per call, before execution, in order
+//   #2 no tool calls → callback never fires
+//   #3 empty tool name → callback still fires
+//   #4 missing onToolCall stays backward-compatible
+// ============================================================================
+describe("runAgent — onToolCall callback (TASK-002)", () => {
+  it("case #1 onToolCall fires once per call, before execution, in order", async () => {
+    const execOrder: string[] = [];
+    const toolA: AgentTool = {
+      name: "a",
+      description: "a",
+      parameters: { type: "object", properties: {} },
+      execute: vi.fn(async () => {
+        execOrder.push("execA");
+        return "A-out";
+      }),
+    };
+    const toolB: AgentTool = {
+      name: "b",
+      description: "b",
+      parameters: { type: "object", properties: {} },
+      execute: vi.fn(async () => {
+        execOrder.push("execB");
+        return "B-out";
+      }),
+    };
+    const reg: ToolRegistry = {
+      list: () => [toolA, toolB],
+      get: (n) => (n === "a" ? toolA : n === "b" ? toolB : undefined),
+    };
+    const deps = makeDeps({
+      results: [
+        resultOk("", [
+          { id: "c1", name: "a", argumentsJson: "{}" },
+          { id: "c2", name: "b", argumentsJson: "{}" },
+        ]),
+        resultOk("done"),
+      ],
+    });
+    const onToolCall = vi.fn((call: ToolCall) => {
+      execOrder.push(`hook:${call.id}`);
+    });
+
+    await runAgent({ messages: [textMsg("user", "u")], tools: reg }, deps, { onToolCall });
+
+    expect(onToolCall).toHaveBeenCalledTimes(2);
+    expect(onToolCall.mock.calls.map((c) => c[0]?.id)).toEqual(["c1", "c2"]);
+    // Hook fires BEFORE each tool's execute resolves.
+    expect(execOrder).toEqual(["hook:c1", "execA", "hook:c2", "execB"]);
+  });
+
+  it("case #2 no tool calls → onToolCall never fires", async () => {
+    const deps = makeDeps({ results: [resultOk("plain text")] });
+    const onToolCall = vi.fn();
+    const out = await runAgent(
+      { messages: [textMsg("user", "u")] },
+      deps,
+      { onToolCall },
+    );
+    expect(onToolCall).not.toHaveBeenCalled();
+    expect(out.finalText).toBe("plain text");
+  });
+
+  it("case #3 empty tool name → onToolCall still fires with that call", async () => {
+    const emptyTool: AgentTool = {
+      name: "nameless",
+      description: "executes regardless of call.name",
+      parameters: { type: "object", properties: {} },
+      execute: vi.fn(async () => "ok"),
+    };
+    // Registry returns a tool only for the canonical name "" — but
+    // executeToolCall looks up `call.name` against the registry, so the
+    // "Unknown tool" path is fine here: we only verify the HOOK fired.
+    const reg: ToolRegistry = { list: () => [emptyTool], get: () => emptyTool };
+    const deps = makeDeps({
+      results: [
+        resultOk("", [{ id: "x", name: "", argumentsJson: "{}" }]),
+        resultOk("done"),
+      ],
+    });
+    const onToolCall = vi.fn();
+
+    await runAgent({ messages: [textMsg("user", "u")], tools: reg }, deps, { onToolCall });
+
+    expect(onToolCall).toHaveBeenCalledTimes(1);
+    expect(onToolCall.mock.calls[0]?.[0]).toEqual({ id: "x", name: "", argumentsJson: "{}" });
+  });
+
+  it("case #4 missing onToolCall stays backward-compatible", async () => {
+    const toolDef: AgentTool = {
+      name: "ok",
+      description: "ok",
+      parameters: { type: "object", properties: {} },
+      execute: vi.fn(async () => "ok-out"),
+    };
+    const reg: ToolRegistry = { list: () => [toolDef], get: () => toolDef };
+    const deps = makeDeps({
+      results: [
+        resultOk("", [{ id: "t", name: "ok", argumentsJson: "{}" }]),
+        resultOk("done"),
+      ],
+    });
+    // No callbacks object at all — backward-compat smoke.
+    const out = await runAgent({ messages: [textMsg("user", "u")], tools: reg }, deps);
+    expect(out.finalText).toBe("done");
+    expect(out.stoppedOnBudget).toBe(false);
+
+    // Callbacks object present but onToolCall omitted — also backward-compat.
+    const out2 = await runAgent(
+      { messages: [textMsg("user", "u")], tools: reg },
+      makeDeps({
+        results: [
+          resultOk("", [{ id: "t", name: "ok", argumentsJson: "{}" }]),
+          resultOk("done2"),
+        ],
+      }),
+      {},
+    );
+    expect(out2.finalText).toBe("done2");
+  });
+});

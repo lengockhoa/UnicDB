@@ -86,6 +86,11 @@ export interface AgentCallbacks {
    * fallback path (stream pre-emit failure). Skipped when the abort rule
    * rethrows first. */
   onStreamFallback?(): void;
+  /** Fires exactly once per tool call, in call order, immediately before
+   * executeToolCall. Invoked on steps that produced tool calls only.
+   * Fires regardless of abort state — abort gating is the consumer's job
+   * (e.g. panel token gate). See docs/AI_HANDOFF/tasks/TASK-002.md. */
+  onToolCall?(call: ToolCall): void;
 }
 
 /** Build a tool error result message. Used in three error paths → lockstep shape. */
@@ -257,6 +262,7 @@ export async function runAgent(
     }
 
     for (const call of result.toolCalls) {
+      callbacks?.onToolCall?.(call);
       const toolMsg = await executeToolCall(call, input.tools, callbacks?.onError);
       history.push(toolMsg);
       stepMessages.push(toolMsg);
