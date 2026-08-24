@@ -210,4 +210,335 @@ describe("AcpClient", () => {
       { jsonrpc: "2.0", method: "initialized", params: {} },
     ]);
   });
+
+  // #5 — TASK-001 case #1: sessionList sends correct frame + normalizes entries
+  it("sessionList sends session/list frame and normalizes entries from _meta", async () => {
+    const client = new AcpClient(transport);
+    const pending = client.sessionList();
+
+    await flushMicrotasks();
+    const written = transport.allWritten();
+    expect(written).toHaveLength(1);
+    expect(written[0]).toMatchObject({
+      jsonrpc: "2.0",
+      method: "session/list",
+      params: {},
+    });
+    expect(typeof written[0]["id"]).toBe("number");
+
+    const id = written[0]["id"];
+    transport.feed(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        result: {
+          sessions: [
+            {
+              sessionId: "s1",
+              cwd: "/w",
+              title: "Fix schema",
+              updatedAt: "2026-08-24T01:02:03Z",
+              _meta: { messageCount: 12, size: 100 },
+            },
+          ],
+        },
+      }),
+    );
+    const items = await pending;
+    expect(items).toEqual([
+      {
+        sessionId: "s1",
+        cwd: "/w",
+        title: "Fix schema",
+        updatedAt: "2026-08-24T01:02:03Z",
+        messageCount: 12,
+        size: 100,
+      },
+    ]);
+  });
+
+  // #6 — TASK-001 case #2: junk title / missing _meta / non-string sessionId drop
+  it("sessionList drops entries with non-string sessionId and normalizes junk title", async () => {
+    const client = new AcpClient(transport);
+    const pending = client.sessionList();
+    await flushMicrotasks();
+
+    const id = transport.lastWritten()["id"];
+    transport.feed(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        result: {
+          sessions: [
+            // sessionId non-string → drop, no throw
+            { sessionId: 1, cwd: "/w", title: "x", updatedAt: "t", _meta: { messageCount: 1, size: 1 } },
+            // title "<function>" → null
+            { sessionId: "s2", cwd: "/w", title: "<function>", updatedAt: "t", _meta: { messageCount: 3, size: 5 } },
+            // title missing entirely → null; _meta missing → 0/0; updatedAt non-string → ""
+            { sessionId: "s3", cwd: "/w", updatedAt: 42 },
+          ],
+        },
+      }),
+    );
+    const items = await pending;
+    expect(items).toEqual([
+      { sessionId: "s2", cwd: "/w", title: null, updatedAt: "t", messageCount: 3, size: 5 },
+      { sessionId: "s3", cwd: "/w", title: null, updatedAt: "", messageCount: 0, size: 0 },
+    ]);
+  });
+
+  // #7 — TASK-001 case #3: replay notifications in same flush as result stay ordered and absorbed
+  it("sessionLoad buffers replay notifications arriving in the same flush as the result", async () => {
+    const client = new AcpClient(transport);
+    const notifs: Array<{ method: string; params: unknown }> = [];
+    client.onNotification((n) => notifs.push(n));
+
+    const pending = client.sessionLoad("s1", "/w");
+    await flushMicrotasks();
+
+    // Written frame must use session/load with frozen envelope shape.
+    const req = transport.lastWritten();
+    expect(req).toMatchObject({
+      jsonrpc: "2.0",
+      method: "session/load",
+      params: { sessionId: "s1", cwd: "/w", mcpServers: [] },
+    });
+
+    const id = req["id"];
+    // Feed in order: n1, n2, n3, then result. Result MUST NOT close the window.
+    transport.feed(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: { sessionId: "s1", update: { sessionUpdate: "n1" } },
+      }),
+    );
+    transport.feed(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: { sessionId: "s1", update: { sessionUpdate: "n2" } },
+      }),
+    );
+    transport.feed(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: { sessionId: "s1", update: { sessionUpdate: "n3" } },
+      }),
+    );
+    transport.feed(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        result: { configOptions: { mode: 1 }, modes: { availableModes: [] } },
+      }),
+    );
+
+    const res = await pending;
+    expect(res.configOptions).toEqual({ mode: 1 });
+    expect(res.modes).toEqual({ availableModes: [] });
+    expect(res.replay.closed).toBe(false);
+    expect(res.replay.notifications.map((n) => n.params)).toEqual([
+      { sessionId: "s1", update: { sessionUpdate: "n1" } },
+      { sessionId: "s1", update: { sessionUpdate: "n2" } },
+      { sessionId: "s1", update: { sessionUpdate: "n3" } },
+    ]);
+    // Live handler MUST NOT have been called for any replay frame.
+    expect(notifs).toEqual([]);
+  });
+
+  // #8 — TASK-001 case #4: replay after result + drain tick still absorbed (RED baseline)
+  it("sessionLoad keeps absorbing session/update across multiple flushes (no drain-tick close)", async () => {
+    const client = new AcpClient(transport);
+    const notifs: Array<{ method: string; params: unknown }> = [];
+    client.onNotification((n) => notifs.push(n));
+
+    const pending = client.sessionLoad("s1", "/w");
+    await flushMicrotasks();
+    const req = transport.lastWritten();
+    const id = req["id"];
+
+    // First flush: n1 + result settles the promise with replay=[n1].
+    transport.feed(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: { sessionId: "s1", update: { sessionUpdate: "n1" } },
+      }),
+    );
+    transport.feed(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        result: { configOptions: {}, modes: {} },
+      }),
+    );
+    const res = await pending;
+    expect(res.replay.notifications.map((n) => n.params)).toEqual([
+      { sessionId: "s1", update: { sessionUpdate: "n1" } },
+    ]);
+    expect(res.replay.closed).toBe(false);
+
+    // Second flush: n2 arrives AFTER settle, BEFORE the next outgoing write.
+    transport.feed(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: { sessionId: "s1", update: { sessionUpdate: "n2" } },
+      }),
+    );
+    await flushMicrotasks();
+
+    // Drain tick: full microtask drain. Window MUST still be open
+    // (no drain-tick close semantics).
+    await flushMicrotasks();
+    // Third flush: n3 arrives after the drain tick — still absorbed.
+    transport.feed(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: { sessionId: "s1", update: { sessionUpdate: "n3" } },
+      }),
+    );
+    await flushMicrotasks();
+
+    expect(res.replay.notifications.map((n) => n.params)).toEqual([
+      { sessionId: "s1", update: { sessionUpdate: "n1" } },
+      { sessionId: "s1", update: { sessionUpdate: "n2" } },
+      { sessionId: "s1", update: { sessionUpdate: "n3" } },
+    ]);
+    expect(res.replay.closed).toBe(false);
+    expect(notifs).toEqual([]);
+  });
+
+  // #9 — TASK-001 case #5: next outgoing request/notify closes the window
+  it("sessionLoad window closes when next outgoing request writes its frame", async () => {
+    const client = new AcpClient(transport);
+    const notifs: Array<{ method: string; params: unknown }> = [];
+    client.onNotification((n) => notifs.push(n));
+
+    const pending = client.sessionLoad("s1", "/w");
+    await flushMicrotasks();
+    const req = transport.lastWritten();
+    const id = req["id"];
+
+    // Late replay frame after settle but before close — absorbed.
+    transport.feed(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: { sessionId: "s1", update: { sessionUpdate: "late" } },
+      }),
+    );
+    transport.feed(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        result: { configOptions: {}, modes: {} },
+      }),
+    );
+    const res = await pending;
+    expect(res.replay.notifications).toHaveLength(1);
+    expect(res.replay.closed).toBe(false);
+
+    // Next outgoing request: writes its frame AND closes the window.
+    const next = client.request("session/prompt", { sessionId: "s1", prompt: [{ type: "text", text: "go" }] });
+    await flushMicrotasks();
+    expect(res.replay.closed).toBe(true);
+
+    // After close: live session/update for the same sessionId goes straight to handler.
+    transport.feed(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: { sessionId: "s1", update: { sessionUpdate: "live" } },
+      }),
+    );
+    await flushMicrotasks();
+    expect(notifs).toEqual([
+      { method: "session/update", params: { sessionId: "s1", update: { sessionUpdate: "live" } } },
+    ]);
+
+    // And the next request settles normally (no leftover state).
+    const nextId = transport.allWritten().slice(-1)[0]["id"];
+    transport.feed(JSON.stringify({ jsonrpc: "2.0", id: nextId, result: { ok: true } }));
+    await expect(next).resolves.toEqual({ ok: true });
+  });
+
+  // #10 — TASK-001 case #5 alt: client.notify also closes the window
+  it("sessionLoad window closes when next outgoing notify writes its frame", async () => {
+    const client = new AcpClient(transport);
+    const notifs: Array<{ method: string; params: unknown }> = [];
+    client.onNotification((n) => notifs.push(n));
+
+    const pending = client.sessionLoad("s1", "/w");
+    await flushMicrotasks();
+    const id = transport.lastWritten()["id"];
+
+    transport.feed(JSON.stringify({ jsonrpc: "2.0", id, result: { configOptions: {}, modes: {} } }));
+    const res = await pending;
+    expect(res.replay.closed).toBe(false);
+
+    client.notify("session/cancel", { sessionId: "s1" });
+    expect(res.replay.closed).toBe(true);
+
+    transport.feed(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: { sessionId: "s1", update: { sessionUpdate: "live2" } },
+      }),
+    );
+    await flushMicrotasks();
+    expect(notifs).toEqual([
+      { method: "session/update", params: { sessionId: "s1", update: { sessionUpdate: "live2" } } },
+    ]);
+  });
+
+  // #11 — TASK-001 case #6: server error during session/load rejects with code + message
+  it("sessionLoad rejects with code -32603 and message when server returns session-not-found", async () => {
+    const client = new AcpClient(transport);
+    const pending = client.sessionLoad("sX", "/w");
+    await flushMicrotasks();
+    const id = transport.lastWritten()["id"];
+
+    transport.feed(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        error: { code: -32603, message: "ACP session not found: sX" },
+      }),
+    );
+
+    const err = await pending.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toContain("ACP session not found");
+    expect((err as Error & { code?: number }).code).toBe(-32603);
+  });
+
+  // #12 — TASK-001 case #7: concurrent sessionLoad rejects without writing a frame
+  it("concurrent sessionLoad rejects synchronously and writes no extra frame", async () => {
+    const client = new AcpClient(transport);
+
+    const first = client.sessionLoad("s1", "/w");
+    await flushMicrotasks();
+    const writtenAfterFirst = transport.allWritten().length;
+
+    // Second call before the first has settled.
+    const second = client.sessionLoad("s1", "/w");
+    await flushMicrotasks();
+    expect(transport.allWritten().length).toBe(writtenAfterFirst);
+
+    const err = await second.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/session load already in progress/i);
+
+    // First still pending — feed a valid result, it must resolve normally.
+    const id = transport.lastWritten()["id"];
+    transport.feed(JSON.stringify({ jsonrpc: "2.0", id, result: { configOptions: {}, modes: {} } }));
+    const res = await first;
+    expect(res.configOptions).toEqual({});
+    expect(res.modes).toEqual({});
+  });
 });

@@ -46,6 +46,41 @@ export type AcpCloseListener = () => void;
 export type AcpServerRequestHandler = (call: AcpServerRequest) => void | Promise<void>;
 export type AcpNotificationHandler = (n: AcpNotification) => void;
 
+/** Normalized entry from `session/list`. Title is null when missing/non-string/<function>. */
+export interface AcpSessionListItem {
+  sessionId: string;
+  cwd: string;
+  title: string | null;
+  updatedAt: string;
+  messageCount: number;
+  size: number;
+}
+
+/** A single absorbed replay notification. */
+export interface AcpReplayNotification {
+  method: string;
+  params: unknown;
+}
+
+/**
+ * LIVE buffer of session/update notifications absorbed during a session/load
+ * window. The promise from sessionLoad() settles when the load result arrives,
+ * but the buffer may keep growing until the next outgoing request/notify
+ * closes the window. After close, subsequent session/update frames for the
+ * same sessionId flow to the registered onNotification handler.
+ */
+export interface AcpReplayBuffer {
+  readonly notifications: readonly AcpReplayNotification[];
+  readonly closed: boolean;
+}
+
+/** Result of sessionLoad(): the load result payload + the LIVE replay buffer. */
+export interface AcpSessionLoadResult {
+  configOptions: unknown;
+  modes: unknown;
+  replay: AcpReplayBuffer;
+}
+
 export class AcpClient {
   private readonly transport: AcpTransport;
   private readonly pending = new Map<number, PendingRequest>();
@@ -55,6 +90,21 @@ export class AcpClient {
   private nextClientId = 1;
   private disposed = false;
   private lineListener: ((line: string) => void) | null = null;
+  /**
+   * Active session/load replay window. When non-null, incoming
+   * `session/update` notifications for the matching sessionId are absorbed
+   * into `notifications` instead of being delivered to onNotification.
+   * The window opens when sessionLoad() writes its request frame and closes
+   * when the next outgoing request/notify writes its frame (absorb-then-flush
+   * ordering: close is marked BEFORE the outgoing write, so any replay
+   * frames still arriving up to that point have already been appended).
+   */
+  private replayState: {
+    sessionId: string;
+    buffer: { notifications: AcpReplayNotification[]; closed: boolean };
+  } | null = null;
+  /** Set to the sessionId while a session/load request is outstanding. */
+  private loadInFlight: string | null = null;
 
   constructor(transport: AcpTransport) {
     this.transport = transport;
@@ -73,6 +123,17 @@ export class AcpClient {
     if (this.disposed) {
       return Promise.reject(new Error("disposed"));
     }
+    // Close any open replay window BEFORE the outgoing write (absorb-then-flush).
+    this.closeReplayWindow();
+    return this.requestRaw<T>(method, params);
+  }
+
+  /**
+   * Write a request frame and return the matching result promise. Does NOT
+   * close the replay window — used by sessionLoad(), which opens the window
+   * around its own write.
+   */
+  private requestRaw<T = unknown>(method: string, params: unknown): Promise<T> {
     const id = this.nextClientId++;
     return new Promise<T>((resolve, reject) => {
       this.pending.set(id, {
@@ -91,7 +152,92 @@ export class AcpClient {
    */
   notify(method: string, params: unknown): void {
     if (this.disposed) return;
+    this.closeReplayWindow();
     this.transport.write(JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n");
+  }
+
+  /**
+   * List persisted sessions via `session/list` (params `{}`). Returns a
+   * normalized array; entries with non-string sessionId are dropped,
+   * junk title (`<function>` / missing / non-string) becomes null, missing
+   * `_meta` defaults messageCount/size to 0, non-string updatedAt becomes "".
+   */
+  async sessionList(): Promise<AcpSessionListItem[]> {
+    const raw = (await this.request<unknown>("session/list", {})) as { sessions?: unknown } | undefined;
+    const sessions = raw && Array.isArray(raw.sessions) ? raw.sessions : [];
+    const out: AcpSessionListItem[] = [];
+    for (const entry of sessions) {
+      if (entry === null || typeof entry !== "object") continue;
+      const e = entry as Record<string, unknown>;
+      if (typeof e["sessionId"] !== "string") continue;
+      const titleRaw = e["title"];
+      const title: string | null =
+        typeof titleRaw === "string" && titleRaw !== "<function>" ? titleRaw : null;
+      const updatedAtRaw = e["updatedAt"];
+      const updatedAt: string = typeof updatedAtRaw === "string" ? updatedAtRaw : "";
+      const cwdRaw = e["cwd"];
+      const cwd: string = typeof cwdRaw === "string" ? cwdRaw : "";
+      const metaRaw = e["_meta"];
+      const meta = metaRaw !== null && typeof metaRaw === "object" ? (metaRaw as Record<string, unknown>) : null;
+      const messageCount =
+        meta !== null && typeof meta["messageCount"] === "number" ? (meta["messageCount"] as number) : 0;
+      const size = meta !== null && typeof meta["size"] === "number" ? (meta["size"] as number) : 0;
+      out.push({ sessionId: e["sessionId"] as string, cwd, title, updatedAt, messageCount, size });
+    }
+    return out;
+  }
+
+  /**
+   * Load a session via `session/load` (params `{sessionId, cwd, mcpServers: []}`)
+   * and return the load result plus a LIVE replay buffer. The replay window is
+   * OPEN at the moment this call's request frame is written, and CLOSED by the
+   * next outgoing request()/notify() write. While open, incoming `session/update`
+   * notifications whose params.sessionId equals `sessionId` are absorbed into
+   * the buffer (in arrival order) instead of being delivered to onNotification.
+   * Concurrent calls (before the first settles) reject synchronously.
+   */
+  async sessionLoad(sessionId: string, cwd: string): Promise<AcpSessionLoadResult> {
+    if (this.loadInFlight !== null) {
+      throw new Error("session load already in progress");
+    }
+    this.loadInFlight = sessionId;
+    // Open the window BEFORE the request write so that notifications arriving
+    // in the same NDJSON flush as the request frame are also absorbed.
+    const buffer: { notifications: AcpReplayNotification[]; closed: boolean } = {
+      notifications: [],
+      closed: false,
+    };
+    this.replayState = { sessionId, buffer };
+    let result: unknown;
+    try {
+      result = await this.requestRaw<unknown>("session/load", {
+        sessionId,
+        cwd,
+        mcpServers: [],
+      });
+    } finally {
+      this.loadInFlight = null;
+    }
+    const obj = (result ?? {}) as { configOptions?: unknown; modes?: unknown };
+    return {
+      configOptions: obj.configOptions,
+      modes: obj.modes,
+      replay: {
+        get notifications() {
+          return buffer.notifications as readonly AcpReplayNotification[];
+        },
+        get closed() {
+          return buffer.closed;
+        },
+      },
+    };
+  }
+
+  /** Mark the current replay window closed and drop the reference. */
+  private closeReplayWindow(): void {
+    if (this.replayState === null) return;
+    this.replayState.buffer.closed = true;
+    this.replayState = null;
   }
 
   /**
@@ -244,11 +390,23 @@ export class AcpClient {
   }
 
   private dispatchNotification(frame: Record<string, unknown>): void {
+    const method = typeof frame["method"] === "string" ? (frame["method"] as string) : "";
+    const params = frame["params"];
+    // Replay window is open: absorb `session/update` whose sessionId matches.
+    if (
+      this.replayState !== null &&
+      method === "session/update" &&
+      params !== null &&
+      typeof params === "object" &&
+      (params as Record<string, unknown>)["sessionId"] === this.replayState.sessionId
+    ) {
+      this.replayState.buffer.notifications.push({ method, params });
+      return;
+    }
     const cb = this.notificationHandler;
     if (cb === null) return;
-    const method = typeof frame["method"] === "string" ? (frame["method"] as string) : "";
     try {
-      cb({ method, params: frame["params"] });
+      cb({ method, params });
     } catch {
       /* listener errors must not break the line pump */
     }

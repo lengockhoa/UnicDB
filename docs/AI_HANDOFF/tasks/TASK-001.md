@@ -116,3 +116,81 @@ npm run typecheck && npx vitest run src/ai/omp/__tests__/acp.test.ts
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Executor Report
+
+```
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: ExecO-T001
+SUMMARY: Added `sessionList()` + `sessionLoad()` + LIVE replay buffer to `AcpClient`. Window opens on the `session/load` request write, absorbs `session/update` notifications for the matching sessionId (across any number of NDJSON flushes), closes on the next outgoing `request()`/`notify()` write (absorb-then-flush).
+TEST_PLAN_FOLLOWED: TASK §4 (8 cases, all in `src/ai/omp/__tests__/acp.test.ts`)
+FILES_CHANGED:
+  - src/ai/omp/acp.ts: added AcpSessionListItem/AcpReplayNotification/AcpReplayBuffer/AcpSessionLoadResult; added `replayState` and `loadInFlight` fields; refactored `request()` to close window pre-write via `requestRaw()` helper; `sessionList()` (normalize + drop) and `sessionLoad()` (open window + buffer + concurrent guard); `dispatchNotification()` absorbs matching session/update.
+  - src/ai/omp/__tests__/acp.test.ts: appended 8 new tests covering cases #1..#8 verbatim; case #3 feeds n1,n2,n3 as pinned by reviewer.
+TESTS_ADDED:
+  - src/ai/omp/__tests__/acp.test.ts: sessionList sends session/list frame and normalizes entries from _meta
+  - src/ai/omp/__tests__/acp.test.ts: sessionList drops entries with non-string sessionId and normalizes junk title
+  - src/ai/omp/__tests__/acp.test.ts: sessionLoad buffers replay notifications arriving in the same flush as the result
+  - src/ai/omp/__tests__/acp.test.ts: sessionLoad keeps absorbing session/update across multiple flushes (no drain-tick close)
+  - src/ai/omp/__tests__/acp.test.ts: sessionLoad window closes when next outgoing request writes its frame
+  - src/ai/omp/__tests__/acp.test.ts: sessionLoad window closes when next outgoing notify writes its frame
+  - src/ai/omp/__tests__/acp.test.ts: sessionLoad rejects with code -32603 and message when server returns session-not-found
+  - src/ai/omp/__tests__/acp.test.ts: concurrent sessionLoad rejects synchronously and writes no extra frame
+VERIFICATION:
+  command: npm run typecheck && npx vitest run src/ai/omp/__tests__/acp.test.ts
+  result: 14 pass / 0 fail / exit 0
+  output_excerpt: |
+    > vsdb@1.5.1 typecheck
+    > tsc --noEmit
+    ===
+     RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+     ✓ src/ai/omp/__tests__/acp.test.ts  (14 tests) 4ms
+     Test Files  1 passed (1)
+          Tests  14 passed (14)
+ISSUES: none
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for review
+```
+
+RED evidence (pre-implementation, same command):
+```
+ FAIL  src/ai/omp/__tests__/acp.test.ts > AcpClient > sessionList sends session/list frame and normalizes entries from _meta
+TypeError: client.sessionList is not a function
+ FAIL  src/ai/omp/__tests__/acp.test.ts > AcpClient > sessionList drops entries with non-string sessionId and normalizes junk title
+TypeError: client.sessionList is not a function
+ FAIL  src/ai/omp/__tests__/acp.test.ts > AcpClient > sessionLoad buffers replay notifications arriving in the same flush as the result
+TypeError: client.sessionLoad is not a function
+ FAIL  src/ai/omp/__tests__/acp.test.ts > AcpClient > sessionLoad keeps absorbing session/update across multiple flushes (no drain-tick close)
+TypeError: client.sessionLoad is not a function
+ FAIL  src/ai/omp/__tests__/acp.test.ts > AcpClient > sessionLoad window closes when next outgoing request writes its frame
+TypeError: client.sessionLoad is not a function
+ FAIL  src/ai/omp/__tests__/acp.test.ts > AcpClient > sessionLoad window closes when next outgoing notify writes its frame
+TypeError: client.sessionLoad is not a function
+ FAIL  src/ai/omp/__tests__/acp.test.ts > AcpClient > sessionLoad rejects with code -32603 and message when server returns session-not-found
+TypeError: client.sessionLoad is not a function
+ FAIL  src/ai/omp/__tests__/acp.test.ts > AcpClient > concurrent sessionLoad rejects synchronously and writes no extra frame
+TypeError: client.sessionLoad is not a function
+ Test Files  1 failed (1)
+      Tests  8 failed | 6 passed (14)
+```
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: ExecO-T001
+VERIFICATION_RERUN:
+  command: npm run typecheck && npx vitest run src/ai/omp/__tests__/acp.test.ts
+  result: 14 pass / 0 fail / exit 0
+TEST_PLAN_COVERAGE: all-followed — 8/8 cases (#1..#8) present and real; case #3 fixture feeds n1,n2,n3 per pinned note; no lint script exists (scripts: compile,watch,test,test:integration,typecheck,package,vscode:prepublish) — N/A justified
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/ai/omp/acp.ts:104-109 — redundant reject wrapper in requestRaw: `reject: (err) => reject(err)` is the identity; could pass `reject` directly. Style only.
+    - src/ai/omp/acp.ts:226-243 — on sessionLoad rejection the replay window stays open until the next outgoing request/notify (per frozen spec, which only defines close-on-next-write). Unreachable in practice (failed load → server sends no session/update for that sessionId) but TASK-003 consumer should be aware.
+NOTES: Envelopes match research doc exactly (list `params:{}`, load `params:{sessionId,cwd,mcpServers:[]}`); window semantics implemented as frozen (open on load write, absorb matching session/update across any flush count, close absorb-then-flush on next request/notify, no drain-tick); existing 6 tests pass unmodified; RED output verbatim (8 failed TypeError, methods absent).
+NEXT_STATUS_FOR_INDEX: approved_minor
