@@ -82,3 +82,40 @@ npx tsc --noEmit
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+SUMMARY: ResultsPanel save flow now reads ctid from a hidden `ctid` column in the result set first (exact row address, no value-match round-trip), and only falls back to `fetchPostgresCtids` when the column is absent. Added `hiddenColumns` to `SerializeOptions` and routed it through every serializer (Tsv/Csv/Json/Xml/Sql-*) so the host's export path strips the column uniformly.
+TEST_PLAN_FOLLOWED: inline (appended #1-#4, #5, #6 per spec §Test Cases)
+FILES_CHANGED:
+  - src/ui/resultsPanel.ts: handleSaveEdits: read ctidByRowId from serverRows when `columns.indexOf("ctid") >= 0`; fall through to fetchPostgresCtids only when no ctid column. Surface non-fatal buildSaveStatements.warnings in saveResult ack (errors[] + warnings[]) so per-row missing-ctid rows are not silently dropped.
+  - src/ui/resultsGridModel.ts: SerializeOptions.hiddenColumns? + keepIndices helper. serializeTsv/serializeCsv/serializeJson/serializeXml/serializeSqlInserts/serializeSqlUpdates/serializeWhereClause all skip hidden columns; the dispatcher passes opts through unchanged.
+  - src/ui/__tests__/resultsPanelSaveEdits.test.ts: appended 5 describe blocks (TASK-006 #1 happy, #2 regression Date/numeric, #3 fallback, #4 partial ctid, #6 PK doesn't use ctid). Existing tests preserved.
+  - src/ui/__tests__/resultsGridModel.test.ts: appended "hidden columns excluded from export (TASK-006 #5)" describe with 4 cases (Tsv, Csv, hiddenColumns: undefined, hiddenColumns: []).
+TESTS_ADDED:
+  - resultsPanelSaveEdits.test.ts: 5 cases under "no-PK hidden ctid column" (TASK-006 #1, #2, #3, #4, #6)
+  - resultsGridModel.test.ts: 4 cases under "hidden columns excluded from export" (TASK-006 #5)
+VERIFICATION:
+  command: npx vitest run src/ui/__tests__/resultsPanel.test.ts src/ui/__tests__/resultsPanelSaveEdits.test.ts src/ui/__tests__/resultsGridModel.test.ts
+  result: 56 pass / 0 fail
+  output_excerpt: |
+    ✓ src/ui/__tests__/resultsPanel.test.ts  (15 tests) 17ms
+    ✓ src/ui/__tests__/resultsPanelSaveEdits.test.ts  (14 tests) 6ms
+    ✓ src/ui/__tests__/resultsGridModel.test.ts  (27 tests) 5ms
+    Test Files  3 passed (3)
+         Tests  56 passed (56)
+  command: npx tsc --noEmit
+  result: 0 errors
+  output_excerpt: |
+    (no output)
+  command: npx vitest run src/ui/__tests__/resultsGridModelExport.test.ts src/adapters/__tests__/saveStatements.test.ts src/adapters/__tests__/saveStatementsInline.test.ts
+  result: 59 pass / 0 fail
+ISSUES:
+  - Decision: chọn cách ít invasive cho query path (theo planner @ 2026-08-24). Host KHÔNG chủ động wrap `SELECT t.*, ctid FROM (...) t` cho hand-written queries — chỉ consume ctid khi đã có trong result set (fixture, browse-table path do command khác, hoặc extension tự thêm). Save flow fallback `fetchPostgresCtids` đã cover trường hợp không có ctid column. Browse-table command integration là work riêng (cần touch `browseCommands.ts` + PG adapter) — out of scope cho fix bug user-blocking này.
+  - Pre-existing failures (3 files, 2 tests) trong extension.test.ts, agGridSmoke.test.ts, aiChatPanelWebview.test.ts do dist/* artifacts chưa build — verified trước/sau khi apply changes (git stash) vẫn fail như nhau, không liên quan TASK-006.
+HANDOFF_TO_REVIEWER: yes — code review needed
+NEXT: ready for review

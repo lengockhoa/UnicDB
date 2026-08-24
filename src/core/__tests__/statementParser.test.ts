@@ -348,3 +348,115 @@ describe("statementParser — ParsedStatement shape", () => {
     expect(s.end).toBe(8);
   });
 });
+// ---- Regression tests — cursor-mode regression lock (cycle R, TASK-005) ----
+describe("statementParser — cursor-mode regression lock (cycle R)", () => {
+// Lock parser invariants for Cmd+Enter cursor mode. #2 is the deviation
+// candidate from code-read (gap-fallback returns stmts[last], but user intent
+// for cursor in whitespace is the statement TRƯỚC).
+
+  // #1: cursor giữa stmt multi-line → nguyên stmt (không cắt từ offset).
+  it("#1 cursor giữa multi-line stmt → full stmt (không bắt đầu ở offset)", () => {
+    const sql = "SELECT 1,\n       2;\nSELECT 3;";
+    // sql.length = 28. splitStatements: stmt1 = [0,18) = "SELECT 1,\n       2",
+    // stmt2 = [20,28) = "SELECT 3".
+    const stmt1Start = sql.indexOf("SELECT 1,");
+    const stmt1End = 18;
+    const midOffset = 12; // bên trong stmt 1, sau dấu phẩy.
+    expect(midOffset).toBeGreaterThanOrEqual(stmt1Start);
+    expect(midOffset).toBeLessThan(stmt1End);
+    const out = statementAtCursor(sql, midOffset);
+    expect(out).not.toBeNull();
+    expect(out!.start).toBe(stmt1Start);
+    expect(out!.end).toBe(stmt1End);
+    expect(out!.text).toBe(sql.substring(stmt1Start, stmt1End));
+  });
+
+  // #2: deviation candidate — gap giữa 2 stmt → stmt TRƯỚC (not stmt cuối).
+  it("#2 gap giữa 2 stmt (cursor trong whitespace) → stmt TRƯỚC", () => {
+    const sql = "SELECT 1;\n\nSELECT 2;";
+    // stmt1 = [0,8), stmt2 = [10,18). gap `\n\n` ở [8,10).
+    const stmt1End = 8;
+    const stmt2Start = 10;
+    const gapOffset = 9; // giữa gap
+    expect(gapOffset).toBeGreaterThanOrEqual(stmt1End);
+    expect(gapOffset).toBeLessThan(stmt2Start);
+    const out = statementAtCursor(sql, gapOffset);
+    expect(out).not.toBeNull();
+    // Gap rule mới: stmt gần nhất TRƯỚC cursor → stmt 1.
+    expect(out!.text).toBe("SELECT 1");
+    expect(out!.start).toBe(0);
+    expect(out!.end).toBe(stmt1End);
+  });
+
+  // #3: EOF không `;` → stmt cuối full.
+  it("#3 EOF không `;` → stmt cuối full text", () => {
+    const sql = "SELECT 1;\nSELECT 2";
+    const out = statementAtCursor(sql, sql.length);
+    expect(out).not.toBeNull();
+    expect(out!.text).toBe("SELECT 2");
+    expect(sql.substring(out!.start, out!.end)).toBe(out!.text);
+  });
+
+  // #4: BEGIN...END cursor giữa → cả block.
+  it("#4 cursor giữa BEGIN...END block → cả block", () => {
+    const sql = "BEGIN\n  SELECT 1;\n  SELECT 2;\nEND;\nSELECT 3;";
+    // splitStatements: block=[0,33) "BEGIN\n  SELECT 1;\n  SELECT 2;\nEND", stmt2=[35,43) "SELECT 3".
+    const blockStart = 0;
+    const blockEnd = 33;
+    const midOffset = 10; // giữa khối (trong `BEGIN\n  S`).
+    expect(midOffset).toBeGreaterThanOrEqual(blockStart);
+    expect(midOffset).toBeLessThan(blockEnd);
+    const out = statementAtCursor(sql, midOffset);
+    expect(out).not.toBeNull();
+    expect(out!.start).toBe(blockStart);
+    expect(out!.end).toBe(blockEnd);
+    expect(out!.text.startsWith("BEGIN")).toBe(true);
+    expect(out!.text.includes("END")).toBe(true);
+  });
+
+  // #5: offset < stmt đầu (leading whitespace) → stmt ĐẦU (rule mới).
+  // Trước fix: stmts[0].start > 0 → vòng for không match → fallback trả last stmt.
+  // Sau fix: rule mới — offset trước stmt đầu → stmt đầu.
+  it("#5 offset trước stmt đầu (leading whitespace) → stmt ĐẦU (behavior change có chủ đích)", () => {
+    const sql = "\n  SELECT 1;\nSELECT 2;";
+    // splitStatements bỏ leading whitespace → stmts[0].start = 3 (vị trí 'S').
+    const stmt1Start = 3;
+    const stmt1End = 11;
+    expect(stmt1Start).toBeGreaterThan(0);
+    // offset 0 nằm TRƯỚC stmt đầu.
+    const out = statementAtCursor(sql, 0);
+    expect(out).not.toBeNull();
+    expect(out!.text).toBe("SELECT 1");
+    expect(out!.start).toBe(stmt1Start);
+    expect(out!.end).toBe(stmt1End);
+  });
+
+  // #6: selection mode KHÔNG đổi — selection trong range stmt → statements trong vùng.
+  it("#6 selection mode KHÔNG đổi — chọn vùng stmt 2 → statements trong vùng", () => {
+    const sql = "SELECT 1; SELECT 2; SELECT 3;";
+    const start = sql.indexOf("SELECT 2");
+    const end = sql.indexOf(";", start) + 1;
+    const result = sqlToRun(sql, { start, end }, 0);
+    expect(result.mode).toBe("selection");
+    expect(result.statements.length).toBeGreaterThanOrEqual(1);
+    const texts = result.statements.map((s) => s.text);
+    expect(texts.some((t) => t.includes("SELECT 2"))).toBe(true);
+  });
+
+  // #7: CRLF — offset sau \r\n giữa 2 stmt → stmt trước; ranges không lệch.
+  it("#7 CRLF offset sau \\r\\n gap giữa 2 stmt → stmt trước; ranges không lệch", () => {
+    const sql = "SELECT 1;\r\n\r\nSELECT 2;";
+    // stmt1 = [0,8), stmt2 = [12,20). Gap `\r\n\r\n` ở [8,12).
+    const stmt1End = 8;
+    const stmt2Start = 12;
+    const gapOffset = 10; // giữa gap, sau `\r\n` thứ 2.
+    expect(gapOffset).toBeGreaterThanOrEqual(stmt1End);
+    expect(gapOffset).toBeLessThan(stmt2Start);
+    const out = statementAtCursor(sql, gapOffset);
+    expect(out).not.toBeNull();
+    expect(out!.text).toBe("SELECT 1");
+    // Ranges không lệch — substring[start,end] === text.
+    expect(sql.substring(out!.start, out!.end)).toBe(out!.text);
+    expect(out!.start).toBeLessThan(stmt2Start);
+  });
+});

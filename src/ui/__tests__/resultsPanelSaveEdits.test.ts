@@ -641,3 +641,387 @@ describe("ResultsPanel — partial failure (per-statement errors)", () => {
     expect((ack.errors ?? []).join(" ")).toMatch(/constraint/i);
   });
 });
+
+// ---- TASK-006 no-PK hidden ctid column ----------------------------------
+
+//
+// The fix: instead of value-matching dirty cells to find ctid (fragile
+// against Date/numeric/boolean literal round-trip), the host reads ctid
+// from a hidden "ctid" column carried in the result set. fetchPostgresCtids
+// remains as a fallback when the result set has no ctid column.
+
+describe("ResultsPanel — no-PK hidden ctid column (TASK-006 #1)", () => {
+  it("result set has 'ctid' column → ctidByRowId built from row data, fetchPostgresCtids NOT called, UPDATE uses WHERE ctid = '<literal>'", async () => {
+    const saveCtx: SaveContext = {
+      getDriver: () => "postgres",
+      listPkColumns: async () => [],
+    };
+    // Result set already carries ctid at the LAST column.
+    const columns = ["name", "created_at", "ctid"];
+    const rows: unknown[][] = [
+      ["alice", "2024-01-01T00:00:00.000Z", "(0,1)"],
+    ];
+    const recorded: RecordedCall[] = [];
+    const fakeRunQuery = vi.fn(async (sql: string): Promise<RunResult> => {
+      recorded.push({ sql });
+      if (/ctid\s+FROM\s+/i.test(sql) && !/UPDATE/i.test(sql)) {
+        // Bare value-match ctid lookup — should NEVER be invoked.
+        throw new Error("fetchPostgresCtids must not be called when result set has ctid column");
+      }
+      if (/UPDATE/i.test(sql)) {
+        return {
+          results: [{ columns: [], rows: [], rowCount: 0, durationMs: 0 }],
+        };
+      }
+      return {
+        results: [{ columns, rows, rowCount: rows.length, durationMs: 0 }],
+      };
+    });
+    const runner = {
+      loadMore: vi.fn(async () => [] as StatementResult[]),
+      cancel: vi.fn(async () => undefined),
+      runSql: fakeRunQuery,
+    } as unknown as QueryRunner;
+    const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT name, created_at FROM t",
+          status: "done",
+          result: { columns, rows, rowCount: rows.length, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    const f = lastPanel.current!;
+    f.webview.dispatch({
+      type: "saveEdits",
+      index: 0,
+      tableName: null,
+      pkColumns: [],
+      edits: [{ rowId: 0, colIndex: 0, value: "alice-2" }],
+    });
+    for (let i = 0; i < 200; i++) {
+      if (saveResultAcks(f).length > 0) break;
+      await Promise.resolve();
+    }
+    const update = recorded.find((c) => /UPDATE/i.test(c.sql));
+    expect(update).toBeDefined();
+    // ctid read from data — not from a separate SELECT ctid lookup.
+    expect(update!.sql).toMatch(/ctid='\(0,1\)'/);
+    // The value-match path (SELECT ctid FROM … WHERE col IS NOT DISTINCT FROM …)
+    // must NOT have been invoked.
+    const valueMatch = recorded.find(
+      (c) => /ctid\s+FROM\s+/i.test(c.sql) && !/UPDATE/i.test(c.sql),
+    );
+    expect(valueMatch).toBeUndefined();
+    // Ack is success.
+    const acks = saveResultAcks(f);
+    expect(acks.length).toBeGreaterThanOrEqual(1);
+    const successAck = acks.find((a) => a.ok === true);
+    expect(successAck).toBeDefined();
+  });
+});
+
+describe("ResultsPanel — no-PK regression (TASK-006 #2)", () => {
+  it("postgres no-PK + Date/numeric values + ctid column → save SUCCESS (was previously value-match fail)", async () => {
+    const saveCtx: SaveContext = {
+      getDriver: () => "postgres",
+      listPkColumns: async () => [],
+    };
+    // Pre-fix value-match was: SELECT ctid FROM t WHERE created_at IS NOT
+    // DISTINCT FROM '<literal>'. The literal round-trip for Date / numeric
+    // / boolean is fragile (timezone, precision, format). Pre-fix, this
+    // fixture produced 0 matches → "all_failed" banner → user blocked.
+    // With the hidden-ctid-column fix, the UPDATE addresses ctid DIRECTLY
+    // and the value round-trip is bypassed entirely.
+    const columns = ["name", "created_at", "amount", "is_active", "ctid"];
+    const rows: unknown[][] = [
+      [
+        "alice",
+        new Date("2024-01-01T00:00:00.000Z"),
+        1234.56,
+        true,
+        "(0,1)",
+      ],
+    ];
+    const recorded: RecordedCall[] = [];
+    const fakeRunQuery = vi.fn(async (sql: string): Promise<RunResult> => {
+      recorded.push({ sql });
+      if (/UPDATE/i.test(sql)) {
+        return {
+          results: [{ columns: [], rows: [], rowCount: 0, durationMs: 0 }],
+        };
+      }
+      return {
+        results: [{ columns, rows, rowCount: rows.length, durationMs: 0 }],
+      };
+    });
+    const runner = {
+      loadMore: vi.fn(async () => [] as StatementResult[]),
+      cancel: vi.fn(async () => undefined),
+      runSql: fakeRunQuery,
+    } as unknown as QueryRunner;
+    const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT name, created_at, amount, is_active FROM t",
+          status: "done",
+          result: { columns, rows, rowCount: rows.length, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    const f = lastPanel.current!;
+    f.webview.dispatch({
+      type: "saveEdits",
+      index: 0,
+      tableName: null,
+      pkColumns: [],
+      edits: [{ rowId: 0, colIndex: 0, value: "alice-2" }],
+    });
+    for (let i = 0; i < 200; i++) {
+      if (saveResultAcks(f).length > 0) break;
+      await Promise.resolve();
+    }
+    const acks = saveResultAcks(f);
+    expect(acks.length).toBeGreaterThanOrEqual(1);
+    // The "Cannot save: ... ctid lookup failed for every dirty row" banner
+    // MUST NOT appear.
+    const blocking = acks.find(
+      (a) =>
+        (a.reason ?? "").includes("ctid lookup failed for every dirty row") ||
+        (a.errors ?? []).some((e) => e.includes("ctid lookup failed for every dirty row")),
+    );
+    expect(blocking).toBeUndefined();
+    // UPDATE was issued with the correct ctid literal — addresses the row
+    // directly, no value-match needed.
+    const update = recorded.find((c) => /UPDATE/i.test(c.sql));
+    expect(update).toBeDefined();
+    expect(update!.sql).toMatch(/ctid='\(0,1\)'/);
+    // And a success ack landed.
+    const successAck = acks.find((a) => a.ok === true);
+    expect(successAck).toBeDefined();
+    // refreshCall count — exactly one UPDATE ran, no orphan SELECT ctid.
+    const ctidLookups = recorded.filter(
+      (c) => /ctid\s+FROM\s+/i.test(c.sql) && !/UPDATE/i.test(c.sql),
+    );
+    expect(ctidLookups).toHaveLength(0);
+  });
+});
+
+describe("ResultsPanel — no-PK fallback to fetchPostgresCtids (TASK-006 #3)", () => {
+  it("result set has NO ctid column → fallback fetchPostgresCtids is called, all_failed banner when 0 match", async () => {
+    const saveCtx: SaveContext = {
+      getDriver: () => "postgres",
+      listPkColumns: async () => [],
+    };
+    // Result set without ctid column.
+    const columns = ["name"];
+    const rows: unknown[][] = [["alice"]];
+    const recorded: RecordedCall[] = [];
+    const fakeRunQuery = vi.fn(async (sql: string): Promise<RunResult> => {
+      recorded.push({ sql });
+      if (/ctid\s+FROM\s+/i.test(sql) && !/UPDATE/i.test(sql)) {
+        // Simulate 0-match — old behavior.
+        return {
+          results: [{ columns: ["ctid"], rows: [], rowCount: 0, durationMs: 0 }],
+        };
+      }
+      return {
+        results: [{ columns, rows, rowCount: rows.length, durationMs: 0 }],
+      };
+    });
+    const runner = {
+      loadMore: vi.fn(async () => [] as StatementResult[]),
+      cancel: vi.fn(async () => undefined),
+      runSql: fakeRunQuery,
+    } as unknown as QueryRunner;
+    const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT name FROM t",
+          status: "done",
+          result: { columns, rows, rowCount: rows.length, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    const f = lastPanel.current!;
+    f.webview.dispatch({
+      type: "saveEdits",
+      index: 0,
+      tableName: null,
+      pkColumns: [],
+      edits: [{ rowId: 0, colIndex: 0, value: "alice-2" }],
+    });
+    for (let i = 0; i < 200; i++) {
+      if (saveResultAcks(f).length > 0) break;
+      await Promise.resolve();
+    }
+    // fetchPostgresCtids was called.
+    const ctidLookup = recorded.find(
+      (c) => /ctid\s+FROM\s+/i.test(c.sql) && !/UPDATE/i.test(c.sql),
+    );
+    expect(ctidLookup).toBeDefined();
+    // All_failed banner — same as before the fix.
+    const acks = saveResultAcks(f);
+    expect(acks.length).toBeGreaterThanOrEqual(1);
+    const banner = acks.find(
+      (a) =>
+        (a.reason ?? "").includes("ctid lookup failed for every dirty row") ||
+        (a.errors ?? []).some((e) => e.includes("ctid lookup failed for every dirty row")),
+    );
+    expect(banner).toBeDefined();
+    // No UPDATE was issued.
+    const update = recorded.find((c) => /UPDATE/i.test(c.sql));
+    expect(update).toBeUndefined();
+  });
+});
+
+describe("ResultsPanel — partial ctid in row data (TASK-006 #4)", () => {
+  it("1 of 2 rows has null ctid → UPDATE for the row with ctid, per-row warning for the missing one", async () => {
+    const saveCtx: SaveContext = {
+      getDriver: () => "postgres",
+      listPkColumns: async () => [],
+    };
+    const columns = ["name", "ctid"];
+    const rows: unknown[][] = [
+      ["alice", "(0,1)"],
+      ["bob", null], // missing ctid on this row
+    ];
+    const recorded: RecordedCall[] = [];
+    const fakeRunQuery = vi.fn(async (sql: string): Promise<RunResult> => {
+      recorded.push({ sql });
+      if (/UPDATE/i.test(sql)) {
+        return {
+          results: [{ columns: [], rows: [], rowCount: 0, durationMs: 0 }],
+        };
+      }
+      return {
+        results: [{ columns, rows, rowCount: rows.length, durationMs: 0 }],
+      };
+    });
+    const runner = {
+      loadMore: vi.fn(async () => [] as StatementResult[]),
+      cancel: vi.fn(async () => undefined),
+      runSql: fakeRunQuery,
+    } as unknown as QueryRunner;
+    const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT name FROM t",
+          status: "done",
+          result: { columns, rows, rowCount: rows.length, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    const f = lastPanel.current!;
+    f.webview.dispatch({
+      type: "saveEdits",
+      index: 0,
+      tableName: null,
+      pkColumns: [],
+      edits: [
+        { rowId: 0, colIndex: 0, value: "alice-2" },
+        { rowId: 1, colIndex: 0, value: "bob-2" },
+      ],
+    });
+    for (let i = 0; i < 200; i++) {
+      if (saveResultAcks(f).length > 0) break;
+      await Promise.resolve();
+    }
+    // UPDATE for rowId 0 (alice, has ctid) was emitted; UPDATE for rowId 1
+    // (bob, null ctid) was SKIPPED.
+    const updates = recorded.filter((c) => /UPDATE/i.test(c.sql));
+    expect(updates).toHaveLength(1);
+    expect(updates[0].sql).toMatch(/ctid='\(0,1\)'/);
+    // The skipped row surfaces as a per-row warning surfaced via
+    // buildSaveStatements.warnings. The save still completes (partial
+    // success) — ack is ok:true with the warning in errors[]. The hard
+    // bar is: no silent ok:true WITH no UPDATE issued for the other row.
+    const acks = saveResultAcks(f);
+    expect(acks.length).toBeGreaterThanOrEqual(1);
+    const last = acks[acks.length - 1];
+    const errText = ((last.errors ?? []).join(" ") + " " + (last.reason ?? "")).trim();
+    expect(/row\s*1|missing\s*ctid/i.test(errText)).toBe(true);
+  });
+});
+
+describe("ResultsPanel — PK table does NOT use ctid (TASK-006 #6)", () => {
+  it("postgres + PK → save uses pkColumns; no separate SELECT ctid, no ctid column in UPDATE", async () => {
+    const saveCtx: SaveContext = {
+      getDriver: () => "postgres",
+      listPkColumns: async () => ["id"],
+    };
+    const columns = ["id", "name"];
+    const rows: unknown[][] = [[1, "alice"], [2, "bob"]];
+    const recorded: RecordedCall[] = [];
+    const fakeRunQuery = vi.fn(async (sql: string): Promise<RunResult> => {
+      recorded.push({ sql });
+      if (/UPDATE/i.test(sql)) {
+        return {
+          results: [{ columns: [], rows: [], rowCount: 0, durationMs: 0 }],
+        };
+      }
+      return {
+        results: [{ columns, rows, rowCount: rows.length, durationMs: 0 }],
+      };
+    });
+    const runner = {
+      loadMore: vi.fn(async () => [] as StatementResult[]),
+      cancel: vi.fn(async () => undefined),
+      runSql: fakeRunQuery,
+    } as unknown as QueryRunner;
+    const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT id, name FROM t",
+          status: "done",
+          result: { columns, rows, rowCount: rows.length, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    const f = lastPanel.current!;
+    f.webview.dispatch({
+      type: "saveEdits",
+      index: 0,
+      tableName: null,
+      pkColumns: [],
+      edits: [{ rowId: 0, colIndex: 1, value: "alice-2" }],
+    });
+    for (let i = 0; i < 200; i++) {
+      if (saveResultAcks(f).length > 0) break;
+      await Promise.resolve();
+    }
+    // UPDATE was issued using id PK — no ctid lookup, no ctid column.
+    const updates = recorded.filter((c) => /UPDATE/i.test(c.sql));
+    expect(updates).toHaveLength(1);
+    expect(updates[0].sql).toMatch(/WHERE\s+id=1/);
+    // No SELECT ctid lookup was issued.
+    const ctidLookups = recorded.filter(
+      (c) => /ctid\s+FROM\s+/i.test(c.sql) && !/UPDATE/i.test(c.sql),
+    );
+    expect(ctidLookups).toHaveLength(0);
+    // Ack success.
+    const acks = saveResultAcks(f);
+    const successAck = acks.find((a) => a.ok === true);
+    expect(successAck).toBeDefined();
+  });
+});

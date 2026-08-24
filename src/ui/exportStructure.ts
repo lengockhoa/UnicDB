@@ -87,4 +87,41 @@ export function buildViewStructure(
   ].join("\n");
 }
 
+/** Input shape cho buildDatabaseStructure — agent tool builds from adapter results. */
+export interface DatabaseStructureInput {
+  schemas: Array<{ name: string }>;
+  tables: Array<{ schema: string; name: string }>;
+  views: Array<{ schema: string; name: string }>;
+  /** Key "schema.table" → column list cho table/view. Missing key → empty columns. */
+  columns: Record<string, ExportColumn[]>;
+}
+
+/**
+ * Render full-DB DDL text từ introspection results.
+ * Pure, deterministic. Empty DB → header only, không schema/table blocks.
+ * Blocks cách nhau bằng 1 blank line; trailing blanks stripped.
+ */
+export function buildDatabaseStructure(db: DatabaseStructureInput): string {
+  const header = `-- Database structure (${db.schemas.length} schemas, ${db.tables.length} tables, ${db.views.length} views)`;
+  if (db.schemas.length === 0) return header;
+
+  const blocks: string[] = [];
+  for (const s of db.schemas) {
+    blocks.push(`-- Schema: ${s.name}`);
+    for (const t of db.tables.filter((x) => x.schema === s.name)) {
+      const key = `${t.schema}.${t.name}`;
+      blocks.push(buildTableStructure(t.schema, t.name, db.columns[key] ?? []));
+      blocks.push("");
+    }
+    for (const v of db.views.filter((x) => x.schema === s.name)) {
+      const key = `${v.schema}.${v.name}`;
+      blocks.push(buildViewStructure(v.schema, v.name, db.columns[key] ?? []));
+      blocks.push("");
+    }
+  }
+
+  while (blocks.length > 0 && blocks[blocks.length - 1] === "") blocks.pop();
+  return [header, ...blocks].join("\n");
+}
+
 export { sqlLiteral };

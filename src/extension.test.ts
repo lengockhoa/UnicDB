@@ -1376,3 +1376,97 @@ describe("TASK-007 — runStatement rewrites reserved-keyword tables to public s
   });
 });
 
+// =============================================================================
+// TASK-005 — `vsdb.runQuery` cursor mode (no selection). Cursor nằm giữa 2
+// statement → handler chỉ chạy statement chứa con trỏ, KHÔNG chạy cả file.
+// =============================================================================
+describe("TASK-005 — runQueryFromEditor cursor mode", () => {
+  let runSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+    state.registeredTreeDataProviders.clear();
+    state.createdStatusBarItems.length = 0;
+    state.createdWebviewPanels.length = 0;
+    state.createdTreeViews.length = 0;
+    state.registeredCodeLensProviders.length = 0;
+    state.onDidChangeConfigSubscribers.length = 0;
+    state.workspaceFolders = undefined;
+    state.activeEditor = undefined;
+    state.createdTerminals.length = 0;
+    state.confirmDestructive = undefined;
+    vi.resetModules();
+  });
+
+  it("#9 cursor giữa stmt 1 của 2 statement → runner.runQuery chạy đúng 1 stmt đầu", async () => {
+    const ctx = makeCtx();
+    // Seed active connection để runQuery qua màn QuickPick.
+    ctx.globalState.get = vi.fn((key: string) => {
+      if (key === "vsdb.connections") {
+        return [
+          {
+            id: "c1",
+            name: "c",
+            driver: "postgres",
+            host: "h",
+            port: 5432,
+            user: "u",
+            database: "d",
+          },
+        ];
+      }
+      if (key === "vsdb.activeConnection") return "c1";
+      return undefined;
+    }) as never;
+
+    const connectionMgrMod = await import("./core/connectionManager");
+    const adapter: Partial<DbAdapter> = {
+      listTables: vi.fn().mockResolvedValue([]),
+      testConnection: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    vi.spyOn(
+      connectionMgrMod.ConnectionManager.prototype,
+      "getAdapter",
+    ).mockResolvedValue(adapter as DbAdapter);
+
+    const runnerMod = await import("./core/queryRunner");
+    runSpy = vi
+      .spyOn(runnerMod.QueryRunner.prototype, "run")
+      .mockResolvedValue([]);
+
+    const ext = await import("./extension");
+    await ext.activate(ctx as never);
+
+    const runQueryFn = state.registeredCommands.get("vsdb.runQuery");
+    expect(runQueryFn).toBeDefined();
+
+    const sql = "SELECT 1;\nSELECT 2;";
+    // offset 3 = bên trong `SELECT 1` (giữa stmt 1).
+    const cursorOffset = 3;
+
+    state.activeEditor = {
+      document: {
+        languageId: "sql",
+        getText: () => sql,
+        offsetAt: (_p: unknown) => cursorOffset,
+      },
+      selection: {
+        isEmpty: true,
+        active: { line: 0, character: cursorOffset },
+        start: { line: 0, character: cursorOffset },
+        end: { line: 0, character: cursorOffset },
+      },
+      insertSnippet: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await runQueryFn!();
+
+    expect(runSpy).toHaveBeenCalled();
+    const passed = runSpy.mock.calls[0]?.[0] as ParsedStatement[];
+    expect(passed.length).toBe(1);
+    expect(passed[0]!.text).toBe("SELECT 1");
+  });
+});
+

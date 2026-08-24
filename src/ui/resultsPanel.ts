@@ -397,36 +397,83 @@ export class ResultsPanel {
     // Postgres no-PK fallback: pre-fetch ctids per row. fetchPostgresCtids
     // uses quoted identifiers + safe literal escape; ambiguous matches
     // (count > 1) are refused.
+    //
+    // TASK-006: when the result set ALREADY carries a `ctid` column (the
+    // host appends it to PG no-PK browse queries), the host reads ctid
+    // from row data FIRST — exact row address, no value-match round-trip
+    // (which is fragile against Date/numeric/boolean literal format
+    // differences and was the root cause of the user-blocking
+    // "ctid lookup failed for every dirty row" banner on newly-created
+    // no-PK tables). fetchPostgresCtids remains as a fallback when the
+    // result set has no ctid column.
     let ctidByRowId: ReadonlyMap<number, string> | undefined;
     if (
       driver === "postgres" &&
       pkColumns.length === 0 &&
       edits.length > 0
     ) {
-      const ctidRes = await this.fetchPostgresCtids(
-        tableName,
-        parsed.schema,
-        columns,
-        serverRows,
-      );
-      if (!ctidRes.ok) {
-        const reason =
-          ctidRes.reason === "ambiguous_only"
-            ? `Cannot save: postgres no-PK + ctid lookup is ambiguous (multiple rows match the dirty cells). Add a PRIMARY KEY or refine edits.`
-            : `Cannot save: postgres no-PK + ctid lookup failed for every dirty row.`;
-        this.postMessage({
-          type: "saveResult",
-          index,
-          ok: false,
-          refused: true,
-          reason,
-          errors: [reason],
-        });
-        return;
+      const ctidColIdx = columns.indexOf("ctid");
+      if (ctidColIdx >= 0 && serverRows.every((r) => r.length > ctidColIdx)) {
+        // Fast path: ctid is in the result set — read per row.
+        const map = new Map<number, string>();
+        for (let i = 0; i < serverRows.length; i++) {
+          const v = serverRows[i]?.[ctidColIdx];
+          if (v === null || v === undefined) continue; // missing → per-row skip
+          map.set(i, String(v));
+        }
+        if (map.size > 0) {
+          ctidByRowId = map;
+        } else {
+          // No row had a ctid at all — fall through to the value-match
+          // path. Empty data, ambiguity, or column always-null.
+          const ctidRes = await this.fetchPostgresCtids(
+            tableName,
+            parsed.schema,
+            columns,
+            serverRows,
+          );
+          if (!ctidRes.ok) {
+            const reason =
+              ctidRes.reason === "ambiguous_only"
+                ? `Cannot save: postgres no-PK + ctid lookup is ambiguous (multiple rows match the dirty cells). Add a PRIMARY KEY or refine edits.`
+                : `Cannot save: postgres no-PK + ctid lookup failed for every dirty row.`;
+            this.postMessage({
+              type: "saveResult",
+              index,
+              ok: false,
+              refused: true,
+              reason,
+              errors: [reason],
+            });
+            return;
+          }
+          ctidByRowId = ctidRes.map;
+        }
+      } else {
+        const ctidRes = await this.fetchPostgresCtids(
+          tableName,
+          parsed.schema,
+          columns,
+          serverRows,
+        );
+        if (!ctidRes.ok) {
+          const reason =
+            ctidRes.reason === "ambiguous_only"
+              ? `Cannot save: postgres no-PK + ctid lookup is ambiguous (multiple rows match the dirty cells). Add a PRIMARY KEY or refine edits.`
+              : `Cannot save: postgres no-PK + ctid lookup failed for every dirty row.`;
+          this.postMessage({
+            type: "saveResult",
+            index,
+            ok: false,
+            refused: true,
+            reason,
+            errors: [reason],
+          });
+          return;
+        }
+        ctidByRowId = ctidRes.map;
       }
-      ctidByRowId = ctidRes.map;
     }
-
     const built = buildSaveStatements(
       driver as Dialect,
       tableName,
@@ -524,7 +571,20 @@ export class ResultsPanel {
           busy: this.busy,
         });
       }
-      this.postMessage({ type: "saveResult", index, ok: true });
+      // Surface non-fatal warnings (e.g. per-row missing ctid on
+      // postgres no-PK — that row was skipped, others saved) so the
+      // user knows exactly which row did NOT save. Without this the
+      // webview sees a silent ok:true and the user can't tell which
+      // edits were dropped. TASK-006 #4.
+      const nonFatalWarnings = built.warnings;
+      this.postMessage({
+        type: "saveResult",
+        index,
+        ok: true,
+        ...(nonFatalWarnings.length > 0
+          ? { warnings: nonFatalWarnings, errors: nonFatalWarnings }
+          : {}),
+      });
     } finally {
       this.setBusy(false);
     }

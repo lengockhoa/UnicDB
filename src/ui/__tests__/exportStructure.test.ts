@@ -3,6 +3,7 @@ import {
   buildTableStructure,
   buildViewStructure,
   quoteIdentIfNeeded,
+  buildDatabaseStructure,
 } from "../exportStructure";
 
 describe("exportStructure — pure builder", () => {
@@ -70,5 +71,59 @@ describe("exportStructure — pure builder", () => {
     expect(txt).toContain("-- Output columns (1):");
     expect(txt).toContain("    id integer");
     expect(txt).toContain("pg_get_viewdef");
+  });
+});
+
+// ---- TASK-001 §Test Cases #1, #3 --------------------------------------------
+
+describe("buildDatabaseStructure — full-DB builder", () => {
+  // test #1 — 2 schemas, tables + views → header + DDL blocks
+  it("test #1 full DB: 2 schemas with tables + views renders header + per-schema DDL", () => {
+    const db = {
+      schemas: [{ name: "public" }, { name: "sales" }],
+      tables: [
+        { schema: "public", name: "users" },
+        { schema: "public", name: "orders" },
+        { schema: "sales", name: "deals" },
+      ],
+      views: [{ schema: "public", name: "v_active" }],
+      columns: {
+        "public.users": [
+          { name: "id", dataType: "integer", nullable: false, isPrimaryKey: true },
+          { name: "email", dataType: "text", nullable: false },
+        ],
+        "public.orders": [
+          { name: "id", dataType: "bigint", nullable: false, isPrimaryKey: true },
+        ],
+        "sales.deals": [
+          { name: "id", dataType: "uuid", nullable: false, isPrimaryKey: true },
+        ],
+        "public.v_active": [
+          { name: "id", dataType: "integer", nullable: false },
+        ],
+      },
+    };
+
+    const out = buildDatabaseStructure(db);
+
+    expect(out).toContain("-- Database structure (2 schemas, 3 tables, 1 views)");
+    expect(out).toContain("-- Schema: public");
+    expect(out).toContain("-- Schema: sales");
+    expect(out).toContain("CREATE TABLE public.users (");
+    expect(out).toContain("CREATE TABLE public.orders (");
+    expect(out).toContain("CREATE TABLE sales.deals (");
+    expect(out).toContain("-- View structure: public.v_active");
+  });
+
+  // test #3 — empty DB
+  it("test #3 empty DB → header line only, no schema/table blocks", () => {
+    const out = buildDatabaseStructure({
+      schemas: [],
+      tables: [],
+      views: [],
+      columns: {},
+    });
+
+    expect(out).toBe("-- Database structure (0 schemas, 0 tables, 0 views)");
   });
 });

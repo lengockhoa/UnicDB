@@ -5,8 +5,9 @@ import { describe, it, expect, vi } from "vitest";
 import {
   createListTablesTool,
   createDescribeTableTool,
+  createExportStructureTool,
 } from "../schemaTools";
-import type { DbAdapter, TableInfo, TableDetail } from "../../../adapters/types";
+import type { DbAdapter, TableInfo, TableDetail, ColumnInfo } from "../../../adapters/types";
 import { NotImplementedError } from "../../../adapters/types";
 import type { AdapterFactory } from "../types";
 
@@ -141,5 +142,113 @@ describe("schemaTools — frozen contract", () => {
     const out = await tool.execute({});
 
     expect(out).toBe("Tool failed: boom");
+  });
+});
+
+// ---- TASK-001 §Test Cases #2, #4, #5, #6 ------------------------------------
+
+describe("export_structure tool", () => {
+  // ---- helpers ----
+  function columnCols(): ColumnInfo[] {
+    return [
+      { name: "id", dataType: "integer", nullable: false, isPrimaryKey: true },
+    ];
+  }
+
+  // test #2 — happy path
+  it("test #2 execute returns JSON with ddl + counts (schemas=2, tables=3, views=1, skipped=0)", async () => {
+    const adapter = fakeAdapter({
+      listSchemas: vi.fn(async () => [
+        { name: "public" },
+        { name: "sales" },
+      ]),
+      listTables: vi.fn(async (schema?: string) => {
+        if (schema === "public") return [{ schema: "public", name: "users" }, { schema: "public", name: "orders" }];
+        if (schema === "sales") return [{ schema: "sales", name: "deals" }];
+        return [];
+      }),
+      listViews: vi.fn(async (schema?: string) => {
+        if (schema === "public") return [{ schema: "public", name: "v_active" }];
+        return [];
+      }),
+      listColumns: vi.fn(async () => columnCols()),
+    });
+    const f: AdapterFactory = async () => adapter;
+    const tool = createExportStructureTool(f);
+
+    const out = await tool.execute({});
+    const parsed = JSON.parse(out) as {
+      ddl: string;
+      schemas: number;
+      tables: number;
+      views: number;
+      skipped: number;
+    };
+
+    expect(parsed.ddl).toContain("-- Database structure (2 schemas, 3 tables, 1 views)");
+    expect(parsed.schemas).toBe(2);
+    expect(parsed.tables).toBe(3);
+    expect(parsed.views).toBe(1);
+    expect(parsed.skipped).toBe(0);
+    expect(adapter.listSchemas).toHaveBeenCalledWith(false);
+  });
+
+  // test #4 — mysql adapter throws NotImplementedError
+  it("test #4 mysql adapter NotImplementedError → PG-only message string", async () => {
+    const adapter = fakeAdapter({
+      listSchemas: vi.fn(async () => {
+        throw new NotImplementedError("mysql");
+      }),
+    });
+    const f: AdapterFactory = async () => adapter;
+    const tool = createExportStructureTool(f);
+
+    const out = await tool.execute({});
+
+    expect(out).toBe("export_structure is only supported for PostgreSQL connections.");
+  });
+
+  // test #5 — listColumns throws for one table → skipped=1, others still render
+  it("test #5 one table listColumns throws → skipped=1, surviving table renders in ddl", async () => {
+    const adapter = fakeAdapter({
+      listSchemas: vi.fn(async () => [{ name: "public" }]),
+      listTables: vi.fn(async () => [
+        { schema: "public", name: "orders" },
+        { schema: "public", name: "users" },
+      ]),
+      listViews: vi.fn(async () => []),
+      listColumns: vi.fn(async (table: string, _schema?: string) => {
+        if (table === "orders") throw new Error("columns boom");
+        return columnCols();
+      }),
+    });
+    const f: AdapterFactory = async () => adapter;
+    const tool = createExportStructureTool(f);
+
+    const out = await tool.execute({});
+    const parsed = JSON.parse(out) as {
+      ddl: string;
+      schemas: number;
+      tables: number;
+      views: number;
+      skipped: number;
+    };
+
+    expect(parsed.skipped).toBe(1);
+    expect(parsed.tables).toBe(2);
+    expect(parsed.ddl).toContain("CREATE TABLE public.users (");
+    expect(parsed.ddl).not.toContain("CREATE TABLE public.orders");
+  });
+
+  // test #6 — factory resolves null
+  it("test #6 factory resolves null → no-connection message string", async () => {
+    const f: AdapterFactory = async () => null;
+    const tool = createExportStructureTool(f);
+
+    const out = await tool.execute({});
+
+    expect(out).toBe(
+      "No active connection. Connect to a database first, then retry.",
+    );
   });
 });

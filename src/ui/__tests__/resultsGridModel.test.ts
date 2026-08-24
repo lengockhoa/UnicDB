@@ -9,6 +9,8 @@ import {
   shouldResetGrid,
   footerText,
   formatCell,
+  serializeTsv,
+  serializeCsv,
   type StatementResult,
 } from "../resultsGridModel";
 
@@ -363,5 +365,86 @@ describe("formatCell", () => {
     expect(formatCell(42)).toBe("42");
     expect(formatCell("hello")).toBe("hello");
     expect(formatCell(true)).toBe("true");
+  });
+});
+
+// =============================================================================
+// 11. TASK-006 #5 — hidden columns excluded from export TSV/CSV
+// =============================================================================
+// The ctid column is a postgres-only addressing hint the host carries in the
+// result set so no-PK saves have an exact row reference. It MUST NOT leak
+// into user-facing exports (TSV, CSV) — users would not understand what
+// "(0,1)" means in their spreadsheet. The grid hides it visually (webview
+// concern) AND the host serializers strip it.
+
+describe("hidden columns excluded from export (TASK-006 #5)", () => {
+  it("serializeTsv with hiddenColumns: ['ctid'] → header + rows omit ctid", () => {
+    const columns = ["name", "created_at", "ctid"];
+    const rows: unknown[][] = [
+      ["alice", "2024-01-01T00:00:00.000Z", "(0,1)"],
+      ["bob", "2024-02-02T00:00:00.000Z", "(0,2)"],
+    ];
+    const out = serializeTsv(columns, rows, {
+      includeHeader: true,
+      tableName: "t",
+      pkColumns: [],
+      hiddenColumns: ["ctid"],
+    });
+    const lines = out.split("\n");
+    // Header has only name + created_at — no ctid column.
+    expect(lines[0]).toBe("name\tcreated_at");
+    // Data rows have 2 cells (no trailing tab with "(0,1)").
+    expect(lines[1]).toBe("alice\t2024-01-01T00:00:00.000Z");
+    expect(lines[2]).toBe("bob\t2024-02-02T00:00:00.000Z");
+    // The ctid value never appears anywhere in the output.
+    expect(out).not.toContain("(0,1)");
+    expect(out).not.toContain("(0,2)");
+    expect(out).not.toMatch(/\bctid\b/);
+  });
+
+  it("serializeCsv with hiddenColumns: ['ctid'] → header + rows omit ctid (RFC4180)", () => {
+    const columns = ["name", "ctid"];
+    const rows: unknown[][] = [
+      ["alice", "(0,1)"],
+      ["bob, with comma", "(0,2)"],
+    ];
+    const out = serializeCsv(columns, rows, {
+      includeHeader: true,
+      tableName: "t",
+      pkColumns: [],
+      hiddenColumns: ["ctid"],
+    });
+    const lines = out.split("\n");
+    expect(lines[0]).toBe("name");
+    expect(lines[1]).toBe("alice");
+    // RFC4180 still applies for the visible columns.
+    expect(lines[2]).toBe('"bob, with comma"');
+    // ctid value never appears.
+    expect(out).not.toContain("(0,1)");
+    expect(out).not.toContain("(0,2)");
+    expect(out).not.toMatch(/\bctid\b/);
+  });
+
+  it("hiddenColumns: undefined → behaves as before (no columns hidden)", () => {
+    const columns = ["name", "ctid"];
+    const rows: unknown[][] = [["alice", "(0,1)"]];
+    const out = serializeTsv(columns, rows, {
+      includeHeader: true,
+      tableName: "t",
+      pkColumns: [],
+    });
+    expect(out).toBe("name\tctid\nalice\t(0,1)");
+  });
+
+  it("hiddenColumns: [] → behaves as before (no columns hidden)", () => {
+    const columns = ["name", "ctid"];
+    const rows: unknown[][] = [["alice", "(0,1)"]];
+    const out = serializeTsv(columns, rows, {
+      includeHeader: true,
+      tableName: "t",
+      pkColumns: [],
+      hiddenColumns: [],
+    });
+    expect(out).toBe("name\tctid\nalice\t(0,1)");
   });
 });

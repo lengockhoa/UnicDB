@@ -240,4 +240,27 @@ describe("VsdbCodeLensProvider — provideCodeLenses", () => {
     cb({ affectsConfiguration: (s: string) => s === "vsdb.unrelated" });
     expect(fireSpy).not.toHaveBeenCalled();
   });
+  // #8 regression-lock (TASK-005 cycle R): mỗi lens range start/end ===
+  // positionAt(stmt.start) / positionAt(stmt.end) — không lệch ký tự.
+  it("#8 lens range = positionAt(stmt.start/end); không lệch ký tự so với text", () => {
+    const provider = new VsdbCodeLensProvider();
+    const sql = "SELECT 1;\nSELECT 2;\nSELECT 3;";
+    const doc = fakeDoc("sql", sql.split("\n"));
+    const lenses = provider.provideCodeLenses(doc as never) as Array<{
+      range: { start: { line: number; character: number }; end: { line: number; character: number } };
+      command: { arguments: ParsedStatement[] };
+    }>;
+    expect(lenses.length).toBe(3);
+    for (const l of lenses) {
+      const stmt = l.command.arguments[0] as ParsedStatement;
+      const expectedStart = doc.positionAt(stmt.start);
+      const expectedEnd = doc.positionAt(stmt.end);
+      expect(l.range.start.line).toBe(expectedStart.line);
+      expect(l.range.start.character).toBe(expectedStart.character);
+      expect(l.range.end.line).toBe(expectedEnd.line);
+      expect(l.range.end.character).toBe(expectedEnd.character);
+      // Invariant: substring khớp text.
+      expect(sql.substring(stmt.start, stmt.end)).toBe(stmt.text);
+    }
+  });
 });

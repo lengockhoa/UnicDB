@@ -411,6 +411,32 @@ export interface SerializeOptions {
   /** When set, sql-where uses these rows instead of `rows`. Other formats
    * ignore this — they always operate on the full dataset. */
   selectedRows?: unknown[][];
+  /** Column names to exclude from the rendered output. Used for postgres
+   * `ctid` addressing hint and any other column the host carries but the
+   * user must not see (TASK-006). Skip applies to all serializers
+   * (TSV/CSV/JSON/XML/SQL) so the column is uniformly hidden. */
+  hiddenColumns?: string[];
+}
+
+/** Build a Set<number> of indices to KEEP from `columns` — every column
+ * NOT in `hiddenColumns`. Returns null when no columns are hidden so the
+ * caller can fast-path the unfiltered case. */
+function keepIndices(
+  columns: string[],
+  hiddenColumns?: string[],
+): { indices: number[]; hidden: ReadonlySet<string> } | null {
+  if (!hiddenColumns || hiddenColumns.length === 0) return null;
+  const hidden = new Set(hiddenColumns);
+  let any = false;
+  const indices: number[] = [];
+  for (let i = 0; i < columns.length; i++) {
+    if (hidden.has(columns[i])) {
+      any = true;
+      continue;
+    }
+    indices.push(i);
+  }
+  return any ? { indices, hidden } : null;
 }
 
 function headerLine(
@@ -429,7 +455,6 @@ function dataLines(
 ): string[] {
   return rows.map((row) => row.map(cells).join(joiner));
 }
-
 /** Serialize to TSV — tab-separated with optional header. Uses formatCell
  * so bigint/Date/null render the same on screen as in the export. */
 export function serializeTsv(
@@ -437,6 +462,17 @@ export function serializeTsv(
   rows: unknown[][],
   opts: SerializeOptions,
 ): string {
+  const keep = keepIndices(columns, opts.hiddenColumns);
+  if (keep) {
+    const out: string[] = [];
+    if (opts.includeHeader) {
+      out.push(keep.indices.map((i) => formatCell(columns[i])).join("\t"));
+    }
+    for (const row of rows) {
+      out.push(keep.indices.map((i) => formatCell(row[i] ?? null)).join("\t"));
+    }
+    return out.join("\n");
+  }
   const out = [
     ...headerLine(columns, formatCell, "\t", opts.includeHeader),
     ...dataLines(rows, formatCell, "\t"),
@@ -450,6 +486,17 @@ export function serializeCsv(
   rows: unknown[][],
   opts: SerializeOptions,
 ): string {
+  const keep = keepIndices(columns, opts.hiddenColumns);
+  if (keep) {
+    const out: string[] = [];
+    if (opts.includeHeader) {
+      out.push(keep.indices.map((i) => csvEscape(columns[i])).join(","));
+    }
+    for (const row of rows) {
+      out.push(keep.indices.map((i) => csvEscape(row[i] ?? null)).join(","));
+    }
+    return out.join("\n");
+  }
   const out = [
     ...headerLine(columns, csvEscape, ",", opts.includeHeader),
     ...dataLines(rows, csvEscape, ","),
@@ -472,15 +519,16 @@ export function serializeXml(
   opts: SerializeOptions,
 ): string {
   const decl = '<?xml version="1.0" encoding="UTF-8"?>';
+  const keep = keepIndices(columns, opts.hiddenColumns);
+  const colIdx = keep ? keep.indices : columns.map((_, i) => i);
   const body = rows
     .map((row) => {
-      const cells = columns
-        .map((c, j) => `<col name="${xmlEscape(c)}">${xmlEscape(formatCell(row[j] ?? null))}</col>`)
+      const cells = colIdx
+        .map((i) => `<col name="${xmlEscape(columns[i])}">${xmlEscape(formatCell(row[i] ?? null))}</col>`)
         .join("");
       return `<row>${cells}</row>`;
     })
     .join("");
-  void opts; // opts unused for XML — included for API symmetry
   return `${decl}\n<rows>${body}</rows>`;
 }
 
@@ -490,8 +538,11 @@ export function serializeJson(
   rows: unknown[][],
   opts: SerializeOptions,
 ): string {
-  void opts; // unused — included for API symmetry
-  return JSON.stringify({ columns, rows });
+  const keep = keepIndices(columns, opts.hiddenColumns);
+  if (!keep) return JSON.stringify({ columns, rows });
+  const cols = keep.indices.map((i) => columns[i]);
+  const rs = rows.map((row) => keep.indices.map((i) => row[i] ?? null));
+  return JSON.stringify({ columns: cols, rows: rs });
 }
 
 /** Serialize to INSERT statements. `multirow=true` emits ONE INSERT with
@@ -502,14 +553,25 @@ export function serializeSqlInserts(
   opts: SerializeOptions & { multirow?: boolean },
 ): string {
   if (rows.length === 0) return "";
-  const colList = columns.join(", ");
+  const keep = keepIndices(columns, opts.hiddenColumns);
+  const visibleCols = keep ? keep.indices.map((i) => columns[i]) : columns;
+  const colList = visibleCols.join(", ");
   if (opts.multirow) {
-    const tuples = rows.map((row) => `(${row.map(sqlLiteral).join(", ")})`);
+    const tuples = rows.map(
+      (row) =>
+        `(${
+          keep
+            ? keep.indices.map((i) => sqlLiteral(row[i] ?? null)).join(", ")
+            : row.map(sqlLiteral).join(", ")
+        })`,
+    );
     return `INSERT INTO ${opts.tableName} (${colList}) VALUES ${tuples.join(", ")};`;
   }
   return rows
     .map((row) => {
-      const vals = row.map(sqlLiteral).join(", ");
+      const vals = keep
+        ? keep.indices.map((i) => sqlLiteral(row[i] ?? null)).join(", ")
+        : row.map(sqlLiteral).join(", ");
       return `INSERT INTO ${opts.tableName} (${colList}) VALUES (${vals});`;
     })
     .join("\n");
@@ -537,9 +599,16 @@ export function serializeSqlUpdates(
   // schema drift rather than throw, matching the rest of the file.
   const colIdx = new Map<string, number>();
   for (let i = 0; i < columns.length; i++) colIdx.set(columns[i], i);
-  const pkCols = opts.pkColumns.length > 0 ? opts.pkColumns : columns;
+  // TASK-006: hidden columns (e.g. postgres ctid) must NOT appear in
+  // generated SQL — the user never sees them in the grid, so an
+  // exported `UPDATE t SET ctid='(0,1)' WHERE …` is meaningless.
+  const hidden = new Set(opts.hiddenColumns ?? []);
+  const visibleCols = columns.filter((c) => !hidden.has(c));
+  const pkCols = (opts.pkColumns.length > 0 ? opts.pkColumns : visibleCols).filter(
+    (c) => !hidden.has(c),
+  );
   const pkSet = new Set(pkCols);
-  const setCols = columns.filter((c) => !pkSet.has(c));
+  const setCols = visibleCols.filter((c) => !pkSet.has(c));
   const out: string[] = [];
   rows.forEach((row, rowIdx) => {
     const setClause = setCols
@@ -589,7 +658,12 @@ export function serializeWhereClause(
   // row, and a missing PK column no longer silently yields `col=NULL`.
   const colIdx = new Map<string, number>();
   for (let i = 0; i < columns.length; i++) colIdx.set(columns[i], i);
-  const keyCols = opts.pkColumns.length > 0 ? opts.pkColumns : columns;
+  // TASK-006: skip hidden columns (postgres ctid) so the exported
+  // `WHERE …` is built from user-visible PK columns only.
+  const hidden = new Set(opts.hiddenColumns ?? []);
+  const keyCols = (opts.pkColumns.length > 0 ? opts.pkColumns : columns).filter(
+    (c) => !hidden.has(c),
+  );
   const groups = useRows.map((row) => {
     const parts = keyCols
       .map((c) => {

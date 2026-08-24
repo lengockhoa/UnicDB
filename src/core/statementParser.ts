@@ -476,8 +476,13 @@ function isMeaningful(text: string): boolean {
 // ---- statementAtCursor -------------------------------------------------------
 
 /**
- * Trả về statement chứa `offset`. Nếu offset nằm trước statement đầu (vd whitespace đầu),
- * trả về statement đầu. Nếu không có statement nào (file rỗng/whitespace) → null.
+ * Trả về statement chứa `offset`. Nếu offset nằm trong statement → statement đó.
+ * Nếu offset nằm trong **gap** giữa 2 statement (whitespace/comment) → statement
+ * gần nhất TRƯỚC cursor (user intent "chạy statement chứa con trỏ / statement đã viết
+ * xong trước đó"). Nếu offset trước statement đầu → statement đầu. Nếu không có
+ * statement nào → null.
+ *
+ * TASK-005 cycle R: rule mới thay cho fallback cũ (`stmts[stmts.length-1]` khi gap).
  */
 export function statementAtCursor(
   sql: string,
@@ -488,12 +493,19 @@ export function statementAtCursor(
 
   const clamped = Math.max(0, Math.min(offset, sql.length));
 
+  // Trường hợp 1: offset nằm trong range của 1 statement (kể cả = start) → stmt đó.
   for (const s of stmts) {
-    // [start, end) — nếu clamped nằm trong range (kể cả = start).
     if (clamped >= s.start && clamped < s.end) return s;
   }
-  // Offset vượt quá statement cuối → trả về statement cuối.
-  return stmts[stmts.length - 1];
+
+  // Trường hợp 2: gap giữa 2 statement hoặc trước statement đầu → statement
+  // gần nhất TRƯỚC cursor; nếu không có (cursor trước stmt đầu) → stmt đầu.
+  let best: ParsedStatement | null = null;
+  for (const s of stmts) {
+    if (s.end <= clamped) best = s;
+    else break;
+  }
+  return best ?? stmts[0];
 }
 
 function isWhitespace(ch: string): boolean {
