@@ -84,3 +84,37 @@ Ghi chú mapping (review #3): module `saveStatements` sống ở `src/core/saveS
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: Exec-T7
+SUMMARY: Implemented Excel-style dirty highlight (cell + new-row + deleted-row), per-row error handling in commit flow (rowErrors banner + keep errored rows dirty), and the no-op guard test. Added CSS classes, AG Grid cellClassRules + getRowClass, and EditState predicate APIs.
+TEST_PLAN_FOLLOWED: inline — wrote 8 pure-logic EditState tests + 5 webview-bundle tests covering #1-#5 from the Test Cases table; #6 ran as regression net.
+FILES_CHANGED:
+  - src/ui/messages.ts: SaveResultMessage: added `rowErrors?: Array<{rowId:number; error:string}>` field.
+  - src/ui/resultsGridModel.ts: EditState: added `isCellDirty`, `isRowNew`, `isRowDeleted`, `clearExceptRowIds` + helper `isRowMarker`.
+  - webview/main.ts: SaveResultMsg mirror; renderGrid baseCols gained `cellClassRules` reading editState; createGrid gained `getRowClass` reading isRowNew/isRowDeleted; onCellValueChangedHandler / onAddRowClick / onDeleteRowClick refresh rows/cells after edit so highlights render live; handleSaveResult handles `rowErrors` (per-row keep + banner with row ids + clear highlight on success).
+  - webview/styles.css: added `.vsdb-cell-dirty` (orange bg), `.vsdb-row-new .ag-cell` (light blue bg), `.vsdb-row-deleted .ag-cell` (line-through + opacity 0.6).
+  - src/ui/__tests__/resultsGridModelEdit.test.ts: appended 3 new describe blocks (clearExceptRowIds, row markers, isCellDirty) — 8 new tests.
+  - tests/webviewEditHighlight.test.ts (NEW): 5 tests covering cell-dirty class, row-new/row-deleted classes with CSS line-through, no-op commit, rowErrors banner + keep errored dirty, saveResult ok clears highlights.
+TESTS_ADDED:
+  - tests/webviewEditHighlight.test.ts: 1. cell-dirty, 2. row-new/row-deleted + line-through CSS, 3. commit no-op, 4. rowErrors banner + keep errored, 5. saveResult ok clears.
+  - src/ui/__tests__/resultsGridModelEdit.test.ts: clearExceptRowIds (3), row markers (3), isCellDirty (2).
+VERIFICATION:
+  command: npx vitest run tests/webviewEditHighlight.test.ts src/ui/__tests__/resultsGridModelEdit.test.ts src/adapters/__tests__/saveStatementsInline.test.ts
+  result: 33 pass / 0 fail / exit 0
+  output_excerpt: |
+    ✓ src/adapters/__tests__/saveStatementsInline.test.ts  (8 tests)
+    ✓ src/ui/__tests__/resultsGridModelEdit.test.ts  (20 tests)
+    ✓ tests/webviewEditHighlight.test.ts  (5 tests)
+    Test Files  3 passed (3)
+         Tests  33 passed (33)
+  command2: npx tsc --noEmit
+  result2: exit 0 (clean)
+  regression: webviewSaveEdits.test.ts (4) + webviewEdit.test.ts (14) + resultsGridModel* (111) all pass — no regressions.
+ISSUES: EditState.clearExceptRowIds had to snapshot keys into an array before deleting (Map spec leaves iteration undefined after delete — same pattern as ArrayList). getRowClass doesn't re-evaluate on `refreshCells`; `onAddRowClick` now marks dirty BEFORE applyTransaction (so first render picks up `vsdb-row-new`), `onDeleteRowClick` uses `redrawRows` (not refreshCells) for the row-level class.
+HANDOFF_TO_REVIEWER: yes — wave-2 batch A. Disjoint with T2/T4 (those touched different files per wave plan).
+NEXT: ready for review. TASK-008 (unified undo stack) will consume `EditState.isCellDirty` + the marker predicates (no API change needed).

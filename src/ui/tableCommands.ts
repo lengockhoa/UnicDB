@@ -37,7 +37,7 @@ import {
 import { NewTableForm } from "./newTableForm";
 import { SchemaForm } from "./schemaForm";
 import { buildPostmanPayload } from "./postmanPayload";
-import { buildTableStructure, buildViewStructure } from "./exportStructure";
+import { buildTableStructure, buildViewStructure, buildDatabaseStructure, type ExportColumn } from "./exportStructure";
 import {
   SchemaTreeProvider,
   revealTableNode,
@@ -574,6 +574,107 @@ export function registerTableCommands(deps: RegisterDeps): void {
           const msg = err instanceof Error ? err.message : String(err);
           void vscode.window.showErrorMessage(
             `Export Structure failed: ${msg}`,
+          );
+        }
+      },
+    ),
+  );
+  // TASK-004 — vsdb.exportAllStructures: copy whole-DB DDL (all schemas →
+  // CREATE TABLE / CREATE VIEW) to clipboard. Connection/schema node arg or
+  // palette (no arg → mgr.getActive()). Postgres-only; non-PG → info guard.
+  // Per-object listColumns throw → skip that object (không blank whole export).
+  // Status bar reports total objects successfully copied.
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "vsdb.exportAllStructures",
+      async (arg?: unknown) => {
+        // Resolve target conn: connection node (meta.connection) | schema node
+        // (meta.connection) | palette → mgr.getActive().
+        let conn: ConnectionConfig | null = null;
+        let targetSchema: string | null = null;
+        if (arg && typeof arg === "object") {
+          const meta = (arg as {
+            meta?: { connection?: ConnectionConfig; schema?: string };
+          }).meta;
+          if (meta?.connection) conn = meta.connection;
+          if (meta?.schema) targetSchema = meta.schema;
+        }
+        if (!conn) conn = mgr.getActive();
+        if (!conn) {
+          void vscode.window.showErrorMessage(
+            "Export All Structures failed: no active connection. Select one first.",
+          );
+          return;
+        }
+        if (conn.driver !== "postgres") {
+          void vscode.window.showInformationMessage(
+            "Export All Structures: PostgreSQL connections only",
+          );
+          return;
+        }
+
+        try {
+          const adapter = await mgr.getAdapterFor(conn);
+          const allSchemas = await adapter.listSchemas(false);
+          const schemas = targetSchema
+            ? allSchemas.filter((s) => s.name === targetSchema)
+            : allSchemas;
+          const tables: Array<{ schema: string; name: string }> = [];
+          const views: Array<{ schema: string; name: string }> = [];
+          const columns: Record<string, ExportColumn[]> = {};
+
+          const collectColumns = async (
+            schema: string,
+            name: string,
+          ): Promise<ExportColumn[] | null> => {
+            try {
+              const cols = await adapter.listColumns(name, schema);
+              return cols.map((c) => ({
+                name: c.name,
+                dataType: c.dataType,
+                nullable: c.nullable,
+                isPrimaryKey: c.isPrimaryKey,
+              }));
+            } catch {
+              return null;
+            }
+          };
+
+          let renderedObjects = 0;
+          for (const s of schemas) {
+            const schemaTables = await adapter.listTables(s.name);
+            for (const t of schemaTables) {
+              const cols = await collectColumns(t.schema, t.name);
+              if (!cols) continue;
+              tables.push({ schema: t.schema, name: t.name });
+              columns[`${t.schema}.${t.name}`] = cols;
+              renderedObjects += 1;
+            }
+            const schemaViews = await adapter.listViews(s.name);
+            for (const v of schemaViews) {
+              const cols = await collectColumns(v.schema, v.name);
+              if (!cols) continue;
+              views.push({ schema: v.schema, name: v.name });
+              columns[`${v.schema}.${v.name}`] = cols;
+              renderedObjects += 1;
+            }
+          }
+
+          const text = buildDatabaseStructure({
+            schemas: schemas.map((s) => ({ name: s.name })),
+            tables,
+            views,
+            columns,
+          });
+          await vscode.env.clipboard.writeText(text);
+          void vscode.window.setStatusBarMessage(
+            `VSDB: database structure copied (${renderedObjects} objects)`,
+            2000,
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          void vscode.window.showErrorMessage(
+            `Export All Structures failed: ${msg}`,
           );
         }
       },

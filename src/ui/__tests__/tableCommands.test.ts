@@ -1106,3 +1106,233 @@ describe("tableCommands — TASK-008 vsdb.postmanPayload", () => {
   });
 });
 });
+
+// =============================================================================
+// TASK-004 — vsdb.exportAllStructures: copy whole-DB DDL to clipboard.
+// connection/schema node arg → introspect every user schema (or single schema
+// if node is schema) → buildDatabaseStructure → clipboard. PG-only; non-PG
+// info guard; no active conn → error; per-object listColumns throw → skipped.
+// =============================================================================
+describe("tableCommands — TASK-004 vsdb.exportAllStructures", () => {
+  it("#1 happy: connection node PG → clipboard full-DB DDL + statusbar message", async () => {
+    const mgr = makeFakeMgr({
+      tables: [
+        { name: "users", schema: "public" },
+        { name: "orders", schema: "public" },
+      ],
+    });
+    (mgr.adapter.listSchemas as Mock).mockResolvedValue([{ name: "public" }]);
+    (mgr.adapter.listViews as Mock).mockResolvedValue([]);
+    (mgr.adapter.listColumns as Mock).mockImplementation(
+      async (name: string, schema: string) => {
+        if (name === "users" && schema === "public") {
+          return [
+            { name: "id", dataType: "integer", nullable: false, isPrimaryKey: true },
+            { name: "email", dataType: "varchar", nullable: false },
+          ];
+        }
+        if (name === "orders" && schema === "public") {
+          return [
+            { name: "id", dataType: "integer", nullable: false, isPrimaryKey: true },
+          ];
+        }
+        return [];
+      },
+    );
+    const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
+    registerSchemaTreeProvider(provider);
+    registerTableCommands({
+      mgr: mgr.stub as unknown as ConnectionManager,
+      tree: provider,
+      treeView: treeView as unknown as TreeView<unknown>,
+      context: { subscriptions: [] } as unknown as ExtensionContext,
+    });
+    const connNode: VsdbNode = {
+      label: "Test PG",
+      contextValue: "connection",
+      collapsible: 0,
+      meta: { connection: mgr.cfg },
+    };
+    vscode.env.clipboard.writeText.mockClear();
+    await state.registeredCommands.get("vsdb.exportAllStructures")!(connNode);
+    const writes = (vscode.env.clipboard.writeText as Mock).mock.calls;
+    expect(writes.length).toBe(1);
+    const text = writes[0][0] as string;
+    expect(text.startsWith("-- Database structure (1 schemas, 2 tables, 0 views)")).toBe(true);
+    expect(text).toContain("CREATE TABLE public.users");
+    expect(state.statusMessages.some((m) => /database structure copied \(2 objects\)/.test(m.text))).toBe(true);
+  });
+
+  it("#2 non-PG (mysql) connection node → guard info; no clipboard write", async () => {
+    const mgr = makeFakeMgr({ driver: "mysql" });
+    const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
+    registerSchemaTreeProvider(provider);
+    registerTableCommands({
+      mgr: mgr.stub as unknown as ConnectionManager,
+      tree: provider,
+      treeView: treeView as unknown as TreeView<unknown>,
+      context: { subscriptions: [] } as unknown as ExtensionContext,
+    });
+    const connNode: VsdbNode = {
+      label: "MySQL",
+      contextValue: "connection",
+      collapsible: 0,
+      meta: { connection: mgr.cfg },
+    };
+    vscode.env.clipboard.writeText.mockClear();
+    await state.registeredCommands.get("vsdb.exportAllStructures")!(connNode);
+    expect(
+      state.infoMessages.some((m) =>
+        /Export All Structures.*PostgreSQL connections only/.test(m),
+      ),
+    ).toBe(true);
+    expect(vscode.env.clipboard.writeText).not.toHaveBeenCalled();
+  });
+
+  it("#3 empty DB (0 user schemas) → header line only + status 0 objects; no throw", async () => {
+    const mgr = makeFakeMgr();
+    (mgr.adapter.listSchemas as Mock).mockResolvedValue([]);
+    const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
+    registerSchemaTreeProvider(provider);
+    registerTableCommands({
+      mgr: mgr.stub as unknown as ConnectionManager,
+      tree: provider,
+      treeView: treeView as unknown as TreeView<unknown>,
+      context: { subscriptions: [] } as unknown as ExtensionContext,
+    });
+    const connNode: VsdbNode = {
+      label: "Empty PG",
+      contextValue: "connection",
+      collapsible: 0,
+      meta: { connection: mgr.cfg },
+    };
+    vscode.env.clipboard.writeText.mockClear();
+    await state.registeredCommands.get("vsdb.exportAllStructures")!(connNode);
+    const writes = (vscode.env.clipboard.writeText as Mock).mock.calls;
+    expect(writes.length).toBe(1);
+    expect(writes[0][0]).toBe(
+      "-- Database structure (0 schemas, 0 tables, 0 views)",
+    );
+    expect(state.statusMessages.some((m) => /database structure copied \(0 objects\)/.test(m.text))).toBe(true);
+    expect(state.errorMessages).toHaveLength(0);
+  });
+
+  it("#5 1 listColumns throw → skipped, rest copied; no error message", async () => {
+    const mgr = makeFakeMgr({
+      tables: [
+        { name: "broken", schema: "public" },
+        { name: "good", schema: "public" },
+      ],
+    });
+    (mgr.adapter.listSchemas as Mock).mockResolvedValue([{ name: "public" }]);
+    (mgr.adapter.listViews as Mock).mockResolvedValue([]);
+    (mgr.adapter.listColumns as Mock).mockImplementation(
+      async (name: string, schema: string) => {
+        if (name === "broken") throw new Error("permission denied");
+        if (name === "good" && schema === "public") {
+          return [{ name: "id", dataType: "integer", nullable: false }];
+        }
+        return [];
+      },
+    );
+    const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
+    registerSchemaTreeProvider(provider);
+    registerTableCommands({
+      mgr: mgr.stub as unknown as ConnectionManager,
+      tree: provider,
+      treeView: treeView as unknown as TreeView<unknown>,
+      context: { subscriptions: [] } as unknown as ExtensionContext,
+    });
+    const connNode: VsdbNode = {
+      label: "Test PG",
+      contextValue: "connection",
+      collapsible: 0,
+      meta: { connection: mgr.cfg },
+    };
+    vscode.env.clipboard.writeText.mockClear();
+    await state.registeredCommands.get("vsdb.exportAllStructures")!(connNode);
+    const writes = (vscode.env.clipboard.writeText as Mock).mock.calls;
+    expect(writes.length).toBe(1);
+    const text = writes[0][0] as string;
+    expect(text).toContain("CREATE TABLE public.good");
+    expect(text).not.toContain("CREATE TABLE public.broken");
+    expect(state.errorMessages).toHaveLength(0);
+    expect(text.startsWith("-- Database structure (1 schemas, 1 tables, 0 views)")).toBe(true);
+  });
+
+  it("#6 no active connection (palette invoke, mgr.getActive() null) → error; no clipboard write; no unhandled rejection", async () => {
+    const mgr = makeFakeMgr();
+    const fakeMgr = {
+      listConnections: () => [],
+      getActive: () => null,
+      onDidChangeActive: () => ({ dispose: () => {} }),
+      getAdapter: () => Promise.resolve(mgr.adapter),
+      getAdapterFor: () => Promise.resolve(mgr.adapter),
+    } as unknown as ConnectionManager;
+    const provider = new SchemaTreeProvider(fakeMgr);
+    registerSchemaTreeProvider(provider);
+    const treeView: MockTreeView = { reveal: vi.fn(), dispose: vi.fn() };
+    registerTableCommands({
+      mgr: fakeMgr,
+      tree: provider,
+      treeView: treeView as unknown as TreeView<unknown>,
+      context: { subscriptions: [] } as unknown as ExtensionContext,
+    });
+    vscode.env.clipboard.writeText.mockClear();
+    await state.registeredCommands.get("vsdb.exportAllStructures")!();
+    expect(vscode.env.clipboard.writeText).not.toHaveBeenCalled();
+    const messages = [
+      ...state.errorMessages,
+      ...state.infoMessages,
+    ].join("\n");
+    expect(/no.*(connection|active)/i.test(messages)).toBe(true);
+  });
+
+  it("#6b factory getAdapterFor rejects → error message; no clipboard write; no unhandled rejection", async () => {
+    const mgr = makeFakeMgr();
+    const fakeMgr = {
+      listConnections: () => [mgr.cfg],
+      getActive: () => mgr.cfg,
+      onDidChangeActive: () => ({ dispose: () => {} }),
+      getAdapter: () => Promise.resolve(mgr.adapter),
+      getAdapterFor: () => Promise.reject(new Error("factory exploded")),
+    } as unknown as ConnectionManager;
+    const provider = new SchemaTreeProvider(fakeMgr);
+    registerSchemaTreeProvider(provider);
+    const treeView: MockTreeView = { reveal: vi.fn(), dispose: vi.fn() };
+    registerTableCommands({
+      mgr: fakeMgr,
+      tree: provider,
+      treeView: treeView as unknown as TreeView<unknown>,
+      context: { subscriptions: [] } as unknown as ExtensionContext,
+    });
+    vscode.env.clipboard.writeText.mockClear();
+    await state.registeredCommands.get("vsdb.exportAllStructures")!();
+    expect(vscode.env.clipboard.writeText).not.toHaveBeenCalled();
+    expect(
+      state.errorMessages.some((m) => /Export All Structures failed/.test(m)),
+    ).toBe(true);
+  });
+
+  it("#7 wiring: registeredCommands has vsdb.exportAllStructures + package.json menu covers connection|schema", () => {
+    const mgr = makeFakeMgr();
+    const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
+    registerSchemaTreeProvider(provider);
+    registerTableCommands({
+      mgr: mgr.stub as unknown as ConnectionManager,
+      tree: provider,
+      treeView: treeView as unknown as TreeView<unknown>,
+      context: { subscriptions: [] } as unknown as ExtensionContext,
+    });
+    expect(state.registeredCommands.has("vsdb.exportAllStructures")).toBe(true);
+    const pkgPath = path.join(__dirname, "..", "..", "..", "package.json");
+    const pkgJson = fs.readFileSync(pkgPath, "utf8");
+    interface MenuItem { command: string; when: string; }
+    const menuItems = JSON.parse(pkgJson)
+      .contributes.menus["view/item/context"] as MenuItem[];
+    const entry = menuItems.find((m) => m.command === "vsdb.exportAllStructures");
+    expect(entry).toBeDefined();
+    expect(entry!.when).toMatch(/viewItem == connection/);
+    expect(entry!.when).toMatch(/viewItem == schema/);
+  });
+});

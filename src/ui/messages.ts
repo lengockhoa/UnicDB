@@ -109,5 +109,15 @@ export interface SaveResultMessage {
    */
   refused?: boolean;
   reason?: string;
+  /**
+   * TASK-007 — per-row error report. When the host runs each generated
+   * UPDATE/INSERT/DELETE statement against the DB and at least one fails,
+   * it pairs the failing row's stable id with the driver error string so
+   * the webview can KEEP that row's edits dirty (for retry) while clearing
+   * successful rows. Older hosts (pre-T7) do not send this field; the
+   * webview treats absence as "no per-row info, banner shows joined
+   * `errors[]` and the user fixes manually".
+   */
+  rowErrors?: Array<{ rowId: number; error: string }>;
 }
 

@@ -1470,3 +1470,46 @@ describe("TASK-005 — runQueryFromEditor cursor mode", () => {
   });
 });
 
+// =============================================================================
+// TASK-004 — vsdb.exportAllStructures wiring smoke: command id registered by
+// activate(), package.json contributes.commands declares it, activationEvents
+// has the onCommand entry, contributes.menus["view/item/context"] has an
+// entry covering connection + schema viewItems. Lock-in match (Reviewer block).
+// =============================================================================
+describe("TASK-004 — vsdb.exportAllStructures wiring", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+  });
+
+  it("Test #4 — vsdb.exportAllStructures được register trong subscriptions khi activate()", () => {
+    const ctx = makeCtx();
+    activate(ctx as never);
+    expect(state.registeredCommands.has("vsdb.exportAllStructures")).toBe(true);
+  });
+
+  it("Test #4b — package.json contributes.commands declares vsdb.exportAllStructures", () => {
+    const cmds = (pkgJson.contributes as { commands: Array<{ command: string; title: string }> })
+      .commands;
+    const entry = cmds.find((c) => c.command === "vsdb.exportAllStructures");
+    expect(entry).toBeDefined();
+    expect(entry!.title).toMatch(/Export All Structures/i);
+  });
+
+  it("Test #4c — package.json activationEvents contains onCommand:vsdb.exportAllStructures", () => {
+    const evts = pkgJson.activationEvents as string[];
+    expect(evts).toContain("onCommand:vsdb.exportAllStructures");
+  });
+
+  it("Test #4d — package.json view/item/context menu covers connection + schema viewItem", () => {
+    const menuItems = (
+      (pkgJson.contributes as { menus: Record<string, Array<{ command: string; when: string }>> })
+        .menus["view/item/context"] ?? []
+    );
+    const entry = menuItems.find((m) => m.command === "vsdb.exportAllStructures");
+    expect(entry).toBeDefined();
+    expect(entry!.when).toMatch(/view == vsdb\.schemaTree/);
+    expect(entry!.when).toMatch(/viewItem == connection/);
+    expect(entry!.when).toMatch(/viewItem == schema/);
+  });
+});

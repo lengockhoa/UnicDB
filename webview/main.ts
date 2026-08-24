@@ -83,6 +83,13 @@ interface SaveResultMsg {
    *  map clears; `reason` is the banner copy. */
   refused?: boolean;
   reason?: string;
+  /** TASK-007 — per-row error report. When the host runs each generated
+   *  UPDATE/INSERT/DELETE statement and at least one fails, it pairs the
+   *  failing row's stable id with the driver error string so the webview
+   *  can KEEP that row's edits dirty (for retry) while clearing the
+   *  successful rows. Older hosts (pre-T7) don't send this — webview
+   *  then falls back to "N rows failed" general banner. */
+  rowErrors?: Array<{ rowId: number; error: string }>;
 }
 
 type HostMsg = StateMsg | BusyMsg | SaveResultMsg;
@@ -245,6 +252,12 @@ function onCellValueChangedHandler(e: CellValueChangedEvent): void {
   const rowId = readRowId(e.node?.data);
   if (rowId === undefined) return;
   editState.markDirty(rowId, colIndex, e.newValue, e.oldValue);
+  // TASK-007: re-run cellClassRules for this cell so `vsdb-cell-dirty`
+  // paints immediately. AG Grid only re-evaluates class rules when the
+  // cell is refreshed (cellValueChanged alone doesn't trigger it).
+  if (e.node && gridApi) {
+    gridApi.refreshCells({ rowNodes: [e.node], force: true });
+  }
   updateFooterNow();
 }
 
@@ -271,10 +284,13 @@ function simulateCellEdit(
   // assertions read the value the user actually sees on screen.
   node.data[spec.field] = newValue;
   // Build the minimum event shape the handler reads. We mark `api`
-  // for typing but the handler does not call it.
+  // for typing but the handler does not call it. Pass the REAL node so
+  // TASK-007's `refreshCells({ rowNodes: [e.node], force: true })`
+  // reaches AG Grid — a plain `{ data }` shim is silently ignored by
+  // refreshCells (no `id`, no internal RowNode bookkeeping).
   const fakeEvent = {
     api: gridApi,
-    node: { data: node.data },
+    node,
     colDef: { field: spec.field },
     newValue,
     oldValue,
@@ -1285,6 +1301,10 @@ function renderGrid(): void {
   // itself lives inside the column-menu popup, so the floating-filter row
   // is no longer needed and stays disabled.
   const baseCols = specs.map((spec) => {
+    // colIndex in currentSpecs is the source-array index. We close over
+    // it for the cellClassRules predicate so each column knows which
+    // colIndex to ask EditState about.
+    const colIndex = specs.findIndex((s) => s.field === spec.field);
     return {
       field: spec.field,
       headerName: spec.headerName,
@@ -1297,6 +1317,22 @@ function renderGrid(): void {
       // sees raw vs formatted values.
       editable: true,
       valueFormatter: (p: { value: unknown }) => formatDataCell(p.value),
+      // TASK-007: cellClassRules paints `vsdb-cell-dirty` on a cell whose
+      // (rowId, colIndex) is in the local EditState. The rule re-evaluates
+      // when AG Grid calls `api.refreshCells({ rowNodes, force: true })` —
+      // we trigger that from onCellValueChangedHandler, onAddRowClick, and
+      // onDeleteRowClick so the highlight follows the user's edits live.
+      cellClassRules: {
+        "vsdb-cell-dirty": (params: {
+          data?: Record<string, unknown> | undefined;
+        }): boolean => {
+          const data = params.data;
+          if (!data) return false;
+          const id = readRowId(data);
+          if (id === undefined) return false;
+          return editState.isCellDirty(id, colIndex);
+        },
+      },
       cellStyle:
         spec.kind === "number"
           ? {
@@ -1382,6 +1418,25 @@ function renderGrid(): void {
       // reorder. TASK-503's save payload and the bundle's undo handler
       // both rely on this.
       getRowId: (params) => String(params.data.__rowId),
+      // TASK-007: getRowClass returns the row-level edit class. The
+      // callback runs once per row render — cheap (two Map scans inside
+      // EditState). We use the string form (single class) so we can
+      // combine the new-row and deleted markers; AG Grid appends the
+      // returned string to the row element's class list. The actual
+      // CSS rules live in styles.css (`vsdb-row-new`,
+      // `vsdb-row-deleted`).
+      getRowClass: (params: {
+        data?: Record<string, unknown> | undefined;
+      }): string => {
+        const data = params.data;
+        if (!data) return "";
+        const id = readRowId(data);
+        if (id === undefined) return "";
+        const classes: string[] = [];
+        if (editState.isRowNew(id)) classes.push("vsdb-row-new");
+        if (editState.isRowDeleted(id)) classes.push("vsdb-row-deleted");
+        return classes.join(" ");
+      },
       rowSelection: {
         mode: "multiRow",
         // v36 selection column is auto-created when checkboxes/headerCheckbox
@@ -1703,19 +1758,17 @@ function onAddRowClick(): void {
   for (const col of cols ?? []) {
     if (col.field && col.field !== "__rowId") blank[col.field] = "";
   }
-  gridApi.applyTransaction({ add: [blank] });
-  newRowCount++;
-  // Mark this row pending insert in EditState. The marker is a small
-  // array of blank values (one per column) so TASK-503 can see "this
-  // is a new row, generate an INSERT for it" without parsing magic
-  // strings — the snapshot entry also includes colIndex 0 .. colCount-1
-  // as blank cells the user will fill via cellValueChanged.
+  // TASK-007: mark dirty FIRST so when AG Grid renders the new row,
+  // getRowClass already sees isRowNew(newRowId)=true and appends the
+  // `vsdb-row-new` class on first render — no second redraw needed.
   editState.markDirty(
     newRowId,
     0,
     { __vsdb_new_row__: true, __rowId: newRowId, values: blank },
     undefined,
   );
+  gridApi.applyTransaction({ add: [blank] });
+  newRowCount++;
   updateFooterNow();
 }
 
@@ -1731,7 +1784,16 @@ function onDeleteRowClick(): void {
     : null;
   const rowId = readRowId(focusedNode?.data);
   if (rowId === undefined) return;
+  // TASK-007: mark dirty BEFORE the redraw so getRowClass sees
+  // isRowDeleted(rowId)=true when the row re-renders. refreshCells
+  // alone re-evaluates cellClassRules (the cell-level highlight) but
+  // does NOT re-run getRowClass — we need redrawRows for the row-level
+  // class to re-evaluate.
   editState.markDirty(rowId, 0, { __vsdb_deleted__: true, __rowId: rowId }, undefined);
+  if (focusedNode) {
+    const node = gridApi.getRowNode(String(rowId));
+    if (node) gridApi.redrawRows({ rowNodes: [node] });
+  }
   updateFooterNow();
 }
 
@@ -2050,18 +2112,50 @@ function renderMessagesInto(panel: HTMLDivElement): void {
 function handleSaveResult(msg: SaveResultMsg): void {
   const banner = dom?.saveBanner;
   if (msg.ok) {
-    editState.clear();
-    if (banner) {
-      banner.classList.add("vsdb-hidden");
-      banner.setAttribute("hidden", "");
-      banner.textContent = "";
-    }
-    if (msg.refused && msg.reason && banner) {
-      banner.classList.remove("vsdb-hidden");
-      banner.removeAttribute("hidden");
-      banner.textContent = msg.reason;
+    // TASK-007: per-row error handling. When rowErrors is present and
+    // non-empty, the host reported which specific rows failed. We keep
+    // those rows' edits dirty (so the user can retry) and clear the
+    // successful rows. When rowErrors is absent or empty, full success
+    // — clear everything (the original TASK-503 behaviour).
+    if (msg.rowErrors && msg.rowErrors.length > 0) {
+      const erroredRowIds = new Set(msg.rowErrors.map((e) => e.rowId));
+      editState.clearExceptRowIds(erroredRowIds);
+      if (banner) {
+        const lines = msg.rowErrors.map(
+          (e) => `row ${e.rowId}: ${e.error}`,
+        );
+        banner.textContent =
+          `${erroredRowIds.size} row${erroredRowIds.size === 1 ? "" : "s"} failed · ` +
+          lines.join(" · ");
+        banner.classList.remove("vsdb-hidden");
+        banner.removeAttribute("hidden");
+      }
+      // Re-render cells so dirty highlights on errored rows remain
+      // and highlights on cleared rows disappear.
+      if (gridApi) {
+        gridApi.refreshCells({ force: true });
+      }
+    } else {
+      editState.clear();
+      if (banner) {
+        banner.classList.add("vsdb-hidden");
+        banner.setAttribute("hidden", "");
+        banner.textContent = "";
+      }
+      if (msg.refused && msg.reason && banner) {
+        banner.classList.remove("vsdb-hidden");
+        banner.removeAttribute("hidden");
+        banner.textContent = msg.reason;
+      }
+      // Re-render cells so the now-empty EditState strips all dirty
+      // highlights across the grid (new baseline).
+      if (gridApi) {
+        gridApi.refreshCells({ force: true });
+      }
     }
   } else {
+    // ok:false path — host says "everything failed (or the build was
+    // refused)". Keep editState; banner shows per-statement errors.
     const errs = msg.errors ?? ["Unknown save error"];
     if (banner) {
       banner.textContent = errs.join(" · ");

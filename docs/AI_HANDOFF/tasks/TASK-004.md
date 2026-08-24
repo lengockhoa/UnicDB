@@ -112,3 +112,37 @@ npx tsc --noEmit
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+---
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: Exec-T4
+SUMMARY: Implemented `vsdb.exportAllStructures` — connection/schema node or palette (no arg → `mgr.getActive()`), PG-only with mysql/mssql info guard, introspects all user schemas (or single schema if schema node) → `buildDatabaseStructure` → clipboard. Per-object `listColumns` throw → silent skip. Status bar reports successfully-rendered objects. Tests added in `src/ui/__tests__/tableCommands.test.ts` (#1, #2, #3, #5, #6, #6b, #7) + `src/extension.test.ts` (#4 wiring smoke).
+TEST_PLAN_FOLLOWED: task §Test Cases (TDD inline plan)
+FILES_CHANGED:
+  - package.json: contributed command `vsdb.exportAllStructures` (title "VSDB: Export All Structures (Copy DDL)", icon $(output)), `onCommand:vsdb.exportAllStructures` activationEvent, view/item/context menu entry covering `viewItem == connection || viewItem == schema`.
+  - src/ui/tableCommands.ts: imported `buildDatabaseStructure` + `ExportColumn` from `./exportStructure`; added `vsdb.exportAllStructures` registration inside `registerTableCommands` (after `vsdb.exportStructure` block, before closing `}`).
+  - src/ui/__tests__/tableCommands.test.ts: appended `describe("tableCommands — TASK-004 vsdb.exportAllStructures", …)` with 7 cases (#1, #2, #3, #5, #6, #6b, #7).
+  - src/extension.test.ts: appended `describe("TASK-004 — vsdb.exportAllStructures wiring", …)` with 4 cases (registration, contributes.commands, activationEvents, view/item/context menu).
+TESTS_ADDED:
+  - src/ui/__tests__/tableCommands.test.ts: #1 happy 2-table PG node → clipboard starts "-- Database structure (1 schemas, 2 tables, 0 views)" + statusbar "database structure copied (2 objects)"; #2 mysql node → "Export All Structures: PostgreSQL connections only" info + no clipboard write; #3 empty DB (listSchemas → []) → header line only + 0 objects + no error; #5 listColumns throw on one table → that object skipped, surviving table rendered, no error message (header counts rendered objects); #6 mgr.getActive() null (palette invoke) → error message, no clipboard write, no unhandled rejection; #6b getAdapterFor rejects → "Export All Structures failed: …" error, no clipboard write, no unhandled rejection; #7 wiring smoke → registeredCommands has the id + package.json menu entry covers connection + schema.
+  - src/extension.test.ts: #4 wiring smoke (4 cases) — activate() registers the command, contributes.commands declares it, activationEvents has onCommand entry, view/item/context menu entry has connection + schema viewItem.
+VERIFICATION:
+  command: npx vitest run src/ui/__tests__/tableCommands.test.ts src/extension.test.ts
+  result: 87 passed | 1 failed | 88 total (1 fail is pre-existing TASK-003 dist/schemaForm.js bundle presence check; reproduced on baseline `git stash` without my changes — not caused by TASK-004)
+  output_excerpt: |
+    ✓ src/ui/__tests__/tableCommands.test.ts  (35 tests) 11ms
+    ✓ src/extension.test.ts  (53 tests | 49 skipped) when filtered to "TASK-004 — vsdb.exportAllStructures wiring" — 4 passed
+    ✗ src/extension.test.ts > TASK-003 — vsdb.createSchema extension wiring > npm run compile emits dist/schemaForm.js
+      (pre-existing, unrelated to TASK-004; dist/ not built in worktree)
+  command: npx tsc --noEmit
+  result: clean (no output, exit 0)
+  RED-output (captured before impl, npx vitest with same selectors): 12 failed (7 in tableCommands.test.ts, 5 in extension.test.ts) — confirmed each new test fails for the right reason (command not yet registered + menu entry not yet declared).
+ISSUES: Pre-existing `dist/schemaForm.js` failure on extension.test.ts TASK-003 case is unrelated to TASK-004. Verified by stashing my changes and re-running — same failure. No regression introduced by this change.
+HANDOFF_TO_REVIEWER: yes — wiring smoke matches task spec, command registered, package.json entries match test #4 lock-in.
+NEXT: ready for review (Reviewer Verdict append below).
+
+---

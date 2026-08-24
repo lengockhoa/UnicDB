@@ -254,6 +254,23 @@
 }
 .vsdb-save-banner.vsdb-hidden { display: none; }
 
+/* TASK-007 — Excel-style edit highlights.
+ * - cellClassRules drives `vsdb-cell-dirty` per cell from EditState.
+ * - getRowClass drives `vsdb-row-new` / `vsdb-row-deleted` per row.
+ * var() fallbacks so the rules render in both VS Code dark/light themes
+ * (AG Grid's JS Theming API may paint over CSS variables — !important
+ * beats the element-level vars the theme uses). */
+.vsdb-cell-dirty {
+  background: var(--vsdb-dirty-bg, rgba(255, 166, 0, 0.25)) !important;
+}
+.vsdb-row-new .ag-cell {
+  background: rgba(60, 170, 255, 0.12);
+}
+.vsdb-row-deleted .ag-cell {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
 /* --- Messages tab --- */
 .vsdb-messages {
   flex: 1;

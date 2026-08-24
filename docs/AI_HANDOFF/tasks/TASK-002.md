@@ -117,3 +117,42 @@ TASK-003 đụng cùng file nhưng khác region (handleClear/handleSend/handleRe
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: Exec-T2
+SUMMARY: Replaced buildMessages single-schema introspection with full-DB (schemas+tables+views) via buildDatabaseStructure, raised SCHEMA_CONTEXT_BUDGET to 12_000 and SCHEMA_CONTEXT_TABLE_LIMIT to 200, added injectable opts for tests, registered createExportStructureTool in runBuiltinTurn. 7 new tests (5 unit + 2 E2E) cover multi-schema DDL, budget cut at block boundary, factory null, per-schema failure isolation, oversize single-table rule, E2E DDL flow, and export_structure tool registration.
+TEST_PLAN_FOLLOWED: task §Test Cases (7/7 cases implemented as tests)
+FILES_CHANGED:
+  - src/ui/aiChatPanel.ts: imports (createExportStructureTool, buildDatabaseStructure, ExportColumn, TableInfo, ViewInfo, ColumnInfo); SCHEMA_CONTEXT_BUDGET 8000→12000; SCHEMA_CONTEXT_TABLE_LIMIT 30→200; buildMessages body rewritten with opts + full-DB introspection + block-boundary budget cut + footer gate; registry.register(createExportStructureTool) added in runBuiltinTurn.
+  - src/ui/__tests__/aiChatPanel.test.ts: imported buildMessages; new describe "AiChatPanel — buildMessages full-DB context" with 5 tests (#1, #3, #4, #5, #7); R1 regression test adapter mock updated to include listSchemas/listViews/listColumns.
+  - src/ui/__tests__/aiChatE2e.test.ts: new describe "AiChatPanel — E2E full-DB context" with test #2; assertion added in existing happy 2-step test for tools array containing export_structure (#6).
+TESTS_ADDED:
+  - src/ui/__tests__/aiChatPanel.test.ts: #1 multi-schema PG; #3 budget cut at block boundary; #4 factory null; #5 per-schema failure isolation; #7 oversize single-table
+  - src/ui/__tests__/aiChatE2e.test.ts: #2 E2E DDL in provider body; #6 export_structure tool in tools array
+VERIFICATION:
+  command: npx vitest run src/ui/__tests__/aiChatPanel.test.ts src/ui/__tests__/aiChatE2e.test.ts && npx tsc --noEmit
+  result: 29/29 tests pass; tsc exit 0
+  output_excerpt: |
+    ✓ src/ui/__tests__/aiChatE2e.test.ts  (4 tests) 6ms
+    ✓ src/ui/__tests__/aiChatPanel.test.ts  (25 tests) 9ms
+    Test Files  2 passed (2)
+         Tests  29 passed (29)
+ISSUES: none (task spec executed as written). One pre-existing R1 regression test in aiChatPanel.test.ts (TASK-003 region) was updated to mock the new adapter shape (listSchemas/listViews/listColumns) — adapter surface for the panel-level context path is now listSchemas-based. The export_structure tool registration and budget-cut behavior both verified through deps.complete spy / fetch body parse + runAgent input capture. schemaContext.ts module left intact per spec.
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for review (cycle R, wave 2 batchA — task-002)
+
+### RED output (paste from `vitest run` before implementation):
+```
+Tests  7 failed | 22 passed (29)
+  #1 buildMessages is not a function
+  #3 buildMessages is not a function
+  #4 buildMessages is not a function
+  #5 buildMessages is not a function
+  #7 buildMessages is not a function
+  #2 E2E: system prompt missing "Database structure (DDL):"
+  #6 E2E happy 2-step: export_structure tool NOT in tools array
+```
+All 7 new tests failed for the expected reasons (buildMessages not exported → unit tests type-error; new prompt marker absent → E2E provider-body assertion fails; export_structure not registered → tools array missing entry).

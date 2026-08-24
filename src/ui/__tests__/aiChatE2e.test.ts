@@ -318,6 +318,23 @@ describe("AiChatPanel — E2E happy 2-step", () => {
     // Provider was hit twice (tool_call + final).
     expect(fetchMock).toHaveBeenCalledTimes(2);
 
+    // TASK-002 #6: tools array sent to the provider includes
+    // `export_structure` (registered alongside run_sql in runBuiltinTurn).
+    const firstCallInit = fetchMock.mock.calls[0]?.[1];
+    const firstBodyText = typeof firstCallInit === "object" && firstCallInit !== null && "body" in firstCallInit
+      ? String((firstCallInit as { body: unknown }).body)
+      : "";
+    const firstBody = JSON.parse(firstBodyText) as unknown;
+    const tools = (typeof firstBody === "object" && firstBody !== null && "tools" in firstBody)
+      ? (firstBody as { tools: unknown }).tools
+      : undefined;
+    expect(Array.isArray(tools)).toBe(true);
+    const exportTool = (Array.isArray(tools) ? tools : []).find(
+      (t) => typeof t === "object" && t !== null && "function" in t &&
+        typeof (t as { function: unknown }).function === "object" &&
+        (t as { function: { name?: unknown } }).function?.name === "export_structure",
+    );
+    expect(exportTool).toBeDefined();
     const posted = postedMessages(p);
     const assistant = posted.find(isAssistant);
     expect(assistant).toBeDefined();
@@ -438,5 +455,86 @@ describe("AiChatPanel — E2E offline 500", () => {
     // Panel survives: not disposed, done posted, can still send again.
     expect(p.disposed).toBe(false);
     expect(postedMessages(p).some(isDone)).toBe(true);
+  });
+});
+// ============================================================================
+// TASK-002 — Case #2: full-DB context reaches the provider body in E2E.
+// Pins that the system prompt actually carries DDL through the real
+// runAgent → createProviderClient → fetch pipeline (not just the unit-level
+// buildMessages output).
+// ============================================================================
+describe("AiChatPanel — E2E full-DB context", () => {
+  it("#2 system prompt carries DDL through to the provider request body", async () => {
+    const cfg = makeConfig({
+      models: {
+        work: { modelId: "fake-work", vision: true },
+        smart: { modelId: "fake-smart", vision: false },
+      },
+    });
+
+    const fetchMock = vi.fn(async () =>
+      jsonOk(chatResp({ finishReason: "stop", content: "Here is your schema." })),
+    );
+
+    const adapter = {
+      ...createFakeAdapter({ tables: [] }),
+      listSchemas: vi.fn(async () => [{ name: "public" }]),
+      listTables: vi.fn(async (schema: string) =>
+        schema === "public"
+          ? [{ name: "users", schema: "public" }]
+          : [] as Array<{ name: string; schema: string }>
+      ),
+      listViews: vi.fn(async () => []),
+      listColumns: vi.fn(async (name: string, schema?: string) =>
+        schema === "public" && name === "users"
+          ? [
+              { name: "id", dataType: "integer", nullable: false, isPrimaryKey: true },
+            ]
+          : []
+      ),
+    } as unknown as ReturnType<typeof createFakeAdapter>;
+    const adapterFactory: AdapterFactory = async () => adapter;
+
+    const deps = makeDepsWithFetch(fetchMock as unknown as typeof fetch, cfg);
+    const panel = new AiChatPanel({ extensionUri: vscode.Uri.file("/ext"), deps, adapterFactory });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some((m) => (m as { type?: string }).type === "init"));
+    handler({ type: "send", text: "list users" });
+    await until(() => postedMessages(p).some(isAssistant));
+    await until(() => postedMessages(p).some(isDone));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const callInit = fetchMock.mock.calls[0]?.[1];
+    const bodyText = typeof callInit === "object" && callInit !== null && "body" in callInit
+      ? String((callInit as { body: unknown }).body)
+      : "";
+    const body = JSON.parse(bodyText) as unknown;
+    const isMsgArray = (v: unknown): v is Array<{ role: string; content: string }> =>
+      Array.isArray(v) &&
+      v.every(
+        (m) =>
+          m !== null &&
+          typeof m === "object" &&
+          "role" in m &&
+          "content" in m &&
+          typeof (m as { role: unknown }).role === "string" &&
+          typeof (m as { content: unknown }).content === "string",
+      );
+    const isRequestBody = (v: unknown): v is { messages: unknown } =>
+      v !== null && typeof v === "object" && "messages" in v;
+    const requestBody = isRequestBody(body) ? body : { messages: [] };
+    const messages = isMsgArray(requestBody.messages) ? requestBody.messages : [];
+    const sys = messages[0]?.content ?? "";
+    expect(sys).toContain("Database structure (DDL):");
+    expect(sys).toContain("CREATE TABLE public.users");
+
+    // Final assistant bubble posted with done.
+    const posted = postedMessages(p);
+    const assistant = posted.find(isAssistant);
+    expect(assistant).toBeDefined();
+    expect(assistant!.text).toBe("Here is your schema.");
+    expect(posted.some(isDone)).toBe(true);
   });
 });

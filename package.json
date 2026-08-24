@@ -56,8 +56,8 @@
     "onCommand:vsdb.aiChat",
     "onCommand:vsdb.browseTableData",
     "onCommand:vsdb.createSchema",
-    "onCommand:vsdb.postmanPayload",
-    "onCommand:vsdb.exportStructure"
+    "onCommand:vsdb.exportStructure",
+    "onCommand:vsdb.exportAllStructures"
   ],
   "contributes": {
     "commands": [
@@ -210,6 +210,12 @@
         "title": "VSDB: Export Structure",
         "category": "VSDB",
         "icon": "$(output)"
+      },
+      {
+        "command": "vsdb.exportAllStructures",
+        "title": "VSDB: Export All Structures (Copy DDL)",
+        "category": "VSDB",
+        "icon": "$(output)"
       }
     ],
     "keybindings": [
@@ -315,7 +321,12 @@
           "command": "vsdb.exportStructure",
           "when": "view == vsdb.schemaTree && (viewItem == table || viewItem == view)",
           "group": "vsdb"
-         }
+        },
+        {
+          "command": "vsdb.exportAllStructures",
+          "when": "view == vsdb.schemaTree && (viewItem == connection || viewItem == schema)",
+          "group": "vsdb"
+        }
       ],
       "view/title": [
         {

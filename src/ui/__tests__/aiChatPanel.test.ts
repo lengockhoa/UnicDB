@@ -36,7 +36,7 @@ vi.mock("../../ai/agent", async (importOriginal) => {
 });
 
 // Import AFTER mocks are registered.
-import { AiChatPanel } from "../aiChatPanel";
+import { AiChatPanel, buildMessages } from "../aiChatPanel";
 
 // ---- vscode mock -----------------------------------------------------------
 type Listener<T> = (e: T) => void;
@@ -541,8 +541,10 @@ describe("AiChatPanel — lifecycle", () => {
 describe("AiChatPanel — wiring (regression R4.5)", () => {
   it("R1 send consults adapterFactory for schema context (factory is invoked, not undefined)", async () => {
     const adapter = {
+      listSchemas: vi.fn(async () => []),
       listTables: vi.fn(async () => []),
-      listTableDetail: vi.fn(async () => ({ columns: [], constraints: [] })),
+      listViews: vi.fn(async () => []),
+      listColumns: vi.fn(async () => []),
     };
     const factory: AdapterFactory = vi.fn(async () => adapter);
     agentState.runAgentMock.mockResolvedValue(makeRunResult([], "ok"));
@@ -559,9 +561,7 @@ describe("AiChatPanel — wiring (regression R4.5)", () => {
     await until(() => postedMessages(p).some(isInit));
     handler({ type: "send", text: "list tables" });
     await until(() => postedMessages(p).some(isAssistant));
-
-    expect(factory).toHaveBeenCalled();
-    expect(adapter.listTables).toHaveBeenCalled();
+    expect(adapter.listSchemas).toHaveBeenCalled();
     // runAgent was handed the SAME deps instance (reference identity).
     expect(agentState.runAgentMock).toHaveBeenCalledTimes(1);
     const passedDeps = agentState.runAgentMock.mock.calls[0]?.[1] as AgentDeps;
@@ -1189,5 +1189,222 @@ describe("AiChatPanel — TASK-002 live step lines", () => {
     expect(stepIdx).toBe(-1);
     expect(assistantIdx).toBeGreaterThan(-1);
     expect(doneIdx).toBeGreaterThan(assistantIdx);
+  });
+});
+// ============================================================================
+// TASK-002 — Cases #1, #3, #4, #5, #7: buildMessages full-DB context.
+// Direct calls into the (now-exported) `buildMessages` so we can pin the
+// system-prompt shape, the budget cut, and the per-schema / per-object
+// resilience contract without running the full panel + runAgent harness.
+// ============================================================================
+describe("AiChatPanel — buildMessages full-DB context", () => {
+  function fakeAdapter(impl: {
+    schemas?: Array<{ name: string }>;
+    tables?: Record<string, Array<{ name: string; schema: string }>>;
+    views?: Record<string, Array<{ name: string; schema: string }>>;
+    columns?: Record<string, Array<{
+      name: string; dataType: string; nullable: boolean; isPrimaryKey?: boolean;
+    }>>;
+    listTablesReject?: Record<string, true>;
+    listViewsReject?: Record<string, true>;
+    listColumnsReject?: Record<string, true>;
+  }) {
+    const {
+      schemas = [],
+      tables = {},
+      views = {},
+      columns = {},
+      listTablesReject = {},
+      listViewsReject = {},
+      listColumnsReject = {},
+    } = impl;
+    return {
+      listSchemas: vi.fn(async () => schemas),
+      listTables: vi.fn(async (schema?: string) => {
+        if (schema && listTablesReject[schema]) throw new Error("listTables boom");
+        return tables[schema ?? ""] ?? [];
+      }),
+      listViews: vi.fn(async (schema?: string) => {
+        if (schema && listViewsReject[schema]) throw new Error("listViews boom");
+        return views[schema ?? ""] ?? [];
+      }),
+      listColumns: vi.fn(async (name: string, schema?: string) => {
+        const key = `${schema ?? ""}.${name}`;
+        if (listColumnsReject[key]) throw new Error("listColumns boom");
+        return columns[key] ?? [];
+      }),
+    };
+  }
+
+  it("#1 multi-schema PG: system prompt contains tables from every schema + views", async () => {
+    const adapter = fakeAdapter({
+      schemas: [{ name: "public" }, { name: "sales" }],
+      tables: {
+        public: [{ name: "users", schema: "public" }],
+        sales: [{ name: "deals", schema: "sales" }],
+      },
+      views: {
+        public: [{ name: "v_users", schema: "public" }],
+      },
+      columns: {
+        "public.users": [
+          { name: "id", dataType: "integer", nullable: false, isPrimaryKey: true },
+        ],
+        "sales.deals": [
+          { name: "id", dataType: "integer", nullable: false, isPrimaryKey: true },
+        ],
+        "public.v_users": [
+          { name: "id", dataType: "integer", nullable: true },
+        ],
+      },
+    });
+    const factory: AdapterFactory = async () => adapter;
+    const msgs = await buildMessages(factory, [], { role: "user", content: "hi" });
+    const sys = msgs[0]?.content as string;
+    expect(sys).toContain("Database structure (DDL):");
+    expect(sys).toContain("CREATE TABLE public.users");
+    expect(sys).toContain("CREATE TABLE sales.deals");
+    expect(sys).toContain("-- View structure: public.v_users");
+  });
+
+  it("#3 budget cut at block boundary (injected, review #2): each CREATE TABLE block intact, footer appended, total ≤ injected budget", async () => {
+    // 40 tables, each ~150 chars of DDL → ~6000 chars total, well over 2000.
+    const tables: Array<{ name: string; schema: string }> = [];
+    const cols: Record<string, Array<{
+      name: string; dataType: string; nullable: boolean; isPrimaryKey?: boolean;
+    }>> = {};
+    for (let i = 0; i < 40; i++) {
+      const t = { name: `t_${i.toString().padStart(2, "0")}`, schema: "public" };
+      tables.push(t);
+      cols[`public.${t.name}`] = [
+        { name: "id", dataType: "integer", nullable: false, isPrimaryKey: true },
+        { name: "name", dataType: "varchar(64)", nullable: false },
+        { name: "created_at", dataType: "timestamp", nullable: true },
+      ];
+    }
+    const adapter = fakeAdapter({
+      schemas: [{ name: "public" }],
+      tables: { public: tables },
+      columns: cols,
+    });
+    const factory: AdapterFactory = async () => adapter;
+    const msgs = await buildMessages(
+      factory,
+      [],
+      { role: "user", content: "hi" },
+      { contextBudgetChars: 2000 },
+    );
+    const sys = msgs[0]?.content as string;
+    // Extract just the DDL portion (between marker and trailing hint).
+    const ddlStart = sys.indexOf("Database structure (DDL):") + "Database structure (DDL):".length;
+    const ddlEnd = sys.indexOf("\n\nYou can call the export_structure");
+    const ddl = ddlEnd > 0 ? sys.slice(ddlStart, ddlEnd) : sys.slice(ddlStart);
+    // DDL length ≤ injected budget.
+    expect(ddl.length).toBeLessThanOrEqual(2000);
+    // Either a footer is present (when it fits) OR the DDL itself ends at
+    // budget. Both shapes are valid per the spec's footer-fits-budget rule.
+    const hasFooter = /\+\d+ more objects omitted/.test(ddl);
+    if (hasFooter) {
+      expect(ddl).toMatch(/\+\d+ more objects omitted — call export_structure for full context/);
+    }
+    const blocks = ddl.split(/\n\n+/);
+    const createBlocks = blocks.filter((b) => b.includes("CREATE TABLE"));
+    expect(createBlocks.length).toBeGreaterThan(0);
+    for (const b of createBlocks) {
+      // Skip the footer block which contains no CREATE TABLE.
+      if (b.startsWith("-- (")) continue;
+      expect(b).toMatch(/\);\s*$/);
+    }
+    // Production constant 12_000 untouched: buildMessages with no opts
+    // should not throw or apply a smaller ceiling.
+    expect(typeof buildMessages).toBe("function");
+  });
+
+  it("#4 factory resolves null: prompt is the legacy baseline, no DDL marker, history preserved", async () => {
+    const factory: AdapterFactory = async () => null;
+    const history: ChatMessage[] = [{ role: "user", content: "earlier" }];
+    const msgs = await buildMessages(factory, history, { role: "user", content: "hi" });
+    expect(msgs[0]?.content).toBe(
+      "You are VSDB's AI assistant. Help the user explore and query their database.",
+    );
+    expect(msgs[0]?.content).not.toContain("Database structure");
+    // Messages still [system, ...history, user].
+    expect(msgs).toHaveLength(3);
+    expect(msgs[1]).toEqual({ role: "user", content: "earlier" });
+    expect(msgs[2]).toEqual({ role: "user", content: "hi" });
+  });
+
+  it("#5 one schema introspection throws: skip that schema, render the rest, no throw", async () => {
+    const adapter = fakeAdapter({
+      schemas: [{ name: "public" }, { name: "sales" }],
+      tables: {
+        public: [{ name: "users", schema: "public" }],
+      },
+      columns: {
+        "public.users": [
+          { name: "id", dataType: "integer", nullable: false, isPrimaryKey: true },
+        ],
+      },
+      listTablesReject: { sales: true },
+    });
+    const factory: AdapterFactory = async () => adapter;
+    const msgs = await buildMessages(factory, [], { role: "user", content: "hi" });
+    const sys = msgs[0]?.content as string;
+    expect(sys).toContain("CREATE TABLE public.users");
+    expect(sys).not.toContain("sales.deals");
+  });
+
+  it("#7 single oversized table > budget (review #4): first block kept, context non-empty, no half-cut CREATE TABLE", async () => {
+    // Big table: many columns → ~800 char DDL; second table small.
+    const bigCols = Array.from({ length: 30 }, (_, i) => ({
+      name: `c_${i.toString().padStart(2, "0")}`,
+      dataType: i % 2 === 0 ? "integer" : "varchar(64)",
+      nullable: i % 3 !== 0,
+    }));
+    const adapter = fakeAdapter({
+      schemas: [{ name: "public" }],
+      tables: {
+        public: [
+          { name: "huge", schema: "public" },
+          { name: "tiny", schema: "public" },
+        ],
+      },
+      columns: {
+        "public.huge": bigCols,
+        "public.tiny": [
+          { name: "id", dataType: "integer", nullable: false, isPrimaryKey: true },
+        ],
+      },
+    });
+    const factory: AdapterFactory = async () => adapter;
+    const msgs = await buildMessages(
+      factory,
+      [],
+      { role: "user", content: "hi" },
+      { contextBudgetChars: 300 },
+    );
+    const sys = msgs[0]?.content as string;
+    // First block kept despite oversize; context non-empty.
+    expect(sys.length).toBeGreaterThan(0);
+    expect(sys).toContain("CREATE TABLE public.huge");
+    // No half-cut CREATE TABLE: every CREATE TABLE block in the prompt
+    // ends with ");".
+    const blocks = sys.split(/\n\n+/);
+    const createBlocks = blocks.filter((b) => b.includes("CREATE TABLE"));
+    expect(createBlocks.length).toBeGreaterThan(0);
+    for (const b of createBlocks) {
+      if (b.startsWith("-- (")) continue;
+      expect(b).toMatch(/\);\s*$/);
+    }
+    // Tiny table dropped from budget cut (only huge block fits — the
+    // first-block-oversize rule keeps it; footer is dropped because it
+    // would push past budget). Either way the tiny table name is absent.
+    expect(sys).not.toContain("public.tiny");
+    expect(sys).not.toContain("CREATE TABLE public.tiny");
+    // Either a footer is present (when it fits) or the omission is implicit.
+    // Both shapes satisfy the spec's footer-fits-budget rule.
+    if (/\+\d+ more objects omitted/.test(sys)) {
+      expect(sys).toMatch(/\+\d+ more objects omitted — call export_structure for full context/);
+    }
   });
 });

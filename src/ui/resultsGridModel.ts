@@ -311,7 +311,7 @@ export function footerText(
  * - Date → ISO.
  * - Object → JSON.
  *
- * COPIED VERBATIM từ webview/grid.ts — TASK-203 sẽ xóa webview/grid.ts.
+ * COPIED VERBATIM từ webview/grid.ts — TASK-203 s� xóa webview/grid.ts.
  */
 export function formatCell(v: unknown): string {
   if (v === null || v === undefined) return "";
@@ -726,6 +726,21 @@ interface DirtyEntry {
   value: unknown;
 }
 
+/** True if `value` is a TASK-007 row marker emitted by Add Row / Delete Row.
+ *  Markers are plain object literals (`{__vsdb_new_row__: true, ...}` /
+ *  `{__vsdb_deleted__: true, ...}`) so a structural `__vsdb_*__` field
+ *  discriminates from regular cell values (string / number / Date / etc.). */
+function isRowMarker(
+  value: unknown,
+  kind: "new" | "deleted",
+): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return kind === "new"
+    ? v.__vsdb_new_row__ === true
+    : v.__vsdb_deleted__ === true;
+}
+
 export class EditState {
   private readonly dirty = new Map<string, DirtyEntry>();
 
@@ -792,6 +807,50 @@ export class EditState {
       out.push({ rowId: e.rowId, colIndex: e.colIndex, value: e.value });
     }
     return out;
+  }
+
+  // ---- TASK-007: commit-flow row-level selectors -------------------------
+
+  /** True if a dirty entry exists for the given (rowId, colIndex) cell.
+   *  Used by AG Grid cellClassRules to apply the `vsdb-cell-dirty` class. */
+  isCellDirty(rowId: number, colIndex: number): boolean {
+    return this.dirty.has(`${rowId}:${colIndex}`);
+  }
+
+  /** True if any dirty entry for `rowId` carries the new-row marker
+   *  (`{__vsdb_new_row__: true, ...}`) emitted by Add Row. Drives AG Grid
+   *  getRowClass to apply `vsdb-row-new`. */
+  isRowNew(rowId: number): boolean {
+    for (const e of this.dirty.values()) {
+      if (e.rowId !== rowId) continue;
+      if (isRowMarker(e.value, "new")) return true;
+    }
+    return false;
+  }
+
+  /** True if any dirty entry for `rowId` carries the delete-row marker
+   *  (`{__vsdb_deleted__: true, ...}`) emitted by Delete Row. Drives AG Grid
+   *  getRowClass to apply `vsdb-row-deleted` (strikethrough + opacity). */
+  isRowDeleted(rowId: number): boolean {
+    for (const e of this.dirty.values()) {
+      if (e.rowId !== rowId) continue;
+      if (isRowMarker(e.value, "deleted")) return true;
+    }
+    return false;
+  }
+
+  /** Drop every dirty entry whose rowId is NOT in `keepRowIds`.
+   *  Used by the partial-failure commit path (TASK-007 #4): keep
+   *  errored rows' edits so the user can retry, clear the rest. */
+  clearExceptRowIds(keepRowIds: ReadonlySet<number>): void {
+    // Snapshot keys first: deleting during Map iteration is unsafe
+    // (the spec leaves iteration order undefined after a delete and
+    // adjacent entries can be skipped on the next step).
+    const toDrop: string[] = [];
+    for (const [key, entry] of this.dirty) {
+      if (!keepRowIds.has(entry.rowId)) toDrop.push(key);
+    }
+    for (const k of toDrop) this.dirty.delete(k);
   }
 }
 

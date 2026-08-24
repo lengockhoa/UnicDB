@@ -190,3 +190,82 @@ describe("applyPasteToDirty", () => {
     expect(snap.find((e) => e.rowId === 4)).toBeUndefined();
   });
 });
+
+// =============================================================================
+// TASK-007 — EditState.clearExceptRowIds / row markers / isCellDirty.
+// Used by the webview commit flow (per-row error handling) and by AG Grid
+// getRowClass / cellClassRules for highlight rendering.
+// =============================================================================
+describe("EditState — clearExceptRowIds (TASK-007)", () => {
+  it("keeps entries whose rowId is in the keep set; drops the rest", () => {
+    const s = new EditState();
+    s.markDirty(0, 0, "v0", "old0");
+    s.markDirty(1, 0, "v1", "old1");
+    s.markDirty(2, 1, "v2", "old2");
+    expect(s.dirtyCount).toBe(3);
+
+    s.clearExceptRowIds(new Set([1]));
+
+    expect(s.dirtyCount).toBe(1);
+    const snap = s.snapshot();
+    expect(snap).toEqual([{ rowId: 1, colIndex: 0, value: "v1" }]);
+  });
+
+  it("empty keep set clears everything", () => {
+    const s = new EditState();
+    s.markDirty(0, 0, "a", "A");
+    s.markDirty(1, 0, "b", "B");
+    s.clearExceptRowIds(new Set());
+    expect(s.dirtyCount).toBe(0);
+    expect(s.snapshot()).toEqual([]);
+  });
+
+  it("keep set containing only non-dirty rowIds drops everything", () => {
+    const s = new EditState();
+    s.markDirty(0, 0, "a", "A");
+    // rowId 0 not in keep set {42} → dropped.
+    s.clearExceptRowIds(new Set([42]));
+    expect(s.dirtyCount).toBe(0);
+    expect(s.snapshot()).toEqual([]);
+  });
+});
+
+describe("EditState — row markers (TASK-007)", () => {
+  it("isRowNew true only when an entry's value carries __vsdb_new_row__", () => {
+    const s = new EditState();
+    s.markDirty(7, 0, { __vsdb_new_row__: true, __rowId: 7 }, undefined);
+    expect(s.isRowNew(7)).toBe(true);
+    expect(s.isRowNew(0)).toBe(false);
+  });
+
+  it("isRowDeleted true only when an entry's value carries __vsdb_deleted__", () => {
+    const s = new EditState();
+    s.markDirty(3, 0, { __vsdb_deleted__: true, __rowId: 3 }, undefined);
+    expect(s.isRowDeleted(3)).toBe(true);
+    expect(s.isRowDeleted(7)).toBe(false);
+  });
+
+  it("plain cell edit → both predicates false", () => {
+    const s = new EditState();
+    s.markDirty(0, 1, "v", "old");
+    expect(s.isRowNew(0)).toBe(false);
+    expect(s.isRowDeleted(0)).toBe(false);
+  });
+});
+
+describe("EditState — isCellDirty (TASK-007)", () => {
+  it("true only for the exact (rowId, colIndex) key", () => {
+    const s = new EditState();
+    s.markDirty(0, 1, "v", "old");
+    expect(s.isCellDirty(0, 1)).toBe(true);
+    expect(s.isCellDirty(0, 0)).toBe(false);
+    expect(s.isCellDirty(1, 1)).toBe(false);
+  });
+
+  it("false after clear()", () => {
+    const s = new EditState();
+    s.markDirty(0, 1, "v", "old");
+    s.clear();
+    expect(s.isCellDirty(0, 1)).toBe(false);
+  });
+});

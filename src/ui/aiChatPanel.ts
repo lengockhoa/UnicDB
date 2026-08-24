@@ -46,9 +46,13 @@ import type { ChatMessage } from "../ai/provider";
 import type { AdapterFactory } from "../ai/tools/types";
 import { createDbTools } from "../ai/tools/registry";
 import { createSqlTool } from "../ai/tools/sqlTool";
-import { formatSchemaContext } from "../ai/tools/schemaContext";
-import type { TableInfo, TableDetail } from "../adapters/types";
+import { createExportStructureTool } from "../ai/tools/schemaTools";
 import type { AcpProcessHandle } from "../ai/omp/acpProcess";
+import {
+  buildDatabaseStructure,
+  type ExportColumn,
+} from "./exportStructure";
+import type { TableInfo, ViewInfo, ColumnInfo } from "../adapters/types";
 import {
   type AcpServerRequest,
   type AcpNotification,
@@ -65,8 +69,8 @@ import { buildPermissionToolInfo } from "./permissionDetail";
 
 const PANEL_ID = "vsdb.aiChatPanel";
 
-const SCHEMA_CONTEXT_BUDGET = 8000; // chars
-const SCHEMA_CONTEXT_TABLE_LIMIT = 30;
+const SCHEMA_CONTEXT_BUDGET = 12_000; // chars (tăng từ 8000)
+const SCHEMA_CONTEXT_TABLE_LIMIT = 200; // objects (tăng từ 30)
 const DEFAULT_PERMISSION_TIMEOUT_MS = 60_000;
 
 /** Optional second constructor arg used by tests to control permission timeout. */
@@ -108,36 +112,137 @@ export interface AiChatPanelOptions {
   tuning?: AiChatPanelTuning;
 }
 
-/** Per-turn input assembly — system prompt + history + user msg. */
-async function buildMessages(
+/**
+ * Per-turn input assembly — system prompt + history + user msg.
+ *
+ * Full-DB context injection (TASK-002): introspect every user schema
+ * (tables + views), render DDL via `buildDatabaseStructure`, budget to a
+ * 12_000-char ceiling cut at block boundaries, and footer-hint the model to
+ * call `export_structure` for the rest. Factory null / introspection
+ * failures → empty context, no crash (prompt stays minimal).
+ *
+ * `opts` is injectable so tests can verify the budget cut without paying
+ * the cost of generating 12_000 chars of fixtures; production call sites
+ * omit it and the production constants apply.
+ */
+export async function buildMessages(
   factory: AdapterFactory,
   history: ChatMessage[],
   userMsg: ChatMessage,
+  opts?: { contextBudgetChars?: number; contextTableLimit?: number },
 ): Promise<ChatMessage[]> {
+  const budget = opts?.contextBudgetChars ?? SCHEMA_CONTEXT_BUDGET;
+  const limit = opts?.contextTableLimit ?? SCHEMA_CONTEXT_TABLE_LIMIT;
   let context = "";
   try {
     const adapter = await factory();
     if (adapter) {
-      const tables = await adapter.listTables();
-      const limited: TableInfo[] = tables.slice(0, SCHEMA_CONTEXT_TABLE_LIMIT);
-      const details: TableDetail[] = [];
-      for (const t of limited) {
+      const schemas = await adapter.listSchemas(false);
+      const collected: Array<
+        | { kind: "table"; schema: string; name: string }
+        | { kind: "view"; schema: string; name: string }
+      > = [];
+
+      for (const s of schemas) {
+        let schemaTables: TableInfo[] = [];
         try {
-          details.push(await adapter.listTableDetail(t.schema, t.name));
+          schemaTables = await adapter.listTables(s.name);
         } catch {
-          // Skip a single failed table detail; others still render.
-          details.push({ columns: [], constraints: [] });
+          // Per-schema failure: skip schema, keep going.
+          continue;
+        }
+        for (const t of schemaTables) {
+          collected.push({ kind: "table", schema: t.schema, name: t.name });
+        }
+        let schemaViews: ViewInfo[] = [];
+        try {
+          schemaViews = await adapter.listViews(s.name);
+        } catch {
+          continue;
+        }
+        for (const v of schemaViews) {
+          collected.push({ kind: "view", schema: v.schema, name: v.name });
         }
       }
-      context = formatSchemaContext(limited, details, SCHEMA_CONTEXT_BUDGET);
+
+      const total = collected.length;
+      const kept = collected.slice(0, limit);
+      const capDropped = total - kept.length;
+
+      const tables: Array<{ schema: string; name: string }> = [];
+      const views: Array<{ schema: string; name: string }> = [];
+      const columns: Record<string, ExportColumn[]> = {};
+
+      for (const obj of kept) {
+        const key = `${obj.schema}.${obj.name}`;
+        let cols: ColumnInfo[] = [];
+        try {
+          cols = await adapter.listColumns(obj.name, obj.schema);
+        } catch {
+          // Per-object failure: skip object entirely (no partial columns).
+          continue;
+        }
+        const mapped: ExportColumn[] = cols.map((c) => ({
+          name: c.name,
+          dataType: c.dataType,
+          nullable: c.nullable,
+          isPrimaryKey: c.isPrimaryKey,
+        }));
+        columns[key] = mapped;
+        if (obj.kind === "table") {
+          tables.push({ schema: obj.schema, name: obj.name });
+        } else {
+          views.push({ schema: obj.schema, name: obj.name });
+        }
+      }
+
+      let ddl = buildDatabaseStructure({
+        schemas,
+        tables,
+        views,
+        columns,
+      });
+      // Budget cut at block boundaries (blocks = text between blank lines).
+      // Tables AND views share ONE pool in render order; keep leading blocks
+      // until the next one would push us over budget. The first block is
+      // always kept even when it alone exceeds budget (oversize single-
+      // table rule from review #4) — context stays non-empty.
+      if (ddl.length > budget) {
+        const blocks = ddl.split(/\n\n+/);
+        const keptBlocks: string[] = [];
+        let acc = 0;
+        for (let i = 0; i < blocks.length; i++) {
+          const piece = blocks[i] ?? "";
+          const sep = keptBlocks.length > 0 ? 2 : 0;
+          const next = acc + sep + piece.length;
+          if (next > budget) {
+            if (i === 0) {
+              // First block alone exceeds budget — keep it anyway.
+              keptBlocks.push(piece);
+              acc = piece.length;
+            }
+            break;
+          }
+          keptBlocks.push(piece);
+          acc = next;
+        }
+        const omitted = blocks.length - keptBlocks.length + capDropped;
+        ddl = keptBlocks.join("\n\n");
+        if (omitted > 0) {
+          const footer = `\n\n-- (+${omitted} more objects omitted — call export_structure for full context)`;
+          if (ddl.length + footer.length <= budget) ddl += footer;
+        }
+      }
+      context = ddl;
     }
   } catch {
-    // Introspection failure (or factory rejection) → empty context, no crash.
+    // Introspection failure (factory rejection, listSchemas throw, …) →
+    // empty context, no crash.
     context = "";
   }
   const systemPrompt = context.length === 0
     ? "You are VSDB's AI assistant. Help the user explore and query their database."
-    : `You are VSDB's AI assistant. Help the user explore and query their database.\n\nDatabase schema:\n${context}`;
+    : `You are VSDB's AI assistant. Help the user explore and query their database.\n\nDatabase structure (DDL):\n${context}\n\nYou can call the export_structure tool for the complete structure when truncated.`;
   return [{ role: "system", content: systemPrompt }, ...history, userMsg];
 }
 
@@ -331,6 +436,7 @@ export class AiChatPanel {
   private async runBuiltinTurn(userMsg: ChatMessage): Promise<void> {
     const registry = createDbTools(this.options.adapterFactory);
     registry.register(createSqlTool(this.options.adapterFactory));
+    registry.register(createExportStructureTool(this.options.adapterFactory));
 
     const messages = await buildMessages(
       this.options.adapterFactory,
