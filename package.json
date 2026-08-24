@@ -54,7 +54,8 @@
     "onCommand:vsdb.vacuumTable",
     "onCommand:vsdb.openAiSettings",
     "onCommand:vsdb.aiChat",
-    "onCommand:vsdb.browseTableData"
+    "onCommand:vsdb.browseTableData",
+    "onCommand:vsdb.createSchema"
   ],
   "contributes": {
     "commands": [
@@ -188,6 +189,12 @@
         "command": "vsdb.browseTableData",
         "title": "VSDB: Browse Table Data",
         "category": "VSDB"
+      },
+      {
+        "command": "vsdb.createSchema",
+        "title": "VSDB: Create New Schema",
+        "category": "VSDB",
+        "icon": "$(add)"
       }
     ],
     "keybindings": [
@@ -277,6 +284,11 @@
         {
           "command": "vsdb.vacuumTable",
           "when": "view == vsdb.schemaTree && viewItem == table",
+          "group": "vsdb"
+        },
+        {
+          "command": "vsdb.createSchema",
+          "when": "view == vsdb.schemaTree && (viewItem == connection || viewItem == schema)",
           "group": "vsdb"
         }
       ],

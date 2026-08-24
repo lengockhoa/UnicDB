@@ -92,6 +92,7 @@ import {
   qualifiedName,
   formatRows,
   revealTableNode,
+  revealSchemaNode,
   registerSchemaTreeProvider,
 } from "../schemaTree";
 import { ConnectionManager } from "../../core/connectionManager";
@@ -1333,5 +1334,129 @@ describe("SchemaTreeProvider — R1 regression: getParent cho TreeView.reveal", 
     const cols = await provider.getChildren(tables[0]);
     const parent = provider.getParent(cols[0]);
     expect(parent?.contextValue).toBe("table");
+  });
+});
+
+// =============================================================================
+// TASK-003 — findSchemaNode + revealSchemaNode. findSchemaNode locates a
+// VsdbNode (contextValue === "schema", meta.connection + meta.schema) by
+// (conn, schema); returns null when absent or adapter throw. revealSchemaNode
+// wraps treeView.reveal(node, {select:true, expand:false}) and swallows throw.
+// =============================================================================
+describe("SchemaTreeProvider — TASK-003 findSchemaNode + revealSchemaNode", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.emitters = [];
+    state.treeItemCalls = [];
+  });
+
+  it("findSchemaNode returns schema node from fake adapter (contextValue 'schema', meta.schema)", async () => {
+    const { mgr } = setupTree({
+      schemas: [{ name: "app" }, { name: "public" }],
+    });
+    await mgr.addConnection(makeCfg({ id: "c1", name: "Local" }), "p");
+    await mgr.setActive("c1");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const cfg = mgr.listConnections()[0];
+    const found = await provider.findSchemaNode(cfg, "app");
+    expect(found).not.toBeNull();
+    if (!found) throw new Error("expected schema node");
+    expect(found.contextValue).toBe("schema");
+    expect(found.label).toBe("app");
+    expect(found.meta?.schema).toBe("app");
+    expect(found.meta?.connection?.id).toBe(cfg.id);
+  });
+
+  it("findSchemaNode returns null when schema absent", async () => {
+    const { mgr } = setupTree({ schemas: [{ name: "public" }] });
+    await mgr.addConnection(makeCfg({ id: "c1" }), "p");
+    await mgr.setActive("c1");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const cfg = mgr.listConnections()[0];
+    const found = await provider.findSchemaNode(cfg, "missing");
+    expect(found).toBeNull();
+  });
+
+  it("findSchemaNode returns null when adapter throws", async () => {
+    const { mgr } = setupTree({ throw: true });
+    await mgr.addConnection(makeCfg({ id: "c1" }), "p");
+    await mgr.setActive("c1");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const cfg = mgr.listConnections()[0];
+    const found = await provider.findSchemaNode(cfg, "public");
+    expect(found).toBeNull();
+  });
+
+  it("revealSchemaNode calls treeView.reveal({select:true, expand:false})", async () => {
+    const { mgr } = setupTree({ schemas: [{ name: "public" }] });
+    await mgr.addConnection(makeCfg({ id: "c1" }), "p");
+    await mgr.setActive("c1");
+    const provider = new SchemaTreeProvider(mgr);
+    registerSchemaTreeProvider(provider);
+
+    const cfg = mgr.listConnections()[0];
+    const treeView = { reveal: vi.fn(), dispose: vi.fn() };
+    await revealSchemaNode(
+      treeView as unknown as TreeView<unknown>,
+      cfg,
+      "public",
+    );
+    expect(treeView.reveal).toHaveBeenCalledTimes(1);
+    const [revealedNode, opts] = treeView.reveal.mock.calls[0];
+    let contextValue: string | undefined;
+    if (
+      revealedNode !== undefined &&
+      revealedNode !== null &&
+      typeof revealedNode === "object" &&
+      "contextValue" in revealedNode
+    ) {
+      const cv = (revealedNode as { contextValue: unknown }).contextValue;
+      if (typeof cv === "string") contextValue = cv;
+    }
+    expect(contextValue).toBe("schema");
+    expect(opts).toEqual({ select: true, expand: false });
+  });
+
+  it("revealSchemaNode swallows throw (tree disposed)", async () => {
+    const { mgr } = setupTree({ schemas: [{ name: "public" }] });
+    await mgr.addConnection(makeCfg({ id: "c1" }), "p");
+    await mgr.setActive("c1");
+    const provider = new SchemaTreeProvider(mgr);
+    registerSchemaTreeProvider(provider);
+
+    const cfg = mgr.listConnections()[0];
+    const treeView = {
+      reveal: vi.fn(() => {
+        throw new Error("disposed");
+      }),
+      dispose: vi.fn(),
+    };
+    await expect(
+      revealSchemaNode(
+        treeView as unknown as TreeView<unknown>,
+        cfg,
+        "public",
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it("revealSchemaNode with schema absent → does NOT call reveal", async () => {
+    const { mgr } = setupTree({ schemas: [] });
+    await mgr.addConnection(makeCfg({ id: "c1" }), "p");
+    await mgr.setActive("c1");
+    const provider = new SchemaTreeProvider(mgr);
+    registerSchemaTreeProvider(provider);
+
+    const cfg = mgr.listConnections()[0];
+    const treeView = { reveal: vi.fn(), dispose: vi.fn() };
+    await revealSchemaNode(
+      treeView as unknown as TreeView<unknown>,
+      cfg,
+      "missing",
+    );
+    expect(treeView.reveal).not.toHaveBeenCalled();
   });
 });

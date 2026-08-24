@@ -686,6 +686,39 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
   }
 
   /**
+   * TASK-003 — Locate the schema node for (conn, schema). Reuses the same
+   * path getSchemaNodesForConnection uses (adapter.listSchemas(false)). Returns
+   * null khi schema không có / adapter fail.
+   */
+  async findSchemaNode(
+    conn: ConnectionConfig,
+    schema: string,
+  ): Promise<VsdbNode | null> {
+    let adapter: DbAdapter;
+    try {
+      adapter = await this.getAdapterFor(conn);
+    } catch {
+      return null;
+    }
+    let schemas;
+    try {
+      schemas = await adapter.listSchemas(false);
+    } catch {
+      return null;
+    }
+    const hit = schemas.find((s) => s.name === schema);
+    if (!hit) return null;
+    return {
+      label: hit.name,
+      icon: "symbol-namespace",
+      tooltip: `${conn.name} / ${hit.name}`,
+      contextValue: "schema",
+      collapsible: vscode.TreeItemCollapsibleState.Collapsed,
+      meta: { connection: conn, schema: hit.name },
+    };
+  }
+
+  /**
    * getParent — bắt buộc cho vscode.TreeView.reveal() (vscode.d.ts):
    * "This method should be implemented in order to access TreeView.reveal API".
    * Trước fix: thiếu → reveal throw "Tree item not found" → try/catch nuốt →
@@ -817,6 +850,27 @@ export async function revealTableNode(
     await treeView.reveal(node, { select: true, expand: false });
   } catch {
     // Node có thể đã dispose / tree đã refresh → bỏ qua, command vẫn OK.
+  }
+}
+
+/**
+ * TASK-003 — Reveal a schema node in the schema tree after a DDL operation.
+ * findSchemaNode may return null nếu absent (tree đang refresh); trong
+ * trường hợp đó → no-op. reveal() có thể throw nếu node đã dispose /
+ * tree đã đóng → nuốt để caller không phải xử lý.
+ */
+export async function revealSchemaNode(
+  treeView: vscode.TreeView<unknown>,
+  conn: ConnectionConfig,
+  schema: string,
+): Promise<void> {
+  if (!_activeProvider) return;
+  const node = await _activeProvider.findSchemaNode(conn, schema);
+  if (!node) return;
+  try {
+    await treeView.reveal(node, { select: true, expand: false });
+  } catch {
+    // Node có thể đã dispose / tree đã refresh → bỏ qua.
   }
 }
 

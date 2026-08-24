@@ -83,6 +83,18 @@ const aiChatPanelConfig = {
   minify,
   logLevel: "info",
 };
+/** @type {import('esbuild').BuildOptions} */
+const schemaFormConfig = {
+  entryPoints: ["webview/schemaFormMain.ts"],
+  outfile: "dist/schemaForm.js",
+  bundle: true,
+  platform: "browser",
+  format: "iife",
+  target: "es2022",
+  sourcemap: !minify,
+  minify,
+  logLevel: "info",
+};
 
 async function run() {
   if (watch) {
@@ -92,7 +104,8 @@ async function run() {
     const ctx4 = await esbuild.context(newTableFormConfig);
     const ctx5 = await esbuild.context(aiSettingsFormConfig);
     const ctx6 = await esbuild.context(aiChatPanelConfig);
-    await Promise.all([ctx1.watch(), ctx2.watch(), ctx3.watch(), ctx4.watch(), ctx5.watch(), ctx6.watch()]);
+    const ctx7 = await esbuild.context(schemaFormConfig);
+    await Promise.all([ctx1.watch(), ctx2.watch(), ctx3.watch(), ctx4.watch(), ctx5.watch(), ctx6.watch(), ctx7.watch()]);
     console.log("esbuild: watching...");
   } else {
     await Promise.all([
@@ -102,6 +115,7 @@ async function run() {
       esbuild.build(newTableFormConfig),
       esbuild.build(aiSettingsFormConfig),
       esbuild.build(aiChatPanelConfig),
+      esbuild.build(schemaFormConfig),
     ]);
     console.log("esbuild: build complete");
   }

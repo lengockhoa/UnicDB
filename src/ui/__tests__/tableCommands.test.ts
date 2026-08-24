@@ -628,3 +628,149 @@ describe("tableCommands — R1 regression: no DEBUG logs + spec.name pass-throug
     logSpy.mockRestore();
   });
 });
+
+// =============================================================================
+// TASK-003 — vsdb.createSchema: open SchemaForm on connection/schema node;
+// OK runs DDL via adapter.runQuery, refreshes tree, reveals new schema node,
+// info toast. Driver guard (mysql/mssql) → info, no form. No active conn +
+// no node conn → info, no form.
+// =============================================================================
+describe("tableCommands — TASK-003 vsdb.createSchema", () => {
+  it("#2 connection node → SchemaForm; submit → runDdl(CREATE SCHEMA \"x\";) + refresh + reveal + info", async () => {
+    const mgr = makeFakeMgr();
+    // Simulate CREATE SCHEMA succeeding: listSchemas() reflects the new schema
+    // once runQuery has executed CREATE SCHEMA "x"; — enables revealSchemaNode
+    // to find the node.
+    const schemasState: string[] = ["public"];
+    (mgr.adapter.listSchemas as Mock).mockImplementation(() =>
+      Promise.resolve(schemasState.map((name) => ({ name }))),
+    );
+    (mgr.adapter.runQuery as Mock).mockImplementation((sql: string) => {
+      mgr.adapter.runCalls.push({ sql });
+      const m = sql.match(/^CREATE SCHEMA "([^"]+)";$/);
+      if (m && !schemasState.includes(m[1])) schemasState.push(m[1]);
+      return Promise.resolve({ results: [{ columns: [], rows: [], rowCount: 0, durationMs: 1 } as QueryResult] });
+    });
+    const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
+    registerSchemaTreeProvider(provider);
+    const refreshSpy = vi.spyOn(provider, "refresh");
+    registerTableCommands({
+      mgr: mgr.stub as unknown as ConnectionManager,
+      tree: provider,
+      treeView: treeView as unknown as TreeView<unknown>,
+      context: { subscriptions: [] } as unknown as ExtensionContext,
+    });
+    const connNode: VsdbNode = {
+      label: "Test PG",
+      contextValue: "connection",
+      collapsible: 0,
+      meta: { connection: mgr.cfg },
+    };
+    await state.registeredCommands.get("vsdb.createSchema")!(connNode);
+    const panel = state.createdPanels[state.createdPanels.length - 1];
+    const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0] as (msg: unknown) => Promise<void>;
+    await handler({ type: "ready" });
+    await handler({ type: "nameChanged", name: "x" });
+    await handler({ type: "submit", name: "x" });
+    for (let i = 0; i < 200 && (!treeView.reveal.mock.calls.length || state.infoMessages.length === 0); i++) await Promise.resolve();
+    expect(refreshSpy).toHaveBeenCalled();
+    expect(treeView.reveal).toHaveBeenCalled();
+    expect(state.infoMessages.some((m) => /schema\s+"x"\s+created/i.test(m))).toBe(true);
+  });
+
+  it("#5 mysql driver on connection node → 'Create Schema: PostgreSQL connections only' info; no form", async () => {
+    const mgr = makeFakeMgr({ driver: "mysql" });
+    const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
+    registerSchemaTreeProvider(provider);
+    registerTableCommands({
+      mgr: mgr.stub as unknown as ConnectionManager,
+      tree: provider,
+      treeView: treeView as unknown as TreeView<unknown>,
+      context: { subscriptions: [] } as unknown as ExtensionContext,
+    });
+    const connNode: VsdbNode = {
+      label: "MySQL",
+      contextValue: "connection",
+      collapsible: 0,
+      meta: { connection: mgr.cfg },
+    };
+    await state.registeredCommands.get("vsdb.createSchema")!(connNode);
+    expect(state.infoMessages.some((m) => /Create Schema.*PostgreSQL connections only/.test(m))).toBe(true);
+    expect(state.createdPanels.length).toBe(0);
+    expect(mgr.adapter.runCalls).toHaveLength(0);
+    expect(treeView.reveal).not.toHaveBeenCalled();
+  });
+
+  it("#5b mssql driver on connection node → same info guard", async () => {
+    const mgr = makeFakeMgr({ driver: "mssql" });
+    const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
+    registerSchemaTreeProvider(provider);
+    registerTableCommands({
+      mgr: mgr.stub as unknown as ConnectionManager,
+      tree: provider,
+      treeView: treeView as unknown as TreeView<unknown>,
+      context: { subscriptions: [] } as unknown as ExtensionContext,
+    });
+    const connNode: VsdbNode = {
+      label: "MSSQL",
+      contextValue: "connection",
+      collapsible: 0,
+      meta: { connection: mgr.cfg },
+    };
+    await state.registeredCommands.get("vsdb.createSchema")!(connNode);
+    expect(state.infoMessages.some((m) => /Create Schema.*PostgreSQL connections only/.test(m))).toBe(true);
+    expect(state.createdPanels.length).toBe(0);
+  });
+
+  it("#6 palette invocation: no active conn, no node arg → info message; no form", async () => {
+    const mgr = makeFakeMgr();
+    const fakeMgr = {
+      listConnections: () => [],
+      getActive: () => null,
+      onDidChangeActive: () => ({ dispose: () => {} }),
+      getAdapter: () => Promise.resolve(mgr.adapter),
+      getAdapterFor: () => Promise.resolve(mgr.adapter),
+    } as unknown as ConnectionManager;
+    const provider = new SchemaTreeProvider(fakeMgr);
+    registerSchemaTreeProvider(provider);
+    const treeView: MockTreeView = { reveal: vi.fn(), dispose: vi.fn() };
+    registerTableCommands({
+      mgr: fakeMgr,
+      tree: provider,
+      treeView: treeView as unknown as TreeView<unknown>,
+      context: { subscriptions: [] } as unknown as ExtensionContext,
+    });
+    await state.registeredCommands.get("vsdb.createSchema")!();
+    expect(state.infoMessages.some((m) => /no.*(connection|active)/i.test(m))).toBe(true);
+    expect(state.createdPanels.length).toBe(0);
+  });
+
+  it("#7 runDdl rejects → 'Create Schema failed: permission denied' error; no refresh; no reveal", async () => {
+    const mgr = makeFakeMgr({ rejectRun: true });
+    const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
+    registerSchemaTreeProvider(provider);
+    const refreshSpy = vi.spyOn(provider, "refresh");
+    registerTableCommands({
+      mgr: mgr.stub as unknown as ConnectionManager,
+      tree: provider,
+      treeView: treeView as unknown as TreeView<unknown>,
+      context: { subscriptions: [] } as unknown as ExtensionContext,
+    });
+    const connNode: VsdbNode = {
+      label: "Test PG",
+      contextValue: "connection",
+      collapsible: 0,
+      meta: { connection: mgr.cfg },
+    };
+    await state.registeredCommands.get("vsdb.createSchema")!(connNode);
+    const panel = state.createdPanels[state.createdPanels.length - 1];
+    const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0] as (msg: unknown) => Promise<void>;
+    await handler({ type: "ready" });
+    await handler({ type: "nameChanged", name: "x" });
+    await handler({ type: "submit", name: "x" });
+    for (let i = 0; i < 200 && state.errorMessages.length === 0; i++) await Promise.resolve();
+    expect(state.errorMessages.some((m) => /Create Schema failed: boom/.test(m))).toBe(true);
+    expect(refreshSpy).not.toHaveBeenCalled();
+    expect(treeView.reveal).not.toHaveBeenCalled();
+  });
+});

@@ -29,9 +29,11 @@ import { alwaysQuote } from "../core/ddl/alterTable";
 import { rowsToSpec } from "../core/ddl/pgIntrospect";
 import { generateSampleInserts } from "../core/ddl/sampleData";
 import { NewTableForm } from "./newTableForm";
+import { SchemaForm } from "./schemaForm";
 import {
   SchemaTreeProvider,
   revealTableNode,
+  revealSchemaNode,
   registerSchemaTreeProvider,
   type VsdbNode,
 } from "./schemaTree";
@@ -69,6 +71,7 @@ const COMMAND_TITLE: Record<string, string> = {
   generateSampleData: "Generate Sample Data",
   analyzeTable: "Analyze Table",
   vacuumTable: "Vacuum Table",
+  createSchema: "Create Schema",
 };
 
 interface GuardedTarget {
@@ -380,6 +383,59 @@ export function registerTableCommands(deps: RegisterDeps): void {
         const msg = err instanceof Error ? err.message : String(err);
         void vscode.window.showErrorMessage(`Vacuum Table failed: ${msg}`);
       }
+    }),
+  );
+  // TASK-003 — vsdb.createSchema: open SchemaForm on connection/schema node.
+  // node arg meta.connection (connection node) → that conn; schema node passes
+  // meta.connection too (schema meta = {connection, schema}). palette (no arg)
+  // → fall back to mgr.getActive(); null → info message.
+  context.subscriptions.push(
+    vscode.commands.registerCommand("vsdb.createSchema", async (arg?: unknown) => {
+      // Resolve target conn.
+      let conn: ConnectionConfig | null = null;
+      if (arg && typeof arg === "object") {
+        const meta = (arg as {
+          meta?: { connection?: ConnectionConfig };
+        }).meta;
+        if (meta?.connection) conn = meta.connection;
+      }
+      if (!conn) conn = mgr.getActive();
+      if (!conn) {
+        void vscode.window.showInformationMessage(
+          "Create Schema: no active connection. Select one first.",
+        );
+        return;
+      }
+      if (conn.driver !== "postgres") {
+        void vscode.window.showInformationMessage(
+          `${COMMAND_TITLE.createSchema}: PostgreSQL connections only`,
+        );
+        return;
+      }
+
+      const form = new SchemaForm({
+        extensionUri: context.extensionUri,
+        listSchemaNames: async () => {
+          const adapter = await mgr.getAdapterFor(conn);
+          const schemas = await adapter.listSchemas(true);
+          return schemas.map((s) => s.name);
+        },
+        runDdl: async (sql, _name) => {
+          const adapter = await mgr.getAdapterFor(conn);
+          await adapter.runQuery(sql);
+        },
+        onOk: async (sql, name) => {
+          tree.refresh();
+          await revealSchemaNode(treeView, conn, name);
+          void vscode.window.showInformationMessage(
+            `VSDB: schema "${name}" created`,
+          );
+        },
+        onError: (msg) => {
+          void vscode.window.showErrorMessage(msg);
+        },
+      });
+      form.show();
     }),
   );
 }

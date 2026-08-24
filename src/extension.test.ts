@@ -1216,3 +1216,57 @@ function makeConfiguredCtx() {
     },
   };
 }
+
+// =============================================================================
+// TASK-003 (wave 3) — vsdb.createSchema: register the command, declare in
+// package.json contributes.commands + activationEvents, add view/item/context
+// entry for connection + schema viewItem when-clause, ensure esbuild emits
+// dist/schemaForm.js.
+// =============================================================================
+describe("TASK-003 — vsdb.createSchema extension wiring", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+  });
+
+  it("registers vsdb.createSchema handler on activate (case 9)", () => {
+    const ctx = makeCtx();
+    activate(ctx as never);
+    expect(state.registeredCommands.has("vsdb.createSchema")).toBe(true);
+  });
+
+  it("package.json contributes.commands declares vsdb.createSchema with category VSDB", () => {
+    interface CmdEntry { command: string; title?: string; category?: string }
+    const commands = pkgJson.contributes.commands as CmdEntry[];
+    const entry = commands.find((c) => c.command === "vsdb.createSchema");
+    expect(entry).toBeDefined();
+    expect(entry!.title).toMatch(/Create.*Schema/i);
+    expect(entry!.category).toBe("VSDB");
+  });
+
+  it("package.json activationEvents contains onCommand:vsdb.createSchema", () => {
+    const evts = pkgJson.activationEvents as string[];
+    expect(evts).toContain("onCommand:vsdb.createSchema");
+  });
+
+  it("package.json menus.view/item/context contains connection+schema entry for vsdb.createSchema", () => {
+    interface MenuEntry { command: string; when?: string; group?: string }
+    const ctxMenus = (pkgJson.contributes.menus as { "view/item/context": MenuEntry[] })[
+      "view/item/context"
+    ];
+    const entry = ctxMenus.find((m) => m.command === "vsdb.createSchema");
+    expect(entry).toBeDefined();
+    expect(entry!.when).toMatch(/view\s*==\s*vsdb\.schemaTree/);
+    expect(entry!.when).toMatch(/connection/);
+    expect(entry!.when).toMatch(/schema/);
+  });
+
+  it("npm run compile emits dist/schemaForm.js (esbuild config wired)", () => {
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const out = path.join(__dirname, "..", "dist", "schemaForm.js");
+    // The esbuild step ran as part of `npm run compile` at the top of
+    // verification; bundle must exist on disk.
+    expect(fs.existsSync(out)).toBe(true);
+  });
+});
