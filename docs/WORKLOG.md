@@ -47,3 +47,11 @@ For each significant action, append:
 - Fix rounds: T001 (CRLF parse + abort wrap), T003 (Stop hiện error bubble — phân loại abort-vs-error; test tự gate theo signal).
 - Flaky-type fix: `webviewExport.test.ts` drain AG Grid debounce-0 timer sau teardown (unhandled 'window is not defined' → exit 1 dù 777 pass).
 - Verification: full suite 778 passed / 2 opt-in skipped, exit 0; compile + typecheck clean. Pushed 2056828.
+
+## 2026-08-24 — Cycle O: ACP session history & resume
+
+- Action: AI Chat thêm Resume session — list/load/replay/resume omp sessions qua ACP; fix latent bug session/new thiếu mcpServers:[] (live -32603).
+- Probe-first: live omp acp NDJSON probes chứng minh session/list, session/load (replay 157 notifications), resume prompt end_turn; ghi queue/ACP-SESSION-research.md trước khi plan (không đoán envelope).
+- Files: src/ai/omp/acp.ts (sessionList/sessionLoad + AcpReplayBuffer — cửa sổ replay đóng theo outgoing write, multi-flush safe), src/ai/omp/acpProcess.ts (wiring + mcpServers fix), src/ui/aiChatPanel.ts + aiChatPanelMessages.ts (picker, replay drop-guard, cap 50 + truncated notice, streaming guard), webview/aiChatPanelMain.ts (picker UI + history render textContent-safe).
+- Fix round T003: missing RED output, streaming guard, 2 test không giết mutation (sort monotonic fixture, drop-guard bị transport absorb che).
+- Verification: full suite 819 passed / 2 opt-in skipped exit 0; compile + typecheck clean. Pushed a3ba36b.
