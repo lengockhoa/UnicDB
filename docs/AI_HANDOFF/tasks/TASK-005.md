@@ -187,3 +187,19 @@ yes — Tất cả tests xanh, tsc clean, deviation confirmed + fixed, audit che
 ### Next
 
 ready for review.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/core/__tests__/statementParser.test.ts src/ui/__tests__/codeLensProvider.test.ts src/extension.test.ts
+  result: 108 pass / 0 fail (3 files)
+TEST_PLAN_COVERAGE: all-followed — all 9 test cases #1-#9 implemented per spec; RED confirmed for #2/#5/#7 before fix
+FINDINGS:
+  critical: none
+  important: none
+  minor: none
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Deviation #2 (gap-fallback returning last statement) confirmed and correctly fixed. Fix is minimal (6-line loop replacing 1-line return), deterministic, and locked by 7 regression tests. Handler + CodeLens audit paths confirmed clean. All verification fresh-pass.

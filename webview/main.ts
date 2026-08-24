@@ -1375,6 +1375,12 @@ function renderGrid(): void {
       filter: SetFilterComponent,
       resizable: true,
       floatingFilter: false,
+      // TASK-006 fix-round-1: postgres no-PK browse queries carry a hidden
+      // `ctid` system column for row addressing. inferColumns tags it via
+      // `spec.hidden`; we forward to AG Grid `hide: true` so the column is
+      // visually hidden. Hidden columns are still in `colDefs` (so save
+      // flow reads `row[ctid]` correctly), they just don't render.
+      hide: spec.hidden === true,
       // TASK-501: cells are editable (cellValueChanged → editState.markDirty).
       // valueFormatter is rebuilt when csvMode flips (toggleCsv) so the user
       // sees raw vs formatted values.
@@ -2097,6 +2103,15 @@ function readExportInput():
       }
     }
   }
+  // TASK-006 fix-round-1: derive hiddenColumns from the column specs so
+  // exports strip the host-only `ctid` addressing column. The serializer
+  // already supports `hiddenColumns` (used by saveEdits tests #5). Building
+  // it from specs keeps the export path in sync with whatever the grid
+  // shows: any column with `spec.hidden` is excluded from TSV/CSV/JSON/XML
+  // and from the SET clause of generated UPDATE/INSERT statements.
+  const hiddenColumns = currentSpecs
+    .filter((s) => s.hidden === true)
+    .map((s) => s.field);
   return {
     format,
     includeHeader,
@@ -2105,6 +2120,7 @@ function readExportInput():
     pkColumns: [],
     tableName: "results",
     selectedRows: selected,
+    hiddenColumns,
   };
 }
 
@@ -2114,6 +2130,9 @@ function onExportCopyClick(): void {
   // Fix R1: serializeExport is contracted to never throw (R1 makes
   // serializeSqlUpdates degrade safely on empty PK), but defensive
   // logging is cheap and protects against future regression.
+  // TASK-006 fix-round-1: hiddenColumns (e.g. postgres `ctid` addressing
+  // hint) is forwarded so the user never sees host metadata in their
+  // exported file.
   try {
     const text = serializeExport(
       input.format,
@@ -2124,6 +2143,7 @@ function onExportCopyClick(): void {
         tableName: input.tableName,
         pkColumns: input.pkColumns,
         selectedRows: input.selectedRows,
+        hiddenColumns: input.hiddenColumns,
       },
     );
     postToHost({ type: "copy", text });
@@ -2135,6 +2155,7 @@ function onExportFileClick(): void {
   const input = readExportInput();
   if (!input) return;
   // Same defensive contract as onExportCopyClick — see comment there.
+  // TASK-006 fix-round-1: hiddenColumns forwarded (e.g. postgres `ctid`).
   try {
     const text = serializeExport(
       input.format,
@@ -2145,6 +2166,7 @@ function onExportFileClick(): void {
         tableName: input.tableName,
         pkColumns: input.pkColumns,
         selectedRows: input.selectedRows,
+        hiddenColumns: input.hiddenColumns,
       },
     );
     postToHost({ type: "exportFile", format: input.format, text });

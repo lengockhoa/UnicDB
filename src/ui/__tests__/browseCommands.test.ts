@@ -505,3 +505,202 @@ it("#11 browse path applies qualifyKeywordTables — listTables('public') consul
 
 // Suppress lint warning about unused vscode import — needed to wire the mock.
 void vscode;
+// =============================================================================
+// TASK-006 fix-round-1 regression — PG no-PK browse query augmentation
+// =============================================================================
+// Reviewer important #1: the prior implementation let the browse path emit
+// `SELECT * FROM …` for any table. PG no-PK browse → edit → save then had to
+// fall back on value-matching (fragile against Date/numeric/boolean literal
+// round-trip) because the result set had no ctid column. Fix: when the
+// driver is `postgres` AND the table has no PK column, the host wraps the
+// generated browse SELECT so the result set carries ctid at a known index.
+// The save flow reads it directly (existing fast-path). The fallback
+// value-match stays untouched for hand-written queries (no metadata to
+// inspect).
+
+interface PgBrowseFixture {
+  captureSql(sql: string): void;
+  captured(): string[];
+  adapter: AdapterWithTables & { listColumns: Mock };
+}
+
+function makePgBrowseFixture(
+  listColumnsImpl: () => Promise<Array<{ name: string; isPrimaryKey?: boolean }>>,
+): PgBrowseFixture {
+  const captured: string[] = [];
+  const captureSql = (sql: string) => {
+    captured.push(sql);
+  };
+  const adapter: AdapterWithTables & { listColumns: Mock } = {
+    listTables: vi.fn(async (_schema: string) => []),
+    listColumns: vi.fn(listColumnsImpl),
+  };
+  return { captureSql, captured: () => captured, adapter };
+}
+
+describe("registerBrowseCommands — TASK-006 PG no-PK browse appends ctid", () => {
+  it("#12 PG no-PK table → browse SQL wraps original to expose ctid at known column index", async () => {
+    const conn: ConnectionConfig = {
+      id: "c1",
+      name: "PG",
+      driver: "postgres",
+      host: "127.0.0.1",
+      port: 5432,
+      user: "u",
+      database: "d",
+    };
+    const fix = makePgBrowseFixture(
+      async () => [
+        { name: "name", isPrimaryKey: false },
+        { name: "created_at", isPrimaryKey: false },
+      ],
+    );
+    const runner = makeFakeRunner([]);
+    (runner.run as Mock) = vi.fn(
+      async (stmts: ParsedStatement[], _onUpdate: (r: StatementResult[]) => void) => {
+        for (const s of stmts) fix.captureSql(s.text);
+        return [];
+      },
+    );
+    const panel = makeFakePanel();
+    const mgr = makeFakeMgr({ activeId: "c1", active: conn });
+    (mgr as unknown as { getAdapter: () => Promise<unknown> }).getAdapter = vi.fn(
+      async () => fix.adapter,
+    );
+    registerBrowseCommands({
+      mgr: mgr as unknown as ConnectionManager,
+      runner: runner as unknown as Parameters<typeof registerBrowseCommands>[0]["runner"],
+      panel: panel as unknown as Parameters<typeof registerBrowseCommands>[0]["panel"],
+    });
+    const fn = state.registeredCommands.get("vsdb.browseTableData");
+    await fn!({ meta: { connection: conn, schema: "public", objectName: "notes" } });
+    expect(fix.captured()).toHaveLength(1);
+    const sql = fix.captured()[0]!;
+    // RED: ctid must appear in the executed SQL for a no-PK PG table. The
+    // pre-fix code emits `SELECT * FROM "public"."notes"` — save flow
+    // would then fall back to the value-match path, which fails on
+    // Date/numeric literal round-trip and produces the user-blocking
+    // "ctid lookup failed for every dirty row" banner.
+    expect(sql.toLowerCase()).toContain("ctid");
+    // The original SELECT * must NOT be a bare pass-through — we wrap it so
+    // ctid is a distinct column (avoids ambiguity with a hypothetical user
+    // column literally named "ctid").
+    expect(sql).not.toMatch(/^SELECT\s+\*\s+FROM\s+"public"\."notes"\s*;?\s*$/i);
+  });
+
+  it("#13 PG table WITH PK → browse SQL unchanged (no ctid appended)", async () => {
+    const conn: ConnectionConfig = {
+      id: "c1",
+      name: "PG",
+      driver: "postgres",
+      host: "127.0.0.1",
+      port: 5432,
+      user: "u",
+      database: "d",
+    };
+    const fix = makePgBrowseFixture(
+      async () => [
+        { name: "id", isPrimaryKey: true },
+        { name: "name", isPrimaryKey: false },
+      ],
+    );
+    const runner = makeFakeRunner([]);
+    (runner.run as Mock) = vi.fn(
+      async (stmts: ParsedStatement[], _onUpdate: (r: StatementResult[]) => void) => {
+        for (const s of stmts) fix.captureSql(s.text);
+        return [];
+      },
+    );
+    const panel = makeFakePanel();
+    const mgr = makeFakeMgr({ activeId: "c1", active: conn });
+    (mgr as unknown as { getAdapter: () => Promise<unknown> }).getAdapter = vi.fn(
+      async () => fix.adapter,
+    );
+    registerBrowseCommands({
+      mgr: mgr as unknown as ConnectionManager,
+      runner: runner as unknown as Parameters<typeof registerBrowseCommands>[0]["runner"],
+      panel: panel as unknown as Parameters<typeof registerBrowseCommands>[0]["panel"],
+    });
+    const fn = state.registeredCommands.get("vsdb.browseTableData");
+    await fn!({ meta: { connection: conn, schema: "public", objectName: "users" } });
+    expect(fix.captured()).toHaveLength(1);
+    const sql = fix.captured()[0]!;
+    expect(sql).toBe('SELECT * FROM "public"."users"');
+    expect(sql.toLowerCase()).not.toContain("ctid");
+  });
+
+  it("#14 MySQL no-PK → browse SQL unchanged (driver != postgres)", async () => {
+    const conn: ConnectionConfig = {
+      id: "c1",
+      name: "My",
+      driver: "mysql",
+      host: "127.0.0.1",
+      port: 3306,
+      user: "u",
+      database: "d",
+    };
+    const fix = makePgBrowseFixture(async () => [{ name: "name", isPrimaryKey: false }]);
+    const runner = makeFakeRunner([]);
+    (runner.run as Mock) = vi.fn(
+      async (stmts: ParsedStatement[], _onUpdate: (r: StatementResult[]) => void) => {
+        for (const s of stmts) fix.captureSql(s.text);
+        return [];
+      },
+    );
+    const panel = makeFakePanel();
+    const mgr = makeFakeMgr({ activeId: "c1", active: conn });
+    (mgr as unknown as { getAdapter: () => Promise<unknown> }).getAdapter = vi.fn(
+      async () => fix.adapter,
+    );
+    registerBrowseCommands({
+      mgr: mgr as unknown as ConnectionManager,
+      runner: runner as unknown as Parameters<typeof registerBrowseCommands>[0]["runner"],
+      panel: panel as unknown as Parameters<typeof registerBrowseCommands>[0]["panel"],
+    });
+    const fn = state.registeredCommands.get("vsdb.browseTableData");
+    await fn!({ meta: { connection: conn, schema: "mydb", objectName: "notes" } });
+    expect(fix.captured()).toHaveLength(1);
+    const sql = fix.captured()[0]!;
+    expect(sql).toBe("SELECT * FROM `mydb`.`notes`");
+    expect(sql.toLowerCase()).not.toContain("ctid");
+  });
+
+  it("#15 PG no-PK + adapter.listColumns REJECTS → browse SQL unchanged (graceful fallback)", async () => {
+    const conn: ConnectionConfig = {
+      id: "c1",
+      name: "PG",
+      driver: "postgres",
+      host: "127.0.0.1",
+      port: 5432,
+      user: "u",
+      database: "d",
+    };
+    const captured: string[] = [];
+    const runner = makeFakeRunner([]);
+    (runner.run as Mock) = vi.fn(
+      async (stmts: ParsedStatement[], _onUpdate: (r: StatementResult[]) => void) => {
+        for (const s of stmts) captured.push(s.text);
+        return [];
+      },
+    );
+    const panel = makeFakePanel();
+    const mgr = makeFakeMgr({ activeId: "c1", active: conn });
+    (mgr as unknown as { getAdapter: () => Promise<unknown> }).getAdapter = vi.fn(
+      async () => ({
+        listTables: vi.fn(async () => []),
+        listColumns: vi.fn(async () => {
+          throw new Error("catalog unavailable");
+        }),
+      }),
+    );
+    registerBrowseCommands({
+      mgr: mgr as unknown as ConnectionManager,
+      runner: runner as unknown as Parameters<typeof registerBrowseCommands>[0]["runner"],
+      panel: panel as unknown as Parameters<typeof registerBrowseCommands>[0]["panel"],
+    });
+    const fn = state.registeredCommands.get("vsdb.browseTableData");
+    await fn!({ meta: { connection: conn, schema: "public", objectName: "notes" } });
+    expect(captured).toHaveLength(1);
+    expect(captured[0]).toBe('SELECT * FROM "public"."notes"');
+  });
+});

@@ -73,6 +73,29 @@ describe("inferColumns", () => {
   it("returns empty array when no columns", () => {
     expect(inferColumns([], [])).toEqual([]);
   });
+
+  // TASK-006 fix-round-1: postgres appends a `ctid` column to no-PK
+  // browse queries as a row-addressing hint. inferColumns auto-tags it
+  // hidden so webview/main.ts can pass `{ hide: spec.hidden }` to AG Grid
+  // and the export input can derive `hiddenColumns`.
+  it("ctid column is auto-tagged hidden (TASK-006)", () => {
+    const rows: unknown[][] = [
+      ["alice", "(0,1)"],
+      ["bob", "(0,2)"],
+    ];
+    const cols = inferColumns(["name", "ctid"], rows);
+    expect(cols).toEqual([
+      { field: "name", headerName: "name", kind: "string" },
+      { field: "ctid", headerName: "ctid", kind: "string", hidden: true },
+    ]);
+  });
+
+  it("non-ctid columns are NOT marked hidden", () => {
+    const rows: unknown[][] = [[1, "x"]];
+    const cols = inferColumns(["id", "name"], rows);
+    expect(cols[0]?.hidden).toBeUndefined();
+    expect(cols[1]?.hidden).toBeUndefined();
+  });
 });
 
 // =============================================================================

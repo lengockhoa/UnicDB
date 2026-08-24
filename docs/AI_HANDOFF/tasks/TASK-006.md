@@ -119,3 +119,70 @@ ISSUES:
   - Pre-existing failures (3 files, 2 tests) trong extension.test.ts, agGridSmoke.test.ts, aiChatPanelWebview.test.ts do dist/* artifacts chưa build — verified trước/sau khi apply changes (git stash) vẫn fail như nhau, không liên quan TASK-006.
 HANDOFF_TO_REVIEWER: yes — code review needed
 NEXT: ready for review
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic/unic-smart (configured unic-smart)
+EXECUTOR_MODEL: unic/unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/resultsPanel.test.ts src/ui/__tests__/resultsPanelSaveEdits.test.ts src/ui/__tests__/resultsGridModel.test.ts
+  result: 56 pass / 0 fail
+  command: npx tsc --noEmit
+  result: 0 errors
+TEST_PLAN_COVERAGE: partial — tests exercise a pre-populated ctid result, but the required PG no-PK browse query augmentation and actual AG Grid hiding are absent.
+FINDINGS:
+  critical: []
+  important:
+    - src/ui/browseCommands.ts:41-49 — PG browse queries always remain `SELECT *`; no code detects a no-PK table or appends `ctid`, so the stated newly-created no-PK browse → edit → save path still returns no ctid and takes the fragile value-matching fallback. Implement ctid projection for PostgreSQL no-PK browse results and cover it with an integration-level browse test.
+    - webview/main.ts:1360-1416 — every inferred result column is emitted as a visible AG Grid colDef; `ctid` has no `{ hide: true }` definition. The serializer-only `hiddenColumns` option is never passed by the export callers at webview/main.ts:2118-2147, so ctid remains visible and exported in the actual UI. Hide the ctid colDef and derive/pass `hiddenColumns: ["ctid"]` on exports.
+  minor: []
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Model isolation passes: executor reports unic/unic-code and this reviewer runs unic/unic-smart. Targeted verification reran cleanly, but the user-blocking browse flow is not wired.
+
+## Executor Report (fix round 1)
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+SUMMARY: Round-1 fix addresses both reviewer important findings. (1) `browseCommands.ts` now detects PG driver + no-PK via `adapter.listColumns` and wraps the browse SELECT as `SELECT __vsdb_browse__.*, ctid FROM (<raw>) __vsdb_browse__` so the result set carries ctid for the save flow's existing fast-path. (2) `inferColumns` auto-tags the `ctid` column with `hidden: true`; the webview now forwards it to AG Grid `hide: true` AND derives `hiddenColumns` for `serializeExport`, so the user never sees the host metadata in either the grid or exports.
+TEST_PLAN_FOLLOWED: inline — added 4 browseCommands regression tests (#12 PG no-PK, #13 PK unchanged, #14 MySQL unchanged, #15 adapter failure graceful), 2 inferColumns auto-hidden tests, 1 webviewBundle colDef hidden test, 1 webviewExport ctid-stripped test.
+FILES_CHANGED:
+  - src/ui/browseCommands.ts: Added `maybeAppendCtidForNoPk(conn, schema, table, rawSql, adapter)` — PG only, no-PK only, wraps as `SELECT __vsdb_browse__.*, ctid FROM (<raw>) __vsdb_browse__`. Best-effort on adapter failure (returns raw SQL). Wired into `registerBrowseCommands` between `buildBrowseSelect` and `qualifyKeywordTables`.
+  - src/ui/resultsGridModel.ts: Added `hidden?: boolean` to `ColumnSpec` interface. `inferColumns` now auto-tags `ctid` columns with `hidden: true` so the webview can pass `{ hide: spec.hidden }` to AG Grid and the export input can derive `hiddenColumns` from specs.
+  - webview/main.ts: (a) colDef mapping adds `hide: spec.hidden === true` so AG Grid hides the column. (b) `readExportInput` derives `hiddenColumns` from `currentSpecs.filter(s => s.hidden).map(s => s.field)`. (c) `onExportCopyClick` + `onExportFileClick` forward `hiddenColumns` to `serializeExport`.
+  - src/ui/__tests__/browseCommands.test.ts: appended describe "registerBrowseCommands — TASK-006 PG no-PK browse appends ctid" with #12, #13, #14, #15.
+  - src/ui/__tests__/resultsGridModel.test.ts: appended 2 cases under "inferColumns" — ctid auto-tagged hidden + non-ctid not tagged.
+  - src/ui/__tests__/webviewBundle.test.ts: appended case #9 — ctid hidden in colDefs + absent from `getAllDisplayedColumns()`.
+  - src/ui/__tests__/webviewExport.test.ts: appended case "TASK-006 fix-round-1" — TSV export with ctid column strips it from header + data.
+TESTS_ADDED:
+  - browseCommands.test.ts: 4 cases (TASK-006 #12, #13, #14, #15)
+  - resultsGridModel.test.ts: 2 cases (TASK-006 ctid auto-hidden + non-ctid not hidden)
+  - webviewBundle.test.ts: 1 case (TASK-006 colDef hide:true verified via bundle)
+  - webviewExport.test.ts: 1 case (TASK-006 TSV export strips ctid)
+VERIFICATION:
+  command: npx vitest run src/ui/__tests__/resultsPanel.test.ts src/ui/__tests__/resultsPanelSaveEdits.test.ts src/ui/__tests__/resultsGridModel.test.ts
+  result: 58 pass / 0 fail
+  output_excerpt: |
+    ✓ src/ui/__tests__/resultsGridModel.test.ts  (29 tests) 6ms
+    ✓ src/ui/__tests__/resultsPanelSaveEdits.test.ts  (14 tests) 6ms
+    ✓ src/ui/__tests__/resultsPanel.test.ts  (15 tests) 17ms
+    Test Files  3 passed (3)
+         Tests  58 passed (58)
+  command: npx tsc --noEmit
+  result: 0 errors
+  output_excerpt: |
+    (no output)
+  command: npx vitest run src/ui/__tests__/browseCommands.test.ts src/ui/__tests__/resultsGridModelExport.test.ts src/adapters/__tests__/saveStatements.test.ts src/adapters/__tests__/saveStatementsInline.test.ts
+  result: 73 pass / 0 fail
+  command: npx vitest run src/ui/__tests__/webviewBundle.test.ts src/ui/__tests__/webviewExport.test.ts src/ui/__tests__/webviewSaveEdits.test.ts src/ui/__tests__/webviewToolbar.test.ts
+  result: 26 pass / 0 fail
+ISSUES:
+  - Decision: chose host-driven wrap per planner @ 2026-08-24. PG no-PK browse queries get `SELECT __vsdb_browse__.*, ctid FROM (<raw>) __vsdb_browse__`. Hand-written (editor) queries are NOT touched — save flow's `fetchPostgresCtids` fallback remains the safety net.
+  - Wrapper alias `__vsdb_browse__` is unique to this code path and uses identifier characters legal in Postgres + qualifyKeywordTables. The `ctid` system column is selected alongside `__vsdb_browse__.*` so no ambiguity with a hypothetical user column literally named "ctid".
+  - Adapter failure → wrap skipped, raw SQL passes through; save flow value-match fallback handles the no-ctid case. PK table → wrap skipped (PK path is fast). MySQL/MSSQL → wrap skipped (no ctid concept).
+  - `ColumnSpec.hidden` was added so the webview can derive `hiddenColumns` for export from the same source-of-truth as `hide: true` — single point of change (inferColumns) governs both visual hide and export strip.
+  - Bundle-based tests verified after `npm run compile`: AG Grid `getColumnState()` shows `hide: true` for the ctid colDef; `getAllDisplayedColumns()` excludes ctid; TSV export with header toggle strips ctid from header + every row.
+HANDOFF_TO_REVIEWER: yes — code review needed
+NEXT: ready for review

@@ -27,6 +27,10 @@ export interface ColumnSpec {
   headerName: string;
   kind: ColumnKind;
   alignRight?: boolean;
+  /** TASK-006 fix-round-1: when true, the column is hidden in the grid
+   * (AG Grid `hide: true`) AND excluded from exports. Set for postgres
+   * `ctid` addressing hint that the host appends to no-PK browse queries. */
+  hidden?: boolean;
 }
 
 // ---- local StatementResult mirror -----------------------------------------
@@ -95,6 +99,11 @@ export function inferColumns(columns: string[], rows: unknown[][]): ColumnSpec[]
     }
     const spec: ColumnSpec = { field: name, headerName: name, kind };
     if (alignRight) spec.alignRight = true;
+    // TASK-006 fix-round-1: postgres appends a `ctid` column to no-PK
+    // browse queries as a row-addressing hint. Server metadata, never user
+    // content, so the grid hides it (AG Grid `hide: true`) and the host
+    // serializers strip it (see `hiddenColumns` on SerializeOptions).
+    if (name === 'ctid') spec.hidden = true;
     return spec;
   });
 }

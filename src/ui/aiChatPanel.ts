@@ -175,19 +175,23 @@ export async function buildMessages(
 
       for (const obj of kept) {
         const key = `${obj.schema}.${obj.name}`;
-        let cols: ColumnInfo[] = [];
+        // Per-object listColumns failure: retain it with an empty column
+        // list so its DDL (table name / schema) still surfaces in context.
+        // Dropping the object entirely would hide a real table from the
+        // model when introspection is flaky; missing columns is recoverable
+        // (the model can call export_structure) but a missing table is not.
+        let mapped: ExportColumn[] = [];
         try {
-          cols = await adapter.listColumns(obj.name, obj.schema);
+          const cols = await adapter.listColumns(obj.name, obj.schema);
+          mapped = cols.map((c) => ({
+            name: c.name,
+            dataType: c.dataType,
+            nullable: c.nullable,
+            isPrimaryKey: c.isPrimaryKey,
+          }));
         } catch {
-          // Per-object failure: skip object entirely (no partial columns).
-          continue;
+          // Keep the object; columns default to [].
         }
-        const mapped: ExportColumn[] = cols.map((c) => ({
-          name: c.name,
-          dataType: c.dataType,
-          nullable: c.nullable,
-          isPrimaryKey: c.isPrimaryKey,
-        }));
         columns[key] = mapped;
         if (obj.kind === "table") {
           tables.push({ schema: obj.schema, name: obj.name });

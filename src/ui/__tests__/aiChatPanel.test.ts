@@ -1407,6 +1407,40 @@ describe("AiChatPanel — buildMessages full-DB context", () => {
       expect(sys).toMatch(/\+\d+ more objects omitted — call export_structure for full context/);
     }
   });
+
+  // ---- Regression (reviewer #R1.1): listColumns failure must NOT drop the
+  // object — render it with an empty column list so its DDL stays in context.
+  it("#R1 listColumns throws for a discovered table: that table is RETAINED with columns:[] (no drop)", async () => {
+    const adapter = fakeAdapter({
+      schemas: [{ name: "public" }],
+      tables: {
+        public: [
+          { name: "broken", schema: "public" },
+          { name: "ok", schema: "public" },
+        ],
+      },
+      columns: {
+        "public.ok": [
+          { name: "id", dataType: "integer", nullable: false, isPrimaryKey: true },
+        ],
+      },
+      listColumnsReject: { "public.broken": true },
+    });
+    const factory: AdapterFactory = async () => adapter;
+    const msgs = await buildMessages(factory, [], { role: "user", content: "hi" });
+    const sys = msgs[0]?.content as string;
+    expect(sys).toContain("Database structure (DDL):");
+    // The table whose listColumns failed must still be present in context.
+    expect(sys).toContain("CREATE TABLE public.broken");
+    // And the table whose columns loaded normally must also be present.
+    expect(sys).toContain("CREATE TABLE public.ok");
+    // Note: listColumns failure on `broken` must NOT drop the object.
+    // We don't re-assert CREATE-TABLE block shape here
+    // (buildTableStructure with empty columns emits "CREATE TABLE ... (\n\n);"
+    // which splits into two sub-blocks under the blank-line splitter; that's
+    // a rendering detail of exportStructure, not part of this regression's
+    // contract — see buildTableStructure in src/ui/exportStructure.ts).
+  });
 });
 
 

@@ -118,3 +118,23 @@ VERIFICATION:
 ISSUES: EditState.clearExceptRowIds had to snapshot keys into an array before deleting (Map spec leaves iteration undefined after delete — same pattern as ArrayList). getRowClass doesn't re-evaluate on `refreshCells`; `onAddRowClick` now marks dirty BEFORE applyTransaction (so first render picks up `vsdb-row-new`), `onDeleteRowClick` uses `redrawRows` (not refreshCells) for the row-level class.
 HANDOFF_TO_REVIEWER: yes — wave-2 batch A. Disjoint with T2/T4 (those touched different files per wave plan).
 NEXT: ready for review. TASK-008 (unified undo stack) will consume `EditState.isCellDirty` + the marker predicates (no API change needed).
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run tests/webviewEditHighlight.test.ts src/ui/__tests__/resultsGridModelEdit.test.ts src/adapters/__tests__/saveStatementsInline.test.ts
+  result: 35 pass / 0 fail / exit 0
+TEST_PLAN_COVERAGE: all-followed — #1-#5 webview jsdom tests (5), #6 regression net via saveStatementsInline (8); EditState pure-logic tests (8) cover isCellDirty/isRowNew/isRowDeleted/clearExceptRowIds
+FINDINGS:
+  critical:
+    (none)
+  important:
+    - src/ui/resultsGridModel.ts:314 — UTF-8 corruption: `sẽ` became `s�` (replacement char). Comment-only, zero functional impact, but visible in code review. Originates from batch commit encoding issue, not T7 spec.
+  minor:
+    - tests/webviewEditHighlight.test.ts:1-14 — file now contains TASK-008 undo/redo tests appended below T7 tests (lines 408+). Not a T7 defect — T8 reuses the same jsdom harness file. Clean separation within the file (separate `describeIfBundle` blocks).
+    - Executor report missing RED_OUTPUT evidence — spec §Test Cases requires TDD with failing-first proof. Executor wrote tests and verified GREEN; no evidence of RED phase. Process gap, not a code defect.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: All T7 spec requirements fully implemented and verified. UTF-8 corruption on resultsGridModel.ts:314 is a pre-existing comment that got garbled during the batch commit — fix by restoring `sẽ` character.

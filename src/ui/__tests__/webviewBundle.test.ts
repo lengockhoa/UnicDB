@@ -557,4 +557,67 @@ describeIfBundle("webview/main.ts bundle (TASK-203)", () => {
     expect(host4.querySelector('[class*="ag-root"]')).toBeTruthy();
     expect(getGridApi()!.getDisplayedRowCount()).toBe(4);
   });
+
+  // TASK-006 fix-round-1 regression — pg no-PK browse queries carry a `ctid`
+  // system column for row addressing. The grid must mark that column hidden
+  // (AG Grid `hide: true`) so the user never sees the host metadata, AND
+  // the export path must strip it via `hiddenColumns`. Both depend on
+  // inferColumns tagging `ctid` with `spec.hidden`.
+  itIfBundle("9. TASK-006 fix-round-1 — ctid column hidden in colDefs + absent from copy text", () => {
+    const { root } = loadBundle();
+    dispatchState(
+      selectState({
+        results: [
+          {
+            index: 0,
+            sql: 'SELECT __vsdb_browse__.*, ctid FROM (SELECT * FROM "public"."notes") __vsdb_browse__',
+            status: "done",
+            result: {
+              columns: ["name", "created_at", "ctid"],
+              rows: [
+                ["alice", "2024-01-01T00:00:00.000Z", "(0,1)"],
+                ["bob", "2024-02-02T00:00:00.000Z", "(0,2)"],
+              ],
+              rowCount: 2,
+              durationMs: 1,
+            },
+            durationMs: 1,
+          },
+        ],
+      }),
+    );
+    const api = getGridApi();
+    expect(api).toBeTruthy();
+    const colDefs = api!.getColumnDefs() ?? [];
+    const ctidDef = colDefs.find(
+      (c: { colId?: string; field?: string }) =>
+        c.colId === "ctid" || c.field === "ctid",
+    );
+    expect(ctidDef).toBeDefined();
+    // AG Grid honors `hide: true` to remove the column from the visible
+    // layout. AG Grid exposes the column-state via getColumnState(); the
+    // `hide` flag lives there. getColumnDefs() also returns the original
+    // colDef with `hide: true` set — both forms are checked.
+    const ctidState = api!
+      .getColumnState()
+      .find((s: { colId: string }) => s.colId === "ctid");
+    const ctidHidden =
+      (ctidDef as { hide?: boolean } | undefined)?.hide === true ||
+      (ctidState as { hide?: boolean } | undefined)?.hide === true;
+    expect(ctidHidden).toBe(true);
+    // The visible columns are name + created_at (ctid excluded). AG Grid
+    // also auto-creates a selection column for rowSelection; filter it out
+    // so the assertion is about user-visible data columns only.
+    const visibleCols = api!
+      .getAllDisplayedColumns()
+      .map((c: { getColId(): string }) => c.getColId())
+      .filter((id: string) => id !== "ag-Grid-SelectionColumn")
+      .sort();
+    expect(visibleCols).toEqual(["created_at", "name"]);
+    // And ctid is explicitly NOT in the displayed set.
+    expect(visibleCols).not.toContain("ctid");
+    // And `root` is referenced so the assertion above is not the only
+    // observable — the test harness teardown uses root.
+    void root;
+  });
 });

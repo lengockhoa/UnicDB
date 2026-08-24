@@ -225,3 +225,22 @@ ready for reviewer (Rev-T003).
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/aiChatPanel.test.ts src/ui/__tests__/aiChatPanelWebview.test.ts src/ui/__tests__/aiChatPanelMessages.test.ts && npx tsc --noEmit
+  result: 70 pass / 0 fail; tsc clean (exit 0)
+TEST_PLAN_COVERAGE: all-followed — #1 regression, #2 edge, #3 edge, #4 unit, #5 unit, #6 regression all implemented with real expect assertions; #3 RED output shows concrete assertion failures (acArg.aborted false, missing "Open AI Settings", sendBtn disabled)
+FINDINGS:
+  critical: none
+  important:
+    - src/ui/aiChatPanel.ts:850-861 — handleClear posts init{hasHistory:false}+done sequentially; if any downstream consumer processes init before done completes, busy flag could briefly flip. Low risk since both are synchronous post() calls into the webview, but worth noting as a future race surface if message ordering changes.
+  minor:
+    - src/ui/__tests__/aiChatPanel.test.ts:1320-1360 — test #1 has manual type guards (`if (inits.length >= 2)` + `if (firstErr && typeof firstErr === "object" && "message" in firstErr)`) before asserting; could use toEqual/toContain after the length check to be more direct, but this is cosmetic.
+    - src/ui/__tests__/aiChatPanelWebview.test.ts:722-734 — test #4 simulates sendBtn.click() to setBusy(true) instead of using the panel handler; works because it tests the webview in isolation, but the approach is slightly fragile if sendBtn's click handler changes.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: All 70 tests pass, tsc clean. The core fix (handleClear resets token/currentAbort/turnDonePosted + aborts SSE + posts init+done belt; applyInit de-streams+re-enables on hasHistory:false) is clean, minimal, and matches spec exactly. Error enrichment for "AI is not configured" is correct. Webview defense-in-depth is well-motivated. No regressions detected.

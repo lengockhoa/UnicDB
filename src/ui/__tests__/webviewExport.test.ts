@@ -376,4 +376,69 @@ describeIfBundle("webview/main.ts export toolbar (TASK-502)", () => {
       void root;
     },
   );
+
+  // TASK-006 fix-round-1 regression — when the result set carries a
+  // postgres `ctid` addressing column, the export buttons must strip it
+  // from the output (TSV default). User never sees host metadata.
+  itIfBundle(
+    "TASK-006 fix-round-1. ctid column hidden from TSV export",
+    () => {
+      const { root, received } = loadBundle();
+      dispatchState({
+        type: "state",
+        header: "Browse public.notes at 2024-01-01T00:00:00.000Z",
+        busy: false,
+        results: [
+          {
+            index: 0,
+            sql: 'SELECT __vsdb_browse__.*, ctid FROM (SELECT * FROM "public"."notes") __vsdb_browse__',
+            status: "done",
+            result: {
+              columns: ["name", "created_at", "ctid"],
+              rows: [
+                ["alice", "2024-01-01T00:00:00.000Z", "(0,1)"],
+                ["bob", "2024-02-02T00:00:00.000Z", "(0,2)"],
+              ],
+              rowCount: 2,
+              durationMs: 1,
+            },
+            durationMs: 1,
+          },
+        ],
+      });
+      void received;
+
+      const select = root.querySelector(
+        ".vsdb-export-format",
+      ) as HTMLSelectElement | null;
+      select!.value = "tsv";
+      select!.dispatchEvent(new Event("change"));
+      // Header is unchecked by default — toggle it on for the header assertion.
+      const headerCb = root.querySelector(
+        ".vsdb-export-header",
+      ) as HTMLInputElement | null;
+      headerCb!.checked = true;
+      headerCb!.dispatchEvent(new Event("change"));
+
+      const exportBtn = root.querySelector(
+        ".vsdb-export-file",
+      ) as HTMLButtonElement | null;
+      exportBtn!.click();
+
+      const exportMsgs = received.filter((m) => m.type === "exportFile");
+      expect(exportMsgs.length).toBe(1);
+      const m = exportMsgs[0] as { format: string; text: string };
+      expect(m.format).toBe("tsv");
+      const lines = m.text.split("\n");
+      // Header has only name + created_at — ctid is stripped.
+      expect(lines[0]).toBe("name\tcreated_at");
+      // Data rows have 2 cells each.
+      expect(lines[1]).toBe("alice\t2024-01-01T00:00:00.000Z");
+      expect(lines[2]).toBe("bob\t2024-02-02T00:00:00.000Z");
+      // ctid value never appears anywhere in the output.
+      expect(m.text).not.toContain("(0,1)");
+      expect(m.text).not.toContain("(0,2)");
+      expect(m.text).not.toMatch(/\bctid\b/);
+    },
+  );
 });
