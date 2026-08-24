@@ -4,6 +4,42 @@ All notable changes to VSDB are documented in this file. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.6.1] — 2026-08-24
+
+Cycle Q: schema-tree UX batch (9 tasks, handoff pipeline) + Export
+Structure. All reviewed (3 approved, 6 fixed round 1 → approved).
+
+### Added
+- **Browse data**: double-click table/view node opens `SELECT *` in the
+  results grid with edit/save.
+- **Create New Schema**: right-click a connection/schema opens a webview
+  form with live `CREATE SCHEMA` preview, reveal-on-create.
+- **Column designer Type dropdown**: varchar / numeric / boolean; Default
+  auto-fills `''` / `0` / `FALSE`.
+- **Requery bar**: WHERE / ORDER BY bar sits above the grid, below the
+  toolbar.
+- **AI sample data**: `Generate sample data` on a table uses the AI work
+  model (skips `id_<table>` + `created_at`), INSERT-whitelist validated.
+- **Postman Payload**: context menu on table/view/routine copies a JS
+  object literal `{ schema, table, col: this.workingObj.col }`; routine
+  columns via `listRoutineParams`.
+- **Export Structure**: context menu on table/view copies `CREATE TABLE`
+  DDL (PK constraint, NOT NULL, identifier-safe quoting) / view column
+  list to the clipboard.
+- **AI Chat toolbar icon** next to AI Settings in the schema-tree title.
+
+### Fixed
+- `SELECT * FROM order;` now qualifies unquoted keyword table names as
+  `"public".order` at the execution choke point (editor + CodeLens paths).
+- `listRoutineParams` reads `COALESCE(proallargtypes, proargtypes::oid[])`
+  with `WITH ORDINALITY` — all-IN-arg routines no longer degrade to
+  `{schema, table}` payloads (validated on PG 16).
+- Command `vsdb.browseTableData` icon regression; webview parallel-race in
+  the schemaForm bundle test; stale window listeners on repeated dynamic
+  import of the new-table form; `gridWrap` TS2339s under webview tsconfig.
+- AI sample data no longer claims implicit transaction: adapter errors
+  surface an explicit "partial rows MAY have committed" warning.
+
 ## [1.6.0] — 2026-08-24
 
 Cycles I–P. Table designer and the entire AI assistant stack landed since
@@ -69,6 +105,7 @@ boundary.
 
 Cycle G: set-filter, toolbar icons, `run-sh` fix.
 
+[1.6.1]: https://github.com/lengockhoa/VSDB/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/lengockhoa/VSDB/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/lengockhoa/VSDB/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/lengockhoa/VSDB/compare/v1.4.1...v1.5.0
