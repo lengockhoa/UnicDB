@@ -39,3 +39,11 @@ For each significant action, append:
 - Review: 4/4 approved (TASK-004 approved_minor after fix round for real child-exit → default-deny lifecycle). Known minor: `hostTools.ts`/`detect.ts` are now orphaned; deferred rather than deleting fallback-related code outside this cycle.
 - Verification: full suite 751 passed / 2 opt-in availability smoke skipped; `npm run compile` and `npm run typecheck` clean.
 - Lesson lặp lại: copy-back bằng `git diff --name-only` + `ls-files` bỏ sót file gitignored (`.cache/release-notes-v1.5.1.md` ở cycle G) → cycle H copy tay notes ngay đầu và báo path trong report — không mất lần nữa.
+
+## 2026-08-24 — Cycle N: builtin engine streaming
+
+- Action: streaming cho builtin AI engine (đóng UX gap chờ full response); unfreeze có chủ đích `provider.ts`/`agent.ts` (frozen từ cycle J chỉ là scope).
+- Files: `src/ai/provider.ts` (streamComplete SSE, parser tự viết 0 dep, CRLF-safe, AbortError trần), `src/ai/agent.ts` (opt-in streamComplete deps + onStreamFallback 1 lần + catch order pin: abort→rethrow / ProviderError@0→fallback / else→rethrow), `src/ui/aiChatPanel.ts` + `webview/aiChatPanelMain.ts` (delta render có sẵn từ ACP, banner "— streaming", deStreamOpenBubble trên done/error), `src/extension.ts` (5-arg closure).
+- Fix rounds: T001 (CRLF parse + abort wrap), T003 (Stop hiện error bubble — phân loại abort-vs-error; test tự gate theo signal).
+- Flaky-type fix: `webviewExport.test.ts` drain AG Grid debounce-0 timer sau teardown (unhandled 'window is not defined' → exit 1 dù 777 pass).
+- Verification: full suite 778 passed / 2 opt-in skipped, exit 0; compile + typecheck clean. Pushed 2056828.
