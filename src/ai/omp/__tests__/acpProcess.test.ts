@@ -425,4 +425,256 @@ describe("AcpProcess", () => {
         ),
     ).not.toThrow();
   });
+
+  // ---- TASK-002 cases #1..#4 (mcpServers regression + list/load wiring) ----
+
+  /**
+   * Read every NDJSON frame written to the fake child's stdin. PassThrough
+   * stdio buffers chunks; parsing here mirrors what the real `omp acp`
+   * process would receive on its stdin pipe.
+   */
+  function readStdinFrames(c: FakeChildProcess): Array<Record<string, unknown>> {
+    const raw = (c.stdin as PassThrough).read() ?? "";
+    const text = typeof raw === "string" ? raw : raw.toString("utf8");
+    return text
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+  }
+
+  // Case #1 — regression: session/new frame params deep-equal {cwd, mcpServers: []}
+  it("session/new frame sends {cwd, mcpServers: []} (regression for latent -32603)", async () => {
+    const proc = new AcpProcess(
+      {
+        ompPath: "omp",
+        cwd: "/w",
+        supportCwdFlag: true,
+        execFn: async () => "omp/18.0.1\n",
+      },
+      captureSpawn(child, captured),
+    );
+
+    const startPromise = proc.start();
+    queueMicrotask(() => {
+      void (async () => {
+        // Drain initialize, then drain enough microtasks so the session/new
+        // request frame has been written to stdin BEFORE the session/new
+        // response lands.
+        child.feedStdout(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: { protocolVersion: 1, agentInfo: { version: "18.0.1" } },
+          }) + "\n",
+        );
+        for (let i = 0; i < 8; i++) {
+          await Promise.resolve();
+        }
+        child.feedStdout(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 2,
+            result: { sessionId: "sess-1" },
+          }) + "\n",
+        );
+      })();
+    });
+    await startPromise;
+
+    const frames = readStdinFrames(child);
+    // Frame layout: [initialize id=1, session/new id=2]
+    const sessionNew = frames[1];
+    expect(sessionNew).toBeDefined();
+    expect(sessionNew?.["method"]).toBe("session/new");
+    expect(sessionNew?.["params"]).toEqual({ cwd: "/w", mcpServers: [] });
+  });
+
+  // Case #2 — edge-flag: supportCwdFlag:false → spawn cwd present, no --cwd, envelope still has mcpServers
+  it("supportCwdFlag:false still spawns cwd + session/new envelope carries mcpServers: []", async () => {
+    const proc = new AcpProcess(
+      {
+        ompPath: "omp",
+        cwd: "/w",
+        supportCwdFlag: false,
+        execFn: async () => "omp/18.0.1\n",
+      },
+      captureSpawn(child, captured),
+    );
+
+    const startPromise = proc.start();
+    queueMicrotask(() => {
+      void (async () => {
+        child.feedStdout(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: { protocolVersion: 1, agentInfo: { version: "18.0.1" } },
+          }) + "\n",
+        );
+        for (let i = 0; i < 8; i++) {
+          await Promise.resolve();
+        }
+        child.feedStdout(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 2,
+            result: { sessionId: "sess-1" },
+          }) + "\n",
+        );
+      })();
+    });
+    await startPromise;
+
+    expect(captured.options?.cwd).toBe("/w");
+    expect(captured.args ?? []).not.toContain("--cwd");
+
+    const frames = readStdinFrames(child);
+    const sessionNew = frames[1];
+    expect(sessionNew?.["method"]).toBe("session/new");
+    expect(sessionNew?.["params"]).toEqual({ cwd: "/w", mcpServers: [] });
+  });
+
+  // Case #3 — edge-sessionLoad: handle.acp.sessionLoad returns replay buffer across same flush as result.
+  it("handle.acp.sessionLoad resolves with replay buffer (window open across multi-flush)", async () => {
+    const proc = new AcpProcess(
+      {
+        ompPath: "omp",
+        cwd: "/w",
+        supportCwdFlag: true,
+        execFn: async () => "omp/18.0.1\n",
+      },
+      captureSpawn(child, captured),
+    );
+
+    const startPromise = proc.start();
+    const loadPromise = startPromise.then((handle) =>
+      handle.acp.sessionLoad("s1", "/w"),
+    );
+
+    queueMicrotask(() => {
+      void (async () => {
+        child.feedStdout(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: { protocolVersion: 1, agentInfo: { version: "18.0.1" } },
+          }) + "\n",
+        );
+        for (let i = 0; i < 8; i++) {
+          await Promise.resolve();
+        }
+        child.feedStdout(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 2,
+            result: { sessionId: "sess-1" },
+          }) + "\n",
+        );
+        // Drain so handle is returned and sessionLoad() has been called and its
+        // request frame written to stdin (id=3). Then respond + feed 2 notifications
+        // in the same flush so the replay window absorbs them.
+        for (let i = 0; i < 8; i++) {
+          await Promise.resolve();
+        }
+        child.feedStdout(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: { sessionId: "s1", delta: "n1" },
+          }) + "\n" +
+          JSON.stringify({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: { sessionId: "s1", delta: "n2" },
+          }) + "\n" +
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 3,
+            result: { configOptions: [], modes: {} },
+          }) + "\n",
+        );
+      })();
+    });
+
+    const result = await loadPromise;
+
+    // Replay buffer absorbs both notifications arriving in the same flush
+    // as the load result. Window is NOT closed by result+settle (TASK-001 §F1
+    // frozen semantics: closed only on the NEXT outgoing request/notify write).
+    expect(result.configOptions).toEqual([]);
+    expect(result.modes).toEqual({});
+    expect(result.replay.closed).toBe(false);
+    expect(result.replay.notifications).toEqual([
+      { method: "session/update", params: { sessionId: "s1", delta: "n1" } },
+      { method: "session/update", params: { sessionId: "s1", delta: "n2" } },
+    ]);
+
+    // Outgoing frame for session/load carries the evidence-frozen envelope.
+    const frames = readStdinFrames(child);
+    const loadFrame = frames[2];
+    expect(loadFrame?.["method"]).toBe("session/load");
+    expect(loadFrame?.["params"]).toEqual({
+      sessionId: "s1",
+      cwd: "/w",
+      mcpServers: [],
+    });
+  });
+
+  // Case #4 — edge-list: sessionList propagates server error code/message verbatim.
+  it("handle.acp.sessionList rejects with server error code + message intact", async () => {
+    const proc = new AcpProcess(
+      {
+        ompPath: "omp",
+        cwd: "/w",
+        supportCwdFlag: true,
+        execFn: async () => "omp/18.0.1\n",
+      },
+      captureSpawn(child, captured),
+    );
+
+    const startPromise = proc.start();
+    const listPromise = startPromise.then((handle) => handle.acp.sessionList());
+
+    queueMicrotask(() => {
+      void (async () => {
+        child.feedStdout(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: { protocolVersion: 1, agentInfo: { version: "18.0.1" } },
+          }) + "\n",
+        );
+        for (let i = 0; i < 8; i++) {
+          await Promise.resolve();
+        }
+        child.feedStdout(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 2,
+            result: { sessionId: "sess-1" },
+          }) + "\n",
+        );
+        for (let i = 0; i < 8; i++) {
+          await Promise.resolve();
+        }
+        child.feedStdout(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 3,
+            error: { code: -32603, message: "boom" },
+          }) + "\n",
+        );
+      })();
+    });
+
+    await expect(listPromise).rejects.toMatchObject({
+      message: expect.stringContaining("boom"),
+      code: -32603,
+    });
+  });
+
+  // Case #5 — regression-lifecycle: existing suite (above) must keep passing. Implicit:
+  // if any of the existing tests fail post-fix, vitest reports it. No explicit
+  // assertion here — this test is the documentation anchor for the contract.
 });
+

@@ -162,7 +162,7 @@ export class AcpProcess {
         startError,
       ])) as { agentInfo?: { version?: string } };
       const sessionResult = (await Promise.race([
-        acp.request("session/new", { cwd: this.opts.cwd }),
+        acp.request("session/new", { cwd: this.opts.cwd, mcpServers: [] }),
         startError,
       ])) as { sessionId?: unknown };
 

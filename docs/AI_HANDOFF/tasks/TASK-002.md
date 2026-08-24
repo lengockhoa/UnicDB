@@ -1,8 +1,8 @@
 # TASK-002 — AcpProcess session/new envelope fix + list/load on spawned client
 
-- Status: `ready`
+- Status: `approved`
 - Owner: `-`
-- Reviewer: `-`
+- Reviewer: `unic-smart`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §3.B
 
 ## Goal
@@ -80,3 +80,72 @@ live smoke gửi đúng envelope thủ công). Chỉ sửa đúng 1 dòng params
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Executor Report
+
+```
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: ExecO-T002
+SUMMARY: Added `mcpServers: []` to the `session/new` envelope sent by `AcpProcess.start()` (the latent -32603 bug). Verified `handle.acp.sessionList()` and `handle.acp.sessionLoad()` from TASK-001 surface through the spawned client. No other code changed; lifecycle/permission/watchdog untouched.
+TEST_PLAN_FOLLOWED: TASK §4 verbatim — cases #1..#4 appended to `src/ai/omp/__tests__/acpProcess.test.ts`; case #5 covered by the existing suite passing unmodified.
+FILES_CHANGED:
+  - src/ai/omp/acpProcess.ts:165 — `acp.request("session/new", { cwd: this.opts.cwd })` → `acp.request("session/new", { cwd: this.opts.cwd, mcpServers: [] })`. One line, one property. No other edits.
+  - src/ai/omp/__tests__/acpProcess.test.ts: appended 4 tests + a `readStdinFrames` helper. Reads the fake child's stdin PassThrough buffer to assert envelope params.
+TESTS_ADDED:
+  - src/ai/omp/__tests__/acpProcess.test.ts: session/new frame sends {cwd, mcpServers: []} (regression for latent -32603)
+  - src/ai/omp/__tests__/acpProcess.test.ts: supportCwdFlag:false still spawns cwd + session/new envelope carries mcpServers: []
+  - src/ai/omp/__tests__/acpProcess.test.ts: handle.acp.sessionLoad resolves with replay buffer (window open across multi-flush)
+  - src/ai/omp/__tests__/acpProcess.test.ts: handle.acp.sessionList rejects with server error code + message intact
+VERIFICATION:
+  command: npm run typecheck && npx vitest run src/ai/omp/__tests__/acpProcess.test.ts src/ai/omp/__tests__/acp.test.ts
+  result: 28 pass / 0 fail / exit 0
+  output_excerpt: |
+    > vsdb@1.5.1 typecheck
+    > tsc --noEmit
+    ===
+     RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+     ✓ src/ai/omp/__tests__/acp.test.ts  (14 tests) 4ms
+     ✓ src/ai/omp/__tests__/acpProcess.test.ts  (14 tests) 7ms
+     Test Files  2 passed (2)
+          Tests  28 passed (28)
+ISSUES: none
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for review
+```
+
+RED evidence (pre-fix, same command on `acpProcess.test.ts` only):
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+
+ ❯ src/ai/omp/__tests__/acpProcess.test.ts  (14 tests | 2 failed) 11ms
+   ❯ AcpProcess > session/new frame sends {cwd, mcpServers: []} (regression for latent -32603)
+     → expected { cwd: '/w' } to deeply equal { cwd: '/w', mcpServers: [] }
+   ❯ AcpProcess > supportCwdFlag:false still spawns cwd + session/new envelope carries mcpServers: []
+     → expected { cwd: '/w' } to deeply equal { cwd: '/w', mcpServers: [] }
+
+  Test Files  1 failed (1)
+       Tests  2 failed | 12 passed (14)
+```
+Cases #3 and #4 (sessionLoad, sessionList) passed pre-fix because the AcpClient methods were already added by TASK-001 and `handle.acp` already exposes them; the regression contract pinned by case #1 is the only RED that depends on the AcpProcess edit.
+
+## Reviewer Verdict
+
+```
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code (ExecO-T002) — differs from reviewer ✓
+VERIFICATION_RERUN:
+  command: npm run typecheck && npx vitest run src/ai/omp/__tests__/acpProcess.test.ts src/ai/omp/__tests__/acp.test.ts
+  result: 28 pass / 0 fail / exit 0 (typecheck clean)
+TEST_PLAN_COVERAGE: all-followed — cases #1-#4 appended verbatim; case #5 = existing 10 tests unmodified (diff is pure insertion, 0 deletions)
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - acpProcess.test.ts:680 — case #5 has no test body; comment documents the implicit
+      regression contract. Acceptable anchor per task file's "case 5 = suite cũ chạy lại".
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Diff is minimal and exact: acpProcess.ts:165 single-property envelope fix, tests pure-insertion. Envelope pinned via stdin frame assert (WRITE side). sessionLoad params {sessionId, cwd, mcpServers:[]} and sessionList {} verified against acp.ts:166,213-216. Spawn args untouched (["acp"] + conditional --cwd only; no yolo/approval-mode/auto-approve). RED output verbatim with real assertion diffs. extension.ts not touched (TASK-003 scope). Lint script N/A (absent in package.json) — typecheck included instead.
+```
