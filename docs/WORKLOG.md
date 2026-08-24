@@ -55,3 +55,10 @@ For each significant action, append:
 - Files: src/ai/omp/acp.ts (sessionList/sessionLoad + AcpReplayBuffer — cửa sổ replay đóng theo outgoing write, multi-flush safe), src/ai/omp/acpProcess.ts (wiring + mcpServers fix), src/ui/aiChatPanel.ts + aiChatPanelMessages.ts (picker, replay drop-guard, cap 50 + truncated notice, streaming guard), webview/aiChatPanelMain.ts (picker UI + history render textContent-safe).
 - Fix round T003: missing RED output, streaming guard, 2 test không giết mutation (sort monotonic fixture, drop-guard bị transport absorb che).
 - Verification: full suite 819 passed / 2 opt-in skipped exit 0; compile + typecheck clean. Pushed a3ba36b.
+
+## 2026-08-24 — Cycle P: permission detail + tool-call UI + VSIX release
+
+- Action: dọn sạch backlog cuối — permission dialog hiện tool args/SQL preview, builtin engine hiện tool-call live, release pass VSIX 1.6.0.
+- Files: src/ui/permissionDetail.ts (sanitizer pure: redact secret keys, SQL preview, JSON pretty, cap 2000), aiChatPanel.ts + webview (collapsible textContent detail), agent.ts (AgentCallbacks.onToolCall additive — fire trước executeToolCall, không abort-check trong loop), CHANGELOG.md (I–P), docs/RELEASE.md, .vscodeignore (thêm vitest.integration-all.config.ts bị leak).
+- Lỗi bắt được: releaseHygiene test phát hiện package-lock root version 1.5.1 ≠ package.json 1.6.0 → npm install --package-lock-only sync lại.
+- Verification: full suite 838 passed / 2 opt-in skipped exit 0; compile + typecheck clean; vsdb-1.6.0.vsix (15 files, 1.55 MB, không src/node_modules). Pushed 6df9083.
