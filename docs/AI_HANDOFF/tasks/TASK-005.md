@@ -150,3 +150,23 @@ VERIFICATION:
 ISSUES: none. The other webview tsc errors (newTableFormMain.ts TableSpec.originalName; schemaFormMain.ts duplicate vscode globals; AG-Grid cellStyle `overflow: undefined` index-signature) and the 3 gridFooter TS2339 lines (329/1228/1983) were confirmed out of scope for this fix round — the verdict's "important" finding was strictly the gridWrap deletion, and gridFooter was never dropped (R3 never touched it).
 HANDOFF_TO_REVIEWER: yes — verdict's "important" finding fully resolved; minor finding #1 (decorative banner in webviewRequery.test.ts:421) left untouched as instructed (minors only if trivial; not in fix-005 scope).
 NEXT: ready for re-review by unic/unic-smart.
+
+## Reviewer Verdict (fix round 1 re-review)
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic/unic-smart (config handoff.reviewer.model = unic-smart — match)
+EXECUTOR_MODEL: unic/unic-code (Fix-005) — differs from reviewer; isolation OK
+VERIFICATION_RERUN:
+  command: npx tsc -p tsconfig.webview.json --noEmit (0 TS2339 gridWrap/gridHost; 52 total diagnostics — matches parent baseline, was 63 at d266d93) && npm run compile && npx vitest run src/ui/__tests__/webviewRequery.test.ts && npm run typecheck
+  result: PASS — compile OK; vitest 10/10; root tsc clean
+TEST_PLAN_COVERAGE: all-followed — restore-only fix; N/A justification valid (original TDD cases 1-4 + 4 layout assertions still green in the 10/10 run)
+FIX_VERIFICATION: webview/main.ts:303-307 — `gridWrap: HTMLDivElement;` and `gridHost: HTMLDivElement;` both re-declared in PersistentDom with updated JSDoc; round-1 "important" finding fully resolved. Remaining TS2339s (aiSettingsFormMain.ts never-narrowing ×3, newTableFormMain.ts TableSpec.originalName) are pre-existing and out of scope.
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - src/ui/__tests__/webviewRequery.test.ts:421 — decorative `// ===` banner now sits BELOW the "Fix Round 2 — Critical #1" heading instead of above it (round-1 minor, untouched by design); cosmetic only.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Fix is minimal and exactly scoped (two interface property lines restored, no behavior change). 52 webview diagnostics all pre-existing-or-improved vs d266d93 baseline of 63.

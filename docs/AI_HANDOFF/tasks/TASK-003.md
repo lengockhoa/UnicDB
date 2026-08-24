@@ -225,3 +225,21 @@ VERIFICATION:
 ISSUES: RED_OUTPUT not recoverable from this worktree (round-0 executor ran in a different worktree; wave-3 history is parked, not re-runnable). Reviewer already confirmed a fresh serial PASS in their rerun notes — that evidence plus this round's fresh PASS is the strongest available substitute for the original RED paste. No other blockers.
 HANDOFF_TO_REVIEWER: yes
 NEXT: Ready for re-review — flake addressed via module-init pattern matching the other 11 bundle tests; task's verification command reproduces 137/137 + typecheck clean on a fresh serial run; the only prior blocker (RED_OUTPUT) is documented above with what was verified instead.
+
+## Reviewer Verdict (fix round 1 re-review)
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run src/ui/__tests__/schemaForm.test.ts src/ui/__tests__/tableCommands.test.ts src/extension.test.ts src/ui/__tests__/schemaTree.test.ts && npm run typecheck
+  result: 137 pass / 0 fail; compile + typecheck clean
+FINDINGS:
+  critical: []
+  important: []
+  minor:
+    - docs/AI_HANDOFF/tasks/TASK-003.md — RED_OUTPUT remains substituted (RED_OUTPUT_NOTE + fresh evidence), not the original RED paste. Round-0 worktree is inaccessible, executor documented the substitute honestly, reviewer re-ran serial verification independently (137/137 PASS) and reproduced the negative path: `rm dist/schemaForm.js` → exactly one failure, TASK-003 case-9 `expect(schemaFormBundlePresent).toBe(true)` Received: false — deterministic, not a race. Original RED evidence is now permanently lost; noted for the human, not blocking.
+FLAKE_FIX_VERIFIED: src/extension.test.ts:394 — `schemaFormBundlePresent` is a module-init const consumed at :1273; matches the 11 existing bundle tests' pattern. Full parallel `npx vitest run` re-run fresh: 76 passed / 1 skipped (939 pass / 2 skip / 0 fail) — case-9 no longer trips under parallelism.
+TEST_PLAN_COVERAGE: all-followed (9/9 cases green; fix round scoped to test stability, no contract change)
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Model isolation holds (executor unic-code ≠ reviewer unic/unic-smart). Prior blocker resolved: RED_OUTPUT handled as honestly-documented substitute + independent reproduction; parallel race eliminated by the module-init hoist.

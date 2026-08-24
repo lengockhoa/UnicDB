@@ -180,3 +180,24 @@ ISSUES: NONE_BLOCKING. Honest atomicity scope documented: per constraint scope, 
 HANDOFF_TO_REVIEWER: yes — reviewer should verify (1) false "implicit transaction" claim is removed at all three sites, (2) new error message contains "partial rows MAY have committed" and routes to showError, (3) both new regression tests pass and would have failed against pre-fix code, (4) other tests still green.
 NEXT: ready for re-review.
 ```
+
+## Reviewer Verdict (fix round 1 re-review)
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/sampleDataAi.test.ts src/ui/__tests__/tableCommands.test.ts && npm run typecheck
+  result: 37 pass / 0 fail (exit 0); typecheck clean (exit 0)
+FIX_VERIFICATION:
+  - False "implicit transaction (all-or-nothing)" claim gone at all 3 sites (grep for it: zero hits). Header (src/ui/sampleDataAi.ts:8-13), orchestrator JSDoc "Atomicity scope (honest)" (:176-185), and call-site comment (:226-229) now state the real split+auto-commit behavior.
+  - adapter.runQuery wrapped in try/catch (:230-240): rethrows with "partial rows MAY have committed" + INSERT count, routes to showError, propagates original error via `cause`. Pinned by 2 regression tests (sampleDataAi.test.ts:272-387) with real assertions (rejects.toThrow, runQuery toHaveBeenCalledTimes(1), errorSpy content).
+  - Honest-warning resolution ACCEPTED vs verdict's explicit-transaction demand: BEGIN;...;COMMIT; joined into runQuery is non-viable — PostgresAdapter.runQuery (src/adapters/postgres.ts) splits via splitStatements and each pool.query auto-commits, so BEGIN would land on a different pooled connection than the INSERTs. An adapter transaction API (begin/commit/rollback) is a DbAdapter contract change owned outside this task. Verdict's core defect was the false claim, which is now removed and regression-pinned.
+FINDINGS:
+  critical: []
+  important: []
+  minor:
+    - src/ui/sampleDataAi.ts:115-127 — carried from round 1 (non-blocking): `i` flag makes quoted-identifier match case-insensitive (`"Users"` passes for target `users`); DB-side error makes practical risk low.
+    - src/ui/sampleDataAi.ts:106-120 — carried: no exclusion for other server-defaulted columns (e.g. `updated_at DEFAULT now()`); spec only required the 3 kinds.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Round-1 important finding resolved exactly as the verdict's NOTES demanded ("fix the false atomicity claim"); validation-time zero-partial-insert guarantee remains intact and is now pinned by a dedicated regression test.

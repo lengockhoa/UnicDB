@@ -207,3 +207,24 @@ VERIFICATION:
 ISSUES: VSDB_IT integration case for `listRoutineParams` against real PG cannot be authored from this worktree (PG_PORT_CLOSED) — follow-up for a runner with PG access. Reviewer-flagged minors (`p.name ?? ""` silent drop in postmanPayload + duplicate pre-check in tableCommands) intentionally left untouched (out of file ownership scope; assigned to fix-005 / a future minor round).
 HANDOFF_TO_REVIEWER: yes
 NEXT: ready for review (PostgresAdapter.listRoutineParams SQL now matches the Reviewer's verified fix; new INOUT regression test + SQL-text negative assertions pin both critical defects; typecheck clean; no other adapter file modified).
+
+## Reviewer Verdict (fix round 1 re-review)
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic/unic-smart (handoff.reviewer.model=unic-smart — match)
+EXECUTOR_MODEL: unic/unic-code (claude-sonnet-4-5) — differs from reviewer, isolation OK
+VERIFICATION_RERUN:
+  command: npx vitest run src/adapters/__tests__/postgres.test.ts src/ui/__tests__/postmanPayload.test.ts src/ui/__tests__/tableCommands.test.ts && npm run typecheck
+  result: 44 pass / 0 fail; tsc --noEmit exit 0
+FIX_VERIFICATION:
+  - Both CRITICAL findings resolved. src/adapters/postgres.ts:279-290 now ships the validated SQL verbatim (unnest(COALESCE(p.proallargtypes, p.proargtypes::oid[])) WITH ORDINALITY, p.proargnames[t.ord], format_type(t.typ), $1/$2 binds).
+  - Reviewer re-verified empirically on the real instance (vsdb-postgres, PG 16.15 — container was stopped, reviewer started it, ran shipped SQL + old SQL, then stopped it again): named all-IN (p_user_id/p_amount), unnamed positional (null/null), no-arg ([]), INOUT mixed(a, INOUT b) → all 4 shapes correct. Old SQL confirmed defective: [] for all-IN shapes; [(null,null),(a,integer)] misalignment for INOUT. This closes the executor's PG_PORT_CLOSED gap — no VSDB_IT case needed to unblock.
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/adapters/__tests__/postgres.test.ts:196 — fix round dropped `expect(lastCall[1]).toEqual(["public","add_credit"])`; no assertion now pins the $1/$2 bind VALUES (only SQL text). Restore one line in a later minor round.
+    - ddl.integration.test.ts — permanent VSDB_IT=1 case for listRoutineParams still absent (PG unreachable in fix worktree; defect surface now covered by SQL-text tripwires + reviewer's real-PG run). Follow-up only.
+    - Round-1 minors unchanged (postmanPayload.ts silent drop of unnamed args; tableCommands.ts duplicate pre-check) — tracked for the minor round, non-blocking.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: RED evidence for the fix round is real: the old pinned assertion toMatch(/proallargtypes\[ord\]/) genuinely fails against the new SQL, and the old SQL demonstrably returns wrong rows on PG 16.15. SQL-correctness proven at the strongest available level (real DB, 4 shapes).

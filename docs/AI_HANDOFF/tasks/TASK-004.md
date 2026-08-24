@@ -261,3 +261,23 @@ ISSUES: none. Out-of-scope scaffold test failure (1 in src/scaffold.test.ts)
 belongs to TASK-002 — not touched here per assignment file-ownership rule.
 HANDOFF_TO_REVIEWER: yes — critical finding resolved; double-run green.
 NEXT: ready for review
+
+## Reviewer Verdict (fix round 1 re-review)
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic/unic-smart (configured reviewer: unic-smart)
+EXECUTOR_MODEL: unic/unic-code
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run src/ui/__tests__/newTableFormColumnDefault.test.ts (×2 consecutive) && npm run typecheck
+  result: compile OK; vitest 9/9 pass run 1 (exit 0, 0 uncaught errors); vitest 9/9 pass run 2 (exit 0, 0 uncaught errors); typecheck clean
+TEST_PLAN_COVERAGE: all-followed — original 7 cases + regression #8; both R4.5 critical findings addressed (listener fix verified at webview/newTableFormMain.ts:559-633; RED evidence backfilled with real pre-fix output: 8 pass + 15 uncaught TypeErrors, exit 1)
+FINDINGS:
+  critical: []
+  important: []
+  minor:
+    - src/ui/__tests__/newTableFormColumnDefault.test.ts:33-46 — two afterEach hooks with duplicated bodies (first adds a setTimeout(0) wait, second is an identical immediate copy); the second is redundant, delete it.
+    - webview/newTableFormMain.ts:495 — `reindexTracking(removedIdx, _delta: -1)` takes an unused `_delta` parameter; drop it and the `-1` at both call sites.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Model isolation satisfied (unic-smart ≠ unic-code). Self-replacing listener pattern is confined to module scope, no behavior change for single-load usage; consecutive-run flakiness from the original verdict is gone.
+
+INDEX row: | TASK-004 | ✅ done | Feature C: Designer column form Type dropdown + default auto-fill | webview/newTableFormMain.ts, webview/newTableFormColumnHelpers.ts, src/ui/__tests__/newTableFormColumnDefault.test.ts | unic/unic-code | unic/unic-smart | approved_minor |

@@ -198,3 +198,20 @@ VERIFICATION:
 ISSUES: none. Edit tool auto-repair stripped two duplicated body rows in package.json between range boundaries; the syntax probe verified the final file shape (no stray commas, balanced braces), and scaffold.test.ts:7/7 green confirms parity with other command entries.
 HANDOFF_TO_REVIEWER: yes
 NEXT: ready for re-review
+
+## Reviewer Verdict (fix round 1 re-review)
+
+VERDICT: approved
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_TOOL: claude-code
+EXECUTOR_SUBAGENT: Fix-002
+VERIFICATION_RERUN:
+  command: npx vitest run src/scaffold.test.ts && npx vitest run src/ui/__tests__/schemaTree.test.ts src/extension.test.ts src/ui/__tests__/browseCommands.test.ts && npm run typecheck
+  result: scaffold 7/7 pass; scoped 111/111 pass; typecheck exit 0
+FINDINGS:
+  critical: none
+  important: none
+  minor: none
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Fix-002 added icon="$(preview)" to the vsdb.browseTableData command entry at package.json:190. Scaffold icon assertion loop now passes; no other regressions. Fix fully resolves the critical_block from R4.
