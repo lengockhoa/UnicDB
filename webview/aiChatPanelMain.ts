@@ -57,15 +57,32 @@ interface PermissionRequestMsg {
   tool: { id: string; name: string; detail: string };
   options: Array<{ optionId: string; label: string }>;
 }
-type HostMsg =
-  | InitMsg
-  | StepMsg
-  | AssistantMsg
-  | ErrorMsg
-  | DoneMsg
-  | DeltaMsg
-  | EngineMsg
-  | PermissionRequestMsg;
+/** Host answer for `resume_list` — ≤20 cwd-filtered rows, current session
+ * removed. `sessionId` is opaque to the webview (echoed verbatim on pick). */
+interface ResumeSessionsMsg {
+  type: "resume_sessions";
+  sessions: Array<{ sessionId: string; label: string; detail: string }>;
+}
+/** Host replay of the picked session — capped at HISTORY_RENDER_CAP. Only
+ * `kind:"user"|"assistant"|"tool"` items are rendered; anything else is
+ * silently dropped (host already filtered `agent_thought_chunk`). */
+interface HistoryMsg {
+  type: "history";
+  items: Array<{ kind: string; text: string }>;
+  truncated: boolean;
+  truncatedCount: number;
+}
+ type HostMsg =
+   | InitMsg
+   | StepMsg
+   | AssistantMsg
+   | ErrorMsg
+   | DoneMsg
+   | DeltaMsg
+   | EngineMsg
+  | PermissionRequestMsg
+  | ResumeSessionsMsg
+  | HistoryMsg;
 
 // ---- State -----------------------------------------------------------------
 interface State {
@@ -137,9 +154,11 @@ function setBusy(busy: boolean): void {
   state.busy = busy;
   const sendBtn = document.getElementById("sendBtn") as HTMLButtonElement | null;
   const stopBtn = document.getElementById("stopBtn") as HTMLButtonElement | null;
+  const resumeBtn = document.getElementById("resumeBtn") as HTMLButtonElement | null;
   if (sendBtn) sendBtn.disabled = busy;
   // stopBtn is always clickable — host ignores stop when no agent is in flight.
   if (stopBtn) stopBtn.disabled = false;
+  if (resumeBtn) resumeBtn.disabled = busy;
   const prompt = document.getElementById("prompt") as HTMLTextAreaElement | null;
   if (prompt) prompt.disabled = busy;
 }
@@ -150,6 +169,7 @@ function renderInitial(): void {
   <div class="vsdb-chat-input">
     <textarea id="prompt" rows="3" placeholder="Ask about your database…"></textarea>
     <div class="vsdb-chat-actions">
+      <button id="resumeBtn" class="vsdb-chat-secondary">Resume session</button>
       <button id="clearBtn">Clear</button>
       <button id="stopBtn" class="vsdb-chat-secondary">Stop</button>
       <button id="sendBtn" class="vsdb-chat-primary">Send</button>
@@ -187,6 +207,12 @@ function wireControls(): void {
 
   stopBtn?.addEventListener("click", () => {
     post({ type: "stop" });
+  });
+
+  const resumeBtn = document.getElementById("resumeBtn") as HTMLButtonElement | null;
+  resumeBtn?.addEventListener("click", () => {
+    if (state.busy) return;
+    post({ type: "resume_list" });
   });
 
   clearBtn?.addEventListener("click", () => {
@@ -423,10 +449,122 @@ function disposePermissionCard(
   card.remove();
 }
 
+// ---- Resume picker + history batch rendering (TASK-004) -------------------
+//
+// SECURITY: the picker renders every label / detail via DOM text nodes
+// (element.textContent) — never innerHTML, never a markdown interpreter.
+// `sessionId` is echoed verbatim on pick; the webview never invents or
+// rewrites IDs. The history renderer only knows about user/assistant/tool
+// items; any other `kind` is silently dropped (host already filtered
+// `agent_thought_chunk` — the webview has no branch that renders thoughts).
+
+/** Open picker state — exactly one row pick yields exactly one resume_pick. */
+let pickerOpen = false;
+/** Once the user picked a session we close the picker locally to guarantee no
+ * second resume_pick can fire if a stale row is clicked again. */
+let pickerConsumed = false;
+
+/** Render the host-supplied session list as text-only rows inside a picker
+ * card. Replaces any prior open picker. */
+function renderResumePicker(msg: ResumeSessionsMsg): void {
+  disposeResumePicker();
+  pickerOpen = true;
+  pickerConsumed = false;
+
+  const thread = document.getElementById("thread");
+  if (!thread) return;
+
+  const card = document.createElement("div");
+  card.className = "vsdb-chat-resume-picker";
+
+  const header = document.createElement("div");
+  header.className = "vsdb-chat-resume-header";
+  header.textContent = "Resume a previous session";
+  card.appendChild(header);
+
+  for (const s of msg.sessions) {
+    const row = document.createElement("div");
+    row.className = "vsdb-chat-resume-row";
+    row.dataset.sessionId = s.sessionId;
+
+    const label = document.createElement("div");
+    label.className = "vsdb-chat-resume-row-label";
+    label.textContent = s.label;
+    row.appendChild(label);
+
+    const detail = document.createElement("div");
+    detail.className = "vsdb-chat-resume-row-detail";
+    detail.textContent = s.detail;
+    row.appendChild(detail);
+
+    row.addEventListener("click", () => {
+      if (!pickerOpen || pickerConsumed) return;
+      pickerConsumed = true;
+      // Verbatim echo — never synthesize / rewrite the sessionId.
+      post({ type: "resume_pick", sessionId: s.sessionId });
+      disposeResumePicker();
+    });
+    card.appendChild(row);
+  }
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "vsdb-chat-secondary vsdb-chat-resume-cancel";
+  cancelBtn.textContent = "Cancel";
+  cancelBtn.addEventListener("click", () => {
+    if (!pickerOpen) return;
+    post({ type: "resume_cancel" });
+    disposeResumePicker();
+  });
+  card.appendChild(cancelBtn);
+
+  thread.appendChild(card);
+  thread.scrollTop = thread.scrollHeight;
+}
+
+/** Tear down the open picker without emitting any further messages. */
+function disposeResumePicker(): void {
+  pickerOpen = false;
+  pickerConsumed = false;
+  const existing = document.querySelector(".vsdb-chat-resume-picker");
+  if (existing) existing.remove();
+}
+
+/** Render the host's replay-derived history batch in the original order.
+ * user items → plain text bubble; assistant items → existing markdown
+ * renderer (only safe path for any markdown); tool items → one-line
+ * collapsed row. Anything else is silently skipped. If `truncated` is set,
+ * a single notice line using `truncatedCount` is placed ABOVE the items. */
+function renderHistory(msg: HistoryMsg): void {
+  const thread = document.getElementById("thread");
+  if (!thread) return;
+
+  if (msg.truncated && msg.truncatedCount > 0) {
+    const notice = document.createElement("div");
+    notice.className = "vsdb-chat-history-truncated";
+    notice.textContent = `${msg.truncatedCount} earlier items not shown`;
+    thread.appendChild(notice);
+  }
+
+  for (const item of msg.items) {
+    if (item.kind === "user") {
+      appendUser(item.text);
+    } else if (item.kind === "assistant") {
+      appendAssistant(item.text, true);
+    } else if (item.kind === "tool") {
+      const row = document.createElement("div");
+      row.className = "vsdb-chat-history-tool";
+      row.textContent = item.text;
+      thread.appendChild(row);
+    }
+    // Any other kind (host shouldn't ship thought/skip — silently dropped).
+  }
+  thread.scrollTop = thread.scrollHeight;
+}
+
 // ---- Wire host messages ----------------------------------------------------
-window.addEventListener("message", (ev: MessageEvent) => {
-  const msg = ev.data as HostMsg;
-  switch (msg.type) {
+ window.addEventListener("message", (ev: MessageEvent) => {
+   const msg = ev.data as HostMsg;
+   switch (msg.type) {
     case "init":
       applyInit(msg);
       return;
@@ -464,6 +602,12 @@ window.addEventListener("message", (ev: MessageEvent) => {
       return;
     case "permission_request":
       renderPermissionRequest(msg);
+      return;
+    case "resume_sessions":
+      renderResumePicker(msg);
+      return;
+    case "history":
+      renderHistory(msg);
       return;
   }
 });

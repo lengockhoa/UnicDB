@@ -140,3 +140,62 @@ describeIfBundle("webview/aiChatPanelMain.ts bundle (TASK-003)", () => {
     expect(html).toMatch(/<h2/);
   });
 });
+describeIfBundle("webview/aiChatPanelMain.ts bundle (TASK-004 Resume)", () => {
+  itIfBundle("#9 Resume button exists in initial render and is enabled", () => {
+    const { received: _r } = loadBundle();
+    dispatch({ type: "init", hasHistory: false });
+    const root = document.getElementById("vsdb-root") as HTMLDivElement;
+    let resumeBtn: HTMLButtonElement | null = null;
+    for (const b of Array.from(root.querySelectorAll("button"))) {
+      if ((b.textContent ?? "").includes("Resume")) {
+        resumeBtn = b;
+        break;
+      }
+    }
+    expect(resumeBtn).not.toBeNull();
+    expect(resumeBtn?.disabled).toBe(false);
+  });
+
+  itIfBundle("#10 click Resume → posts exactly one resume_list", () => {
+    const { received } = loadBundle();
+    dispatch({ type: "init", hasHistory: false });
+    const root = document.getElementById("vsdb-root") as HTMLDivElement;
+    let resumeBtn: HTMLButtonElement | null = null;
+    for (const b of Array.from(root.querySelectorAll("button"))) {
+      if ((b.textContent ?? "").includes("Resume")) {
+        resumeBtn = b;
+        break;
+      }
+    }
+    expect(resumeBtn).not.toBeNull();
+    resumeBtn?.click();
+    const listPosts = received.filter((m) => m.type === "resume_list");
+    expect(listPosts).toHaveLength(1);
+  });
+
+  itIfBundle("#11 no apiKey material across resume picker exchanges", () => {
+    const { received } = loadBundle();
+    dispatch({ type: "init", hasHistory: false });
+    const root = document.getElementById("vsdb-root") as HTMLDivElement;
+    let resumeBtn: HTMLButtonElement | null = null;
+    for (const b of Array.from(root.querySelectorAll("button"))) {
+      if ((b.textContent ?? "").includes("Resume")) {
+        resumeBtn = b;
+        break;
+      }
+    }
+    resumeBtn?.click();
+    dispatch({
+      type: "resume_sessions",
+      sessions: [
+        { sessionId: "sess-A", label: "first", detail: "1 messages" },
+        { sessionId: "sess-B", label: "second", detail: "2 messages" },
+      ],
+    });
+    const rows = root.querySelectorAll<HTMLDivElement>(".vsdb-chat-resume-row");
+    rows[0]?.click();
+    const allText = JSON.stringify(received);
+    expect(allText).not.toMatch(/sk-/i);
+    expect(allText).not.toMatch(/api_?key/i);
+  });
+});

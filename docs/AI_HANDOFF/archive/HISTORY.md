@@ -19,3 +19,6 @@
 
 ## Cycle N — builtin engine streaming (2026-08-24)
 - 3/3 approved (T001, T003 each 1 fix round; T002 direct). Provider SSE streamComplete (CRLF+abort hardened), agent opt-in streaming + one-shot onStreamFallback + pinned catch order, panel delta wiring + banner + deStreamOpenBubble. Unfroze provider.ts/agent.ts deliberately. 778 passed / 2 skipped exit 0. Released df28b75.
+
+## Cycle O — ACP session history & resume (2026-08-24)
+- 4/4 approved (T003 + 1 fix round: streaming guard + mutation-killing tests; others direct/minor). AcpClient sessionList/sessionLoad + AcpReplayBuffer (window closes on next outgoing write — multi-flush safe), acpProcess wiring + latent mcpServers:[] fix (live -32603), panel picker + replay (cwd filter, Date.parse sort, own-id filter, drop-guard, cap 50), webview picker + history rendering (textContent, hostile-input safe). Live-probe-driven: session/list, session/load replay 157 notifs, resume end_turn. 819 passed / 2 skipped exit 0. Pushed this cycle.

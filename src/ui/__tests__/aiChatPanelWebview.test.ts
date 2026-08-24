@@ -418,3 +418,227 @@ describe("AiChatPanelWebview — de-stream on done/error (regression F4)", () =>
     expect(bubbles.length).toBeGreaterThanOrEqual(2);
   });
 });
+
+// ---- TASK-004 — Resume picker + history rendering --------------------------
+//
+// Resumes the TASK-003 message shape on the webview side. The webview never
+// invents a sessionId, never renders host-driven labels via innerHTML, and
+// never renders `agent_thought_chunk` (host already filtered those out).
+
+describe("AiChatPanelWebview — Resume button + session picker", () => {
+  it("#1 click Resume → posts resume_list; receives resume_sessions rows; click row → exactly ONE resume_pick with verbatim sessionId", () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false });
+
+    const resumeBtn = btnContaining(h.root, "Resume");
+    expect(resumeBtn).not.toBeNull();
+    resumeBtn?.click();
+
+    const listPosts = h.received.filter((m) => m.type === "resume_list");
+    expect(listPosts).toHaveLength(1);
+
+    // Host answers with three rows.
+    h.dispatch({
+      type: "resume_sessions",
+      sessions: [
+        { sessionId: "sess-A", label: "first chat", detail: "12 messages" },
+        { sessionId: "sess-B", label: "(untitled)", detail: "3 messages" },
+        { sessionId: "sess-C-with-<weird>&chars", label: "triage", detail: "7 messages" },
+      ],
+    });
+
+    const rows = h.root.querySelectorAll<HTMLDivElement>(
+      ".vsdb-chat-resume-row",
+    );
+    expect(rows.length).toBe(3);
+
+    // Every row's label + detail are text nodes — never innerHTML for data
+    // host-driven content.
+    for (const row of Array.from(rows)) {
+      const html = row.innerHTML;
+      expect(html).not.toMatch(/<script/i);
+      expect(html).not.toMatch(/<img[^>]*onerror/i);
+    }
+    expect(rows[0]?.textContent).toContain("first chat");
+    expect(rows[0]?.textContent).toContain("12 messages");
+    expect(rows[2]?.textContent).toContain("triage");
+
+    // Click row 1 (session B).
+    rows[1]?.click();
+    const picks = h.received.filter((m) => m.type === "resume_pick");
+    expect(picks).toHaveLength(1);
+    expect(picks[0]?.sessionId).toBe("sess-B");
+    // sessionId echoed verbatim — never synthesized by the webview.
+    expect(picks[0]?.sessionId).not.toBe("0");
+    expect(picks[0]?.sessionId).not.toBe("sess-A");
+
+    // Click row 2 — but only ONE resume_pick must ever be emitted per pick.
+    // Once the user picked a session the picker is dismissed (host replaces
+    // state), but a defensive double-click must NOT emit a second resume_pick.
+    rows[2]?.click();
+    const allPicks = h.received.filter((m) => m.type === "resume_pick");
+    expect(allPicks).toHaveLength(1);
+  });
+
+  it("#1b dismiss picker → posts resume_cancel exactly once", () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false });
+    btnContaining(h.root, "Resume")?.click();
+    h.dispatch({
+      type: "resume_sessions",
+      sessions: [{ sessionId: "sess-A", label: "first", detail: "1 messages" }],
+    });
+    // Cancel button exists while picker is open.
+    const cancelBtn = btnContaining(h.root, "Cancel");
+    expect(cancelBtn).not.toBeNull();
+    cancelBtn?.click();
+    const cancels = h.received.filter((m) => m.type === "resume_cancel");
+    expect(cancels).toHaveLength(1);
+    // Picker is gone from the DOM.
+    expect(h.root.querySelector(".vsdb-chat-resume-picker")).toBeNull();
+  });
+});
+
+describe("AiChatPanelWebview — history batch render", () => {
+  it("#2 history renders user/assistant/tool in order; assistant via markdown renderer; tool one-line collapsed", () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false });
+    h.dispatch({
+      type: "history",
+      items: [
+        { kind: "user", text: "hi" },
+        { kind: "assistant", text: "**bold** reply" },
+        { kind: "tool", text: "ran sql_query" },
+      ],
+      truncated: false,
+      truncatedCount: 0,
+    });
+
+    const thread = document.getElementById("thread") as HTMLDivElement;
+    // User bubble: plain text node, class vsdb-chat-user.
+    const userBubbles = thread.querySelectorAll(".vsdb-chat-bubble.vsdb-chat-user");
+    expect(userBubbles.length).toBe(1);
+    expect(userBubbles[0]?.textContent).toBe("hi");
+    // Assistant bubble: uses existing markdown renderer → emits <strong>.
+    const assistantBubbles = thread.querySelectorAll(
+      ".vsdb-chat-bubble.vsdb-chat-assistant",
+    );
+    expect(assistantBubbles.length).toBe(1);
+    expect(assistantBubbles[0]?.innerHTML).toMatch(/<strong>bold<\/strong>/);
+    // Tool item: one-line, collapsed (no markdown interpreted, no inner HTML
+    // payload from host data beyond text).
+    const toolItems = thread.querySelectorAll(".vsdb-chat-history-tool");
+    expect(toolItems.length).toBe(1);
+    expect(toolItems[0]?.textContent).toContain("ran sql_query");
+    // DOM order matches item order.
+    const ordered = Array.from(
+      thread.querySelectorAll(
+        ".vsdb-chat-bubble, .vsdb-chat-history-tool",
+      ),
+    );
+    expect(ordered.length).toBe(3);
+    expect(ordered[0]).toBe(userBubbles[0]);
+    expect(ordered[1]).toBe(assistantBubbles[0]);
+    expect(ordered[2]).toBe(toolItems[0]);
+  });
+
+  it("#3 agent_thought_chunk is NEVER rendered (host-filtered; no branch in webview)", () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false });
+    // Host legitimately never sends a kind:"thought" — but even if a stray
+    // payload reaches the webview, no DOM node must be produced for it.
+    h.dispatch({
+      type: "history",
+      items: [
+        { kind: "user", text: "u" },
+        // The hostile kind label itself must NOT become DOM.
+        { kind: "agent_thought_chunk" as "user", text: "secret thought" },
+        { kind: "assistant", text: "ok" },
+      ],
+      truncated: false,
+      truncatedCount: 0,
+    });
+    const thread = document.getElementById("thread") as HTMLDivElement;
+    expect(thread.textContent ?? "").not.toMatch(/secret thought/);
+    // Only the user + assistant bubbles exist.
+    const bubbles = thread.querySelectorAll(".vsdb-chat-bubble");
+    expect(bubbles.length).toBe(2);
+  });
+
+  it("#4 truncation: single notice line ABOVE items using truncatedCount", () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false });
+    h.dispatch({
+      type: "history",
+      items: [{ kind: "user", text: "last" }],
+      truncated: true,
+      truncatedCount: 23,
+    });
+    const thread = document.getElementById("thread") as HTMLDivElement;
+    const notice = thread.querySelector(".vsdb-chat-history-truncated");
+    expect(notice).not.toBeNull();
+    expect(notice?.textContent).toMatch(/^23 earlier items not shown$/);
+    // Notice sits above the rendered items.
+    const firstChild = thread.children[0];
+    expect(firstChild).toBe(notice);
+  });
+
+  it("#5 hostile label/detail in resume_sessions renders literal text (no live nodes)", () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false });
+    btnContaining(h.root, "Resume")?.click();
+    h.dispatch({
+      type: "resume_sessions",
+      sessions: [
+        {
+          sessionId: "sess-X",
+          label: "<img src=x onerror=alert(1)>",
+          detail: "<script>window.__pwned=1</script>",
+        },
+      ],
+    });
+    const threadHtml = h.root.innerHTML;
+    expect(threadHtml).not.toMatch(/<script/i);
+    expect(threadHtml).not.toMatch(/<img[^>]*onerror/i);
+    const row = h.root.querySelector(".vsdb-chat-resume-row");
+    expect(row?.textContent).toContain("<img src=x onerror=alert(1)>");
+    expect(row?.textContent).toContain("<script>window.__pwned=1</script>");
+    const w = window as unknown as Record<string, unknown>;
+    expect("__pwned" in w).toBe(false);
+  });
+
+  it("#6 busy: Send in flight disables Resume; done re-enables", () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false });
+    const resumeBtn = btnContaining(h.root, "Resume");
+    expect(resumeBtn).not.toBeNull();
+    expect(resumeBtn?.disabled).toBe(false);
+
+    // User sends a message — turns busy on.
+    inputEl("prompt").value = "go";
+    btn("sendBtn").click();
+    expect(resumeBtn?.disabled).toBe(true);
+
+    // Click while busy must NOT post a resume_list.
+    resumeBtn?.click();
+    const listWhileBusy = h.received.filter((m) => m.type === "resume_list");
+    expect(listWhileBusy).toHaveLength(0);
+
+    // Host signals turn end → Resume re-enabled.
+    h.dispatch({ type: "done" });
+    expect(resumeBtn?.disabled).toBe(false);
+
+    resumeBtn?.click();
+    const listAfter = h.received.filter((m) => m.type === "resume_list");
+    expect(listAfter).toHaveLength(1);
+  });
+});
+
+// Shared lookup helpers for the resume/history tests above. Duplicated from
+// the bundle test to keep the two suites independently readable.
+function inputEl(id: string): HTMLInputElement {
+  return document.getElementById(id) as HTMLInputElement;
+}
+function btn(id: string): HTMLButtonElement {
+  return document.getElementById(id) as HTMLButtonElement;
+}
