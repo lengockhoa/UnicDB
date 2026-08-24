@@ -23,13 +23,13 @@ export function mapTypeToForm(realType: string): FormType {
 }
 
 /**
- * Auto-fill default value per form type. Unknown types return "" (safe).
- *   varchar → ""
+ * Auto-fill default value per form type. Unknown types return "" (no default).
+ *   varchar → "''" (SQL empty-string literal — DEFAULT '')
  *   numeric → "0"
  *   boolean → "FALSE"
  */
 export function defaultColumnDefault(type: string): string {
-  if (type === "varchar") return "";
+  if (type === "varchar") return "''";
   if (type === "numeric") return "0";
   if (type === "boolean") return "FALSE";
   return "";

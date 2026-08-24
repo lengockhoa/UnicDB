@@ -211,7 +211,7 @@ function render(): void {
       ...spec,
       columns: [
         ...spec.columns,
-        { name: `col_${spec.columns.length + 1}`, type: "varchar", default: "" },
+        { name: `col_${spec.columns.length + 1}`, type: "varchar", default: "''" },
       ],
     };
     const newIdx = spec.columns.length - 1;

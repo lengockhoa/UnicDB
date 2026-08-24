@@ -131,7 +131,7 @@ describe("newTableFormMain — Type dropdown + default auto-fill", () => {
     const addBtn = document.getElementById("addColBtn") as HTMLButtonElement;
     addBtn.click();
     const defaultEl = document.getElementById("colDefault") as HTMLInputElement;
-    expect(defaultEl.value).toBe("");
+    expect(defaultEl.value).toBe("''");
     const typeEl = document.getElementById("colType") as HTMLSelectElement;
     typeEl.value = "numeric";
     typeEl.dispatchEvent(new Event("change", { bubbles: true }));
@@ -141,11 +141,11 @@ describe("newTableFormMain — Type dropdown + default auto-fill", () => {
     expect(defaultEl.value).toBe("FALSE");
     typeEl.value = "varchar";
     typeEl.dispatchEvent(new Event("change", { bubbles: true }));
-    expect(defaultEl.value).toBe("");
+    expect(defaultEl.value).toBe("''");
     const last = lastSpecChanged();
     expect(last.spec).toBeDefined();
     const cols = last.spec!.columns;
-    expect(cols[cols.length - 1]!.default).toBe("");
+    expect(cols[cols.length - 1]!.default).toBe("''");
   });
 
   // ==========================================================================
@@ -263,7 +263,7 @@ describe("newTableFormMain — Type dropdown + default auto-fill", () => {
     // Module side-effects only; we still need the exported helper.
     void mod;
     const helpers = await import("../../../webview/newTableFormColumnHelpers");
-    expect(helpers.defaultColumnDefault("varchar")).toBe("");
+    expect(helpers.defaultColumnDefault("varchar")).toBe("''");
     expect(helpers.defaultColumnDefault("numeric")).toBe("0");
     expect(helpers.defaultColumnDefault("boolean")).toBe("FALSE");
     expect(helpers.defaultColumnDefault("timestamp")).toBe("");
