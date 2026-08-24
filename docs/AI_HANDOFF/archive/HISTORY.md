@@ -16,3 +16,6 @@
 
 ## Cycle N — builtin engine streaming (2026-08-24)
 - 3/3 approved (T001, T003 after 1 fix round each; T002 direct). provider streamComplete SSE (CRLF+abort hardened), agent opt-in streaming with one-shot onStreamFallback + pinned abort/fallback catch order, panel delta wiring + banner + deStreamOpenBubble (orphan-bubble regression). Unfroze provider.ts/agent.ts deliberately. +27 tests (778 passed / 2 opt-in skipped, exit 0 — webviewExport timer-drain fix). Pushed this cycle.
+
+## Cycle N — builtin engine streaming (2026-08-24)
+- 3/3 approved (T001, T003 each 1 fix round; T002 direct). Provider SSE streamComplete (CRLF+abort hardened), agent opt-in streaming + one-shot onStreamFallback + pinned catch order, panel delta wiring + banner + deStreamOpenBubble. Unfroze provider.ts/agent.ts deliberately. 778 passed / 2 skipped exit 0. Released df28b75.

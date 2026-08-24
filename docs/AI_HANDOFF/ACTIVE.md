@@ -1,9 +1,9 @@
 # ACTIVE
 
-Cycle: N — builtin engine streaming
+Cycle: O — ACP session history & resume
 
 ## State
-done
+planning
 
 ## Notes
-- 3/3 approved; full suite 778 passed / 2 skipped, exit 0; compile+typecheck clean.
+- Probe evidence in queue/ACP-SESSION-research.md: session/new needs mcpServers:[], session/list + session/load replay + resume all live-proven.
