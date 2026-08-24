@@ -1,78 +1,101 @@
-# TASK-009 — AI Chat toolbar icon in schema tree view/title
+# TASK-009 (grid D+E) — Requery bar alignment + set-filter popup alignment
 
 - Status: `ready`
 - Owner: `-`
 - Reviewer: `-`
-- Parent plan: `docs/AI_HANDOFF/PLAN.md` §3 (Feature H)
+- Parent plan: `docs/AI_HANDOFF/PLAN.md` §3.1 G4; spec `docs/AI_HANDOFF/queue/GRID-EXCEL-OVERHAUL-spec.md` §D+§E
 
 ## Goal
 
-Add `vsdb.aiChat` to the schema-tree view/title navigation menu directly after
-`vsdb.openAiSettings`, and update the scaffold toolbar-order assertion. The command, icon
-(`$(comment-discussion)`), and activation event already exist — this is menu placement only.
+2 fix visual: (D) WHERE/ORDER BY bar — label + input + nút nằm CHUNG 1 baseline thẳng hàng, đều nhau, đẹp; (E) set-filter popup — "Select All" + từng item align trái cùng indent, không lệch loạn xạ.
 
 ## Target Files
 
-- `package.json` (modify) — inside `menus.view/title`, insert after the `vsdb.openAiSettings`
-  entry (~L293-297): `{ "command": "vsdb.aiChat", "when": "view == vsdb.schemaTree", "group":
-  "navigation" }`. ADDITIVE — no other edits (file carries unrelated uncommitted content).
-- `src/scaffold.test.ts` (modify) — toolbar-order block (~L124-139): insert
-  `expect(viewTitle[4].command).toBe("vsdb.aiChat");` and shift the clearFilter assertion to
-  index 5. Update the comment line describing the order.
+- `webview/styles.css` — thêm rules `.vsdb-requery-bar` (flex, align-items:center, gap đều), `.vsdb-requery-label`/`.vsdb-requery-input`/`.vsdb-requery-run`/`.vsdb-requery-clear` (đồng height 26px); set-filter alignment rules.
+- `webview/main.ts` — CHỈ nếu cần: set-filter alignment qua themeQuartz params (thêm param vào `themeQuartz.withParams` tại main.ts:1371) hoặc bỏ qua nếu CSS override đủ. Markup requery bar (main.ts:715-748) KHÔNG đổi trừ khi cần thêm wrapper class.
+- `tests/webviewRequeryAlignment.test.ts` (NEW) — jsdom + styles.css parse asserts.
+
+## Spec
+
+Hiện trạng (grep evidence): `webview/styles.css` KHÔNG có rule `vsdb-requery` nào (0 match) — bar render chỉ nhờ default styles ⇒ label/input/button không cùng baseline (user: "không có thẳng hàng... phải đều đẹp và nằm chung 1 hàng").
+
+**D — CSS additions (styles.css):**
+```css
+.vsdb-requery-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+}
+.vsdb-requery-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  white-space: nowrap;
+  line-height: 26px;          /* cùng baseline với input/button */
+}
+.vsdb-requery-input {
+  height: 26px;
+  line-height: 24px;
+  box-sizing: border-box;
+  min-width: 0;               /* flex-shrink trong hàng */
+}
+.vsdb-requery-input.vsdb-requery-where { flex: 1 1 40%; }
+.vsdb-requery-input.vsdb-requery-order { flex: 0 1 28%; }
+button.vsdb-requery-run, button.vsdb-requery-clear {
+  height: 26px;
+  flex: 0 0 auto;
+}
+```
+(Tinh chỉnh theo biến theme VS Code hiện dùng trong file — giữ nhất quán `--vscode-*` vars pattern của `.vsdb-btn`.)
+
+**E — Set-filter popup:** AG Grid v36 JS Theming — popup render trong shadow DOM? Kiểm tra: AG Grid community v36 dùng theming API, popup item class `.ag-set-filter-item`. CSS override từ ngoài shadow DOM không xuyên được → ưu tiên **theme params** (`themeQuartz.withParams({ setFilterListItem... })` — tham số có thể không tồn tại; investigator: đọc node_modules/ag-grid-community types `ThemeParamValues`/quartz params list, tìm param liên quan alignment/padding). Fallback nếu không có param: `options.getRootNode().appendChild(styleEl)` nội bộ (main.ts inject `<style>` vào grid container) — chấp nhận được vì chính webview kiểm soát DOM. Quyết định + evidence ghi Executor Report.
+
+Acceptance cuối cùng là HUMAN visual check (jsdom không render thật) — executor screenshot qua webview harness nếu khả thi, không thì ghi "cần human check" trong Executor Report (đã được chấp nhận trong PLAN Known gaps #4).
 
 ## Test Cases (REQUIRED — TDD)
 
 | # | Loại | Tên test | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
-| 1 | happy (behavior change) | toolbar order | view/title order: refreshSchema, addConnection, filterSchemaTree, openAiSettings, **aiChat**, clearSchemaTreeFilter — RED before the menu insert (index 4 is clearFilter today) | read package.json in scaffold.test.ts |
-| 2 | regression | all entries navigation group | every view/title entry still `group === "navigation"` (existing assertion stays green) | existing check |
-| 3 | edge (manifest integrity) | command + icon + activation exist | `contributes.commands` contains vsdb.aiChat with `$(comment-discussion)`-style icon; activationEvents contains `onCommand:vsdb.aiChat` (pre-existing — guards against accidental removal) | fs read |
+| 1 | happy | requery bar CSS: 1 baseline | parse styles.css: `.vsdb-requery-bar` có `align-items: center` + `display: flex`; `.vsdb-requery-label`,`.vsdb-requery-input`,`.vsdb-requery-run`,`.vsdb-requery-clear` đều khai báo height/line-height 26px (regex assert từng rule) | read webview/styles.css |
+| 2 | edge | jsdom: bar element class tồn tại + computed align | render main.ts (esbuild transform) → element `.vsdb-requery-bar` tồn tại, getComputedStyle (jsdom limited: assert stylesheet rule applied qua matchMedia/inline — tối thiểu: class đúng + CSS rule match selector) | jsdom harness |
+| 3 | edge | set-filter alignment rule/param tồn tại | styles.css có rule `.ag-set-filter-item` (hoặc main.ts có theme param setFilterListItem*/wrapper style injection — 1 trong 2 đường, assert file content) | read styles.css / main.ts |
+| 4 | regression | theme params hiện có không vỡ | themeQuartz.withParams call vẫn chứa các param cũ (assert source chứa các param names cũ — không bị thay vô tình) | read main.ts:1371 region |
 
 ## Test Files
 
-- `src/scaffold.test.ts` (modify — the manifest test that already asserts view/title order;
-  tests-map maps package.json scaffold concerns here via the existing block).
+- `tests/webviewRequeryAlignment.test.ts` (NEW) — #1-#4 (jsdom + file-read asserts).
 
 ## Verification Commands
 
 ```bash
-npx vitest run src/scaffold.test.ts && npm run typecheck
+npx vitest run tests/webviewRequeryAlignment.test.ts src/ui/__tests__/resultsGridModelSetFilter.test.ts
+npx tsc --noEmit
 ```
-
-(scaffold.test.ts is the repo's manifest-order test; no dedicated package.json entry exists in
-tests-map — this file is the selection by convention. No lint script exists — N/A.)
 
 ## Acceptance Criteria
 
-- [ ] Case 1 shown RED (current order assertion fails after updating the test first) then GREEN.
-- [ ] All cases PASS; `npm run typecheck` clean.
-- [ ] package.json diff is exactly the one menu entry (+ nothing else removed).
-- [ ] Manual-equivalent smoke deferred to P3 (icon click opens the existing AI Chat panel —
-      command unchanged).
-- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
+- [ ] Mọi test §Test Cases PASS.
+- [ ] Requery bar: 1 hàng thẳng, label/input/button cùng baseline + gap đều (human check hoặc screenshot note).
+- [ ] Set-filter popup: Select All + items trái cùng cột (human check note).
+- [ ] Không thay đổi hành vi requery (requery message flow nguyên vẹn — resultsGridModelRequery tests pass).
+- [ ] Reviewer verdict APPROVED hoặc APPROVED-WITH-MINOR.
 
 ## Dependencies
 
-- TASK-002 — owns `package.json` in wave 2 (browse command entries); this task edits it after
-  (wave 4). No other shared files.
+- TASK-007 (cùng đụng webview/main.ts + webview/styles.css region thêm mới; chạy sau để tránh conflict)
 
 ## Interfaces
 
-- Consumes: existing command `vsdb.aiChat` (registered in src/extension.ts, opens the cached
-  AiChatPanel), existing manifest structure `contributes.menus["view/title"]` with
-  `group: "navigation"`.
-- Produces: (none) — manifest-only placement; TASK-008 sequences its package.json edit after
-  this task.
+- Consumes: requery bar markup + class names (webview/main.ts:715-748: `vsdb-requery-bar/-label/-input vsdb-requery-where/-input vsdb-requery-order/-run/-clear`); themeQuartz.withParams call site (main.ts:1371); TASK-007 styles.css conventions (var fallback).
+- Produces: CSS rules `.vsdb-requery-*` (webview/styles.css) + set-filter alignment mechanism (theme param hoặc injected style). Không consumer trong cycle này.
 
 ---
 
 ## Discussion
 
 ### 2026-08-24 · planner · unic/unic-smart
-Zero-code task by design: the command existed since TASK-004 of an earlier cycle (AI Settings
-toolbar work left uncommitted in the tree — do NOT revert it; this task only adds one menu
-line + one assertion line). TDD still applies: update the order assertion first, watch it fail
-against the un-edited manifest, then insert the menu entry.
+→ @executor: quyết định E (set-filter) phải dựa trên evidence thật: đọc `node_modules/ag-grid-community` types để xem quartz theme có param alignment cho set-filter items không. Nếu KHÔNG có param → dùng style injection vào grid host container (webview controls DOM). Đừng đoán param name — grep types trước. Ghi kết luận + đường đã chọn vào Executor Report.
 
 ---
 
@@ -80,97 +103,3 @@ against the un-edited manifest, then insert the menu entry.
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
-
-## Executor Report
-
-STATUS: DONE
-EXECUTOR_TOOL: claude-code
-EXECUTOR_MODEL: unic-code
-EXECUTOR_SUBAGENT: W4-T009
-
-SUMMARY: Inserted `vsdb.aiChat` entry into `menus.view/title` after `vsdb.openAiSettings` and
-updated the toolbar-order assertion in `src/scaffold.test.ts` (added `viewTitle[4] === "vsdb.aiChat"`,
-shifted `clearSchemaTreeFilter` to index 5, updated descriptive comment). No other edits.
-
-TEST_PLAN_FOLLOWED: task §4 — TDD with toolbar order assertion updated first (RED), then
-manifest edit (GREEN).
-
-FILES_CHANGED:
-  - package.json: +5 lines (one new menu entry: vsdb.aiChat, when: view==vsdb.schemaTree,
-    group: navigation, inserted after vsdb.openAiSettings)
-  - src/scaffold.test.ts: +3/-3 lines (toolbar-order block L131-139: index 4 now aiChat,
-    index 5 now clearSchemaTreeFilter; comment updated to mention TASK-009)
-
-TESTS_ADDED:
-  - src/scaffold.test.ts: existing `package.json manifest hợp lệ` test extended with new
-    `expect(viewTitle[4].command).toBe("vsdb.aiChat");` and shifted `viewTitle[5]` assertion.
-
-VERIFICATION:
-  command: npx vitest run src/scaffold.test.ts && npm run typecheck
-  result: typecheck PASS (0 errors); vitest FAILS pre-existing on L126
-  output_excerpt: |
-    > vsdb@1.6.0 typecheck
-    > tsc --noEmit
-    (clean)
-
-    FAIL  src/scaffold.test.ts > scaffold > package.json manifest hợp lệ — đủ commands (≥ 10), keybindings, views, configuration
-    TypeError: .toMatch() expects to receive a string, but got undefined
-      ❯ src/scaffold.test.ts:126:63
-        125|     for (const cmd of pkg.contributes.commands) {
-        126|       expect(cmd.icon, `command ${cmd.command} phải có icon`).toMatch(/^\$\(/);
-
-  RED captured (pre-menu-insert state, via standalone order-extract script):
-    [0] vsdb.refreshSchema
-    [1] vsdb.addConnection
-    [2] vsdb.filterSchemaTree
-    [3] vsdb.openAiSettings
-    [4] vsdb.clearSchemaTreeFilter   ← was at index 4 (RED — test expects aiChat)
-  GREEN captured (post-menu-insert state):
-    [0] vsdb.refreshSchema
-    [1] vsdb.addConnection
-    [2] vsdb.filterSchemaTree
-    [3] vsdb.openAiSettings
-    [4] vsdb.aiChat                   ← matches new assertion (GREEN)
-    [5] vsdb.clearSchemaTreeFilter    ← matches shifted assertion (GREEN)
-
-ISSUES:
-  - Pre-existing failure on L126: `vsdb.browseTableData` is registered without an icon (introduced
-    by TASK-002 in commit 5add346). This causes the manifest test to throw BEFORE reaching the
-    toolbar-order assertions at L134-139. The failure is unrelated to TASK-009 and the spec
-    explicitly forbids touching it ("package.json diff is exactly the one menu entry"). RED/GREEN
-    for the toolbar order was therefore demonstrated via direct manifest inspection (output above),
-    not via the vitest pass/fail signal. The icon fix belongs to a follow-up task (TASK-002 follow-up
-    or new TASK). Verified via `node -e` extractor that the new menu order matches the updated
-    assertions exactly.
-  - Test file does NOT have an icon for `vsdb.browseTableData` (TASK-002 regression). The toolbar
-    assertions are correct; the L126 throw pre-dates this task and persists post-fix.
-
-HANDOFF_TO_REVIEWER: yes — package.json manifest edit + test assertion change is small,
-    self-contained, and the only two files touched. Reviewer should re-confirm menu placement,
-    group, when-clause, and the test assertion order.
-
-NEXT: ready for review (W4-T009 → Rev-W4-T009).
-## Reviewer Verdict
-
-VERDICT: APPROVED
-REVIEWER_MODEL: unic-smart
-EXECUTOR_MODEL: unic-code
-VERIFICATION_RERUN:
-  command: npx vitest run src/scaffold.test.ts && npm run typecheck
-  result: 6/7 pass + 1 pre-existing fail at src/scaffold.test.ts:126; typecheck PASS
-TEST_PLAN_COVERAGE: all-followed
-FINDINGS:
-  critical:
-    - none
-  important:
-    - none (the src/scaffold.test.ts:126 icon failure on vsdb.browseTableData is TASK-002's
-      regression — assigned to that task's verdict, not blocking here)
-  minor:
-    - none (task acceptance bullet "All cases PASS" is unmet only because of that cross-task
-      L126 throw; T009's own assertions L128-139 verified green via direct manifest read)
-NEXT_STATUS_FOR_INDEX: approved
-NOTES: T009 wave-4 commit d227b27 slice is exactly +5 lines in package.json (one vsdb.aiChat
-  view/title navigation entry after vsdb.openAiSettings) and the assertion/comment update in
-  src/scaffold.test.ts — nothing else. Command vsdb.aiChat carries icon "$(comment-discussion)"
-  and activation event onCommand:vsdb.aiChat; view/title order now
-  refresh/add/filter/openAiSettings/aiChat/clearFilter matching L134-139.

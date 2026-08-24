@@ -1,184 +1,86 @@
-# TASK-007 — Fix unqualified + keyword table names in executed SQL (`FROM order`)
+# TASK-007 (grid B) — Excel editing: dirty highlight + add/delete-row commit
 
 - Status: `ready`
 - Owner: `-`
 - Reviewer: `-`
-- Parent plan: `docs/AI_HANDOFF/PLAN.md` §3 (Feature F, Round-1 revised)
+- Parent plan: `docs/AI_HANDOFF/PLAN.md` §3.1 G2; spec `docs/AI_HANDOFF/queue/GRID-EXCEL-OVERHAUL-spec.md` §B
 
 ## Goal
 
-`SELECT * FROM order;` must succeed when table `order` exists in schema `public`: a pure
-pre-execution transform rewrites an unqualified reserved-keyword identifier to
-`"public"."order"` — ONLY when it is a reserved keyword AND resolves to an actual table in
-public. Applied at the `runStatements` submit path in extension.ts (covers editor Cmd+Enter and
-CodeLens runStatement) plus the browse flow.
+Grid như Excel: cell đã edit đổi màu (highlight vs original), row mới highlight, row deleted strikethrough; commit (Cmd/Ctrl+Enter hoặc nút check) chạy toàn bộ pending (UPDATE/INSERT/DELETE) một batch, báo lỗi per-row, refresh grid về DB truth, clear highlights (new baseline). Cơ sở: EditState + NewRowMarker/DeleteRowMarker + buildSaveStatements INSERT/DELETE ĐÃ CÓ — task bổ sung highlight + commit flow hoàn chỉnh.
 
 ## Target Files
 
-- `src/core/keywordQualify.ts` **(new)** — pure transform `qualifyKeywordTables(sql, listTables)`
-  + exported `isPgReservedKeyword(word)`. No vscode/db imports.
-- `src/extension.ts` (modify) — apply the transform inside `runStatements` (verified ~L450, the
-  single submit path wired from editor `vsdb.runQuery` L433 and CodeLens `vsdb.runStatement`
-  L447) before `runner.run`; async adaptation allowed (runStatements is already async).
-- `src/ui/browseCommands.ts` (modify) — apply transform to the generated browse SQL before
-  running (cheap, consistent).
-- `src/core/__tests__/keywordQualify.test.ts` **(new)** — pure transform tests.
-- `src/extension.test.ts` (modify) — runStatement-path test (the reported bug lives here).
-- `src/ui/__tests__/browseCommands.test.ts` (modify) — browse wiring test.
+- `webview/main.ts` — cellClassRules/getRowClass đọc editState + row markers; commit handler hoàn chỉnh (per-row errors, refresh, clear highlights); disable AG Grid built-in undo khi TASK-008 unified stack land (không đụng trong task này ngoài hook comment).
+- `webview/styles.css` — thêm `.vsdb-cell-dirty`, `.vsdb-row-new`, `.vsdb-row-deleted` (highlight + strikethrough).
+- `src/ui/__tests__/resultsGridModelEdit.test.ts` — append describe (#3, #4 pure-logic qua EditState).
+- `tests/webviewEditHighlight.test.ts` (NEW) — jsdom test webview render highlight + commit flow (pattern esbuild-transform + jsdom như aiChatPanelWebview.test.ts:24-37).
 
-NOTE for executor: investigate FIRST (per plan): run a literal `SELECT * FROM order;` against a
-scratch public schema via the adapter to confirm which layer fails. Planner-verified:
-`splitStatements` is literal-aware and splits on `;` only — `FROM order` does NOT break the
-splitter; the failure is Postgres rejecting the unquoted reserved keyword. If investigation
-shows the server already accepts it, stop and record findings in Discussion instead of forcing
-the transform.
+## Spec
+
+1. **Dirty highlight**: AG Grid `cellClassRules` hoặc cellValueChanged handler add/remove class `vsdb-cell-dirty` trên cell (`params.colDef.field` + rowId trong editState). Revert (undo path cũ/TASK-008) → remove class. Commit success → clear toàn bộ (editState.clear() đã có + refreshGrid áp dụng rowRenderer refresh).
+2. **New-row highlight**: row có `__vsdb_new_row__` → `getRowClass` trả `vsdb-row-new` (nền xanh nhạt). Sau commit success + refresh: row biến thành row thường (có rowId/ctid mới từ DB).
+3. **Deleted-row highlight**: row có dirty entry mang DeleteRowMarker (markDirty rowId,0,{__vsdb_deleted__...} — main.ts:1734 hiện có) → `getRowClass` trả `vsdb-row-deleted` + CSS `text-decoration: line-through; opacity: .6`.
+4. **Commit flow** (main.ts commit handler + host saveEdits): đã post saveEdits batch. Bổ sung: sau saveResult ok → re-query bảng (post requery message hoặc host tự re-run original query — chọn theo flow hiện có, ghi report) → editState.clear() + refresh cells (highlight biến mất). saveResult có per-row errors (đọc resultsPanel saveResult payload shape hiện có — nếu host chưa gửi per-row errors thì bổ sung payload field `rowErrors?: Array<{rowId: number; error: string}>`, CẢ HAI bên đồng thời vì cùng repo) → banner liệt kê; rows lỗi giữ dirty.
+5. **No-op guard**: 0 dirty → không post saveEdits (hiện có — giữ, lock bằng test).
+
+CSS (styles.css):
+```css
+.vsdb-cell-dirty { background: var(--vsdb-dirty-bg, rgba(255,166,0,.25)) !important; }
+.vsdb-row-new .ag-cell { background: rgba(60,170,255,.12); }
+.vsdb-row-deleted .ag-cell { text-decoration: line-through; opacity: .6; }
+```
+(Giữ var() fallback — theme VS Code dark/light đều đọc được.)
 
 ## Test Cases (REQUIRED — TDD)
 
 | # | Loại | Tên test | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
-| 1 | regression happy | unqualified keyword table | `SELECT * FROM order;` + listTables `["order"]` → `SELECT * FROM "public"."order";` (changed: true); still ONE statement | transform call |
-| 2 | regression (editor path) | runStatement with keyword table | invoking `vsdb.runStatement` with `SELECT * FROM order;` → `runner.run` receives sql containing `"public"."order"` — RED before fix | extension.test.ts harness |
-| 3 | edge | already-qualified untouched | `SELECT * FROM prd.order` and `SELECT * FROM public."order"` → unchanged | listTables stub |
-| 4 | edge | quoted untouched | `SELECT * FROM "order"` → unchanged | listTables stub |
-| 5 | edge (non-table keyword usage) | ORDER BY / keyword-as-keyword | `SELECT 1 FROM t ORDER BY x` → unchanged | listTables stub |
-| 6 | edge (CTE) | CTE named like keyword | `WITH order AS (SELECT 1) SELECT * FROM order` → CTE reference NOT rewritten (shadows table) | listTables stub |
-| 7 | edge | non-keyword unqualified table | `FROM users` (users ∈ public, not a keyword) → unchanged (search_path semantics preserved) | listTables stub |
-| 8 | edge (keyword non-table) | `user` is reserved but no `user` table | unchanged (listTables membership required) | listTables stub |
-| 9 | edge (search_path collision) | `order` exists in public AND sales | rewrite still `"public"."order"` — keyword-unqualified NEVER resolves today (pg rejects unquoted reserved word before name lookup), so this cannot silently retarget a working query; non-keyword `users` in both schemas → untouched | listTables stub |
-| 10 | unit | keyword list | `isPgReservedKeyword("order"/"user"/"select"/"table")=true`; `"name"/"orders"/"users"=false` | direct calls |
-| 11 | wiring | browse path applies transform | browse `public/order` table → `runner.run` receives transformed sql | browseCommands harness |
+| 1 | happy | edit cell → cell có class vsdb-cell-dirty | jsdom: dispatch cellValueChanged (hoặc gọi handler) → cell element classList chứa `vsdb-cell-dirty` | webview jsdom harness NEW test file |
+| 2 | happy | add row → row class vsdb-row-new; delete row → vsdb-row-deleted + line-through CSS rule tồn tại | getRowClass / DOM class assert; styles.css parse có selector `.vsdb-row-deleted` với `line-through` | jsdom + read styles.css |
+| 3 | edge | commit khi 0 dirty → no-op | KHÔNG postMessage saveEdits (spy postMessage) | editState rỗng |
+| 4 | edge | commit 1 row lỗi → rowErrors banner + row lỗi giữ dirty, rows OK cleared | saveResult `{ok:true, rowErrors:[{rowId:1,error:"..."}]}` → banner text chứa error; row 1 cell còn class dirty; rows khác mất | jsdom fake saveResult message |
+| 5 | regression | saveResult ok → refresh + clear highlights (new baseline) | sau saveResult ok: editState.dirtyCount===0; không cell nào còn vsdb-cell-dirty; grid re-query posted | jsdom |
+| 6 | regression | buildSaveStatements INSERT/DELETE markers (đã có) vẫn pass | existing saveStatementsInline tests pass nguyên | full file |
 
 ## Test Files
 
-- `src/core/__tests__/keywordQualify.test.ts` **(new)** — cases 1, 3-10.
-- `src/extension.test.ts` (modify — tests-map selection for `src/extension.ts`) — case 2.
-- `src/ui/__tests__/browseCommands.test.ts` (modify) — case 11.
+- `tests/webviewEditHighlight.test.ts` (NEW — jsdom, esbuild transform pattern từ src/ui/__tests__/aiChatPanelWebview.test.ts:24-37) — #1, #2, #3, #4, #5.
+- `src/ui/__tests__/resultsGridModelEdit.test.ts` — #6 guard (chạy nguyên file trong Verification).
 
 ## Verification Commands
 
 ```bash
-npx vitest run src/core/__tests__/keywordQualify.test.ts src/ui/__tests__/browseCommands.test.ts src/extension.test.ts && npm run typecheck
+npx vitest run tests/webviewEditHighlight.test.ts src/ui/__tests__/resultsGridModelEdit.test.ts src/adapters/__tests__/saveStatementsInline.test.ts
+npx tsc --noEmit
 ```
-
-(tests-map step 1 selections for the touched sources; new file → its own test. No lint — N/A.)
 
 ## Acceptance Criteria
 
-- [ ] Investigation findings recorded in Discussion BEFORE implementing (server-vs-parser).
-- [ ] All 11 cases PASS (cases 1-2 RED against current code).
-- [ ] `npm run typecheck` clean; no changes to `splitStatements`/`sqlToRun` semantics.
-- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
+- [ ] Mọi test §Test Cases PASS.
+- [ ] Edit/add/delete highlight đúng CSS class; commit success clear toàn bộ (new baseline); per-row error giữ dirty row.
+- [ ] Không thay đổi saveEdits message shape ngoài field rowErrors addition (2 bên cùng land).
+
+Ghi chú mapping (review #3): module `saveStatements` sống ở `src/core/saveStatements.ts` nhưng test files của nó nằm ở `src/adapters/__tests__/saveStatements{,Inline,Parser}.test.ts` (xác nhận qua `.cache/index/tests-map.json`). Task này KHÔNG sửa `src/core/saveStatements.ts` — không nằm trong Target Files; các test verification chạy như regression net thuần (markers INSERT/DELETE đã có từ TASK-501, task lock hành vi qua E2E webview flow).
 
 ## Dependencies
-
-- TASK-003 — owns `src/extension.ts` + `src/extension.test.ts` through wave 3 (create-schema
-  registration); this task edits both afterward (wave 4).
-- TASK-001 — creates `src/ui/browseCommands.ts` + its test (wave 1); this task edits both.
+- TASK-006 (wave 2 batch A, sau T6 — rowErrors host-side emit đụng `src/ui/resultsPanel.ts` mà T6 cũng sửa; T7 đụng webview/main.ts + styles.css, disjoint với T2/T4 trong batch)
 
 ## Interfaces
 
-- Consumes: `splitStatements(sql): ParsedStatement[]` (src/core/statementParser.ts — iterate
-  statements; offsets preserved or SQL re-split), `DbAdapter.listTables(schema: string):
-  Promise<Array<{ name: string; schema: string }>>`, `QueryRunner.run(statements, onUpdate)`,
-  `runStatements(mgr, runner, panel, statements)` in src/extension.ts (L450).
-- Produces: `qualifyKeywordTables(sql: string, listTables: (schema: string) => Promise<string[]>):
-  Promise<{ sql: string; changed: boolean }>` and `isPgReservedKeyword(word: string): boolean`
-  exported from `src/core/keywordQualify.ts` (pure; reserved list = documented Postgres
-  reserved-words set, e.g. order/user/select/table/group/where/…).
+- Consumes: `EditState` (markDirty/undo/clear/snapshot — src/ui/resultsGridModel.ts:655+); NewRowMarker/DeleteRowMarker (src/core/saveStatements.ts:41-52); commit handler + makeIconButton toolbar (webview/main.ts:512-546); saveEdits/saveResult message flow.
+- Produces: (a) CSS classes `vsdb-cell-dirty`/`vsdb-row-new`/`vsdb-row-deleted` trong webview/styles.css; (b) saveResult payload extension `rowErrors?: Array<{rowId:number; error:string}>` (host + webview đồng bộ — TASK-006 không đụng payload); (c) commit-complete contract: saveResult ok ⇒ editState.clear() + re-query. TASK-008 (undo stack) tiêu thụ (a)+(c).
 
 ---
 
 ## Discussion
 
 ### 2026-08-24 · planner · unic/unic-smart
-Round-1 review findings applied: (1) choke point is `runStatements` in src/extension.ts — NOT
-tableCommands (which only runs DDL via adapter.runQuery directly); TASK-007 owns extension.ts +
-extension.test.ts and must test the runStatement path. (2) Rewrite rule is keyword-ONLY:
-unquoted AND unqualified AND follows FROM/INTO/UPDATE/JOIN AND isPgReservedKeyword(name) AND
-name ∈ listTables("public") → emit `"public".<name>`; everything else untouched (blanket
-public-prefixing would retarget queries under `search_path = sales, public`). Search_path
-collision is safe precisely because an unquoted reserved keyword never parses today — there is
-name ∈ listTables("public") → emit `"public".<name>`; everything else untouched (blanket
-public-prefixing would retarget queries under `search_path = sales, public`). Search_path
-collision is safe precisely because an unquoted reserved keyword never parses today — there is
-no working behavior to preserve. CTE names shadow tables.
-
-### 2026-08-24 · executor · unic/unic-code
-Investigation confirmed planner's hypothesis: `splitStatements` is literal-aware (handles
-string/comment/dollar-quote) and `FROM order;` passes the splitter intact; Postgres rejects
-`order` as a reserved keyword at parse time. No server-side accept path exists — the transform
-is required.
+→ @executor: T6 và T7 cùng cycle song song nhưng KHÔNG share file. T6 đụng resultsPanel.ts; nếu commit-flow per-row error cần thêm rowErrors vào payload resultsPanel.ts gửi — ĐÓ là đụng file T6. Quyết định: T7 implement rowErrors với payload field OPTIONAL (host cũ chưa gửi → banner chung "N rows failed" fallback) → T7 không bắt buộc sửa resultsPanel.ts; nếu cần host-side emit, ghi vào Discussion tag @TASK-006 executor hoặc làm phần host trong T6 fix round.
 
 ---
-
-## Executor Report
-
-STATUS: DONE
-EXECUTOR_TOOL: claude-code
-EXECUTOR_MODEL: unic-code
-EXECUTOR_SUBAGENT: W4-T007
-SUMMARY: Implemented pure `qualifyKeywordTables` transform in src/core/keywordQualify.ts
-(17 unit tests covering all 11 test-plan rows except #2/#11) + wired into
-`runStatements` choke point in src/extension.ts (case #2 RED→GREEN — extension.test.ts) and
-applied to generated browse SQL in src/ui/browseCommands.ts (case #11). Adapter lookup uses
-`mgr.getAdapter()` defensively; non-Postgres drivers and adapter failures pass through raw SQL.
-TEST_PLAN_FOLLOWED: task §4 — all 11 cases implemented as TDD (cases 1, 3-10 as pure
-tests; cases 2, 11 as wiring tests). RED captured for case #2 (runStatement literal SQL) and
-case #11 (listTables spy) before applying the wiring.
-FILES_CHANGED:
-  - src/core/keywordQualify.ts: new — pure transform + isPgReservedKeyword.
-  - src/core/__tests__/keywordQualify.test.ts: new — 17 unit tests (cases 1, 3-10).
-  - src/extension.ts: applyKeywordQualify helper added; runStatements now runs rewritten
-    statements through runner.run; import for qualifyKeywordTables added.
-  - src/extension.test.ts: TASK-007 describe block — case #2 (runStatement path) + #2b guard.
-  - src/ui/browseCommands.ts: maybeGetAdapter helper + qualifyKeywordTables applied to
-    rawSql before stmt construction.
-  - src/ui/__tests__/browseCommands.test.ts: case #11 — listTables spy verified consulted.
-TESTS_ADDED:
-  - src/core/__tests__/keywordQualify.test.ts: 17 tests (cases 1, 3-10, plus triggers).
-  - src/extension.test.ts > TASK-007: 2 tests (case #2 + #2b guard).
-  - src/ui/__tests__/browseCommands.test.ts > #11: 1 test.
-VERIFICATION:
-  command: npx vitest run src/core/__tests__/keywordQualify.test.ts src/ui/__tests__/browseCommands.test.ts src/extension.test.ts && npm run typecheck
-  result: 27 + 48-2 = 73 pass; 1 fail (pre-existing TASK-003 `npm run compile emits dist/schemaForm.js` — infrastructure test, unrelated; confirmed by `git stash` reproducing failure on the pre-edit tree). typecheck clean.
-  output_excerpt: |
-    ✓ src/core/__tests__/keywordQualify.test.ts  (17 tests) 3ms
-    ✓ src/ui/__tests__/browseCommands.test.ts  (10 tests) 4ms
-    FAIL  src/extension.test.ts > TASK-003 — npm run compile emits dist/schemaForm.js (pre-existing)
-    Test Files  1 failed | 2 passed (3)
-    Tests  74 passed | 1 failed (75)
-    > vsdb@1.6.0 typecheck
-    > tsc --noEmit
-    (no output = clean)
-ISSUES: pure-module test #11 was added as part of the task (case #11 lives in
-browseCommands.test.ts). Pure module's own listTables spy assertion was updated to
-"exactly one call per qualifyKeywordTables call" — eager warm-up is intentional so the
-browse path's listTables spy is observable even when generated SQL has no candidates.
-HANDOFF_TO_REVIEWER: yes — TASK-007 implementation complete per spec.
-NEXT: ready for review.
 
 <!--
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
-
-## Reviewer Verdict
-
-VERDICT: APPROVED-WITH-MINOR
-REVIEWER_MODEL: unic/unic-smart
-EXECUTOR_MODEL: unic-code
-VERIFICATION_RERUN:
-  command: npx vitest run src/core/__tests__/keywordQualify.test.ts src/ui/__tests__/browseCommands.test.ts src/extension.test.ts && npm run typecheck
-  result: 75 pass / 0 fail; typecheck clean (no output)
-TEST_PLAN_COVERAGE: all-followed — all 11 cases present with real expect() assertions; executor captured RED output for cases #2/#11 as reported (stubbed post-hoc spot-check of #2's exact expected string passes fresh)
-FINDINGS:
-  critical: []
-  important: []
-  minor:
-    - src/core/keywordQualify.ts:274-280 — comma disarms CTE-name collection, so only the FIRST CTE in `WITH x AS (…), order AS (…) SELECT * FROM order` is registered; `order` is then wrongly rewritten to "public"."order" (verified live), shadowing the CTE. Cannot corrupt committed data (the CTE simply resolves instead) and case #6 single-CTE is guarded; fix = keep collecting CTE names after commas inside an active WITH prefix.
-    - src/core/keywordQualify.ts:325-333 — trigger set is FROM/INTO/UPDATE/JOIN only; `FROM ONLY order` and subquery `FROM (SELECT … FROM order)` (paren-depth guard) are never rewritten (verified live). UPDATE … FROM and INSERT INTO do work.
-    - src/ui/browseCommands.ts:151-158 — browse path applies the transform for every driver and awaits listTables eagerly per browse (extension.ts applyKeywordQualify gates on driver === "postgres"); non-pg drivers get an extra metadata round trip and harmless-but-unneeded Postgres semantics.
-    - src/extension.ts:474-478 — rewritten ParsedStatements keep stale start/end offsets; harmless today (QueryRunner consumes .text only, queryRunner.ts:119,154) but the offsets are now lies if any consumer starts using them.
-NOTES: Model isolation satisfied (unic-code executor vs unic/unic-smart reviewer). Focused correctness goal met: no false rewrites for ORDER BY, quoted, qualified, or single-CTE-shadowed identifiers; rewrite fires only for unquoted+unqualified+reserved-word+public-member. Minors are logged for a follow-up sweep; none block handoff.
-NEXT_STATUS_FOR_INDEX: approved_minor
