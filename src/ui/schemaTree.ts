@@ -387,44 +387,53 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
       try {
         if (category === "tables") {
           const tables = await adapter.listTables(schema);
-          raw = tables.map((t) => ({
-            label: t.name,
-            description: t.schema,
-            tooltip: `${t.schema}.${t.name}`,
-            contextValue: "table",
-            collapsible: vscode.TreeItemCollapsibleState.Collapsed,
-            meta: {
-              connection: conn,
-              category: "columns",
-              objectKey: `${conn.id}.${t.schema}.${t.name}`,
-              schema: t.schema,
-              objectName: t.name,
-            },
-            command: {
-              command: "vsdb.copyQualifiedName",
-              title: "Copy qualified name",
-              arguments: [qualifiedName({ table: t.name, schema: t.schema })],
-            },
-          }));
+          raw = tables.map((t) => {
+            const n: VsdbNode = {
+              label: t.name,
+              description: t.schema,
+              tooltip: `${t.schema}.${t.name}`,
+              contextValue: "table",
+              collapsible: vscode.TreeItemCollapsibleState.Collapsed,
+              meta: {
+                connection: conn,
+                category: "columns",
+                objectKey: `${conn.id}.${t.schema}.${t.name}`,
+                schema: t.schema,
+                objectName: t.name,
+              },
+            };
+            // TASK-002 — double-click/Enter opens ResultsPanel with SELECT *
+            // for this table. Argument is the whole VsdbNode so browseCommands
+            // can read .meta. Chevrons keep single-click expand behavior.
+            n.command = {
+              command: "vsdb.browseTableData",
+              title: "Browse Data",
+              arguments: [n],
+            };
+            return n;
+          });
         } else if (category === "views") {
           const views = await adapter.listViews(schema);
-          raw = views.map((v) => ({
-            label: v.name,
-            description: v.schema,
-            tooltip: `${v.schema}.${v.name}`,
-            contextValue: "view",
-            collapsible: vscode.TreeItemCollapsibleState.None,
-            meta: {
-              connection: conn,
-              schema: v.schema,
-              objectName: v.name,
-            },
-            command: {
-              command: "vsdb.copyQualifiedName",
-              title: "Copy qualified name",
-              arguments: [qualifiedName({ table: v.name, schema: v.schema })],
-            },
-          }));
+          raw = views.map((v) => {
+            const n: VsdbNode = {
+              label: v.name,
+              description: v.schema,
+              tooltip: `${v.schema}.${v.name}`,
+              contextValue: "view",
+              collapsible: vscode.TreeItemCollapsibleState.None,
+              meta: {
+                connection: conn,
+                schema: v.schema,
+                objectName: v.name,
+              },
+            };
+            n.command = {
+              command: "vsdb.browseTableData",
+              title: "Browse Data",
+              arguments: [n],
+            };
+            return n;
+          });
         } else {
           const routines = await adapter.listRoutines(schema);
           raw = routines.map((r) => ({

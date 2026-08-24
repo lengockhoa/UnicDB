@@ -688,6 +688,116 @@ describe("SchemaTreeProvider — connection node command + dialect per node", ()
     expect(root[0].command?.arguments).toEqual(["x"]);
   });
 });
+// =============================================================================
+// TASK-002 (wave 2) — table/view tree nodes wire `vsdb.browseTableData`
+// (double-click/Enter). Routines + connection nodes keep `vsdb.copyQualifiedName` /
+// `vsdb.selectConnectionFromTree`. The whole VsdbNode (with .meta) is the
+// command argument so resolveBrowseNode in browseCommands.ts can read .meta.
+// =============================================================================
+describe("SchemaTreeProvider — TASK-002 browse gesture wiring", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.emitters = [];
+    state.treeItemCalls = [];
+    state.workspaceFolders = undefined;
+  });
+
+  it("table node command = vsdb.browseTableData 'Browse Data' với arguments[0]=node (case 1)", async () => {
+    const { mgr } = setupTree({
+      schemas: [{ name: "app" }],
+      tables: [{ name: "users", schema: "app" }],
+    });
+    await mgr.addConnection(makeCfg({ id: "a", name: "Local" }), "p");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    const cats = await provider.getChildren(schemas[0]);
+    const tables = await provider.getChildren(cats[0]);
+
+    expect(tables).toHaveLength(1);
+    const node = tables[0];
+    expect(node.contextValue).toBe("table");
+    expect(node.collapsible).toBe(1); // Collapsed
+    expect(node.command?.command).toBe("vsdb.browseTableData");
+    expect(node.command?.title).toBe("Browse Data");
+    expect(Array.isArray(node.command?.arguments)).toBe(true);
+    expect(node.command?.arguments?.[0]).toBe(node);
+    if (
+      node.command?.arguments?.[0] &&
+      typeof node.command.arguments[0] === "object" &&
+      "meta" in node.command.arguments[0]
+    ) {
+      const arg = node.command.arguments[0] as { meta?: unknown };
+      const meta = arg.meta as
+        | { connection?: { id?: string }; schema?: string; objectName?: string }
+        | undefined;
+      expect(meta?.connection?.id).toBe("a");
+      expect(meta?.schema).toBe("app");
+      expect(meta?.objectName).toBe("users");
+    } else {
+      throw new Error("expected arguments[0] to be an object with meta");
+    }
+  });
+
+  it("view node command = vsdb.browseTableData 'Browse Data' với arguments[0]=node (case 2)", async () => {
+    const { mgr } = setupTree({
+      schemas: [{ name: "app" }],
+      views: [{ name: "v_active_users", schema: "app" }],
+      routines: [{ name: "do_thing", kind: "procedure", schema: "app" }],
+    });
+    await mgr.addConnection(makeCfg({ id: "v", name: "V" }), "p");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    const cats = await provider.getChildren(schemas[0]);
+    const viewsNode = cats[1]; // ["Tables","Views","Routines"] — Views at index 1
+    const views = await provider.getChildren(viewsNode);
+    const routinesNode = cats[2];
+    const routines = await provider.getChildren(routinesNode);
+
+    expect(views).toHaveLength(1);
+    expect(routines).toHaveLength(1);
+
+    const view = views[0];
+    expect(view.contextValue).toBe("view");
+    expect(view.command?.command).toBe("vsdb.browseTableData");
+    expect(view.command?.title).toBe("Browse Data");
+    expect(view.command?.arguments?.[0]).toBe(view);
+    if (
+      view.command?.arguments?.[0] &&
+      typeof view.command.arguments[0] === "object" &&
+      "meta" in view.command.arguments[0]
+    ) {
+      const viewArg = view.command.arguments[0] as { meta?: unknown };
+      const meta = viewArg.meta as
+        | { connection?: { id?: string }; schema?: string; objectName?: string }
+        | undefined;
+      expect(meta?.connection?.id).toBe("v");
+      expect(meta?.schema).toBe("app");
+      expect(meta?.objectName).toBe("v_active_users");
+    } else {
+      throw new Error("expected view arguments[0] to be an object with meta");
+    }
+
+    // Routines node giữ command copyQualifiedName cũ (không đổi).
+    expect(routines[0].command?.command).toBe("vsdb.copyQualifiedName");
+    expect(routines[0].command?.title).toBe("Copy qualified name");
+  });
+
+  it("connection node giữ command vsdb.selectConnectionFromTree với arguments=[id] (case 5)", async () => {
+    const stubMgr = {
+      listConnections: () => [makeCfg({ id: "conn-x", name: "X" })],
+      getActive: () => null,
+      onDidChangeActive: () => ({ dispose: () => {} }),
+    };
+    const provider = new SchemaTreeProvider(stubMgr as never);
+    const root = await provider.getChildren(undefined);
+    expect(root[0].command?.command).toBe("vsdb.selectConnectionFromTree");
+    expect(root[0].command?.arguments).toEqual(["conn-x"]);
+  });
+});
 
 // =============================================================================
 // DataGrip-style UX: connection root nodes xuất hiện sẵn (expanded), icon theo

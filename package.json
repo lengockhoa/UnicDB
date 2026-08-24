@@ -53,7 +53,8 @@
     "onCommand:vsdb.analyzeTable",
     "onCommand:vsdb.vacuumTable",
     "onCommand:vsdb.openAiSettings",
-    "onCommand:vsdb.aiChat"
+    "onCommand:vsdb.aiChat",
+    "onCommand:vsdb.browseTableData"
   ],
   "contributes": {
     "commands": [
@@ -182,6 +183,11 @@
         "title": "VSDB: AI Chat",
         "category": "VSDB",
         "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "vsdb.browseTableData",
+        "title": "VSDB: Browse Table Data",
+        "category": "VSDB"
       }
     ],
     "keybindings": [

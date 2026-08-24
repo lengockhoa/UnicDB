@@ -1000,6 +1000,50 @@ describe("TASK-004 — vsdb.aiChat wiring", () => {
     expect(called).toBe(true);
   });
 });
+// =============================================================================
+// TASK-002 (wave 2) — wire `vsdb.browseTableData` from schemaTree nodes:
+//   * extension.activate() registers the command via registerBrowseCommands.
+//   * package.json declares contributes.commands entry + activationEvent.
+//   * invoking the registered handler with no argument must not throw
+//     (palette fallback → showInformationMessage, see browseCommands.test.ts #5).
+// =============================================================================
+describe("TASK-002 — vsdb.browseTableData extension wiring", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+  });
+
+  it("registers vsdb.browseTableData handler trong activate() (case 3)", () => {
+    const ctx = makeCtx();
+    activate(ctx as never);
+    expect(state.registeredCommands.has("vsdb.browseTableData")).toBe(true);
+  });
+
+  it("invoking vsdb.browseTableData handler không throw khi palette (no arg) (case 3)", async () => {
+    const ctx = makeCtx();
+    activate(ctx as never);
+    const fn = state.registeredCommands.get("vsdb.browseTableData");
+    expect(fn).toBeDefined();
+    await expect(fn!()).resolves.not.toThrow();
+    await expect(fn!(undefined)).resolves.not.toThrow();
+    await expect(fn!({})).resolves.not.toThrow();
+  });
+  it("package.json contributes.commands có vsdb.browseTableData entry với category VSDB (case 4)", () => {
+    // pkgJson đã là typed JSON.parse output; ép kiểu 1 lần tại ranh giới rồi truy cập thuộc tính đã được kiểm tra.
+    interface CmdEntry { command: string; title?: string; category?: string }
+    const commands = pkgJson.contributes.commands as CmdEntry[];
+    const entry = commands.find((c) => c.command === "vsdb.browseTableData");
+    expect(entry).toBeDefined();
+    expect(entry!.title).toMatch(/Browse Table Data/i);
+    expect(entry!.category).toBe("VSDB");
+  });
+
+  it("package.json activationEvents có onCommand:vsdb.browseTableData (case 4)", () => {
+    const evts = pkgJson.activationEvents as string[];
+    expect(evts).toContain("onCommand:vsdb.browseTableData");
+  });
+});
+
 
 // =============================================================================
 // TASK-002 — AcpProcess module is importable + extension activation still

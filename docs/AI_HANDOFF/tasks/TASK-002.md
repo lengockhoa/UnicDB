@@ -97,3 +97,57 @@ raw argument and keeps the argument forward-compatible.
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: W2-T002
+SUMMARY: Wired `vsdb.browseTableData` for double-click/Enter on table + view schemaTree nodes (routines + connection nodes unchanged). `src/ui/schemaTree.ts` builds the VsdbNode first then attaches `command = { command: "vsdb.browseTableData", title: "Browse Data", arguments: [n] }` in the tables + views blocks. `src/extension.ts` imports `registerBrowseCommands` from `./ui/browseCommands` and calls it right after `ResultsPanel` is constructed (panel/runner/mgr all available there) with `{ mgr, runner, panel }`. `package.json` gains one `contributes.commands` entry (title "VSDB: Browse Table Data", category "VSDB") + one `activationEvents` entry (`onCommand:vsdb.browseTableData`) — purely additive (the only "removed" byte is the trailing comma needed for valid JSON after the new activationEvents row).
+TEST_PLAN_FOLLOWED: task §4 (all 5 cases implemented; case 5 = regression-protection PASSES against baseline)
+FILES_CHANGED:
+  - src/ui/schemaTree.ts: tables + views blocks in getCategoryChildren — build VsdbNode first then attach command with whole node as arg
+  - src/extension.ts: import registerBrowseCommands; call right after `panel.setExtensionUri(...)`/`context.subscriptions.push(panel)`
+  - package.json: +1 activationEvent ("onCommand:vsdb.browseTableData") +1 contributes.commands entry
+  - src/ui/__tests__/schemaTree.test.ts: +3 cases (case 1 table, case 2 view + routines untouched, case 5 connection untouched) in new describe "TASK-002 browse gesture wiring"
+  - src/extension.test.ts: +4 cases (case 3 registration, case 3 palette no-throw, case 4 contributes entry, case 4 activationEvent) in new describe "TASK-002 — vsdb.browseTableData extension wiring"
+TESTS_ADDED:
+  - src/ui/__tests__/schemaTree.test.ts: TASK-002 browse gesture wiring describe (3 cases)
+  - src/extension.test.ts: TASK-002 — vsdb.browseTableData extension wiring describe (4 cases)
+VERIFICATION:
+  command: `cd .worktrees/task-002 && npm ci --silent && npx vitest run src/ui/__tests__/schemaTree.test.ts src/extension.test.ts src/ui/__tests__/browseCommands.test.ts && npm run typecheck`
+  result: 97 pass / 0 fail; typecheck exit 0
+  output_excerpt: |
+    RED (6 new-test failures captured before src edits):
+      RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-002
+       FAIL  src/extension.test.ts > TASK-002 — vsdb.browseTableData extension wiring > registers vsdb.browseTableData handler trong activate() (case 3)
+       AssertionError: expected false to be true  // command not registered yet
+       FAIL  src/extension.test.ts > TASK-002 — vsdb.browseTableData extension wiring > invoking vsdb.browseTableData handler không throw khi palette (no arg) (case 3)
+       AssertionError: expected undefined not to be undefined  // fn = registeredCommands.get(...)
+       FAIL  src/extension.test.ts > TASK-002 — vsdb.browseTableData extension wiring > package.json contributes.commands có vsdb.browseTableData entry với category VSDB (case 4)
+       AssertionError: expected undefined not to be undefined  // entry not in manifest yet
+       FAIL  src/extension.test.ts > TASK-002 — vsdb.browseTableData extension wiring > package.json activationEvents có onCommand:vsdb.browseTableData (case 4)
+       AssertionError: expected [ 'onLanguage:sql', …(20) ] to include 'onCommand:vsdb.browseTableData'
+       FAIL  src/ui/__tests__/schemaTree.test.ts > SchemaTreeProvider — TASK-002 browse gesture wiring > table node command = vsdb.browseTableData 'Browse Data' với arguments[0]=node (case 1)
+       AssertionError: expected 'vsdb.copyQualifiedName' to be 'vsdb.browseTableData'  // schemaTree tables block unchanged
+       FAIL  src/ui/__tests__/schemaTree.test.ts > SchemaTreeProvider — TASK-002 browse gesture wiring > view node command = vsdb.browseTableData 'Browse Data' với arguments[0]=node (case 2)
+       AssertionError: expected 'vsdb.copyQualifiedName' to be 'vsdb.browseTableData'  // schemaTree views block unchanged
+       Test Files  2 failed | 1 passed (3)
+            Tests  6 failed | 91 passed (97)
+
+    GREEN (after schemaTree/extension/package.json edits):
+      RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-002
+       ✓ src/ui/__tests__/browseCommands.test.ts  (9 tests) 4ms
+       ✓ src/ui/__tests__/schemaTree.test.ts  (47 tests) 25ms
+       ✓ src/extension.test.ts  (41 tests) 87ms
+       Test Files  3 passed (3)
+            Tests  97 passed (97)
+
+    typecheck:
+      > vsdb@1.6.0 typecheck
+      > tsc --noEmit
+      (exit 0, no output)
+ISSUES: (1) Mid-flight: my first extension.ts import edit accidentally overwrote the existing `import type { ConnectionConfig } from "./config/types"` (the auto-repair echo dropped it). Restored immediately — typecheck caught the regression (4× TS2304 Cannot find name 'ConnectionConfig') and the fix brought it back to clean. (2) Mid-flight: while rewriting the new schemaTree RED tests to comply with ts-no-inline-cast-access, I temporarily orphaned the case-5 connection test body — caught by reading the file, restored verbatim before any test run. The final test file parses and all 5 cases pass as expected.
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for review
+

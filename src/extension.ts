@@ -26,6 +26,7 @@ import type { AgentDeps } from "./ai/agent";
 import { AiChatPanel, type AcpPanelDeps } from "./ui/aiChatPanel";
 import { AcpProcess } from "./ai/omp/acpProcess";
 import type { ConnectionConfig } from "./config/types";
+import { registerBrowseCommands } from "./ui/browseCommands";
 import type { ParsedStatement } from "./config/types";
 let disposables: vscode.Disposable[] = [];
 let state: ExtensionState | null = null;
@@ -94,6 +95,11 @@ export async function activate(
   const panel = new ResultsPanel({ runner, saveContext });
   panel.setExtensionUri(context.extensionUri);
   context.subscriptions.push(panel);
+
+  // TASK-002 — wire `vsdb.browseTableData` (double-click/Enter on table/view nodes
+  // in the schema tree). Consumes TASK-001's registerBrowseCommands; the tree
+  // node (with .meta) is passed as the command argument.
+  registerBrowseCommands({ mgr, runner, panel });
 
   // ---- CodeLens ----
   const codeLens = new VsdbCodeLensProvider();
