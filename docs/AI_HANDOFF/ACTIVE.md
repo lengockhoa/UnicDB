@@ -1,9 +1,9 @@
 # ACTIVE
 
-Cycle: O — ACP session history & resume
+Cycle: P — permission detail + builtin tool-call UI + VSIX release pass
 
 ## State
-done
+planning
 
 ## Notes
-- 4/4 approved; full suite 819 passed / 2 skipped exit 0; compile+typecheck clean.
+- Final backlog sweep: 3 items, user-approved "làm hết tất cả".

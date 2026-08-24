@@ -22,3 +22,6 @@
 
 ## Cycle O — ACP session history & resume (2026-08-24)
 - 4/4 approved (T003 + 1 fix round: streaming guard + mutation-killing tests; others direct/minor). AcpClient sessionList/sessionLoad + AcpReplayBuffer (window closes on next outgoing write — multi-flush safe), acpProcess wiring + latent mcpServers:[] fix (live -32603), panel picker + replay (cwd filter, Date.parse sort, own-id filter, drop-guard, cap 50), webview picker + history rendering (textContent, hostile-input safe). Live-probe-driven: session/list, session/load replay 157 notifs, resume end_turn. 819 passed / 2 skipped exit 0. Pushed this cycle.
+
+## Cycle O — ACP session history & resume (2026-08-24)
+- 4/4 approved (T003 + 1 fix round). AcpClient list/load + AcpReplayBuffer (outgoing-write window), acpProcess mcpServers latent fix, panel picker + replay, webview picker + history. Live-probe-driven. 819 passed / 2 skipped exit 0. Released da413cb.
