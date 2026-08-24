@@ -101,4 +101,129 @@ Bản thiết kế fallback nằm ở agent (không phải provider) — lý do 
 executor thấy khó giữ `onText` count chính xác (async race giữa onText cuối + throw),
 an toàn: bọc `emitted` counter ngoài try, throw sau khi await streamComplete settle.
 
+
 ---
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: ExecN-T002
+
+### Scope
+
+Extend `runAgent` with optional 4th param `signal?: AbortSignal`, add optional
+`streamComplete` to `AgentDeps` (cfg,role,req,onText,signal signature), add
+optional `onText(text: string)` and `onStreamFallback()` to `AgentCallbacks`.
+Introduce `runStep` helper inside agent.ts that: (a) picks non-stream path when
+`!deps.streamComplete || cfg.method !== "chat/completions"`; (b) wraps the
+user's `onText` to count emitted deltas; (c) freezes the catch order:
+`AbortError || signal.aborted → rethrow bare`,
+`ProviderError && emitted===0 → onStreamFallback once + deps.complete(req)`,
+otherwise rethrow. agent.ts stays pure (no vscode import). agent.test.ts NOT
+edited; full AI suite green.
+
+### RED evidence (verbatim, captured before GREEN)
+
+```
+ ❯ src/ai/__tests__/agentStream.test.ts > runAgent — stream opt-in (TASK-002) > case #1 happy single-step: stream emits 2 deltas then final
+   → expected [] to deeply equal [ 'hi ', 'there' ]
+ ❯ case #2 tool loop: tool step emits no text, text step does; argumentsJson merges from stream
+   → expected "streamImpl" to be called 2 times, but got 0 times
+ ❯ case #3 fallback: streamComplete rejects ProviderError pre-emit → onStreamFallback once + deps.complete
+   → expected "spy" to be called 1 times, but got 0 times
+ ❯ case #4 mid-stream ProviderError after onText → rethrow, NO fallback
+   → promise resolved "{ steps: … }" instead of rejecting
+ ❯ case #5a abort mid-stream (after 1 onText) → AbortError propagates bare, NO fallback
+   → promise resolved "{ steps: … }" instead of rejecting
+ ❯ case #5b abort pre-emit (tool step, emitted===0) → AbortError propagates, NO fallback
+   → promise resolved "{ steps: … }" instead of rejecting
+ ❯ case #5c abort propagated even when err.name is NOT 'AbortError' but signal.aborted is true
+   → promise resolved "{ steps: … }" instead of rejecting
+ Test Files  1 failed (1)
+      Tests  7 failed (7)
+```
+
+### GREEN verification (fresh re-run in this turn)
+
+command: `npm run typecheck && npx vitest run src/ai/__tests__/agent.test.ts src/ai/__tests__/agentStream.test.ts`
+result: typecheck exit 0; 19/19 pass (0 fail) — fresh re-run PASS
+output_excerpt:
+```
+> vsdb@1.5.1 typecheck
+> tsc --noEmit
+ ✓ src/ai/__tests__/agentStream.test.ts  (7 tests) 6ms
+ ✓ src/ai/__tests__/agent.test.ts  (12 tests) 6ms
+ Test Files  2 passed (2)
+      Tests  19 passed (19)
+```
+
+### Files Changed
+
+- `src/ai/agent.ts`:
+  - Imports: added `AiConfig`/`AiModelRole` from `./settings`; `ProviderError`
+    as a value (mixed import) plus remaining type-only imports from `./provider`.
+  - `AgentDeps` gains optional `streamComplete(cfg, role, req, onText, signal)`
+    matching the frozen TASK-002 §Interfaces signature exactly.
+  - `AgentCallbacks` gains optional `onText(text: string)` and
+    `onStreamFallback()` per the same frozen contract.
+  - `runAgent(input, deps, callbacks?, signal?)` — 4th param `signal?: AbortSignal`
+    threaded through to per-step provider calls.
+  - New private helper `runStep(req, deps, callbacks, signal, cfg, role)`:
+    - Non-stream path when `!deps.streamComplete || cfg.method !== "chat/completions"`
+      (preserves case 6 regression — stream opt-in is silent on missing deps or
+      `responses` method).
+    - Stream path wraps user `callbacks.onText` to count emitted deltas; the
+      counter increments before the user callback fires, so `emitted` is the
+      number of deltas delivered (not the number of successful callbacks).
+    - Catch order is exact: (1) abort check (name OR signal.aborted) → rethrow
+      bare, no fallback; (2) ProviderError && emitted===0 →
+      `callbacks.onStreamFallback?.()` once, then `deps.complete(cfg, role, req)`
+      with the same request; (3) else rethrow.
+  - No changes to `AgentStep`/`AgentRunResult` shape; case 6 regression verified
+    by the 12 untouched `agent.test.ts` cases passing.
+- `src/ai/__tests__/agentStream.test.ts`: new file, 7 cases (1 happy single-step,
+  2 tool loop, 3 fallback, 4 mid-stream fail, 5a abort mid-stream, 5b abort
+  pre-emit, 5c OR-rule with non-AbortError name). All run synchronously, no
+  network, no real fetch.
+
+### Tests Added
+
+- `src/ai/__tests__/agentStream.test.ts`: `case #1 happy single-step: stream
+  emits 2 deltas then final`, `case #2 tool loop: tool step emits no text, text
+  step does; argumentsJson merges from stream`, `case #3 fallback: streamComplete
+  rejects ProviderError pre-emit → onStreamFallback once + deps.complete`,
+  `case #4 mid-stream ProviderError after onText → rethrow, NO fallback`,
+  `case #5a abort mid-stream (after 1 onText) → AbortError propagates bare,
+  NO fallback`, `case #5b abort pre-emit (tool step, emitted===0) → AbortError
+  propagates, NO fallback`, `case #5c abort propagated even when err.name is
+  NOT 'AbortError' but signal.aborted is true`.
+
+### Issues
+
+none — frozen interfaces preserved (AgentDeps.streamComplete signature,
+AgentCallbacks additions, runAgent 4th param all match TASK-002 §Interfaces
+byte-for-byte); case 6 regression intact (12 untouched `agent.test.ts` cases
+still pass); no new dependencies (`package.json`/`package-lock.json` unchanged);
+no vscode import introduced in agent.ts.
+---
+---
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: ExecN-T002
+VERIFICATION_RERUN:
+  command: npm run typecheck && npx vitest run src/ai/__tests__/agent.test.ts src/ai/__tests__/agentStream.test.ts
+  result: typecheck exit 0; 19/19 pass (0 fail) — fresh re-run PASS
+  extra: src/ai/tools/__tests__/registry.test.ts 2/2 (shared runAgent consumer, regression net)
+TEST_PLAN_COVERAGE: all-followed (cases 1-5 in new agentStream.test.ts: 7 tests incl. 5a/5b/5c; case 6 via untouched agent.test.ts 12/12; git diff on agent.test.ts empty)
+FINDINGS:
+  critical: none
+  important: none
+  minor: none
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Signatures verified byte-against-contract: AgentDeps.streamComplete(cfg,role,req,onText,sig#5), runAgent param4 signal, AgentCallbacks.onText/onStreamFallback. Catch order exact (agent.ts:177-190): abort(name OR signal.aborted)→bare rethrow incl. emitted===0 (test 5b); ProviderError&&emitted===0→onStreamFallback once then complete, no double text (fallback path has no onText, result authoritative); else rethrow. wrappedOnText counts before dispatch (planner's counter-outside-try rule). AgentDeps.streamComplete onText takes {text} per TASK-001 frozen StreamRequestOptions — task §Produces parenthetical "(text: string)" is informal; code is the correct consume-side shape and unwraps ev.text for AgentCallbacks.onText(text: string). agent.ts pure (imports only ./settings, ./provider). Non-stream callers unaffected: runStep falls to deps.complete when streamComplete absent or method!==chat/completions; panel/extension callers compile + pass (param4 optional). RED evidence verbatim with 7 real assertion failures.

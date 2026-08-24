@@ -4,6 +4,4 @@ Cycle: N — builtin engine streaming
 
 | Task | Title | Status | Reviewer | Dependencies |
 |------|-------|--------|----------|--------------|
-| TASK-001 | Provider SSE streaming (streamComplete) | approved | unic-smart | none |
-| TASK-002 | Agent streaming loop (opt-in via AgentDeps) | ready | - | TASK-001 |
-| TASK-003 | Panel builtin streaming wiring + webview banner | ready | - | TASK-002 |
+| TASK-002 | Agent streaming loop (opt-in via AgentDeps) | approved | unic/unic-smart | TASK-001 |

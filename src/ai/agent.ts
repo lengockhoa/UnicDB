@@ -4,8 +4,15 @@
 // deterministic. Spec: docs/AI_HANDOFF/tasks/TASK-003.md §Spec (frozen).
 
 import type { AiConfig, AiModelRole } from "./settings";
-import type { ChatMessage, ChatContentPart, ProviderRequest, ProviderResult, ToolCall, ToolDef } from "./provider";
-
+import {
+  ProviderError,
+  type ChatMessage,
+  type ChatContentPart,
+  type ProviderRequest,
+  type ProviderResult,
+  type ToolCall,
+  type ToolDef,
+} from "./provider";
 export interface AgentTool {
   name: string;
   description: string;
@@ -38,6 +45,18 @@ export interface AgentInput {
 export interface AgentDeps {
   loadConfig(): Promise<AiConfig | null>;
   complete(cfg: AiConfig, role: AiModelRole, req: ProviderRequest): Promise<ProviderResult>;
+  /**
+   * Optional streaming path. When provided AND cfg.method === "chat/completions",
+   * runAgent uses streamComplete per step instead of complete(), emitting
+   * `callbacks.onText` per delta. See docs/AI_HANDOFF/tasks/TASK-002.md §Interfaces.
+   */
+  streamComplete?(
+    cfg: AiConfig,
+    role: AiModelRole,
+    req: ProviderRequest,
+    onText: (ev: { text: string }) => void,
+    signal?: AbortSignal,
+  ): Promise<ProviderResult>;
 }
 
 export interface AgentStep {
@@ -59,9 +78,15 @@ export interface AgentRunResult {
 export interface AgentCallbacks {
   onStep?(step: AgentStep): void;
   onError?(error: Error): void;
+  /** Fires once per text-delta, only when streaming path is active and the
+   * step's result has no tool_calls. Not invoked on the fallback non-stream
+   * response. See TASK-002 §Interfaces. */
+  onText?(text: string): void;
+  /** Fires exactly once, immediately before deps.complete is invoked on the
+   * fallback path (stream pre-emit failure). Skipped when the abort rule
+   * rethrows first. */
+  onStreamFallback?(): void;
 }
-
-// ---- internal helpers -------------------------------------------------------
 
 /** Build a tool error result message. Used in three error paths → lockstep shape. */
 function toolErrorMessage(id: string, error: string): ChatMessage {
@@ -110,10 +135,66 @@ async function executeToolCall(
   }
 }
 
+/**
+ * Execute one provider step with the stream path when available. Frozen rule:
+ *   1. AbortError / signal.aborted → rethrow bare (no fallback, no
+ *      onStreamFallback). User stop must NEVER trigger a re-request.
+ *   2. ProviderError with emitted === 0 → onStreamFallback once, then fall
+ *      back to deps.complete(req). Step is committed with the fallback
+ *      result; no onText fired.
+ *   3. Otherwise (emitted > 0, or non-ProviderError) → rethrow.
+ */
+async function runStep(
+  req: ProviderRequest,
+  deps: AgentDeps,
+  callbacks: AgentCallbacks | undefined,
+  signal: AbortSignal | undefined,
+  cfg: AiConfig,
+  role: AiModelRole,
+): Promise<ProviderResult> {
+  if (!deps.streamComplete || cfg.method !== "chat/completions") {
+    return deps.complete(cfg, role, req);
+  }
+
+  // Stream path: wrap the user's onText to count deltas for the fallback rule.
+  // The wrapped function preserves caller identity and never throws onward
+  // (caller's onText may throw — we swallow per the provider's streamComplete
+  // contract, where streamComplete itself owns error reporting).
+  let emitted = 0;
+  const userOnText = callbacks?.onText;
+  const wrappedOnText = (ev: { text: string }): void => {
+    emitted++;
+    try {
+      userOnText?.(ev.text);
+    } catch {
+      // user's onText must never break the stream path.
+    }
+  };
+
+  try {
+    return await deps.streamComplete(cfg, role, req, wrappedOnText, signal);
+  } catch (err) {
+    // Rule 1: abort — never fallback. Either name === "AbortError" OR the
+    // caller's signal reports aborted (per frozen spec).
+    const aborted = (err instanceof Error && err.name === "AbortError") || signal?.aborted === true;
+    if (aborted) {
+      throw err;
+    }
+    // Rule 2: ProviderError with zero text emitted → fallback to non-stream.
+    if (err instanceof ProviderError && emitted === 0) {
+      callbacks?.onStreamFallback?.();
+      return deps.complete(cfg, role, req);
+    }
+    // Rule 3: mid-stream failure (emitted > 0) or non-ProviderError → rethrow.
+    throw err;
+  }
+}
+
 export async function runAgent(
   input: AgentInput,
   deps: AgentDeps,
   callbacks?: AgentCallbacks,
+  signal?: AbortSignal,
 ): Promise<AgentRunResult> {
   const role: AiModelRole = input.role ?? "work";
 
@@ -152,8 +233,7 @@ export async function runAgent(
       messages: history.map((m) => ({ ...m })),
       tools: toolDefs,
     };
-    const result = await deps.complete(cfg, role, req);
-
+    const result = await runStep(req, deps, callbacks, signal, cfg, role);
     const hasToolCalls = result.toolCalls.length > 0;
     const assistantMsg: ChatMessage = hasToolCalls
       ? { role: "assistant", content: "", toolCalls: result.toolCalls }
