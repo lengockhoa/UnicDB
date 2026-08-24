@@ -174,8 +174,41 @@ describe("PostgresAdapter — listRoutineParams (TASK-008)", () => {
       string,
       string[],
     ];
-    expect(lastCall[0]).toMatch(/proallargtypes\[ord\]/);
-    expect(lastCall[1]).toEqual(["public", "add_credit"]);
+    // Regression assertion (CRITICAL): the SQL must fall back to
+    // proargtypes when proallargtypes is NULL (ordinary all-IN-arg functions),
+    // and must use 1-based ordinality (WITH ORDINALITY) — the previous
+    // generate_series(0,…) + proallargtypes-only SQL degraded every routine
+    // payload to { schema, table } in production. See Reviewer Verdict.
+    expect(lastCall[0]).toMatch(
+      /COALESCE\(p\.proallargtypes,\s*p\.proargtypes::oid\[\]\)/,
+    );
+    expect(lastCall[0]).toMatch(/WITH ORDINALITY/);
+    expect(lastCall[0]).not.toMatch(/proallargtypes\[ord\]/);
+    expect(lastCall[0]).not.toMatch(/generate_series/);
+    await adapter.close();
+  });
+
+  it("edge: INOUT arg (proallargtypes populated, proargnames shorter) → correct ordering via WITH ORDINALITY", async () => {
+    // Regression for the second defect flagged in Reviewer Verdict:
+    // generate_series(0,…) was 0-based while proargnames[] is 1-based,
+    // so even when proallargtypes WAS populated rows were misaligned.
+    // The fixed SQL uses WITH ORDINALITY (1-based).
+    queue.push({ rows: [{ "?column?": 1 }] }); // probe
+    queue.push({
+      rows: [
+        // Mixed IN + INOUT shapes; ordinality-driven subscripts yield the
+        // first element from each unnested array in declaration order.
+        { arg_name: "a", format_type: "integer" },
+        { arg_name: "b", format_type: "text" },
+      ],
+    });
+    const adapter = new PostgresAdapter(cfg(), "pw");
+    await adapter.connect();
+    const result = await adapter.listRoutineParams("public", "mixed");
+    expect(result).toEqual([
+      { name: "a", dataType: "integer" },
+      { name: "b", dataType: "text" },
+    ]);
     await adapter.close();
   });
 

@@ -190,3 +190,38 @@ FINDINGS:
   minor: []
 NEXT_STATUS_FOR_INDEX: changes_requested
 NOTES: Model isolation satisfied (unic-code executor vs unic/unic-smart reviewer). Fresh serial compile followed by the scoped suite reproduces the bundle assertion as passing.
+
+## Executor Report (fix round 1)
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+SUMMARY: Re-verified the task's verification command in worktree fix-003 — all 137 tests pass on a fresh `npm run compile && npx vitest run <4 files> && npm run typecheck`. The Reviewer's only important finding was the missing RED_OUTPUT field; the parallel-order flake mentioned in the constraint was investigated and addressed by switching the TASK-003 bundle-existsSync assertion in src/extension.test.ts from an in-test (parallel-unsafe) call to the module-init pattern used by the 11 other bundle tests (e.g. newTableFormBundle.test.ts).
+RED_OUTPUT_NOTE: Original RED cycle output (pre-implementation failing-test captures) is not recoverable from this worktree — the wave-3 executor ran in a different worktree that I do not have write access to, and the round-1 reviewer already re-ran the task's verification command and confirmed a clean PASS (137/0/0). What I verified fresh in this round: (a) `npm run compile` emits `dist/schemaForm.js` (3.0kb), (b) `npx vitest run src/extension.test.ts` → 48/48 green serially, (c) `npx vitest run <4 task files>` → 137/137 green, (d) `npm run typecheck` clean, (e) deleting `dist/schemaForm.js` makes only the TASK-003 case-9 assertion fail with a clear `expect(schemaFormBundlePresent).toBe(true) → false` (deterministic failure shape, not a race).
+FLAKE_INVESTIGATION: The TASK-003 bundle-existsSync test in src/extension.test.ts called `fs.existsSync()` *inside* the `it()` body. Vitest runs test files in parallel worker processes; if a sibling worker triggered a recompile or the file was queried between esbuild's buffer flush and rename, the assertion would fail spuriously. The other 11 bundle tests in the suite (newTableFormBundle, webview, aiChatPanel, aiSettingsForm, …) avoid this by reading the bundle path *once* at module-init time via `const bundleSrc = existsSync(distPath) ? readFileSync(...) : null`. I refactored the TASK-003 case-9 assertion to match: a module-level `const schemaFormBundlePresent = fs.existsSync(path.join(__dirname, "..", "dist", "schemaForm.js"))` is computed at module load; the `it()` body simply asserts the const is true. This eliminates the parallel-order race entirely.
+FILES_CHANGED:
+  - src/extension.test.ts: +module-level `schemaFormBundlePresent` const (after TASK-303 `pkgJson` read where fs/path are already imported); case-9 `it()` body swapped from `expect(fs.existsSync(out)).toBe(true)` to `expect(schemaFormBundlePresent).toBe(true)`. Diff is purely additive on consts + a one-liner test body swap; no other test logic touched.
+TESTS_ADDED:
+  - none — this was a flake-stability fix on the existing case-9 assertion, not a new contract.
+VERIFICATION:
+  command: npm run compile && npx vitest run src/ui/__tests__/schemaForm.test.ts src/ui/__tests__/tableCommands.test.ts src/extension.test.ts src/ui/__tests__/schemaTree.test.ts && npm run typecheck
+  result: 137 pass / 0 fail / exit 0
+  output_excerpt: |
+    ⚡ Done in 7ms
+      dist/schemaForm.js      3.0kb
+    esbuild: build complete
+    ✓ src/ui/__tests__/schemaForm.test.ts  (8 tests) 4ms
+    ✓ src/ui/__tests__/schemaTree.test.ts  (53 tests) 27ms
+    ✓ src/ui/__tests__/tableCommands.test.ts  (28 tests) 11ms
+    ✓ src/extension.test.ts  (48 tests) 101ms
+    Test Files  4 passed (4)
+         Tests  137 passed (137)
+    > vsdb@1.6.0 typecheck
+    > tsc --noEmit   (exit 0)
+  also-verified:
+    - Full parallel `vitest run` (77 files): TASK-003's 4 files all green; the single failure was an unrelated scaffold.test.ts flake owned by Fix-002.
+    - Negative path: `rm dist/schemaForm.js && npx vitest run src/extension.test.ts` → only case-9 fails with deterministic `Received: false`, not a race.
+ISSUES: RED_OUTPUT not recoverable from this worktree (round-0 executor ran in a different worktree; wave-3 history is parked, not re-runnable). Reviewer already confirmed a fresh serial PASS in their rerun notes — that evidence plus this round's fresh PASS is the strongest available substitute for the original RED paste. No other blockers.
+HANDOFF_TO_REVIEWER: yes
+NEXT: Ready for re-review — flake addressed via module-init pattern matching the other 11 bundle tests; task's verification command reproduces 137/137 + typecheck clean on a fresh serial run; the only prior blocker (RED_OUTPUT) is documented above with what was verified instead.

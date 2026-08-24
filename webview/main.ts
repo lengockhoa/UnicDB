@@ -303,6 +303,9 @@ interface PersistentDom {
   /** Persistent grid wrap that contains requeryBar + gridHost + gridFooter
    *  + saveBanner (TASK-005 — requery bar moved above the grid host).
    *  Created once; re-attached to `panel` on every grid render. */
+  gridWrap: HTMLDivElement;
+  /** Persistent grid host that holds the AG Grid table. */
+  gridHost: HTMLDivElement;
   /** Persistent grid footer. */
   gridFooter: HTMLDivElement;
   /** Persistent banner above the footer — shows save errors / no_pk warnings.

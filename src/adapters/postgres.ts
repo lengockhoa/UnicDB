@@ -258,22 +258,37 @@ export class PostgresAdapter implements DbAdapter {
     routine: string,
   ): Promise<Array<{ name: string | null; dataType: string }>> {
     // Parameterized — $1/$2 bind via this.query → pool.query(sql, [..]).
-    // Unnest proallargtypes + proargnames with pg_type for the human-readable
-    // format_type. Empty routines → 0 rows → empty array.
+    //
+    // Two source columns for arg types in pg_proc:
+    //   proallargtypes  — oid[]   of arg types including INOUT/OUT/VARIADIC;
+    //                     NULL when the routine declares only IN args (the common
+    //                     case for ordinary all-IN-arg functions/procs).
+    //   proargtypes     — oidvector of arg types (only IN args).
+    //
+    // COALESCE(proallargtypes, proargtypes::oid[]) covers both shapes.
+    // WITH ORDINALITY supplies a 1-based `ord` matching pg_proc's 1-based
+    // array subscript convention (previous generate_series(0,…) implementation
+    // was 0-based and misaligned even when proallargtypes WAS populated).
+    //
+    // proargnames[] is an array of the same length; subscript by ord → names
+    // (NULL where the arg is unnamed positional).
+    //
+    // Validated against real PG 16.15 (vsdb-postgres, PREPARE/EXECUTE mirroring
+    // $1/$2 binds) for: named all-IN args, unnamed positional args, no-arg,
+    // and INOUT — see test cases.
     const res = await this.query<{
       arg_name: string | null;
       format_type: string;
     }>(
-      `SELECT proargnames[ord] AS arg_name,
-              pg_catalog.format_type(proallargtypes[ord], NULL) AS format_type
+      `SELECT p.proargnames[t.ord] AS arg_name,
+              pg_catalog.format_type(t.typ, NULL) AS format_type
          FROM pg_proc p
-         JOIN pg_namespace n ON n.oid = p.pronamespace,
-              LATERAL generate_series(
-                0,
-                COALESCE(array_length(proallargtypes, 1), 0) - 1
-              ) AS ord
+         JOIN pg_namespace n ON n.oid = p.pronamespace
+         CROSS JOIN LATERAL unnest(
+           COALESCE(p.proallargtypes, p.proargtypes::oid[])
+         ) WITH ORDINALITY AS t(typ, ord)
         WHERE n.nspname = $1 AND p.proname = $2
-        ORDER BY ord`,
+        ORDER BY t.ord`,
       [schema, routine],
     );
     return res.rows.map((row) => ({

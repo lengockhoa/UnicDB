@@ -257,4 +257,126 @@ describe("sampleDataAi — aiGenerateSampleData e2e", () => {
       "VSDB: nothing to insert into public.users",
     );
   });
+
+  // Regression: reviewer's important finding — PostgresAdapter.runQuery splits
+  // multi-statement SQL via splitStatements and runs each via auto-commit
+  // pool.query. There is NO transaction API on DbAdapter, so true rollback
+  // atomicity is impossible from this module without editing the adapter.
+  // The orchestrator must (a) submit all statements as ONE runQuery call (no
+  // per-statement loop in this layer), (b) rethrow adapter errors with an
+  // explicit warning that partial rows MAY have committed, (c) surface that
+  // message to showError. We assert the contract here with a fake adapter
+  // that throws on 2nd statement — the test documents what guarantees ARE
+  // provided (single-call dispatch + honest error reporting) rather than
+  // pretending to a rollback semantic that doesn't exist.
+  it("R1 regression: adapter mid-batch failure → runQuery called ONCE with joined SQL; error rethrown with honest partial-rows warning", async () => {
+    const cfg = makeCfg();
+    const conn = makeConn();
+    const complete = vi.fn(
+      async (_req: ProviderRequest): Promise<ProviderResult> => ({
+        text: [
+          `INSERT INTO "public"."users" ("name") VALUES ('a');`,
+          `INSERT INTO "public"."users" ("name") VALUES ('b');`,
+          `INSERT INTO "public"."users" ("name") VALUES ('c');`,
+        ].join("\n"),
+        toolCalls: [],
+        finishReason: "stop",
+        usage: { inputTokens: 1, outputTokens: 1 },
+      }),
+    );
+    // Real PostgresAdapter would split and run each via pool.query, throwing
+    // on the 2nd statement (e.g. UNIQUE violation). Fake adapter simulates
+    // exactly that behavior — but at the runQuery-call boundary we only see
+    // the aggregated outcome. To exercise the orchestrator's catch path we
+    // throw on the single runQuery() call here.
+    const runQuery = vi.fn(async (_sql: string) => {
+      throw new Error("duplicate key value violates unique constraint");
+    });
+    const fakeAdapter = { runQuery } as unknown as DbAdapter;
+    const getAdapterFor = vi.fn(async () => fakeAdapter);
+    const infoSpy = vi.fn();
+    const errorSpy = vi.fn();
+
+    await expect(
+      aiGenerateSampleData({
+        cfg,
+        conn,
+        schema: "public",
+        table: "users",
+        n: 3,
+        complete,
+        getAdapterFor,
+        columns: [{ name: "name", type: "varchar", nullable: true }],
+        showInfo: infoSpy,
+        showError: errorSpy,
+      }),
+    ).rejects.toThrow(/partial rows MAY have committed/);
+
+    // Single dispatch (not a per-statement loop in this module).
+    expect(runQuery).toHaveBeenCalledTimes(1);
+    const sql = runQuery.mock.calls[0]![0] as string;
+    expect(sql).toMatch(/INSERT INTO "public"\."users"/);
+    expect(sql).toMatch(/VALUES \('a'\)/);
+    expect(sql).toMatch(/VALUES \('b'\)/);
+    expect(sql).toMatch(/VALUES \('c'\)/);
+
+    // Honest error surface (no silent swallow).
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const errMsg = errorSpy.mock.calls[0]![0] as string;
+    expect(errMsg).toMatch(/partial rows MAY have committed/);
+    expect(errMsg).toMatch(/duplicate key value/);
+    // No info toast on failure path.
+    expect(infoSpy).not.toHaveBeenCalled();
+  });
+
+  // Validation-time zero-partial-insert guarantee: the whitelist rejects
+  // anything other than INSERT INTO this-table BEFORE the adapter is ever
+  // called. This test pins down that guarantee independently of the
+  // (non-atomic) run-time path.
+  it("R1 regression: parse rejects non-INSERT or wrong-table statement BEFORE runQuery is called (zero partial insert at validation time)", async () => {
+    const cfg = makeCfg();
+    const conn = makeConn();
+    const complete = vi.fn(
+      async (_req: ProviderRequest): Promise<ProviderResult> => ({
+        text: [
+          `INSERT INTO "public"."users" ("name") VALUES ('a');`,
+          // Whitelist must reject this even though it's a valid INSERT —
+          // wrong table. This is the layer that protects against
+          // misdirected rows when the AI hallucinates a different table.
+          `INSERT INTO "public"."orders" ("qty") VALUES (1);`,
+        ].join("\n"),
+        toolCalls: [],
+        finishReason: "stop",
+        usage: { inputTokens: 1, outputTokens: 1 },
+      }),
+    );
+    const runQuery = vi.fn(async (_sql: string): Promise<QueryResult[]> => []);
+    const fakeAdapter = { runQuery } as unknown as DbAdapter;
+    const getAdapterFor = vi.fn(async () => fakeAdapter);
+    const infoSpy = vi.fn();
+    const errorSpy = vi.fn();
+
+    await expect(
+      aiGenerateSampleData({
+        cfg,
+        conn,
+        schema: "public",
+        table: "users",
+        n: 2,
+        complete,
+        getAdapterFor,
+        columns: [{ name: "name", type: "varchar", nullable: true }],
+        showInfo: infoSpy,
+        showError: errorSpy,
+      }),
+    ).rejects.toBeTruthy();
+
+    // CRITICAL: adapter never sees the SQL — even though statement #1 was a
+    // valid INSERT for the target table, the wrong-table INSERT poisons the
+    // whole batch at validation time. This is the real "zero partial insert"
+    // guarantee this module can deliver.
+    expect(runQuery).not.toHaveBeenCalled();
+    expect(infoSpy).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+  });
 });

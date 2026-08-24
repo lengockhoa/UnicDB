@@ -1,6 +1,6 @@
 Command: handoff-fullstack
 Goal: browse+edit/save, Create Schema form, column designer dropdown+defaults, requery bar above grid, AI sample data (work model), keyword/public SQL fix, Postman Payload, AI Chat toolbar icon
 Base: main
-Phase: R2
-Cursor: I4 done (INDEX 9×pending_review, commit c131af9); 9 code-reviewer agents running R2-R4 (review range d266d93..HEAD)
-Next: on verdicts — R4.5 auto-fix loop for changes_requested/critical tasks
+Phase: R4.5
+Cursor: verdicts landed (T001/T007/T009 approved_minor; T002/T004/T008 critical; T003/T005/T006 changes_requested); commit aa52f07
+Next: fix round 1 — 6 feature-implementers in fresh worktrees, then re-review touched tasks

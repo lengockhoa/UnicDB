@@ -544,8 +544,24 @@ function escapeHtml(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
-window.addEventListener("message", (ev: MessageEvent) => {
-  const msg = ev.data;
+// TASK-004 fix (R4.5 critical): repeated dynamic imports of this module must
+// not pile up window listeners nor crash when a stale listener from a
+// previously-imported instance fires after the test tore down the DOM.
+// Each re-import captures a fresh `root` reference; we must replace the
+// previously-registered listener so that messages reach THIS instance
+// (whose root is connected) rather than the stale instance (whose root
+// is orphaned and would throw on input("tableName").value = ...).
+type VsdbListener = (ev: Event) => void;
+const __vsdbWin = window as unknown as {
+  __vsdbMsgListener?: VsdbListener;
+  __vsdbKeyListener?: VsdbListener;
+};
+if (__vsdbWin.__vsdbMsgListener) {
+  window.removeEventListener("message", __vsdbWin.__vsdbMsgListener);
+}
+const __vsdbMsgHandler: VsdbListener = (ev: Event) => {
+  const mev = ev as MessageEvent;
+  const msg = mev.data;
   if (msg && msg.type === "init") {
     applyInit(msg as InitMsg);
     return;
@@ -566,7 +582,9 @@ window.addEventListener("message", (ev: MessageEvent) => {
     refreshOkButton();
     return;
   }
-});
+};
+__vsdbWin.__vsdbMsgListener = __vsdbMsgHandler;
+window.addEventListener("message", __vsdbMsgHandler);
 
 function applyInit(msg: InitMsg): void {
   mode = msg.mode;
@@ -599,12 +617,20 @@ function refreshOkButton(): void {
   const emptyModify = mode === "modify" && lastPreviewSql === "";
   ok.disabled = errored || emptyModify;
 }
-window.addEventListener("keydown", (ev: KeyboardEvent) => {
-  if (ev.key === "Escape") {
-    ev.preventDefault();
+// keydown listener: same replace-on-reimport pattern as the message
+// listener above. Only one keydown listener per window.
+if (__vsdbWin.__vsdbKeyListener) {
+  window.removeEventListener("keydown", __vsdbWin.__vsdbKeyListener);
+}
+const __vsdbKeyHandler: VsdbListener = (ev: Event) => {
+  const kev = ev as KeyboardEvent;
+  if (kev.key === "Escape") {
+    kev.preventDefault();
     post({ type: "cancel" });
   }
-});
+};
+__vsdbWin.__vsdbKeyListener = __vsdbKeyHandler;
+window.addEventListener("keydown", __vsdbKeyHandler);
 // Auto-init: tests can set `data-vsdb-skip-auto-init` on the root div to skip
 // the initial render + ready post (drive lifecycle manually via init msg).
 const __vsdbSkipAutoInit = root.dataset.vsdbSkipAutoInit === "true";

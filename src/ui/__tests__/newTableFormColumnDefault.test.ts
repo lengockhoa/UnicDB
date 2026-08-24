@@ -298,4 +298,41 @@ describe("newTableFormMain — Type dropdown + default auto-fill", () => {
     expect(helpers.mapTypeToForm("jsonb")).toBe("varchar");
     expect(helpers.mapTypeToForm("_int4")).toBe("varchar");
   });
-});
+  it("#8 regression — double dynamic import does not throw on re-init", async () => {
+    // R4.5 critical finding: vitest previously leaked listeners across
+    // dynamic imports. Force the scenario: re-import the module AFTER
+    // dispatching an init message, then dispatch another init and assert
+    // (a) no uncaught exception, (b) the new init reaches the live
+    // module instance (colType select is rendered for the new columns).
+    await importModuleFresh();
+    dispatchInit({
+      type: "init",
+      mode: "create",
+      schema: "public",
+      spec: { name: "first", schema: "public", columns: [], keys: [] },
+    });
+    expect(document.getElementById("colType")).toBeNull(); // no selected col yet
+    // Re-import: simulate a new test importing the module after the
+    // first one's DOM has been torn down. The previous instance's
+    // listener must be replaced, not duplicated.
+    vi.resetModules();
+    document.body.innerHTML = '<div id="vsdb-root" data-vsdb-skip-auto-init="true"></div>';
+    const received2: ReceivedMsg[] = [];
+    vi.stubGlobal("acquireVsCodeApi", () => ({
+      postMessage: (m: unknown) => received2.push(m as ReceivedMsg),
+    }));
+    (window as unknown as { __vsdbReceived: ReceivedMsg[] }).__vsdbReceived = received2;
+    await importModuleFresh();
+    dispatchInit({
+      type: "init",
+      mode: "create",
+      schema: "public",
+      spec: { name: "second", schema: "public", columns: [], keys: [] },
+    });
+    // No uncaught exception — the fix replaces the previous listener so
+    // the stale instance no longer fires render() against a detached root.
+    // This init reaches the live module (whose root is connected) and
+    // render() ran successfully — proven by #tableName now existing.
+    expect(document.getElementById("tableName")).not.toBeNull();
+  });
+ });

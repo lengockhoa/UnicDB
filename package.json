@@ -189,7 +189,8 @@
       {
         "command": "vsdb.browseTableData",
         "title": "VSDB: Browse Table Data",
-        "category": "VSDB"
+        "category": "VSDB",
+        "icon": "$(preview)"
       },
       {
         "command": "vsdb.createSchema",

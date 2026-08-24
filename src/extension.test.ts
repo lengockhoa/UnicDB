@@ -387,6 +387,14 @@ const pkgJson = JSON.parse(
   fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf-8"),
 );
 
+// TASK-003 (case #9, last assertion) — esbuild emits dist/schemaForm.js.
+// Read at module-init time to match the 11 other bundle tests; an in-test
+// existsSync raced with parallel workers when compile was racing other
+// builds, causing a spurious failure on a green run.
+const schemaFormBundlePresent = fs.existsSync(
+  path.join(__dirname, "..", "dist", "schemaForm.js"),
+);
+
 describe("TASK-303 — filter command + view/title menu", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -1262,13 +1270,8 @@ describe("TASK-003 — vsdb.createSchema extension wiring", () => {
   });
 
   it("npm run compile emits dist/schemaForm.js (esbuild config wired)", () => {
-    const fs = require("node:fs");
-    const path = require("node:path");
-    const out = path.join(__dirname, "..", "dist", "schemaForm.js");
-    // The esbuild step ran as part of `npm run compile` at the top of
-    // verification; bundle must exist on disk.
-    expect(fs.existsSync(out)).toBe(true);
-});
+    expect(schemaFormBundlePresent).toBe(true);
+  });
 });
 
 
