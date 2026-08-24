@@ -253,6 +253,35 @@ export class PostgresAdapter implements DbAdapter {
     }));
   }
 
+  async listRoutineParams(
+    schema: string,
+    routine: string,
+  ): Promise<Array<{ name: string | null; dataType: string }>> {
+    // Parameterized — $1/$2 bind via this.query → pool.query(sql, [..]).
+    // Unnest proallargtypes + proargnames with pg_type for the human-readable
+    // format_type. Empty routines → 0 rows → empty array.
+    const res = await this.query<{
+      arg_name: string | null;
+      format_type: string;
+    }>(
+      `SELECT proargnames[ord] AS arg_name,
+              pg_catalog.format_type(proallargtypes[ord], NULL) AS format_type
+         FROM pg_proc p
+         JOIN pg_namespace n ON n.oid = p.pronamespace,
+              LATERAL generate_series(
+                0,
+                COALESCE(array_length(proallargtypes, 1), 0) - 1
+              ) AS ord
+        WHERE n.nspname = $1 AND p.proname = $2
+        ORDER BY ord`,
+      [schema, routine],
+    );
+    return res.rows.map((row) => ({
+      name: row.arg_name,
+      dataType: row.format_type,
+    }));
+  }
+
   async listColumns(
     table: string,
     schema: string = "public",

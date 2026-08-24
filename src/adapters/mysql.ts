@@ -276,6 +276,12 @@ export class MySqlAdapter implements DbAdapter {
     // verifies caller-side guard.
     throw new NotImplementedError("mysql");
   }
+  async listRoutineParams(
+    _schema: string,
+    _routine: string,
+  ): Promise<Array<{ name: string | null; dataType: string }>> {
+    throw new NotImplementedError("mysql");
+ }
 
   private async executeText(sql: string): Promise<QueryResult> {
     const result = await this.query(sql);

@@ -148,4 +148,55 @@ describe("PostgresAdapter — estimateTableRows (TASK-301)", () => {
     expect(result).toBe(0);
     await adapter.close();
   });
+
+// =============================================================================
+// TASK-008 — listRoutineParams: parameterized pg_proc introspection via
+// $1/$2 bind. Returns { name, dataType } per routine argument; `name` is null
+// for unnamed positional args. Empty arrays for no-arg routines.
+// =============================================================================
+describe("PostgresAdapter — listRoutineParams (TASK-008)", () => {
+  it("happy: routine with named params → mapped rows + parameterized bind", async () => {
+    queue.push({ rows: [{ "?column?": 1 }] }); // connect probe
+    queue.push({
+      rows: [
+        { arg_name: "user_id", format_type: "integer" },
+        { arg_name: "amount", format_type: "numeric" },
+      ],
+    });
+    const adapter = new PostgresAdapter(cfg(), "pw");
+    await adapter.connect();
+    const result = await adapter.listRoutineParams("public", "add_credit");
+    expect(result).toEqual([
+      { name: "user_id", dataType: "integer" },
+      { name: "amount", dataType: "numeric" },
+    ]);
+    const lastCall = lastPool().query.mock.calls.at(-1) as unknown as [
+      string,
+      string[],
+    ];
+    expect(lastCall[0]).toMatch(/proallargtypes\[ord\]/);
+    expect(lastCall[1]).toEqual(["public", "add_credit"]);
+    await adapter.close();
+  });
+
+  it("edge: unnamed positional arg → name: null in mapped row", async () => {
+    queue.push({ rows: [{ "?column?": 1 }] }); // probe
+    queue.push({ rows: [{ arg_name: null, format_type: "integer" }] });
+    const adapter = new PostgresAdapter(cfg(), "pw");
+    await adapter.connect();
+    const result = await adapter.listRoutineParams("public", "inc");
+    expect(result).toEqual([{ name: null, dataType: "integer" }]);
+    await adapter.close();
+  });
+
+  it("edge: no-arg routine → empty array, no throw", async () => {
+    queue.push({ rows: [{ "?column?": 1 }] }); // probe
+    queue.push({ rows: [] });
+    const adapter = new PostgresAdapter(cfg(), "pw");
+    await adapter.connect();
+    const result = await adapter.listRoutineParams("public", "no_args");
+    expect(result).toEqual([]);
+    await adapter.close();
+  });
+});
 });

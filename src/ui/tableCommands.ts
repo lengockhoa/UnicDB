@@ -36,6 +36,7 @@ import {
 } from "./sampleDataAi";
 import { NewTableForm } from "./newTableForm";
 import { SchemaForm } from "./schemaForm";
+import { buildPostmanPayload } from "./postmanPayload";
 import {
   SchemaTreeProvider,
   revealTableNode,
@@ -78,6 +79,7 @@ const COMMAND_TITLE: Record<string, string> = {
   analyzeTable: "Analyze Table",
   vacuumTable: "Vacuum Table",
   createSchema: "Create Schema",
+  postmanPayload: "Postman Payload",
 };
 
 interface GuardedTarget {
@@ -486,6 +488,51 @@ export function registerTableCommands(deps: RegisterDeps): void {
       });
       form.show();
     }),
+  );
+  // TASK-008 — vsdb.postmanPayload: copy JS object literal for table/view/
+  // routine node. Schema + table/view/routine name are JSON-quoted strings;
+  // columns are emitted as `jsKey: this.workingObj.<col>` (bracket-access for
+  // non-identifier keys). MySQL/MSSQL → info message, no clipboard write.
+  // Routine nodes resolve columns via adapter.listRoutineParams (pg
+  // proallargtypes / proargnames); table + view both use listColumns
+  // (information_schema covers view output columns).
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "vsdb.postmanPayload",
+      async (arg?: unknown) => {
+        if (!arg || typeof arg !== "object") return;
+        const node = arg as { contextValue?: string; meta?: { connection?: ConnectionConfig; schema?: string; objectName?: string } };
+        if (!node.meta?.connection || !node.meta.schema) return;
+        const guarded = guardPostgres(
+          resolveTableNode(arg),
+          "postmanPayload",
+        );
+        if (!guarded) return;
+        const { conn, schema, table: name } = guarded;
+        if (name === "") return;
+
+        try {
+          const adapter = await mgr.getAdapterFor(conn);
+          const isRoutine = node.contextValue === "routine";
+          const columnNames: string[] = isRoutine
+            ? (await adapter.listRoutineParams(schema, name)).map(
+                (p) => p.name ?? "",
+              )
+            : (await adapter.listColumns(name, schema)).map((c) => c.name);
+          const payload = buildPostmanPayload(schema, name, columnNames);
+          await vscode.env.clipboard.writeText(payload);
+          void vscode.window.setStatusBarMessage(
+            "VSDB: Postman payload copied",
+            2000,
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          void vscode.window.showErrorMessage(
+            `Postman Payload failed: ${msg}`,
+          );
+        }
+      },
+    ),
   );
 }
 

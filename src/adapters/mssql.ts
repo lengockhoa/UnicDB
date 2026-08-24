@@ -309,6 +309,12 @@ export class MsSqlAdapter implements DbAdapter {
     // before calling). Throw to satisfy the DbAdapter contract.
     throw new NotImplementedError("mssql");
   }
+  async listRoutineParams(
+    _schema: string,
+    _routine: string,
+  ): Promise<Array<{ name: string | null; dataType: string }>> {
+    throw new NotImplementedError("mssql");
+  }
 
   async estimateTableRows(
     schema: string,

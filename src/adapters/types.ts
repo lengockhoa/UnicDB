@@ -96,6 +96,16 @@ export interface DbAdapter {
   listRoutines(schema?: string): Promise<RoutineInfo[]>;
   listColumns(table: string, schema?: string): Promise<ColumnInfo[]>;
   /**
+   * Routine argument introspection — one entry per routine parameter.
+   * `name` is null for unnamed positional args (Postgres `proargnames`
+   * can be NULL). Empty array for no-arg routines. MySQL/MSSQL throw
+   * NotImplementedError (caller guards driver === "postgres" first).
+   */
+  listRoutineParams(
+    schema: string,
+    routine: string,
+  ): Promise<Array<{ name: string | null; dataType: string }>>;
+  /**
    * Row estimate cho table từ planner/catalog metadata (không scan).
    * Null = unknown (chưa analyze / lỗi / không tồn tại).
    */

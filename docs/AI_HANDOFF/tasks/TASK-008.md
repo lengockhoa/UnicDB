@@ -114,4 +114,40 @@ schema. Payload always uses key `table` (user requirement) regardless of node ki
 <!--
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic/unic-code (claude-sonnet-4-5)
+EXECUTOR_SUBAGENT: W5-T008
+SUMMARY: Implemented `buildPostmanPayload` + `jsKey` pure builder in new `src/ui/postmanPayload.ts`, added `listRoutineParams` to `DbAdapter` (Postgres pg_proc implementation + mysql/mssql NotImplementedError stubs), registered `vsdb.postmanPayload` command in `registerTableCommands` (table/view → `listColumns`, routine → `listRoutineParams`), and added the command + menu entry to `package.json`.
+TEST_PLAN_FOLLOWED: task §Test Cases — all 9 cases implemented
+FILES_CHANGED:
+  - `src/ui/postmanPayload.ts` (new): `buildPostmanPayload(schema, name, columns)` returns JS object literal with schema/table JSON-quoted + columns as `jsKey: this.workingObj.<col>` (bracket form for non-identifier keys). `jsKey(name)` returns bare identifier for valid JS idents (excludes reserved words like `default`/`class`), JSON-quoted string otherwise.
+  - `src/ui/__tests__/postmanPayload.test.ts` (new): cases #1, #4, #5, #8 + happy parse + bracket access.
+  - `src/adapters/types.ts`: added `listRoutineParams(schema, routine): Promise<Array<{ name: string | null; dataType: string }>>` to `DbAdapter`.
+  - `src/adapters/postgres.ts`: implemented `listRoutineParams` via parameterized pg_proc query joining pg_type, unnesting `proallargtypes` + `proargnames` via LATERAL `generate_series`. Empty routines → `[]`.
+  - `src/adapters/mysql.ts`: 3-line `NotImplementedError` stub.
+  - `src/adapters/mssql.ts`: 3-line `NotImplementedError` stub.
+  - `src/ui/tableCommands.ts`: added `postmanPayload: "Postman Payload"` to `COMMAND_TITLE`; registered `vsdb.postmanPayload` command at end of `registerTableCommands` (after `vsdb.createSchema`); resolves node via `resolveTableNode` (reused guard pattern), dispatches by `contextValue === "routine"` to `listRoutineParams` else `listColumns`; driver guard reuses `guardPostgres` → info message on mysql/mssql; clipboard + status bar on success; error message on failure.
+  - `package.json`: ADDITIVE — `contributes.commands` += `{ command: "vsdb.postmanPayload", title: "VSDB: Postman Payload", category: "VSDB", icon: "$(copy)" }`; `activationEvents` += `onCommand:vsdb.postmanPayload`; `contributes.menus["view/item/context"]` += entry with `when: "view == vsdb.schemaTree && (viewItem == table || viewItem == view || viewItem == routine)"`.
+  - `src/adapters/__tests__/postgres.test.ts`: added 3 tests for `listRoutineParams` (happy named params + bind assertion, edge null arg_name, edge empty result).
+  - `src/ui/__tests__/tableCommands.test.ts`: added `listRoutineParams` to fake adapter; added describe block with 5 tests covering cases #2 (view → listColumns + clipboard), #3 (routine → listRoutineParams + clipboard), #6/#6b (mysql/mssql driver guard → info, no clipboard), #7 (empty params → `{ schema, table }` only), #9 wiring (registeredCommands has key + package.json menu entry covers table|view|routine).
+TESTS_ADDED:
+  - `src/ui/__tests__/postmanPayload.test.ts`: buildPostmanPayload (4 tests: case #1, case #4, case #5, happy parse + bracket access), jsKey (2 tests: case #8 plain + case #8 reserved).
+  - `src/ui/__tests__/tableCommands.test.ts`: describe "tableCommands — TASK-008 vsdb.postmanPayload" (5 tests: case #2 view, case #3 routine, case #6/#6b mysql+mssql, case #7 empty, case #9 wiring).
+  - `src/adapters/__tests__/postgres.test.ts`: describe "PostgresAdapter — listRoutineParams (TASK-008)" (3 tests: happy+bind, null name, empty array).
+VERIFICATION:
+  command: `npx vitest run src/ui/__tests__/postmanPayload.test.ts src/ui/__tests__/tableCommands.test.ts src/adapters/__tests__/postgres.test.ts && npm run typecheck`
+  result: 43 pass / 0 fail; tsc --noEmit exit 0; full suite: 839 pass / 3 pre-existing failures (extension.test.ts esbuild compile + scaffold.test.ts manifest + agGridSmoke.test.ts dist/webview.css missing — unrelated to TASK-008, present before changes)
+  output_excerpt: |
+    ✓ src/ui/__tests__/postmanPayload.test.ts  (6 tests) 2ms
+    ✓ src/adapters/__tests__/postgres.test.ts  (9 tests) 3ms
+    ✓ src/ui/__tests__/tableCommands.test.ts  (28 tests) 10ms
+    Test Files  3 passed (3)
+         Tests  43 passed (43)
+ISSUES: none
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for review (TaskContract postmanPayload behavior + adapter contract extension + driver guard tested; typecheck clean; package.json diff purely additive)
 -->

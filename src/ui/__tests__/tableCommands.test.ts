@@ -30,6 +30,8 @@ import {
   registerSchemaTreeProvider,
 } from "../schemaTree";
 import type { ConnectionManager } from "../../core/connectionManager";
+import * as fs from "fs";
+import * as path from "path";
 
 interface MockTreeView { reveal: Mock; dispose: Mock; }
 
@@ -135,6 +137,7 @@ function makeFakeAdapter(opts: MakeFakeAdapterOpts = {}): FakeAdapter {
     }),
     listViews: vi.fn().mockResolvedValue([]),
     listRoutines: vi.fn().mockResolvedValue([]),
+    listRoutineParams: vi.fn().mockResolvedValue([]),
     listColumns: vi.fn().mockResolvedValue([]),
     estimateTableRows: vi.fn().mockResolvedValue(null),
     listTableDetail,
@@ -953,4 +956,153 @@ describe("tableCommands — TASK-003 vsdb.createSchema", () => {
     expect(refreshSpy).not.toHaveBeenCalled();
     expect(treeView.reveal).not.toHaveBeenCalled();
   });
+
+// =============================================================================
+// TASK-008 — vsdb.postmanPayload: register the command + context menu entry;
+// route table/view nodes through listColumns, routine through listRoutineParams;
+// driver guard (mysql/mssql) → info message, no clipboard write.
+// =============================================================================
+describe("tableCommands — TASK-008 vsdb.postmanPayload", () => {
+  it("case #2: view node → listColumns + clipboard + status bar", async () => {
+    const mgr = makeFakeMgr();
+    (mgr.adapter.listColumns as Mock).mockResolvedValue([
+      { name: "id", dataType: "integer", nullable: false },
+      { name: "name", dataType: "varchar", nullable: true },
+    ]);
+    const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
+    registerSchemaTreeProvider(provider);
+    registerTableCommands({
+      mgr: mgr.stub as unknown as ConnectionManager,
+      tree: provider,
+      treeView: treeView as unknown as TreeView<unknown>,
+      context: { subscriptions: [] } as unknown as ExtensionContext,
+    });
+    const viewNode: VsdbNode = {
+      label: "v_users",
+      contextValue: "view",
+      collapsible: 0,
+      meta: { connection: mgr.cfg, schema: "public", objectName: "v_users" },
+    };
+    await state.registeredCommands.get("vsdb.postmanPayload")!(viewNode);
+    expect(mgr.adapter.listColumns).toHaveBeenCalledWith("v_users", "public");
+    expect(mgr.adapter.listRoutineParams).not.toHaveBeenCalled();
+    const expected =
+      '{\n' +
+      '  schema: "public",\n' +
+      '  table: "v_users",\n' +
+      '  id: this.workingObj.id,\n' +
+      '  name: this.workingObj.name,\n' +
+      '}';
+    expect(vscode.env.clipboard.writeText).toHaveBeenCalledWith(expected);
+    expect(state.statusMessages.some((m) => /Postman payload copied/.test(m.text))).toBe(true);
+  });
+
+  it("case #3: routine node → listRoutineParams + clipboard payload", async () => {
+    const mgr = makeFakeMgr();
+    (mgr.adapter.listRoutineParams as Mock).mockResolvedValue([
+      { name: "user_id", dataType: "integer" },
+      { name: "amount", dataType: "numeric" },
+    ]);
+    const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
+    registerSchemaTreeProvider(provider);
+    registerTableCommands({
+      mgr: mgr.stub as unknown as ConnectionManager,
+      tree: provider,
+      treeView: treeView as unknown as TreeView<unknown>,
+      context: { subscriptions: [] } as unknown as ExtensionContext,
+    });
+    const routineNode: VsdbNode = {
+      label: "add_credit",
+      contextValue: "routine",
+      collapsible: 0,
+      meta: { connection: mgr.cfg, schema: "public", objectName: "add_credit" },
+    };
+    await state.registeredCommands.get("vsdb.postmanPayload")!(routineNode);
+    expect(mgr.adapter.listRoutineParams).toHaveBeenCalledWith("public", "add_credit");
+    expect(mgr.adapter.listColumns).not.toHaveBeenCalled();
+    const expected =
+      '{\n' +
+      '  schema: "public",\n' +
+      '  table: "add_credit",\n' +
+      '  user_id: this.workingObj.user_id,\n' +
+      '  amount: this.workingObj.amount,\n' +
+      '}';
+    expect(vscode.env.clipboard.writeText).toHaveBeenCalledWith(expected);
+  });
+
+  it("case #6 (mysql) + #6b (mssql): non-pg driver → info message, no clipboard write", async () => {
+    for (const driver of ["mysql", "mssql"] as const) {
+      const mgr = makeFakeMgr({ driver });
+      const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
+      registerSchemaTreeProvider(provider);
+      registerTableCommands({
+        mgr: mgr.stub as unknown as ConnectionManager,
+        tree: provider,
+        treeView: treeView as unknown as TreeView<unknown>,
+        context: { subscriptions: [] } as unknown as ExtensionContext,
+      });
+      const tableNode: VsdbNode = {
+        label: "t",
+        contextValue: "table",
+        collapsible: 0,
+        meta: { connection: mgr.cfg, schema: "public", objectName: "t" },
+      };
+      vscode.env.clipboard.writeText.mockClear();
+      await state.registeredCommands.get("vsdb.postmanPayload")!(tableNode);
+      expect(
+        state.infoMessages.some((m) =>
+          /Postman Payload.*PostgreSQL connections only/.test(m),
+        ),
+      ).toBe(true);
+      expect(vscode.env.clipboard.writeText).not.toHaveBeenCalled();
+    }
+  });
+
+  it("case #7: listRoutineParams → [] (no-arg routine) → { schema, table } only, no crash", async () => {
+    const mgr = makeFakeMgr();
+    (mgr.adapter.listRoutineParams as Mock).mockResolvedValue([]);
+    const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
+    registerSchemaTreeProvider(provider);
+    registerTableCommands({
+      mgr: mgr.stub as unknown as ConnectionManager,
+      tree: provider,
+      treeView: treeView as unknown as TreeView<unknown>,
+      context: { subscriptions: [] } as unknown as ExtensionContext,
+    });
+    const routineNode: VsdbNode = {
+      label: "no_args",
+      contextValue: "routine",
+      collapsible: 0,
+      meta: { connection: mgr.cfg, schema: "public", objectName: "no_args" },
+    };
+    await state.registeredCommands.get("vsdb.postmanPayload")!(routineNode);
+    const expected =
+      '{\n  schema: "public",\n  table: "no_args",\n}';
+    expect(vscode.env.clipboard.writeText).toHaveBeenCalledWith(expected);
+    expect(state.statusMessages.some((m) => /Postman payload copied/.test(m.text))).toBe(true);
+  });
+
+  it("case #9 wiring: registeredCommands has vsdb.postmanPayload + package.json menu entry covers table|view|routine", () => {
+    const mgr = makeFakeMgr();
+    const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
+    registerSchemaTreeProvider(provider);
+    registerTableCommands({
+      mgr: mgr.stub as unknown as ConnectionManager,
+      tree: provider,
+      treeView: treeView as unknown as TreeView<unknown>,
+      context: { subscriptions: [] } as unknown as ExtensionContext,
+    });
+    expect(state.registeredCommands.has("vsdb.postmanPayload")).toBe(true);
+    const pkgPath = path.join(__dirname, "..", "..", "..", "package.json");
+    const pkgJson = fs.readFileSync(pkgPath, "utf8");
+    interface MenuItem { command: string; when: string; }
+    const menuItems = JSON.parse(pkgJson)
+      .contributes.menus["view/item/context"] as MenuItem[];
+    const entry = menuItems.find((m) => m.command === "vsdb.postmanPayload");
+    expect(entry).toBeDefined();
+    expect(entry!.when).toMatch(/viewItem == table/);
+    expect(entry!.when).toMatch(/viewItem == view/);
+    expect(entry!.when).toMatch(/viewItem == routine/);
+  });
+});
 });

@@ -55,7 +55,8 @@
     "onCommand:vsdb.openAiSettings",
     "onCommand:vsdb.aiChat",
     "onCommand:vsdb.browseTableData",
-    "onCommand:vsdb.createSchema"
+    "onCommand:vsdb.createSchema",
+    "onCommand:vsdb.postmanPayload"
   ],
   "contributes": {
     "commands": [
@@ -195,6 +196,12 @@
         "title": "VSDB: Create New Schema",
         "category": "VSDB",
         "icon": "$(add)"
+      },
+      {
+        "command": "vsdb.postmanPayload",
+        "title": "VSDB: Postman Payload",
+        "category": "VSDB",
+        "icon": "$(copy)"
       }
     ],
     "keybindings": [
@@ -289,6 +296,11 @@
         {
           "command": "vsdb.createSchema",
           "when": "view == vsdb.schemaTree && (viewItem == connection || viewItem == schema)",
+          "group": "vsdb"
+        },
+        {
+          "command": "vsdb.postmanPayload",
+          "when": "view == vsdb.schemaTree && (viewItem == table || viewItem == view || viewItem == routine)",
           "group": "vsdb"
         }
       ],
