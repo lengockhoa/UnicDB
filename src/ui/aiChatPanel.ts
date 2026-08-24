@@ -61,6 +61,7 @@ import {
   type AiChatPanelHostMessage,
   type AiChatPanelWebviewMessage,
 } from "./aiChatPanelMessages";
+import { buildPermissionToolInfo } from "./permissionDetail";
 
 const PANEL_ID = "vsdb.aiChatPanel";
 
@@ -594,12 +595,12 @@ export class AiChatPanel {
       toolCall?: { id?: unknown; name?: unknown; detail?: unknown };
       options?: Array<{ optionId?: unknown; label?: unknown }>;
     };
-    const toolCall = p.toolCall;
     const options = Array.isArray(p.options) ? p.options : [];
-    const toolName = typeof toolCall?.name === "string" ? toolCall.name : "";
-    const toolId = typeof toolCall?.id === "string" ? toolCall.id : "";
-    const toolDetail =
-      typeof toolCall?.detail === "string" ? toolCall.detail : "";
+    const toolCall = p.toolCall;
+    const toolInfo = buildPermissionToolInfo(toolCall);
+    const toolId = toolInfo.id;
+    const toolName = toolInfo.name;
+    const toolDetail = toolInfo.detail;
     const optionEntries: Array<{ optionId: string; label: string }> = [];
     const optionIdSet = new Set<string>();
     for (const opt of options) {

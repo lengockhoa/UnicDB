@@ -300,6 +300,25 @@ function feedAgentThoughtChunk(
     }),
   );
 }
+function feedPermissionRequestWithArgs(
+  transport: FakeAcpTransport,
+  id: number,
+  options: Array<{ optionId: string; label: string }>,
+  toolCall: Record<string, unknown>,
+): void {
+  transport.feed(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id,
+      method: "session/request_permission",
+      params: {
+        sessionId: "sess-1",
+        toolCall,
+        options,
+      },
+    }),
+  );
+}
 
 beforeEach(() => {
   state.panels.length = 0;
@@ -806,6 +825,91 @@ describe("AiChatPanel — builtin fallback regression (TASK-004 #6)", () => {
     ) as Array<{ text: string }>;
     expect(assistants[0]?.text).toBe("builtin-final");
     expect(postedMessages(p).some(isDone)).toBe(true);
+  });
+});
+
+// ============================================================================
+// TASK-001 #6 — Host builds the detail string via the sanitizer; opaque
+// requestId stays host-generated; options untouched.
+// ============================================================================
+describe("AiChatPanel — permission detail sanitizer (TASK-001 #6)", () => {
+  it("#6a posted permission_request carries built detail + opaque ID unchanged", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const { start, sessions } = makeFakeAcpDeps();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      acp: { start },
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some((m) => isInit(m)));
+    handler({ type: "send", text: "go" });
+    await until(() => sessions.length > 0);
+    const session = sessions[0] as FakeAcpSession;
+    await flush();
+
+    feedPermissionRequestWithArgs(session.transport, 100, [
+      { optionId: "allow-once", label: "Allow once" },
+      { optionId: "deny", label: "Deny" },
+    ], {
+      id: "tool-server-xyz",
+      name: "describe_table",
+      arguments: { schema: "public", table: "users", api_key: "sk-1" },
+    });
+    await until(() => postedMessages(p).some(isPermissionRequest));
+
+    const reqs = postedMessages(p).filter(isPermissionRequest);
+    expect(reqs).toHaveLength(1);
+    const req = reqs[0] as PermissionRequestMsg;
+    expect(req.requestId.startsWith("req-")).toBe(true);
+    expect(req.requestId).not.toBe("tool-server-xyz");
+    expect(req.tool.id).toBe("tool-server-xyz");
+    expect(req.tool.name).toBe("describe_table");
+    expect(req.tool.detail).toContain("[redacted]");
+    expect(req.tool.detail).not.toContain("sk-1");
+    expect(req.tool.detail).toContain("public");
+    expect(req.tool.detail).toContain("users");
+    expect(req.options.map((o) => o.optionId)).toEqual([
+      "allow-once",
+      "deny",
+    ]);
+    expect(req.options.map((o) => o.label)).toEqual([
+      "Allow once",
+      "Deny",
+    ]);
+  });
+
+  it("#6b run_sql toolCall renders SQL preview in posted detail", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const { start, sessions } = makeFakeAcpDeps();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      acp: { start },
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some((m) => isInit(m)));
+    handler({ type: "send", text: "go" });
+    await until(() => sessions.length > 0);
+    const session = sessions[0] as FakeAcpSession;
+    await flush();
+
+    feedPermissionRequestWithArgs(session.transport, 101, [
+      { optionId: "allow", label: "Allow" },
+    ], {
+      id: "t1",
+      name: "run_sql",
+      arguments: { sql: "SELECT 1 FROM t" },
+    });
+    await until(() => postedMessages(p).some(isPermissionRequest));
+    const req = postedMessages(p).find(isPermissionRequest) as PermissionRequestMsg;
+    expect(req.tool.detail).toBe("SQL:\nSELECT 1 FROM t");
   });
 });
 

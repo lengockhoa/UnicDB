@@ -362,6 +362,37 @@ function permissionCard(requestId: string): HTMLDivElement | null {
     `.vsdb-chat-permission[data-request-id="${cssEscape(requestId)}"]`,
   );
 }
+/** Threshold above which the detail collapses into a <details><pre> block.
+ * Single-line + <= threshold → plain div, otherwise collapsible. */
+const PERMISSION_DETAIL_COLLAPSE_THRESHOLD = 120;
+
+/** Build the detail DOM node for a permission card. Short single-line → a
+ * plain div; longer or multi-line → a collapsible `<details><summary>Show
+ * tool details</summary><pre>`. Empty → null (caller omits the node).
+ * textContent only — no innerHTML. */
+function permissionDetailNode(
+  detail: string,
+): HTMLDivElement | HTMLDetailsElement | null {
+  if (detail.length === 0) return null;
+  const isShort =
+    detail.length <= PERMISSION_DETAIL_COLLAPSE_THRESHOLD &&
+    !detail.includes("\n");
+  if (isShort) {
+    const div = document.createElement("div");
+    div.className = "vsdb-chat-permission-tool-detail";
+    div.textContent = detail;
+    return div;
+  }
+  const details = document.createElement("details");
+  details.className = "vsdb-chat-permission-tool-detail";
+  const summary = document.createElement("summary");
+  summary.textContent = "Show tool details";
+  details.appendChild(summary);
+  const pre = document.createElement("pre");
+  pre.textContent = detail;
+  details.appendChild(pre);
+  return details;
+}
 
 /** Render one host permission request. Every label / detail / option is
  * rendered via DOM text nodes (element.textContent) — never innerHTML, never
@@ -395,10 +426,10 @@ function renderPermissionRequest(msg: PermissionRequestMsg): void {
   toolName.textContent = msg.tool.name;
   card.appendChild(toolName);
 
-  const toolDetail = document.createElement("div");
-  toolDetail.className = "vsdb-chat-permission-tool-detail";
-  toolDetail.textContent = msg.tool.detail;
-  card.appendChild(toolDetail);
+  // Detail rendering: short single-line → plain div; long → collapsible
+  // <details><summary>…</summary><pre>; empty → omit node. textContent only.
+  const detailNode = permissionDetailNode(msg.tool.detail);
+  if (detailNode !== null) card.appendChild(detailNode);
 
   const actions = document.createElement("div");
   actions.className = "vsdb-chat-permission-actions";

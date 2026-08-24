@@ -33,6 +33,7 @@ tsconfig.json
 tsconfig.webview.json
 vitest.config.ts
 vitest.integration.config.ts
+vitest.integration-all.config.ts
 
 # Build / packaging scripts
 scripts/**

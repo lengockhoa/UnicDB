@@ -261,6 +261,73 @@ describe("AiChatPanelWebview — Allow/Deny responses", () => {
   });
 });
 
+// ---- TASK-001 #7+#8 — long detail renders collapsible; short detail stays
+// a plain div; empty detail is omitted entirely. textContent only.
+describe("AiChatPanelWebview — permission detail collapsible (TASK-001)", () => {
+  function longDetailRequest(detail: string) {
+    return {
+      type: "permission_request",
+      requestId: "req-long-1",
+      tool: {
+        id: "tool-1",
+        name: "describe_table",
+        detail,
+      },
+      options: [
+        { optionId: "allow-once", label: "Allow once" },
+        { optionId: "deny", label: "Deny" },
+      ],
+    } as const;
+  }
+
+  it("#7 long detail (>120 chars) renders collapsible; textContent only; pre carries full detail", () => {
+    const longDetail = "x".repeat(150);
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false });
+    h.dispatch(longDetailRequest(longDetail));
+    const card = h.root.querySelector(".vsdb-chat-permission");
+    expect(card).not.toBeNull();
+    // Collapsible: a <details> with a <summary> + <pre>.
+    const details = card?.querySelector("details");
+    expect(details).not.toBeNull();
+    const summary = details?.querySelector("summary");
+    expect(summary?.textContent).toBe("Show tool details");
+    const pre = details?.querySelector("pre");
+    expect(pre?.textContent).toBe(longDetail);
+    // No .vsdb-chat-permission-tool-detail plain div when collapsible is used.
+    // When collapsible, the detail element is a <details>, not a plain div.
+    expect(card?.querySelector("div.vsdb-chat-permission-tool-detail")).toBeNull();
+    // Sanity: nothing in card assigned innerHTML — textContent only.
+    const threadHtml = h.root.innerHTML;
+    expect(threadHtml).not.toMatch(/<script/i);
+  });
+
+  it("#7b short single-line detail (<=120 chars) renders as plain div", () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false });
+    h.dispatch(longDetailRequest("short detail"));
+    const card = h.root.querySelector(".vsdb-chat-permission");
+    expect(card).not.toBeNull();
+    const plain = card?.querySelector(".vsdb-chat-permission-tool-detail");
+    expect(plain).not.toBeNull();
+    expect(plain?.textContent).toBe("short detail");
+    // No <details> when detail is short.
+    expect(card?.querySelector("details")).toBeNull();
+  });
+
+  it("#8 empty detail: no .vsdb-chat-permission-tool-detail node", () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false });
+    h.dispatch(longDetailRequest(""));
+    const card = h.root.querySelector(".vsdb-chat-permission");
+    expect(card).not.toBeNull();
+    expect(
+      card?.querySelector(".vsdb-chat-permission-tool-detail"),
+    ).toBeNull();
+    expect(card?.querySelector("details")).toBeNull();
+  });
+});
+
 // ---- #4 — duplicate / unknown / disposed requests post nothing extra -------
 describe("AiChatPanelWebview — duplicate and disposed requests", () => {
   it("#4a clicking Allow twice on the same request posts exactly one response", () => {
