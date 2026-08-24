@@ -174,3 +174,141 @@ describe("AiChatPanelMessages — backward compatibility", () => {
     expect(types.has("permission_request")).toBe(false); // not in this slice
   });
 });
+
+// ---- TASK-003 §Interfaces — resume message protocol (frozen shapes) ----
+import {
+  HISTORY_RENDER_CAP,
+} from "../aiChatPanelMessages";
+import type {
+  AiChatPanelResumeList,
+  AiChatPanelResumePick,
+  AiChatPanelResumeCancel,
+  AiChatPanelResumeSessions,
+  AiChatPanelHistory,
+} from "../aiChatPanelMessages";
+
+describe("AiChatPanelMessages — resume_list / resume_pick / resume_cancel (webview → host)", () => {
+  it("#R1 resume_list carries no payload beyond the discriminator", () => {
+    const msg: AiChatPanelResumeList = { type: "resume_list" };
+    expect(msg.type).toBe("resume_list");
+    expect(JSON.stringify(msg)).toBe(JSON.stringify({ type: "resume_list" }));
+    // Must not include any credential-shaped field.
+    expect(JSON.stringify(msg)).not.toMatch(/api_?key|sk-[a-z0-9]|secret/i);
+  });
+
+  it("#R2 resume_pick carries the opaque sessionId the webview was given", () => {
+    const msg: AiChatPanelResumePick = {
+      type: "resume_pick",
+      sessionId: "sess-load-9c4f",
+    };
+    expect(msg.type).toBe("resume_pick");
+    expect(msg.sessionId).toBe("sess-load-9c4f");
+    // No credential leakage even on resume_pick (sessionId is opaque).
+    const asJson = JSON.stringify(msg);
+    expect(asJson).not.toMatch(/api_?key|sk-[a-z0-9]|secret/i);
+  });
+
+  it("#R3 resume_cancel closes the picker with no payload", () => {
+    const msg: AiChatPanelResumeCancel = { type: "resume_cancel" };
+    expect(msg.type).toBe("resume_cancel");
+    expect(JSON.stringify(msg)).toBe(JSON.stringify({ type: "resume_cancel" }));
+  });
+
+  it("#R4 webview union members are assignable to AiChatPanelWebviewMessage", () => {
+    const arr: AiChatPanelWebviewMessage[] = [
+      { type: "ready" },
+      { type: "send", text: "hi" },
+      { type: "stop" },
+      { type: "clear" },
+      denyResponse,
+      allowResponse,
+      { type: "resume_list" },
+      { type: "resume_pick", sessionId: "s1" },
+      { type: "resume_cancel" },
+    ];
+    const types = new Set(arr.map((m) => m.type));
+    expect(types.has("resume_list")).toBe(true);
+    expect(types.has("resume_pick")).toBe(true);
+    expect(types.has("resume_cancel")).toBe(true);
+    // Existing kinds still present (no breaking change).
+    expect(types.has("ready")).toBe(true);
+    expect(types.has("send")).toBe(true);
+    expect(types.has("stop")).toBe(true);
+    expect(types.has("clear")).toBe(true);
+    expect(types.has("permission_response")).toBe(true);
+  });
+});
+
+describe("AiChatPanelMessages — resume_sessions / history (host → webview)", () => {
+  it("#R5 resume_sessions carries only opaque-id + label + detail per entry", () => {
+    const msg: AiChatPanelResumeSessions = {
+      type: "resume_sessions",
+      sessions: [
+        { sessionId: "s1", label: "Fix schema", detail: "12 messages" },
+        { sessionId: "s2", label: "(untitled)", detail: "0 messages" },
+        // Hostile labels stay verbatim — textContent-only rendering.
+        { sessionId: "s3", label: "<script>alert(1)</script>", detail: "<img onerror=x>" },
+      ],
+    };
+    expect(msg.type).toBe("resume_sessions");
+    expect(msg.sessions).toHaveLength(3);
+    expect(msg.sessions[0]?.label).toBe("Fix schema");
+    expect(msg.sessions[1]?.label).toBe("(untitled)");
+    // Entries carry only opaque-id + label + detail — no extra fields.
+    const keys0 = Object.keys(msg.sessions[0] as object).sort();
+    expect(keys0).toEqual(["detail", "label", "sessionId"]);
+    // No credential leakage.
+    const asJson = JSON.stringify(msg);
+    expect(asJson).not.toMatch(/api_?key|sk-[a-z0-9]|secret/i);
+  });
+
+  it("#R6 history carries items, truncated, truncatedCount (frozen shape)", () => {
+    const msg: AiChatPanelHistory = {
+      type: "history",
+      items: [
+        { kind: "user", text: "hi" },
+        { kind: "assistant", text: "hello" },
+        { kind: "tool", text: "list_tables" },
+      ],
+      truncated: true,
+      truncatedCount: 7,
+    };
+    expect(msg.type).toBe("history");
+    expect(msg.items).toHaveLength(3);
+    expect(msg.items[0]?.kind).toBe("user");
+    expect(msg.items[1]?.kind).toBe("assistant");
+    expect(msg.items[2]?.kind).toBe("tool");
+    expect(msg.truncated).toBe(true);
+    expect(msg.truncatedCount).toBe(7);
+    // Every item carries only kind + text (no payload, no tool args).
+    for (const item of msg.items) {
+      expect(Object.keys(item).sort()).toEqual(["kind", "text"]);
+    }
+    const asJson = JSON.stringify(msg);
+    expect(asJson).not.toMatch(/api_?key|sk-[a-z0-9]|secret/i);
+  });
+
+  it("#R7 history union assignable to AiChatPanelHostMessage", () => {
+    const arr: AiChatPanelHostMessage[] = [
+      { type: "init", hasHistory: false },
+      { type: "step", label: "x" },
+      { type: "delta", text: "y" },
+      { type: "assistant", text: "z", markdown: true },
+      { type: "error", message: "boom" },
+      { type: "engine", name: "omp" },
+      { type: "done" },
+      { type: "resume_sessions", sessions: [] },
+      { type: "history", items: [], truncated: false, truncatedCount: 0 },
+    ];
+    const types = new Set(arr.map((m) => m.type));
+    expect(types.has("resume_sessions")).toBe(true);
+    expect(types.has("history")).toBe(true);
+    // Existing kinds still present.
+    expect(types.has("init")).toBe(true);
+    expect(types.has("permission_request")).toBe(false); // not in this slice
+  });
+
+  it("#R8 HISTORY_RENDER_CAP is exported and equals 50 (frozen)", () => {
+    expect(HISTORY_RENDER_CAP).toBe(50);
+  });
+});

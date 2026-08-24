@@ -85,7 +85,51 @@ export type AiChatPanelHostMessage =
   | AiChatPanelError
   | AiChatPanelEngine
   | AiChatPanelDone
-  | AiChatPanelPermissionRequest;
+  | AiChatPanelPermissionRequest
+  | AiChatPanelResumeSessions
+  | AiChatPanelHistory;
+
+/** Render cap for `history` items posted to the webview (TASK-003 §Interfaces). */
+export const HISTORY_RENDER_CAP = 50;
+
+/** Webview opened the resume picker. Host lists sessions for the active cwd. */
+export interface AiChatPanelResumeList {
+  type: "resume_list";
+}
+
+/** Webview picked a session to resume. `sessionId` is the opaque id the host posted
+ * in `resume_sessions`. */
+export interface AiChatPanelResumePick {
+  type: "resume_pick";
+  sessionId: string;
+}
+
+/** Webview cancelled the resume picker. Host may discard any in-flight load. */
+export interface AiChatPanelResumeCancel {
+  type: "resume_cancel";
+}
+
+/** Host answer for `resume_list`: ≤20 entries, cwd-filtered, sorted updatedAt desc,
+ * current panel sessionId removed. Label is `title` if non-empty, else `"(untitled)"`;
+ * detail carries message count (e.g. "12 messages"). */
+export interface AiChatPanelResumeSessions {
+  type: "resume_sessions";
+  sessions: Array<{
+    sessionId: string;
+    label: string;
+    detail: string;
+  }>;
+}
+
+/** Host answer for `resume_pick`: replay-derived history items in original order,
+ * capped at HISTORY_RENDER_CAP. If the cap truncated, `truncated === true` and
+ * `truncatedCount` carries how many older items were omitted. */
+export interface AiChatPanelHistory {
+  type: "history";
+  items: Array<{ kind: "user" | "assistant" | "tool"; text: string }>;
+  truncated: boolean;
+  truncatedCount: number;
+}
 
 // ---- Webview → Host --------------------------------------------------------
 
@@ -119,13 +163,15 @@ export interface AiChatPanelPermissionResponse {
   requestId: string;
   optionId?: string;
 }
-
 export type AiChatPanelWebviewMessage =
   | AiChatPanelReady
   | AiChatPanelSend
   | AiChatPanelStop
   | AiChatPanelClear
-  | AiChatPanelPermissionResponse;
+  | AiChatPanelPermissionResponse
+  | AiChatPanelResumeList
+  | AiChatPanelResumePick
+  | AiChatPanelResumeCancel;
 
 // ---- Internal host helpers (not webview-bound) ----------------------------
 

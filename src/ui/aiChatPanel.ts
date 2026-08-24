@@ -52,10 +52,14 @@ import type { AcpProcessHandle } from "../ai/omp/acpProcess";
 import {
   type AcpServerRequest,
   type AcpNotification,
+  type AcpReplayNotification,
+  type AcpReplayBuffer,
+  type AcpSessionListItem,
 } from "../ai/omp/acp";
-import type {
-  AiChatPanelHostMessage,
-  AiChatPanelWebviewMessage,
+import {
+  HISTORY_RENDER_CAP,
+  type AiChatPanelHostMessage,
+  type AiChatPanelWebviewMessage,
 } from "./aiChatPanelMessages";
 
 const PANEL_ID = "vsdb.aiChatPanel";
@@ -143,13 +147,17 @@ interface PendingPermission {
   serverId: unknown;
   requestId: string;
   optionIds: Set<string>;
-  /** Settled exactly once. Prevents duplicate / late ACP writes. */
   settled: boolean;
   timeoutHandle: NodeJS.Timeout;
 }
 
+export const RESUME_PICKER_CAP = 20;
+
 interface AcpSession {
   handle: AcpProcessHandle;
+  /** Active session id used by `session/prompt`. Starts as the handle's
+   * sessionId; updated to the loaded id after `resume_pick`. */
+  sessionId: string;
   /** Accumulated assistant text for the current turn. */
   buffer: string;
   /** Active permission requests keyed by host requestId. */
@@ -174,13 +182,22 @@ export class AiChatPanel {
   /** Set once per ACP turn when done was posted. */
   private turnDonePosted = false;
   /** Resolvers for in-flight ACP turns — fired by settle path. */
-  /** Resolvers for in-flight ACP turns — fired by settle path. */
   private acpTurnResolvers: Array<() => void> = [];
   /** Per-turn AbortController for the built-in engine. Created in
    * handleSend and aborted in handleStop so the streaming path sees the
    * signal flip exactly when the user clicks Stop. ACP path ignores this. */
   private currentAbort: AbortController | null = null;
   private permissionTimeoutMs: number;
+  /** Drop-guard (F1 belt): true between `resume_pick` settle and the next
+   * `session/prompt` write. While set, `session/update` notifications for
+   * the loaded sessionId are absorbed silently (AcpReplayBuffer is the
+   * primary defense; this guard is defense-in-depth). */
+  private dropReplayFrames = false;
+  /** Set while a `resume_list` round-trip is in flight, so the webview
+   * can post a fresh `resume_list` only after the previous list resolves. */
+  private resumeListInFlight = false;
+
+
 
   constructor(
     private readonly options: AiChatPanelOptions,
@@ -251,6 +268,15 @@ export class AiChatPanel {
         return;
       case "permission_response":
         this.handlePermissionResponse(msg.requestId, msg.optionId);
+        return;
+      case "resume_list":
+        await this.handleResumeList();
+        return;
+      case "resume_pick":
+        await this.handleResumePick(msg.sessionId);
+        return;
+      case "resume_cancel":
+        this.handleResumeCancel();
         return;
     }
   }
@@ -410,8 +436,15 @@ export class AiChatPanel {
     session.buffer = "";
 
     try {
+      // The drop-guard (F1 belt) is cleared RIGHT BEFORE the outgoing
+      // session/prompt write — see AcpClient.request closing the replay
+      // window. Any session/update frame for the loaded sessionId that
+      // leaked into the handler between load-settle and this write was
+      // silently dropped. From here on, agent_message_chunk streams as
+      // deltas normally.
+      this.dropReplayFrames = false;
       await session.handle.acp.request("session/prompt", {
-        sessionId: session.handle.sessionId,
+        sessionId: session.sessionId,
         prompt: [{ type: "text", text }],
       });
       await new Promise<void>((resolve) => {
@@ -460,6 +493,7 @@ export class AiChatPanel {
     let nextRequestSeq = 0;
     const session: AcpSession = {
       handle,
+      sessionId: handle.sessionId,
       buffer: "",
       pending,
       bumpRequestSeq: () => ++nextRequestSeq,
@@ -506,6 +540,16 @@ export class AiChatPanel {
     if (n.method !== "session/update") return;
     const params = n.params;
     if (params === null || typeof params !== "object") return;
+    // Drop-guard (F1 belt): between resume_pick settle and the next
+    // session/prompt write, ignore session/update for the loaded sessionId.
+    // AcpReplayBuffer is the primary defense (server-originated frames
+    // for the loaded id are absorbed there); this is belt + suspenders.
+    if (
+      this.dropReplayFrames &&
+      (params as { sessionId?: unknown }).sessionId === session.sessionId
+    ) {
+      return;
+    }
     const update = (params as { update?: unknown }).update;
     if (update === null || typeof update !== "object") return;
     const sessionUpdate = (update as { sessionUpdate?: unknown }).sessionUpdate;
@@ -688,6 +732,209 @@ export class AiChatPanel {
     this.history = [];
     this.post({ type: "init", hasHistory: false });
   }
+
+  /** Workspace cwd used to filter session/list entries. */
+  private workspaceCwd(): string {
+    return (
+      vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd()
+    );
+  }
+
+  /** Compare two entries for sort-by-updatedAt-desc with a raw-string
+   * fallback (TASK-003 F2): if Date.parse yields NaN for either side, fall
+   * back to lexicographic comparison of the raw strings. */
+  private static compareUpdatedAtDesc(
+    a: AcpSessionListItem,
+    b: AcpSessionListItem,
+  ): number {
+    const pa = Date.parse(a.updatedAt);
+    const pb = Date.parse(b.updatedAt);
+    if (Number.isNaN(pa) && Number.isNaN(pb)) {
+      if (a.updatedAt < b.updatedAt) return 1;
+      if (a.updatedAt > b.updatedAt) return -1;
+      return 0;
+    }
+    if (Number.isNaN(pa)) return 1; // NaN last
+    if (Number.isNaN(pb)) return -1;
+    return pb - pa;
+  }
+
+  /** Pure helper: derive ordered history items from a replay buffer.
+   * - agent_thought_chunk NEVER renders (TASK-003 §3)
+   * - user_message_chunk: kind "user", text = content.text
+   * - agent_message_chunk: kind "assistant", text = delta
+   * - tool_call: kind "tool", text = title || name || toolCallId || "tool"
+   * - cap: HISTORY_RENDER_CAP items; older items dropped, truncatedCount set.
+   * - malformed entries (missing content/tool fields, unknown sessionUpdate)
+   *   are skipped silently — derive NEVER throws. */
+  static deriveHistoryFromReplay(
+    notifications: readonly AcpReplayNotification[],
+  ): {
+    items: Array<{ kind: "user" | "assistant" | "tool"; text: string }>;
+    truncated: boolean;
+    truncatedCount: number;
+  } {
+    const items: Array<{ kind: "user" | "assistant" | "tool"; text: string }> = [];
+    for (const n of notifications) {
+      if (n.method !== "session/update") continue;
+      const params = n.params;
+      if (params === null || typeof params !== "object") continue;
+      const update = (params as { update?: unknown }).update;
+      if (update === null || typeof update !== "object") continue;
+      const sessionUpdate = (update as { sessionUpdate?: unknown }).sessionUpdate;
+      if (sessionUpdate === "agent_message_chunk") {
+        const delta = (update as { delta?: unknown }).delta;
+        if (typeof delta === "string" && delta.length > 0) {
+          items.push({ kind: "assistant", text: delta });
+        }
+        continue;
+      }
+      if (sessionUpdate === "user_message_chunk") {
+        const content = (update as { content?: unknown }).content;
+        if (content === null || typeof content !== "object") continue;
+        const text = (content as { text?: unknown }).text;
+        if (typeof text === "string" && text.length > 0) {
+          items.push({ kind: "user", text });
+        }
+        continue;
+      }
+      if (sessionUpdate === "tool_call") {
+        const title = (update as { title?: unknown }).title;
+        const name = (update as { name?: unknown }).name;
+        const toolCallId = (update as { toolCallId?: unknown }).toolCallId;
+        const label =
+          (typeof title === "string" && title.length > 0 && title) ||
+          (typeof name === "string" && name.length > 0 && name) ||
+          (typeof toolCallId === "string" && toolCallId.length > 0 && toolCallId) ||
+          "tool";
+        items.push({ kind: "tool", text: label });
+        continue;
+      }
+      // agent_thought_chunk, unknown kinds: skipped silently.
+    }
+    const total = items.length;
+    if (total <= HISTORY_RENDER_CAP) {
+      return { items, truncated: false, truncatedCount: 0 };
+    }
+    const drop = total - HISTORY_RENDER_CAP;
+    return {
+      items: items.slice(drop),
+      truncated: true,
+      truncatedCount: drop,
+    };
+  }
+
+  private async handleResumeList(): Promise<void> {
+    // Guard: builtin engine has no session persistence — error inline.
+    if (this.engine !== "omp") {
+      this.post({
+        type: "error",
+        message: "Resume requires the omp engine.",
+      });
+      return;
+    }
+    // Guard: another list already in flight — drop silently.
+    if (this.resumeListInFlight) return;
+    const acp = this.options.acp;
+    if (acp === undefined) {
+      this.post({
+        type: "error",
+        message: "Resume requires the omp engine.",
+      });
+      return;
+    }
+    // Guard: while a turn is streaming, do not spawn a list round-trip.
+    if (this.token !== null) return;
+    this.resumeListInFlight = true;
+    try {
+      const session = await this.ensureAcpSession();
+      const handle = session.handle;
+      const cwd = this.workspaceCwd();
+      const all = await handle.acp.sessionList();
+      const ownSessionId = session.sessionId;
+      const filtered = all
+        .filter((e: AcpSessionListItem) => e.cwd === cwd)
+        .filter((e: AcpSessionListItem) => e.sessionId !== ownSessionId)
+        .slice()
+        .sort(AiChatPanel.compareUpdatedAtDesc)
+        .slice(0, RESUME_PICKER_CAP);
+      this.post({
+        type: "resume_sessions",
+        sessions: filtered.map((e: AcpSessionListItem) => ({
+          sessionId: e.sessionId,
+          label:
+            e.title !== null && e.title.length > 0 && e.title !== "<function>"
+              ? e.title
+              : "(untitled)",
+          detail: `${e.messageCount} messages`,
+        })),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.post({ type: "error", message: `Resume list failed: ${message}` });
+    } finally {
+      this.resumeListInFlight = false;
+    }
+  }
+
+  private async handleResumePick(sessionId: string): Promise<void> {
+    if (this.engine !== "omp") {
+      this.post({
+        type: "error",
+        message: "Resume requires the omp engine.",
+      });
+      return;
+    }
+    // Guard (R5): while a turn is streaming, ignore resume_pick. Re-basing
+    // sessionId mid-turn would let the in-flight agent_end arrive for the
+    // OLD sessionId while session.sessionId is already the NEW one —
+    // acpTurnResolvers never settles and the panel streams forever.
+    if (this.token !== null) return;
+    const acp = this.options.acp;
+    if (acp === undefined) {
+      this.post({
+        type: "error",
+        message: "Resume requires the omp engine.",
+      });
+      return;
+    }
+    try {
+      const acpSession = await this.ensureAcpSession();
+      const handle = acpSession.handle;
+      // sessionLoad opens the replay window on the AcpClient. We arm the
+      // panel-side drop-guard BEFORE awaiting so any in-flight frame that
+      // races the load settles into the guard instead of leaking to the
+      // delta path.
+      this.dropReplayFrames = true;
+      const cwd = this.workspaceCwd();
+      const result = await handle.acp.sessionLoad(sessionId, cwd);
+      const { items, truncated, truncatedCount } =
+        AiChatPanel.deriveHistoryFromReplay(result.replay.notifications);
+      // Re-base the active sessionId BEFORE posting the history batch so
+      // the webview can immediately send a follow-up prompt. Both the
+      // AcpProcessHandle AND the cached AcpSession must be updated so
+      // runAcpTurn reads the new id when it next issues session/prompt.
+      handle.sessionId = sessionId;
+      acpSession.sessionId = sessionId;
+      this.post({ type: "history", items, truncated, truncatedCount });
+      // dropReplayFrames stays armed until the next session/prompt write
+      // (see runAcpTurn) — that write is what closes the AcpClient's
+      // replay window, and the guard mirrors that lifecycle exactly.
+    } catch (err) {
+      this.dropReplayFrames = false;
+      const message = err instanceof Error ? err.message : String(err);
+      this.post({
+        type: "error",
+        message: `Resume failed: ${message}`,
+      });
+    }
+  }
+
+  private handleResumeCancel(): void {
+    // Nothing to cancel on the host side today — the webview closes the
+    // picker. Reserved hook for a future in-flight load tracker.
+  }
+
 
   private post(msg: AiChatPanelHostMessage): void {
     void this.panel?.webview.postMessage(msg);
