@@ -1,6 +1,6 @@
 Command: handoff-fullstack
-Goal: Cycle N — builtin engine streaming (streaming cho engine builtin trong AI Chat)
+Goal: Cycle O — ACP session history & resume (AI Chat: list + load + replay + resume omp sessions)
 Base: main
-Phase: done
-Cursor: released 207436d — 3/3 approved; full suite 778 passed / 2 opt-in skipped exit 0; compile/typecheck clean; tree clean
-Next: backlog còn session-resume (cần probe `session/load`/`session/list` trước khi plan), orphan hostTools/detect cleanup, richer permission detail
+Phase: P2 (planning)
+Cursor: plan-rev round 2 — Round-1 F1-F3 applied (replay window closes on next outgoing request; AcpReplayBuffer live object; TASK-001 two-flush RED; TASK-003 drop-guard + own-session filter + Date.parse sort); awaiting PlanRevO re-review
+Next: PlanRevO re-review (round 2 of 2) → waves → R5 push → archive
