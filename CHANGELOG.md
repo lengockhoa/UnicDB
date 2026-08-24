@@ -4,6 +4,21 @@ All notable changes to VSDB are documented in this file. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.6.2] — 2026-08-25
+
+Cycle R: AI reliability and full-database context, Export Structure AI tool, and Excel-like results-grid editing.
+
+### Added
+- **AI context**: full schemas/tables/views context with `export_structure` tool and `vsdb.exportAllStructures` command.
+- **Results grid**: dirty-cell highlighting, add/delete row editing, Cmd/Ctrl+Enter commit, unified undo/redo, and aligned requery/filter controls.
+
+### Fixed
+- **PostgreSQL no-PK saves**: browse results carry hidden `ctid` row identity for reliable updates.
+- **SQL editor Cmd/Ctrl+Enter**: cursor execution uses the complete statement/block containing the cursor.
+- **AI chat**: Clear no longer leaves the panel unable to start a new chat; actionable configuration errors are shown.
+- **Column defaults**: varchar fields initialize to SQL literal `''`.
+- **Menu label**: renamed Copy CREATE DDL to Copy Create Query.
+
 ## [1.6.1] — 2026-08-24
 
 Cycle Q: schema-tree UX batch (9 tasks, handoff pipeline) + Export
@@ -106,6 +121,7 @@ boundary.
 Cycle G: set-filter, toolbar icons, `run-sh` fix.
 
 [1.6.1]: https://github.com/lengockhoa/VSDB/compare/v1.6.0...v1.6.1
+[1.6.2]: https://github.com/lengockhoa/VSDB/compare/v1.6.1...v1.6.2
 [1.6.0]: https://github.com/lengockhoa/VSDB/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/lengockhoa/VSDB/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/lengockhoa/VSDB/compare/v1.4.1...v1.5.0
