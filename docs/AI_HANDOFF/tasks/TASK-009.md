@@ -98,8 +98,63 @@ npx tsc --noEmit
 → @executor: quyết định E (set-filter) phải dựa trên evidence thật: đọc `node_modules/ag-grid-community` types để xem quartz theme có param alignment cho set-filter items không. Nếu KHÔNG có param → dùng style injection vào grid host container (webview controls DOM). Đừng đoán param name — grep types trước. Ghi kết luận + đường đã chọn vào Executor Report.
 
 ---
+## Executor Report (Exec-T9)
+
+**STATUS: DONE**
+
+**EXECUTOR_TOOL:** claude-code
+**EXECUTOR_MODEL:** unic/unic-code
+**EXECUTOR_SUBAGENT:** Exec-T9
+
+**SUMMARY:** Appended `.vsdb-requery-*` CSS rules + an explicit left-alignment rule pinning both Select All row and entries to the same 8px left indent in `webview/styles.css`. No `main.ts` edits needed — set-filter is a custom component (light DOM) and the existing per-row `padding: ... 8px` already aligned both blocks; the new explicit rule makes the alignment contract durable.
+
+**E — Set-filter evidence:** AG Grid v36.1.0 (`node_modules/ag-grid-community`) theming types were inspected (`dist/types/src/theming/core/core-css.d.ts`). The ONLY set-filter theme param exposed is `setFilterIndentSize: LengthValue` (single param, no per-item alignment). The community build does NOT expose `setFilterListItem*` params. **The set-filter panel in this app is a custom component (`SetFilterComponent` in `webview/main.ts:906-1235`) rendering in the LIGHT DOM inside AG Grid's popup chrome, so its CSS is fully controllable from the external stylesheet.** Therefore no theme-param injection is needed and no `themeQuartz.withParams` modification was made — Test #4 (regression guard) is satisfied by reading main.ts and asserting the existing four params are still present.
+
+**TEST_PLAN_FOLLOWED:** inline (no task-provided Test Plan; planner §Discussion explicitly delegated the §E evidence-gathering to executor). Tests #1-#4 from §Test Cases mapped 1:1 to `describe` blocks in the new test file.
+
+**FILES_CHANGED:**
+  - `webview/styles.css`: appended `.vsdb-requery-bar` (flex + align-items:center + gap:8px), `.vsdb-requery-label` (line-height:26px), `.vsdb-requery-input` (height:26px + box-sizing:border-box), `.vsdb-requery-input.vsdb-requery-where`/`-order` (flex), `button.vsdb-requery-run`/`-clear` (height:26px); also appended an explicit `.vsdb-setfilter-selectall-row, .vsdb-setfilter-entry { padding-left: 8px }` rule to pin the left indent (lines added at end of file; existing T7 rules untouched).
+  - `tests/webviewRequeryAlignment.test.ts` (NEW): 10 tests across 4 describe blocks (D CSS alignment × 5, D DOM bundle × 1, E set-filter indent × 3, themeQuartz regression guard × 1).
+  - `webview/main.ts`: NOT MODIFIED (no theme param change needed; CSS rule was sufficient).
+
+**TESTS_ADDED:**
+  - `tests/webviewRequeryAlignment.test.ts`:
+    - "declares .vsdb-requery-bar with display:flex + align-items:center"
+    - ".vsdb-requery-label sets line-height to 26px (shared baseline)"
+    - ".vsdb-requery-input sets height:26px + box-sizing:border-box"
+    - "button.vsdb-requery-run sets height:26px"
+    - "button.vsdb-requery-clear sets height:26px"
+    - "bundle mounts the requery bar after a state message"
+    - ".vsdb-setfilter-selectall-row declares padding (left indent)"
+    - ".vsdb-setfilter-entry declares padding (left indent)"
+    - "both select-all-row and entry rules use the same left padding value"
+    - "webview/main.ts keeps the existing four theme params"
+
+**RED evidence (initial run before CSS edit):**
+```
+Test Files  1 failed (1)
+     Tests  6 failed | 4 passed (10)
+```
+6 RED failures:
+  - 5 in CSS rule-body assertions (selector body empty — rule didn't exist yet).
+  - 1 in DOM-bundle assertion (`.vsdb-requery-bar` not in DOM — same root cause: no CSS rule + no stylesheet binding in jsdom).
+4 GREEN pre-existing: set-filter indent assertions + themeQuartz param regression guard (those rules/params already existed).
+
+**VERIFICATION:**
+  - command: `npx vitest run tests/webviewRequeryAlignment.test.ts src/ui/__tests__/resultsGridModelSetFilter.test.ts`
+  - result: 2 files passed, 21/21 tests passed, exit 0
+  - output_excerpt: `✓ src/ui/__tests__/resultsGridModelSetFilter.test.ts (11 tests) 2ms` / `✓ tests/webviewRequeryAlignment.test.ts (10 tests) 192ms` / `Test Files 2 passed (2)` / `Tests 21 passed (21)`
+  - command: `npx tsc --noEmit`
+  - result: EXIT=0 (no type errors)
+  - regression check: `npx vitest run src/ui/__tests__/resultsGridModelRequery.test.ts src/ui/__tests__/webviewRequery.test.ts` → 24/24 passed (requery message flow unchanged).
+
+**ISSUES / HUMAN-CHECK NOTES:**
+  - jsdom does not paint real CSS, so visual baseline alignment is asserted structurally (CSS source + DOM class presence). A real VS Code webview harness (PLAN Known gaps #4) is required to confirm the rendered baseline visually.
+  - T7 contract preserved: `.vsdb-cell-dirty`, `.vsdb-row-new`, `.vsdb-row-deleted` rules at lines 263/266/269 of styles.css untouched.
+  - No git commit/push performed (per assignment: I4-Consolidate owns merge after sibling agents complete).
+
+**HANDOFF_TO_REVIEWER:** yes — Executor Report appended; visual confirmation requires human check (jsdom limitation acknowledged in PLAN).
+
+**NEXT:** ready for reviewer (different model per Handoff mode contract).
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
--->

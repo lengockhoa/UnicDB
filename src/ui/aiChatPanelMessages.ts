@@ -17,6 +17,10 @@ export interface AiChatPanelInit {
   /** True iff the panel already holds multi-turn history. */
   hasHistory: boolean;
 }
+// TASK-003 D2: init{hasHistory:false} doubles as a host-driven panel
+// reset signal — Clear emits it after cancelling the in-flight turn.
+// The webview applies it as "force idle": de-stream open bubble +
+// re-enable input. Webview-only contract; shape unchanged.
 
 /** A tool or thinking step the agent took this turn. */
 export interface AiChatPanelStep {

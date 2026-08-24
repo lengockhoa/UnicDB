@@ -932,3 +932,74 @@
   justify-content: flex-end;
   margin-top: 4px;
 }
+
+/* --- TASK-009 grid D — Requery bar single-baseline alignment ----------
+ * Aligns the WHERE / ORDER BY labels, inputs, and run/clear buttons on
+ * a single 26px baseline with an even 8px gap. Without these rules the
+ * bar inherits defaults: label baselines drift below the input, and the
+ * icon-only buttons sit at a different height than the inputs.
+ *
+ * Color rules follow the existing --vscode-* variable pattern used by
+ * .vsdb-btn and the input-field rules above, so the bar respects both
+ * light and dark VS Code themes.
+ */
+.vsdb-requery-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--vscode-editorWidget-background, transparent);
+  border-bottom: 1px solid var(--vscode-panel-border, #3c3c3c);
+}
+.vsdb-requery-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  color: var(--vscode-foreground, #cccccc);
+  line-height: 26px;
+}
+.vsdb-requery-input {
+  height: 26px;
+  line-height: 24px;
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 0 6px;
+  background: var(--vscode-input-background, #2b2b2b);
+  color: var(--vscode-input-foreground, #cccccc);
+  border: 1px solid var(--vscode-input-border, #3c3c3c);
+  border-radius: 2px;
+}
+.vsdb-requery-input:focus {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  border-color: var(--vscode-focusBorder, #007fd4);
+}
+.vsdb-requery-input.vsdb-requery-where {
+  flex: 1 1 40%;
+}
+.vsdb-requery-input.vsdb-requery-order {
+  flex: 0 1 28%;
+}
+button.vsdb-requery-run,
+button.vsdb-requery-clear {
+  height: 26px;
+  flex: 0 0 auto;
+}
+button.vsdb-requery-run:disabled,
+button.vsdb-requery-clear:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* --- TASK-009 grid E — set-filter popup left alignment ---------------
+ * Pin the Select All row and each entry to the SAME left indent. Both
+ * were already 8px via the per-row padding shorthand, but the spec asks
+ * for explicit "same indent" — define a single CSS var and override any
+ * per-rule deviation so future rules can't drift the two apart.
+ *
+ * Right edge: count cell already uses margin-left:auto (TASK-602).
+ */
+.vsdb-setfilter-selectall-row,
+.vsdb-setfilter-entry {
+  padding-left: 8px;
+}

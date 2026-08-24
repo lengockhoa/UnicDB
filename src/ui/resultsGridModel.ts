@@ -795,6 +795,14 @@ export class EditState {
   clear(): void {
     this.dirty.clear();
   }
+  /** Drop the dirty entry for the given (rowId, colIndex). Used by the
+   *  TASK-008 unified undo stack — when the stack pops a cell-edit and
+   *  reverts the cell to oldValue, the dirty entry for THAT cell must
+   *  disappear (so cellClassRules strips `vsdb-cell-dirty`). Does
+   *  nothing when no entry exists for that key. */
+  clearCell(rowId: number, colIndex: number): void {
+    this.dirty.delete(`${rowId}:${colIndex}`);
+  }
 
   /**
    * Current dirty cells as `{rowId, colIndex, value}` for save payload

@@ -215,6 +215,10 @@ function wireControls(): void {
     post({ type: "resume_list" });
   });
 
+  // Clear: immediately wipe the local thread (UI responsiveness) and tell
+  // host to reset. Host replies with init{hasHistory:false}+done; applyInit
+  // re-enables the input + de-streams any orphaned bubble. The local wipe
+  // is best-effort UX — applyInit is the authoritative reset.
   clearBtn?.addEventListener("click", () => {
     post({ type: "clear" });
     const thread = document.getElementById("thread");
@@ -336,6 +340,13 @@ function applyEngine(msg: EngineMsg): void {
 
 function applyInit(msg: InitMsg): void {
   state.hasHistory = msg.hasHistory;
+  // init{hasHistory:false} đến sau khi panel từng busy (Clear path) →
+  // chắc chắn re-enable input + đóng streaming bubble. Host cũng post
+  // done, nhưng done một mình không de-stream nếu panel replay init.
+  if (!msg.hasHistory) {
+    deStreamOpenBubble();
+    setBusy(false);
+  }
 }
 
 // ---- Permission request rendering (text-only) -----------------------------

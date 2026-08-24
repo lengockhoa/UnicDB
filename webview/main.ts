@@ -57,6 +57,7 @@ import {
   type ResultsGridModel,
   type ExportFormat,
 } from "../src/ui/resultsGridModel";
+import { UndoStack } from "../src/ui/undoStack";
 
 // AG Grid v36 modular API — register all-community so createGrid initializes.
 ModuleRegistry.registerModules([AllCommunityModule]);
@@ -183,6 +184,12 @@ let colFilterActive = false;
 /** Local edit state — pure-logic dirty map. Cleared on tab switch / new query.
  *  TASK-503 will read `editState.snapshot()` to build the save payload. */
 let editState = new EditState();
+/** TASK-008 — Unified Excel-like undo/redo stack. Mirrors editState but
+ *  spans cell-edits, add-row and delete-row through one LIFO branch.
+ *  Cleared after a successful saveResult commit (DB has already
+ *  written; undo past that is out of scope) and on tab switch / new
+ *  query alongside editState.clear(). */
+let undoStack = new UndoStack();
 /** When true, data cells display the raw value (CSV preview mode). Flipped
  *  by the CSV toggle toolbar button. */
 let csvMode = false;
@@ -252,6 +259,17 @@ function onCellValueChangedHandler(e: CellValueChangedEvent): void {
   const rowId = readRowId(e.node?.data);
   if (rowId === undefined) return;
   editState.markDirty(rowId, colIndex, e.newValue, e.oldValue);
+  // TASK-008 — push the cell-edit onto the unified undo stack. The stack
+  // itself coalesces consecutive edits to the SAME (rowId, colIndex)
+  // so one keystroke per character doesn't grow the stack unboundedly
+  // (parity with EditState.markDirty's in-place coalesce).
+  undoStack.push({
+    kind: "cell-edit",
+    rowId,
+    colIndex,
+    oldValue: e.oldValue,
+    newValue: e.newValue,
+  });
   // TASK-007: re-run cellClassRules for this cell so `vsdb-cell-dirty`
   // paints immediately. AG Grid only re-evaluates class rules when the
   // cell is refreshed (cellValueChanged alone doesn't trigger it).
@@ -305,6 +323,10 @@ interface PersistentDom {
   addRowBtn: HTMLButtonElement;
   deleteRowBtn: HTMLButtonElement;
   undoBtn: HTMLButtonElement;
+  /** TASK-008 — Redo: replay the most-recently-undone action. Mirrors
+   *  undoBtn — sits next to it in the toolbar; disabled when redo
+   *  branch is empty. */
+  redoBtn: HTMLButtonElement;
   csvToggleBtn: HTMLButtonElement;
   exportFormat: HTMLSelectElement;
   exportHeader: HTMLInputElement;
@@ -465,6 +487,10 @@ const ICON_UNDO =
   // curved arrow left.
   '<path d="M3.5 8 H10 a3 3 0 0 1 0 6 H8" />' +
   '<path d="M3.5 5.5 L3.5 10.5 L6.5 8 Z" fill="currentColor" stroke="none" />';
+const ICON_REDO =
+  // curved arrow right — mirror of ICON_UNDO.
+  '<path d="M12.5 8 H6 a3 3 0 0 0 0 6 H8" />' +
+  '<path d="M12.5 5.5 L12.5 10.5 L9.5 8 Z" fill="currentColor" stroke="none" />';
 const ICON_COMMIT =
   // check mark.
   '<path d="M3.5 8.5 L6.5 11.5 L12.5 4.5" />';
@@ -547,7 +573,18 @@ function buildPersistentDom(): PersistentDom {
     ICON_UNDO,
     () => onUndoClick(),
   );
+  undoBtn.disabled = true;
   toolbar.appendChild(undoBtn);
+  // TASK-008 — Redo button next to Undo (Excel toolbar order). Initially
+  // disabled — `refreshUndoRedoButtons` keeps it in sync with the stack.
+  const redoBtn = makeIconButton(
+    "",
+    "Redo — replay the most-recently-undone edit / row add / row delete",
+    ICON_REDO,
+    () => onRedoClick(),
+  );
+  redoBtn.disabled = true;
+  toolbar.appendChild(redoBtn);
 
   // TASK-503 — Commit button (and Cmd/Ctrl+Enter keyboard shortcut).
   // Posts a single saveEdits batch with every dirty cell. No-op when the
@@ -711,6 +748,31 @@ function buildPersistentDom(): PersistentDom {
     },
     true,
   );
+  // TASK-008 — Cmd/Ctrl+Z (undo) + Cmd/Ctrl+Shift+Z (redo). Excel-style
+  // shortcut; we listen on the grid wrap in capture phase so we run
+  // before AG Grid's default browser handling. Skip when focus is in a
+  // text input — the user is typing. Stop any active AG Grid edit first
+  // so the new value lands in the cell BEFORE we undo (otherwise the
+  // next edit could collide with the popped action).
+  gridWrap.addEventListener(
+    "keydown",
+    (ev) => {
+      if (isFilterInput(ev.target)) return;
+      if (!(ev.ctrlKey || ev.metaKey)) return;
+      if (ev.key.toLowerCase() !== "z") return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (gridApi && typeof gridApi.getEditingCell === "function" && gridApi.getEditingCell()) {
+        gridApi.stopEditing();
+      }
+      if (ev.shiftKey) {
+        onRedoClick();
+      } else {
+        onUndoClick();
+      }
+    },
+    true,
+  );
   // TASK-501: paste handler — TSV payload from the OS clipboard. AG Grid's
   // own paste module requires Enterprise; we listen on gridWrap so the
   // event is caught whether dispatched directly on the wrap (test) or
@@ -799,6 +861,7 @@ function buildPersistentDom(): PersistentDom {
     addRowBtn,
     deleteRowBtn,
     undoBtn,
+    redoBtn,
     csvToggleBtn,
     exportFormat,
     exportHeader,
@@ -1392,6 +1455,7 @@ function renderGrid(): void {
       gridApi = null;
     }
     editState.clear();
+    undoStack.clear();
     newRowCount = 0;
     highestAllocatedId = -1;
     colFilterActive = false;
@@ -1498,12 +1562,14 @@ function renderGrid(): void {
     // `Math.max(previousRows.length, highestAllocatedId + 1)` to keep
     // the two id spaces disjoint.
     highestAllocatedId = r.result.rows.length - 1;
+    refreshUndoRedoButtons();
   } else if (statementReset || columnsChanged || syncResult.isReset) {
     // New data for the same statement (e.g. statementReset on terminal
     // status, or columnsChanged). Drop stale dirty edits and any rows
     // the user added locally — they no longer make sense for a fresh
     // result set; the user must re-add via the Add Row button.
     editState.clear();
+    undoStack.clear();
     newRowCount = 0;
     highestAllocatedId = -1;
     // Clear the server-id → source-index map BEFORE rowsToObjects
@@ -1528,6 +1594,7 @@ function renderGrid(): void {
     // r.result.rows.length. Locally-added rows were cleared above so this
     // is safe.
     highestAllocatedId = r.result.rows.length - 1;
+    refreshUndoRedoButtons();
   } else if (rowsGrew && syncResult.appendDelta.length > 0) {
     // Append delta — only new server rows get added (no clobber). Each
     // appended row needs a __rowId so the grid's stable-identity layer
@@ -1733,10 +1800,11 @@ function onGridPaste(ev: ClipboardEvent): void {
  *  state to the host so the host's "saved" snapshot matches. */
 function onRefreshClick(): void {
   editState.clear();
+  undoStack.clear();
   // No-op for the host today — TASK-503 will define the host message; for
   // now this just clears the local dirty map (which is the user-visible
   // "reset" semantics).
-  updateFooterNow();
+  refreshUndoRedoButtons();
 }
 /** Add Row: append a real blank row to the grid. The row gets a stable
  *  __rowId past every id we have ever allocated (server OR local) — the
@@ -1767,6 +1835,10 @@ function onAddRowClick(): void {
     { __vsdb_new_row__: true, __rowId: newRowId, values: blank },
     undefined,
   );
+  // TASK-008 — record the add-row on the unified undo stack so undo can
+  // remove the row, redo can re-add it, and the toolbar redoBtn stays in
+  // sync with the user's history.
+  undoStack.push({ kind: "add-row", rowId: newRowId });
   gridApi.applyTransaction({ add: [blank] });
   newRowCount++;
   updateFooterNow();
@@ -1786,6 +1858,10 @@ function onDeleteRowClick(): void {
   if (rowId === undefined) return;
   // TASK-007: mark dirty BEFORE the redraw so getRowClass sees
   // isRowDeleted(rowId)=true when the row re-renders. refreshCells
+  // TASK-008 — record the delete-row on the unified undo stack so undo
+  // can clear the marker (and un-strike the row), redo can re-strike it,
+  // and the toolbar redoBtn stays in sync with the user's history.
+  undoStack.push({ kind: "delete-row", rowId });
   // alone re-evaluates cellClassRules (the cell-level highlight) but
   // does NOT re-run getRowClass — we need redrawRows for the row-level
   // class to re-evaluate.
@@ -1797,45 +1873,109 @@ function onDeleteRowClick(): void {
   updateFooterNow();
 }
 
-/** Undo: pop the last dirty cell from EditState and revert its grid cell.
- *  Resolves the field via currentSpecs (stable column ordering — column
- *  drag-reorder would shift getColumnDefs order) and the row via the
- *  grid's __rowId (stable row identity — sort/filter would shift
- *  displayed row index). */
-function onUndoClick(): void {
+/** TASK-008 — Apply the inverse of a single undo action to the grid +
+ *  EditState. Shared by onUndoClick and onRedoClick. The `apply` flag
+ *  picks the inverse-vs-forward direction (undo pops the action and
+ *  applies its inverse; redo replays it as-is). */
+function applyUndoAction(action: UndoAction, mode: "undo" | "redo"): void {
   if (!gridApi) return;
-  const popped = editState.undo();
-  if (!popped) return;
-  const spec = currentSpecs[popped.colIndex];
-  if (!spec) return;
-  const node = gridApi.getRowNode(String(popped.rowId));
-  if (!node?.data) return;
-  // Resolve the server-truth source row via the stable __rowId → source-
-  // index map. After Add Row + stream, a streamed row's __rowId is past
-  // the source-array length, so the old `r.result.rows[popped.rowId]`
-  // returned the wrong row's value. The map is populated in
-  // rowsToObjects and cleared in the two reset branches (R3 finding #1).
-  // Locally-added rows have no entry → si is undefined → no revert.
-  const r = results[activeTab];
-  const si = serverIndexByRowId.get(popped.rowId);
-  const serverRow = si !== undefined ? r?.result?.rows?.[si] : undefined;
-  // Distinguish NULL from MISSING — `serverRow` exists iff the row is
-  // server-truth. A NULL cell value is a LEGITIMATE old value that must
-  // be restored as null on undo (the most common SQL edge case: a cell
-  // is null on disk, the user edits to "EDITED", then undoes — the
-  // grid cell must return to null, not stay "EDITED" or become "").
-  // The buggy `serverOld ?? node.data[spec.field] ?? ""` conflated
-  // null with absent because `null ?? anything` returns anything (R2
-  // finding #3).
-  if (serverRow !== undefined) {
-    node.data[spec.field] = serverRow[popped.colIndex];
+  if (action.kind === "cell-edit") {
+    const spec = currentSpecs[action.colIndex];
+    if (!spec) return;
+    const node = gridApi.getRowNode(String(action.rowId));
+    if (!node?.data) return;
+    // Undo: revert to oldValue (server-truth or original blank). Redo:
+    // re-apply newValue and mark dirty again. Either way, the dirty
+    // highlight must follow: undo strips it (clearCell), redo paints
+    // it (markDirty).
+    if (mode === "undo") {
+      const r = results[activeTab];
+      const si = serverIndexByRowId.get(action.rowId);
+      const serverRow = si !== undefined ? r?.result?.rows?.[si] : undefined;
+      if (serverRow !== undefined) {
+        // Distinguish NULL from MISSING — `null ?? anything` returns
+        // anything, so we test `serverRow !== undefined` instead of
+        // `serverOld ?? ...` (R2 finding #3 in TASK-501).
+        node.data[spec.field] = serverRow[action.colIndex];
+      }
+      // Locally-added rows have no server-row twin; leave the cell as-is.
+      editState.clearCell(action.rowId, action.colIndex);
+    } else {
+      node.data[spec.field] = action.newValue;
+      editState.markDirty(
+        action.rowId,
+        action.colIndex,
+        action.newValue,
+        action.oldValue,
+      );
+    }
+    gridApi.refreshCells({ rowNodes: [node], force: true });
+  } else if (action.kind === "add-row") {
+    // Undo: remove the row (applyTransaction remove). Redo: re-add it.
+    // We track the locally-added row so a re-add is the same object.
+    if (mode === "undo") {
+      const node = gridApi.getRowNode(String(action.rowId));
+      const data = node?.data;
+      gridApi.applyTransaction({ remove: data ? [data] : [] });
+      editState.clearCell(action.rowId, 0);
+      if (newRowCount > 0) newRowCount--;
+    } else {
+      const blank: Record<string, unknown> = { __rowId: action.rowId };
+      const cols = gridApi.getColumnDefs() as
+        | Array<{ field?: string }>
+        | undefined;
+      for (const col of cols ?? []) {
+        if (col.field && col.field !== "__rowId") blank[col.field] = "";
+      }
+      editState.markDirty(
+        action.rowId,
+        0,
+        { __vsdb_new_row__: true, __rowId: action.rowId, values: blank },
+        undefined,
+      );
+      gridApi.applyTransaction({ add: [blank] });
+      newRowCount++;
+    }
+  } else {
+    // delete-row. Undo: clear the delete marker (un-strike — cell
+    // values themselves were never mutated, only the marker was added).
+    // Redo: re-mark the row deleted.
+    if (mode === "undo") {
+      editState.clearCell(action.rowId, 0);
+    } else {
+      editState.markDirty(
+        action.rowId,
+        0,
+        { __vsdb_deleted__: true, __rowId: action.rowId },
+        undefined,
+      );
+    }
+    const node = gridApi.getRowNode(String(action.rowId));
+    if (node) gridApi.redrawRows({ rowNodes: [node] });
   }
-  // Locally-added rows have no server-row twin; leave the cell as-is —
-  // the user added the row, there is no "original" to revert to.
-  gridApi.refreshCells({ force: true });
   updateFooterNow();
+  refreshUndoRedoButtons();
 }
-
+/** TASK-008 — Undo: pop the top action from the unified stack and
+ *  apply its inverse to the grid + EditState. */
+function onUndoClick(): void {
+  const action = undoStack.undo();
+  if (!action) return;
+  applyUndoAction(action, "undo");
+}
+/** TASK-008 — Redo: replay the most-recently-undone action. */
+function onRedoClick(): void {
+  const action = undoStack.redo();
+  if (!action) return;
+  applyUndoAction(action, "redo");
+}
+/** TASK-008 — Sync toolbar undo/redo button enabled state with the
+ *  stack. Cheap O(1) — just reflects the two boolean getters. */
+function refreshUndoRedoButtons(): void {
+  if (!dom) return;
+  dom.undoBtn.disabled = !undoStack.canUndo;
+  dom.redoBtn.disabled = !undoStack.canRedo;
+}
 /** TASK-503 — Commit: post a single saveEdits batch with every dirty cell.
  *
  *  - No-op (no postMessage) when dirtyCount === 0 — the keyboard shortcut
@@ -2043,6 +2183,7 @@ function updateFooter(
 
 function updateFooterNow(): void {
   if (!dom) return;
+  refreshUndoRedoButtons();
   const footer = dom.gridFooter;
   const api = gridApi;
   const r = currentStatement;
@@ -2136,7 +2277,13 @@ function handleSaveResult(msg: SaveResultMsg): void {
         gridApi.refreshCells({ force: true });
       }
     } else {
+      // TASK-008 — full commit success. Undo past a DB write is out of
+      // scope (the DB has already committed), so we drop both branches
+      // of the stack alongside the dirty-map clear. The partial-failure
+      // branch above intentionally keeps the stack — the user retries
+      // the errored rows.
       editState.clear();
+      undoStack.clear();
       if (banner) {
         banner.classList.add("vsdb-hidden");
         banner.setAttribute("hidden", "");
@@ -2164,6 +2311,7 @@ function handleSaveResult(msg: SaveResultMsg): void {
     }
     // edit state preserved; user can retry after fixing.
   }
+  refreshUndoRedoButtons();
   updateFooterNow();
 }
 
@@ -2212,12 +2360,25 @@ render();
   get editState(): EditState {
     return editState;
   },
-  addRow: onAddRowClick,
+  /** TASK-008 — unified undo/redo stack handle for tests. */
+  get undoStack(): UndoStack {
+    return undoStack;
+  },
+  /** TASK-008 — live toolbar buttons (read current \`dom\`, which is set
+   *  on first render — module init time it's null). */
+  get undoBtn(): HTMLButtonElement | undefined {
+    return dom?.undoBtn;
+  },
+  get redoBtn(): HTMLButtonElement | undefined {
+    return dom?.redoBtn;
+  },
+  redo: onRedoClick,
   deleteRow: onDeleteRowClick,
   refresh: onRefreshClick,
   toggleCsv: onCsvToggleClick,
   undo: onUndoClick,
   commit: onCommitClick,
   simulateCellEdit,
+  addRow: onAddRowClick,
 };
 

@@ -709,3 +709,49 @@ function inputEl(id: string): HTMLInputElement {
 function btn(id: string): HTMLButtonElement {
   return document.getElementById(id) as HTMLButtonElement;
 }
+
+// ---- TASK-003 #4, #5 — init{hasHistory:false} re-enables input -----------
+// Host posts init{hasHistory:false} after handleClear. The webview must
+// re-enable Send/prompt and de-stream any orphaned bubble, even if the
+// `done` message is reordered or lost in transit (defense-in-depth vs.
+// the host's `done`). #5 — double init does not throw / does not double-
+// fire error.
+describe("AiChatPanelWebview — init re-enable (TASK-003)", () => {
+  it("#4 init{hasHistory:false} after setBusy(true) re-enables sendBtn + prompt + de-streams", () => {
+    const h = makeHarness();
+    // First init from handleReady — sent on bundle boot via ready. The
+    // bundle already posted {type:"ready"} before this test ran. Dispatch
+    // init{hasHistory:false} from host manually.
+    h.dispatch({ type: "init", hasHistory: false });
+
+    // Simulate user clicking Send → setBusy(true).
+    const sendBtn = document.getElementById("sendBtn") as HTMLButtonElement;
+    const prompt = document.getElementById("prompt") as HTMLTextAreaElement;
+    prompt.value = "hi";
+    sendBtn.click();
+
+    expect(sendBtn.disabled).toBe(true);
+    expect(prompt.disabled).toBe(true);
+
+    // Host posts init{hasHistory:false} after Clear (defense-in-depth
+    // alongside `done`). Webview must re-enable input.
+    h.dispatch({ type: "init", hasHistory: false });
+
+    expect(sendBtn.disabled).toBe(false);
+    expect(prompt.disabled).toBe(false);
+  });
+
+  it("#5 double init{hasHistory:false} does not throw; banner/thread DOM stays well-formed", () => {
+    const h = makeHarness();
+    expect(() => {
+      h.dispatch({ type: "init", hasHistory: false });
+      h.dispatch({ type: "init", hasHistory: false });
+      h.dispatch({ type: "init", hasHistory: false });
+    }).not.toThrow();
+    // Thread container still exists and has no error bubbles.
+    const thread = document.getElementById("thread");
+    expect(thread).not.toBeNull();
+    expect(thread?.querySelectorAll(".vsdb-chat-bubble.vsdb-chat-error").length ?? 0).toBe(0);
+  });
+});
+

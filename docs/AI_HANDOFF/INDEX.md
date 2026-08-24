@@ -6,7 +6,7 @@ Cycle R — AI overhaul + Grid Excel hóa. 9 tasks, 2 waves.
 |------|-------|--------|----------|----------|
 | TASK-001 | Full-DB structure builder + export_structure agent tool | ready | - | - |
 | TASK-002 | Full-DB DDL context injection vào buildMessages | ready | - | - |
-| TASK-003 | Chat reliability: Clear dead-state + not-configured error | ready | - | - |
+| TASK-003 | Chat reliability: Clear dead-state + not-configured error | pending_review | Exec-T3 | Rev-T003 |
 | TASK-004 | vsdb.exportAllStructures — copy toàn-DB DDL | ready | - | - |
 | TASK-005 | Cmd+Enter cursor-mode: gap-rule fix + regression lock | ready | - | - |
 | TASK-006 | Grid A (P0): no-PK ctid save bug — hidden ctid column | ready | - | - |

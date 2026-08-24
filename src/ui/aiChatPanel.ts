@@ -501,10 +501,17 @@ export class AiChatPanel {
         return;
       }
       const message = err instanceof Error ? err.message : String(err);
-      // Surface as-is. Provider / stream errors carry "stream" naturally
-      // (e.g. "provider stream failed"); the webview error case is a
-      // thin wrapper around the string.
-      this.post({ type: "error", message });
+      // TASK-003 D3: when AI is not configured mid-session, the literal
+      // provider error "AI is not configured" is not actionable on its
+      // own — the user has to know where to set baseUrl/model/API key.
+      // Enrich with the menu path. Other errors surface as-is (provider
+      // / stream errors carry "stream" naturally; the webview error
+      // case is a thin wrapper around the string).
+      const enriched =
+        message === "AI is not configured"
+          ? "AI is not configured — open VSDB: Open AI Settings to configure baseUrl/model/API key"
+          : message;
+      this.post({ type: "error", message: enriched });
     } finally {
       this.post({ type: "done" });
       this.currentAbort = null;
@@ -842,8 +849,16 @@ export class AiChatPanel {
   }
 
   private handleClear(): void {
+    // Full turn reset: Clear giữa turn đang stream phải hủy turn + trả UI
+    // về idle. Không reset token/currentAbort → webview busy mãi (D2).
+    this.token = null;
+    this.currentAbort?.abort();      // hủy SSE đang đọc (builtin)
+    this.currentAbort = null;
+    this.turnDonePosted = false;
+    this.cancelAllPending();          // ACP pending → cancelled (giữ pattern stop)
     this.history = [];
     this.post({ type: "init", hasHistory: false });
+    this.post({ type: "done" });      // belt: webview busy flag về false
   }
 
   /** Workspace cwd used to filter session/list entries. */

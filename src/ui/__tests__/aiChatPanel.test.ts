@@ -1408,3 +1408,275 @@ describe("AiChatPanel — buildMessages full-DB context", () => {
     }
   });
 });
+
+
+// ============================================================================
+// TASK-003 (cycle R, D2/D3) — Clear mid-stream recovery + not-configured surface.
+//   #1 regression (user report): send msg (pending) → clear → send msg2 →
+//      posted sequence contains init{hasHistory:false} + done + assistant of
+//      msg2; msg2 chat works again. RED on current handleClear (no abort,
+//      no done, no input re-enable) — GREEN after spec fix.
+//   #2 edge: clear when idle — init{hasHistory:false} + done posted once each;
+//      subsequent send still produces an assistant bubble.
+//   #3 edge: not-configured mid-session — error bubble contains
+//      "AI is not configured" AND "Open AI Settings"; done posted; no
+//      unhandled rejection; send after config returns still runs.
+//   #6 regression: Clear must not break ACP pending (cancelAllPending invoked
+//      for each pending requestId when acpSession present; no-op in builtin).
+// ============================================================================
+describe("AiChatPanel — Clear recovery + not-configured (TASK-003)", () => {
+  // ---- #1 — user report regression ---------------------------------------
+  it("#1 clear mid-stream: chat works again; init{hasHistory:false} + done + assistant(msg2) posted in order", async () => {
+    let sawMsg1Abort = false;
+    agentState.runAgentMock.mockImplementationOnce(
+      async (
+        _input: unknown,
+        _deps: unknown,
+        _cb?: unknown,
+        signal?: AbortSignal,
+      ) => {
+        if (signal) {
+          if (signal.aborted) {
+            sawMsg1Abort = true;
+            const e = new Error("The operation was aborted");
+            e.name = "AbortError";
+            throw e;
+          }
+          signal.addEventListener("abort", () => {
+            sawMsg1Abort = true;
+          });
+        }
+        return new Promise<AgentRunResult>(() => {});
+      },
+    );
+    agentState.runAgentMock.mockImplementationOnce(
+      async (
+        _input: unknown,
+        _deps: unknown,
+        callbacks?: { onText?: (text: string) => void },
+      ) => {
+        callbacks?.onText?.("msg2-answer");
+        return makeRunResult(
+          [
+            {
+              messages: [{ role: "assistant", content: "msg2-answer" }],
+              result: {
+                text: "msg2-answer",
+                toolCalls: [],
+                finishReason: "stop",
+                usage: { inputTokens: 0, outputTokens: 0 },
+              },
+            },
+          ],
+          "msg2-answer",
+        );
+      },
+    );
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+
+    handler({ type: "send", text: "first" });
+    await until(() => agentState.runAgentMock.mock.calls.length >= 1);
+    handler({ type: "clear" });
+    const acArg = agentState.runAgentMock.mock.calls[0]?.[3] as
+      | AbortSignal
+      | undefined;
+    expect(acArg).toBeDefined();
+    expect(acArg?.aborted).toBe(true);
+
+    handler({ type: "send", text: "second" });
+    await until(() => postedMessages(p).filter(isAssistant).length >= 1);
+    await until(() => postedMessages(p).filter(isDone).length >= 2);
+
+    const posted = postedMessages(p);
+    const inits = posted.filter(isInit);
+    expect(inits.length).toBe(2);
+    if (inits.length >= 2) {
+      const clearInit = inits[1];
+      if (clearInit && typeof clearInit === "object" && "hasHistory" in clearInit) {
+        expect((clearInit as InitMsg).hasHistory).toBe(false);
+      }
+    }
+    expect(posted.filter(isDone).length).toBeGreaterThanOrEqual(2);
+    const assistants = posted.filter(isAssistant);
+    expect(assistants.length).toBe(1);
+    if (assistants.length >= 1 && assistants[0] && typeof assistants[0] === "object" && "text" in assistants[0]) {
+      expect((assistants[0] as AssistantMsg).text).toBe("msg2-answer");
+    }
+    expect(posted.filter(isError)).toEqual([]);
+    expect(sawMsg1Abort).toBe(true);
+  });
+
+  // ---- #2 — Clear when idle ---------------------------------------------
+  it("#2 clear when idle: history reset; init{hasHistory:false} + done posted; subsequent send still runs", async () => {
+    agentState.runAgentMock.mockResolvedValueOnce(
+      makeRunResult(
+        [
+          {
+            messages: [{ role: "assistant", content: "first" }],
+            result: {
+              text: "first",
+              toolCalls: [],
+              finishReason: "stop",
+              usage: { inputTokens: 0, outputTokens: 0 },
+            },
+          },
+        ],
+        "first",
+      ),
+    );
+    agentState.runAgentMock.mockResolvedValueOnce(
+      makeRunResult(
+        [
+          {
+            messages: [{ role: "assistant", content: "second" }],
+            result: {
+              text: "second",
+              toolCalls: [],
+              finishReason: "stop",
+              usage: { inputTokens: 0, outputTokens: 0 },
+            },
+          },
+        ],
+        "second",
+      ),
+    );
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "go" });
+    await until(() => postedMessages(p).some(isAssistant));
+    await until(() => postedMessages(p).some(isDone));
+    const initCountBefore = postedMessages(p).filter(isInit).length;
+    const doneCountBefore = postedMessages(p).filter(isDone).length;
+    const assistantsBefore = postedMessages(p).filter(isAssistant).length;
+
+    handler({ type: "clear" });
+    await until(
+      () => postedMessages(p).filter(isInit).length > initCountBefore,
+    );
+    const initsAfter = postedMessages(p).filter(isInit);
+    const lastInit = initsAfter[initsAfter.length - 1];
+    if (lastInit && typeof lastInit === "object" && "hasHistory" in lastInit) {
+      expect((lastInit as InitMsg).hasHistory).toBe(false);
+    }
+    expect(postedMessages(p).filter(isDone).length).toBe(doneCountBefore + 1);
+
+    handler({ type: "send", text: "go-again" });
+    await until(
+      () =>
+        postedMessages(p).filter(isAssistant).length ===
+        assistantsBefore + 1,
+    );
+    const assistants = postedMessages(p).filter(isAssistant);
+    expect(assistants).toHaveLength(assistantsBefore + 1);
+    const lastAssistant = assistants[assistants.length - 1];
+    if (lastAssistant && typeof lastAssistant === "object" && "text" in lastAssistant) {
+      expect((lastAssistant as AssistantMsg).text).toBe("second");
+    }
+  });
+
+  // ---- #3 — not-configured mid-session ----------------------------------
+  it("#3 loadConfig null mid-session: error bubble has 'AI is not configured' + 'Open AI Settings'; done posted; send kế vẫn chạy", async () => {
+    const deps = makeDeps();
+    agentState.runAgentMock.mockImplementationOnce(async () => {
+      throw new Error("AI is not configured");
+    });
+    agentState.runAgentMock.mockResolvedValueOnce(
+      makeRunResult(
+        [
+          {
+            messages: [{ role: "assistant", content: "ok" }],
+            result: {
+              text: "ok",
+              toolCalls: [],
+              finishReason: "stop",
+              usage: { inputTokens: 0, outputTokens: 0 },
+            },
+          },
+        ],
+        "ok",
+      ),
+    );
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps,
+      adapterFactory: factory,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+
+    handler({ type: "send", text: "hello" });
+    await until(() => postedMessages(p).some(isError));
+    await until(() => postedMessages(p).some(isDone));
+
+    const errs = postedMessages(p).filter(isError);
+    expect(errs.length).toBeGreaterThanOrEqual(1);
+    const firstErr = errs[0];
+    if (firstErr && typeof firstErr === "object" && "message" in firstErr) {
+      expect((firstErr as ErrorMsg).message).toContain("AI is not configured");
+      expect((firstErr as ErrorMsg).message).toContain("Open AI Settings");
+    }
+
+    const donesAfterFirst = postedMessages(p).filter(isDone).length;
+    expect(p.disposed).toBe(false);
+
+    handler({ type: "send", text: "hi again" });
+    await until(() => postedMessages(p).filter(isAssistant).length >= 1);
+    await until(
+      () => postedMessages(p).filter(isDone).length > donesAfterFirst,
+    );
+    const assistants = postedMessages(p).filter(isAssistant);
+    expect(assistants).toHaveLength(1);
+    const lastAssistant = assistants[assistants.length - 1];
+    if (lastAssistant && typeof lastAssistant === "object" && "text" in lastAssistant) {
+      expect((lastAssistant as AssistantMsg).text).toBe("ok");
+    }
+  });
+
+  // ---- #6 — Clear must not break ACP pending ----------------------------
+  it("#6 builtin mode + no acp: clear is a safe no-op on pending (no throw); engine stays builtin", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], "ok"));
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "go" });
+    await until(() => postedMessages(p).some(isAssistant));
+    expect(() => handler({ type: "clear" })).not.toThrow();
+    await until(() => postedMessages(p).filter(isInit).length >= 2);
+    const engineMsgs = postedMessages(p).filter(
+      (m): m is { type: "engine"; name: string } =>
+        !!m && typeof m === "object" && (m as { type?: string }).type === "engine",
+    );
+    expect(engineMsgs).toHaveLength(1);
+    const engineMsg = engineMsgs[0];
+    if (engineMsg && typeof engineMsg === "object" && "name" in engineMsg) {
+      expect((engineMsg as { name: string }).name).toBe("builtin");
+    }
+  });
+});
