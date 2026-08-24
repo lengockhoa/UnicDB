@@ -37,6 +37,7 @@ import {
 import { NewTableForm } from "./newTableForm";
 import { SchemaForm } from "./schemaForm";
 import { buildPostmanPayload } from "./postmanPayload";
+import { buildTableStructure, buildViewStructure } from "./exportStructure";
 import {
   SchemaTreeProvider,
   revealTableNode,
@@ -529,6 +530,50 @@ export function registerTableCommands(deps: RegisterDeps): void {
           const msg = err instanceof Error ? err.message : String(err);
           void vscode.window.showErrorMessage(
             `Postman Payload failed: ${msg}`,
+          );
+        }
+      },
+    ),
+  );
+  // Export Structure — copy CREATE TABLE DDL (table) / column list (view)
+  // cho node table/view. Postgres-only, giống postmanPayload guard.
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "vsdb.exportStructure",
+      async (arg?: unknown) => {
+        if (!arg || typeof arg !== "object") return;
+        const node = arg as { contextValue?: string };
+        const guarded = guardPostgres(
+          resolveTableNode(arg),
+          "exportStructure",
+        );
+        if (!guarded) return;
+        const { conn, schema, table: name } = guarded;
+        if (name === "") return;
+
+        try {
+          const adapter = await mgr.getAdapterFor(conn);
+          const columns = (await adapter.listColumns(name, schema)).map(
+            (c) => ({
+              name: c.name,
+              dataType: c.dataType,
+              nullable: c.nullable,
+              isPrimaryKey: c.isPrimaryKey,
+            }),
+          );
+          const text =
+            node.contextValue === "view"
+              ? buildViewStructure(schema, name, columns)
+              : buildTableStructure(schema, name, columns);
+          await vscode.env.clipboard.writeText(text);
+          void vscode.window.setStatusBarMessage(
+            "VSDB: structure copied",
+            2000,
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          void vscode.window.showErrorMessage(
+            `Export Structure failed: ${msg}`,
           );
         }
       },

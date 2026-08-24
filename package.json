@@ -56,7 +56,8 @@
     "onCommand:vsdb.aiChat",
     "onCommand:vsdb.browseTableData",
     "onCommand:vsdb.createSchema",
-    "onCommand:vsdb.postmanPayload"
+    "onCommand:vsdb.postmanPayload",
+    "onCommand:vsdb.exportStructure"
   ],
   "contributes": {
     "commands": [
@@ -203,6 +204,12 @@
         "title": "VSDB: Postman Payload",
         "category": "VSDB",
         "icon": "$(copy)"
+      },
+      {
+        "command": "vsdb.exportStructure",
+        "title": "VSDB: Export Structure",
+        "category": "VSDB",
+        "icon": "$(output)"
       }
     ],
     "keybindings": [
@@ -303,7 +310,12 @@
           "command": "vsdb.postmanPayload",
           "when": "view == vsdb.schemaTree && (viewItem == table || viewItem == view || viewItem == routine)",
           "group": "vsdb"
-        }
+        },
+        {
+          "command": "vsdb.exportStructure",
+          "when": "view == vsdb.schemaTree && (viewItem == table || viewItem == view)",
+          "group": "vsdb"
+         }
       ],
       "view/title": [
         {
