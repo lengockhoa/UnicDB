@@ -10,3 +10,6 @@
 
 ## Cycle L — omp agent integration (2026-08-23)
 - 4/4 approved after two fix rounds: long-lived RPC bridge, read-only DB host tools, detect/fallback, Chat engine switch and guarded streaming. +117 tests (729 passed, 1 availability-gated smoke skipped); real omp 18.0.1 full start→prompt→agent_end smoke passed. Pushed dee1430.
+
+## Cycle M — ACP approval bridge (2026-08-24)
+- 4/4 approved (TASK-004 after 1 fix round: production child-exit → AcpClient.dispose → panel default-deny). JSON-RPC/NDJSON `omp acp` replaces yolo RPC bridge; `session/new` proven live; permission UI Allow/Deny, default-deny on stop/dispose/exit/replacement/timeout; legacy rpc.ts/process.ts deleted. +22 tests (751 passed, 2 opt-in smoke skipped). Pushed b3ab260.
