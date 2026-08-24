@@ -1,6 +1,6 @@
 Command: handoff-fullstack
-Goal: Cycle M — replace Cycle L yolo RPC bridge with approval-aware ACP bridge
+Goal: Cycle N — builtin engine streaming (streaming cho engine builtin trong AI Chat)
 Base: main
-Phase: done
-Cursor: released 5629b9d — 4/4 approved; full suite 751 passed / 2 opt-in smoke skipped; compile/typecheck clean; no worktrees or changes
-Next: none queued; follow-ups deliberately deferred: remove orphaned hostTools/detect after fallback audit, ACP session history, richer approval detail
+Phase: P2.5 plan review (round 2 revision applied)
+Cursor: plan-rev round 2 — F1-F6 resolved (fallback=onStreamFallback callback; signal=runAgent param4→deps param5; abort-never-fallback rule pinned; webview deStreamOpenBubble; case6 vi.mock capture; include_usage omitted). PLAN §2-§6 + TASK-001..003 sync'd; 3-task chain unchanged
+Next: round-2 plan re-review (REVIEW_TARGET_TYPE=plan); Pass → handoff-implement wave 1 (TASK-001)
