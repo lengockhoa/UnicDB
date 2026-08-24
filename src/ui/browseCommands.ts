@@ -1,5 +1,8 @@
 // src/ui/browseCommands.ts
 // TASK-001 — browseCommands module.
+// TASK-007 — applies qualifyKeywordTables to generated browse SQL so it
+// shares the same defensive reserved-keyword rewrite path as the editor
+// submit path.
 //
 // Exports:
 //   - `buildBrowseSelect(driver, schema, table)` — pure per-dialect SELECT builder
@@ -15,9 +18,14 @@
 // The header copy mirrors `runStatements` style: `Browse <qualified> at <ISO>`.
 import * as vscode from "vscode";
 import type { ConnectionConfig, ParsedStatement } from "../config/types";
+import { qualifyKeywordTables } from "../core/keywordQualify";
 import type { QueryRunner, StatementResult } from "../core/queryRunner";
 import type { ResultsPanel } from "./resultsPanel";
 import type { ConnectionManager } from "../core/connectionManager";
+import type { DbAdapter } from "../adapters/types";
+
+/** Adapter surface needed by qualifyKeywordTables (only listTables). */
+type AdapterWithTables = Pick<DbAdapter, "listTables">;
 
 /**
  * Pure per-dialect SELECT * FROM <schema>.<table> builder.
@@ -35,8 +43,8 @@ export function buildBrowseSelect(
   schema: string,
   table: string,
 ): string {
-  const qualifiedSchema = schema ? quoteForDriver(driver, schema) : "";
   const qualifiedTable = quoteForDriver(driver, table);
+  const qualifiedSchema = schema ? quoteForDriver(driver, schema) : "";
   const tableRef = schema ? `${qualifiedSchema}.${qualifiedTable}` : qualifiedTable;
   return `SELECT * FROM ${tableRef}`;
 }
@@ -49,9 +57,9 @@ function quoteForDriver(
     case "postgres":
       return `"${id.replace(/"/g, '""')}"`;
     case "mysql":
-      return `\`${id.replace(/`/g, "``")}\``;
+      return '`' + id.replace(/`/g, "``") + '`';
     case "mssql":
-      return `[${id.replace(/]/g, "]]")}]`;
+      return '[' + id.replace(/]/g, "]]") + ']';
     default: {
       const _exhaustive: never = driver;
       void _exhaustive;
@@ -59,7 +67,6 @@ function quoteForDriver(
     }
   }
 }
-
 
 interface BrowseNodeArg {
   meta?: {
@@ -93,21 +100,32 @@ export interface RegisterBrowseDeps {
 }
 
 /**
+ * Safely fetch the active adapter. Returns null when no adapter is reachable
+ * (no active connection, missing password, testConnect failure). Callers use
+ * null to bypass adapter-dependent operations (like qualifyKeywordTables).
+ */
+async function maybeGetAdapter(
+  mgr: ConnectionManager,
+): Promise<AdapterWithTables | null> {
+  try {
+    const a = await mgr.getAdapter();
+    return a ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Register the `vsdb.browseTableData` command.
  *
- * Pipeline:
- *   1. resolve node arg → showInformationMessage + return if missing/invalid.
- *   2. If `meta.connection.id !== mgr.getActive()?.id` → await `mgr.setActive(id)`
- *      (ordering: setActive MUST complete BEFORE first `runner.run`).
- *   3. Build SELECT via `buildBrowseSelect(driver, schema, table)`.
- *   4. `panel.setBusy(true)` → `runner.run([stmt], onUpdate)` (where onUpdate
- *      re-renders the panel via `runner.getResults()`) → final `panel.render`
- *      with the resolved results.
- *   5. On any error: `showErrorMessage(<message>)`. `panel.setBusy(false)` in
- *      `finally` to release the busy state on both success and failure paths.
- *
- * Note: `confirmDangerousStatements` is intentionally SKIPPED — the generated
- * statement is a `SELECT *`, `guardTier` can never fire.
+ * Steps:
+ *  1. Resolve the VsdbNode arg (palette fallback → showInformationMessage).
+ *  2. Align the active connection if the node's conn differs.
+ *  3. Build the per-dialect SELECT.
+ *  4. TASK-007: apply qualifyKeywordTables via the active adapter
+ *     (best-effort — falls back to raw SQL on adapter failure).
+ *  5. Run via the standard `runner.run → panel.render` pipeline. No destructive
+ *     confirm — generated SELECT is never dangerous.
  */
 export function registerBrowseCommands(deps: RegisterBrowseDeps): void {
   const { mgr, runner, panel } = deps;
@@ -127,7 +145,17 @@ export function registerBrowseCommands(deps: RegisterBrowseDeps): void {
         if (!active || active.id !== conn.id) {
           await mgr.setActive(conn.id);
         }
-        const sql = buildBrowseSelect(conn.driver, schema, table);
+        const rawSql = buildBrowseSelect(conn.driver, schema, table);
+        // TASK-007 — Apply qualifyKeywordTables so generated browse SQL keeps
+        // the same defensive rewrite path as the editor submit path.
+        const adapter = await maybeGetAdapter(mgr);
+        const sql = adapter
+          ? (
+              await qualifyKeywordTables(rawSql, (s) =>
+                adapter.listTables(s).then((rows) => rows.map((r) => r.name)),
+              )
+            ).sql
+          : rawSql;
         const stmt: ParsedStatement = { text: sql, start: 0, end: sql.length };
         const qualified = schema ? `${schema}.${table}` : table;
         const header = `Browse ${qualified} at ${new Date().toISOString()}`;

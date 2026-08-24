@@ -80,3 +80,73 @@ against the un-edited manifest, then insert the menu entry.
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: W4-T009
+
+SUMMARY: Inserted `vsdb.aiChat` entry into `menus.view/title` after `vsdb.openAiSettings` and
+updated the toolbar-order assertion in `src/scaffold.test.ts` (added `viewTitle[4] === "vsdb.aiChat"`,
+shifted `clearSchemaTreeFilter` to index 5, updated descriptive comment). No other edits.
+
+TEST_PLAN_FOLLOWED: task §4 — TDD with toolbar order assertion updated first (RED), then
+manifest edit (GREEN).
+
+FILES_CHANGED:
+  - package.json: +5 lines (one new menu entry: vsdb.aiChat, when: view==vsdb.schemaTree,
+    group: navigation, inserted after vsdb.openAiSettings)
+  - src/scaffold.test.ts: +3/-3 lines (toolbar-order block L131-139: index 4 now aiChat,
+    index 5 now clearSchemaTreeFilter; comment updated to mention TASK-009)
+
+TESTS_ADDED:
+  - src/scaffold.test.ts: existing `package.json manifest hợp lệ` test extended with new
+    `expect(viewTitle[4].command).toBe("vsdb.aiChat");` and shifted `viewTitle[5]` assertion.
+
+VERIFICATION:
+  command: npx vitest run src/scaffold.test.ts && npm run typecheck
+  result: typecheck PASS (0 errors); vitest FAILS pre-existing on L126
+  output_excerpt: |
+    > vsdb@1.6.0 typecheck
+    > tsc --noEmit
+    (clean)
+
+    FAIL  src/scaffold.test.ts > scaffold > package.json manifest hợp lệ — đủ commands (≥ 10), keybindings, views, configuration
+    TypeError: .toMatch() expects to receive a string, but got undefined
+      ❯ src/scaffold.test.ts:126:63
+        125|     for (const cmd of pkg.contributes.commands) {
+        126|       expect(cmd.icon, `command ${cmd.command} phải có icon`).toMatch(/^\$\(/);
+
+  RED captured (pre-menu-insert state, via standalone order-extract script):
+    [0] vsdb.refreshSchema
+    [1] vsdb.addConnection
+    [2] vsdb.filterSchemaTree
+    [3] vsdb.openAiSettings
+    [4] vsdb.clearSchemaTreeFilter   ← was at index 4 (RED — test expects aiChat)
+  GREEN captured (post-menu-insert state):
+    [0] vsdb.refreshSchema
+    [1] vsdb.addConnection
+    [2] vsdb.filterSchemaTree
+    [3] vsdb.openAiSettings
+    [4] vsdb.aiChat                   ← matches new assertion (GREEN)
+    [5] vsdb.clearSchemaTreeFilter    ← matches shifted assertion (GREEN)
+
+ISSUES:
+  - Pre-existing failure on L126: `vsdb.browseTableData` is registered without an icon (introduced
+    by TASK-002 in commit 5add346). This causes the manifest test to throw BEFORE reaching the
+    toolbar-order assertions at L134-139. The failure is unrelated to TASK-009 and the spec
+    explicitly forbids touching it ("package.json diff is exactly the one menu entry"). RED/GREEN
+    for the toolbar order was therefore demonstrated via direct manifest inspection (output above),
+    not via the vitest pass/fail signal. The icon fix belongs to a follow-up task (TASK-002 follow-up
+    or new TASK). Verified via `node -e` extractor that the new menu order matches the updated
+    assertions exactly.
+  - Test file does NOT have an icon for `vsdb.browseTableData` (TASK-002 regression). The toolbar
+    assertions are correct; the L126 throw pre-dates this task and persists post-fix.
+
+HANDOFF_TO_REVIEWER: yes — package.json manifest edit + test assertion change is small,
+    self-contained, and the only two files touched. Reviewer should re-confirm menu placement,
+    group, when-clause, and the test assertion order.
+
+NEXT: ready for review (W4-T009 → Rev-W4-T009).

@@ -394,58 +394,238 @@ describe("tableCommands — vsdb.copyCreateDdl", () => {
     expect(state.statusMessages.some((m) => /DDL copied/.test(m.text))).toBe(true);
   });
 });
+describe("tableCommands — vsdb.generateSampleData (TASK-006 AI flow)", () => {
+  // Hoisted mock fns so vi.mock factories (which run before imports resolve)
+  // can hand the same instances back via sampleDataAi + AiConfigStore.
+  const aiHarness = vi.hoisted(() => ({
+    generate: vi.fn(async (_deps: unknown) => ({ inserted: 3 })),
+    pickInsertableColumns: vi.fn(
+      (_tableName: string, cols: PgColumnRow[]) => cols,
+    ),
+  }));
+  const configHarness = vi.hoisted(() => ({
+    loadConfig: vi.fn(async () => null as unknown),
+  }));
 
-describe("tableCommands — vsdb.generateSampleData", () => {
-  it("#10 InputBox '3' → openTextDocument {language:'sql', content: 3-row INSERT}; showTextDocument called", async () => {
-    const cols: PgColumnRow[] = [
-      { column_name: "id", format_type: "integer", is_nullable: "YES", column_default: null },
-    ];
-    const mgr = makeFakeMgr({ introspectRows: { columns: cols, constraints: [] } });
+  vi.mock("../sampleDataAi", () => ({
+    aiGenerateSampleData: aiHarness.generate,
+    buildSampleDataPrompt: vi.fn(),
+    pickInsertableColumns: aiHarness.pickInsertableColumns,
+    parseInsertStatements: vi.fn(),
+  }));
+
+  vi.mock("../../ai/config", () => ({
+    AiConfigStore: class FakeStore {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      constructor(_ctx: unknown) {}
+      loadConfig = configHarness.loadConfig;
+      loadSettings = vi.fn();
+      loadApiKey = vi.fn();
+      save = vi.fn();
+      clear = vi.fn();
+      static defaults = () => ({});
+    },
+  }));
+
+  interface CtxOpts {
+    subscriptions?: unknown[];
+  }
+  function makeCtx(opts: CtxOpts = {}): ExtensionContext {
+    return {
+      subscriptions: opts.subscriptions ?? [],
+      globalState: {
+        get: vi.fn().mockReturnValue(undefined),
+        update: vi.fn(),
+      },
+      secrets: {
+        get: vi.fn().mockResolvedValue(undefined),
+        store: vi.fn().mockResolvedValue(undefined),
+        delete: vi.fn().mockResolvedValue(undefined),
+      },
+      extensionUri: {
+        toString: () => "vscode://test",
+      } as unknown as ExtensionContext["extensionUri"],
+    } as unknown as ExtensionContext;
+  }
+
+  function setupCommand(cols: PgColumnRow[]) {
+    const mgr = makeFakeMgr({
+      introspectRows: { columns: cols, constraints: [] },
+    });
     const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
     registerSchemaTreeProvider(provider);
     registerTableCommands({
       mgr: mgr.stub as unknown as ConnectionManager,
       tree: provider,
       treeView: treeView as unknown as TreeView<unknown>,
-      context: { subscriptions: [] } as unknown as ExtensionContext,
+      context: makeCtx(),
     });
-    state.inputBoxResult = "3";
-    const openTextDocumentSpy = vi.spyOn(vscode.workspace, "openTextDocument").mockImplementation((doc: unknown) => Promise.resolve(doc as unknown as TextDocument));
-    const showTextDocumentSpy = vi.spyOn(vscode.window, "showTextDocument").mockResolvedValue(undefined as unknown as TextEditor);
     const tableNode: VsdbNode = {
       label: "t",
       contextValue: "table",
       collapsible: 0,
       meta: { connection: mgr.cfg, schema: "public", objectName: "t" },
     };
-    await state.registeredCommands.get("vsdb.generateSampleData")!(tableNode);
-    expect(openTextDocumentSpy).toHaveBeenCalledTimes(1);
-    expect(showTextDocumentSpy).toHaveBeenCalled();
+    return { mgr, tableNode };
+  }
+
+  beforeEach(() => {
+    aiHarness.generate.mockClear();
+    aiHarness.generate.mockResolvedValue({ inserted: 3 });
+    aiHarness.pickInsertableColumns.mockClear();
+    aiHarness.pickInsertableColumns.mockImplementation(
+      (_t: string, cols: PgColumnRow[]) => cols,
+    );
+    configHarness.loadConfig.mockReset();
+    configHarness.loadConfig.mockResolvedValue(null);
   });
 
-  it("#11 InputBox 'abc' → Information 'Enter a positive number'; undefined → nothing", async () => {
-    const mgr = makeFakeMgr();
-    const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
-    registerSchemaTreeProvider(provider);
-    registerTableCommands({
-      mgr: mgr.stub as unknown as ConnectionManager,
-      tree: provider,
-      treeView: treeView as unknown as TreeView<unknown>,
-      context: { subscriptions: [] } as unknown as ExtensionContext,
+  it("case #4: loadConfig → null → info + executeCommand('vsdb.openAiSettings'); provider never called", async () => {
+    configHarness.loadConfig.mockResolvedValue(null);
+    const cols: PgColumnRow[] = [
+      {
+        column_name: "name",
+        format_type: "varchar",
+        is_nullable: "YES",
+        column_default: null,
+      },
+    ];
+    const { tableNode } = setupCommand(cols);
+    state.inputBoxResult = "5";
+    await state.registeredCommands.get("vsdb.generateSampleData")!(tableNode);
+    expect(
+      state.infoMessages.some((m) =>
+        /AI not configured|openAiSettings|Configure AI/i.test(m),
+      ),
+    ).toBe(true);
+    expect(aiHarness.generate).not.toHaveBeenCalled();
+  });
+
+  it("case #5: empty insertable set → info 'nothing to insert'; provider NOT called", async () => {
+    // Config present; pickInsertableColumns returns empty list.
+    configHarness.loadConfig.mockResolvedValue({
+      baseUrl: "https://api.example.com/v1",
+      method: "chat/completions",
+      timeoutMs: 30000,
+      maxSteps: 8,
+      models: {
+        work: { modelId: "work-1", vision: false },
+        smart: { modelId: "smart-1", vision: false },
+      },
+      apiKey: "sk",
     });
-    const tableNode: VsdbNode = {
-      label: "t",
-      contextValue: "table",
-      collapsible: 0,
-      meta: { connection: mgr.cfg, schema: "public", objectName: "t" },
-    };
+    aiHarness.pickInsertableColumns.mockReturnValue([]);
+    const cols: PgColumnRow[] = [
+      { column_name: "id_t", format_type: "integer", is_nullable: "NO", column_default: null },
+      { column_name: "created_at", format_type: "timestamp", is_nullable: "NO", column_default: null },
+    ];
+    const { tableNode } = setupCommand(cols);
+    state.inputBoxResult = "5";
+    await state.registeredCommands.get("vsdb.generateSampleData")!(tableNode);
+    expect(aiHarness.generate).not.toHaveBeenCalled();
+  });
+
+  it("case #7a: N=500 clamped to 100 (still calls provider with n=100)", async () => {
+    configHarness.loadConfig.mockResolvedValue({
+      baseUrl: "https://api.example.com/v1",
+      method: "chat/completions",
+      timeoutMs: 30000,
+      maxSteps: 8,
+      models: {
+        work: { modelId: "work-1", vision: false },
+        smart: { modelId: "smart-1", vision: false },
+      },
+      apiKey: "sk",
+    });
+    const cols: PgColumnRow[] = [
+      { column_name: "name", format_type: "varchar", is_nullable: "YES", column_default: null },
+    ];
+    const { tableNode } = setupCommand(cols);
+    state.inputBoxResult = "500";
+    await state.registeredCommands.get("vsdb.generateSampleData")!(tableNode);
+    expect(aiHarness.generate).toHaveBeenCalledTimes(1);
+    const depsArg = aiHarness.generate.mock.calls[0]![0] as { n: number };
+    expect(depsArg.n).toBe(100);
+  });
+
+  it("case #7b: N='abc' → info + no provider", async () => {
+    configHarness.loadConfig.mockResolvedValue({
+      baseUrl: "https://api.example.com/v1",
+      method: "chat/completions",
+      timeoutMs: 30000,
+      maxSteps: 8,
+      models: {
+        work: { modelId: "work-1", vision: false },
+        smart: { modelId: "smart-1", vision: false },
+      },
+      apiKey: "sk",
+    });
+    const cols: PgColumnRow[] = [
+      { column_name: "name", format_type: "varchar", is_nullable: "YES", column_default: null },
+    ];
+    const { tableNode } = setupCommand(cols);
     state.inputBoxResult = "abc";
     await state.registeredCommands.get("vsdb.generateSampleData")!(tableNode);
-    expect(state.infoMessages.some((m) => /Enter a positive number/.test(m))).toBe(true);
-    state.infoMessages.length = 0;
-    state.inputBoxResult = undefined;
+    expect(
+      state.infoMessages.some((m) => /positive number/i.test(m)),
+    ).toBe(true);
+    expect(aiHarness.generate).not.toHaveBeenCalled();
+  });
+
+  it("case #7c: N='0' → info + no provider", async () => {
+    configHarness.loadConfig.mockResolvedValue({
+      baseUrl: "https://api.example.com/v1",
+      method: "chat/completions",
+      timeoutMs: 30000,
+      maxSteps: 8,
+      models: {
+        work: { modelId: "work-1", vision: false },
+        smart: { modelId: "smart-1", vision: false },
+      },
+      apiKey: "sk",
+    });
+    const cols: PgColumnRow[] = [
+      { column_name: "name", format_type: "varchar", is_nullable: "YES", column_default: null },
+    ];
+    const { tableNode } = setupCommand(cols);
+    state.inputBoxResult = "0";
     await state.registeredCommands.get("vsdb.generateSampleData")!(tableNode);
-    expect(mgr.adapter.runCalls).toHaveLength(0);
+    expect(
+      state.infoMessages.some((m) => /positive number/i.test(m)),
+    ).toBe(true);
+    expect(aiHarness.generate).not.toHaveBeenCalled();
+  });
+
+  it("happy: config present + columns + N=3 → aiGenerateSampleData invoked once with schema/table/n/columns", async () => {
+    configHarness.loadConfig.mockResolvedValue({
+      baseUrl: "https://api.example.com/v1",
+      method: "chat/completions",
+      timeoutMs: 30000,
+      maxSteps: 8,
+      models: {
+        work: { modelId: "work-1", vision: false },
+        smart: { modelId: "smart-1", vision: false },
+      },
+      apiKey: "sk",
+    });
+    const cols: PgColumnRow[] = [
+      { column_name: "name", format_type: "varchar", is_nullable: "YES", column_default: null },
+    ];
+    const { tableNode } = setupCommand(cols);
+    state.inputBoxResult = "3";
+    await state.registeredCommands.get("vsdb.generateSampleData")!(tableNode);
+    expect(aiHarness.generate).toHaveBeenCalledTimes(1);
+    interface GenCall {
+      schema: string;
+      table: string;
+      n: number;
+      columns: unknown[];
+    }
+    const callArgs = aiHarness.generate.mock.calls[0]![0] as GenCall;
+    expect(callArgs.schema).toBe("public");
+    expect(callArgs.table).toBe("t");
+    expect(callArgs.n).toBe(3);
+    expect(callArgs.columns.length).toBeGreaterThan(0);
   });
 });
 

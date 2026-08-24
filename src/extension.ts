@@ -16,6 +16,7 @@ import { registerTableCommands } from "./ui/tableCommands";
 import { VsdbCodeLensProvider } from "./ui/codeLensProvider";
 import { ConnectionForm } from "./ui/connectionForm";
 import { sqlToRun } from "./core/statementParser";
+import { qualifyKeywordTables } from "./core/keywordQualify";
 import { analyzeStatement, guardTier } from "./core/dangerousStatement";
 import { truncateAtBoundary } from "./core/text";
 import { AiConfigStore } from "./ai/config";
@@ -453,7 +454,33 @@ async function runStatement(
   await runStatements(mgr, runner, panel, [stmt]);
 }
 
-async function runStatements(
+/**
+ * TASK-007 — Qualify reserved-keyword table names in `statements` against the
+ * active adapter's public schema. Returns the original array reference if no
+ * rewrite happened. On adapter error (no active connection, missing password,
+ * etc) the original statements pass through — never block the run.
+ */
+async function applyKeywordQualify(
+  mgr: ConnectionManager,
+  statements: ParsedStatement[],
+): Promise<ParsedStatement[]> {
+  // Skip transform when no adapter is reachable (QuickPick path / unconfigured).
+  const adapter = await mgr.getAdapter().catch(() => null);
+  if (!adapter) return statements;
+  // Only Postgres supports unquoted reserved-keyword ambiguity — skip others.
+  const active = mgr.getActive();
+  if (active?.driver !== "postgres") return statements;
+  const rewritten: ParsedStatement[] = [];
+  for (const stmt of statements) {
+    const res = await qualifyKeywordTables(stmt.text, (schema) =>
+      adapter.listTables(schema).then((rows) => rows.map((r) => r.name)),
+    );
+    rewritten.push(res.changed ? { ...stmt, text: res.sql } : stmt);
+  }
+  return rewritten;
+}
+
+ async function runStatements(
   mgr: ConnectionManager,
   runner: QueryRunner,
   panel: ResultsPanel,
@@ -464,11 +491,16 @@ async function runStatements(
   if (!(await confirmDangerousStatements(statements))) {
     return;
   }
+  // TASK-007 — Rewrite reserved-keyword table names after FROM/INTO/UPDATE/JOIN
+  // to `public.<name>` so Postgres doesn't reject `SELECT * FROM order;` with a
+  // `syntax error at or near "order"`. Only touches identifiers that resolve to
+  // actual tables in `public` (see core/keywordQualify).
+  const rewritten = await applyKeywordQualify(mgr, statements);
   const active = mgr.getActive();
   const header = `Run at ${new Date().toISOString()} — ${active ? `${active.driver}@${active.host}/${active.database}` : "no connection"}`;
   panel.setBusy(true);
   try {
-    const results = await runner.run(statements, () => {
+    const results = await runner.run(rewritten, () => {
       // Each onUpdate re-render the panel.
       panel.render(runner.getResults(), header);
     });

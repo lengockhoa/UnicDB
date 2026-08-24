@@ -27,7 +27,13 @@ import {
 } from "../core/ddl/createTable";
 import { alwaysQuote } from "../core/ddl/alterTable";
 import { rowsToSpec } from "../core/ddl/pgIntrospect";
-import { generateSampleInserts } from "../core/ddl/sampleData";
+import { AiConfigStore } from "../ai/config";
+import { createProviderClient } from "../ai/provider";
+import {
+  aiGenerateSampleData,
+  pickInsertableColumns,
+  type SampleColumn,
+} from "./sampleDataAi";
 import { NewTableForm } from "./newTableForm";
 import { SchemaForm } from "./schemaForm";
 import {
@@ -289,7 +295,7 @@ export function registerTableCommands(deps: RegisterDeps): void {
     }),
   );
 
-  // vsdb.generateSampleData — table nodes only.
+  // vsdb.generateSampleData — TASK-006 AI-driven flow (work model).
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "vsdb.generateSampleData",
@@ -306,30 +312,73 @@ export function registerTableCommands(deps: RegisterDeps): void {
           value: "10",
         });
         if (input === undefined) return;
-        const n = Number.parseInt(input, 10);
-        if (Number.isNaN(n) || n < 0) {
+        const parsed = Number.parseInt(input, 10);
+        if (Number.isNaN(parsed) || parsed <= 0) {
           void vscode.window.showInformationMessage(
             "Enter a positive number",
           );
           return;
         }
-        const clamped = Math.max(0, Math.min(1000, n));
+        const n = Math.min(100, parsed);
+
+        const cfg = await new AiConfigStore(context).loadConfig();
+        if (!cfg) {
+          void vscode.window.showInformationMessage(
+            "VSDB: AI not configured. Open settings.",
+          );
+          await vscode.commands.executeCommand("vsdb.openAiSettings");
+          return;
+        }
+
+        let columns: SampleColumn[];
+        try {
+          const detail = await introspectTable(mgr, conn, schema, table);
+          columns = detail.columns.map((r) => ({
+            name: r.column_name,
+            type: r.format_type,
+            nullable: r.is_nullable === "YES",
+            default: r.column_default,
+          }));
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          void vscode.window.showErrorMessage(
+            `Generate Sample Data failed: ${msg}`,
+          );
+          return;
+        }
+
+        const insertable = pickInsertableColumns(table, columns);
+        if (insertable.length === 0) {
+          void vscode.window.showInformationMessage(
+            `VSDB: nothing to insert into ${schema}.${table}`,
+          );
+          return;
+        }
+
+        const provider = createProviderClient({
+          baseUrl: cfg.baseUrl,
+          apiKey: cfg.apiKey,
+          method: cfg.method,
+          timeoutMs: cfg.timeoutMs,
+        });
 
         try {
-          const { columns, constraints } = await introspectTable(
-            mgr,
+          await aiGenerateSampleData({
+            cfg,
             conn,
             schema,
             table,
-          );
-          const spec = rowsToSpec(schema, table, columns, constraints);
-          const content = generateSampleInserts(spec, clamped);
-          if (content === "") return;
-          const doc = await vscode.workspace.openTextDocument({
-            language: "sql",
-            content,
+            n,
+            columns: insertable,
+            complete: (req) => provider.complete(req),
+            getAdapterFor: () => mgr.getAdapterFor(conn),
+            showInfo: (m) => {
+              void vscode.window.showInformationMessage(m);
+            },
+            showError: (m) => {
+              void vscode.window.showErrorMessage(m);
+            },
           });
-          await vscode.window.showTextDocument(doc);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           void vscode.window.showErrorMessage(

@@ -1268,5 +1268,108 @@ describe("TASK-003 — vsdb.createSchema extension wiring", () => {
     // The esbuild step ran as part of `npm run compile` at the top of
     // verification; bundle must exist on disk.
     expect(fs.existsSync(out)).toBe(true);
+});
+});
+
+
+// =============================================================================
+// TASK-007 — vsdb.runStatement applies qualifyKeywordTables at the
+// runStatements choke point. Active adapter's listTables("public") determines
+// whether reserved-keyword table names get rewritten to "public"."<name>".
+import { qualifyKeywordTables } from "./core/keywordQualify";
+import type { DbAdapter } from "./adapters/types";
+import type { ParsedStatement } from "./config/types";
+
+describe("TASK-007 — runStatement rewrites reserved-keyword tables to public schema", () => {
+  let runSpy: ReturnType<typeof vi.fn>;
+  let listTablesSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+    state.registeredTreeDataProviders.clear();
+    state.createdStatusBarItems.length = 0;
+    state.createdWebviewPanels.length = 0;
+    state.createdTreeViews.length = 0;
+    state.registeredCodeLensProviders.length = 0;
+    state.onDidChangeConfigSubscribers.length = 0;
+    state.workspaceFolders = undefined;
+    state.activeEditor = undefined;
+    state.createdTerminals.length = 0;
+    state.confirmDestructive = undefined;
+    vi.resetModules();
+  });
+
+  it("#2 vsdb.runStatement with `SELECT * FROM order;` rewrites to `SELECT * FROM \"public\".\"order\";`", async () => {
+    const ctx = makeCtx();
+    // Seed an active connection so getActive() returns truthy and the run
+    // path proceeds past the QuickPick fallback.
+    ctx.globalState.get = vi.fn((key: string) => {
+      if (key === "vsdb.connections") {
+        return [
+          {
+            id: "c1",
+            name: "c",
+            driver: "postgres",
+            host: "h",
+            port: 5432,
+            user: "u",
+            database: "d",
+          },
+        ];
+      }
+      if (key === "vsdb.activeConnection") return "c1";
+      return undefined;
+    }) as never;
+
+    // Mock the active adapter via ConnectionManager.getAdapter() — patch the
+    // prototype so any instance created during activate() picks it up.
+    const connectionMgrMod = await import("./core/connectionManager");
+    listTablesSpy = vi.fn().mockResolvedValue([{ name: "order", schema: "public" }]);
+    const adapter: Partial<DbAdapter> = {
+      listTables: listTablesSpy as unknown as DbAdapter["listTables"],
+      testConnection: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    vi.spyOn(connectionMgrMod.ConnectionManager.prototype, "getAdapter").mockResolvedValue(
+      adapter as DbAdapter,
+    );
+
+    // Spy on QueryRunner.run so we can inspect the statements it receives.
+    const runnerMod = await import("./core/queryRunner");
+    runSpy = vi
+      .spyOn(runnerMod.QueryRunner.prototype, "run")
+      .mockResolvedValue([]);
+
+    const ext = await import("./extension");
+    await ext.activate(ctx as never);
+
+    const runStatementFn = state.registeredCommands.get("vsdb.runStatement");
+    expect(runStatementFn).toBeDefined();
+
+    const stmt: ParsedStatement = {
+      text: "SELECT * FROM order;",
+      start: 0,
+      end: "SELECT * FROM order;".length,
+    };
+    await runStatementFn!(stmt);
+
+    expect(runSpy).toHaveBeenCalled();
+    const passed = runSpy.mock.calls[0]?.[0] as ParsedStatement[];
+    expect(passed.length).toBe(1);
+    expect(passed[0]!.text).toBe('SELECT * FROM "public"."order";');
+    expect(listTablesSpy).toHaveBeenCalledWith("public");
+  });
+
+  it("#2b RED→GREEN guard: invoking qualifyKeywordTables directly with the same input matches the runner input", async () => {
+    // Direct sanity check — guards against the runStatement test passing
+    // for the wrong reason (e.g. mgr mock returning a pre-rewritten string).
+    const res = await qualifyKeywordTables(
+      "SELECT * FROM order;",
+      async () => ["order"],
+    );
+    expect(res.changed).toBe(true);
+    expect(res.sql).toBe('SELECT * FROM "public"."order";');
   });
 });
+

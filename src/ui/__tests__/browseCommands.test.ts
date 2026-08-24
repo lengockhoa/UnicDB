@@ -460,5 +460,48 @@ describe("registerBrowseCommands", () => {
   });
 });
 
+// =============================================================================
+// TASK-007 — vsdb.browseTableData applies qualifyKeywordTables. Browse SQL is
+// already qualified (driver-specific quoting), so the transform is a no-op for
+// the normal `public/users` browse. Test verifies the wiring: listTables is
+// consulted (called with "public") and the existing pipeline stays intact.
+// =============================================================================
+it("#11 browse path applies qualifyKeywordTables — listTables('public') consulted, SQL unchanged for normal browse", async () => {
+  const conn: ConnectionConfig = {
+    id: "c1",
+    name: "Test PG",
+    driver: "postgres",
+    host: "127.0.0.1",
+    port: 5432,
+    user: "vsdb",
+    database: "vsdb",
+  };
+  const listTablesSpy = vi.fn(async (_schema: string): Promise<Array<{ name: string; schema: string }>> => [{ name: "order", schema: "public" }]);
+  const mgr = makeFakeMgr({ activeId: "c1", active: conn });
+  (mgr as unknown as { getAdapter: () => Promise<unknown> }).getAdapter =
+    vi.fn(async () => ({ listTables: listTablesSpy }));
+  const runner: FakeRunner = {
+    run: vi.fn(async (_stmts: ParsedStatement[], onUpdate: (r: StatementResult[]) => void) => {
+      onUpdate([]);
+      return [];
+    }),
+  };
+  const panel = makeFakePanel();
+  registerBrowseCommands({
+    mgr: mgr as unknown as ConnectionManager,
+    runner: runner as unknown as Parameters<typeof registerBrowseCommands>[0]["runner"],
+    panel: panel as unknown as Parameters<typeof registerBrowseCommands>[0]["panel"],
+  });
+  const fn = state.registeredCommands.get("vsdb.browseTableData");
+  expect(fn).toBeDefined();
+  await fn!({ meta: { connection: conn, schema: "public", objectName: "users" } });
+  expect(runner.run).toHaveBeenCalledTimes(1);
+  const [stmts] = runner.run.mock.calls[0] as [ParsedStatement[], unknown];
+  expect(stmts[0]!.text).toBe('SELECT * FROM "public"."users"');
+  // RED: listTables must be called with "public" — currently NOT called because
+  // browseCommands has no wiring to the transform.
+  expect(listTablesSpy).toHaveBeenCalledWith("public");
+});
+
 // Suppress lint warning about unused vscode import — needed to wire the mock.
 void vscode;

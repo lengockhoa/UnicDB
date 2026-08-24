@@ -314,6 +314,11 @@
           "group": "navigation"
         },
         {
+          "command": "vsdb.aiChat",
+          "when": "view == vsdb.schemaTree",
+          "group": "navigation"
+        },
+        {
           "command": "vsdb.clearSchemaTreeFilter",
           "when": "view == vsdb.schemaTree && vsdb.schemaTreeFilterActive",
           "group": "navigation"

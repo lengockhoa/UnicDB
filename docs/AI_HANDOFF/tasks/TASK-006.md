@@ -102,3 +102,33 @@ table, reject everything else including fences/explanatory text.
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Executor Report
+
+```
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: W4-T006
+SUMMARY: Replaced deterministic body of vsdb.generateSampleData with AI-driven sample-data flow. New src/ui/sampleDataAi.ts implements pure buildSampleDataPrompt, pickInsertableColumns, parseInsertStatements (INSERT-only whitelist via lookahead), and aiGenerateSampleData orchestrator that drives the work model + single adapter.runQuery (implicit transaction). tableCommands.ts now loads AiConfigStore, clamps N to 1..100, picks insertable columns, and delegates to aiGenerateSampleData with showInfo/showError callbacks.
+TEST_PLAN_FOLLOWED: inline
+FILES_CHANGED:
+  - src/ui/sampleDataAi.ts (new): pure fns + aiGenerateSampleData orchestrator
+  - src/ui/tableCommands.ts (modify): replaced generateSampleData body; added AiConfigStore + createProviderClient + pickInsertableColumns wiring
+  - src/ui/__tests__/sampleDataAi.test.ts (new): 7 tests covering prompt build, pickInsertableColumns, parseInsertStatements whitelist, full e2e (work model + runQuery ONCE + info), malformed-SQL zero-partial-insert, empty insertable set
+  - src/ui/__tests__/tableCommands.test.ts (modify): replaced old openTextDocument tests with command-level tests for cases #4 (config null → info + vsdb.openAiSettings), #5 (empty insertable → info + no provider), #7a (N=500→100), #7b (N='abc'), #7c (N='0'), plus happy-path delegation
+TESTS_ADDED:
+  - src/ui/__tests__/sampleDataAi.test.ts: buildSampleDataPrompt, pickInsertableColumns, parseInsertStatements (#3, #8), aiGenerateSampleData e2e (#2, malformed, empty)
+  - src/ui/__tests__/tableCommands.test.ts: vsdb.generateSampleData (TASK-006 AI flow) describe block — 6 tests
+VERIFICATION:
+  command: npx vitest run src/ui/__tests__/sampleDataAi.test.ts src/ui/__tests__/tableCommands.test.ts && npm run typecheck
+  result: 30 passed / 0 fail / exit 0 (typecheck clean)
+  output_excerpt: |
+    ✓ src/ui/__tests__/sampleDataAi.test.ts  (7 tests) 4ms
+    ✓ src/ui/__tests__/tableCommands.test.ts  (23 tests) 9ms
+    Test Files  2 passed (2)
+    Tests  30 passed (30)
+ISSUES: None beyond expected. Note: parseInsertStatements uses lookahead `(?=[\s(;]|$)` after the target table because the closing `"` of the quoted identifier is non-word and `\b` after it would always compare non-word/non-word and never match. Sample-data core src/core/ddl/sampleData.ts kept exported (TASK-005 contract) — no changes to that file.
+HANDOFF_TO_REVIEWER: yes — Reviewer should verify the zero-partial-insert guarantee and that no AI provider call happens on unconfigured state.
+NEXT: ready for review.
+```
