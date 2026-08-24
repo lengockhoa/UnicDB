@@ -1781,7 +1781,14 @@ function onGridPaste(ev: ClipboardEvent): void {
   // Apply the paste to the live grid by mapping each parsed cell onto
   // the precomputed nodes — same order as the applyPasteToDirty call
   // above. Column field lookup uses currentSpecs (stable ordering) —
-  // NOT live getColumnDefs.
+  // NOT live getColumnDefs. We also push a `cell-edit` action onto the
+  // unified undo stack per pasted cell (TASK-008 R2 follow-up): the
+  // paste path was leaving the undo stack empty, so clicking undo
+  // after a paste was a no-op. Capture the server-truth oldValue from
+  // the active result so a single undo restores the original cell,
+  // matching the R2 finding #3 NULL-vs-MISSING distinction already
+  // honored in applyUndoAction.
+  const activeResult = results[activeTab];
   for (let r = 0; r < targetNodes.length; r++) {
     const ref = targetNodes[r];
     const row = parsed[r];
@@ -1790,7 +1797,23 @@ function onGridPaste(ev: ClipboardEvent): void {
       if (targetCol < 0 || targetCol >= colCount) continue;
       const spec = currentSpecs[targetCol];
       if (!spec) continue;
+      // Read the pre-paste value from server-truth (same source
+      // applyUndoAction consults on undo). For locally-added rows this
+      // is undefined — those rows are never targeted here because the
+      // targetNodes loop above already broke on `serverIndexByRowId`
+      // missing.
+      const si = serverIndexByRowId.get(ref.id);
+      const serverRow =
+        si !== undefined ? activeResult?.result?.rows?.[si] : undefined;
+      const oldValue = serverRow !== undefined ? serverRow[targetCol] : undefined;
       ref.data[spec.field] = row[c];
+      undoStack.push({
+        kind: "cell-edit",
+        rowId: ref.id,
+        colIndex: targetCol,
+        oldValue,
+        newValue: row[c],
+      });
     }
   }
   gridApi.refreshCells({ force: true });

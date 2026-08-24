@@ -187,7 +187,8 @@ const EXPECTED_ORDER = [
   "vsdb-btn", // Add Row
   "vsdb-btn", // Delete Row
   "vsdb-btn", // Undo
-  "vsdb-commit",
+  "vsdb-btn", // Redo
+  "vsdb-commit", // Commit
   "vsdb-btn", // CSV toggle
   "vsdb-toolbar-sep", // edit│export divider
   "vsdb-export-format",
@@ -213,7 +214,7 @@ describeIfBundle("webview/main.ts icon toolbar + single-row layout (TASK-603)", 
       ).filter(
         (el): el is HTMLButtonElement => el.tagName === "BUTTON",
       ) as HTMLButtonElement[];
-      expect(btns.length).toBe(9);
+      expect(btns.length).toBe(10);
 
       for (const b of btns) {
         const svg = b.querySelector("svg");
