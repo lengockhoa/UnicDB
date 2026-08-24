@@ -150,3 +150,27 @@ HANDOFF_TO_REVIEWER: yes — package.json manifest edit + test assertion change 
     group, when-clause, and the test assertion order.
 
 NEXT: ready for review (W4-T009 → Rev-W4-T009).
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/scaffold.test.ts && npm run typecheck
+  result: 6/7 pass + 1 pre-existing fail at src/scaffold.test.ts:126; typecheck PASS
+TEST_PLAN_COVERAGE: all-followed
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none (the src/scaffold.test.ts:126 icon failure on vsdb.browseTableData is TASK-002's
+      regression — assigned to that task's verdict, not blocking here)
+  minor:
+    - none (task acceptance bullet "All cases PASS" is unmet only because of that cross-task
+      L126 throw; T009's own assertions L128-139 verified green via direct manifest read)
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: T009 wave-4 commit d227b27 slice is exactly +5 lines in package.json (one vsdb.aiChat
+  view/title navigation entry after vsdb.openAiSettings) and the assertion/comment update in
+  src/scaffold.test.ts — nothing else. Command vsdb.aiChat carries icon "$(comment-discussion)"
+  and activation event onCommand:vsdb.aiChat; view/title order now
+  refresh/add/filter/openAiSettings/aiChat/clearFilter matching L134-139.

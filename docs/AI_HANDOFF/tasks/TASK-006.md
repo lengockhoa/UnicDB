@@ -132,3 +132,23 @@ ISSUES: None beyond expected. Note: parseInsertStatements uses lookahead `(?=[\s
 HANDOFF_TO_REVIEWER: yes — Reviewer should verify the zero-partial-insert guarantee and that no AI provider call happens on unconfigured state.
 NEXT: ready for review.
 ```
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/sampleDataAi.test.ts src/ui/__tests__/tableCommands.test.ts && npm run typecheck
+  result: 35 pass / 0 fail; typecheck clean (exit 0)
+TEST_PLAN_COVERAGE: partial — case #4 assertion weakened to `infoMessages.some(...)` (does not assert `executeCommand("vsdb.openAiSettings")` fired, which the spec and test name both promise); executor report `TEST_PLAN_FOLLOWED: inline` carries no RED output — reviewer reproduced RED independently at baseline (sampleDataAi module-not-found; 14 tableCommands test failures) so TDD did happen, but the report does not document it.
+FINDINGS:
+  critical: []
+  important:
+    - src/ui/sampleDataAi.ts:211 — "implicit transaction (all-or-nothing)" claim is false. PostgresAdapter.runQuery (src/adapters/postgres.ts:169-184) splits the joined string with splitStatements and executes each statement in its own `pool.query` — every INSERT autocommits. A mid-batch failure (e.g. one row violates a UNIQUE/FK constraint) leaves rows 1..k-1 permanently inserted, violating the task's stated all-or-nothing goal (Task Goal + Acceptance "Zero-partial-insert guarantee" refers to validation; the atomicity goal is §Goal/discussion). Correct: wrap the batch in one explicit transaction — either join as `BEGIN; <inserts>; COMMIT;` (validation whitelist already rejects anything non-INSERT so BEGIN/COMMIT would need an allowlist exemption) or add an adapter-level `runQueryInTransaction(sql)`/dedicated-client path; keep the single round-of-execution semantics. Note the comment at sampleDataAi.ts:8 and :169 repeats the same false claim — update both.
+  minor:
+    - src/ui/sampleDataAi.ts:55-63 — pickInsertableColumns drops all `id_<table>` and `created_at` columns, so a table whose ONLY columns are `id_users`+`created_at` correctly yields "nothing to insert" (covered by test), but there is no exclusion for other server-defaulted columns (e.g. `updated_at DEFAULT now()`); AI will generate values for them, overriding defaults. Low impact — spec only required the 3 exclusion kinds.
+    - src/ui/sampleDataAi.ts:108-120 — parseInsertStatements lowercases `schema`/`table` names for comparison only via the case-insensitive regex flag, but PG quoted identifiers are case-sensitive: `INSERT INTO "public"."Users"` (target table `users`) passes validation and inserts into a nonexistent/other table only if such a table exists. Practical risk low (would usually error), but the regex alternation `qSchema\\.${qTable}|${bareTarget}` with `i` flag also accepts `PUBLIC.USERS` for target `public.users`. Consider case-sensitive matching for the quoted form.
+    - src/ui/__tests__/sampleDataAi.test.ts:52-73 — case #1 prompt assertions use loose `toMatch(/name/)` etc.; `10` asserted via two separate regexes that could match substring `10` anywhere. Minor test-strength nit; the case-2 e2e covers the real contract.
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Security review of the AI-INSERT path is clean: whitelist is anchored (`^\\s*INSERT\\s+INTO\\s+` + exact schema.table, lookahead boundary), splitStatements is quote/dollar-quote aware so embedded `;` in VALUES cannot smuggle a second statement past validation, and apiKey stays in SecretStorage (never in the prompt; provider scrubs it from error snippets). The one real defect is the false atomicity claim — fix and re-submit.

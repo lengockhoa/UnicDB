@@ -106,3 +106,23 @@ NEXT: ready for review (Phase 4)
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic/unic-smart (config handoff.reviewer.model = unic-smart — match)
+EXECUTOR_MODEL: unic/unic-code (differs — isolation OK)
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run src/ui/__tests__/webviewRequery.test.ts && npm run typecheck
+  result: PASS — compile OK; 10/10 tests pass (re-ran file 4x serially, all green); tsc --noEmit clean
+TEST_PLAN_COVERAGE: all-followed (cases 1-4 → tests 5-8; RED evidence concrete: idxRequery 2 vs 0, cmp 1 vs -1). Note: plan itself shipped 1 edge case vs config minTestsEdgeCase=2 (planner-side, non-blocking).
+FINDINGS:
+  critical:
+    - none
+  important:
+    - webview/main.ts:303-307 — the diff DELETED `gridWrap: HTMLDivElement;` from the PersistentDom interface (JSDoc kept, property line dropped; diff hunk shows `- gridWrap: HTMLDivElement;` with no re-add). `dom.gridWrap` is used at L868/874/883/1224; `npx tsc -p tsconfig.webview.json` now reports 4 NEW TS2339 "Property 'gridWrap' does not exist on type 'PersistentDom'" errors. Invisible to `npm run typecheck` (root tsconfig excludes webview/). Fix: re-add `gridWrap: HTMLDivElement;` after the updated JSDoc.
+  minor:
+    - src/ui/__tests__/webviewRequery.test.ts:421 — diff ate the decorative `// ===...` banner line above "Fix Round 2 — Critical #1" comment; restore for consistency.
+    - webview/main.ts — `gridHost: HTMLDivElement;` also missing from PersistentDom (PRE-EXISTING at base d266d93, not introduced here); add it in the same one-line fix if convenient.
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Parallel-run flake judged TEST ISOLATION, not product: buildPersistentDom DOM order is built synchronously (no timing/async); tests 5/6 assert static child order and pass 4/4 serially. Plausible mechanisms: stale dist/webview.js from a pre-move compile at suite start, or worker-thread globalThis reuse across bundle-eval suites. Non-blocking.

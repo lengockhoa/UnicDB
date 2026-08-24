@@ -152,3 +152,22 @@ ISSUES: none
 HANDOFF_TO_REVIEWER: yes — TASK-004 fully implemented; code changes left
 uncommitted in .worktrees/task-004 per harness rule.
 NEXT: ready for review
+
+
+## Reviewer Verdict
+
+VERDICT: CRITICAL
+REVIEWER_MODEL: unic/unic-smart (configured reviewer: unic-smart)
+EXECUTOR_MODEL: unic/unic-code
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run src/ui/__tests__/newTableFormColumnDefault.test.ts && npm run typecheck
+  result: FAIL — compile passed; Vitest reported 1 file/8 tests passed but exited 1 with uncaught TypeError; typecheck was not reached in the chained command (passes when run separately).
+TEST_PLAN_COVERAGE: partial — 8 assertions cover the listed cases, but verification is not clean; Executor Report also omits required RED_OUTPUT evidence.
+FINDINGS:
+  critical:
+    - src/ui/__tests__/newTableFormColumnDefault.test.ts:31-45 — each dynamic import registers another window message listener, while afterEach only resets the module cache and clears the DOM. Later init messages invoke stale listeners whose captured root is detached, producing `TypeError: Cannot set properties of null (setting 'value')` at webview/newTableFormMain.ts:193; the required Vitest command exits non-zero. Use one module listener per test environment or explicitly remove the registered listener during teardown, then re-run the full verification command.
+    - docs/AI_HANDOFF/tasks/TASK-004.md:Executor Report — RED_OUTPUT is absent; the report does not provide the required real failing-test output before implementation. Re-run the TDD RED cycle and append actual failure output.
+  important: []
+  minor: []
+NEXT_STATUS_FOR_INDEX: critical_block
+NOTES: Model isolation is satisfied. The implementation diff otherwise matches the requested dropdown, default, and wire-preservation behavior, but a non-zero verification command blocks approval.

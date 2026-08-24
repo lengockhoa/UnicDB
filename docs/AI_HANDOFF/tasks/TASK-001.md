@@ -118,3 +118,24 @@ ISSUES: Two mid-flight deviations from initial spec reading:
   2. Initial impl used `runner.getResults()` inside onUpdate; tests provide `vi.fn` runners without `getResults`. Switched to use the `current` array passed into the onUpdate callback. Mirrors the contract `runner.run(stmts, onUpdate(r => …))`.
 HANDOFF_TO_REVIEWER: yes
 NEXT: ready for review
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/browseCommands.test.ts && npm run typecheck
+  result: 10 pass / 0 fail (9 TASK-001 cases + TASK-007 case #11); typecheck exit 0
+TEST_PLAN_COVERAGE: all-followed — 9/9 required cases present, real expect() in each; RED_OUTPUT is genuine module-not-found failure output (matches task's defined RED form)
+FINDINGS:
+  critical:
+    - none in TASK-001's slice. (Known regression — vsdb.browseTableData has NO `icon` in package.json, breaking src/scaffold.test.ts:126 — is TASK-002's: wave-2 commit 5add346 added that entry; TASK-001 touched only its two Target Files. Assigned to TASK-002's verdict, not this one.)
+  important:
+    - none
+  minor:
+    - src/ui/browseCommands.ts:112 — registerBrowseCommands returns void and drops the registerCommand Disposable; repo convention (src/ui/tableCommands.ts:178) pushes to context.subscriptions, so this command is never disposed on teardown. Spec-conformant (task Interfaces specified `: void`) but the API should return the Disposable for the caller to push.
+    - src/ui/browseCommands.ts:81 — resolveBrowseNode rejects falsy `meta.schema` (`!meta.schema`), making buildBrowseSelect's empty-schema unqualified branch (case #4) unreachable from the command path. Latent dead path; document or let empty schema through.
+    - src/ui/browseCommands.ts:175 — file lacks trailing newline.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: T001's slice (wave-1 commit 03525eb; T007's wave-4 edits to the same file judged separately) is correct, well-tested, typecheck-clean, and within scope. Icon regression is TASK-002's to fix.

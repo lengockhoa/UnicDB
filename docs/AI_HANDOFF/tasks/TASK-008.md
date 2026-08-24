@@ -151,3 +151,26 @@ ISSUES: none
 HANDOFF_TO_REVIEWER: yes
 NEXT: ready for review (TaskContract postmanPayload behavior + adapter contract extension + driver guard tested; typecheck clean; package.json diff purely additive)
 -->
+
+## Reviewer Verdict
+
+VERDICT: CRITICAL
+REVIEWER_MODEL: unic/unic-smart (config handoff.reviewer.model=unic-smart — match)
+EXECUTOR_MODEL: unic/unic-code (claude-sonnet-4-5) — differs from reviewer, isolation OK
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/postmanPayload.test.ts src/ui/__tests__/tableCommands.test.ts src/adapters/__tests__/postgres.test.ts && npm run typecheck
+  result: 43 pass / 0 fail; tsc --noEmit clean
+TEST_PLAN_COVERAGE: all-followed (9/9 cases present) — but no RED_OUTPUT pasted (AC#1 unmet) and adapter tests are mock-row based, blind to the SQL defect below
+FINDINGS:
+  critical:
+    - src/adapters/postgres.ts:267-276 — listRoutineParams reads only `proallargtypes`, which is NULL for ordinary all-IN-arg functions (their arg types live in `proargtypes` oidvector). Verified on real PG 16.15 (vsdb-postgres, PREPARE/EXECUTE mirroring $1/$2 binds): shipped SQL returns 0 rows for `named_args(p_user_id integer, p_amount numeric)` and `unnamed(integer, text)` → in production every routine payload degrades to `{ schema, table }` with zero param keys. Verified fix (returns correct rows for named / unnamed / no-args / INOUT — all four shapes tested):
+      `SELECT p.proargnames[t.ord] AS arg_name, pg_catalog.format_type(t.typ, NULL) AS format_type FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace CROSS JOIN LATERAL unnest(COALESCE(p.proallargtypes, p.proargtypes::oid[])) WITH ORDINALITY AS t(typ, ord) WHERE n.nspname = $1 AND p.proname = $2 ORDER BY t.ord`
+    - src/adapters/postgres.ts:271-274 — same query, second defect: `generate_series(0, …)` is 0-based while `proargnames`/`proallargtypes` subscripts are 1-based, so even when `proallargtypes` IS populated (INOUT args) rows are misaligned: `mixed(a integer, INOUT b text)` returned `(NULL,''), (a,'integer')` instead of `(a,integer),(b,text)`. The fix above covers both.
+  important:
+    - src/adapters/__tests__/postgres.test.ts:177 — `toMatch(/proallargtypes\[ord\]/)` pins the defective SQL text; after the fix, update this assertion to the corrected query. The mock harness cannot catch wrong-SQL defects (canned rows bypass parsing); if feasible add a VSDB_IT=1 case in src/adapters/__tests__/ddl.integration.test.ts asserting listRoutineParams on an all-IN-arg function.
+    - Executor Report — no RED_OUTPUT field with real failing output (AC#1 "RED first … pasted"). On the fix round, paste actual failing-test output before implementing.
+  minor:
+    - src/ui/tableCommands.ts:517-521 + src/ui/postmanPayload.ts:115 — `p.name ?? ""` then skip-empty silently drops unnamed positional args from the payload with no signal; emit positional keys (arg1, arg2, …) or document the drop.
+    - src/ui/tableCommands.ts:503-505 — the `node.meta?.connection/schema` pre-check duplicates resolveTableNode's null path (guardPostgres already returns null); keep one.
+NEXT_STATUS_FOR_INDEX: critical_block
+NOTES: Parameterization verified — $1/$2 bind asserted, no injection. package.json slice is clean and purely additive (icon `$(copy)`, activationEvent, menu when-clause); the vsdb.browseTableData missing-icon scaffold regression belongs to TASK-002, not this task. Builder/jsKey/driver-guard/mysql+mssql stubs all correct.

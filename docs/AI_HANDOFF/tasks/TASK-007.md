@@ -162,3 +162,23 @@ NEXT: ready for review.
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/core/__tests__/keywordQualify.test.ts src/ui/__tests__/browseCommands.test.ts src/extension.test.ts && npm run typecheck
+  result: 75 pass / 0 fail; typecheck clean (no output)
+TEST_PLAN_COVERAGE: all-followed — all 11 cases present with real expect() assertions; executor captured RED output for cases #2/#11 as reported (stubbed post-hoc spot-check of #2's exact expected string passes fresh)
+FINDINGS:
+  critical: []
+  important: []
+  minor:
+    - src/core/keywordQualify.ts:274-280 — comma disarms CTE-name collection, so only the FIRST CTE in `WITH x AS (…), order AS (…) SELECT * FROM order` is registered; `order` is then wrongly rewritten to "public"."order" (verified live), shadowing the CTE. Cannot corrupt committed data (the CTE simply resolves instead) and case #6 single-CTE is guarded; fix = keep collecting CTE names after commas inside an active WITH prefix.
+    - src/core/keywordQualify.ts:325-333 — trigger set is FROM/INTO/UPDATE/JOIN only; `FROM ONLY order` and subquery `FROM (SELECT … FROM order)` (paren-depth guard) are never rewritten (verified live). UPDATE … FROM and INSERT INTO do work.
+    - src/ui/browseCommands.ts:151-158 — browse path applies the transform for every driver and awaits listTables eagerly per browse (extension.ts applyKeywordQualify gates on driver === "postgres"); non-pg drivers get an extra metadata round trip and harmless-but-unneeded Postgres semantics.
+    - src/extension.ts:474-478 — rewritten ParsedStatements keep stale start/end offsets; harmless today (QueryRunner consumes .text only, queryRunner.ts:119,154) but the offsets are now lies if any consumer starts using them.
+NOTES: Model isolation satisfied (unic-code executor vs unic/unic-smart reviewer). Focused correctness goal met: no false rewrites for ORDER BY, quoted, qualified, or single-CTE-shadowed identifiers; rewrite fires only for unquoted+unqualified+reserved-word+public-member. Minors are logged for a follow-up sweep; none block handoff.
+NEXT_STATUS_FOR_INDEX: approved_minor

@@ -151,3 +151,24 @@ ISSUES: (1) Mid-flight: my first extension.ts import edit accidentally overwrote
 HANDOFF_TO_REVIEWER: yes
 NEXT: ready for review
 
+
+## Reviewer Verdict
+
+VERDICT: CRITICAL
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic-code
+EXECUTOR_TOOL: claude-code
+VERIFICATION_RERUN:
+  command: `npx vitest run src/ui/__tests__/schemaTree.test.ts src/extension.test.ts src/ui/__tests__/browseCommands.test.ts && npm run typecheck`
+  result: 111 pass / 0 fail (scoped suite); typecheck exit 0
+TEST_PLAN_COVERAGE: all-followed
+FINDINGS:
+  critical:
+    - package.json:190 — `vsdb.browseTableData` contributes.commands entry has NO `icon` property. Baseline at d266d93 had zero iconless commands. `src/scaffold.test.ts:126` loops every command asserting `cmd.icon` matches `/^\$\(/`; this is a real regression now confirmed: `npx vitest run src/scaffold.test.ts` fails `TypeError: .toMatch() expects a string, got undefined` at L126 for this command. TASK-002 owns package.json and owns this entry; this blocks handoff.
+    - src/scaffold.test.ts:126 — the failing assertion originates here (inherited loop from earlier scaffold tests, NOT modified by T002's diff). The root cause is the missing icon in the command entry added by T002, not the test itself.
+  important:
+    - src/extension.ts:100 — `registerBrowseCommands(...)` is called as a bare statement; any thrown synchronous error would crash `activate()`. The other registrations push returned disposables or void identically, so this is consistent with the existing pattern and is not blocking.
+  minor:
+    - package.json:189-193 — add `"icon": "$(database)"` (or a similar DataGrip-style icon matching the "Browse Data" semantics) to the `vsdb.browseTableData` command entry.
+NEXT_STATUS_FOR_INDEX: critical_block
+NOTES: Scoped T002 verification passes; the regression is isolated to the icon-assertion loop in scaffold.test.ts which T002's new command entry triggers. Fix: add `icon` to the package.json command entry and re-verify both scoped and scaffold suites.
