@@ -1,6 +1,6 @@
 Command: handoff-fullstack
-Goal: Cycle O — ACP session history & resume
+Goal: Cycle P — permission detail + builtin tool-call UI + VSIX release pass
 Base: main
 Phase: done
-Cursor: released da413cb — 4/4 approved; full suite 819 passed / 2 opt-in skipped exit 0; compile/typecheck clean; tree clean
-Next: backlog (verified 2026-08-24) — permission dialog detail (tool args/SQL preview), builtin engine tool-call streaming UI, optional VSIX release pass (npm run package). hostTools/detect NOT orphan (in active use, tests green) — removed from backlog.
+Cursor: released b1ca68c — 3/3 approved; full suite 838 passed / 2 opt-in skipped exit 0; compile/typecheck clean; vsdb-1.6.0.vsix built (not published); tree clean
+Next: backlog EMPTY — all queued items delivered. Optional future: marketplace publish (needs PAT, out of scope), i18n, connection profiles UI.
