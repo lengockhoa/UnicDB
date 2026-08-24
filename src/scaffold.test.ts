@@ -128,12 +128,14 @@ describe("scaffold", () => {
     const viewTitle = pkg.contributes.menus["view/title"];
     expect(viewTitle).toBeTruthy();
     expect(viewTitle.every((m: { group?: string }) => m.group === "navigation")).toBe(true);
-    // Toolbar order: refresh, add connection, filter, clear-filter (vị trí ổn định
+    // Toolbar order: refresh, add connection, filter, AI settings (1.6.x),
+    // clear-filter (chỉ hiện khi filter active — luôn cuối, vị trí ổn định
     // khi connection/filter state xuất hiện).
     expect(viewTitle[0].command).toBe("vsdb.refreshSchema");
     expect(viewTitle[1].command).toBe("vsdb.addConnection");
     expect(viewTitle[2].command).toBe("vsdb.filterSchemaTree");
-    expect(viewTitle[3].command).toBe("vsdb.clearSchemaTreeFilter");
+    expect(viewTitle[3].command).toBe("vsdb.openAiSettings");
+    expect(viewTitle[4].command).toBe("vsdb.clearSchemaTreeFilter");
 
     // Empty state: viewsWelcome thay cho tree node "No connections" — không còn
     // node placeholder nào trong tree.

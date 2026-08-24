@@ -291,6 +291,11 @@
           "group": "navigation"
         },
         {
+          "command": "vsdb.openAiSettings",
+          "when": "view == vsdb.schemaTree",
+          "group": "navigation"
+        },
+        {
           "command": "vsdb.clearSchemaTreeFilter",
           "when": "view == vsdb.schemaTree && vsdb.schemaTreeFilterActive",
           "group": "navigation"
