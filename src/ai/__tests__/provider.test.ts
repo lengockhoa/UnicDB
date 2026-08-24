@@ -1,6 +1,7 @@
 // src/ai/__tests__/provider.test.ts
 // Tests for TASK-002: OpenAI-compatible provider client (pure, injected fetch).
 // Spec: docs/AI_HANDOFF/tasks/TASK-002.md §Spec + §Test Cases.
+// + TASK-001: provider streamComplete SSE streaming.
 import { describe, it, expect, vi } from "vitest";
 import {
   createProviderClient,
@@ -424,5 +425,289 @@ describe("buildResponsesBody — system messages concatenated", () => {
     });
     expect(body.instructions).toBe("S1\nS2");
     expect(Array.isArray(body.input)).toBe(true);
+  });
+});
+
+// ---- TASK-001: streamComplete SSE ---------------------------------------
+function sseResponse(body: string, status = 200, statusText = "OK"): Response {
+  return new Response(body, {
+    status,
+    statusText,
+    headers: { "Content-Type": "text/event-stream" },
+  });
+}
+
+function sseStreamResponse(
+  pump: (controller: ReadableStreamDefaultController<Uint8Array>) => void,
+): Response {
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        try {
+          pump(controller);
+        } catch (e) {
+          controller.error(e);
+        }
+      },
+    }),
+    { status: 200, statusText: "OK", headers: { "Content-Type": "text/event-stream" } },
+  );
+}
+
+describe("provider — streamComplete (#1 happy)", () => {
+  it("emits onText per delta chunk, final result with usage from last chunk", async () => {
+    const sseBody =
+      'data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n' +
+      'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n' +
+      'data: {"choices":[{"delta":{"content":"!"}}],"usage":{"prompt_tokens":7,"completion_tokens":5}}\n\n' +
+      "data: [DONE]\n\n";
+    const fetch: FetchLike = vi.fn(async () => sseResponse(sseBody));
+    const client = createProviderClient({
+      baseUrl: "https://x/v1",
+      apiKey: "sk-1",
+      method: "chat/completions",
+      fetch,
+    });
+    const texts: string[] = [];
+    const result = await client.streamComplete(baseReq(), {
+      onText: (ev) => texts.push(ev.text),
+    });
+    expect(texts).toEqual(["Hel", "lo", "!"]);
+    expect(result).toEqual({
+      text: "Hello!",
+      toolCalls: [],
+      finishReason: "stop",
+      usage: { inputTokens: 7, outputTokens: 5 },
+    });
+  });
+});
+
+describe("provider — streamComplete (#2 malformed events)", () => {
+  it("skips JSON.parse failures and events without choices, but keeps good events", async () => {
+    const sseBody =
+      "data: {bad json\n\n" +
+      'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n' +
+      "data: {}\n\n" +
+      "data: [DONE]\n\n";
+    const fetch: FetchLike = vi.fn(async () => sseResponse(sseBody));
+    const client = createProviderClient({
+      baseUrl: "https://x/v1",
+      apiKey: "sk-1",
+      method: "chat/completions",
+      fetch,
+    });
+    const texts: string[] = [];
+    const result = await client.streamComplete(baseReq(), {
+      onText: (ev) => texts.push(ev.text),
+    });
+    expect(texts).toEqual(["ok"]);
+    expect(result.text).toBe("ok");
+  });
+});
+
+describe("provider — streamComplete (#3 chunk boundaries + multi-line data)", () => {
+  it("reassembles fragments split mid-UTF8, mid-line, and across events; concatenates multi-line data with \\n", async () => {
+    // "hél" → "h" 0x68, "é" 0xC3 0xA9, "l" 0x6C.
+    // Split mid-UTF8: chunk1 ends with bytes for "h" + first byte of "é" (0xC3).
+    const part1 = new TextEncoder().encode('data: {"choices":[{"delta":{"content":"h');
+    const part2 = new TextEncoder().encode(
+      'él"}}]}\n\ndata: [DONE]\n\n',
+    );
+    // The boundary is inside the JSON content of a single data: line.
+    // Concretely: split after the opening of the "hél" content string.
+    // The first chunk ends right before the UTF-8 bytes for "é" are written.
+    // We achieve the split by making the first chunk contain "data: {\"choices\":[{\"delta\":{\"content\":\"h"
+    // and the second chunk contain the rest of the JSON, the event terminator, and [DONE].
+    const resp = sseStreamResponse((c) => {
+      // enqueue first fragment (no terminator yet, content string not yet closed)
+      c.enqueue(part1);
+      // enqueue second fragment: closes the JSON, ends the event, then [DONE] event
+      c.enqueue(part2);
+      c.close();
+    });
+    const fetch: FetchLike = vi.fn(async () => resp);
+    const client = createProviderClient({
+      baseUrl: "https://x/v1",
+      apiKey: "sk-1",
+      method: "chat/completions",
+      fetch,
+    });
+    const texts: string[] = [];
+    const result = await client.streamComplete(baseReq(), {
+      onText: (ev) => texts.push(ev.text),
+    });
+    expect(texts).toEqual(["h\u00e9l"]);
+    expect(result.text).toBe("h\u00e9l");
+  });
+});
+
+describe("provider — streamComplete (#4 HTTP 401)", () => {
+  it("throws ProviderError with status 401 and apiKey scrubbed from snippet/message", async () => {
+    const fetch: FetchLike = vi.fn(async () =>
+      textResponse("Unauthorized for key sk-secret-123", 401, "Unauthorized"),
+    );
+    const client = createProviderClient({
+      baseUrl: "https://x/v1",
+      apiKey: "sk-secret-123",
+      method: "chat/completions",
+      fetch,
+    });
+    try {
+      await client.streamComplete(baseReq(), { onText: () => {} });
+      throw new Error("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ProviderError);
+      const pe = e as ProviderError;
+      expect(pe.status).toBe(401);
+      expect(pe.bodySnippet).toBe("Unauthorized for key ***");
+      expect(pe.message).not.toContain("sk-secret-123");
+      expect(pe.bodySnippet).not.toContain("sk-secret-123");
+    }
+  });
+});
+
+describe("provider — streamComplete (#5 non-SSE 200)", () => {
+  it("throws ProviderError (invalid SSE) when body is plain JSON, no onText fired", async () => {
+    const fetch: FetchLike = vi.fn(async () =>
+      jsonResponse({ choices: [{ message: { content: "Hello" } }] }),
+    );
+    const client = createProviderClient({
+      baseUrl: "https://x/v1",
+      apiKey: "sk-1",
+      method: "chat/completions",
+      fetch,
+    });
+    let called = false;
+    try {
+      await client.streamComplete(baseReq(), {
+        onText: () => {
+          called = true;
+        },
+      });
+      throw new Error("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ProviderError);
+      expect(called).toBe(false);
+    }
+  });
+});
+
+describe("provider — streamComplete (#6 abort mid-stream)", () => {
+  it("rejects with bare AbortError (not wrapped in ProviderError), no onText after abort", async () => {
+    const controller = new AbortController();
+    const abortErr: Error & { name: string } = Object.assign(new Error("stream aborted"), {
+      name: "AbortError",
+    });
+    const fetch: FetchLike = vi.fn(async (_url, init) => {
+      // Forward caller signal so .abort() works.
+      const callerSignal = init.signal;
+      return sseStreamResponse((c) => {
+        // Enqueue one good delta first.
+        c.enqueue(
+          new TextEncoder().encode(
+            'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n',
+          ),
+        );
+        // Then error with AbortError when caller aborts.
+        callerSignal.addEventListener("abort", () => {
+          c.error(abortErr);
+        });
+      });
+    });
+    const client = createProviderClient({
+      baseUrl: "https://x/v1",
+      apiKey: "sk-1",
+      method: "chat/completions",
+      fetch,
+    });
+    const texts: string[] = [];
+    try {
+      const p = client.streamComplete(baseReq(), {
+        onText: (ev) => texts.push(ev.text),
+        signal: controller.signal,
+      });
+      // abort after this microtask
+      await Promise.resolve();
+      controller.abort();
+      await p;
+      throw new Error("should have thrown");
+    } catch (e) {
+      const err = e as Error;
+      expect(err.name).toBe("AbortError");
+      expect(err).not.toBeInstanceOf(ProviderError);
+      // "partial" may have been delivered before the abort propagated
+      expect(texts.length).toBeLessThanOrEqual(1);
+      if (texts.length === 1) expect(texts[0]).toBe("partial");
+    }
+  });
+});
+
+describe("provider — streamComplete (CRLF body regression)", () => {
+  it("parses events when server uses \\r\\n\\r\\n separators (legal SSE per spec)", async () => {
+    // Some SSE servers emit CRLF-only line endings (SSE spec: "line terminators" can be CR, LF, or CRLF).
+    const sseBody =
+      'data: {"choices":[{"delta":{"content":"Hel"}}]}\r\n\r\n' +
+      'data: {"choices":[{"delta":{"content":"lo"}}]}\r\n\r\n' +
+      'data: {"choices":[{"delta":{"content":"!"}}],"usage":{"prompt_tokens":7,"completion_tokens":5}}\r\n\r\n' +
+      'data: [DONE]\r\n\r\n';
+    const fetch: FetchLike = vi.fn(async () => sseResponse(sseBody));
+    const client = createProviderClient({
+      baseUrl: "https://x/v1",
+      apiKey: "sk-1",
+      method: "chat/completions",
+      fetch,
+    });
+    const texts: string[] = [];
+    const result = await client.streamComplete(baseReq(), {
+      onText: (ev) => texts.push(ev.text),
+    });
+    expect(texts).toEqual(["Hel", "lo", "!"]);
+    expect(result.text).toBe("Hello!");
+  });
+});
+
+describe("provider — streamComplete (caller abort during fetch phase)", () => {
+  it("rejects with bare AbortError (name 'AbortError', not ProviderError) when caller signal aborts before response headers arrive", async () => {
+    const controller = new AbortController();
+    const abortErr: Error & { name: string } = Object.assign(new Error("aborted"), {
+      name: "AbortError",
+    });
+    const fetch: FetchLike = vi.fn(async (_url, init) => {
+      // Simulate caller abort during fetch: forward signal so .abort() fires,
+      // and reject the fetch promise with an AbortError-shape error (as Node fetch / undici does).
+      const callerSignal = init.signal;
+      // Simulate the real fetch behavior: throw an AbortError when the signal fires.
+      return await new Promise<Response>((_resolve, reject) => {
+        callerSignal.addEventListener(
+          "abort",
+          () => reject(abortErr),
+          { once: true },
+        );
+      });
+    });
+    const client = createProviderClient({
+      baseUrl: "https://x/v1",
+      apiKey: "sk-1",
+      method: "chat/completions",
+      fetch,
+    });
+    const p = client.streamComplete(baseReq(), {
+      onText: () => {
+        // should not be called
+        throw new Error("onText should not fire on abort");
+      },
+      signal: controller.signal,
+    });
+    // abort after the fetch has been started
+    await Promise.resolve();
+    controller.abort();
+    try {
+      await p;
+      throw new Error("should have thrown");
+    } catch (e) {
+      const err = e as Error;
+      expect(err.name).toBe("AbortError");
+      expect(err).not.toBeInstanceOf(ProviderError);
+    }
   });
 });

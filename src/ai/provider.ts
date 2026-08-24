@@ -84,6 +84,15 @@ export interface ProviderOptions {
   fetch?: FetchLike;
 }
 
+// ---- TASK-001: streaming types -------------------------------------------
+export interface StreamTextEvent {
+  text: string;
+}
+
+export interface StreamRequestOptions {
+  onText(ev: StreamTextEvent): void;
+  signal?: AbortSignal;
+}
 // ---- helpers ---------------------------------------------------------------
 const DEFAULT_TIMEOUT_MS = 60_000;
 const SNIPPET_MAX = 300;
@@ -321,6 +330,7 @@ export function parseResponsesResponse(json: unknown): ProviderResult {
 // ---- factory --------------------------------------------------------------
 export function createProviderClient(opts: ProviderOptions): {
   complete(req: ProviderRequest): Promise<ProviderResult>;
+  streamComplete(req: ProviderRequest, opts: StreamRequestOptions): Promise<ProviderResult>;
 } {
   const baseUrl = opts.baseUrl;
   const apiKey = opts.apiKey;
@@ -407,6 +417,278 @@ export function createProviderClient(opts: ProviderOptions): {
           bodySnippet: snippet,
         });
       }
+    },
+
+    async streamComplete(
+      req: ProviderRequest,
+      streamOpts: StreamRequestOptions,
+    ): Promise<ProviderResult> {
+      if (method === "responses") {
+        throw new Error("streaming not supported for method responses");
+      }
+      const url = buildUrl(baseUrl, method);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      // If caller supplied a signal, forward aborts.
+      if (streamOpts.signal) {
+        if (streamOpts.signal.aborted) {
+          controller.abort();
+        } else {
+          streamOpts.signal.addEventListener("abort", () => controller.abort(), {
+            once: true,
+          });
+        }
+      }
+      let body: Record<string, unknown>;
+      try {
+        body = buildChatCompletionsBody(req);
+      } catch (e) {
+        clearTimeout(timer);
+        throw new ProviderError(`invalid request: ${(e as Error).message}`, {
+          timeout: false,
+          endpoint: url,
+          bodySnippet: "",
+        });
+      }
+      // stream:true; no stream_options, no include_usage.
+      const wireBody = { ...body, stream: true };
+
+      let resp: Response;
+      try {
+        resp = await fetchImpl(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify(wireBody),
+          signal: controller.signal,
+        });
+      } catch (e) {
+        clearTimeout(timer);
+        const err = e as Error & { name?: string };
+        if (err.name === "AbortError") {
+          // Distinguish caller-level abort from our internal timeout.
+          // Frozen contract: caller abort must surface bare (name "AbortError", NOT ProviderError).
+          if (streamOpts.signal?.aborted) {
+            // Surface the original error so its name stays "AbortError" and it
+            // is NOT an instance of ProviderError. If `e` is not an Error, wrap minimally.
+            if (e instanceof Error) throw e;
+            throw Object.assign(new Error("aborted"), { name: "AbortError" });
+          }
+          throw new ProviderError(`request timed out after ${timeoutMs}ms`, {
+            timeout: true,
+            endpoint: url,
+            bodySnippet: "",
+          });
+        }
+        throw new ProviderError(`network error: ${err.message}`, {
+          timeout: false,
+          endpoint: url,
+          bodySnippet: "",
+        });
+      }
+      clearTimeout(timer);
+
+      if (!resp.ok) {
+        const snippet = await readSnippet(resp, apiKey);
+        throw new ProviderError(
+          `${resp.status} ${resp.statusText} — ${snippet}`,
+          { status: resp.status, timeout: false, endpoint: url, bodySnippet: snippet },
+        );
+      }
+
+      // Must be text/event-stream.
+      const ctype = resp.headers.get("content-type") ?? "";
+      if (!ctype.toLowerCase().includes("text/event-stream")) {
+        // Read a snippet to put in error and surface API key scrubbing.
+        const snippet = await readSnippet(resp, apiKey);
+        throw new ProviderError("invalid SSE/stream shape: unexpected content-type", {
+          timeout: false,
+          endpoint: url,
+          bodySnippet: snippet,
+        });
+      }
+
+      // Stream + parse SSE. Hand-written, dependency-free, incremental.
+      const reader = resp.body?.getReader();
+      if (!reader) {
+        throw new ProviderError("invalid SSE/stream shape: empty body", {
+          timeout: false,
+          endpoint: url,
+          bodySnippet: "",
+        });
+      }
+      const decoder = new TextDecoder("utf-8", { fatal: false });
+      let buffer = "";
+      let accText = "";
+      let finishReason: "stop" | "tool_calls" | "length" | "other" = "other";
+      let inputTokens = 0;
+      let outputTokens = 0;
+      let sawAnyEvent = false;
+
+      while (true) {
+        let read: { done: boolean; value?: Uint8Array };
+        try {
+          read = await reader.read();
+        } catch (e) {
+          // Distinguish caller-level abort from our internal timeout (same rule as fetch-phase catch).
+          const err = e as Error & { name?: string };
+          if (err.name === "AbortError") {
+            if (streamOpts.signal?.aborted) {
+              if (e instanceof Error) throw e;
+              throw Object.assign(new Error("aborted"), { name: "AbortError" });
+            }
+            throw new ProviderError(`request timed out after ${timeoutMs}ms`, {
+              timeout: true,
+              endpoint: url,
+              bodySnippet: "",
+            });
+          }
+          throw new ProviderError(`stream read error: ${err.message}`, {
+            timeout: false,
+            endpoint: url,
+            bodySnippet: "",
+          });
+        }
+        if (read.done) break;
+        if (read.value) {
+          buffer += decoder.decode(read.value, { stream: true });
+        }
+        // Split on event boundaries. SSE spec: "line terminators" can be CR, LF, or CRLF,
+        // so servers are free to use \n\n or \r\n\r\n (and even mixed). Find the earliest
+        // of either delimiter and slice by the matched length.
+        const idx = (): { i: number; len: number } => {
+          const a = buffer.indexOf("\r\n\r\n");
+          const b = buffer.indexOf("\n\n");
+          if (a === -1 && b === -1) return { i: -1, len: 0 };
+          if (a === -1) return { i: b, len: 2 };
+          if (b === -1) return { i: a, len: 4 };
+          return a < b ? { i: a, len: 4 } : { i: b, len: 2 };
+        };
+        let found = idx();
+        while (found.i !== -1) {
+          const rawEvent = buffer.slice(0, found.i);
+          buffer = buffer.slice(found.i + found.len);
+          // Trim trailing \r from each line (some servers use CRLF line endings).
+          const lines = rawEvent.split(/\r?\n/);
+          const dataLines: string[] = [];
+          for (const ln of lines) {
+            if (ln.startsWith("data:")) {
+              // After "data:" may be a single leading space.
+              dataLines.push(ln.slice(5).replace(/^ /, ""));
+            }
+          }
+          if (dataLines.length === 0) {
+            found = idx();
+            continue;
+          }
+          const payload = dataLines.join("\n");
+          if (payload === "[DONE]") {
+            found = idx();
+            continue;
+          }
+          sawAnyEvent = true;
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(payload);
+          } catch {
+            // skip malformed event
+            found = idx();
+            continue;
+          }
+          const j = parsed as {
+            choices?: Array<{
+              finish_reason?: unknown;
+              delta?: { content?: unknown };
+            }>;
+            usage?: { prompt_tokens?: unknown; completion_tokens?: unknown };
+          };
+          if (Array.isArray(j.choices) && j.choices.length > 0) {
+            for (const choice of j.choices) {
+              const content = choice.delta?.content;
+              if (typeof content === "string" && content.length > 0) {
+                accText += content;
+                streamOpts.onText({ text: content });
+              }
+              if (typeof choice.finish_reason === "string") {
+                finishReason = mapFinishReason(choice.finish_reason);
+              }
+            }
+          }
+          if (j.usage) {
+            if (typeof j.usage.prompt_tokens === "number") inputTokens = j.usage.prompt_tokens;
+            if (typeof j.usage.completion_tokens === "number")
+              outputTokens = j.usage.completion_tokens;
+          }
+          found = idx();
+        }
+      }
+      // Flush decoder for any trailing bytes.
+      buffer += decoder.decode();
+      // If the server sent a final event without \n\n terminator (rare), still try.
+      if (buffer.trim().length > 0) {
+        const lines = buffer.split(/\r?\n/);
+        const dataLines: string[] = [];
+        for (const ln of lines) {
+          if (ln.startsWith("data:")) {
+            dataLines.push(ln.slice(5).replace(/^ /, ""));
+          }
+        }
+        if (dataLines.length > 0) {
+          const payload = dataLines.join("\n");
+          if (payload !== "[DONE]") {
+            try {
+              const parsed = JSON.parse(payload) as {
+                choices?: Array<{
+                  finish_reason?: unknown;
+                  delta?: { content?: unknown };
+                }>;
+                usage?: { prompt_tokens?: unknown; completion_tokens?: unknown };
+              };
+              sawAnyEvent = true;
+              if (Array.isArray(parsed.choices)) {
+                for (const choice of parsed.choices) {
+                  const content = choice.delta?.content;
+                  if (typeof content === "string" && content.length > 0) {
+                    accText += content;
+                    streamOpts.onText({ text: content });
+                  }
+                  if (typeof choice.finish_reason === "string") {
+                    finishReason = mapFinishReason(choice.finish_reason);
+                  }
+                }
+              }
+              if (parsed.usage) {
+                if (typeof parsed.usage.prompt_tokens === "number")
+                  inputTokens = parsed.usage.prompt_tokens;
+                if (typeof parsed.usage.completion_tokens === "number")
+                  outputTokens = parsed.usage.completion_tokens;
+              }
+            } catch {
+              // ignore trailing garbage
+            }
+          }
+        }
+      }
+
+      if (!sawAnyEvent && accText.length === 0) {
+        throw new ProviderError("invalid SSE/stream shape: no events parsed", {
+          timeout: false,
+          endpoint: url,
+          bodySnippet: "",
+        });
+      }
+      if (finishReason === "other") {
+        // Default to "stop" if we got text but no explicit finish reason.
+        finishReason = "stop";
+      }
+      return {
+        text: accText,
+        toolCalls: [],
+        finishReason,
+        usage: { inputTokens, outputTokens },
+      };
     },
   };
 }
