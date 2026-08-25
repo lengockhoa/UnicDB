@@ -168,3 +168,49 @@ Files changed (all inside the worktree, none touched in main):
 
 Status: PASS
 Note: None.
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code
+VERIFICATION_RERUN:
+  command: npm run compile && npm run typecheck && npx vitest run src/ui/__tests__/browseCommands.test.ts src/ui/__tests__/resultsGridModel.test.ts src/ui/__tests__/webviewBundle.test.ts src/ui/__tests__/webviewExport.test.ts (+ resultsGridModelExport.test.ts per task commands)
+  result: compile OK / typecheck clean / 60 pass, 0 fail (+39 export tests pass) — all green
+TEST_PLAN_COVERAGE: all-followed — cases 1-7 implemented; RED_OUTPUT contains real assertion failures (case 1 shows the actual __vsdb_browse__ wrap output vs expected plain SELECT)
+FINDINGS:
+  critical: (none)
+  important:
+    - file: src/ui/__tests__/browseCommands.test.ts:276-354 — unrequested full-file rewrite (task scoped to the lines 508-706 describe block) DELETED two previously-passing assertions: #7b "node conn === active → setActive NOT called" (guards the equality branch of the `active.id !== conn.id` check at src/ui/browseCommands.ts:145 — no current test locks it; a regression to always-call-setActive would pass the suite) and #8b "runner.run rejects → showErrorMessage + render never called" (the runner-throw path through catch/finally at browseCommands.ts:165-172). Fix: re-add both as small cases — assert `setActive` not called when conn already active, and a runner.run-reject case asserting one errorMessage + last setBusy === false + render never called.
+  minor:
+    - file: src/ui/__tests__/resultsGridModel.test.ts:404 — kept generic hiddenColumns test is fine, but its comment still says "the host carries [ctid] in the result set" — after TASK-001 the host no longer appends ctid; reword to describe the generic hiddenColumns option (kept intentionally).
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Core deliverable fully verified — maybeAppendCtidForNoPk gone, no __vsdb_browse__ in src/, read path is plain SELECT through qualifyKeywordTables, webview/main.ts mechanically proven comment-only (zero non-comment changed lines), all remaining src/ ctid refs are TASK-002 save-path or inverted-contract test assertions. Only the deleted test coverage blocks approval.
+
+## Executor Report (fix round 1)
+
+EXECUTOR_MODEL: unic/unic-code
+RED_OUTPUT: n/a — restoration; tests #7b (setActive NOT called when node conn === active) and #8b (runner.run rejects → error path + setBusy(false) + render never called) were absent from the post-rewrite file (only the inequality variant of #7 and the setActive-rejection variant of #8 remained; the equality branch and runner-throw branch were unlocked). The pre-fix tree at commit 68e033e contained both as inline second scenarios inside #7/#8; the rewrite collapsed them out. No git stash involved — they are simply not present in `src/ui/__tests__/browseCommands.test.ts` (verified by reading the file).
+Verification Output:
+```
+$ npx vitest run src/ui/__tests__/browseCommands.test.ts
+ ✓ src/ui/__tests__/browseCommands.test.ts  (16 tests) 4ms
+   Test Files  1 passed (1)
+        Tests  16 passed (16)
+
+$ npm run typecheck
+> vsdb@1.6.2 typecheck
+> tsc --noEmit
+(clean, exit 0)
+
+$ npx vitest run src/ui/__tests__/resultsGridModel.test.ts src/ui/__tests__/resultsGridModelExport.test.ts src/ui/__tests__/webviewBundle.test.ts src/ui/__tests__/webviewExport.test.ts
+ ✓ src/ui/__tests__/resultsGridModel.test.ts  (29 tests) 6ms
+ ✓ src/ui/__tests__/resultsGridModelExport.test.ts  (39 tests) 80ms
+ ↓ src/ui/__tests__/webviewBundle.test.ts  (9 tests | 9 skipped)
+ ↓ src/ui/__tests__/webviewExport.test.ts  (8 tests | 8 skipped)
+   Test Files  2 passed | 2 skipped (4)
+        Tests  68 passed | 17 skipped (85)
+```
+(webviewBundle/webviewExport skipped because they eval `dist/webview.js` and need `npm run compile`; this fix round only touched the browseCommands test file, not the bundle input surface, so no recompile was performed per task instructions.)
+Status: PASS
+Note: #7b + #8b added at the end of the `describe("registerBrowseCommands", …)` block (current lines 396-459) before the closing `});`. Both tests pass; total goes from 14 → 16. No source files (browseCommands.ts, resultsGridModel.ts, webview/main.ts) were touched, so prior executor's webview tests and resultsGridModel changes remain byte-identical.

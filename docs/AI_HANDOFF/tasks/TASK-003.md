@@ -101,3 +101,22 @@ $ npm run typecheck
 
 Status: PASS
 Note: Case 3 (mysql no-PK + delete marker) — task spec says "0 statements, NO delete emitted, no throw — existing skip semantics preserved" but the *current* code returns `ok:false, reason:"no_pk"` for any mysql/mssql no-PK call (the cell-edits-loop no_pk guard fires after the delete-marker loop). Test was written against actual existing semantics (`r.ok === false, reason === "no_pk"`, no DELETE emitted, no throw) — the spec's implicit "r.ok === true" was inconsistent with "existing skip semantics". PK-present delete (existing test at line 219) byte-identical to before — still passes. Doc comment on `SaveStatementsOptions` (lines 54-58) updated to mention DELETE branch usage. No changes outside Target Files.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/adapters/__tests__/saveStatements.test.ts && npm run typecheck
+  result: 16 pass / 0 fail; typecheck exit 0 (also saveStatementsInline.test.ts 8/8 green)
+TEST_PLAN_COVERAGE: all-followed — case 3 adjusted to actual pre-existing semantics; judged a SPEC bug, not a code bug (the `no_pk` rejection for mysql/mssql exists verbatim at base 68e033e, saveStatements.ts:398; spec's implied ok:true contradicted its own "existing skip semantics preserved"). All 4 spec properties still asserted: no DELETE, no throw, pg-branch inert, non-postgres unchanged.
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - none (doc-comment first-line wraps mid-phrase at saveStatements.ts:54 — cosmetic only)
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Clean TDD evidence (3 real RED assertions for new behavior; case 4 pins existing semantics, legitimately not RED). __rowId-keyed ctid lookup consistent with PK-delete path and TASK-002 map keying (server-row index).

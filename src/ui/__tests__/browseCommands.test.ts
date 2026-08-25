@@ -393,6 +393,70 @@ describe("registerBrowseCommands", () => {
     expect(panel.setBusySequence[panel.setBusySequence.length - 1]).toBe(false);
     expect(state.errorMessages).toEqual([]);
   });
+
+  // Regression guard for the equality branch of `active.id !== conn.id` in
+  // registerBrowseCommands (src/ui/browseCommands.ts). When the node conn is
+  // already the active connection, setActive MUST NOT be called — a regression
+  // that always calls setActive would still satisfy test #7 (which only
+  // asserts the inequality path) but would cause needless state churn.
+  it("#7b node conn === active → setActive NOT called; runner.run still executes", async () => {
+    const conn: ConnectionConfig = {
+      id: "c1",
+      name: "Test PG",
+      driver: "postgres",
+      host: "127.0.0.1",
+      port: 5432,
+      user: "vsdb",
+      database: "vsdb",
+    };
+    const mgr = makeFakeMgr({ activeId: "c1", active: conn });
+    const runner = makeFakeRunner([]);
+    const panel = makeFakePanel();
+    registerBrowseCommands({
+      mgr: mgr as unknown as ConnectionManager,
+      runner: runner as unknown as Parameters<typeof registerBrowseCommands>[0]["runner"],
+      panel: panel as unknown as Parameters<typeof registerBrowseCommands>[0]["panel"],
+    });
+    const fn = state.registeredCommands.get("vsdb.browseTableData");
+    await fn!({ meta: { connection: conn, schema: "public", objectName: "users" } });
+    expect(mgr.setActive).not.toHaveBeenCalled();
+    expect(runner.run).toHaveBeenCalledTimes(1);
+  });
+
+  // Regression guard for the runner-throw path through catch/finally at
+  // src/ui/browseCommands.ts. runner.run rejecting must surface a single
+  // showErrorMessage carrying the original message, leave panel.render
+  // untouched (no onUpdate fired before the throw), and still execute the
+  // finally setBusy(false).
+  it("#8b runner.run rejects → showErrorMessage + setBusy(false); panel.render NEVER called", async () => {
+    const conn: ConnectionConfig = {
+      id: "c1",
+      name: "Test PG",
+      driver: "postgres",
+      host: "127.0.0.1",
+      port: 5432,
+      user: "vsdb",
+      database: "vsdb",
+    };
+    const runner: FakeRunner = {
+      run: vi.fn(async () => {
+        throw new Error("runner boom");
+      }),
+    };
+    const panel = makeFakePanel();
+    const mgr = makeFakeMgr({ activeId: "c1", active: conn });
+    registerBrowseCommands({
+      mgr: mgr as unknown as ConnectionManager,
+      runner: runner as unknown as Parameters<typeof registerBrowseCommands>[0]["runner"],
+      panel: panel as unknown as Parameters<typeof registerBrowseCommands>[0]["panel"],
+    });
+    const fn = state.registeredCommands.get("vsdb.browseTableData");
+    await fn!({ meta: { connection: conn, schema: "public", objectName: "users" } });
+    expect(state.errorMessages).toHaveLength(1);
+    expect(state.errorMessages[0]).toContain("runner boom");
+    expect(panel.setBusySequence[panel.setBusySequence.length - 1]).toBe(false);
+    expect(panel.render).not.toHaveBeenCalled();
+  });
 });
 
 // =============================================================================

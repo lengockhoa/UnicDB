@@ -151,3 +151,22 @@ Test Files  1 passed (1)
 
 Status: PASS
 Note: none
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code
+VERIFICATION_RERUN:
+  command: npm run typecheck && npx vitest run src/ui/__tests__/resultsPanelSaveEdits.test.ts
+  result: typecheck clean (exit 0); 14 pass / 0 fail
+TEST_PLAN_COVERAGE: all-followed
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - src/ui/resultsPanel.ts:326-333 — class doc comment largely duplicates the inline TASK-002 comment at lines 405-412; harmless but could be trimmed to one line pointing at handleSaveEdits.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: needsCtid predicate matches saveStatements.ts marker shapes exactly; ctidColIdx fast-path fully removed (0 hits); refusal banner copy verbatim at the single bail-out; ambiguity + PK-present cases correctly kept untouched and now exercise the collapsed path. RED_OUTPUT is genuine assertion-failure output (case 4 RED shows old code trusting user-data '(9,9)').
