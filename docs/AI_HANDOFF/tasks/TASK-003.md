@@ -331,3 +331,23 @@ NOTES: Model isolation passed; configured reviewer alias is unic-smart and the a
   was rejected because the state-message shape is frozen for TASK-004, so the
   reviewer-endorsed strict token parse was implemented instead. No git
   add/commit performed.
+
+---
+## Reviewer Verdict (fix round 1)
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: bao-opus (configured: unic-smart)
+EXECUTOR_MODEL: bao-sonnet
+VERIFICATION_RERUN:
+  command: npm run compile; npm run typecheck; npx vitest run src/ui/__tests__/webviewServerSort.test.ts src/ui/__tests__/webviewDistinctValues.test.ts; npx tsc -p tsconfig.webview.json --noEmit 2>&1 | grep -oE '^[^ (]+\.ts' | sort | uniq -c
+  result: compile PASS; typecheck PASS; 19 pass / 0 fail; tsc baseline 14/10/10/5/1
+TEST_PLAN_COVERAGE: partial — cache-invalidation test omits the loaded-row fallback before/error response
+FINDINGS:
+  critical:
+    - none
+  important:
+    - file: webview/main.ts:3308 — invalidation calls `refreshEntries()` before `render()` swaps AG Grid to the replacement rows, so the fallback is recomputed from the old statement; if the fresh DISTINCT request errors (`handleDistinctValues` returns at webview/main.ts:2271), the mounted list remains stale indefinitely. Refresh mounted instances after rowData render (and on error) so they show the replacement statement's loaded-row fallback.
+  minor:
+    - none
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Isolation passed and fix-round RED_OUTPUT contains real failing-test evidence. Dialect token parsing, grid-sort carry, debounce cancellation, message shape, and fresh verification are otherwise correct.

@@ -399,3 +399,22 @@ npm run compile                         → esbuild: build complete
 Status: PASS
 Note: All four reviewer findings addressed (three code/test, one evidence); full
 `npm test` boundary run left to the orchestrator per round-1 convention.
+
+---
+
+## Reviewer Verdict (fix round 1)
+
+VERDICT: APPROVED
+REVIEWER_MODEL: bao-opus (configured reviewer tier: unic-smart)
+EXECUTOR_MODEL: bao-sonnet
+VERIFICATION_RERUN:
+  command: npm run typecheck
+  result: PASS (clean)
+  command: npx vitest run src/ui/__tests__/resultsPanelDistinctValues.test.ts src/ui/__tests__/resultsPanelOrderBy.test.ts src/ui/__tests__/resultsPanelServerFilter.test.ts src/ui/__tests__/resultsPanelRequery.test.ts
+  result: 57 pass / 0 fail
+  command: npm run compile
+  result: PASS (esbuild complete)
+TEST_PLAN_COVERAGE: all-followed — fix-round RED evidence and all four prior gaps resolved
+FINDINGS: critical: none; important: none; minor: none
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Cache replay preserves truncated; batched DISTINCT drains through the 1001-row probe and closes in finally; table-map miss degrades gracefully; cycle-V stale guards remain intact. npm test intentionally not run per orchestrator instruction.
