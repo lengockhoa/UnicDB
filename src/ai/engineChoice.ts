@@ -25,6 +25,17 @@ export interface EngineChoice {
   hint?: string;
   /** Detected omp version — only set when engine is "omp". */
   version?: string;
+  /**
+   * Review Finding 2: resolved binary path from `detectOmp()`'s
+   * `which`/`where` probe — only set when engine is "omp". Callers MUST
+   * thread this through to `acp.start()` instead of the bare "omp" literal:
+   * on Windows `where omp` typically resolves `omp.cmd`, and `spawn("omp",
+   * …)` without `shell:true` cannot execute a `.cmd` shim on Node >= 20.12
+   * — detection reports omp usable, then every session start dies with
+   * ENOENT. Falls back to bare `"omp"` (unchanged behavior) if `detectOmp()`
+   * could not resolve a path for some reason.
+   */
+  path?: string;
 }
 
 export function resolveEngine(input: {
@@ -40,6 +51,7 @@ export function resolveEngine(input: {
     // config required.
     const choice: EngineChoice = { engine: "omp", requiresConfig: false };
     if (detection.version) choice.version = detection.version;
+    if (detection.path) choice.path = detection.path;
     return choice;
   }
 

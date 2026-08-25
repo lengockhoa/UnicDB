@@ -222,6 +222,11 @@ export async function createMcpBridge(registry: ToolRegistry): Promise<McpBridge
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => resolve());
   });
+  // Finding 5 (review): a listening server keeps the extension host's event
+  // loop alive on its own even with zero active connections. This bridge is
+  // purely a sidecar for omp's MCP client — it must never be a reason the
+  // process can't exit.
+  server.unref();
 
   const address = server.address();
   const port = typeof address === "object" && address !== null ? address.port : 0;
@@ -235,6 +240,12 @@ export async function createMcpBridge(registry: ToolRegistry): Promise<McpBridge
     },
     handleMcpRequest,
     dispose(): void {
+      // Finding 5 (review): plain `server.close()` only stops accepting NEW
+      // connections — a connection with an in-flight request (e.g. a
+      // slow/hung tool call) is left open until that request completes,
+      // which may be never. `closeAllConnections()` tears every socket down
+      // immediately regardless of in-flight state.
+      server.closeAllConnections();
       server.close();
     },
   };

@@ -426,6 +426,20 @@ async function commandOpenAiChat(
     acp: choice.engine === "omp" ? buildAcpDeps() : undefined,
     engineVersion: choice.version,
     engineHint: choice.hint,
+    // Finding 2: thread the detected omp binary path through instead of
+    // hardcoding "omp" — Windows resolves omp.cmd, which needs shell:true
+    // to spawn (see AcpProcess.start()); on macOS/Linux this is a no-op.
+    engineOmpPath: choice.path,
+    // Finding 7 (review): without this, closing the webview tab (as
+    // opposed to going through this module's own teardown at line ~325)
+    // left the module-level `aiChatPanel` reference pointing at a disposed
+    // instance forever — the `if (aiChatPanel) { aiChatPanel.show(); ... }`
+    // guard above then kept reusing it instead of re-detecting the engine,
+    // so an omp install/uninstall or config change after the FIRST open
+    // was never picked up without a full window reload.
+    onDispose: () => {
+      aiChatPanel = null;
+    },
   });
   aiChatPanel.show();
 }

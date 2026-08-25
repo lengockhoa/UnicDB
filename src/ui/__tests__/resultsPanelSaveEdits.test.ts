@@ -1723,3 +1723,201 @@ describe("ResultsPanel — post-save refresh on a batched driver (R-A4)", () => 
     expect(last!.results?.[0]?.result?.rows).toEqual([[1, "alice-2"]]);
   });
 });
+
+// ---- Review Fix Round (cycle T) — Finding 2: Add Row on a no-PK postgres
+// table is hard-refused because the row's own cell edits push it into the
+// ctid resolver even though it's addressed by its own INSERT. -------------
+describe("ResultsPanel — Add Row on no-PK postgres never triggers a ctid lookup (Finding 2, cycle T)", () => {
+  it("insert marker + a cell edit on the SAME new row ⇒ NO ctid SELECT is issued, INSERT succeeds", async () => {
+    const saveCtx: SaveContext = {
+      getDriver: () => "postgres",
+      listPkColumns: async () => [],
+    };
+    const columns = ["name"];
+    const rows: unknown[][] = [];
+    const recorded: RecordedCall[] = [];
+    const fakeRunQuery = vi.fn(async (sql: string): Promise<RunResult> => {
+      recorded.push({ sql });
+      return {
+        results: [{ columns: [], rows: [], rowCount: 0, durationMs: 0 }],
+      };
+    });
+    const runner = {
+      loadMore: vi.fn(async () => [] as StatementResult[]),
+      cancel: vi.fn(async () => undefined),
+      runSql: fakeRunQuery,
+    } as unknown as QueryRunner;
+    const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT name FROM public.t",
+          status: "done",
+          result: { columns, rows, rowCount: rows.length, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    const f = lastPanel.current!;
+    f.webview.dispatch({
+      type: "saveEdits",
+      index: 0,
+      tableName: null,
+      pkColumns: [],
+      edits: [
+        {
+          rowId: 0,
+          colIndex: -1,
+          value: {
+            __vsdb_new_row__: true,
+            __rowId: 0,
+            values: [{ __vsdb_default__: true }],
+          },
+        },
+        // Ordinary cell edit on the SAME (brand-new, no server row yet)
+        // rowId — this is exactly what onCellValueChangedHandler records
+        // when the user types into an Add Row cell.
+        { rowId: 0, colIndex: 0, value: "Alice" },
+      ],
+    });
+    for (let i = 0; i < 200; i++) {
+      if (saveResultAcks(f).length > 0) break;
+      await Promise.resolve();
+    }
+    // The row is addressed entirely by its own INSERT — no ctid lookup
+    // should ever be attempted for it.
+    const ctidLookups = recorded.filter(
+      (c) => /ctid\s+FROM\s+/i.test(c.sql) && !/UPDATE/i.test(c.sql),
+    );
+    expect(ctidLookups).toHaveLength(0);
+    const ins = recorded.find((c) => /INSERT\s+INTO/i.test(c.sql));
+    expect(ins).toBeDefined();
+    const acks = saveResultAcks(f);
+    const successAck = acks.find((a) => a.ok === true);
+    expect(successAck).toBeDefined();
+  });
+});
+
+// ---- Review Fix Round (cycle T) — Finding 5: the post-commit refresh
+// `state` message must never race ahead of the `saveResult` ack — otherwise
+// the webview's isReset branch wipes editState/undoStack before
+// clearExceptRowIds gets a chance to keep skipped rows dirty. ---------------
+describe("ResultsPanel — saveResult acks BEFORE the post-commit refresh state (Finding 5, cycle T)", () => {
+  it("message order: saveResult is posted strictly before the refreshed state message", async () => {
+    const columns = ["id", "name"];
+    const rows: unknown[][] = [[1, "alice"]];
+    const fakeRunQuery = vi.fn(async (sql: string): Promise<RunResult> => {
+      if (/^UPDATE/i.test(sql.trim()) || /^BEGIN/i.test(sql.trim())) {
+        return {
+          results: [{ columns: [], rows: [], rowCount: 0, durationMs: 0 }],
+        };
+      }
+      return {
+        results: [
+          { columns, rows: [[1, "alice-2"]], rowCount: 1, durationMs: 0 },
+        ],
+      };
+    });
+    const runner = {
+      loadMore: vi.fn(async () => [] as StatementResult[]),
+      cancel: vi.fn(async () => undefined),
+      runSql: fakeRunQuery,
+    } as unknown as QueryRunner;
+    const saveCtx: SaveContext = {
+      getDriver: () => "postgres",
+      listPkColumns: async () => ["id"],
+    };
+    const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT id, name FROM t",
+          status: "done",
+          result: { columns, rows, rowCount: 1, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    const f = lastPanel.current!;
+    f.webview.postMessage.mockClear();
+    f.webview.dispatch({
+      type: "saveEdits",
+      index: 0,
+      tableName: null,
+      pkColumns: [],
+      edits: [{ rowId: 0, colIndex: 1, value: "alice-2" }],
+    });
+    for (let i = 0; i < 200; i++) {
+      if (saveResultAcks(f).length > 0 && stateMessages(f).length > 0) break;
+      await Promise.resolve();
+    }
+    const types = f.webview.postMessage.mock.calls.map(
+      (c) => (c[0] as { type?: string }).type,
+    );
+    const saveResultIdx = types.indexOf("saveResult");
+    const stateIdx = types.lastIndexOf("state");
+    expect(saveResultIdx).toBeGreaterThanOrEqual(0);
+    expect(stateIdx).toBeGreaterThanOrEqual(0);
+    expect(saveResultIdx).toBeLessThan(stateIdx);
+  });
+});
+
+// ---- Review Fix Round (cycle T) — Finding 6: one bad ctid probe (e.g. a
+// column type with no equality operator) must not abort the whole batch. --
+describe("ResultsPanel — one throwing ctid probe does not poison the rest of the batch (Finding 6, cycle T)", () => {
+  it("row 0's ctid predicate throws, row 1's succeeds ⇒ row 1 still saves", async () => {
+    const saveCtx: SaveContext = {
+      getDriver: () => "postgres",
+      listPkColumns: async () => [],
+    };
+    const columns = ["v"];
+    const serverRows: unknown[][] = [["bad-throws"], ["good-value"]];
+    const { runner } = makeBatchAwareRunner((sql) => {
+      if (/ctid\s+FROM\s+/i.test(sql) && !/UPDATE/i.test(sql)) {
+        if (/'bad-throws'/i.test(sql)) return "throw";
+        return { rows: [["(0,9)"]], columns: ["ctid"] };
+      }
+      if (/UPDATE/i.test(sql) || /^BEGIN/i.test(sql.trim())) {
+        return { rows: [], columns: [] };
+      }
+      return { rows: serverRows, columns };
+    });
+    const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT v FROM t",
+          status: "done",
+          result: { columns, rows: serverRows, rowCount: 2, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    const fake = lastPanel.current!;
+    fake.webview.dispatch({
+      type: "saveEdits",
+      index: 0,
+      tableName: null,
+      pkColumns: [],
+      edits: [
+        { rowId: 0, colIndex: 0, value: "row0-new" },
+        { rowId: 1, colIndex: 0, value: "row1-new" },
+      ],
+    });
+    for (let i = 0; i < 200; i++) {
+      if (saveResultAcks(fake).length > 0) break;
+      await Promise.resolve();
+    }
+    const acks = saveResultAcks(fake);
+    const successAck = acks.find((a) => a.ok === true);
+    // Row 1's UPDATE must have gone through even though row 0's ctid probe
+    // threw — one bad row must not poison the whole batch.
+    expect(successAck).toBeDefined();
+  });
+});

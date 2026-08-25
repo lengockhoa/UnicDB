@@ -436,18 +436,36 @@ export class ResultsPanel {
     let ctidByRowId: ReadonlyMap<number, string> | undefined;
     const rowIdsNeedingCtid: number[] = [];
     if (driver === "postgres" && pkColumns.length === 0) {
-      const seen = new Set<number>();
+      // Finding 2 (review fix round, cycle T) — a locally-added row's
+      // insert marker AND its ordinary cell edits (colIndex >= 0, recorded
+      // separately by onCellValueChangedHandler) share the same rowId. The
+      // old per-EDIT `isPureInsert` check only excluded the marker entry
+      // itself, so the row's cell edits still pushed it into
+      // rowIdsNeedingCtid. fetchPostgresCtids then found no server row for
+      // that (brand-new) rowId and skipped it, and when the batch was
+      // insert-only that meant EVERY row failed → hard `all_failed`
+      // refusal — Add Row on a no-PK postgres table (the entire point of
+      // the ctid path) could never save. Compute the full set of
+      // insert-marked rowIds FIRST and exclude them entirely: those rows
+      // are addressed by their own INSERT (with cell edits folded in per
+      // Finding 1), never by a ctid-addressed UPDATE.
+      const insertRowIds = new Set<number>();
       for (const e of edits) {
-        if (seen.has(e.rowId)) continue;
         const v = e.value;
-        const isPureInsert =
+        if (
           typeof v === "object" &&
           v !== null &&
-          (v as Record<string, unknown>)["__vsdb_new_row__"] === true;
-        if (!isPureInsert) {
-          seen.add(e.rowId);
-          rowIdsNeedingCtid.push(e.rowId);
+          (v as Record<string, unknown>)["__vsdb_new_row__"] === true
+        ) {
+          insertRowIds.add(e.rowId);
         }
+      }
+      const seen = new Set<number>();
+      for (const e of edits) {
+        if (insertRowIds.has(e.rowId)) continue;
+        if (seen.has(e.rowId)) continue;
+        seen.add(e.rowId);
+        rowIdsNeedingCtid.push(e.rowId);
       }
     }
     if (rowIdsNeedingCtid.length > 0) {
@@ -564,8 +582,17 @@ export class ResultsPanel {
       // is always undefined for the batched case (A4).
       const refreshed = await this.runner.runSql(r.sql);
       const freshResult = await pickResult(refreshed);
+      // Finding 5 (review fix round, cycle T) — `saveResult` MUST be
+      // posted before the refreshed `state` message. The webview's
+      // `state` handler decides `isReset` off a row-count/columns
+      // comparison; on a row-count-changing batch (e.g. Add Row) that
+      // branch WIPES editState/undoStack before the (later) saveResult's
+      // rowErrors could ever reach clearExceptRowIds to preserve
+      // skipped rows' edits. Posting saveResult first lets the webview
+      // record rowErrors/preserve-list BEFORE the reset arrives.
+      let newStmt: StatementResult | undefined;
       if (freshResult) {
-        const newStmt: StatementResult = {
+        newStmt = {
           ...r,
           result: freshResult,
           batched: refreshed.batched,
@@ -574,22 +601,6 @@ export class ResultsPanel {
           // showed a stale number after commit.
           durationMs: Date.now() - refreshStart,
         };
-        const next = this.lastResults.slice();
-        next[index] = newStmt;
-        this.lastResults = next;
-        // Sync the runner-internal entry so loadMore(index) reaches the
-        // NEW cursor (mirrors handleRequery's adopt() call).
-        try {
-          this.runner.adopt(r.index, newStmt);
-        } catch {
-          // adopt is best-effort; loadMore path failure is non-fatal here.
-        }
-        this.postMessage({
-          type: "state",
-          header: this.header,
-          results: next,
-          busy: this.busy,
-        });
       }
       // Surface non-fatal warnings (e.g. per-row missing ctid on
       // postgres no-PK — that row was skipped, others saved) so the
@@ -615,6 +626,24 @@ export class ResultsPanel {
           : {}),
         ...(rowErrors && rowErrors.length > 0 ? { rowErrors } : {}),
       });
+      if (newStmt) {
+        const next = this.lastResults.slice();
+        next[index] = newStmt;
+        this.lastResults = next;
+        // Sync the runner-internal entry so loadMore(index) reaches the
+        // NEW cursor (mirrors handleRequery's adopt() call).
+        try {
+          this.runner.adopt(r.index, newStmt);
+        } catch {
+          // adopt is best-effort; loadMore path failure is non-fatal here.
+        }
+        this.postMessage({
+          type: "state",
+          header: this.header,
+          results: next,
+          busy: this.busy,
+        });
+      }
     } finally {
       this.setBusy(false);
     }
@@ -815,14 +844,27 @@ export class ResultsPanel {
     const map = new Map<number, string>();
     let anySucceeded = false;
     let anyAmbiguous = false;
+    // Finding 2 — rows with no resolvable server row (e.g. a stray dirty
+    // entry for a rowId that was never actually inserted server-side) are
+    // NOT a ctid-lookup failure; they were simply never attempted.
+    // buildSaveStatements' own per-row "no server row" check surfaces the
+    // right message for them. Only rows that WERE attempted (a server row
+    // was found and a lookup actually ran) count towards `all_failed`.
+    let anyAttempted = false;
     const qSchema = schema ? quoteIdent(schema, "postgres") : null;
     const qTable = quoteIdent(tableName, "postgres");
     const fullTable = qSchema ? `${qSchema}.${qTable}` : qTable;
-    try {
-      for (const rowId of rowIds) {
+    for (const rowId of rowIds) {
+      // Finding 6 — the try/catch used to wrap the ENTIRE loop, so a
+      // column type with no equality operator (json, xml, point, ...)
+      // throwing on ONE row's predicate aborted every remaining row's
+      // lookup too, refusing the whole save. Scope the try/catch to a
+      // single row's body so one bad probe can't poison the batch.
+      try {
         const serverIndex = resolveServerIndex(rowId);
         const row = serverRows[serverIndex];
         if (!row) continue;
+        anyAttempted = true;
         const conds: string[] = [];
         for (let c = 0; c < columns.length && c < row.length; c++) {
           const col = columns[c];
@@ -862,13 +904,16 @@ export class ResultsPanel {
             }
           }
         }
+      } catch {
+        // Best-effort: this row's ctid lookup failed (bad predicate, no
+        // equality operator for its column type, etc). Skip it and keep
+        // going — it will surface as a per-row warning in
+        // buildSaveStatements when its ctid is missing from the map.
       }
-    } catch {
-      // Best-effort: missing ctids will surface as per-row warnings in
-      // buildSaveStatements.
     }
     if (anySucceeded) return { ok: true, map };
     if (anyAmbiguous) return { ok: false, reason: "ambiguous_only" };
+    if (!anyAttempted) return { ok: true, map };
     return { ok: false, reason: "all_failed" };
   }
 

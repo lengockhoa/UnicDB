@@ -346,3 +346,150 @@ per the standard wave pipeline (this executor does not edit `INDEX.md` per task 
 **NEXT:** ready for review.
 
 ---
+
+## Executor Report (fix round — review findings, cycle T)
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: claude-sonnet-5
+EXECUTOR_SUBAGENT: -
+SUMMARY: Fixed all 6 CRITICAL/IMPORTANT findings from the cycle-T opus review of the
+save/grid cluster (Add Row data loss, no-PK postgres insert-only refusal + orphan cell
+edits, MySQL `DEFAULT VALUES` syntax, phantom placeholder row after post-commit refresh,
+saveResult/state message ordering, and one-bad-row ctid-probe abort) with a RED-confirmed
+regression test per finding.
+
+TEST_PLAN_FOLLOWED: inline — task instructions required a RED-before-fix regression test
+per finding; no pre-existing Test Plan section for this fix round.
+
+FILES_CHANGED:
+  - src/core/saveStatements.ts: (Finding 1) build `cellEditsByRow` map and overlay
+    ordinary cell edits onto a copy of the insert marker's `values` array before
+    building the INSERT's column/value lists, so typed cell values on a newly-added
+    row are no longer silently discarded. (Finding 3) branch `INSERT INTO t DEFAULT
+    VALUES` vs `INSERT INTO t () VALUES ()` by dialect (mysql uses the latter — the
+    former is invalid MySQL syntax).
+  - src/ui/resultsPanel.ts: (Finding 2) `handleSaveEdits`'s `rowIdsNeedingCtid`
+    computation now excludes every edit sharing a rowId with an insert marker (not
+    just the marker entry itself), so an Add Row's ordinary cell edits on a no-PK
+    postgres table no longer push that rowId into the ctid lookup and trigger
+    `all_failed`. `fetchPostgresCtids` now tracks `anyAttempted` and returns
+    `{ok:true}` (not `all_failed`) when no rowId in the batch had a resolvable
+    server row — "nothing to look up" is not a failure. (Finding 5) `saveResult` is
+    now posted BEFORE the refreshed `state` message in the post-commit success path
+    (previously state posted first, so on a row-count-changing batch the webview's
+    `isReset` branch wiped editState/undoStack before `clearExceptRowIds` could act
+    on saveResult's rowErrors). (Finding 6) `fetchPostgresCtids`'s try/catch now
+    wraps only a single row's probe body instead of the entire for-loop, so one
+    row's exception (e.g. a column type with no equality operator) no longer aborts
+    ctid probing for every remaining row in the batch.
+  - webview/main.ts: (Finding 2, second half) `applyUndoAction`'s add-row undo
+    branch now also clears every column's cell edit for the removed row (previously
+    only cleared the insert marker at `MARKER_COL_INSERT`, leaving orphan cell
+    edits keyed to a row that no longer exists). (Finding 4) `renderGrid()` gains a
+    new branch — `rowsGrew && newRowCount > 0 && editState.dirtyCount === 0` — that
+    does a full rowData rebuild (matching the existing isReset-branch pattern:
+    reset editState/undoStack/newRowCount/highestAllocatedId/serverIndexByRowId)
+    instead of an append-delta, when growth is attributable to already-committed
+    local rows (dirtyCount===0 rules out the legitimate "Add Row while a batched
+    query is still streaming in more rows" case, where the added row is still
+    dirty/uncommitted) — this removes the phantom placeholder row left behind by a
+    post-commit refresh and correctly resets newRowCount.
+
+TESTS_ADDED:
+  - src/adapters/__tests__/saveStatements.test.ts: `buildSaveStatements — Add Row
+    cell edits merge into the INSERT (Finding 1, cycle T)` (2 tests: single-cell and
+    two-different-cells merge); `buildSaveStatements — dialect-aware all-DEFAULT
+    insert (Finding 3, cycle T)` (3 tests: mysql `() VALUES ()`, postgres/mssql
+    unaffected `DEFAULT VALUES`).
+  - src/ui/__tests__/resultsPanelSaveEdits.test.ts: `ResultsPanel — Add Row on no-PK
+    postgres never triggers a ctid lookup (Finding 2, cycle T)`; `ResultsPanel —
+    saveResult acks BEFORE the post-commit refresh state (Finding 5, cycle T)`;
+    `ResultsPanel — one throwing ctid probe does not poison the rest of the batch
+    (Finding 6, cycle T)` (1 test each).
+  - src/ui/__tests__/webviewCommitRefresh.test.ts: `Finding 4. Add Row -> commit ->
+    post-commit refresh grows row count ⇒ no phantom placeholder row survives` (bundle-
+    eval harness: addRow → simulateCellEdit → commit → saveResult ok:true → state with
+    grown rows; asserts `getDisplayedRowCount()===4`, not a phantom 5, and correct
+    row contents).
+
+RED confirmed (pasted output, pre-fix):
+```
+$ npx vitest run src/adapters/__tests__/saveStatements.test.ts
+ ❯ buildSaveStatements — Add Row cell edits merge into the INSERT (Finding 1, cycle T)
+     × merges a single cell edit into the insert marker's values before building INSERT
+     × merges edits on two different columns into the same insert row
+ ❯ buildSaveStatements — dialect-aware all-DEFAULT insert (Finding 3, cycle T)
+     × mysql: all-DEFAULT insert uses INSERT INTO t () VALUES () (DEFAULT VALUES is invalid MySQL)
+ Test Files  1 failed (1)
+      Tests  3 failed | 25 passed (28)
+
+$ npx vitest run src/ui/__tests__/resultsPanelSaveEdits.test.ts
+ ❯ ResultsPanel — Add Row on no-PK postgres never triggers a ctid lookup (Finding 2, cycle T)
+     × Add Row's cell edits do not push its rowId into a ctid probe / insert still saves
+       → ins is undefined (whole batch refused all_failed before the fix)
+ ❯ ResultsPanel — saveResult acks BEFORE the post-commit refresh state (Finding 5, cycle T)
+     × message order: saveResult is posted strictly before the refreshed state message
+       → expected 2 to be less than 1
+ ❯ ResultsPanel — one throwing ctid probe does not poison the rest of the batch (Finding 6, cycle T)
+     × row 1 still saves despite row 0's ctid probe throwing
+       → successAck is undefined (whole loop aborted on row 0's throw)
+ Test Files  1 failed (1)
+      Tests  3 failed | 22 passed (25)
+
+$ npx vitest run src/ui/__tests__/webviewCommitRefresh.test.ts -t "Finding 4"
+ ❯ Finding 4. Add Row -> commit -> post-commit refresh grows row count ⇒ no phantom placeholder row survives
+     × expected 5 to be 4 // Object.is equality
+ Test Files  1 failed (1)
+      Tests  1 failed | 12 skipped (13)
+```
+(Finding 4's RED was confirmed "for free" — the regression test was written and run
+against the not-yet-recompiled `dist/webview.js`, which still reflected pre-fix source,
+before `npm run compile` was re-run to bake in the webview/main.ts fix.)
+
+GREEN confirmed (all fixes applied, `npm run compile` re-run once to refresh
+`dist/webview.js`):
+
+VERIFICATION:
+  command: npx vitest run src/adapters/__tests__/saveStatements.test.ts src/adapters/__tests__/saveStatementsInline.test.ts src/adapters/__tests__/saveStatementsQualify.test.ts src/adapters/__tests__/saveStatementsParser.test.ts
+  result: 66 passed / 0 failed
+  command: npx vitest run src/ui/__tests__/resultsPanelSaveEdits.test.ts
+  result: 25 passed / 0 failed
+  command: npx vitest run src/ui/__tests__/webviewCommitRefresh.test.ts src/ui/__tests__/webviewEdit.test.ts
+  result: 28 passed / 0 failed (confirms Finding 4's fix does not regress the R2-B/R3-A
+    legitimate "Add Row during streaming" scenarios — the `dirtyCount === 0` guard is
+    what keeps those on the append-delta path)
+  command: npm test
+  result: 85 files passed, 1 skipped (86) / 1205 passed, 2 skipped (1207) — vs. baseline
+    1196 passed / 2 skipped / 86 files: +9 new tests, zero regressions, zero new skips
+  command: npm run typecheck
+  result: clean, exit 0
+  output_excerpt: |
+     Test Files  85 passed | 1 skipped (86)
+          Tests  1205 passed | 2 skipped (1207)
+     Start at  11:53:43
+     Duration  7.68s
+
+     > vsdb@1.6.3 typecheck
+     > tsc --noEmit
+     (no output — clean)
+
+ISSUES: none. One design decision made without a human to ask (per Handoff-mode autonomy
+rule): Finding 2's "no server row found for any rowId in the batch" case now returns
+`{ok:true, map:empty}` instead of `all_failed` — the rationale is that `buildSaveStatements`
+already has its own per-row "no server row for this UPDATE" skip/warning path, so treating an
+empty-lookup batch as a ctid-probe failure was double-refusing the same condition at a coarser
+grain (whole-batch instead of per-row). This is consistent with the finding's explicit
+"treat 'no server row' as not-a-failure" instruction. Finding 4's fix uses a narrower trigger
+condition (`editState.dirtyCount === 0`) than the finding's literal wording might suggest,
+because a broader `rowsGrew && newRowCount > 0` condition (tried first) regressed two existing
+R2-B/R3-A tests covering the legitimate "Add Row while a batched/streaming query is still
+appending more rows" scenario — `dirtyCount === 0` is the signal that distinguishes "this
+growth is a post-commit echo of already-saved local rows" from "this growth is unrelated
+streamed content arriving while an uncommitted local row still exists."
+
+HANDOFF_TO_REVIEWER: yes — `handoff.reviewer.enabled` per `.ukit/storage/config.json`; task
+status will be set to `pending_review` by the orchestrator per the standard pipeline (this
+executor does not edit `INDEX.md`).
+
+NEXT: ready for review.

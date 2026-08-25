@@ -159,6 +159,32 @@ describe("AcpProcess", () => {
     }
   });
 
+  // Review Finding 2: on Windows, `where omp` typically resolves `omp.cmd`
+  // — a shell shim. Node >= 20.12 cannot spawn a `.cmd` file without
+  // `shell: true` (CVE-2024-27980 mitigation), so a detected-usable omp
+  // would die with ENOENT on every real session start. `shell` must mirror
+  // `process.platform === "win32"` exactly (true on Windows, false/absent
+  // effect elsewhere) — this assertion is written to hold on every CI
+  // platform, not just Windows.
+  it("R(Finding2) regression: spawn options set shell:true only on win32", async () => {
+    const proc = new AcpProcess(
+      {
+        ompPath: "omp",
+        cwd: "/tmp/proj",
+        supportCwdFlag: true,
+        execFn: async () => "omp/18.0.1\n",
+      },
+      captureSpawn(child, captured),
+    );
+    const startPromise = proc.start();
+    queueMicrotask(() => {
+      void driveHandshake(child);
+    });
+    await startPromise;
+
+    expect(captured.options?.shell).toBe(process.platform === "win32");
+  });
+
   // #2 — spawn always supplies cwd; --cwd flag conditionally passed
   it("start passes workspace cwd to spawn and conditionally adds --cwd flag", async () => {
     // Case A: --cwd supported → flag present

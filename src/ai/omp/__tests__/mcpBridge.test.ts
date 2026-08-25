@@ -9,6 +9,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import net from "node:net";
+import http from "node:http";
 import type { DbAdapter, BatchedQuery, RunResult } from "../../../adapters/types";
 import type { AdapterFactory } from "../../tools/types";
 import { createDbTools } from "../../tools/registry";
@@ -325,6 +326,82 @@ describe("createMcpBridge — no active connection", () => {
     expect(result.content[0]!.text.toLowerCase()).toContain("no active");
 
     bridge.dispose();
+  });
+});
+
+// ---- MINOR review finding 5: dispose() must close lingering connections ----
+//
+// Plain `server.close()` stops accepting NEW connections but lets any
+// connection with an ACTIVE in-flight request (handler hasn't responded yet)
+// linger open indefinitely — it only tears down once that request completes.
+// A slow/hung tool call (e.g. a stuck `run_sql` against a wedged DB) would
+// leave the socket (and the process's event loop) alive well past
+// `dispose()`. `closeAllConnections()` forces it closed immediately.
+
+describe("createMcpBridge — dispose closes lingering connections", () => {
+  it("R(Finding5) regression: dispose() forcibly closes a socket with an in-flight (hung) request instead of waiting for it to finish", async () => {
+    // A tool whose execute() never resolves — simulates a hung/slow call
+    // still in flight when dispose() happens.
+    const hungTool: AgentTool = {
+      name: "hang",
+      description: "",
+      parameters: { type: "object" },
+      execute: () => new Promise<string>(() => {}),
+    };
+    const reg: ToolRegistry = {
+      list: () => [hungTool],
+      get: (n) => (n === "hang" ? hungTool : undefined),
+    };
+    const bridge = await createMcpBridge(reg);
+    const token = tokenFromDescriptor(bridge);
+    const url = new URL(bridge.descriptor["url"] as string);
+    const port = Number(url.port);
+
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "hang", arguments: {} },
+    });
+
+    const closed = await new Promise<boolean>((resolve, reject) => {
+      const req = http.request(
+        {
+          host: "127.0.0.1",
+          port,
+          path: "/",
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Content-Length": Buffer.byteLength(body),
+            Authorization: `Bearer ${token}`,
+          },
+        },
+        () => {
+          // Response never actually arrives (handler is hung) — nothing to
+          // do here; the socket-level events below drive the assertion.
+        },
+      );
+      req.on("error", () => {
+        // A reset from dispose() surfaces here — treat it the same as the
+        // socket's own "close" (both mean the connection was torn down).
+      });
+      req.on("socket", (sock) => {
+        // Give the request time to actually reach the (hung) handler before
+        // disposing, so this really is an in-flight request, not a queued
+        // one the server never started.
+        setTimeout(() => {
+          bridge.dispose();
+          sock.once("close", () => resolve(true));
+          setTimeout(() => resolve(false), 500);
+        }, 50);
+      });
+      req.write(body);
+      req.end();
+      setTimeout(() => reject(new Error("test setup timed out")), 3000);
+    });
+
+    expect(closed).toBe(true);
   });
 });
 

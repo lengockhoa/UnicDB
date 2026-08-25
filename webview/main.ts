@@ -1641,6 +1641,36 @@ function renderGrid(): void {
     // is safe.
     highestAllocatedId = r.result.rows.length - 1;
     refreshUndoRedoButtons();
+  } else if (rowsGrew && newRowCount > 0 && editState.dirtyCount === 0) {
+    // Finding 4 (review fix round, cycle T) — a post-commit refresh
+    // (Add Row → type values → commit) grows r.result.rows by exactly
+    // the committed rows, but the LOCAL placeholder row(s) added via
+    // onAddRowClick are still sitting in the grid (append-delta below
+    // only ADDS the new server row, it never removes/reconciles the
+    // local placeholder). Left alone this leaves a phantom blank row
+    // and `newRowCount` is never decremented, so a later save keeps
+    // treating that phantom as dirty/new.
+    //
+    // Distinguishing this from ordinary "Add Row while streaming more
+    // rows in" (R2-B/R3-A — a legitimate append-delta growth where the
+    // added row is still DIRTY/uncommitted) is the `dirtyCount === 0`
+    // guard: handleSaveResult's ok:true path clears editState/undoStack
+    // the moment a commit succeeds, so dirtyCount can only be 0 here if
+    // the locally-added row(s) were already committed and are now
+    // orphaned placeholders — not live in-progress inserts colliding
+    // with streamed content. With nothing dirty left to preserve, do a
+    // full rebuild (same pattern as the isReset branch above) instead
+    // of an append-delta, so the phantom placeholder is dropped and
+    // newRowCount/highestAllocatedId/serverIndexByRowId are re-seeded
+    // from the authoritative server rows.
+    editState.clear();
+    undoStack.clear();
+    newRowCount = 0;
+    serverIndexByRowId.clear();
+    gridApi!.setGridOption("rowData", rowsToObjects(r.result.rows, specs));
+    statementRows.set(activeTab, r.result.rows.slice());
+    highestAllocatedId = r.result.rows.length - 1;
+    refreshUndoRedoButtons();
   } else if (rowsGrew && syncResult.appendDelta.length > 0) {
     // Append delta — only new server rows get added (no clobber). Each
     // appended row needs a __rowId so the grid's stable-identity layer
@@ -2035,6 +2065,16 @@ function applyUndoAction(action: UndoAction, mode: "undo" | "redo"): void {
       const data = node?.data;
       gridApi.applyTransaction({ remove: data ? [data] : [] });
       editState.clearCell(action.rowId, MARKER_COL_INSERT);
+      // Finding 2 (review fix round, cycle T) — the insert marker is
+      // gone, but ordinary cell edits typed into this same row
+      // (onCellValueChangedHandler records those separately, keyed by
+      // the same rowId) are NOT cleared by clearCell(MARKER_COL_INSERT)
+      // alone. Left behind, they orphan-count towards dirtyCount and a
+      // future save for a row that no longer exists. Clear every
+      // column's edit for this rowId too.
+      for (let i = 0; i < currentSpecs.length; i++) {
+        editState.clearCell(action.rowId, i);
+      }
       if (newRowCount > 0) newRowCount--;
     } else {
       const blank: Record<string, unknown> = { __rowId: action.rowId };

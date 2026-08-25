@@ -1,6 +1,6 @@
 Command: handoff-fullstack
 Goal: Unbreak the VSDB core — make table edit/save actually work and make AI chat + omp usable zero-config
 Base: main
-Phase: R1
-Cursor: I4 done — all 12 tasks PASS and pending_review; waves committed 0c2b2eb/76e7068/b8e1221; tree green (1196 pass / 2 skip, typecheck clean); all worktrees+branches removed
-Next: R1 — spawn code-reviewer agents (opus, != executor sonnet) over the diff f8d088e..HEAD
+Phase: R4.5
+Cursor: R1-R3 done — 4 opus reviewers over f8d088e..HEAD returned CRITICAL/CHANGES-REQUESTED/CHANGES-REQUESTED/CRITICAL; ~20 findings incl. 2 regressions this cycle introduced (data-modifying CTE -> DECLARE CURSOR; END WHILE pops BEGIN) and 1 critical found twice (30s bound on session/prompt)
+Next: auto-fix round 1 of 2 — FIX-A (save/grid) + FIX-B (AI/omp) in parallel worktrees, then FIX-C (parser/adapters)

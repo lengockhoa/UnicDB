@@ -381,15 +381,48 @@ export function buildSaveStatements(
   const colIdx = new Map<string, number>();
   for (let i = 0; i < columns.length; i++) colIdx.set(columns[i], i);
 
+  // Finding 1 (review fix round, cycle T) — Add Row silently discarded every
+  // value the user typed. onCellValueChangedHandler records an ordinary
+  // cell edit (colIndex >= 0) for a locally-added row SEPARATELY from the
+  // insert marker's own `values` array; loop 3 below correctly recognises
+  // the row is "already addressed by the INSERT" and skips re-emitting it
+  // as an UPDATE — but nothing ever folded that typed value INTO the
+  // INSERT, so it vanished entirely. Precompute rowId → cell edits here so
+  // loop 1 can overlay them onto the marker's `values` before building the
+  // INSERT column/value lists.
+  const cellEditsByRow = new Map<number, EditEntry[]>();
+  for (const e of edits) {
+    if (isNewRowMarker(e.value) || isDeleteMarker(e.value)) continue;
+    if (e.colIndex < 0) continue;
+    let arr = cellEditsByRow.get(e.rowId);
+    if (!arr) {
+      arr = [];
+      cellEditsByRow.set(e.rowId, arr);
+    }
+    arr.push(e);
+  }
+
   // ---- 1) Insert markers → one INSERT per new row ------------------------
   for (const e of edits) {
     if (!isNewRowMarker(e.value)) continue;
-    const values = e.value.values;
-    if (!Array.isArray(values) || values.length !== columns.length) {
-      const reason = `insert row ${e.rowId}: values length (${values?.length ?? "?"}) does not match column count (${columns.length}); skipped`;
+    const markerValues = e.value.values;
+    if (!Array.isArray(markerValues) || markerValues.length !== columns.length) {
+      const reason = `insert row ${e.rowId}: values length (${markerValues?.length ?? "?"}) does not match column count (${columns.length}); skipped`;
       warnings.push(reason);
       skippedRows.push({ rowId: e.rowId, reason });
       continue;
+    }
+    // Finding 1 — overlay any ordinary cell edits typed into THIS new row
+    // onto a copy of the marker's values before building the INSERT. Copy
+    // so we never mutate the caller's marker object.
+    const values = markerValues.slice();
+    const overlay = cellEditsByRow.get(e.rowId);
+    if (overlay) {
+      for (const cellEdit of overlay) {
+        if (cellEdit.colIndex < values.length) {
+          values[cellEdit.colIndex] = cellEdit.value;
+        }
+      }
     }
     // A11: DEFAULT-value sentinel — omit untouched columns entirely so the
     // server applies its own DEFAULT instead of receiving `''`/`NULL`. If
@@ -402,7 +435,14 @@ export function buildSaveStatements(
       insertVals.push(values[i]);
     }
     if (insertCols.length === 0) {
-      statements.push(`INSERT INTO ${qTable} DEFAULT VALUES`);
+      // Finding 3 — MySQL has no `DEFAULT VALUES` syntax; it needs the
+      // explicit-empty-list form. Postgres and MSSQL both accept
+      // `DEFAULT VALUES` unchanged.
+      statements.push(
+        dialect === "mysql"
+          ? `INSERT INTO ${qTable} () VALUES ()`
+          : `INSERT INTO ${qTable} DEFAULT VALUES`,
+      );
     } else {
       const colList = insertCols
         .map((c) => quoteIdent(c, dialect))

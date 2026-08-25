@@ -132,38 +132,61 @@ export class AcpClient {
    * resolves with the matching `result`, or rejects with the matching `error`.
    * Bounded by `requestTimeoutMs` (TASK-006 B4b) — a request that never gets
    * a matching response frame rejects instead of hanging forever.
+   *
+   * TASK-007 review fix (Finding 1a): the bound is per-CALL, not per-client.
+   * `opts.timeoutMs` overrides `requestTimeoutMs` for this call only; pass
+   * `0` to disable the bound entirely. `session/prompt` has no bounded
+   * duration (it legitimately runs minutes, more so with DB tools/
+   * permission round-trips in the mix) — callers must pass `{timeoutMs: 0}`
+   * for it while `initialize` / `session/new` / `session/load` keep the
+   * default 30s handshake bound.
    */
-  request<T = unknown>(method: string, params: unknown): Promise<T> {
+  request<T = unknown>(
+    method: string,
+    params: unknown,
+    opts?: { timeoutMs?: number },
+  ): Promise<T> {
     if (this.disposed) {
       return Promise.reject(new Error("disposed"));
     }
     // Close any open replay window BEFORE the outgoing write (absorb-then-flush).
     this.closeReplayWindow();
-    return this.requestRaw<T>(method, params);
+    return this.requestRaw<T>(method, params, opts?.timeoutMs);
   }
 
   /**
    * Write a request frame and return the matching result promise. Does NOT
    * close the replay window — used by sessionLoad(), which opens the window
    * around its own write.
+   *
+   * `timeoutMsOverride` defaults to the client's `requestTimeoutMs`; `0`
+   * (or any value `<= 0`) disables the bound for this call.
    */
-  private requestRaw<T = unknown>(method: string, params: unknown): Promise<T> {
+  private requestRaw<T = unknown>(
+    method: string,
+    params: unknown,
+    timeoutMsOverride?: number,
+  ): Promise<T> {
     const id = this.nextClientId++;
+    const timeoutMs = timeoutMsOverride ?? this.requestTimeoutMs;
     return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        if (this.pending.delete(id)) {
-          reject(
-            new Error(`ACP request "${method}" timed out after ${this.requestTimeoutMs}ms`),
-          );
-        }
-      }, this.requestTimeoutMs);
+      const timer: NodeJS.Timeout | null =
+        timeoutMs > 0
+          ? setTimeout(() => {
+              if (this.pending.delete(id)) {
+                reject(
+                  new Error(`ACP request "${method}" timed out after ${timeoutMs}ms`),
+                );
+              }
+            }, timeoutMs)
+          : null;
       this.pending.set(id, {
         resolve: (result: unknown) => {
-          clearTimeout(timer);
+          if (timer !== null) clearTimeout(timer);
           resolve(result as T);
         },
         reject: (err: Error) => {
-          clearTimeout(timer);
+          if (timer !== null) clearTimeout(timer);
           reject(err);
         },
       });

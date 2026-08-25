@@ -397,6 +397,130 @@ describe("buildSaveStatements — Add Row / Delete Row markers", () => {
     expect(stmt1).toMatch(/^UPDATE "t" SET "a"='new-a' WHERE ctid='\(0,0\)'/i);
   });
 });
+
+// ---- Review Fix Round (cycle T) — Finding 1: Add Row cell edits must not
+// be silently discarded. ----------------------------------------------------
+describe("buildSaveStatements — Add Row cell edits merge into the INSERT (Finding 1, cycle T)", () => {
+  it("insert marker + a cell edit on the SAME new row ⇒ the typed value ends up in the INSERT, not dropped", () => {
+    const edits: EditEntry[] = [
+      {
+        rowId: 3,
+        colIndex: -1,
+        value: {
+          __vsdb_new_row__: true,
+          __rowId: 3,
+          values: [{ __vsdb_default__: true }, { __vsdb_default__: true }],
+        },
+      },
+      { rowId: 3, colIndex: 1, value: "Alice" },
+    ];
+    const r = buildSaveStatements(
+      "postgres",
+      "t",
+      ["id"],
+      ["id", "name"],
+      edits,
+      [],
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok !== true) return;
+    expect(r.statements).toHaveLength(1);
+    expectNoPlaceholders(r.statements[0]);
+    // "id" stayed untouched (DEFAULT sentinel) → omitted; "name" carries
+    // the user's typed value "Alice" — it must NOT be silently dropped.
+    expect(r.statements[0]).toBe('INSERT INTO "t" ("name") VALUES (\'Alice\')');
+  });
+
+  it("insert marker + edits on 2 different cells of the new row ⇒ both land in the INSERT", () => {
+    const edits: EditEntry[] = [
+      {
+        rowId: 7,
+        colIndex: -1,
+        value: {
+          __vsdb_new_row__: true,
+          __rowId: 7,
+          values: [
+            { __vsdb_default__: true },
+            { __vsdb_default__: true },
+            { __vsdb_default__: true },
+          ],
+        },
+      },
+      { rowId: 7, colIndex: 0, value: 99 },
+      { rowId: 7, colIndex: 2, value: "bob" },
+    ];
+    const r = buildSaveStatements(
+      "postgres",
+      "t",
+      [],
+      ["id", "age", "name"],
+      edits,
+      [],
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok !== true) return;
+    expect(r.statements).toHaveLength(1);
+    expect(r.statements[0]).toMatch(
+      /^INSERT INTO "t" \("id", "name"\) VALUES \(99, 'bob'\)/,
+    );
+    expect(r.statements[0]).not.toContain("age");
+  });
+});
+
+// ---- Review Fix Round (cycle T) — Finding 3: MySQL has no `DEFAULT VALUES`
+// syntax. ---------------------------------------------------------------
+describe("buildSaveStatements — dialect-aware all-DEFAULT insert (Finding 3, cycle T)", () => {
+  it("mysql + all-DEFAULT insert ⇒ INSERT INTO `t` () VALUES () (NOT `DEFAULT VALUES`)", () => {
+    const marker: EditEntry = {
+      rowId: 1,
+      colIndex: -1,
+      value: {
+        __vsdb_new_row__: true,
+        __rowId: 1,
+        values: [{ __vsdb_default__: true }],
+      },
+    };
+    const r = buildSaveStatements("mysql", "t", [], ["qty"], [marker], []);
+    expect(r.ok).toBe(true);
+    if (r.ok !== true) return;
+    expect(r.statements).toHaveLength(1);
+    expect(r.statements[0]).not.toMatch(/DEFAULT VALUES/i);
+    expect(r.statements[0]).toBe("INSERT INTO `t` () VALUES ()");
+  });
+
+  it("postgres + all-DEFAULT insert is unaffected: still DEFAULT VALUES", () => {
+    const marker: EditEntry = {
+      rowId: 1,
+      colIndex: -1,
+      value: {
+        __vsdb_new_row__: true,
+        __rowId: 1,
+        values: [{ __vsdb_default__: true }],
+      },
+    };
+    const r = buildSaveStatements("postgres", "t", [], ["qty"], [marker], []);
+    expect(r.ok).toBe(true);
+    if (r.ok !== true) return;
+    expect(r.statements[0]).toBe('INSERT INTO "t" DEFAULT VALUES');
+  });
+
+  it("mssql + all-DEFAULT insert is unaffected: still DEFAULT VALUES", () => {
+    const marker: EditEntry = {
+      rowId: 1,
+      colIndex: -1,
+      value: {
+        __vsdb_new_row__: true,
+        __rowId: 1,
+        values: [{ __vsdb_default__: true }],
+      },
+    };
+    const r = buildSaveStatements("mssql", "t", [], ["qty"], [marker], []);
+    expect(r.ok).toBe(true);
+    if (r.ok !== true) return;
+    expect(r.statements[0]).toBe("INSERT INTO [t] DEFAULT VALUES");
+  });
+});
+
 describe("buildSaveStatements — batch shape", () => {
   it("two rows × two cells → 2 UPDATE statements (one per row)", () => {
     const edits: EditEntry[] = [

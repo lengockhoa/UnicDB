@@ -1136,6 +1136,52 @@ describe("TASK-011 (B3) — commandOpenAiChat resolves engine via detectOmp() + 
     expect(routedToSettings).toBe(true);
     expect(panelConstructorCalls.length).toBe(0);
   });
+
+  // ---- MINOR review finding 7 ------------------------------------------
+  // extension.ts's `if (aiChatPanel) { aiChatPanel.show(); return; }` guard
+  // (line ~405) makes the module-level singleton reference the ONLY thing
+  // that decides whether a fresh detectOmp()/resolveEngine() pass ever
+  // happens again. Closing the webview tab tears the panel down via
+  // `panel.onDidDispose` — a code path that never touched extension.ts's
+  // reference before this fix — so the guard kept short-circuiting into a
+  // disposed instance forever, and a later omp install/config change was
+  // never picked up without a full window reload.
+  it("R(Finding7) regression: closing the webview tab (onDispose) lets the NEXT vsdb.aiChat re-detect the engine and open a fresh panel", async () => {
+    detectOmpState.impl = async () => ({
+      available: true,
+      ok: true,
+      path: "/usr/bin/omp",
+      version: "18.0.1",
+    });
+    const ctx = makeCtx();
+    activate(ctx as never);
+
+    const fn = state.registeredCommands.get("vsdb.aiChat");
+    expect(fn).toBeDefined();
+
+    await fn!();
+    expect(panelConstructorCalls.length).toBe(1);
+
+    // Second open while the panel is still alive is a no-op reveal — no new
+    // detectOmp()/construction (pre-existing behavior, unaffected by this
+    // fix).
+    await fn!();
+    expect(panelConstructorCalls.length).toBe(1);
+
+    // Simulate the webview tab being closed by the user — this is exactly
+    // what `panel.onDidDispose` → `AiChatPanel.teardown()` does in
+    // production: fire the `onDispose` callback threaded into the
+    // constructor options.
+    const firstOpts = panelConstructorCalls[0] as { onDispose?: () => void };
+    expect(firstOpts.onDispose).toBeTypeOf("function");
+    firstOpts.onDispose!();
+
+    // The module-level singleton must now be null, so the NEXT open
+    // re-detects and constructs a SECOND, fresh panel instead of reusing
+    // the disposed one.
+    await fn!();
+    expect(panelConstructorCalls.length).toBe(2);
+  });
 });
 
 // =============================================================================

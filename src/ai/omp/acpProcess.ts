@@ -70,6 +70,19 @@ export interface AcpProcessHandle {
   version: string;
   /** Tear down the AcpClient + best-effort terminate the child. */
   dispose: () => void;
+  /**
+   * Review Finding 4: bounded tail of the child's stderr, live-updated for
+   * the lifetime of the process — NOT just up to the handshake. Pre-fix,
+   * the tail was only ever attached to a handshake-failure error
+   * (`attachStderrTail` inside `start()`'s catch); after a successful
+   * handshake the tail kept filling but was never read again, so an omp
+   * auth/model error DURING `session/prompt` produced an empty assistant
+   * bubble with the explanatory stderr silently discarded. Callers (the
+   * panel's `runAcpTurn` catch) should append this to a mid-turn error.
+   * Optional so existing test fakes that don't model stderr keep compiling;
+   * production `start()` always provides it.
+   */
+  getStderrTail?: () => string;
 }
 
 interface ChildLike {
@@ -113,6 +126,14 @@ export class AcpProcess {
       // Pipe stdin/stdout/stderr so AcpClient can talk NDJSON to the child.
       stdio: ["pipe", "pipe", "pipe"],
       cwd: this.opts.cwd,
+      // Review Finding 2: on Windows, `where omp` typically resolves
+      // `omp.cmd` — a shell shim, not a real PE executable. Node >= 20.12
+      // refuses to spawn a `.cmd` file directly without `shell: true`
+      // (CVE-2024-27980 mitigation), so every session start would die with
+      // ENOENT despite detectOmp() reporting omp usable. No-op on
+      // macOS/Linux (spawnFn's default is already effectively `shell:
+      // false` there and omp is a real executable on those platforms).
+      shell: process.platform === "win32",
     });
     const spawnLike: ChildLike = {
       stdin: child.stdin,
@@ -230,6 +251,10 @@ export class AcpProcess {
         sessionId,
         version,
         dispose: () => this.disposeClient(),
+        // Finding 4: `stderrTail` keeps accumulating (bounded) via the
+        // "data" listener registered above for the life of the process —
+        // read it live rather than only at handshake-failure time.
+        getStderrTail: () => stderrTail,
       };
     } catch (err) {
       this.disposeClient();

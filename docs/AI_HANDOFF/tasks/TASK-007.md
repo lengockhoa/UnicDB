@@ -353,3 +353,177 @@ dangling stash-merge commit that briefly surfaced `handoff/task-002` content is 
 via `git fsck --unreachable` in the shared object store until GC — harmless, but worth knowing).
 
 ---
+
+## Review Fix Report (fix round B — AI/omp cluster)
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: claude-sonnet-5
+EXECUTOR_SUBAGENT: -
+SUMMARY: Fixed all 8 review findings (1 CRITICAL, 2 IMPORTANT, 5 MINOR incl. comment-only)
+raised by two independent opus reviewers over the AI/omp cluster. Every finding has a
+regression test that failed for the right reason before its fix and passes after.
+
+TEST_PLAN_FOLLOWED: inline — the task's frozen `## Test Cases` predate this review-fix round;
+one regression test was written per finding directly against the reviewers' findings (see
+FINDINGS below), following the existing test files' fake-transport / fake-process patterns.
+
+FINDINGS:
+1. CRITICAL (both reviewers) — 30s per-request timeout wrongly applied to `session/prompt`
+   (which legitimately runs minutes, more so with tool/permission round-trips); late
+   `session/update` notifications after turn-settle opened orphan streaming bubbles.
+   FIXED. `AcpClient.request()` gained an optional `{timeoutMs}` override (0 = unbounded);
+   `runAcpTurn()` passes `{timeoutMs: 0}` for `session/prompt` only — `initialize`/
+   `session/new`/`session/load` keep the default 30s bound. A new `turnSettled` flag (set in
+   every turn-exit path: both `finally` blocks, both early returns) gates
+   `handleAcpNotification` so a late frame after settlement is dropped instead of rendered.
+   While fixing this I also found and closed a related swallow bug the timeout-removal
+   refactor would otherwise have introduced: the non-throwing `responseSettled` wrapper
+   (`.then(fulfil, () => undefined)`, needed so it can safely race the Stop/dispose "forced"
+   belt) was silently discarding a genuine `session/prompt` REJECTION (JSON-RPC error,
+   transport closed mid-turn) — the turn would settle as if nothing happened, with no error
+   ever surfacing. Added `promptError` capture + a re-throw after the race
+   (`if (promptError && !forced && !userAborted) throw promptError`) so a real mid-turn
+   failure still reaches the existing `catch` block (and, per Finding 4, the stderr tail).
+2. IMPORTANT — `acp.start("omp", ...)` hardcoded the binary name, discarding the detected
+   path; Windows `.cmd` shim needs `shell:true`. FIXED. `EngineChoice` gained `path?: string`
+   (threaded from `detectOmp()`'s `which`/`where` probe); `extension.ts` passes
+   `engineOmpPath: choice.path` into the panel; `ensureAcpSession()` calls
+   `acp.start(this.options.engineOmpPath ?? "omp", ...)`. `AcpProcess.start()` spawns with
+   `shell: process.platform === "win32"`.
+3. IMPORTANT — `handleClear()` didn't reset the omp session server-side (next prompt answered
+   with full memory of a "cleared" chat). FIXED. `handleClear()` now calls
+   `disposeAcpSession()` when `engine === "omp"` before resetting history, so the next `send`
+   spawns a fresh `session/new`.
+4. MINOR — stderr tail only surfaced on handshake failure, not mid-turn errors. FIXED.
+   `AcpProcessHandle` gained an optional `getStderrTail?: () => string` (production `start()`
+   always provides it; optional purely so the two other test-fake sites that don't model
+   stderr keep compiling). `runAcpTurn`'s `catch` block appends the tail (same
+   `--- omp stderr (tail) ---` format the handshake-failure path already used) when non-empty.
+   This finding's fix depended on Finding 1's `promptError` re-throw above — without it, a
+   mid-turn rejection never reached this `catch` block at all.
+5. MINOR — `mcpBridge.ts`'s `dispose()` called plain `server.close()`, which only stops
+   accepting NEW connections; a socket with an ACTIVE in-flight request (e.g. a hung tool
+   call) lingered open until that request completed, which may be never. FIXED.
+   `dispose()` now calls `server.closeAllConnections(); server.close();`; `server.unref()`
+   added right after `listen()` so the listener alone never keeps the extension host process
+   alive. (Confirmed via a throwaway Node script that plain `close()` already force-closes
+   fully IDLE sockets on this Node 22 runtime — that scenario doesn't discriminate pre/post
+   fix — so the regression test instead drives a socket with a genuinely in-flight/hung
+   request, the case `closeAllConnections()` actually changes.)
+6. MINOR — live `tool_call` `session/update` frames were silently dropped on the omp path (no
+   `step` posted), unlike the builtin engine's `onToolCall` callback — a multi-tool omp turn
+   showed zero progress until the final assistant bubble. FIXED. `handleAcpNotification` gained
+   a `tool_call` branch posting `{type:"step", label}`, deriving `label` via
+   `title || name || toolCallId || "tool"` — the same precedence
+   `deriveHistoryFromReplay` already uses for the identical update kind, kept consistent.
+7. MINOR — `extension.ts`'s module-level `aiChatPanel` was never nulled when the user closed
+   the webview tab (only the explicit `dispose()` call path was covered), so
+   `if (aiChatPanel) { aiChatPanel.show(); return; }` kept reusing a disposed instance forever
+   — a later omp install/uninstall or config change was never picked up without a full window
+   reload. FIXED. `AiChatPanelOptions` gained `onDispose?: () => void`, fired from a single
+   shared `teardown()` method now used by BOTH the explicit `dispose()` call and the
+   `panel.onDidDispose` handler (guarded by a new `torndown` flag so teardown work — including
+   `onDispose` — runs exactly once regardless of which path enters first; `panel.dispose()`
+   re-enters `onDidDispose` synchronously in both real vscode and every test fake here, so this
+   guard was necessary, not optional). `extension.ts` passes `onDispose: () => { aiChatPanel =
+   null; }`.
+8. MINOR (comment-only) — two comments claimed "Stop/dispose push a resolver" onto the
+   `acpTurnResolvers` belt, but only `handleStop()` actually does; `disposeAcpSession()` never
+   touches it. FIXED (comment-only, no test — explicitly noted as harmless in the task). Both
+   comments (near `runAcpTurn`'s doc block and inline at the belt's `Promise` construction)
+   now correctly attribute the push to `handleStop()` alone and cross-reference Finding 1's
+   `promptError` path as how a bare dispose actually settles a turn instead.
+
+FILES_CHANGED:
+  - src/ai/omp/acp.ts: `request()` takes optional `{timeoutMs}`; `requestRaw()` only schedules
+    a timer when `timeoutMs > 0`.
+  - src/ai/omp/acpProcess.ts: `spawn(..., { shell: process.platform === "win32" })`;
+    `AcpProcessHandle.getStderrTail?()` added + populated in `start()`'s success return.
+  - src/ai/omp/mcpBridge.ts: `dispose()` calls `closeAllConnections()` before `close()`;
+    `server.unref()` after `listen()`.
+  - src/ai/engineChoice.ts: `EngineChoice.path?: string`, threaded from `detection.path`.
+  - src/ui/aiChatPanel.ts: `turnSettled` flag + drop-guard in `handleAcpNotification`;
+    `{timeoutMs: 0}` on the `session/prompt` request; `promptError` capture/re-throw;
+    stderr-tail error enrichment; `engineOmpPath` used in `ensureAcpSession()`; `handleClear()`
+    disposes the omp session; live `tool_call` → `step` branch; `AiChatPanelOptions.onDispose`
+    + shared guarded `teardown()`; two corrected comments (Finding 8).
+  - src/extension.ts: `engineOmpPath: choice.path` and `onDispose: () => { aiChatPanel = null;
+    }` added to the `AiChatPanel` constructor call in `commandOpenAiChat()`.
+  - src/ai/__tests__/engineChoice.test.ts, src/ai/omp/__tests__/acpProcess.test.ts,
+    src/ai/omp/__tests__/mcpBridge.test.ts, src/ui/__tests__/aiChatPanelAcp.test.ts,
+    src/extension.test.ts: regression tests (see TESTS_ADDED).
+
+TESTS_ADDED:
+  - src/ui/__tests__/aiChatPanelAcp.test.ts:
+    "R(Finding1a) regression: session/prompt survives past the old 30s per-request bound while
+    permission is pending"
+    "R(Finding1b) regression: a late agent_message_chunk notification after the turn has
+    settled is dropped, not posted as a delta"
+    "R(Finding3) regression: clear on the omp engine disposes the ACP session so the next send
+    starts a fresh session/new"
+    "R(Finding4) regression: a mid-turn session/prompt error is enriched with the child's
+    stderr tail"
+    "R(Finding6) regression: a live tool_call session/update posts a step line, mirroring the
+    builtin engine"
+  - src/ai/omp/__tests__/acpProcess.test.ts:
+    "R(Finding2) regression: spawn options set shell:true only on win32"
+  - src/ai/__tests__/engineChoice.test.ts:
+    "R(Finding2) regression: choice.path mirrors detection.path when engine is omp"
+    "R(Finding2) edge: no path from detectOmp() → choice.path stays undefined (caller falls
+    back to bare \"omp\")"
+  - src/ai/omp/__tests__/mcpBridge.test.ts:
+    "R(Finding5) regression: dispose() forcibly closes a socket with an in-flight (hung)
+    request instead of waiting for it to finish"
+  - src/extension.test.ts:
+    "R(Finding7) regression: closing the webview tab (onDispose) lets the NEXT vsdb.aiChat
+    re-detect the engine and open a fresh panel"
+
+VERIFICATION:
+  command: npm run typecheck
+  result: clean, exit 0
+
+  command: npm test
+  result: 1206 passed / 2 skipped / 86 files (0 failed) — baseline was 1196 passed / 2 skipped
+    / 86 files; +10 new tests, no regressions.
+  output_excerpt: |
+     Test Files  85 passed | 1 skipped (86)
+          Tests  1206 passed | 2 skipped (1208)
+       Start at  12:02:07
+       Duration  8.83s
+
+RED confirmations (all captured this turn, each via a temporary revert-run-restore cycle using
+`cp` to a `/tmp` backup — never `git stash`, per instructions):
+  - Finding1a/1b: pre-fix run showed `expected true to be false` (done posted at 31s, before
+    the old bound would even fire) and `expected [...] to have a length of +0 but got 1` (late
+    delta posted) — both failed for the intended reason.
+  - Finding2 (shell): `AssertionError: expected undefined to be false` (spawn options had no
+    `shell` key pre-fix).
+  - Finding3: `AssertionError: expected 0 to be greater than or equal to 1`
+    (`firstSession.disposeCalls` — handleClear never disposed the session).
+  - Finding4: `TypeError: Cannot read properties of undefined (reading 'message')` — no error
+    message was ever posted for a mid-turn rejection pre-fix (this surfaced the Finding-1-belt
+    swallow bug described above, not just the missing stderr enrichment; the promptError
+    re-throw was required before the stderr-tail enrichment code could even run).
+  - Finding5: `AssertionError: expected false to be true` — the hung-request socket did not
+    close within 500ms under plain `server.close()`.
+  - Finding6: `TypeError: Cannot read properties of undefined (reading 'label')` — no `step`
+    message was ever posted for a `tool_call` update pre-fix.
+  - Finding7: `AssertionError: expected undefined to be type of 'function'` — no `onDispose`
+    option existed pre-fix, so the singleton was never nulled and the second open reused the
+    same disposed panel instance.
+
+ISSUES: none — Finding 1's fix surfaced a real secondary bug (the `responseSettled` rejection
+swallow) that was not explicitly named as one of the 8 findings but sits directly on Finding
+1/4's code path and would have silently defeated Finding 4's fix if left in place; documented
+above and covered by the Finding 4 regression test (which exercises exactly this path). No
+`git stash` was used anywhere in this session (per the explicit ban) — all temporary
+revert/restore cycles used `cp` to `/tmp` backups. The live omp smoke test
+(`acpLiveSmoke.test.ts`) was not run (still shows `2 skipped` in the baseline and final counts,
+unchanged) per instructions. `sqlToRun` dialect-threading work at `extension.ts:462` was left
+untouched.
+
+HANDOFF_TO_REVIEWER: yes — reason: Handoff mode task, `STATUS: DONE`, fresh RED+GREEN evidence
+captured this turn; per protocol the next AI session should pick this up as `pending_review`.
+
+NEXT: ready for review.

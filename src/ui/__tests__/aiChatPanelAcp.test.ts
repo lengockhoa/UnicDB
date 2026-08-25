@@ -214,6 +214,8 @@ interface FakeAcpSession {
   transport: FakeAcpTransport;
   exitListeners: Array<(code: number | null) => void>;
   disposeCalls: number;
+  /** Mutable — tests can set this to simulate accumulated child stderr. */
+  stderrTail: string;
   /** Fire the registered exit listeners — simulates real child process exit. */
   emitChildExit(code?: number | null): void;
 }
@@ -235,6 +237,7 @@ function makeFakeAcpDeps(): FakeAcpDeps {
         transport,
         exitListeners: [],
         disposeCalls: 0,
+        stderrTail: "",
         // Mirrors AcpProcess's post-handshake child-exit watchdog: when the
         // fake child "exits", dispose the AcpClient exactly once. That fires
         // AcpClient.onClose listeners (panel.cancelAllPending), which writes
@@ -259,6 +262,7 @@ function makeFakeAcpDeps(): FakeAcpDeps {
         acp,
         sessionId: "sess-1",
         version: "18.0.1",
+        getStderrTail: () => session.stderrTail,
         dispose: () => {
           session.disposeCalls += 1;
           transport.close();
@@ -311,6 +315,22 @@ function feedAgentMessageChunk(
   );
 }
 
+function feedToolCall(
+  transport: FakeAcpTransport,
+  fields: { title?: string; name?: string; toolCallId?: string },
+): void {
+  transport.feed(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "sess-1",
+        update: { sessionUpdate: "tool_call", ...fields },
+      },
+    }),
+  );
+}
+
 /** Find the `id` of the most recently written `session/prompt` request. */
 function lastPromptRequestId(transport: FakeAcpTransport): unknown {
   const frames = transport.allWritten().filter((f) => f["method"] === "session/prompt");
@@ -328,6 +348,18 @@ function respondPrompt(
 ): void {
   transport.feed(
     JSON.stringify({ jsonrpc: "2.0", id, result: { stopReason } }),
+  );
+}
+
+/** Feed a `session/prompt` JSON-RPC ERROR response — simulates a mid-turn
+ * (post-handshake) failure, e.g. the omp agent crashing while generating. */
+function respondPromptError(
+  transport: FakeAcpTransport,
+  id: unknown,
+  message: string,
+): void {
+  transport.feed(
+    JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32000, message } }),
   );
 }
 
@@ -1384,6 +1416,221 @@ describe("AiChatPanel — ACP turn lifecycle (TASK-007)", () => {
     await until(() => postedMessages(p).some(isDone));
     expect(postedMessages(p).filter(isDone)).toHaveLength(1);
   });
+
+  // ---- CRITICAL review finding 1 (both opus reviewers, independently) -------
+  // `DEFAULT_ACP_REQUEST_TIMEOUT_MS` (30s) was applied to EVERY request(),
+  // including `session/prompt`, which has no bounded duration — and is
+  // shorter than `DEFAULT_PERMISSION_TIMEOUT_MS` (60s), so a turn that asks
+  // permission always died before the user could answer. No existing fake
+  // catches this because every fake responds within the same tick; these
+  // tests use fake timers to actually let the 30s bound elapse.
+  it("R(Finding1a) regression: session/prompt survives past the old 30s per-request bound while permission is pending", async () => {
+    vi.useFakeTimers();
+    try {
+      agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+      const { start, sessions } = makeFakeAcpDeps();
+      const panel = new AiChatPanel({
+        extensionUri: extUri,
+        deps: makeDeps(),
+        adapterFactory: vi.fn(async () => null),
+        acp: { start },
+      });
+      panel.show();
+      const { panel: p, handler } = panelHarness();
+      handler({ type: "ready" });
+      await until(() => postedMessages(p).some(isInit));
+      handler({ type: "send", text: "go" });
+      await until(() => sessions.length > 0);
+      const session = sessions[0] as FakeAcpSession;
+      await until(() => lastPromptRequestId(session.transport) !== undefined);
+
+      // Server asks for permission mid-turn (e.g. a real DB tool call) and
+      // never gets an answer for a while.
+      feedPermissionRequest(session.transport, 301, [
+        { optionId: "allow", label: "Allow" },
+      ]);
+      await until(() => postedMessages(p).some(isPermissionRequest));
+
+      // Advance past the old 30s per-request bound that used to apply to
+      // session/prompt (DEFAULT_ACP_REQUEST_TIMEOUT_MS). Pre-fix, AcpClient's
+      // internal setTimeout rejects the session/prompt request here, which
+      // (silently, since the rejection is swallowed) settles the turn with a
+      // premature `done` — before the 60s permission timeout has any chance
+      // to fire and while the user still hasn't answered.
+      await vi.advanceTimersByTimeAsync(31_000);
+
+      expect(postedMessages(p).some(isDone)).toBe(false);
+      expect(postedMessages(p).some(isAssistant)).toBe(false);
+
+      // The user answers permission after 31s; the turn still completes
+      // normally, driven only by the eventual real session/prompt response.
+      const req = postedMessages(p).find(isPermissionRequest) as
+        | PermissionRequestMsg
+        | undefined;
+      expect(req).toBeDefined();
+      handler({
+        type: "permission_response",
+        requestId: req!.requestId,
+        optionId: "allow",
+      });
+      respondPrompt(session.transport, lastPromptRequestId(session.transport), "end_turn");
+      await until(() => postedMessages(p).some(isDone));
+      expect(postedMessages(p).filter(isDone)).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("R(Finding1b) regression: a late agent_message_chunk notification after the turn has settled is dropped, not posted as a delta", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const { start, sessions } = makeFakeAcpDeps();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      acp: { start },
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "go" });
+    await until(() => sessions.length > 0);
+    const session = sessions[0] as FakeAcpSession;
+    await until(() => lastPromptRequestId(session.transport) !== undefined);
+
+    // Turn settles normally via the session/prompt response.
+    respondPrompt(session.transport, lastPromptRequestId(session.transport), "end_turn");
+    await until(() => postedMessages(p).some(isDone));
+    const deltaCountAtSettle = postedMessages(p).filter(isDelta).length;
+
+    // A LATE agent_message_chunk notification arrives after the turn already
+    // settled (omp kept generating past its own response frame). `token` is
+    // already null at this point — pre-fix, the only gate in
+    // handleAcpNotification is `token?.aborted`, which is falsy for a null
+    // token, so the late chunk still posts a delta and would open an orphan
+    // streaming bubble in the webview after `done`.
+    feedAgentMessageChunk(session.transport, "late-chunk-after-done");
+    await flush(20);
+
+    expect(postedMessages(p).filter(isDelta)).toHaveLength(deltaCountAtSettle);
+  });
+
+  // ---- IMPORTANT review finding 3 --------------------------------------------
+  // handleClear() cleared this.history and posted init{hasHistory:false} but
+  // left this.acpSession alive, so the server-side omp session retained the
+  // whole prior conversation and the next prompt answered with full memory
+  // of a chat the user just "cleared". Clear must dispose the ACP session on
+  // the omp engine so the next send does a fresh session/new.
+  it("R(Finding3) regression: clear on the omp engine disposes the ACP session so the next send starts a fresh session/new", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const { start, sessions } = makeFakeAcpDeps();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      acp: { start },
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "go" });
+    await until(() => sessions.length > 0);
+    const firstSession = sessions[0] as FakeAcpSession;
+    await until(() => lastPromptRequestId(firstSession.transport) !== undefined);
+    respondPrompt(firstSession.transport, lastPromptRequestId(firstSession.transport), "end_turn");
+    await until(() => postedMessages(p).some(isDone));
+
+    handler({ type: "clear" });
+    await flush(5);
+
+    // The omp session must be torn down (best-effort dispose on the fake
+    // handle) — a no-op handleClear leaves it alive with full memory.
+    expect(firstSession.disposeCalls).toBeGreaterThanOrEqual(1);
+
+    // The next send must spawn a BRAND NEW ACP session (fresh session/new),
+    // not reuse the cleared one.
+    handler({ type: "send", text: "after clear" });
+    await until(() => sessions.length > 1);
+    const secondSession = sessions[1] as FakeAcpSession;
+    expect(secondSession).not.toBe(firstSession);
+    await until(() => lastPromptRequestId(secondSession.transport) !== undefined);
+    respondPrompt(secondSession.transport, lastPromptRequestId(secondSession.transport), "end_turn");
+    await until(() => postedMessages(p).filter(isDone).length >= 2);
+  });
+
+  // ---- MINOR review finding 4 -------------------------------------------
+  // Pre-fix, the stderr tail was only attached to the error surfaced when the
+  // ACP HANDSHAKE itself failed (AcpProcess.start's own catch path). A
+  // mid-turn failure — e.g. the omp agent crashing partway through a
+  // response, well after handshake succeeded — got only the bare JSON-RPC
+  // error message with no diagnostic stderr context at all.
+  it("R(Finding4) regression: a mid-turn session/prompt error is enriched with the child's stderr tail", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const { start, sessions } = makeFakeAcpDeps();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      acp: { start },
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "go" });
+    await until(() => sessions.length > 0);
+    const session = sessions[0] as FakeAcpSession;
+    // Handshake already succeeded (session exists) — stderr accumulates
+    // AFTER that point, e.g. the agent process printing a crash trace
+    // while generating the response.
+    session.stderrTail = "panic: agent crashed mid-generation\n  at run()";
+    await until(() => lastPromptRequestId(session.transport) !== undefined);
+
+    respondPromptError(session.transport, lastPromptRequestId(session.transport), "agent died");
+
+    await until(() => postedMessages(p).some(isError));
+    const errorMsg = postedMessages(p).find(isError) as { message: string };
+    expect(errorMsg.message).toContain("agent died");
+    expect(errorMsg.message).toContain("panic: agent crashed mid-generation");
+    expect(errorMsg.message).toContain("--- omp stderr (tail) ---");
+  });
+
+  // ---- MINOR review finding 6 -------------------------------------------
+  // The builtin engine posts a live `{type:"step", label}` per tool call
+  // (see runBuiltinTurn's onToolCall callback) so the user sees progress on
+  // a multi-tool turn. The omp path's handleAcpNotification silently
+  // dropped `session/update` frames with `sessionUpdate: "tool_call"` —
+  // omp turns that call DB tools showed zero progress until the final
+  // assistant bubble arrived.
+  it("R(Finding6) regression: a live tool_call session/update posts a step line, mirroring the builtin engine", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const { start, sessions } = makeFakeAcpDeps();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      acp: { start },
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "go" });
+    await until(() => sessions.length > 0);
+    const session = sessions[0] as FakeAcpSession;
+    await until(() => lastPromptRequestId(session.transport) !== undefined);
+
+    feedToolCall(session.transport, { name: "run_sql", toolCallId: "call-1" });
+    await until(() => postedMessages(p).some(isStep));
+
+    const step = postedMessages(p).find(isStep) as { label: string };
+    expect(step.label).toBe("run_sql");
+
+    respondPrompt(session.transport, lastPromptRequestId(session.transport), "end_turn");
+    await until(() => postedMessages(p).some(isDone));
+  });
 });
 
 // ---- message narrowing helpers ---------------------------------------------
@@ -1406,4 +1653,7 @@ function isDone(m: unknown): m is { type: "done" } {
 }
 function isError(m: unknown): m is { type: "error"; message: string } {
   return !!m && typeof m === "object" && (m as { type?: string }).type === "error";
+}
+function isStep(m: unknown): m is { type: "step"; label: string } {
+  return !!m && typeof m === "object" && (m as { type?: string }).type === "step";
 }

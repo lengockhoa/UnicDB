@@ -16,7 +16,35 @@ describe("resolveEngine", () => {
       engine: "omp",
       requiresConfig: false,
       version: "18.0.1",
+      path: "/usr/bin/omp",
     });
+  });
+
+  // Review Finding 2: `path` must be threaded through from detectOmp()'s
+  // `which`/`where` probe so callers stop hardcoding the bare "omp" literal
+  // (which breaks on Windows, where `where omp` resolves `omp.cmd` and
+  // spawn("omp", …) without shell:true cannot execute a .cmd shim).
+  it("R(Finding2) regression: choice.path mirrors detection.path when engine is omp", () => {
+    const detection: OmpDetection = {
+      available: true,
+      ok: true,
+      path: "C:\\Users\\dev\\AppData\\Local\\omp\\omp.cmd",
+      version: "18.0.1",
+    };
+    const choice = resolveEngine({ detection, config: null });
+    expect(choice.engine).toBe("omp");
+    expect(choice.path).toBe("C:\\Users\\dev\\AppData\\Local\\omp\\omp.cmd");
+  });
+
+  it("R(Finding2) edge: no path from detectOmp() → choice.path stays undefined (caller falls back to bare \"omp\")", () => {
+    const detection: OmpDetection = {
+      available: true,
+      ok: true,
+      version: "18.0.1",
+    };
+    const choice = resolveEngine({ detection, config: null });
+    expect(choice.engine).toBe("omp");
+    expect(choice.path).toBeUndefined();
   });
 
   it("Edge (missing binary) — omp absent, no config → builtin, requiresConfig, OMP_INSTALL_HINT", () => {

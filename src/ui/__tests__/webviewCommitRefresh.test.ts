@@ -638,4 +638,65 @@ describeIfBundle("webview/main.ts bundle (TASK-002)", () => {
       });
     },
   );
+
+  // ---- Finding 4 (review fix round, cycle T) --------------------------------
+  itIfBundle(
+    "Finding 4. Add Row -> commit -> post-commit refresh grows row count ⇒ no phantom placeholder row survives",
+    async () => {
+      const { received } = loadBundle();
+      dispatchMsg(threeRowsState());
+      await flushGridEvents();
+
+      const api = vsdbApi()!;
+      const grid = api.gridApi!;
+      expect(grid.getDisplayedRowCount()).toBe(3);
+
+      api.addRow!();
+      await flushGridEvents();
+      expect(grid.getDisplayedRowCount()).toBe(4);
+
+      api.simulateCellEdit!(3, "name", "delta", "");
+      await flushGridEvents();
+
+      received.length = 0;
+      api.commit!();
+      await flushGridEvents();
+      expect(
+        received.filter((m) => m.type === "saveEdits"),
+      ).toHaveLength(1);
+
+      // Host's success ack clears editState/undoStack — mirrors
+      // handleSaveResult's real ok:true path — but the placeholder row
+      // itself and newRowCount are untouched by this message alone.
+      dispatchMsg({ type: "saveResult", index: 0, ok: true });
+      await flushGridEvents();
+      expect(getEditState()!.dirtyCount).toBe(0);
+
+      // Post-commit refresh: the host re-runs the original SELECT and
+      // echoes back the authoritative row set, now grown by exactly the
+      // one committed row (id 4, name "delta").
+      dispatchMsg(
+        stateWith(
+          ["id", "name"],
+          [
+            [1, "alpha"],
+            [2, "beta"],
+            [3, "gamma"],
+            [4, "delta"],
+          ],
+        ),
+      );
+      await flushGridEvents();
+
+      // Must be exactly 4 — the old bug appended the new server row via
+      // append-delta WITHOUT removing the local placeholder, leaving a
+      // phantom 5th (blank) row.
+      expect(grid.getDisplayedRowCount()).toBe(4);
+      const names: string[] = [];
+      grid.forEachNode((node) => {
+        if (node.data) names.push(node.data.name as string);
+      });
+      expect(names.sort()).toEqual(["alpha", "beta", "delta", "gamma"]);
+    },
+  );
 });

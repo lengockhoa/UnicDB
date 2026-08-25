@@ -127,6 +127,14 @@ export interface AiChatPanelOptions {
    */
   engineVersion?: string;
   /**
+   * Review Finding 2: resolved omp binary path (`EngineChoice.path`) from
+   * the same upstream `detectOmp()` call. Threaded into `acp.start()`
+   * instead of the bare "omp" literal — on Windows `where omp` resolves
+   * `omp.cmd`, and `spawn("omp", …)` without `shell:true` cannot execute a
+   * `.cmd` shim on Node >= 20.12. Falls back to `"omp"` when absent.
+   */
+  engineOmpPath?: string;
+  /**
    * Install/update hint (B8) — `OMP_INSTALL_HINT` | `OMP_UPDATE_HINT` from
    * the same upstream `resolveEngine` call. Rendered in the "engine" banner
    * when the engine is "builtin" because omp was unavailable/too old.
@@ -134,6 +142,18 @@ export interface AiChatPanelOptions {
   engineHint?: string;
   /** Optional tuning for tests (permission timeout, etc). */
   tuning?: AiChatPanelTuning;
+  /**
+   * Finding 7 (review): fired whenever this panel actually tears down its
+   * webview — both the explicit `dispose()` call AND the user closing the
+   * tab (`panel.onDidDispose`). Without this, a caller holding a
+   * single-instance reference (e.g. extension.ts's module-level
+   * `aiChatPanel`) has no way to learn the instance is dead, so
+   * `if (aiChatPanel) { aiChatPanel.show(); return; }` on the next "open AI
+   * chat" keeps reusing a disposed instance forever instead of
+   * re-detecting the engine (stale engine choice survives an omp
+   * install/uninstall or config change until a full reload).
+   */
+  onDispose?: () => void;
 }
 
 /**
@@ -352,6 +372,18 @@ export class AiChatPanel {
   private acpSession: AcpSession | null = null;
   /** Set once per ACP turn when done was posted. */
   private turnDonePosted = false;
+  /**
+   * Finding 1b (review, both opus reviewers): true once the current ACP turn
+   * has settled (done posted) or when there is no turn in flight at all.
+   * `handleAcpNotification` drops `session/update` frames while this is
+   * true — without it, a late `agent_message_chunk` arriving after `done`
+   * (e.g. omp kept generating past its own session/prompt response) still
+   * posts a `delta`, opening a second, orphan streaming bubble in the
+   * webview. `token?.aborted` alone does not catch this: `token` is already
+   * null once the turn has settled. Flipped false at the start of every
+   * send, true whenever `done` is posted.
+   */
+  private turnSettled = true;
   /** Resolvers for in-flight ACP turns — fired by settle path. */
   private acpTurnResolvers: Array<() => void> = [];
   /** Per-turn AbortController for the built-in engine. Created in
@@ -374,6 +406,15 @@ export class AiChatPanel {
   private schemaCacheRef: { current: SchemaContextCacheEntry | null } = {
     current: null,
   };
+  /**
+   * Finding 7 belt: `dispose()` calling `this.panel?.dispose()` synchronously
+   * re-enters the `onDidDispose` handler below (confirmed by the real
+   * webview panel AND every test fake, which both fire `onDidDispose`
+   * listeners from inside their `dispose()`). Without this guard, teardown
+   * (cancelAllPending/disposeAcpSession/onDispose) would run twice for a
+   * single explicit `dispose()` call.
+   */
+  private torndown = false;
 
   constructor(
     private readonly options: AiChatPanelOptions,
@@ -388,6 +429,7 @@ export class AiChatPanel {
       this.panel.reveal();
       return;
     }
+    this.torndown = false;
     this.panel = vscode.window.createWebviewPanel(
       PANEL_ID,
       "VSDB AI Chat",
@@ -412,24 +454,35 @@ export class AiChatPanel {
         // the explicit AiChatPanel.dispose() method below — it must tear
         // down the ACP session and cancel pending permissions the same way,
         // or the omp child process (and its permission timers) leaks.
-        this.cancelAllPending();
-        this.disposeAcpSession();
-        this.panel = null;
-        for (const d of this.disposables) d.dispose();
-        this.disposables = [];
+        this.teardown();
       }),
     );
   }
 
   dispose(): void {
+    // `panel.dispose()` (real vscode AND every test fake) synchronously
+    // re-enters the `onDidDispose` handler registered in `show()`, which
+    // calls `teardown()` itself — so this explicit call and that re-entrant
+    // one must collapse into exactly one teardown. See `teardown()`'s guard.
+    this.panel?.dispose();
+    this.teardown();
+  }
+
+  /** Single teardown path shared by the explicit `dispose()` call and the
+   * webview tab being closed by the user (`panel.onDidDispose`) — guarded
+   * so cancelAllPending/disposeAcpSession/onDispose each run exactly once
+   * per panel lifetime regardless of which path triggers it first. */
+  private teardown(): void {
+    if (this.torndown) return;
+    this.torndown = true;
     // Cancel every pending permission request with one cancelled ACP
     // result per server request before tearing the session down.
     this.cancelAllPending();
     this.disposeAcpSession();
-    this.panel?.dispose();
     this.panel = null;
     for (const d of this.disposables) d.dispose();
     this.disposables = [];
+    this.options.onDispose?.();
   }
 
   // ---- Private -------------------------------------------------------------
@@ -486,6 +539,7 @@ export class AiChatPanel {
     this.cancelAllPending();
     this.token = { aborted: false };
     this.turnDonePosted = false;
+    this.turnSettled = false;
     // Per-turn AbortController for the builtin engine — `signal` flows
     // straight through runAgent → deps.streamComplete so a mid-stream Stop
     // cancels the SSE read. Aborted by handleStop().
@@ -599,6 +653,9 @@ export class AiChatPanel {
       // so the resume guards (`token !== null`) don't permanently swallow
       // resume_list/resume_pick after the first message.
       this.token = null;
+      // Finding 1b: keep turnSettled accurate even for the builtin engine
+      // so a later engine failover (B8) never leaves it stuck false.
+      this.turnSettled = true;
     }
   }
 
@@ -616,11 +673,13 @@ export class AiChatPanel {
    * (no `agent_end`/`turn_complete`) — the turn settles on the
    * `session/prompt` JSON-RPC RESPONSE itself, carrying
    * `{stopReason: "end_turn" | "cancelled" | "refusal" | "max_tokens" | ...}`
-   * (B1). `acpTurnResolvers` is repurposed as a "belt": Stop/dispose push a
-   * resolver there to force early settlement of a turn whose response may
-   * never arrive, without hanging indefinitely. `turnDonePosted` remains the
-   * single guard against double-posting `assistant`/`done`, whichever path
-   * settles first.
+   * (B1). `acpTurnResolvers` is repurposed as a "belt": `handleStop()` pushes
+   * a resolver there to force early settlement of a turn whose response may
+   * never arrive, without hanging indefinitely (Finding 8: `disposeAcpSession()`
+   * does NOT push/resolve this belt — a dispose mid-turn instead settles via
+   * the rejected `session/prompt` request itself, see `promptError` below).
+   * `turnDonePosted` remains the single guard against double-posting
+   * `assistant`/`done`, whichever path settles first.
    */
   private async runAcpTurn(
     text: string,
@@ -632,6 +691,7 @@ export class AiChatPanel {
       this.engine = "builtin";
       this.post({ type: "error", message: "ACP engine unavailable; falling back" });
       this.post({ type: "done" });
+      this.turnSettled = true;
       this.token = null;
       return;
     }
@@ -643,6 +703,7 @@ export class AiChatPanel {
       const message = err instanceof Error ? err.message : String(err);
       this.post({ type: "error", message: `ACP session failed: ${message}` });
       this.post({ type: "done" });
+      this.turnSettled = true;
       this.engine = "builtin";
       // B8: the banner must self-correct on failover — without this repost
       // the webview keeps showing "omp" forever even though every
@@ -681,29 +742,49 @@ export class AiChatPanel {
           ? `${systemMsg.content}\n\n${text}`
           : text;
 
+      // Finding 1a (review, both opus reviewers): session/prompt has no
+      // bounded duration — it legitimately runs minutes, more so with DB
+      // tools/permission round-trips (TASK-012) in the mix. Passing
+      // `timeoutMs: 0` disables AcpClient's default 30s per-request bound
+      // for THIS call only; initialize/session/new/session/load keep it.
       const requestPromise = session.handle.acp.request<
         { stopReason?: unknown } | undefined
-      >("session/prompt", {
-        sessionId: session.sessionId,
-        prompt: [{ type: "text", text: promptText }],
-      });
+      >(
+        "session/prompt",
+        {
+          sessionId: session.sessionId,
+          prompt: [{ type: "text", text: promptText }],
+        },
+        { timeoutMs: 0 },
+      );
 
       // Primary settlement path: the session/prompt RESPONSE. This wrapper
       // is engineered to NEVER reject (both branches resolve normally) so
       // it can safely race the forced-settlement belt below without an
-      // unhandled-rejection warning.
+      // unhandled-rejection warning. A genuine rejection (JSON-RPC error,
+      // transport closed mid-turn, etc.) is captured in `promptError` and
+      // re-thrown AFTER the race below — so it still reaches the `catch`
+      // block (stderr-tail enrichment, error post) instead of being
+      // silently discarded, unless the turn was forced to settle by
+      // Stop/dispose or the user aborted, in which case a rejection here
+      // is expected noise (AcpClient.dispose rejects all pending requests).
       let stopReason: string | undefined;
+      let promptError: unknown;
       const responseSettled: Promise<void> = requestPromise.then(
         (result) => {
           const r = result?.stopReason;
           if (typeof r === "string") stopReason = r;
         },
-        () => undefined,
+        (err) => {
+          promptError = err;
+        },
       );
 
-      // Belt: Stop/dispose push a resolver here (see handleStop /
-      // disposeAcpSession) to force early settlement of a turn that may
-      // never receive a response (hung/killed process).
+      // Belt: `handleStop()` pushes a resolver here (Finding 8: NOT
+      // `disposeAcpSession()` — a bare dispose settles this turn via the
+      // rejected session/prompt request instead, captured as `promptError`
+      // above) to force early settlement of a turn that may never receive
+      // a response (hung/killed process).
       let forced = false;
       let myResolve: () => void = () => {};
       const forcedSettled: Promise<void> = new Promise((resolve) => {
@@ -719,6 +800,10 @@ export class AiChatPanel {
       if (idx !== -1) this.acpTurnResolvers.splice(idx, 1);
 
       const userAborted = token?.aborted === true;
+
+      if (promptError !== undefined && !forced && !userAborted) {
+        throw promptError;
+      }
 
       // Every stopReason is handled explicitly — no silent fallthrough.
       let postAssistant: boolean;
@@ -762,7 +847,15 @@ export class AiChatPanel {
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.post({ type: "error", message });
+      // Finding 4 (review): the stderr tail was previously only surfaced on
+      // a HANDSHAKE failure — after a successful handshake it kept filling
+      // but nothing ever read it again, so an omp auth/model error DURING
+      // session/prompt produced an empty assistant bubble with the real
+      // explanation silently discarded. Append the live tail when present.
+      const tail = session.handle.getStderrTail?.() ?? "";
+      const enriched =
+        tail.length > 0 ? `${message}\n--- omp stderr (tail) ---\n${tail}` : message;
+      this.post({ type: "error", message: enriched });
       if (!this.turnDonePosted) {
         this.post({ type: "done" });
         this.turnDonePosted = true;
@@ -772,6 +865,10 @@ export class AiChatPanel {
       // so the resume guards (`token !== null`) don't permanently swallow
       // resume_list/resume_pick after the first message.
       this.token = null;
+      // Finding 1b: the turn is settled on every exit path from here —
+      // a session/update notification arriving after this point is late
+      // and must be dropped by handleAcpNotification's turnSettled gate.
+      this.turnSettled = true;
     }
   }
 
@@ -796,7 +893,7 @@ export class AiChatPanel {
 
     let handle: AcpProcessHandle;
     try {
-      handle = await acp.start("omp", cwd, mcpServers);
+      handle = await acp.start(this.options.engineOmpPath ?? "omp", cwd, mcpServers);
     } catch (err) {
       // start() failed (e.g. omp missing/spawn error) — the bridge's
       // dispose() closure never gets wired below, so close it here to avoid
@@ -865,6 +962,12 @@ export class AiChatPanel {
     n: AcpNotification,
   ): void {
     if (n.method !== "session/update") return;
+    // Finding 1b: a session/update notification arriving after the current
+    // turn has already settled (done posted) is late — drop it instead of
+    // rendering a delta into a fresh, orphan streaming bubble. `token` is
+    // already null by this point, so `token?.aborted` alone never catches
+    // this case.
+    if (this.turnSettled) return;
     const params = n.params;
     if (params === null || typeof params !== "object") return;
     // Drop-guard (F1 belt): between resume_pick settle and the next
@@ -895,6 +998,25 @@ export class AiChatPanel {
         session.buffer += text;
         this.post({ type: "delta", text });
       }
+      return;
+    }
+    if (sessionUpdate === "tool_call") {
+      // Finding 6 (review): the builtin engine posts a live `step` line per
+      // tool call (see runBuiltinTurn's onToolCall callback) but the omp
+      // path silently dropped this update kind — a multi-tool omp turn
+      // showed no progress at all until the final assistant bubble. Mirror
+      // deriveHistoryFromReplay's label derivation for the replayed-history
+      // rendering of the SAME update kind to stay consistent.
+      if (this.token?.aborted) return;
+      const title = (update as { title?: unknown }).title;
+      const name = (update as { name?: unknown }).name;
+      const toolCallId = (update as { toolCallId?: unknown }).toolCallId;
+      const label =
+        (typeof title === "string" && title.length > 0 && title) ||
+        (typeof name === "string" && name.length > 0 && name) ||
+        (typeof toolCallId === "string" && toolCallId.length > 0 && toolCallId) ||
+        "tool";
+      this.post({ type: "step", label });
       return;
     }
     // agent_thought_chunk + every other update kind (including the stale
@@ -1081,7 +1203,16 @@ export class AiChatPanel {
     this.currentAbort?.abort();      // hủy SSE đang đọc (builtin)
     this.currentAbort = null;
     this.turnDonePosted = false;
+    this.turnSettled = true;
     this.cancelAllPending();          // ACP pending → cancelled (giữ pattern stop)
+    // Finding 3 (review): Clear was a no-op on the omp engine — it reset the
+    // host-side history but left the server-side omp session alive, so the
+    // next prompt answered with full memory of a chat the user just
+    // "cleared". Dispose the ACP session; ensureAcpSession() spawns a fresh
+    // one (fresh session/new) on the next send.
+    if (this.engine === "omp") {
+      this.disposeAcpSession();
+    }
     this.history = [];
     this.post({ type: "init", hasHistory: false });
     this.post({ type: "done" });      // belt: webview busy flag về false
