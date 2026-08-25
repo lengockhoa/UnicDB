@@ -323,6 +323,14 @@ export class ResultsPanel {
    * plan) so the statements can be shipped straight to adapter.runQuery
    * without a parameter channel.
    *
+   * TASK-002 — Postgres no-PK ctid resolution is collapsed to a single
+   * lazy resolver pass invoked ONLY when the active driver is postgres,
+   * the table has no PRIMARY KEY, and at least one dirty edit is NOT a
+   * pure insert-only marker. No result-set `ctid` column is ever
+   * trusted (host no longer appends one — TASK-001), and a user-named
+   * column called `ctid` is data, not a row address. Pure INSERT saves
+   * skip the resolver entirely.
+   *
    * Ack honesty (critical #3): if edits.length > 0 but every produced
    * statement was refused (no_pk, ambiguous ctid, invalid identifier,
    * unknown column), ack is ok:false with errors[] explaining why.
@@ -394,85 +402,47 @@ export class ResultsPanel {
     const columns = r.result.columns;
     const serverRows = r.result.rows;
 
-    // Postgres no-PK fallback: pre-fetch ctids per row. fetchPostgresCtids
-    // uses quoted identifiers + safe literal escape; ambiguous matches
-    // (count > 1) are refused.
-    //
-    // TASK-006: when the result set ALREADY carries a `ctid` column (the
-    // host appends it to PG no-PK browse queries), the host reads ctid
-    // from row data FIRST — exact row address, no value-match round-trip
-    // (which is fragile against Date/numeric/boolean literal format
-    // differences and was the root cause of the user-blocking
-    // "ctid lookup failed for every dirty row" banner on newly-created
-    // no-PK tables). fetchPostgresCtids remains as a fallback when the
-    // result set has no ctid column.
+    // TASK-002 — Postgres no-PK lazy ctid resolver. Single collapsed
+    // path: no fast-path that trusts a result-set `ctid` column (the
+    // host never appends one — TASK-001 — and a user-named column
+    // called `ctid` is data, not a row address). The resolver runs ONCE
+    // at save time, ONLY when we actually need ctids to address any
+    // UPDATE cell edit or DELETE marker; pure INSERT saves (only
+    // `__vsdb_new_row__` markers) skip the resolver entirely.
     let ctidByRowId: ReadonlyMap<number, string> | undefined;
-    if (
+    const needsCtid =
       driver === "postgres" &&
       pkColumns.length === 0 &&
-      edits.length > 0
-    ) {
-      const ctidColIdx = columns.indexOf("ctid");
-      if (ctidColIdx >= 0 && serverRows.every((r) => r.length > ctidColIdx)) {
-        // Fast path: ctid is in the result set — read per row.
-        const map = new Map<number, string>();
-        for (let i = 0; i < serverRows.length; i++) {
-          const v = serverRows[i]?.[ctidColIdx];
-          if (v === null || v === undefined) continue; // missing → per-row skip
-          map.set(i, String(v));
-        }
-        if (map.size > 0) {
-          ctidByRowId = map;
-        } else {
-          // No row had a ctid at all — fall through to the value-match
-          // path. Empty data, ambiguity, or column always-null.
-          const ctidRes = await this.fetchPostgresCtids(
-            tableName,
-            parsed.schema,
-            columns,
-            serverRows,
-          );
-          if (!ctidRes.ok) {
-            const reason =
-              ctidRes.reason === "ambiguous_only"
-                ? `Cannot save: postgres no-PK + ctid lookup is ambiguous (multiple rows match the dirty cells). Add a PRIMARY KEY or refine edits.`
-                : `Cannot save: postgres no-PK + ctid lookup failed for every dirty row.`;
-            this.postMessage({
-              type: "saveResult",
-              index,
-              ok: false,
-              refused: true,
-              reason,
-              errors: [reason],
-            });
-            return;
-          }
-          ctidByRowId = ctidRes.map;
-        }
-      } else {
-        const ctidRes = await this.fetchPostgresCtids(
-          tableName,
-          parsed.schema,
-          columns,
-          serverRows,
-        );
-        if (!ctidRes.ok) {
-          const reason =
-            ctidRes.reason === "ambiguous_only"
-              ? `Cannot save: postgres no-PK + ctid lookup is ambiguous (multiple rows match the dirty cells). Add a PRIMARY KEY or refine edits.`
-              : `Cannot save: postgres no-PK + ctid lookup failed for every dirty row.`;
-          this.postMessage({
-            type: "saveResult",
-            index,
-            ok: false,
-            refused: true,
-            reason,
-            errors: [reason],
-          });
-          return;
-        }
-        ctidByRowId = ctidRes.map;
+      edits.some((e) => {
+        const v = e.value;
+        if (typeof v !== "object" || v === null) return true;
+        // Add-Row markers carry their own values inline — INSERT path
+        // has no ctid requirement.
+        return (v as Record<string, unknown>)["__vsdb_new_row__"] !== true;
+      });
+    if (needsCtid) {
+      const ctidRes = await this.fetchPostgresCtids(
+        tableName,
+        parsed.schema,
+        columns,
+        serverRows,
+      );
+      if (!ctidRes.ok) {
+        const reason =
+          ctidRes.reason === "ambiguous_only"
+            ? `Cannot save: postgres no-PK + ctid lookup is ambiguous (multiple rows match the dirty cells). Add a PRIMARY KEY or refine edits.`
+            : `Cannot save: postgres no-PK + ctid lookup failed for every dirty row.`;
+        this.postMessage({
+          type: "saveResult",
+          index,
+          ok: false,
+          refused: true,
+          reason,
+          errors: [reason],
+        });
+        return;
       }
+      ctidByRowId = ctidRes.map;
     }
     const built = buildSaveStatements(
       driver as Dialect,
@@ -744,17 +714,26 @@ export class ResultsPanel {
   }
 
   /**
-   * Postgres no-PK support: fetch ctid for every row currently in view so
-   * UPDATE WHERE ctid = '<literal>' can address the row.
+   * TASK-002 — Postgres no-PK ctid resolution. Iterates every row in the
+   * current view and issues a value-match lookup (`WHERE col IS NOT
+   * DISTINCT FROM <literal>`) to find that row's ctid. Returns a
+   * partial map indexed by rowId (serverRows index) for use by
+   * buildSaveStatements to address UPDATE / DELETE statements directly.
    *
-   * Fix R1 important #1: identifiers are quoted per dialect (postgres
-   * plain); values use sqlLiteral (single-quote doubling, NO backslash
-   * escape). Ambiguous rows (multiple matches → ambiguous ctid) are
-   * REFUSED — that row is dropped from the map so buildSaveStatements
-   * sees a missing ctid and skips it with a warning.
+   * Identifiers are quoted per dialect (postgres plain); values use
+   * sqlLiteral (single-quote doubling, NO backslash escape). Ambiguous
+   * rows (multiple matches → ambiguous ctid) are REFUSED — that row is
+   * dropped from the map so buildSaveStatements sees a missing ctid and
+   * skips it with a warning.
    *
-   * Returns undefined only when EVERY row's lookup failed (caller treats
-   * that as a hard refusal). Otherwise returns the partial map.
+   * Result:
+   *   - `{ ok: true, map }` → at least one row's ctid resolved; partial
+   *     success is fine — missing keys surface as warnings in build.
+   *   - `{ ok: false, reason: "all_failed" }` → NO row resolved (caller
+   *     treats this as a hard refusal with the existing banner copy).
+   *   - `{ ok: false, reason: "ambiguous_only" }` → only ambiguous
+   *     matches (no row produced exactly one match) — caller treats
+   *     this as a hard refusal with the existing banner copy.
    */
   private async fetchPostgresCtids(
     tableName: string,

@@ -1,6 +1,6 @@
 Command: handoff-fullstack
 Goal: Fix `Error: column "ctid" does not exist` on opening views — stop eager ctid wrapping; resolve ctid lazily only at update/delete time
 Base: main
-Phase: P3
-Cursor: P2.5 done — Round 1 Issues Found, revision applied, Round 2 Approved (unic/unic-smart)
-Next: P3 commit plan via ukit-small-task-maintainer, then I1 setup
+Phase: I3
+Cursor: wave 1 done — TASK-001 PASS, TASK-003 PASS (commit 4489b34); context checkpoint: wave 1 collapsed, 2 tasks summarized
+Next: wave 2 — TASK-002 (resultsPanel lazy ctid save path; dep TASK-003 satisfied)
