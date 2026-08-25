@@ -22,6 +22,23 @@ For each significant action, append:
 
 ---
 
+## 2026-08-25 — Cycle S (lazy ctid) + release v1.6.3
+
+- Action: fix `Error: column "ctid" does not exist` khi mở view PG. Handoff cycle S: 3 tasks
+  (TASK-001 xóa eager ctid wrap ở read path; TASK-003 DELETE no-PK qua ctid lúc save;
+  TASK-002 gộp save path về 1 lazy fetchPostgresCtids). Plan review 2 rounds (1 critical:
+  2 file test webview không có owner → giao TASK-001); review 3/3 approved, TASK-001 cần
+  1 fix round (restore test #7b/#8b ngoài scope bị xóa).
+- Files: `src/ui/browseCommands.ts`, `src/ui/resultsPanel.ts`, `src/core/saveStatements.ts`,
+  `src/ui/resultsGridModel.ts`, `webview/main.ts` (comments), 6 file test; docs/AI_HANDOFF/*.
+- Post-merge: user vẫn thấy lỗi vì cycle S không release — installer 1 dòng kéo VSIX từ
+  latest GitHub Release (vẫn 1.6.2 lỗi). Release v1.6.3: bump + CHANGELOG + lockfile sync
+  (releaseHygiene bắt drift 1.6.2≠1.6.3 → `npm install --package-lock-only`) + build.sh
+  (1043 pass) + tag + `gh release create` kèm vsdb-1.6.3.vsix + install qua one-liner
+  (1.6.2 → 1.6.3, `__vsdb_browse__` = 0 trong bản đã cài).
+- Docs: MEMORY.md (ship constraint + root cause), RELEASE.md (mục "Shipping to users"),
+  CHANGELOG 1.6.3. Pushed 2d0fd94 + tag v1.6.3.
+
 ## 2026-08-23 — Cycle 2026-08-23-H: hardening + release v1.5.1
 
 - Action: carry-over minors từ reviews cycle G → 4 task handoff (701 EXPLAIN guard, 702 codepoint cap, 703 lock hygiene, 704 release).

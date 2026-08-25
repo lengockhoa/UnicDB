@@ -25,13 +25,22 @@
 ## Active Constraints
 
 <!-- Rules AI must respect during implementation. Non-obvious limits not visible in the code. -->
-<!-- Example: Never bypass validate() in users/ — it's a security boundary, not optional. -->
-<!-- Example: Do not add direct DB calls in controllers — always go through service layer. -->
+- **Ship constraint — user installs ONLY via the one-liner**:
+  `curl -fsSL https://raw.githubusercontent.com/lengockhoa/VSDB/main/scripts/install-vsdb.sh | bash`
+  User machines are non-dev machines (no repo, no Node, no build). The script pulls the `.vsix`
+  from the **latest GitHub Release**. Therefore: a fix is NOT shipped until a GitHub release
+  exists (version bump + tag + `vsdb-<version>.vsix` asset). "Merged to main" ≠ shipped.
+  After installing, the user must reload the VS Code window.
 
 ## Known Bugs & Root Causes
 
-<!-- Prevents re-investigating the same issues across sessions. -->
-<!-- Format: [YYYY-MM-DD] Bug: X. Root cause: Y. Fix applied: Z. Watch for: W. -->
+- [2026-08-25] Bug: user still saw `Error: column "ctid" does not exist` after cycle S was
+  merged. Root cause: cycle S ended without a version bump/GitHub release, and the user's
+  one-line installer pulls from latest Release — still v1.6.2 (pre-fix build).
+  Fix applied: released v1.6.3 (bump + lockfile sync + tag + VSIX asset + install).
+  Watch for: every handoff/pipeline cycle that changes user-visible behavior MUST end with a
+  release (or an explicit queued next-cycle release task); releaseHygiene.test.ts now fails
+  the build when package-lock version drifts — run `npm install --package-lock-only` after bumping.
 
 ## Open Risks
 
@@ -39,9 +48,8 @@
 <!-- Clear this entry once the risk is resolved. -->
 
 ## Session Handoff
-
-- Last worked on: —
-- Next step: —
+- Last worked on: 2026-08-25 — cycle S lazy-ctid fix shipped as v1.6.3 (GitHub release + one-liner install verified).
+- Next step: user reloads VS Code window; next cycle starts fresh from `docs/AI_HANDOFF/`.
 
 ## Completed Milestones
 

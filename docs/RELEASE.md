@@ -85,7 +85,40 @@ bash scripts/install-vsdb.sh --local vsdb-<version>.vsix --dry-run
 ```
 
 For a real install, drop `--dry-run` — the script will hand the file to
-the `code` CLI via `--install-extension`.
+
+## Shipping to users (GitHub Release) — REQUIRED for user-visible changes
+
+Users install ONLY via the one-liner on non-dev machines (no repo, no Node):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lengockhoa/VSDB/main/scripts/install-vsdb.sh | bash
+```
+
+It downloads the `.vsix` from the **latest GitHub Release**. So the runbook above is not
+enough: a merged fix reaches no user until a release exists. Every cycle that changes
+user-visible behavior must finish with:
+
+```bash
+# 1. Bump package.json version + CHANGELOG.md entry, then sync the lockfile
+#    (releaseHygiene.test.ts FAILS the build if root version drifts):
+npm install --package-lock-only
+
+# 2. Full pipeline: npm ci → typecheck → tests → compile → package dist/vsdb-<ver>.vsix
+bash scripts/build.sh
+
+# 3. Sanity-check the artifact before publishing (must print 0):
+unzip -p dist/vsdb-<version>.vsix extension/dist/extension.js | grep -c "<regression-marker>"
+
+# 4. Commit, tag, push, publish with the vsix attached:
+git add package.json package-lock.json CHANGELOG.md
+git commit -m "release: v<version>"
+git tag v<version> && git push origin main v<version>
+gh release create v<version> dist/vsdb-<version>.vsix --title "v<version>" --notes "<summary>"
+```
+
+Then tell the user to re-run the one-liner and reload the VS Code window
+(`Cmd/Ctrl+Shift+P → Developer: Reload Window`). Merged-to-main without a release =
+not shipped.
 
 ## Publishing — OUT OF SCOPE
 
