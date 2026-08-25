@@ -1,45 +1,60 @@
-# TASK-003 — Postgres no-PK DELETE via lazily-resolved ctid
+# TASK-003 — Grid model: duplicate column names must not collapse onto one field
 
 - Status: `ready`
 - Owner: `-`
 - Reviewer: `-`
-- Parent plan: `docs/AI_HANDOFF/PLAN.md` §3 (DELETE branch), §4 rows 9-11, §6 item 4
+- Parent plan: `docs/AI_HANDOFF/PLAN.md` §2 (in-scope A17) — §7 Global Constraints applies by reference
 
 ## Goal
 
-In `buildSaveStatements`, the delete-marker branch (saveStatements.ts:344-374) currently `continue`s when `pkColumns.length === 0` — postgres no-PK deletes are silently dropped. Add: when dialect is postgres and `options.ctidByRowId` has the row, emit `DELETE FROM <t> WHERE ctid='<literal>'` (+ concurrency warning), mirroring the UPDATE ctid branch (lines 474-496).
+Fix A17. `inferColumns` (`src/ui/resultsGridModel.ts:74-104`) resolves each column's data index
+with `columns.indexOf(name)`, which returns the **first** match. AG Grid then keys rows on
+`field`, so `SELECT a.id, b.id` renders both columns from data index 0 and any edit on the second
+one addresses the first. Produce unique `field` values while keeping `headerName` as the raw
+column name, and use the loop index — never `indexOf` — as the data index.
 
 ## Target Files
 
-- `src/core/saveStatements.ts` — delete-marker loop: after the existing `if (pkColumns.length === 0) continue;` guard, restructure to `if (pkColumns.length === 0) { if (dialect === "postgres") { …ctid delete… } continue; }`. Missing ctid → `warnings.push("delete row N skipped: postgres no-PK + missing ctid")` and skip. Update the `SaveStatementsOptions` doc comment (line 54-58) to mention DELETE usage.
-- `src/adapters/__tests__/saveStatements.test.ts` — new describe block beside the existing markers block (line 195).
+- `src/ui/resultsGridModel.ts`
+- `src/ui/__tests__/resultsGridModel.test.ts`
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
-|---|------|----------|----------|---------------------|
-| 1 | happy | PG no-PK + delete marker + ctid in map → `DELETE FROM t WHERE ctid='(0,2)'` | `r.ok === true`, exactly 1 statement, `stmt` matches `/^DELETE FROM t WHERE ctid='\(0,2\)'/i`, warnings include the concurrency note (`not safe under concurrent writes`) | `buildSaveStatements("postgres","t",[],["id","name"],[marker],serverRows,{ctidByRowId:new Map([[7,"(0,2)"]])})`, marker `rowId 7` `__vsdb_deleted__` (fixture mirrors existing test at line 219) |
-| 2 | edge (missing key) | PG no-PK + delete marker + rowId NOT in map | 0 statements, warning `delete row 7 skipped: postgres no-PK + missing ctid`, `r.ok === true` | same but empty `ctidByRowId` map |
-| 3 | edge (dialect boundary) | mysql no-PK + delete marker + (irrelevant) map | 0 statements, NO delete emitted, no throw — existing skip semantics preserved | `buildSaveStatements("mysql","t",[],["a"],[marker],[["x"]],{ctidByRowId:new Map([[0,"(0,1)"]])})` |
-| 4 | happy | PG no-PK + delete + update mixed in one save | 1 ctid-DELETE + 1 ctid-UPDATE, ordered deletes-then-updates (loop order preserved) | edits: `[deleteMarker(row 1), cellEdit(row 0)]`, `serverRows` for both |
+| Type | Name | Expected |
+|------|------|----------|
+| Happy | distinct names | `inferColumns(["a","b"], rows)` → fields `["a","b"]`, `headerName` identical |
+| Happy | kind inference intact | numeric second column still infers `kind:"number"`, `alignRight:true` |
+| Edge (duplicate) | `["id","id"]` | fields `["id","id__2"]`; both `headerName === "id"` |
+| Edge (triple + collision bait) | `["id","id","id__2"]` | all three fields unique, no field equals another |
+| Edge (empty) | `inferColumns([], [])` | `[]`, no throw |
+| R (A17) | `["id","id"]` with rows `[[1,2]]` | second spec must resolve value `2`; today both resolve `1` |
 
 ## Test Files
 
-- `src/adapters/__tests__/saveStatements.test.ts` — all 4 cases (follow existing `expectNoPlaceholders` helper usage).
+- `src/ui/__tests__/resultsGridModel.test.ts` (extend)
 
 ## Verification Commands
 
 ```bash
 npm run typecheck
-npx vitest run src/adapters/__tests__/saveStatements.test.ts
+npm test -- src/ui/__tests__/resultsGridModel.test.ts
+npm test -- src/ui/__tests__/resultsGridModelEdit.test.ts
+npm test -- src/ui/__tests__/resultsGridModelExport.test.ts
+npm test -- src/ui/__tests__/resultsGridModelRequery.test.ts
+npm test -- src/ui/__tests__/agGridSmoke.test.ts
 ```
 
 ## Acceptance Criteria
 
-- [ ] All 4 Test Cases PASS (case 1 RED against current code — run first).
-- [ ] PK-present delete path byte-identical to before (existing test at line 219 still green).
-- [ ] `npm run typecheck` clean.
-- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
+- [ ] All 6 cases pass; the regression case confirmed failing on `main` first (output in report).
+- [ ] `inferColumns` contains no `columns.indexOf(...)`.
+- [ ] `field` is unique across the returned specs for any input; `headerName` always equals the
+      original column name.
+- [ ] De-dup suffix cannot itself collide (a pre-existing `id__2` in the input is handled).
+- [ ] Export serializers (`serializeCsv` / `serializeSqlInserts` / `serializeWhereClause`) still
+      emit the **original** column names, not suffixed fields — covered by the existing export
+      tests staying green.
+- [ ] `npm run typecheck` clean; no file outside Target Files touched.
 
 ## Dependencies
 
@@ -47,76 +62,43 @@ npx vitest run src/adapters/__tests__/saveStatements.test.ts
 
 ## Interfaces
 
-- Consumes: existing `SaveStatementsOptions.ctidByRowId?: ReadonlyMap<number, string>` (saveStatements.ts:54-58) — no signature change.
-- Produces: `buildSaveStatements` now consumes `ctidByRowId` for DELETE rows when `dialect === "postgres"`. TASK-002 (resultsPanel.ts) must pass a ctid map covering delete-rowIds too, or those deletes are skipped with warnings — contract is exactly the map TASK-002 builds.
+- Consumes: `(none)`
+- Produces:
+
+```ts
+export interface ColumnSpec {
+  field: string;       // now guaranteed unique within one result set
+  headerName: string;  // raw column name, may repeat
+  kind: ColumnKind;
+  alignRight?: boolean;
+  hidden?: boolean;
+}
+export function inferColumns(columns: string[], rows: unknown[][]): ColumnSpec[];
+```
+
+`webview/main.ts` (TASK-002) consumes specs positionally —
+`specs.forEach((s, j) => obj[s.field] = rows[i][j])` at `webview/main.ts:397` — so a suffixed
+field stays correctly aligned with no webview change.
+
+The one place that is **not** positional — `hiddenColumns`, built from `s.field` at
+`webview/main.ts:2110-2113` and matched against raw `result.columns` — is fixed by **TASK-002**,
+which owns that file in this wave. Do not touch it here.
 
 ---
 
 ## Discussion
 
-### 2026-08-25 · planner · unic/unic-smart
-Wave 1 sibling of TASK-001 (disjoint files). TASK-002 depends on this contract, not on its code landing first — but resultsPanel.ts is where both meet, so TASK-002 is sequenced after both to avoid a same-file clash with nothing (TASK-001 does not touch resultsPanel.ts; the dependency on TASK-003 is a true interface dependency).
+### 2026-08-25 · planner · claude-opus-5
+
+Verified at HEAD: `inferColumns` no longer hides columns named `ctid` (defect A18 was fixed by
+cycle S), so this task is A17 only — do not re-add or re-remove any `ctid` special-casing.
+
+**Consumer-side coupling is TASK-002's job, not yours** (clarified in review round 1). Making
+`field` unique breaks any consumer that maps a spec back to a *database* column by `field` — the
+known one is `hiddenColumns` (`webview/main.ts:2110-2113`) plus the Ctrl+C hidden-column filter,
+both of which must switch to `headerName`. That file belongs to TASK-002 in this same wave, so
+this task must **not** edit it; TASK-002 carries the acceptance line and the duplicate-name test.
+If you find a *further* `field`-as-database-name consumer inside `src/ui/resultsGridModel.ts`
+(this task's own file), fix it here and note it in this thread.
 
 ---
-
-<!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
--->
-
-## Executor Report
-EXECUTOR_TOOL: claude-code
-EXECUTOR_MODEL: unic/unic-code
-EXECUTOR_SUBAGENT: feature-implementer
-
-RED_OUTPUT:
-```
- ❯ src/adapters/__tests__/saveStatements.test.ts  (16 tests | 3 failed) 9ms
-   ❯ buildSaveStatements — Add Row / Delete Row markers > PG no-PK + delete marker + ctid in map → DELETE FROM t WHERE ctid='(0,2)'
-     → expected [] to have a length of 1 but got +0
-   ❯ buildSaveStatements — Add Row / Delete Row markers > PG no-PK + delete marker + rowId NOT in ctid map → 0 stmts + warning
-     → expected false to be true // Object.is equality
-   ❯ buildSaveStatements — Add Row / Delete Row markers > PG no-PK + delete + update mixed in one save → 1 ctid-DELETE + 1 ctid-UPDATE, ordered deletes-then-updates
-     → expected [ Array(1) ] to have a length of 2 but got 1
-
-  Test Files  1 failed (1)
-       Tests  3 failed | 13 passed (16)
-```
-Three RED cases (PG happy, PG missing-ctid, PG mixed); the 4th case (mysql boundary)
-requires a contract clarification — see Note.
-
-Verification Output (post-impl):
-```
-$ npx vitest run src/adapters/__tests__/saveStatements.test.ts
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-003
- ✓ src/adapters/__tests__/saveStatements.test.ts  (16 tests) 5ms
- Test Files  1 passed (1)
-      Tests  16 passed (16)
-
-$ npm run typecheck
-> vsdb@1.6.2 typecheck
-> tsc --noEmit
-(clean — exit 0)
-```
-
-Status: PASS
-Note: Case 3 (mysql no-PK + delete marker) — task spec says "0 statements, NO delete emitted, no throw — existing skip semantics preserved" but the *current* code returns `ok:false, reason:"no_pk"` for any mysql/mssql no-PK call (the cell-edits-loop no_pk guard fires after the delete-marker loop). Test was written against actual existing semantics (`r.ok === false, reason === "no_pk"`, no DELETE emitted, no throw) — the spec's implicit "r.ok === true" was inconsistent with "existing skip semantics". PK-present delete (existing test at line 219) byte-identical to before — still passes. Doc comment on `SaveStatementsOptions` (lines 54-58) updated to mention DELETE branch usage. No changes outside Target Files.
-
-## Reviewer Verdict
-
-VERDICT: APPROVED
-REVIEWER_MODEL: unic/unic-smart
-EXECUTOR_MODEL: unic/unic-code
-VERIFICATION_RERUN:
-  command: npx vitest run src/adapters/__tests__/saveStatements.test.ts && npm run typecheck
-  result: 16 pass / 0 fail; typecheck exit 0 (also saveStatementsInline.test.ts 8/8 green)
-TEST_PLAN_COVERAGE: all-followed — case 3 adjusted to actual pre-existing semantics; judged a SPEC bug, not a code bug (the `no_pk` rejection for mysql/mssql exists verbatim at base 68e033e, saveStatements.ts:398; spec's implied ok:true contradicted its own "existing skip semantics preserved"). All 4 spec properties still asserted: no DELETE, no throw, pg-branch inert, non-postgres unchanged.
-FINDINGS:
-  critical:
-    - none
-  important:
-    - none
-  minor:
-    - none (doc-comment first-line wraps mid-phrase at saveStatements.ts:54 — cosmetic only)
-NEXT_STATUS_FOR_INDEX: approved
-NOTES: Clean TDD evidence (3 real RED assertions for new behavior; case 4 pins existing semantics, legitimately not RED). __rowId-keyed ctid lookup consistent with PK-delete path and TASK-002 map keying (server-row index).

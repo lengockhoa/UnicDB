@@ -1,172 +1,163 @@
-# TASK-002 — Save path resolves ctid lazily (single code path, covers deletes)
+# TASK-002 — Webview grid: stale values after commit, Add Row, marker collision, Refresh, copy
 
 - Status: `ready`
 - Owner: `-`
 - Reviewer: `-`
-- Parent plan: `docs/AI_HANDOFF/PLAN.md` §3 (lazy save path), §4 rows 5-9 & 12, §6 item 3
+- Parent plan: `docs/AI_HANDOFF/PLAN.md` §3.1 / §3.2 / §3.3 — §7 Global Constraints applies by reference
 
 ## Goal
 
-In `handleSaveEdits` (resultsPanel.ts:335-591): with TASK-001 gone, no result set carries a host-added ctid column. Collapse the fast-path/fallback fork (lines 409-476) into ONE lazy resolver call — `fetchPostgresCtids` — invoked when `driver === "postgres" && pkColumns.length === 0` AND the edits contain at least one update-cell or delete-row marker (insert-only saves need no ctid). The resulting map feeds `buildSaveStatements` for updates AND deletes (TASK-003 contract).
+Make the grid tell the truth and make Add Row actually insert. Fixes A5 (grid shows stale values
+after a successful commit), A6 (Add Row sends `values` as a `Record`, so the INSERT is always
+skipped — same bug in the redo path), A7 (insert/delete markers stored at `colIndex 0` are
+destroyed by typing in column 0), A11-producer (blank cells sent as `""`), A12-producer (the
+`serverIndexByRowId` map exists but is never sent) and A13 (Refresh silently discards unsaved
+edits and never messages the host), A16 (Ctrl+C leaks hidden columns, ignores a focused range,
+and fires twice).
 
 ## Target Files
 
-- `src/ui/resultsPanel.ts` — replace lines 397-476 block with: compute `needsCtid = edits.some(e => !isNewRowMarkerShaped(e.value))` (delete markers + cell edits both qualify; reuse a local predicate consistent with `saveStatements.ts` marker shapes — simplest: `edits.some(e => !(typeof e.value === "object" && e.value !== null && "__vsdb_new_row__" in (e.value as object))))`). If `driver === "postgres" && pkColumns.length === 0 && needsCtid`: call `this.fetchPostgresCtids(tableName, parsed.schema, columns, serverRows)` once; on `!ok` post the existing refusal banner (`ambiguous_only` / `all_failed` variants — keep current copy strings at lines 437-439/461-463); on ok pass `{ ctidByRowId: map }` to `buildSaveStatements`. Non-PG or PK-present: pass `{}` as today. Also: a result-set column literally named `ctid` (user data) must NOT be trusted as row address — with the fast-path deleted this falls out naturally; add the regression test to lock it.
-- `src/ui/__tests__/resultsPanelSaveEdits.test.ts` — rewrite the three TASK-006 describe blocks (lines 645-961) per cases below; keep `fetchPostgresCtids correctness (important #1)` (line 410) and `ctid lookup returns >1 row` (line 502) blocks untouched.
+- `webview/main.ts`
+- `src/ui/messages.ts`
+- `src/ui/__tests__/webviewSaveEdits.test.ts`
+- `src/ui/__tests__/webviewEdit.test.ts`
+- `src/ui/__tests__/webviewCommitRefresh.test.ts` (new)
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
-|---|------|----------|----------|---------------------|
-| 1 | regression (bug) | PG no-PK + edit + result set WITHOUT ctid column → lazy resolver used, save SUCCEEDS | recorded SQL has one `SELECT ctid FROM t WHERE name IS NOT DISTINCT FROM 'alice'` then `UPDATE t SET name='alice-2' WHERE ctid='(0,1)'`; success ack `ok:true`; NO "ctid lookup failed" banner | fixture mirrors existing line-819 test but fake returns 1-row ctid result `rows: [["(0,1)"]]` |
-| 2 | happy | PG no-PK + DELETE marker → resolver consulted, ctid-DELETE emitted | recorded: ctid lookup SQL, then `DELETE FROM t WHERE ctid='(0,2)'` (TASK-003 path); ack ok | columns `["name"]`, rows `[["alice"],["bob"]]`, fake maps 2nd lookup to `(0,2)`; edits `[{rowId:1, colIndex:0, value:{__vsdb_deleted__:true,__rowId:1}}]` |
-| 3 | edge (insert-only) | PG no-PK + ONLY a `__vsdb_new_row__` marker | NO ctid lookup SQL recorded; INSERT issued; ack ok | edits `[{rowId:0,colIndex:0,value:{__vsdb_new_row__:true,__rowId:0,values:["x"]}}]` |
-| 4 | edge (user column named ctid) | result set HAS a column literally named `ctid` (user data) → host does NOT trust it | resolver SQL still issued; UPDATE `WHERE ctid='<resolver value>'`; the row-data value `(9,9)` never appears in any statement | columns `["name","ctid"]`, rows `[["alice","(9,9)"]]`, fake resolver returns `(0,1)` |
-| 5 | edge (ambiguity) | resolver returns >1 match for a row | refusal ack `ok:false` with ambiguous reason string; NO UPDATE/DELETE issued | existing ambiguity fixture shape (line 502) extended to the collapsed path |
-| 6 | happy (existing, kept) | PK-present PG save | no resolver SQL, UPDATE `WHERE id=…` | existing test at line 964, unchanged |
+| Type | Name | Expected |
+|------|------|----------|
+| Happy | commit → fresh values | same statement + same row count + changed values ⇒ `setGridOption("rowData", …)` called with the refreshed rows |
+| Happy | Add Row → commit payload | `edits[0].value.values` is an `unknown[]` of `columns.length` |
+| Edge (collision) | Add Row then type in column 0 | `editState.snapshot()` contains the insert marker **and** the cell edit (2 entries) |
+| Edge (idempotent) | commit with unchanged values | exactly one render, no duplicate `applyTransaction`, `dirtyCount === 0` after ack |
+| Edge (permission/confirm) | Refresh with `dirtyCount > 0` | confirm shown; decline ⇒ `dirtyCount` unchanged and no host message; accept ⇒ one `requery`-style message posted |
+| Edge (double-fire) | one Ctrl+C keypress | exactly **1** `copy` message posted |
+| Edge (hidden column) | copy with `spec.hidden` column | hidden column absent from the copied TSV |
+| Edge (duplicate names) | `SELECT a.id, b.id` with the 2nd column hidden, then copy/export | specs are `id` / `id__2` (TASK-003) but `hiddenColumns` is `["id"]` — derived from `headerName`, matching the raw `result.columns` the serializer compares against; the hidden column is still excluded from both the TSV and the export |
+| Edge (duplicate names, values) | `SELECT a.id, b.id` with **distinct** values, Add Row then Ctrl+C | the copied row carries **both** values in column order (`r["id"]`, `r["id__2"]`) — i.e. `:1855`/`:2199` stayed keyed on `field`; keying them on `headerName` collapses both columns onto one value and this case catches it |
+| Edge (focus vs selection) | Ctrl+C with a focused cell and no checkbox selection | copies the focused cell/range, not `""` |
+| R (A5) | same statement, same row count, new values | today the grid renders stale cells |
+| R (A6) | Add Row payload shape | today `values` is a `Record`; builder warns `values length (?)` and skips |
+| R (A7) | marker + column-0 edit | today `markDirty` coalesces and the insert marker is lost |
+| R (A12) | saveEdits message | today has no `serverIndexByRowId`; after fix it carries the map for every rendered row |
+| R (A13) | Refresh click | today posts nothing to the host |
 
 ## Test Files
 
-- `src/ui/__tests__/resultsPanelSaveEdits.test.ts` — all 6 cases.
+- `src/ui/__tests__/webviewSaveEdits.test.ts` (extend — A6/A7/A12 payload)
+- `src/ui/__tests__/webviewEdit.test.ts` (extend — marker/cell coexistence)
+- `src/ui/__tests__/webviewCommitRefresh.test.ts` (new — A5 re-render branch, A13 confirm, A16 copy)
 
 ## Verification Commands
 
 ```bash
 npm run typecheck
-npx vitest run src/ui/__tests__/resultsPanelSaveEdits.test.ts
+npm run compile
+npm test -- src/ui/__tests__/webviewSaveEdits.test.ts
+npm test -- src/ui/__tests__/webviewEdit.test.ts
+npm test -- src/ui/__tests__/webviewCommitRefresh.test.ts
+npm test -- src/ui/__tests__/webviewExport.test.ts
+npm test -- tests/webviewUndoRedo.test.ts
+npm test -- src/ui/__tests__/webviewBundle.test.ts
 ```
 
 ## Acceptance Criteria
 
-- [ ] All 6 Test Cases PASS (case 4 is RED against current code — the fast path trusts a user `ctid` column today; cases 1-2 lock the collapsed lazy path).
-- [ ] No reference to a result-set `ctid` fast-path remains in `src/ui/resultsPanel.ts`.
-- [ ] Refusal banner copy strings unchanged (`ambiguous_only` / `all_failed` variants).
-- [ ] `npm run typecheck` clean.
-- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
+- [ ] All 15 cases pass; every regression case confirmed failing on `main` first, output pasted
+      into the task report.
+- [ ] **`hiddenColumns` is derived from `spec.headerName`, not `spec.field`** — exactly one site:
+      `webview/main.ts:2111-2113`. That list is the only spec-derived value that crosses into the
+      serializers, which match it against the **raw** `result.columns`
+      (`resultsGridModel.ts:470,610`). TASK-003 lands in this same wave and makes `field` unique
+      (`id` → `id__2`), so left on `field` a duplicate-named hidden column silently stops being
+      excluded from export and copy.
+- [ ] **The new Ctrl+C hidden-column filter (A16) filters on the boolean `spec.hidden` and still
+      indexes rows by `spec.field`** (`r[s.field]`, `webview/main.ts:2199`). It needs no name
+      matching at all, so it must not be "converted" to `headerName`.
+- [ ] **`webview/main.ts:1855` and `:2199` MUST STAY on `field`** (narrowed in review round 2 —
+      the round-1 wording wrongly told you to audit them toward `headerName`). Both are
+      **object-key** uses, not database-name uses: `:1855` builds the blank Add-Row object
+      (`blank[col.field] = ""`) and `:2199` reads it back (`r[s.field]`), and those keys are
+      produced by `rowsToObjects` at `:397` from `s.field`. Moving either to `headerName` breaks
+      Ctrl+C and Add Row for duplicate-named columns the moment TASK-003 lands. If you touch
+      either line, you have made the bug worse — leave them.
+- [ ] `renderGrid` gains a third branch (same statement, same row count, values differ) that
+      swaps `rowData`; the reset and append-delta branches are unchanged.
+- [ ] Add Row and its redo path both emit `values: unknown[]` of exactly `columns.length`, using
+      `{__vsdb_default__: true}` for untouched cells — never `""`.
+- [ ] Markers use named constants `MARKER_COL_INSERT = -1` / `MARKER_COL_DELETE = -2`, **declared
+      locally in `webview/main.ts`** (see Interfaces — do not import them from
+      `src/core/saveStatements.ts` this wave), never literal `0`.
+- [ ] `saveEdits` carries `serverIndexByRowId` built from the existing module-level
+      `serverIndexByRowId` map (`webview/main.ts:221`).
+- [ ] Refresh posts to the host and confirms before discarding dirty edits.
+- [ ] Ctrl+C is bound in exactly one place (the duplicate at `webview/main.ts:720` **or**
+      `onCellKeyDown:1537` is removed, not both left in) and filters `spec.hidden` the same way
+      the export path does.
+- [ ] `npm run compile` succeeds; `npm run typecheck` clean.
 
 ## Dependencies
 
-- TASK-003 (interface: `ctidByRowId` now consumed for delete rows — build the map before wiring deletes; TASK-001 is NOT a hard dependency since resultsPanel.ts is untouched there, but the collapsed path assumes no producer of ctid columns, so land TASK-001 in the same or earlier wave).
+none
 
 ## Interfaces
 
-- Consumes: `fetchPostgresCtids(tableName, schema, columns, serverRows)` (own class method, resultsPanel.ts:759-808 — keep NULL-safe `IS NULL` / `IS NOT DISTINCT FROM` matching untouched); TASK-003's `ctidByRowId` DELETE consumption in `buildSaveStatements`.
-- Produces: final save-flow contract — PG no-PK saves (updates + deletes) resolve ctids in one lazy pass at save time; no other task depends on this file afterward.
+**Consumes** — a **wire contract only**, fixed in PLAN §3.2 / §3.3. TASK-001 defines the
+authoritative host-side types *in the same wave*, so importing them here would break
+`npm run typecheck` depending on landing order. Declare these locally in `webview/main.ts` and
+pin the values with a test; TASK-001 pins the identical values on the host side:
+
+```ts
+// local to webview/main.ts — MUST match src/core/saveStatements.ts (TASK-001)
+const MARKER_COL_INSERT = -1;
+const MARKER_COL_DELETE = -2;
+// emitted for untouched new-row cells; plain literal, survives structured cloning
+const DEFAULT_CELL = { __vsdb_default__: true } as const;
+```
+
+**Produces** (`src/ui/messages.ts`):
+
+```ts
+export interface SaveEditsMessage {
+  type: "saveEdits";
+  index: number;
+  edits: Array<{ rowId: number; colIndex: number; value: unknown }>;
+  tableName: string | null;
+  pkColumns: string[];
+  /** NEW (cycle T, A12): __rowId → index into the host's result.rows.
+   *  Keys are stringified numbers (JSON). Absent ⇒ host falls back to rowId. */
+  serverIndexByRowId?: Record<string, number>;
+}
+```
+
+Existing, unchanged: `postToHost(msg: WebviewMsg): void` (`webview/main.ts:144`),
+`rowsToObjects(rows, specs, startIndex?, sourceIndexStart?)` (`webview/main.ts:373`).
 
 ---
 
 ## Discussion
 
-### 2026-08-25 · planner · unic/unic-smart
-If executing before TASK-001 lands: case 1 still passes standalone (no ctid column in fixture ⇒ same observable). The only true ordering constraint is vs TASK-003 (map contract for deletes). Wave 2.
+- **Why this task owns `src/ui/messages.ts`:** `postToHost` is typed as `WebviewMsg`, so the new
+  field must exist in the type for the webview to compile. TASK-009 (host) only *reads* it and
+  runs in a later wave, so there is no same-wave collision.
+- **A5 detection:** compare the incoming `r.result.rows` against `statementRows.get(activeTab)`
+  (already maintained) rather than adding state. Do not route this through
+  `resultsGridModel.shouldResetGrid` — that file belongs to TASK-003 this wave.
+- **A16 double-binding:** confirm which of the two handlers actually reaches the AG Grid focused
+  range before deleting one; the capture-phase binding at `:720` is the likelier keeper because
+  `onCellKeyDown` only fires when a cell has focus.
+- **`headerName` coupling (moved here in review round 1, narrowed in round 2):** TASK-003 makes
+  `ColumnSpec.field` unique but must not edit `webview/main.ts`, which this task owns in the same
+  wave — so the consumer-side fix lives here. It does **not** depend on TASK-003 landing first:
+  with distinct column names `field === headerName`, so the change is a no-op until TASK-003 lands.
+  The discriminator is **what the value is used as**, and it is a one-site change:
+  - `field` = **object key** into a row produced by `rowsToObjects` (`:397`). Keep: `:1855`,
+    `:2199`, and the A16 copy filter's row indexing.
+  - `headerName` = **database column name** crossing a module boundary. Change: `hiddenColumns`
+    (`:2111-2113`) only, because the serializers compare it to raw `result.columns`.
+  Round 1 wrongly lumped `:1855`/`:2199` into the second group; they are firmly in the first.
+- Blank-cell sentinel is a plain object literal — it survives `postMessage` structured cloning.
+  Do not use `undefined` (arrays serialize it to `null`) or a magic string.
+
 ---
-
-<!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
-
-## Executor Report
-
-EXECUTOR_TOOL: claude-code
-EXECUTOR_MODEL: unic/unic-code
-EXECUTOR_SUBAGENT: feature-implementer
-
-### Summary
-
-Collapsed the no-PK save-time ctid resolver in `handleSaveEdits` (resultsPanel.ts lines 397–476) into ONE lazy resolver call. The fast-path that trusted a result-set `ctid` column is gone — the host no longer appends one (TASK-001) and a user-named column called `ctid` is data, not a row address. The resolver runs only when driver is `postgres`, PK is empty, and at least one edit is NOT a pure `__vsdb_new_row__` marker; pure INSERT saves skip it entirely. Refusal banner copy (`ambiguous_only` / `all_failed`) is preserved verbatim. The three TASK-006 describes that asserted the old fast-path behaviour were rewritten as TASK-002 cases 1–4; cases 5 (ambiguity) and 6 (PK-present) are kept at their existing locations.
-
-### RED_OUTPUT (against pre-fix `resultsPanel.ts` on wave-1 base)
-
-```
-RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-002
-
-❯ src/ui/__tests__/resultsPanelSaveEdits.test.ts  (14 tests | 2 failed) 10ms
-  ❯ ... > ResultsPanel — insert-only PG no-PK skips resolver (TASK-002 case 3)
-      > PG no-PK + ONLY a __vsdb_new_row__ marker → NO ctid lookup SQL; INSERT issued; ack ok
-      → expected undefined not to be undefined
-  ❯ ... > ResultsPanel — user column named `ctid` is NOT trusted (TASK-002 case 4)
-      > result set HAS a column literally named `ctid` (user data) → host does NOT trust it
-      → expected 'UPDATE t SET name=\'alice-2\' WHERE c…' to match /ctid='\(0,1\)'/
-
-⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
-
-FAIL ... > insert-only PG no-PK skips resolver (TASK-002 case 3) > ...
-AssertionError: expected undefined not to be undefined
- ❯ src/ui/__tests__/resultsPanelSaveEdits.test.ts:913:17
-    911|     // INSERT was issued.
-    912|     const ins = recorded.find((c) => /INSERT\s+INTO/i.test(c.sql));
-    913|     expect(ins).toBeDefined();
-
-FAIL ... > user column named `ctid` is NOT trusted (TASK-002 case 4) > ...
-AssertionError: expected 'UPDATE t SET name=\'alice-2\' WHERE c…' to match /ctid='\(0,1\)'/
-- Expected: /ctid='\(0,1\)'/
-+ Received: "UPDATE t SET name='alice-2' WHERE ctid='(9,9)'"
- ❯ src/ui/__tests__/resultsPanelSaveEdits.test.ts:996:25
-    994|     const update = recorded.find((c) => /UPDATE/i.test(c.sql));
-    995|     expect(update).toBeDefined();
-    996|     expect(update!.sql).toMatch(/ctid='\(0,1\)'/);
-
-Test Files  1 failed (1)
-     Tests  2 failed | 12 passed (14)
-```
-
-Cases 1 and 2 were already GREEN against the pre-fix code (consistent with the planner's note "case 1 still passes standalone"); cases 3 and 4 are the genuine RED that drove the collapsed-path implementation.
-
-### Verification Output (after implementation)
-
-`npx vitest run src/ui/__tests__/resultsPanelSaveEdits.test.ts`:
-
-```
-RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-002
-
-✓ src/ui/__tests__/resultsPanelSaveEdits.test.ts  (14 tests) 7ms
-
-Test Files  1 passed (1)
-     Tests  14 passed (14)
-  Start at  08:30:00
-  Duration  263ms (transform 88ms, setup 0ms, collect 95ms, tests 7ms, environment 0ms, prepare 31ms)
-```
-
-`npm run typecheck`:
-
-```
-> vsdb@1.6.2 typecheck
-> tsc --noEmit
-
-(no diagnostics, exit code 0)
-```
-
-### Files Changed (worktree .worktrees/task-002)
-
-- `src/ui/resultsPanel.ts` — replaced the fast-path / fallback fork (lines 397–476) with a single lazy resolver call gated by `needsCtid = driver === "postgres" && pkColumns.length === 0 && edits.some(e => !(marker-shaped))`. Refusal banner copy (`ambiguous_only` / `all_failed`) preserved verbatim. No remaining reference to the result-set `ctid` fast-path or `ctidColIdx`.
-- `src/ui/__tests__/resultsPanelSaveEdits.test.ts` — replaced the three TASK-006 describe blocks (`— no-PK hidden ctid column (TASK-006 #1)`, `— no-PK regression (TASK-006 #2)`, `— no-PK fallback to fetchPostgresCtids (TASK-006 #3)`, `— partial ctid in row data (TASK-006 #4)`) at lines 645–961 with the four new TASK-002 case describes (case 1 PG-no-PK lazy resolver + edit, case 2 DELETE-marker resolver, case 3 insert-only skips resolver, case 4 user column named `ctid` not trusted). `fetchPostgresCtids correctness (important #1)` (case 5 ambiguity), `ctid lookup returns >1 row`, and `— PK table does NOT use ctid (TASK-006 #6)` (case 6) are untouched.
-
-### Acceptance Criteria
-
-- [x] All 6 Test Cases PASS (cases 1, 2, 5, 6 were already green; cases 3, 4 became GREEN only after the lazy-ctid collapse).
-- [x] No reference to a result-set `ctid` fast-path remains in `src/ui/resultsPanel.ts` (grep `ctidColIdx` → 0 hits in the file).
-- [x] Refusal banner copy strings unchanged (`ambiguous_only` / `all_failed` variants at the new single-bail-out site).
-- [x] `npm run typecheck` clean.
-- [ ] Reviewer verdict (pending).
-
-Status: PASS
-Note: none
-
-## Reviewer Verdict
-
-VERDICT: APPROVED
-REVIEWER_MODEL: unic/unic-smart
-EXECUTOR_MODEL: unic/unic-code
-VERIFICATION_RERUN:
-  command: npm run typecheck && npx vitest run src/ui/__tests__/resultsPanelSaveEdits.test.ts
-  result: typecheck clean (exit 0); 14 pass / 0 fail
-TEST_PLAN_COVERAGE: all-followed
-FINDINGS:
-  critical:
-    - none
-  important:
-    - none
-  minor:
-    - src/ui/resultsPanel.ts:326-333 — class doc comment largely duplicates the inline TASK-002 comment at lines 405-412; harmless but could be trimmed to one line pointing at handleSaveEdits.
-NEXT_STATUS_FOR_INDEX: approved
-NOTES: needsCtid predicate matches saveStatements.ts marker shapes exactly; ctidColIdx fast-path fully removed (0 hits); refusal banner copy verbatim at the single bail-out; ambiguity + PK-present cases correctly kept untouched and now exercise the collapsed path. RED_OUTPUT is genuine assertion-failure output (case 4 RED shows old code trusting user-data '(9,9)').

@@ -1,6 +1,6 @@
 Command: handoff-fullstack
-Goal: Unbreak the VSDB core — make table browse/edit/save actually work (ctid, no-PK, views, save path) and make AI chat + omp usable zero-config
+Goal: Unbreak the VSDB core — make table edit/save actually work and make AI chat + omp usable zero-config
 Base: main
-Phase: P2
-Cursor: P0 done — 4 decisions locked (cycle 1 = unbreak-only; omp default zero-config; coloring=injection+semantic deferred to cycle 2; per-table tabs = top parity item, cycle 2). Cycle S absorbed.
-Next: spawn handoff-planner to write PLAN.md + TASK files for the unbreak cycle (overwrite cycle S — all its tasks are `ready`, guard permits)
+Phase: P2.5
+Cursor: Round 1 review = Issues Found (8), planner applied all 8 revisions; 12 tasks still `ready`
+Next: P2.5 round 2 (final permitted review round) — fresh code-reviewer verifies the 8 fixes; then P3 commit
