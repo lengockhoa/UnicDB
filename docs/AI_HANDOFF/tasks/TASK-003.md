@@ -248,3 +248,23 @@ already covers the resulting repeat calls.
   tsc gate only; orchestrator runs the full suite at the wave boundary.
 
 ---
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: bao-opus (configured: unic-smart)
+EXECUTOR_MODEL: bao-sonnet
+VERIFICATION_RERUN:
+  command: npm run typecheck; npx vitest run src/ui/__tests__/webviewServerSort.test.ts src/ui/__tests__/webviewDistinctValues.test.ts; npx tsc -p tsconfig.webview.json --noEmit 2>&1 | grep -oE '^[a-zA-Z0-9_./-]+\.ts' | sort | uniq -c | sort -rn
+  result: typecheck PASS; 16 pass / 0 fail; tsc baseline 14/10/10/5/1
+TEST_PLAN_COVERAGE: all-followed
+FINDINGS:
+  critical:
+    - none
+  important:
+    - file: webview/main.ts:2158 — dialect detection searches the entire header instead of parsing the driver token; e.g. `mysql@postgres.internal/db` is misdetected as postgres, so a spaced colId is double-quoted and rejected by the MySQL host parser. Parse only the token after the em dash and before `@`.
+    - file: webview/main.ts:2199 — filter/load-more requeries read the manual ORDER BY input rather than the active grid sort; a pending 150ms filter debounce can post after a header sort and become the newer unsorted requery, and later filter/paging actions also drop the header order. Preserve `orderByFromColumnState()` for filter-driven/paged requeries and cancel or merge a pending filter timer on sort.
+    - file: webview/main.ts:3273 — statement replacement clears the distinct cache but leaves existing filter instances alive; because requests only fire from `SetFilterComponent.init()` at webview/main.ts:1248, reopening that filter after a sort/requery neither requests fresh DISTINCT values nor refreshes its stale list. Invalidation must trigger a fresh cached/pending request and recomputation without losing the active model.
+  minor:
+    - none
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Model isolation passed; configured reviewer alias is unic-smart and the actual bound model is bao-opus. Fresh targeted verification passed, but the three runtime paths above are not covered by the submitted tests.

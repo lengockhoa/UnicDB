@@ -152,3 +152,22 @@ typecheck verified in-worktree. queryComposer.ts NOT modified.
 (no other comments)
 
 ---
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: bao-opus
+EXECUTOR_MODEL: bao-sonnet
+VERIFICATION_RERUN:
+  command: npm run typecheck; npx vitest run src/ui/__tests__/distinctValues.test.ts; npx vitest run src/ui/__tests__/queryComposer.test.ts
+  result: typecheck clean; 54 pass / 0 fail
+TEST_PLAN_COVERAGE: partial — all 11 task cases pass, but the required exact schema-qualified-base-SQL edge case is missing
+FINDINGS:
+  critical:
+    - none
+  important:
+    - file: /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/src/ui/__tests__/distinctValues.test.ts:41 — the quoted-identifier edge uses partial `toContain` assertions, and lines 13-100 never exercise a schema-qualified inner table. Regressions that alter a qualified base statement or the exact escaped-identifier SQL shape can pass; add exact `toBe` assertions covering both the escaped identifier and a schema-qualified base query.
+  minor:
+    - file: /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/src/ui/distinctValues.ts:78 — the comment says rows with extra columns are skipped, but line 94 accepts every non-empty row and takes cell 0; make the documentation match the implemented first-cell behavior.
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Running model bao-opus; configured reviewer model is unic-smart. Model isolation is satisfied against bao-sonnet, RED evidence is concrete, and all fresh verification commands pass.

@@ -7,10 +7,10 @@ AG Grid header-click sort wired to the server. 4 tasks, 2 waves.
 
 | Task | Title | Status | Executor | Reviewer |
 |------|-------|--------|----------|----------|
-| TASK-001 | ORDER BY parser + dialect clause builder + paging tiebreaker + `(Blanks)` opt-in | ready | - | - |
-| TASK-002 | `buildDistinctValuesQuery`: pure DISTINCT-values SQL builder | pending_review | - | - |
-| TASK-003 | Webview: server-side sort on header click + distinct-value set filter | ready | - | - |
-| TASK-004 | Host wiring: distinct-values round trip + ORDER BY parser + paging tiebreaker | pending_review | claude-code/bao-sonnet | - |
+| TASK-001 | ORDER BY parser + dialect clause builder + paging tiebreaker + `(Blanks)` opt-in | changes_requested | - | bao-opus |
+| TASK-002 | `buildDistinctValuesQuery`: pure DISTINCT-values SQL builder | changes_requested | - | bao-opus |
+| TASK-003 | Webview: server-side sort on header click + distinct-value set filter | changes_requested | - | bao-opus |
+| TASK-004 | Host wiring: distinct-values round trip + ORDER BY parser + paging tiebreaker | changes_requested | claude-code/bao-sonnet | bao-opus |
 
 Graph: 001 --> 004, 002 --> 004. 001, 002, 003 are independent.
 

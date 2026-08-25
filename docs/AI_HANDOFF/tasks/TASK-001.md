@@ -253,3 +253,22 @@ dialect and keeps one function rather than a `parseOrderBy` / `parseOrderByFor` 
      ntext/citext/cstring; trim+lowercase first; unknown ⇒ false.
 
 ---
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: bao-opus (configured reviewer alias: unic-smart)
+EXECUTOR_MODEL: bao-sonnet
+VERIFICATION_RERUN:
+  command: npm run typecheck; npx vitest run src/ui/__tests__/queryComposer.test.ts; npx vitest run src/ui/__tests__/resultsPanelServerFilter.test.ts src/ui/__tests__/resultsPanelRequery.test.ts
+  result: typecheck clean; 69 pass / 0 fail
+TEST_PLAN_COVERAGE: partial — no quoted-identifier comma case; string-family false-positive probes miss near-prefix unknown types
+FINDINGS:
+  critical:
+    - none
+  important:
+    - file: src/ui/queryComposer.ts:298 — `split(",")` also splits commas inside valid quoted identifiers, so `parseOrderBy('"last, first"', "postgres")` rejects an accepted identifier; split only on top-level commas outside active/recognized identifier delimiters.
+    - file: src/ui/queryComposer.ts:100 — the second unbounded prefix regex classifies unknown types such as `charset`, `enumeration`, or `setting` as strings, adding `col = ''` despite the unknown-type ⇒ false contract; remove the unbounded match and keep family-boundary/modifier matching, with regression assertions.
+  minor:
+    - none
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Model isolation passed (bao-opus vs bao-sonnet); configured `unic-smart` reviewer tier is satisfied. Fresh targeted and blast-radius verification passed, but the two parser/type-classification edge failures require fixes.

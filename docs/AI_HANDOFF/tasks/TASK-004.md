@@ -328,3 +328,27 @@ Note:
 (no other comments)
 
 ---
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: bao-opus
+EXECUTOR_MODEL: bao-sonnet
+VERIFICATION_RERUN:
+  command: npm run typecheck
+  result: PASS (clean)
+  command: npx vitest run src/ui/__tests__/resultsPanelDistinctValues.test.ts src/ui/__tests__/resultsPanelOrderBy.test.ts src/ui/__tests__/resultsPanelServerFilter.test.ts src/ui/__tests__/resultsPanelRequery.test.ts
+  result: 54 pass / 0 fail
+TEST_PLAN_COVERAGE: partial — case 15's required tableByStatement-miss subcase is not implemented
+FINDINGS:
+  critical:
+    - none
+  important:
+    - file: docs/AI_HANDOFF/tasks/TASK-004.md:213-220 — RED_OUTPUT contains only aggregate failure counts and prose, with no assertion failure, stack trace, or explicit non-zero exit; paste real pre-implementation failing-test output to establish the required RED cycle.
+    - file: src/ui/resultsPanel.ts:963-973 — postgres/mysql single-SELECT execution returns a batched cursor, but pickResult reads only one 500-row batch while this query probes 1001 values and the cursor is never closed; dropdowns are incomplete and a PostgreSQL cursor can retain the sole pooled client. Consume batches through the probe limit and close any batched handle in finally, with a batched-path test.
+    - file: src/ui/resultsPanel.ts:945-948 — the cache stores only values and hard-codes truncated:false on hits, so a first truncated:true response becomes falsely exhaustive on the second request. Cache and replay both values and truncated.
+    - file: src/ui/__tests__/resultsPanelDistinctValues.test.ts:393-410 — the first case-15 fixture uses SELECT n FROM t, so tableByStatement is populated; the required metadata-unavailable tableByStatement-miss edge case is absent. Add a no-FROM fixture and assert requery still runs with bare IS NULL.
+  minor:
+    - none
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Running bao-opus on the configured unic-smart reviewer tier; model isolation is satisfied. Full npm test was intentionally left to the orchestrator.
