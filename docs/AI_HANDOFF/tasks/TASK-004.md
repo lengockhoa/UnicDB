@@ -1,286 +1,281 @@
-# TASK-004 — Dialect query composer: filter WHERE + OFFSET/LIMIT paging + sort dispatch
+# TASK-004 — Host wiring: distinct-values round trip + ORDER BY parser + paging tiebreaker
 
 - Status: `ready`
 - Owner: `-`
 - Reviewer: `-`
-- Parent plan: `docs/AI_HANDOFF/PLAN.md` §3 (Server-side filter + paging)
+- Parent plan: `docs/AI_HANDOFF/PLAN.md` §3.1 / §3.2 / §3.4
 
 ## Goal
 
-Pure-logic SQL composition module for the three dialects: turn an AG Grid set-filter model
-into a `WHERE` clause, add OFFSET/LIMIT-style paging, and expose a dialect dispatch entry
-for the sort helper. No DOM, no `vscode`, no DB driver — unit-testable in isolation, which
-is what lets TASK-005 and TASK-006 be thin wiring tasks.
+Wire the wave-1 pure builders into the extension host: answer the webview's
+`requestDistinctValues` with a cached `distinctValues` reply, replace `SIMPLE_ORDER_BY_RE` with
+TASK-001's `parseOrderBy` (surfacing a rejection to the user instead of passing SQL through
+raw), and page through `buildPagedQueryTerms` with the statement's full projected PK as the
+ordered tiebreaker (or no tiebreaker when any PK component is not projected).
 
 ## Target Files
 
-- `src/ui/queryComposer.ts` **(new)** — the whole module. Placed in `src/ui/` (not
-  `src/core/`) to sit beside `resultsGridModel.ts`, whose helpers it reuses.
-- `src/ui/__tests__/queryComposer.test.ts` **(new)** — tests below.
+- `src/ui/messages.ts` — add `RequestDistinctValuesMessage` + `DistinctValuesMessage`, extend
+  the `WebviewMessage` and `HostMessage` unions.
+- `src/ui/resultsPanel.ts` — new `case "requestDistinctValues"` in `handleMessage` (`:328`);
+  `handleRequestDistinctValues` + a per-`(index, column)` cache invalidated in `render()` and a
+  captured statement identity/generation guard that drops late responses for replaced statements;
+  every reply echoes the request's `index` and `column`; `composeRequerySql` (`:898`) switched
+  from `SIMPLE_ORDER_BY_RE` to `parseOrderBy` / `buildOrderByClause` /
+  `buildPagedQueryTerms`; resolve all PK columns through `listPkColumns` and pass them only when
+  every name appears in `r.result.columns`; remove the now-dead `SIMPLE_ORDER_BY_RE` (`:61`) if
+  nothing else references it; extend `SaveContext` (`:72`) with optional `listColumnTypes`.
+- `src/extension.ts` — **implement** the new optional `SaveContext.listColumnTypes` next to the
+  existing `listPkColumns` (`:95-107`), which already calls
+  `adapter.listColumns(table, schema || undefined)` and returns `ColumnInfo[]`. Map to
+  `Record<name, dataType>`; `catch → {}`. ~8 lines, no other change to this file. No other task
+  touches `src/extension.ts`.
 
-Deliberately NOT edited: `src/ui/resultsGridModel.ts` (already 1214 lines and bundled into
-the webview — new host-side composition must not grow the webview bundle).
+### Composition dispatch — PINNED by `PLAN.md` §3.1, do not improvise
+
+`composeRequerySql` must dispatch exactly like this. Anything not listed keeps cycle-V behaviour.
+
+| `msg` shape (after `parseOrderBy(orderBy, dialect)` succeeds) | Compose with | Alias |
+|---|---|---|
+| `dialect === null` | `composeRequery(sql, where, orderBy)` — **unchanged** | `vsdb_sub` |
+| no `filters`, no `offset`, **0 terms** | `composeRequery(sql, where, "")` — **unchanged** | `vsdb_sub` |
+| no `filters`, no `offset`, **1 term, no `nulls`** | `composeSortQuery(dialect, sql, where, col, dir)` — **unchanged cycle-V path, keeps its quoting** | `vsdb_sort` |
+| no `filters`, no `offset`, **≥2 terms, or 1 term with `nulls`** | new multi-term wrap (below) | `vsdb_sub` |
+| `filters` or `offset` present | `buildPagedQueryTerms(...)` | `vsdb_page` |
+
+Multi-term wrap, exact shape (alias matches `composeRequery`'s existing `vsdb_sub`):
+
+```
+SELECT * FROM (<sql, trailing ; stripped>) AS vsdb_sub[ WHERE <where.trim()>] ORDER BY <buildOrderByClause(terms, dialect)>
+```
+
+No LIMIT/OFFSET on this path — `msg.offset` is absent by construction. An ORDER BY already
+present in the original SQL is **replaced** by the outer one (pre-existing wrapper behaviour
+shared by `composeRequery` / `composeSortQuery` / `buildPagedQuery`); do not add inner-ORDER-BY
+detection.
+- `src/ui/__tests__/resultsPanelDistinctValues.test.ts` **(new)** — cases 1-6, 6b, 14, 15.
+- `src/ui/__tests__/resultsPanelOrderBy.test.ts` **(new)** — cases 7-13b.
+- `src/ui/__tests__/resultsPanelServerFilter.test.ts` — **update case 16 only** (see §Discussion).
 
 ## Test Cases (REQUIRED — TDD)
 
 | # | Loại | Tên test | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
-| 1 | unit (happy) | `buildFilterWhere emits an IN list` | `buildFilterWhere({name:{values:["a","b"]}}, "postgres")` → `"name" IN ('a', 'b')` | none |
-| 2 | unit (happy) | `two filtered columns are AND-joined` | `{a:{values:["1"]},b:{values:["2"]}}` → `"a" IN ('1') AND "b" IN ('2')` | matches AG Grid's multi-column AND semantics |
-| 3 | edge (blanks sentinel) | `(Blanks) becomes IS NULL and OR-joins with the IN list` | `{n:{values:["(Blanks)","a"]}}` → `("n" IS NULL OR "n" IN ('a'))` | `(Blanks)` is `SET_FILTER_BLANKS_DISPLAY`, `resultsGridModel.ts:1138` |
-| 4 | edge (blanks only) | `only (Blanks) selected yields a bare IS NULL` | `{n:{values:["(Blanks)"]}}` → `"n" IS NULL` — no empty `IN ()`, which is a syntax error on all three dialects | boundary |
-| 5 | edge (value injection) | `single quote in a value is doubled` | value `O'Brien` → `'O''Brien'`; result contains no unescaped `'` breaking the literal | must route through `sqlLiteral` |
-| 6 | edge (identifier injection) | `delimiter inside a column name is doubled per dialect` | mssql `a]b` → `[a]]b]`; mysql `` a`b `` → `` `a``b` ``; postgres `a"b` → `"a""b"` | must route through `quoteIdent` |
-| 7 | edge (empty model) | `empty or all-empty filter model returns ""` | `{}` → `""`; `{n:{values:[]}}` → `""` | caller then omits the WHERE entirely |
-| 8 | unit (happy) | `buildPagedQuery pages postgres with LIMIT/OFFSET` | ends with `LIMIT 500 OFFSET 1000` | `(sql,"", "", 1000, 500, "postgres")` |
-| 9 | edge (dialect) | `mssql pages with OFFSET/FETCH and injects an ORDER BY` | contains `ORDER BY (SELECT NULL) OFFSET 1000 ROWS FETCH NEXT 500 ROWS ONLY` | T-SQL rejects OFFSET without ORDER BY |
-| 10 | edge (dialect, order supplied) | `mssql keeps the caller's ORDER BY instead of the placeholder` | orderBy `name DESC` → contains `ORDER BY name DESC OFFSET`, and NOT `(SELECT NULL)` | |
-| 11 | edge (boundary) | `offset 0 still emits OFFSET 0` | `offset:0` → `OFFSET 0` present | omitting it makes the mssql FETCH clause invalid |
-| 12 | edge (statement terminator) | `a trailing semicolon in the inner SQL is stripped before wrapping` | `SELECT 1;` → composed SQL has exactly one `;` at most and never `(SELECT 1;)` | same hazard `composeRequery` guards at `resultsGridModel.ts:1101-1105` |
-| 13 | unit (happy) | `composeSortQuery routes postgres to the existing helper` | output byte-identical to `getTableSortQuery("SELECT 1","","name","ASC")` from `src/adapters/postgres.ts:167` | |
-| 14 | edge (dispatch) | `composeSortQuery quotes per dialect` | postgres `"name"`, mysql `` `name` ``, mssql `[name]` | mssql arm lands in TASK-006; until then it may throw `NotImplementedError` — see Discussion |
-| 15 | edge (numeric typing) | `numeric filter values are emitted unquoted on all three dialects` | `{id:{values:["42","7"],typed:[42,7]}}` → `"id" IN (42, 7)` for postgres, `` `id` IN (42, 7) `` for mysql, `[id] IN (42, 7)` for mssql — the digits appear with **no** surrounding `'` | without `typed`, `String()`-coerced values would emit `IN ('42','7')`, which forces an implicit conversion (index-killing on MySQL, and a hard `Conversion failed` on an MSSQL `int` column when any sibling value is non-numeric) |
-| 16 | edge (temporal typing) | `an ISO timestamp is normalized per dialect` | typed `"2024-03-01T10:30:00.000Z"` → postgres `'2024-03-01T10:30:00.000Z'` (kept verbatim; PG parses full ISO incl. the `Z` offset), mysql and mssql `'2024-03-01 10:30:00.000'` (`T`→space, trailing `Z` stripped) | MSSQL `datetime`/`datetime2` raises a conversion error on the trailing `Z`; see Discussion for the UTC-naive assumption this records |
-| 17 | edge (boolean + null typing) | `booleans and nulls are typed, not stringified` | typed `[true]` → `IN (TRUE)` (not `IN ('true')`); a typed `null` is routed to the `IS NULL` branch and never appears inside the `IN` list | `sqlLiteral` already emits `TRUE`/`FALSE`/`NULL` — case 17 pins that the typed path reaches it |
-| 18 | edge (no type sniffing) | `a numeric-looking value stays quoted when no typed[] is supplied` | `{code:{values:["007"]}}` with **no** `typed` → `"code" IN ('007')` — still a string literal | load-bearing: sniffing `/^\d+$/` would turn a `varchar` zero-padded code into `007` and silently match nothing. Typing must come only from `typed[]`, never from the display string |
-| 19 | edge (length mismatch) | `a typed[] of the wrong length is ignored, not zipped` | `{id:{values:["1","2"],typed:[1]}}` → falls back to the all-string form `"id" IN ('1', '2')`, no throw, no `undefined` in the SQL | defensive: a malformed webview payload must degrade to today's behavior rather than emit `IN (1, undefined)` |
+| 1 | integration (happy) | `requestDistinctValues` runs the DISTINCT SQL | `runSql` called once with a string containing `SELECT DISTINCT "name"` and `vsdb_distinct` | postgres panel, statement 0 |
+| 2 | integration (happy) | the reply reaches the webview | a posted message `{type:"distinctValues", index:0, column:"name", values:["a","b"], truncated:false}` | runner returns rows `[["a"],["b"]]` |
+| 3 | edge (cache) | a second request for the same column runs no SQL | `runSql` call count still 1; a second `distinctValues` message IS still posted | same request twice |
+| 4 | edge (invalidation) | a new `render()` for that index clears the cache | after re-render, the same request runs `runSql` again | statement replaced |
+| 5 | edge (permission/driver error) | a failing DISTINCT query degrades, never throws | posted message has `error` non-empty and `values: []`; no unhandled rejection; panel still responsive | `runSql` rejects with `permission denied` |
+| 6 | edge (no connection) | no dialect ⇒ no SQL, explicit error reply | `runSql` not called; posted `distinctValues` carries the request's `index` / `column` and an `error` | `saveContext.getDriver()` returns `null` |
+| 6b | edge (concurrency) | late DISTINCT response for a replaced statement is dropped | request `{index:0,column:"name"}`, call `render()`/replacement requery for statement 0 before the deferred old `runSql` resolves, then resolve it: **no** `distinctValues` `postMessage` occurs for the old response and the replacement cache stays empty (a next request runs SQL); the captured response identity remains old `index:0,column:"name"` and is rejected against current statement generation | deferred runner promise for statement 0, then replacement at same index |
+| 7 | integration (happy) | multi-term ORDER BY uses the PINNED `AS vsdb_sub` wrapper | composed SQL `=== 'SELECT * FROM (SELECT id FROM t) AS vsdb_sub ORDER BY "a" ASC, "b" DESC'` — exact string via `toBe`, alias `AS vsdb_sub`, no LIMIT/OFFSET | `requery` with `orderBy: "a, b DESC"`, no filters, no offset, postgres, sql `SELECT id FROM t` |
+| 8 | integration (happy) | same wrapper on mssql + with a bar WHERE | `=== 'SELECT * FROM (SELECT id FROM t) AS vsdb_sub ORDER BY [a] ASC, [b] DESC'`; and with `where: "id > 0"` → `… AS vsdb_sub WHERE id > 0 ORDER BY [a] ASC, [b] DESC` | same, mssql |
+| 8b | edge (identifier charset) | active-dialect quoted colId round-trips; mismatched style rejects | postgres `orderBy: '"First Name" ASC'` composes `ORDER BY "First Name" ASC` and runs SQL; postgres with `` `First Name` ASC `` runs no SQL and surfaces the standard parse error | quoted input from TASK-003 + mismatched quote input |
+| 8c | edge (dialect capability) | `NULLS` native vs rejected | postgres `orderBy: "a NULLS LAST"` → SQL contains `ORDER BY "a" ASC NULLS LAST`; mysql and mssql → `runSql` NOT called, `showErrorMessage` called with a message matching `/NULLS/i` | one case per dialect |
+| 9 | regression (behaviour change) | an expression is REJECTED, not passed through | `runSql` NOT called; an error is surfaced (`showErrorMessage` called) — RED against today's pass-through | `orderBy: "lower(name)"` |
+| 10 | regression (back-compat) | a single identifier still composes as in cycle V | `ORDER BY "name" DESC` (postgres) and `[name] DESC` (mssql) | `orderBy: "name DESC"` |
+| 11 | regression (back-compat) | empty ORDER BY is byte-identical to `composeRequery` | `toBe(composeRequery(sql, "", ""))`, no `ORDER BY` substring | `orderBy: ""` |
+| 12 | integration (happy) | paging appends the full composite PK in declared order | SQL ends `ORDER BY "name" ASC, "tenant_id" ASC, "id" ASC LIMIT 500 OFFSET 500`; both PK columns appear once and in `listPkColumns` order | `offset:500`, `r.result.columns:["name","tenant_id","id"]`, PK `["tenant_id","id"]` |
+| 13 | edge (boundary) | no PK ⇒ paging unchanged | SQL is byte-identical to the live cycle-V `buildPagedQuery` output for the same message | `listPkColumns` resolves `[]` |
+| 13b | edge (projection safety) | any non-projected PK component disables the whole tiebreaker | SQL is byte-identical to `buildPagedQuery`; contains neither appended `"tenant_id"` nor `"id"`; no gap-free UI promise/message is posted | projection `["name","tenant_id"]`, PK `["tenant_id","id"]` — `id` missing |
+| 14 | integration (type-derived `(Blanks)`) | `columnTypes` comes from declared type, not row values | a `(Blanks)` selection on a `varchar` column whose **every loaded row value is `null`** composes `("n" IS NULL OR "n" = '' …)`; the same selection on an `int4` column composes bare `"num" IS NULL` | `listColumnTypes` returns `{ n: "varchar", num: "int4" }`; loaded rows all-NULL for `n` |
+| 15 | edge (metadata unavailable) | no type metadata ⇒ cycle-V behaviour, never a type error | `tableByStatement` miss **and** `listColumnTypes` rejecting both compose bare `"n" IS NULL` with no `= ''`; `runSql` still called once (the requery is not aborted) | two sub-cases |
 
 ## Test Files
 
-- `src/ui/__tests__/queryComposer.test.ts` — all 19 cases. Style reference:
-  `src/adapters/__tests__/postgres.sortQuery.test.ts` (pure string assertions, one `it` per
-  numbered case, no mocks).
+- `src/ui/__tests__/resultsPanelDistinctValues.test.ts` **(new)** — cases 1-6, 14, 15.
+- `src/ui/__tests__/resultsPanelOrderBy.test.ts` **(new)** — cases 7-13 (incl. 8b, 8c).
+- `src/ui/__tests__/resultsPanelServerFilter.test.ts` — case 16 updated (see §Discussion).
+
+Reuse the `FakeWebview` / `FakeWebviewPanel` + `vi.mock("vscode")` harness at the top of
+`src/ui/__tests__/resultsPanelServerFilter.test.ts` (lines 25-181, including the `requeryMsg`
+factory and `waitForTerminal`).
 
 ## Verification Commands
 
 ```bash
 npm run typecheck
-npx vitest run src/ui/__tests__/queryComposer.test.ts
+npx vitest run src/ui/__tests__/resultsPanelDistinctValues.test.ts src/ui/__tests__/resultsPanelOrderBy.test.ts
+npx vitest run src/ui/__tests__/resultsPanelServerFilter.test.ts src/ui/__tests__/resultsPanelRequery.test.ts src/ui/__tests__/resultsPanel.test.ts src/ui/__tests__/resultsPanelRetry.test.ts src/ui/__tests__/resultsPanelSaveEdits.test.ts
+npx vitest run src/ui/__tests__/queryComposer.test.ts src/ui/__tests__/distinctValues.test.ts
+npx vitest run src/extension.test.ts src/scaffold.test.ts
 npm test
 ```
 
+`npm test` is the cycle's boundary run: this is the last task, and its baseline is
+1400 passed / 2 skipped / 0 failed. `src/ui/__tests__/resultsGridModelNull.test.ts` test 6 is a
+known pre-existing flake under the full suite (passes in isolation) — not a cycle-W regression.
+
 ## Acceptance Criteria
 
-- [ ] `src/ui/queryComposer.ts` exports `buildFilterWhere`, `buildPagedQuery`,
-      `composeSortQuery` with the exact signatures in §Interfaces.
-- [ ] Zero hand-rolled escaping: every identifier goes through `quoteIdent`, every value
-      through `sqlLiteral` (`grep -n "replace(/'" src/ui/queryComposer.ts` → no hits).
-- [ ] The module imports nothing from `vscode`, `ag-grid-community`, or `src/adapters/*`.
-- [ ] `ColumnFilterModel` entries carry an optional `typed?: unknown[]`, and
-      `buildFilterWhere` emits typed values through `sqlLiteral` (numbers/booleans
-      unquoted, `Date`/ISO strings dialect-normalized) while falling back to string
-      literals whenever `typed` is absent or length-mismatched. No type sniffing from
-      display strings.
-- [ ] All 19 Test Cases PASS.
-- [ ] `npm run typecheck` clean; `npm test` ≥ 1327 passed, 0 failed.
+- [ ] Every case in §Test Cases passes.
+- [ ] `npm run typecheck` clean.
+- [ ] `npm test` ≥ 1400 passed with no failure other than the documented flake.
+- [ ] Cases 11, 13 and 13b prove the no-filter / unusable-full-PK paths are byte-identical to
+      cycle V — asserted with `toBe` against a live `composeRequery` / `buildPagedQuery` call,
+      not a pasted string. These are the only byte-identity claims in this cycle; do not add a
+      `toBe(composeRequery(...))` assertion to the single-term sort path: that path composes via
+      `composeSortQuery` (`vsdb_sort`, quoted) and `composeRequery` emits `vsdb_sub` unquoted, so
+      such an assertion would revert cycle V's dialect quoting and break
+      `resultsPanelServerFilter.test.ts:556-571` (case 15). See `PLAN.md` §7.
+- [ ] `composeRequerySql` dispatches exactly per the table in §Target Files: the single-bare-term
+      path still goes through `composeSortQuery` unchanged, and the multi-term path emits the
+      pinned `AS vsdb_sub` wrapper with no LIMIT/OFFSET. (cases 7, 8, 10)
+- [ ] DISTINCT replies echo the captured request `index` and `column`; a completion whose
+      statement identity/generation no longer matches current statement index is dropped before
+      both cache write and `postMessage`. (case 6b)
+- [ ] `buildDistinctValuesQuery` is called with `where = ""`; `grep` shows no new
+      `lastWhere`/`whereByStatement`-style field added to `resultsPanel.ts`.
+- [ ] `columnTypes` is sourced from `SaveContext.listColumnTypes`, never from
+      `result.rows`; `grep -n "typeof .* === \"string\"" ` shows no row-value type sniffing in
+      the `(Blanks)` path. (cases 14, 15)
+- [ ] `src/ui/__tests__/resultsPanelServerFilter.test.ts` case 15 (`:556-571`) is still green and
+      **unmodified**; only the case-16 block changes.
+- [ ] `SIMPLE_ORDER_BY_RE` is gone from `src/ui/resultsPanel.ts` (or a `grep` shows a remaining
+      caller, documented in the Executor Report).
+- [ ] A rejected ORDER BY produces BOTH a `vscode.window.showErrorMessage` and no `runSql` call.
+- [ ] Paging tiebreakers are the full host-derived PK (`saveContext.listPkColumns` /
+      `tableByStatement`) in declared order, never webview input; they are passed only when every
+      PK name is present in `r.result.columns`, otherwise `[]` preserves cycle-V SQL and no
+      gap-free promise is emitted. (cases 12, 13, 13b)
+- [ ] `webview/main.ts` is NOT modified by this task (TASK-003 owns it).
 - [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
 
 ## Dependencies
 
-- (none)
+- TASK-001, TASK-002
 
 ## Interfaces
 
-- Consumes (all exist at HEAD — import, do not reimplement):
-  - `sqlLiteral(v: unknown): string` — `src/ui/resultsGridModel.ts:378`. Portable
-    single-quote doubling, **no** backslash escaping (deliberate: PG
-    `standard_conforming_strings=on` and MSSQL treat `\` literally).
-  - `quoteIdent(name: string, dialect: Dialect): string` — `src/core/saveStatements.ts:136`.
-    postgres `"…"` (doubling `"`), mysql `` `…` `` (doubling `` ` ``), mssql `[…]` (doubling `]`).
-  - `type Dialect = "postgres" | "mysql" | "mssql"` — `src/core/saveStatements.ts:31`.
-  - `SET_FILTER_BLANKS_DISPLAY = "(Blanks)"` — `src/ui/resultsGridModel.ts:1138`.
-  - `getTableSortQuery(originalSql, whereFromBar, column, direction)` —
-    `src/adapters/postgres.ts:167` (postgres arm of `composeSortQuery`).
-- Produces (TASK-005 and TASK-006 consume these verbatim):
-  ```ts
-  /**
-   * AG Grid set-filter model as returned by GridApi.getFilterModel(), plus an
-   * optional parallel array of the ORIGINAL (uncoerced) cell values.
-   *
-   * `values` is display text — AG Grid's set filter stores what the checkbox
-   * showed, i.e. String()-coerced. `typed[i]` is the raw value behind
-   * `values[i]` and is what buildFilterWhere prefers when present.
-   * `typed` is optional and MUST be ignored unless typed.length === values.length.
-   */
-  export interface ColumnFilterModel {
-    [field: string]: { values: string[]; typed?: unknown[] };
-  }
+- Consumes from TASK-001 (`src/ui/queryComposer.ts`):
 
-  export function buildFilterWhere(
-    filters: ColumnFilterModel,
-    dialect: Dialect,
-  ): string;                       // "" when nothing is filtered
+```ts
+// pass the LIVE dialect — that is what rejects NULLS on mysql/mssql
+export function parseOrderBy(orderBy: string, dialect?: Dialect): { ok: true; terms: OrderByTerm[] } | { ok: false; error: string };
+export function buildOrderByClause(terms: OrderByTerm[], dialect: Dialect): string;
+export function buildPagedQueryTerms(sql: string, where: string, terms: OrderByTerm[], offset: number, limit: number, dialect: Dialect, tiebreakers: string[]): string;
+export function buildFilterWhere(filters: ColumnFilterModel, dialect: Dialect, options?: { columnTypes?: Record<string, string> }): string;
+```
 
-  export function buildPagedQuery(
-    sql: string,
-    where: string,
-    orderBy: string,
-    offset: number,
-    limit: number,
-    dialect: Dialect,
-  ): string;
+- Consumes from TASK-002 (`src/ui/distinctValues.ts`):
 
-  export function composeSortQuery(
-    dialect: Dialect,
-    originalSql: string,
-    whereFromBar: string,
-    column: string,
-    direction: "ASC" | "DESC",
-  ): string;
-  ```
+```ts
+export const DISTINCT_VALUES_LIMIT = 1000;
+export function buildDistinctValuesQuery(sql: string, column: string, dialect: Dialect, where: string, limit?: number): string;
+export function takeDistinctValues(rows: unknown[][], limit?: number): { values: unknown[]; truncated: boolean };
+```
+
+- Consumes from TASK-003 (webview → host), and produces the reply:
+
+```ts
+export interface RequestDistinctValuesMessage { type: "requestDistinctValues"; index: number; column: string; }
+export interface DistinctValuesMessage {
+  type: "distinctValues";
+  index: number;
+  column: string;
+  values: unknown[];
+  truncated: boolean;
+  error?: string;
+}
+```
+
+- Existing host API used unchanged: `SaveContext.getDriver(): Dialect | null`,
+  `SaveContext.listPkColumns(schema: string, table: string): Promise<string[]>`,
+  `this.tableByStatement: Map<number, { schema?: string; table: string }>`.
+
+- **New, added by this task** — `SaveContext` gains one OPTIONAL method so the panel can learn
+  declared column types without importing `ConnectionManager` (same pattern and same adapter call
+  as the existing `listPkColumns`; `extension.ts:98-106` already has `ColumnInfo[]` in hand):
+
+```ts
+export interface SaveContext {
+  getDriver(): ConnectionConfig["driver"] | null;
+  getManualCommit?(): boolean;
+  listPkColumns(schema: string, table: string): Promise<string[]>;
+  /** NEW (optional — an older/ test SaveContext without it still works).
+   *  column name → declared DB type, from ColumnInfo.dataType
+   *  (src/adapters/types.ts:47-52). Resolves to {} on any failure. */
+  listColumnTypes?(schema: string, table: string): Promise<Record<string, string>>;
+}
+```
+
+  Optional, so every existing `SaveContext` literal in the test suite keeps compiling untouched;
+  absent ⇒ no `columnTypes` ⇒ cycle-V `IS NULL` (case 15).
 
 ---
 
 ## Discussion
 
-### 2026-08-25 · planner · bao-opus
+### 2026-08-26 · planner · bao-opus
 
-Ordering note for case 14: `composeSortQuery`'s mssql arm needs
-`getTableSortQuery` from `src/adapters/mssql.ts`, which TASK-006 creates. To keep this task
-in wave 1 with no dependency, implement the mssql arm here as an **inline** T-SQL
-composition (it is four lines: `quoteIdent(col,"mssql")` + ASC/DESC whitelist + subquery
-wrap), and let TASK-006 replace the inline body with a delegation to its adapter export.
-That keeps case 14 green in wave 1 and keeps TASK-006's diff honest. Record whichever you
-chose in the Executor Report.
+→ @executor Read this before touching `composeRequerySql`.
 
-`(Blanks)` semantics: AG Grid's set filter treats `null`, `undefined` and `""` as one group
-(`buildSetFilterEntries`, `resultsGridModel.ts:1151`). Server-side, `col IS NULL` does not
-catch `''`. Cases 3-4 only pin the `IS NULL` half; matching empty strings too is a
-deliberate known gap recorded in PLAN.md, not a bug for the reviewer to flag.
+1. **You are deliberately breaking one existing test, and only one.**
+   `src/ui/__tests__/resultsPanelServerFilter.test.ts:578-591` ("case 16 — non-simple ORDER BY
+   is passed through verbatim") asserts `"lower(name)"`, `"a, b DESC"` and `"1"` compose
+   byte-identically to `composeRequery`. After this task: `"a, b DESC"` is *parsed and quoted*,
+   and `"lower(name)"` / `"1"` are *rejected*. Update that `describe` in place — rename it, keep
+   the three inputs, and assert the new behaviour per input. Do **not** delete the block and do
+   **not** touch any other test in that file. Record the change in your Executor Report; the
+   reviewer will check that the behaviour change was intentional and matches `PLAN.md` §3.1.
+2. **Rejection must be visible and must run nothing.** Follow the existing error style in
+   `handleRequery`: `vscode.window.showErrorMessage` plus the synthetic error `StatementResult`
+   so the webview shows it in the `vsdb-error` placeholder. Silently falling back to
+   `composeRequery` reintroduces exactly the bug this cycle is closing.
+3. **Full-PK tiebreaker source, in order:** `tableByStatement.get(index)` →
+   `listPkColumns(schema, table)` → compare **every** PK name against `r.result?.columns`. Preserve
+   the array's declared order and pass all columns only when each is projected; if the PK is empty,
+   result metadata is absent, or one component is missing, pass `[]` and preserve the case-13/13b
+   byte-identical path. Never use only the first PK and never append all projected columns — neither
+   is guaranteed unique. The result header is already available as `StatementResult.result.columns`
+   (`src/adapters/types.ts:12`), so no new metadata/message is needed. `listPkColumns` is async;
+   resolve it in `handleRequery` before the sync composer rather than reordering the `requerySeq`
+   guard at `:956`. The UI currently has no gap-free copy; do not add one for the fallback.
+4. **`columnTypes` (TASK-001) is derived from DECLARED TYPES — never from row values.** Round-1
+   review killed the row-sniffing version: "at least one loaded value is a `string`" is
+   page-dependent (the same selection composes `IS NULL` on one page and `IS NULL OR = ''` on
+   the next) and is inert for an all-NULL `varchar` window, which is the case users actually
+   notice. Resolve it statically instead:
+   `tableByStatement.get(index)` → `saveContext.listColumnTypes?.(schema ?? "", table)` →
+   `Record<name, dataType>` → pass as `buildFilterWhere(filters, dialect, { columnTypes })`.
+   Note `StatementResult.result.columns` is `string[]` (`src/adapters/types.ts:12`) — **names
+   only, no types** — so the result header cannot supply this; that is why the `SaveContext`
+   method exists. Any miss (no table, method absent, promise rejects) ⇒ pass **no**
+   `columnTypes` ⇒ every `(Blanks)` stays `IS NULL`, i.e. cycle V. Unknown must never widen the
+   predicate: `col = ''` against an `int` is a hard error on postgres and mssql. Cases 14/15.
+   `listColumnTypes` is `async`, like `listPkColumns` — resolve it in `handleRequery` **before**
+   calling the sync `composeRequerySql` and pass it in (same reason as note 3: an async composer
+   reorders the `requerySeq` guard at `:956`). One `await` for both lookups.
+5. **The distinct cache must key on `(index, column)` and be cleared in `render()`**, but cache
+   clearing alone is insufficient. Capture the request's `index`, `column`, and current statement
+   identity/generation before awaiting `runSql`; after it resolves, verify that index still points
+   to that same statement before caching or posting. The reply object must echo the captured
+   request index/column, never values read from mutable current state. If `render()` or a replacement
+   requery changed statement 0 while its DISTINCT request was in flight, drop the old completion:
+   no cache write and no `postMessage` (case 6b). This mirrors the existing stale requery guard.
+6. **The DISTINCT query is BASE-STATEMENT scoped — call `buildDistinctValuesQuery` with `""`.**
+   This was "unverified" in round 0; round-1 review resolved it: `src/ui/resultsPanel.ts` retains
+   no per-statement WHERE (no `lastWhere`, no `whereByStatement`; the requery bar's text only
+   ever arrives inside a single `RequeryMessage`), and `RequestDistinctValuesMsg` carries only
+   `{index, column}`. So compose DISTINCT over the statement's own `r.sql` — the base table,
+   whose `(schema, table)` you already have from `tableByStatement` — bounded by its own
+   `LIMIT n+1`. **Do not invent host state to retain a WHERE**, and do not change the message
+   contract (TASK-003 is written against `{index, column}` in parallel). The consequence — the
+   dropdown may offer a value the current filtered view cannot contain, so selecting it yields
+   zero rows — is an **accepted limitation** recorded in `PLAN.md` §2 out-of-scope and §7, with
+   a queued follow-up in `INDEX.md`. Restate it in your Executor Report so the reviewer sees it
+   as planned.
+7. **`parseOrderBy` takes the live dialect.** Call `parseOrderBy(orderBy, dialect)`, not
+   `parseOrderBy(orderBy)` — the two-arg form is what rejects `NULLS FIRST|LAST` on mysql/mssql
+   (case 8c). Route that rejection through the *same* `showErrorMessage` + synthetic error
+   `StatementResult` channel as note 2; there is exactly one rejection path in this task.
+8. **A quoted colId arriving from TASK-003 is normal input, not an attack.** TASK-003 quotes any
+   non-bare `colId` before sending (`orderBy: '"First Name" ASC'`), and `parseOrderBy` strips the
+   quotes, un-doubles the escapes and hands you `column: "First Name"`, which
+   `buildOrderByClause` re-quotes via `quoteIdent`. Do not add a second validation layer that
+   rejects quoted input — case 8b fails if you do, and header-click sort on a spaced column name
+   regresses versus today.
 
-→ @executor: `buildPagedQuery` receives the ALREADY-composed inner SQL. Do not re-derive a
-WHERE inside it — TASK-005 passes `buildFilterWhere`'s output through the `where` argument.
-
-**Typed filter values (plan review R1, finding 4).** AG Grid's set-filter model holds
-*display strings*: VSDB builds those entries with `String(v)` in `buildSetFilterEntries`
-(`src/ui/resultsGridModel.ts:1151-1176`), and `formatCell` (`:341`) turns `Date` into an
-ISO string and objects into JSON. If `buildFilterWhere` pushed those strings straight
-through `sqlLiteral`, every predicate would be a **string** literal:
-
-- MySQL: `WHERE id IN ('42')` on an `INT` column works, but only via an implicit
-  conversion that discards the index — the exact opposite of the point of pushing the
-  filter to the server.
-- MSSQL: `WHERE id IN ('42')` on an `int` column succeeds, but the moment the selection
-  contains one non-numeric entry the whole batch fails with
-  `Conversion failed when converting the varchar value ... to data type int`. A
-  `datetime2` column with `'2024-03-01T10:30:00.000Z'` fails on the trailing `Z`.
-- Postgres is the forgiving one (`unknown`-typed literals get coerced), which is why this
-  cannot be caught by testing against PG alone. Cases 15-16 therefore assert **all three**
-  dialects.
-
-Design, in order of precedence:
-
-1. If `typed` is present **and** `typed.length === values.length`, build the literal from
-   `typed[i]` via `sqlLiteral`. That already yields unquoted numbers/bigints, `TRUE`/`FALSE`
-   for booleans, and `NULL` for null (`src/ui/resultsGridModel.ts:378-390`) — do not
-   duplicate that logic.
-2. Otherwise fall back to today's behavior: quote every entry as a string literal.
-   **Never** sniff a type from the display string (case 18) — `'007'` in a `varchar` code
-   column must stay `'007'`.
-3. Temporal values need one dialect step `sqlLiteral` does not do: it emits a `Date` as a
-   full ISO string with the `Z` suffix. Keep that for postgres; for mysql and mssql
-   replace the `T` with a space and drop the trailing `Z` before quoting.
-
-*Assumption logged:* step 3 treats the value as UTC and produces a UTC-naive literal for
-MySQL/MSSQL. This matches how the grid displayed it (`formatCell` → `toISOString()`), so
-filtering agrees with what the user saw. It will not agree with a server whose session
-timezone is not UTC, on a column that stores local time. That is out of scope here and is
-recorded as a known gap in PLAN.md rather than silently "fixed" by an executor.
-
-TASK-005 is responsible for populating `typed` from the loaded row values in the webview;
-it is optional precisely so TASK-005 can ship the plumbing incrementally, and so cases
-18-19 keep the fallback honest.
+(no other comments)
 
 ---
-
-<!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
--->
-
----
-
-## Executor Report
-
-EXECUTOR_TOOL: claude-code
-EXECUTOR_MODEL: bao-sonnet
-EXECUTOR_SUBAGENT: feature-implementer
-
-### RED_OUTPUT (fresh, before implementation)
-
-```
-RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-004
-❯ src/ui/__tests__/queryComposer.test.ts  (0 test)
-FAIL  src/ui/__tests__/queryComposer.test.ts
-Error: Failed to load url ../queryComposer (resolved id: ../queryComposer)
-in .../src/ui/__tests__/queryComposer.test.ts. Does the file exist?
-Test Files  1 failed (1)
-     Tests  no tests
-```
-
-RED confirmed for the expected reason: the module `src/ui/queryComposer.ts` did not exist yet,
-so the test file could not even load. Not a false-GREEN.
-
-### Verification Output (fresh, current turn)
-
-`npm run typecheck`:
-```
-> tsc --noEmit
-(exit 0, no diagnostics)
-```
-
-`npx vitest run src/ui/__tests__/queryComposer.test.ts`:
-```
-✓ src/ui/__tests__/queryComposer.test.ts  (19 tests) 3ms
-Test Files  1 passed (1)
-     Tests  19 passed (19)
-```
-
-`npm test` (full suite, after `npm run compile` for the gitignored `dist/` artifacts):
-```
-Test Files  96 passed | 1 skipped (97)
-     Tests  1346 passed | 2 skipped (1348)
-```
-Baseline 1327 passed / 2 skipped / 0 failed → +19 (this task's cases) = 1346, 0 failed, no regression.
-
-### Status: PASS
-
-### Note
-
-- **`src/adapters/*` import conflict resolved inline.** §Interfaces lists
-  `getTableSortQuery` (src/adapters/postgres.ts) as a "consume", but the Acceptance Criteria
-  require the module to import nothing from `src/adapters/*`, and importing postgres.ts would
-  drag the `pg` driver into the webview bundle (esbuild browser platform). I composed the
-  postgres arm of `composeSortQuery` inline, byte-identical to `getTableSortQuery`
-  (`SELECT * FROM (inner) vsdb_sort[ WHERE …] ORDER BY quoteIdent(col,"postgres") ASC|DESC`).
-  Case 13 compares against the real helper and passes. mssql arm likewise inline (TASK-006 may
-  later replace it with a delegation to its adapter export). No `NotImplementedError` thrown.
-- **Temporal normalization (case 16)** handles both `Date` instances and canonical
-  `toISOString()`-shaped strings via a strict regex (`\d{4}-\d{2}-\d{2}T…Z`); mysql/mssql get
-  `T`→space and trailing `Z` dropped, postgres keeps the ISO verbatim. This is the design's
-  step-3 rule, not display-string type sniffing — `"007"` (case 18) never matches and stays
-  `'007'`.
-- **Case 17** additionally routes a `typed[i]` that is `null`/`undefined` to the `IS NULL`
-  branch even when the display string differs, per the "never inside the IN list" rule.
-- Typed arrays are used only when `typed.length === values.length`; wrong-length `typed` falls
-  back to all-string literals (case 19).
-- `dist/` is gitignored and absent in a fresh worktree; `npm test` first failed 2 smoke tests
-  (ENOENT `dist/webview.css` / missing `dist/schemaForm.js`) until `npm run compile` created the
-  artifacts — an environment build step, not a code regression.
-- No git add / commit / push performed; the two new files are left untracked in the worktree.
-
-## Reviewer Verdict
-
-VERDICT: APPROVED
-REVIEWER_MODEL: bao-opus
-EXECUTOR_MODEL: bao-sonnet
-VERIFICATION_RERUN:
-  command: npm run typecheck && npx vitest run src/ui/__tests__/queryComposer.test.ts
-  result: 0 typecheck diagnostics / 21 tests pass (1 file)
-TEST_PLAN_COVERAGE: all-followed — 19 original cases + 2 TASK-006-appended cases, typed value cases 15-19, edge cases for injection/blank/empty/mismatch all covered
-FINDINGS:
-  critical: none
-  important: none
-  minor: none
-NEXT_STATUS_FOR_INDEX: approved
-NOTES: Clean implementation. buildFilterWhere dialect quoting, typed value routing, and injection escaping are correct. buildPagedQuery handles all three dialect paging styles correctly. composeSortQuery delegates mssql to adapter, composes postgres/mysql inline. No vscode/adapters imports that would bloat the webview bundle (mssql adapter import is host-side only per TASK-005). Tests assert real SQL strings for every dialect and edge case.

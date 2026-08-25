@@ -1,574 +1,751 @@
-# PLAN — Cycle V
+# PLAN — Cycle W
+
+Base: `main` · Date: 2026-08-26 · Predecessor: cycle V (`68f602a`, v1.6.5)
 
 ## §1 Intent
 
-Three queued items from cycle U's `INDEX.md` "Next cycles" list, run together:
+Cycle V pushed column filtering, paging and sort *composition* down to the server but left
+four gaps recorded in `INDEX.md` → "Next cycles (queued)". Cycle W closes them:
 
-1. **SQL syntax coloring.** The user's complaint: SQL text inside VSDB surfaces is not
-   colorized the way DataGrip colorizes it. Today the extension contributes **zero**
-   `languages` / `grammars` entries in `package.json` (verified: `contributes` keys are
-   `commands, keybindings, menus, views, viewsContainers, viewsWelcome, configuration`),
-   so `.sql` files rely purely on VS Code's built-in `sql` TextMate grammar — which does
-   not know the connected schema, does not distinguish table names from columns, and does
-   not colorize SQL echoed inside VSDB's own webviews (the Messages tab `pre.vsdb-msg-sql`
-   at `webview/main.ts:2758-2761` renders `r.sql` as flat text; the AI chat bubble's
-   fenced code block at `webview/aiChatPanelMain.ts:139` emits
-   `<code class="vsdb-md-code-lang-sql">` with no token markup).
-2. **Server-side column filter + paging.** Today's per-column set filter
-   (`SetFilterComponent`, `webview/main.ts:1104`) filters only rows already loaded in the
-   grid, and `colFilterActive` (`webview/main.ts:220`) *blocks* `loadMore` entirely while
-   a filter is active (`dispatchLoadMore`, `webview/main.ts:1936-1941`). So a filter on a
-   1M-row table silently searches the first 500 rows and the user cannot page further.
-3. **MSSQL server-side sort.** `getTableSortQuery` exists only in
-   `src/adapters/postgres.ts:167` and has **no production call site** (verified: only
-   its own doc-comment and `postgres.sortQuery.test.ts` reference it). T-SQL cannot reuse
-   it: `OFFSET/FETCH` requires an `ORDER BY`, and identifier quoting is `[...]`, not `"..."`.
+1. **Sort is still client-side.** `getTableSortQuery` (postgres, `src/adapters/postgres.ts:169`)
+   and its MSSQL twin exist as pure builders with no production call site. Clicking an AG Grid
+   column header (`sortable: true`, `webview/main.ts:1535`) re-orders only the rows already
+   loaded in the browser, so on a batched 500-row window the user sees "the smallest of the
+   loaded 500", not "the smallest in the table".
+2. **ORDER BY only understands one bare identifier.** `SIMPLE_ORDER_BY_RE`
+   (`src/ui/resultsPanel.ts:61`) matches `name` / `name DESC` and nothing else; `a, b DESC`
+   falls through to `composeRequery` unquoted, and a real expression is passed to the driver
+   verbatim.
+3. **The set-filter dropdown can only offer values that happen to be loaded.** Entries come
+   from `buildSetFilterEntries` over grid rows (`SetFilterComponent.recomputeEntries`,
+   `webview/main.ts:1261`), so with server-side filtering a value outside the loaded window is
+   unselectable, and `typed[]` degrades to string literals when a selected row is evicted
+   (`buildServerFilterModel`, `webview/main.ts:1976` — index-losing on MySQL).
+4. **`(Blanks)` matches only NULL.** AG Grid groups `null` / `undefined` / `""` together;
+   the composed predicate is `col IS NULL` (`buildFilterWhere`, `src/ui/queryComposer.ts:123`
+   — the `parts.push(\`${quoted} IS NULL\`)` line),
+   so empty-string rows silently disappear from a `(Blanks)` selection.
+5. **OFFSET paging is not deterministic.** `buildPagedQuery` emits `LIMIT n OFFSET m` with
+   whatever ORDER BY the user supplied. When that ORDER BY is non-unique (or absent) the
+   database is free to return overlapping or skipped rows between "Load More" pages.
 
-**Success definition**
-
-- SQL rendered anywhere in VSDB (editor `.sql` documents, Messages-tab statement text,
-  AI-chat fenced `sql` blocks) carries per-token coloring, and connected-schema table /
-  column names are colorized distinctly from plain identifiers.
-- A per-column filter on a browsed table produces a **server-side** `WHERE`: the host
-  re-runs the statement with the filter pushed down, so the filtered result is drawn from
-  the whole table, not the loaded window.
-- "Load more" continues to work while a server-side filter is active, via explicit
-  `OFFSET`/`LIMIT` (Postgres/MySQL) or `OFFSET … FETCH NEXT` (MSSQL) paging instead of
-  the cursor-only path.
-- MSSQL gains a server-side sort at parity with Postgres, and it is **live code, not just
-  an API**: `getTableSortQuery` is exported from `src/adapters/mssql.ts` with the same
-  4-arg signature as the Postgres one; `composeSortQuery(dialect, …)` in
-  `src/ui/queryComposer.ts` dispatches by dialect; and `handleRequery` calls it, so an
-  ORDER BY typed into the existing requery bar is dialect-quoted (`[name]` on MSSQL,
-  `` `name` `` on MySQL, `"name"` on PG) instead of spliced in raw. This also retires the
-  orphan status of the Postgres helper, which has had zero call sites since cycle U.
-  **Explicitly *not* in this cycle:** wiring the AG Grid column-header click to emit a
-  sort requery. No dialect has that wiring today and none gains it here — clicking a
-  header still sorts client-side. This cycle closes the *dialect* gap and gives the helpers
-  one real call path; the header-click lane is queued in `INDEX.md` "Next cycles" and
-  recorded in §2 Out of scope, with the wave-collision reason in §3.
-- Full suite stays green: baseline is **1327 passed / 2 skipped / 0 failed**.
+**Success looks like:** clicking a column header re-queries the *server* with a dialect-quoted
+`ORDER BY`; a multi-column `a, b DESC` from the requery bar is quoted per dialect and an
+expression is rejected with a visible message instead of being passed through raw; the filter
+dropdown lists server-side `DISTINCT` values with their real types; `(Blanks)` matches empty
+strings; and "Load More" receives a total ORDER BY whenever the statement projects every column
+of its primary key. If any PK component is not projected, paging keeps cycle-V behaviour and the
+UI makes no gap-free promise.
 
 ## §2 Scope
 
-**In scope (this cycle, 6 tasks)**
+### In scope
 
-| Task | Area |
-|------|------|
-| TASK-001 | TextMate injection grammar + `contributes.grammars`/`languages` for `.sql` |
-| TASK-002 | `DocumentSemanticTokensProvider` for SQL, fed by the existing `SchemaCache` |
-| TASK-003 | Webview SQL tokenizer + CSS so Messages-tab / AI-chat SQL is colorized |
-| TASK-004 | Pure dialect SQL builders: `buildFilterWhere` + `buildPagedQuery` (3 dialects) |
-| TASK-005 | Host wiring: extended `requery` message → filter + page composition |
-| TASK-006 | MSSQL `getTableSortQuery` (T-SQL dialect) + shared sort-dialect dispatch |
+| # | Change | Owner task |
+|---|--------|------------|
+| A | `parseOrderBy` / `buildOrderByClause` — multi-term ORDER BY, explicit identifier charset (bare **or** pre-quoted), per-dialect quoting, expression rejection | TASK-001 |
+| B | `(Blanks)` → `(col IS NULL OR col = '')` for columns whose **declared type** is a string type | TASK-001 |
+| C | `buildPagedQueryTerms` — append the full projected PK as deterministic ORDER BY tiebreakers | TASK-001 |
+| D | `buildDistinctValuesQuery` — pure `SELECT DISTINCT` builder in a new module | TASK-002 |
+| E | `webview/main.ts`: `onSortChanged` → server-side sort requery | TASK-003 |
+| F | `webview/main.ts`: set-filter list fed by host distinct values (+ typed values beyond the loaded window) | TASK-003 |
+| G | Host wiring: `distinctValues` message pair, `ResultsPanel` handler + per-(index,column) cache, and switching `composeRequerySql` onto the new parser/tiebreaker | TASK-004 |
 
-**Out of scope (this cycle)**
+### Out of scope (deliberate, with reason)
 
-- Webview UI change to the SetFilterComponent panel itself (checkbox list, search box).
-  TASK-005 reuses the *existing* `getModel()` payload shape `{ values: string[] }`; no
-  panel redesign. A "distinct values from server" fetch for the checkbox list is
-  explicitly deferred — the panel keeps counting loaded rows, as documented at
-  `resultsGridModel.ts:1126-1127`.
-- Infinite-row-model / server-side-row-model migration in AG Grid. Paging stays on the
-  client row model with explicit Load More.
-- Colorizing SQL inside the connection form, new-table designer, or schema tree.
-- Non-`sql` languageIds (the `shellscript` CodeLens lane at `src/extension.ts:126` is
-  untouched).
-- **Column-header-click sort wiring, for every dialect.** TASK-006 ships the MSSQL
-  `getTableSortQuery` builder and the `composeSortQuery` dispatch; nothing in this cycle
-  makes an AG Grid header click emit a sort requery. Postgres is in the same state at HEAD
-  (its builder has had no call site since cycle U), so no dialect regresses. Deferred
-  because the click handler lives in `webview/main.ts`, which TASK-005 already owns in
-  wave 2 — a second wave-2 editor of that file would be exactly the same-wave collision
-  this plan forbids. Queued in `INDEX.md` "Next cycles".
-- **`(Blanks)` matching empty strings.** TASK-004 maps the `(Blanks)` sentinel to
-  `col IS NULL` only. AG Grid's client-side set filter groups `null`, `undefined` and `""`
-  under one entry, so a server-side `(Blanks)` selection can return *fewer* rows than the
-  client-side filter did on a column that holds empty strings. Deferred because the
-  correct predicate is dialect-aware (`col IS NULL OR col = ''`, plus a separate decision
-  about whitespace-only values and about MSSQL `CHAR` padding) and deserves its own test
-  matrix. TASK-004's Discussion records the sentinel's exact semantics so the executor
-  does not silently "improve" it. Queued in `INDEX.md` "Next cycles".
-- **Server-fetched distinct values for the set-filter dropdown**, and **keyset paging**
-  (this cycle uses `OFFSET`/`LIMIT`). Both queued in `INDEX.md` "Next cycles".
+- **Full keyset / cursor paging.** See §3 trade-off — replaced by the tiebreaker (C).
+- **Projecting missing PK columns into arbitrary result sets.** The paging tiebreaker is the full
+  declared PK and is added only when every PK column is already present in
+  `StatementResult.result.columns`. If any component is absent, no key is appended: appending all
+  projected columns is not guaranteed unique and therefore cannot make OFFSET paging total. The
+  UI must not claim gap-free paging in that fallback. Queued in `INDEX.md` as a follow-up that
+  safely projects PK columns through arbitrary wrapped SELECTs.
+- **MySQL/MSSQL non-UTC session timestamp normalization.** `mysql.createPool` is created
+  without `timezone`/`dateStrings` and tedious's `new Connection` without `useUTC`, so a
+  server session not running in UTC shifts a `datetime` literal. Fixing this needs a
+  session-timezone probe per connection — a separate cycle, not a line in this one.
+- **A MySQL `getTableSortQuery` adapter twin.** The mysql arm of `composeSortQuery` is
+  composed inline and is byte-identical to what such a helper would emit; adding the helper
+  creates a second source of truth with no call site.
+- **Whitespace-only values folded into `(Blanks)`.** Would require `TRIM(col) = ''`, which
+  loses the index on all three dialects. `"  "` stays its own filter entry.
+- **Scoping the DISTINCT round trip to the active WHERE — accepted limitation, decided, not
+  unknown.** Verified: `src/ui/resultsPanel.ts` retains **no** per-statement `where` (there is no
+  `lastWhere` / `whereByStatement` field; the requery bar's text lives only in `webview/main.ts`
+  and reaches the host inside a single `RequeryMessage`). So the host has nothing to scope with
+  at `requestDistinctValues` time, and `buildDistinctValuesQuery` is called with `where = ""` —
+  the DISTINCT list is composed over the **base statement** (the statement's own `r.sql`, whose
+  schema+table the host already knows via `tableByStatement`) with its own `LIMIT`, and is NOT
+  narrowed by the currently applied filter/requery WHERE. Consequence the user sees: the dropdown
+  may offer a value that the current filtered view cannot contain; selecting it yields zero rows,
+  which is confusing but never wrong data. Deliberately accepted for this cycle rather than
+  adding a `where` field to `RequestDistinctValuesMsg` — the webview's requery-bar text is not
+  the only WHERE in play (the set-filter model composes a second one host-side), so a partial
+  scope would be *more* misleading than none. Queued as a follow-up in `INDEX.md`
+  ("Scope DISTINCT dropdown values to the active filter/WHERE"), which needs the host to retain
+  the composed WHERE per statement first.
+- **`NULLS FIRST/LAST` emulation on mysql/mssql.** Cut on YAGNI grounds (review round 1): no §1
+  gap asks for it and no producer emits it — TASK-003's `onSortChanged` emits only
+  `"<col> ASC|DESC"`, so the clause is reachable solely by hand-typing into the requery bar. The
+  **parser still accepts** `NULLS FIRST|LAST` (grammar in §3.1) and `buildOrderByClause`
+  **renders it natively on postgres**. On mysql/mssql, which have no such syntax, a `nulls` term
+  is **rejected** through the same single error channel as any other unsupported ORDER BY —
+  `parseOrderBy(orderBy, dialect?)` returns `{ ok: false, error }` when `dialect` is `mysql` or
+  `mssql` and any term carries `NULLS`. Never silently dropped (that changes row order with no
+  signal) and never emulated with a synthetic `CASE` / `IS NULL` key term. This also keeps the
+  mssql `CASE` branch — and its collision with the `queryComposer.test.ts:161-182` source-text
+  assertions — out of the cycle entirely.
+- **`docs/CHANGELOG.md` / version bump / commit.** Release chores belong to the orchestrator.
 
-**Same-wave file-collision constraint**
+### Same-file constraint (checked)
 
-No two tasks in the same wave may write the same file. Enforced assignment:
+| File | Task | Wave |
+|------|------|------|
+Complete list — every file named in any task's `## Target Files`, source and test alike:
 
-Waves: **wave 1** = TASK-001, 002, 003, 004 (all `Dependencies: none`); **wave 2** =
-TASK-005, 006 (both depend on TASK-004 only).
+| File | Task | Wave |
+|------|------|------|
+| `src/ui/queryComposer.ts` | TASK-001 only | 1 |
+| `src/ui/__tests__/queryComposer.test.ts` | TASK-001 only | 1 |
+| `src/ui/distinctValues.ts` (new) | TASK-002 only | 1 |
+| `src/ui/__tests__/distinctValues.test.ts` (new) | TASK-002 only | 1 |
+| `webview/main.ts` | TASK-003 only | 1 |
+| `src/ui/__tests__/webviewServerSort.test.ts` (new) | TASK-003 only | 1 |
+| `src/ui/__tests__/webviewDistinctValues.test.ts` (new) | TASK-003 only | 1 |
+| `src/ui/messages.ts` | TASK-004 only | 2 |
+| `src/ui/resultsPanel.ts` | TASK-004 only | 2 |
+| `src/extension.ts` (implement `SaveContext.listColumnTypes`, ~8 lines) | TASK-004 only | 2 |
+| `src/ui/__tests__/resultsPanelDistinctValues.test.ts` (new) | TASK-004 only | 2 |
+| `src/ui/__tests__/resultsPanelOrderBy.test.ts` (new) | TASK-004 only | 2 |
+| `src/ui/__tests__/resultsPanelServerFilter.test.ts` (case 16 block only) | TASK-004 only | 2 |
 
-| File | Wave 1 owner | Wave 2 owner |
-|------|--------------|--------------|
-| `package.json` | TASK-001 | — |
-| `syntaxes/vsdb-sql-injection.tmLanguage.json` (new) | TASK-001 | — |
-| `src/__tests__/sqlGrammar.test.ts` (new) | TASK-001 | — |
-| `src/ui/sqlSemanticTokens.ts` (new) | TASK-002 | — |
-| `src/extension.ts` | TASK-002 | — |
-| `src/ui/__tests__/sqlSemanticTokens.test.ts` (new) | TASK-002 | — |
-| `webview/sqlHighlight.ts` (new) | TASK-003 | — |
-| `webview/aiChatPanelMain.ts` | TASK-003 | — |
-| `webview/styles.css` | TASK-003 | — |
-| `src/ui/__tests__/sqlHighlight.test.ts` (new) | TASK-003 | — |
-| `src/ui/__tests__/webviewSqlHighlight.test.ts` (new) | TASK-003 | — |
-| `webview/main.ts` | TASK-003 (≈4-line swap at `:2758-2761`) | TASK-005 |
-| `src/ui/queryComposer.ts` (new) | TASK-004 (creates) | TASK-006 (mssql arm only) |
-| `src/ui/__tests__/queryComposer.test.ts` (new) | TASK-004 (creates) | TASK-006 (appends) |
-| `src/ui/messages.ts` | — | TASK-005 |
-| `src/ui/resultsPanel.ts` | — | TASK-005 |
-| `src/ui/__tests__/resultsPanelServerFilter.test.ts` (new) | — | TASK-005 |
-| `src/ui/__tests__/webviewServerFilter.test.ts` (new) | — | TASK-005 |
-| `src/adapters/mssql.ts` | — | TASK-006 |
-| `src/adapters/postgres.ts` (doc-comment only) | — | TASK-006 |
-| `src/adapters/__tests__/mssql.sortQuery.test.ts` (new) | — | TASK-006 |
-
-Every column above is collision-free: no file has two owners **in the same wave**. The
-three cross-wave files are safe because a wave boundary serializes them:
-
-- `webview/main.ts` — TASK-003 (wave 1, Messages-tab `pre.vsdb-msg-sql` colorization) then
-  TASK-005 (wave 2, filter/paging wiring). TASK-005 must **re-read** the file rather than
-  work from a cached copy or a pre-computed line number.
-- `src/ui/queryComposer.ts` and its test — TASK-004 creates both in wave 1; TASK-006
-  replaces only the `mssql` arm of `composeSortQuery` and appends cases in wave 2.
-
-`webview/styles.css` belongs to TASK-003 alone; TASK-005 must reuse existing CSS classes
-and add none. `esbuild.js` is **not** modified by any task: TASK-003 imports
-`sqlHighlight.ts` from the two existing entry points rather than adding a bundle.
-`CHANGELOG.md` is owned by cycle-close, not by any task (see §6).
+No file appears in two tasks at all, so no same-wave collision is possible. TASK-003 (webview)
+and TASK-004 (host) implement two ends of one message contract; that contract is frozen in §7
+and repeated verbatim in both tasks' `## Interfaces` so they can be written in parallel.
 
 ## §3 Approach
 
-### Coloring (TASK-001 / 002 / 003)
+### 3.1 ORDER BY: a real parser, not a wider regex
 
-Three complementary layers, because no single layer covers all three surfaces:
+Today `SIMPLE_ORDER_BY_RE = /^\s*([A-Za-z_][A-Za-z0-9_$]*)\s*(?:(ASC|DESC))?\s*$/i` accepts
+exactly one identifier. Widening the regex to cover `a, b DESC` invites the same failure again
+on the next shape, so cycle W adds a **term parser** in `queryComposer.ts`:
 
-- **Layer 1 — TextMate injection grammar (TASK-001).** A grammar with
-  `injectionSelector: "L:source.sql"` layered *on top of* VS Code's built-in `sql`
-  grammar rather than replacing it. Replacing `source.sql` would fight the built-in
-  grammar and regress every user who already relies on it; injection only adds scopes
-  (dialect keywords VS Code's grammar misses: `ILIKE`, `RETURNING`, `MATERIALIZED`,
-  `OFFSET … FETCH`, `TOP`, `[bracket]`/`` `backtick` `` quoted identifiers). This is pure
-  declarative JSON + a `package.json` contribution: no runtime cost, works with every
-  color theme, and needs no DB connection.
-  - *Alternative rejected:* shipping a full replacement `sql` grammar. Higher regression
-    surface, and it would have to be maintained against three dialects forever.
-- **Layer 2 — semantic tokens (TASK-002).** The schema-aware half. A
-  `DocumentSemanticTokensProvider` registered for `{ scheme: "file", language: "sql" }`
-  reads the already-shipped `SchemaCache` (`src/ui/schemaCache.ts`, 60 s TTL,
-  `getSchemas` / `getTables` / `getColumns`) and emits `class` for names matching a live
-  table, `property` for names matching a live column, `namespace` for schemas. This is
-  what makes it feel DataGrip-like: a bare identifier is colored differently once it is
-  *known* to be a table. Registration mirrors the existing defensive pattern at
-  `src/extension.ts:148` (`typeof vscode.languages.registerCompletionItemProvider ===
-  "function"` guard) because `extension.test.ts`'s partial `vscode` mock only stubs
-  `registerCodeLensProvider` (`src/extension.test.ts:159-164`).
-  - *Alternative rejected:* doing schema-awareness inside the TextMate grammar. TextMate
-    is regex-only and cannot consult a live connection.
-  - *Decision logged:* the provider must **never** block or throw when there is no
-    connection — same contract as `SqlCompletionProvider` (`return []` / empty token
-    set), because a cold provider that throws would break coloring for offline `.sql`
-    files entirely.
-- **Layer 3 — webview tokenizer (TASK-003).** Neither layer above reaches a webview: the
-  Messages tab and AI-chat bubbles are plain DOM built by our own code. A tiny pure
-  tokenizer (`webview/sqlHighlight.ts`) splits SQL into
-  `keyword|string|number|comment|ident|punct` spans and returns a `DocumentFragment` built
-  with `document.createElement` + `textContent` only. Emitting an HTML string would
-  reintroduce an injection sink in `aiChatPanelMain.ts`, whose security contract
-  (`aiChatPanelWebview.test.ts` header) is that hostile content never reaches the page via
-  `innerHTML`. Colors come from `--vscode-*` theme variables in `webview/styles.css`, so
-  the webview matches the user's editor theme.
-  - *Decision logged:* the tokenizer is duplicated logic vs. the TextMate grammar. That is
-    accepted — the webview has no TextMate engine, and pulling in `vscode-textmate` +
-    `vscode-oniguruma` (neither is currently a dependency; verified `node_modules` has
-    only `@vscode/vsce`) would add a WASM payload to a `.vsix` for cosmetic gain.
+```ts
+export interface OrderByTerm { column: string; direction: "ASC" | "DESC"; nulls?: "FIRST" | "LAST"; }
+export type ParseOrderByResult =
+  | { ok: true; terms: OrderByTerm[] }
+  | { ok: false; error: string };
+export function parseOrderBy(orderBy: string, dialect?: Dialect): ParseOrderByResult;
+export function buildOrderByClause(terms: OrderByTerm[], dialect: Dialect): string;
+```
 
-### Server-side filter + paging (TASK-004 / 005)
+#### Accepted identifier charset (decided — binds TASK-001 and TASK-003)
 
-`composeRequery` (`src/ui/resultsGridModel.ts:1090`) already wraps a statement as
-`SELECT * FROM (<sql>) vsdb_sub [WHERE …] [ORDER BY …]`. TASK-004 extends that idea into a
-dialect-aware module rather than editing `resultsGridModel.ts`, so the webview bundle does
-not grow and so `resultsGridModel.ts` (already 1214 lines) stops accreting host concerns:
+A term's column part is accepted in exactly two forms, and nothing else:
 
-- `buildFilterWhere(filters, dialect)` turns the SetFilterComponent model
-  (`{ [field]: { values: string[] } }`) into `col IN ('a','b')`, with `(Blanks)` mapping
-  to `col IS NULL` — the sentinel is already exported as `SET_FILTER_BLANKS_DISPLAY`
-  (`resultsGridModel.ts:1138`). Values go through the existing portable `sqlLiteral`
-  (`resultsGridModel.ts:378`, single-quote doubling, no backslash escaping); identifiers
-  through the existing `quoteIdent(name, dialect)` (`src/core/saveStatements.ts:136`).
-  Reusing both is deliberate: they are the project's audited injection boundary and
-  already have dialect-correct escaping for `"`/`` ` ``/`]`.
-- `buildPagedQuery(sql, where, orderBy, offset, limit, dialect)` appends
-  `LIMIT n OFFSET m` for postgres/mysql and `OFFSET m ROWS FETCH NEXT n ROWS ONLY` for
-  mssql. T-SQL requires an `ORDER BY` before `OFFSET`, so the mssql branch injects
-  `ORDER BY (SELECT NULL)` when the caller supplied none — the standard stable-less
-  ordering idiom, chosen over `ORDER BY 1` because column 1 may be non-sortable.
-- TASK-005 extends `RequeryMessage` with **optional** `filters?`, `offset?`, `limit?`,
-  `append?`. Optional, not required, so an older webview bundle (or the post-save
-  auto-requery at `webview/main.ts:2866-2868`, and the Re-Run bar at `main.ts:2469-2473`)
-  keeps working unchanged — this is the one field-compat rule that keeps the three
-  existing requery call sites from all needing edits.
-- The host keeps `handleRequery`'s existing safety work: close the previous batched cursor
-  first (`resultsPanel.ts:877`, Postgres `pool.max=1`), post `status:"running"` before the
-  run (`resultsPanel.ts:890-906`) so the webview's reset branch fires, route through
-  `this.transaction` when a manual transaction is open (`resultsPanel.ts:912`), and
-  `runner.adopt` afterwards (`resultsPanel.ts:942`).
-- On the webview side, `onFilterChanged` (`webview/main.ts:1705`) gains a debounce that
-  posts a `requery` carrying `gridApi.getFilterModel()`, and `dispatchLoadMore` stops
-  hard-returning on `colFilterActive`: when a server filter is active it posts a
-  `requery` with `offset = loadedRows` and `append: true` instead of a cursor `loadMore`.
-  - *Decision logged:* paging is OFFSET-based, not keyset. Keyset is strictly better for
-    deep pages but requires a unique sort key the grid does not always have (a view, or a
-    table with no PK). OFFSET matches what `LIMIT/OFFSET` gives on all three dialects and
-    matches the existing 500-row batch mental model. Noted as a known gap.
-  - *Decision logged:* the client-side `doesFilterPass` is **not** removed. With server
-    filtering active the predicate is a no-op (every returned row already matches), and
-    keeping it means a filter still narrows the view instantly before the round trip.
+1. **Bare identifier** — matches `/^[A-Za-z_][A-Za-z0-9_$]*$/` (the same charset
+   `SIMPLE_ORDER_BY_RE` accepts today, so cycle V's behaviour is a strict subset).
+2. **Already-quoted identifier in the active dialect's style**: `"First Name"` for postgres
+   (`""` escapes a quote), `` `First Name` `` for mysql (a doubled backtick escapes a backtick),
+   and `[First Name]` for mssql (`]]` escapes a bracket). The parser strips the matching quotes
+   and un-doubles the escapes, yielding `column: "First Name"` — an *unquoted logical name*,
+   exactly what `quoteIdent` expects. `buildOrderByClause` then re-quotes it canonically for that
+   dialect, so quoted input is normalized, never passed through as raw text. When `dialect` is
+   omitted, all three styles are accepted for pure-builder use.
 
-### MSSQL sort (TASK-006)
+**Mismatched quote styles are not supported.** With a live dialect, a token quoted in another
+style is not unquoted. It may be treated as an ordinary bare identifier only if the entire token
+also matches `/^[A-Za-z_][A-Za-z0-9_$]*$/`; in practice delimiters such as backticks, double
+quotes and brackets fail that charset, so e.g. ``parseOrderBy("`First Name`", "postgres")`` and
+`parseOrderBy('"First Name"', "mysql")` return the standard `{ ok: false, error }`. A raw
+unquoted identifier containing a space, dot, quote/delimiter character or non-ASCII letter also
+fails. Thus the only route into SQL is an accepted logical name subsequently passed through
+`quoteIdent`.
 
-Mirror the Postgres contract exactly:
-`getTableSortQuery(originalSql, whereFromBar, column, direction) => string`, wrapping in
-`SELECT * FROM (<inner>) vsdb_sort [WHERE …] ORDER BY [col] ASC|DESC`, with `]`-doubling
-and an ASC/DESC whitelist.
+This charset alone would regress today's client-side sort, because AG Grid `colId` is the raw DB
+column name (`webview/main.ts:1533`, `field: spec.field`) and a column literally named
+`First Name` would produce `orderBy: "First Name ASC"` → rejected → error toast where the user
+previously got a (locally) sorted grid. **So TASK-003 must quote before sending**: when a
+`colId` fails the bare-identifier test, `orderByFromColumnState()` wraps it in the dialect quote
+character (doubling any embedded quote char) before joining the term. The webview learns the
+dialect from the `state` message header, which `extension.ts:623` builds as
+``Run at <ISO> — <driver>@<host>/<db>`` — TASK-003 parses the driver out of it and falls back to
+postgres double-quoting when the header carries `no connection` or an unrecognized shape (a
+double-quoted identifier is also what a `null`-dialect host path composes today). Bare
+identifiers are sent bare, so the common case is byte-identical to what cycle V's regex saw.
 
-Both adapters end up exporting the same-named symbol, so something must dispatch by
-dialect. *Alternative rejected:* putting the dispatch inside an adapter — that creates a
-postgres→mssql import edge and makes each adapter depend on its siblings. Instead
-`composeSortQuery(dialect, …)` lives in `src/ui/queryComposer.ts`, which imports nothing
-from `src/adapters/*` and is the natural dialect-dispatch home. TASK-004 creates it in
-wave 1 with the mssql arm written inline (four lines: `quoteIdent(col,"mssql")` + an
-ASC/DESC whitelist + the subquery wrap), which is what keeps TASK-004 dependency-free;
-TASK-006 then replaces that arm's body with a delegation to its new adapter export.
-TASK-006 therefore depends on TASK-004.
+**Rejected alternative:** having TASK-003 post structured terms (`{column, direction}[]`) instead
+of a string. It is the cleaner contract, but `orderBy` is a *shared* field: the requery bar
+(`webview/main.ts:2029/2351/2608/3005`) posts a free-text string into the same message, so the
+host would need both paths anyway, and the message shape would stop being additive for an older
+bundle. Quoting at the producer keeps one contract and one parser.
 
-*Decision logged — the sort helpers must not ship as dead code.* At HEAD the Postgres
-`getTableSortQuery` has **zero** call sites; adding an mssql twin would double the orphans.
-The call path this cycle delivers is the **existing requery-bar ORDER BY input**, whose
-value already rides on every `requery` message (`webview/main.ts:2215`, `:2472`, `:2867`)
-and is today spliced into the SQL raw. TASK-005's `handleRequery` routes a *single bare
-identifier* (optionally `ASC`/`DESC`) through `composeSortQuery` so it gets dialect
-quoting, and passes anything else — `a, b DESC`, `lower(name)`, `1`, empty — through to
-`composeRequery` byte-identically. Deliberately no general ORDER BY parser: the bar is
-free text, and a half-parser that quoted `lower(name)` as an identifier would turn working
-SQL into a syntax error. TASK-005 case 15 is the liveness test (mssql → `ORDER BY [name]
-DESC` at `runner.runSql`); case 16 is the passthrough guard.
+`parseOrderBy` splits on top-level commas and matches each term against
+`identifier [ASC|DESC] [NULLS FIRST|NULLS LAST]`. Anything else — a parenthesis, a function
+call, a dotted qualifier, an ordinal `1`, a bare `*` — returns `{ ok: false, error }`. **The
+error is user-visible** (host surfaces it via `vscode.window.showErrorMessage` and a synthetic
+error `StatementResult`); the expression is *never* passed to the driver raw. This is a
+deliberate behaviour change from cycle V's silent pass-through: pass-through means an
+unquoted, unvalidated user string reaches the database, and the user cannot tell whether their
+ORDER BY was applied or ignored. **Rejected alternative:** keep pass-through for
+"advanced users" — it makes the quoted and unquoted paths indistinguishable in the UI, and
+`composeRequery` already wraps the SQL in a subquery, so an expression referencing an inner
+alias is not reliably valid at the outer level anyway.
 
-*Decision logged:* the AG Grid **column-header click** is still not wired to a sort
-requery, for any dialect — see §2 Out of scope. The click handler lives in
-`webview/main.ts`, which TASK-005 already owns in wave 2, so a second wave-2 editor would
-be the same-file collision this plan forbids. TASK-006 stays confined to `src/adapters/*`
-plus the one composer arm, so the two tasks never touch the same file.
+`NULLS FIRST/LAST` — **accepted by the grammar, rendered natively on postgres, rejected on
+mysql/mssql, never emulated.** Round-1 review flagged the emulation as YAGNI and it is cut (see
+§2 out-of-scope). `parseOrderBy` still parses the clause into `nulls?: "FIRST" | "LAST"` so the
+grammar is honest about what the user typed; `buildOrderByClause` renders `"a" ASC NULLS LAST`
+on postgres. When the dialect is mysql or mssql, `parseOrderBy(orderBy, dialect)` returns
+`{ ok: false, error }` naming the unsupported clause, which flows through the *same* single
+rejection channel as `lower(name)` — one error path, no second wrapper, no synthetic key term.
+**Rejected alternative:** silently dropping the clause on those two dialects — it produces a
+different row order than the one the user asked for, with no signal.
+
+#### Composition path for a multi-term ORDER BY (decided — pins TASK-004)
+
+`composeSortQuery` takes a single `column` + `direction` and structurally cannot express two
+terms, so the plan pins the wrapper rather than letting the executor pick one:
+
+| `msg` shape | Composition | Wrapper alias |
+|---|---|---|
+| no `filters`, no `offset`, **0 terms** | `composeRequery(sql, where, orderBy)` — unchanged | `vsdb_sub` (existing) |
+| no `filters`, no `offset`, **exactly 1 term, no `nulls`** | `composeSortQuery(dialect, sql, where, col, dir)` — **unchanged cycle-V path** | `vsdb_sort` (existing) |
+| no `filters`, no `offset`, **≥2 terms (or 1 term with `nulls`)** | new multi-term wrap, below | `vsdb_sub` |
+| `filters` or `offset` present | `buildPagedQueryTerms(...)` (TASK-001) | `vsdb_page` (existing) |
+
+The multi-term wrap uses the **same builder chain shape as `buildPagedQuery`** — strip the
+trailing semicolon from the original SQL, wrap it verbatim, apply WHERE and ORDER BY at the
+outer level:
+
+```
+SELECT * FROM (<original sql, trailing ; stripped>) AS vsdb_sub[ WHERE <where>] ORDER BY <buildOrderByClause(terms, dialect)>
+```
+
+The alias is exactly **`AS vsdb_sub`**, matching `composeRequery`'s existing wrapper name
+(`src/ui/resultsGridModel.ts:1108`), so the only difference from the no-ORDER-BY path is that
+the ORDER BY is present and dialect-quoted. No `LIMIT`/`OFFSET` is emitted on this path — by
+definition `msg.offset` is absent; when it is present the row above routes to
+`buildPagedQueryTerms`, which owns paging.
+
+**An ORDER BY already present in the original SQL is replaced, not merged.** Because the original
+is wrapped as a subquery, its inner ORDER BY becomes ordering of the *derived table* and the
+outer ORDER BY is what the database honours — postgres and mysql may keep the inner sort as a
+tiebreak-ish artifact, mssql rejects a bare inner `ORDER BY` without `TOP`/`OFFSET`. This is
+**pre-existing** behaviour of every wrapper in the file (`composeRequery`, `composeSortQuery`,
+`buildPagedQuery` all wrap the same way and have shipped since cycle T); cycle W does not change
+it and does not attempt inner-ORDER-BY detection. Documented here so the executor does not
+"fix" it mid-cycle: a user whose statement already ends in `ORDER BY x` and who then clicks a
+header gets ordering by the clicked column, which is the correct and expected outcome.
+
+### 3.2 Paging determinism: a tiebreaker, not keyset paging
+
+Real keyset paging replaces `OFFSET m` with `WHERE (sortkey) > (last seen sortkey)`, which
+requires (a) a unique sort key per result set, (b) carrying the last row's key through the
+webview→host round trip, (c) a different composition for the first page vs subsequent pages,
+and (d) reversing the comparison for `DESC`, per term. For a wrapped arbitrary user SELECT —
+which is what `buildPagedQuery` receives — a unique key is not guaranteed to exist at all.
+
+**Decision: add a total ORDER BY only when the full primary key is usable.**
+`buildPagedQueryTerms` accepts `tiebreakers: string[]` and appends **every** missing PK column in
+`listPkColumns`' declared order, each `ASC`; a PK component already present in the user terms is
+not repeated, regardless of that user's direction. A composite PK is indivisible for this
+purpose: using only its first column is not unique. With all PK components trailing the user
+terms, ordering is total and `OFFSET`/`FETCH` returns disjoint, gap-free pages.
+
+The host derives the candidate from `tableByStatement.get(index)` →
+`saveContext.listPkColumns(schema, table)`, never from the webview, and checks it against the
+statement's existing projection metadata: `StatementResult.result.columns` is the ordered list
+of projected column names already available in `handleRequery` (`r.result?.columns`). Only when
+**every** PK name is present (exact identifier comparison) does it pass the full array to
+`buildPagedQueryTerms`; otherwise it passes `[]`. It must not append all projected columns as a
+fallback because they need not be unique, and it must not reference a non-projected PK because
+the outer wrapper cannot order by a column it does not expose. With `[]` (no PK, missing result
+metadata, or any PK component absent), the clause is byte-identical to today's
+`buildPagedQuery`; the UI makes no gap-free promise. Deep-offset performance and safely
+projecting missing PK columns stay queued. No invented `ctid`/`ROWID` is allowed.
+
+### 3.3 `(Blanks)`: opt-in, never silent
+
+`buildFilterWhere` gains an options argument deciding which columns' `(Blanks)` also matches
+`''`. Making it unconditional would emit `col = ''` against integer/date columns, which is a hard
+type error on postgres and mssql, so it must be per-column. Default (option absent) is
+byte-identical to today's output, which keeps every existing `queryComposer.test.ts` assertion
+green.
+
+**The decision is static, from the column's declared type — never from sniffing loaded values.**
+Round-1 review caught the sniffing version: "at least one loaded value is a `string`" is
+page-dependent (the same selection composes `IS NULL` on one page and `IS NULL OR = ''` on the
+next) and is inert for an all-NULL varchar window — precisely the case the user notices. So:
+
+```ts
+export interface FilterWhereOptions {
+  /** column name → declared DB type (e.g. "varchar", "text", "int4").
+   *  A column whose type is a string type gets the `= ''` arm on (Blanks). */
+  columnTypes?: Record<string, string>;
+}
+```
+
+`buildFilterWhere` normalizes the declared type with `trim().toLowerCase()` and recognizes the
+whole string family without broad substring matching: `char...`, `varchar...`, `nchar...`,
+`nvarchar...`, `enum...`, and `set...` are accepted prefixes (therefore parameters such as
+`nvarchar(50)` work); `text` plus suffix variants `tinytext`, `mediumtext`, `longtext` and `ntext`
+are accepted; multi-word `character varying...` is accepted; and exact `citext` / `cstring` are
+accepted when adapters report them. This covers case-insensitive `TEXT`, `TINYTEXT`,
+`MEDIUMTEXT`, and `LONGTEXT` while avoiding false positives such as `context_id` or
+`textbook_code`. **A column absent from `columnTypes`, or carrying an unknown/empty type,
+defaults to `false`** → bare `IS NULL`, i.e. exactly cycle-V behaviour. Unknown never widens the
+predicate; that keeps the failure mode "the fix did not fire" rather than "a type error killed
+the query".
+
+TASK-004 supplies whatever type metadata it has and nothing more. Verified sources, in order:
+`StatementResult.result.columns` is `string[]` (`src/adapters/types.ts:12` — **names only, no
+types**, so the result header cannot supply this), therefore TASK-004 resolves types through the
+adapter's column metadata for the statement's `(schema, table)` — `ColumnInfo { name, dataType,
+nullable, isPrimaryKey? }` (`src/adapters/types.ts:47-52`), reachable the same way
+`saveContext.listPkColumns` already reaches it (`extension.ts:98-106` calls
+`adapter.listColumns(table, schema)` and filters). When the statement has no addressable table
+(`tableByStatement` miss) or the lookup throws, TASK-004 passes **no** `columnTypes` and every
+`(Blanks)` stays `IS NULL` — the cycle-V path. See TASK-004 for the `SaveContext` extension that
+exposes this without importing `ConnectionManager` into the panel.
+
+### 3.4 Distinct values: host round trip, cached per (index, column)
+
+The webview asks the host for a column's distinct values; the host composes
+`SELECT DISTINCT <col> FROM (<original sql>) vsdb_distinct ORDER BY 1 LIMIT n+1`
+(mssql: `SELECT DISTINCT TOP (n+1)`), runs it through the same `runner.runSql` path as a
+requery, and replies with the raw values plus a `truncated` flag when more than `n` came back
+(default `n = 1000`). Because these are real DB values, the webview can attach them as `typed[]`
+even for rows that were never loaded — which is exactly gap 3 above. The response is cached per
+`(statement index, column)` and invalidated whenever `render()` replaces the statement.
+Each request captures its `index`, `column`, and the current statement identity/generation before
+awaiting `runSql`. Its reply carries that same request `index` and `column`; after the await, the
+host drops the response unless the captured index still names the same current statement. A late
+response for a replaced statement must neither repopulate the cache nor call `postMessage` — the
+same stale-completion principle as `requerySeq`, applied per DISTINCT request.
+
+**Scope of the DISTINCT query: the base statement, NOT the current filtered view — decided.**
+`buildDistinctValuesQuery` keeps its `where: string` parameter (it is a pure builder and the
+parameter is exercised by TASK-002 cases 6-7), but **TASK-004 calls it with `""`**, because the
+host retains no per-statement WHERE to pass: verified, `src/ui/resultsPanel.ts` has no
+`lastWhere` / `whereByStatement` field, and the requery bar's text only ever arrives inside a
+single `RequeryMessage`. The list is therefore composed over the statement's own `r.sql` — the
+base table, whose `(schema, table)` the host already knows from `tableByStatement` — bounded by
+its own `LIMIT n+1`. `RequestDistinctValuesMsg` stays `{ index, column }`; **no contract change,
+so TASK-003 and TASK-004 remain writable in parallel.** The accepted limitation and the queued
+follow-up are recorded in §2 out-of-scope and §7.
+**Rejected alternative:** computing distinct values inside the webview from all loaded rows —
+that is what is broken today; the loaded window is the problem, not the aggregation.
+
+`buildDistinctValuesQuery` lives in a **new** module `src/ui/distinctValues.ts` rather than in
+`queryComposer.ts`. Two reasons: it keeps TASK-002 off TASK-001's file (wave-1 parallelism),
+and `queryComposer.test.ts` contains source-text assertions (see §7) that any new import in
+that file risks breaking.
+
+### 3.5 Webview sort wiring
+
+`createGrid` (`webview/main.ts:1653`) gains `onSortChanged`, which reads
+`api.getColumnState()`, keeps entries with a non-null `sort` ordered by `sortIndex`, renders
+them as an `orderBy` string (`"a ASC, b DESC"` — **`colId` quoted per §3.1 when it is not a bare
+identifier**), and posts the existing `requery` message
+carrying the current filter model — i.e. it reuses `postFilterRequery`'s payload shape so sort,
+filter and paging compose instead of racing. A `suppressSortRequery` re-entrancy guard is set
+while applying host-driven column state so a programmatic restore does not re-post.
 
 ## §4 Test Plan
 
-Baseline: `1327 passed / 2 skipped / 0 failed`. Every task must leave that green.
-
 | Type | Test Name | Expected |
 |------|-----------|----------|
-| happy | `grammar contributes an injection for source.sql` | `package.json` `contributes.grammars[0].injectTo` contains `"source.sql"`; the referenced `syntaxes/*.json` path exists on disk |
-| happy | `grammar JSON parses and every pattern has a name+match` | `JSON.parse` succeeds; every entry in `patterns` has both `name` and (`match` or `begin`) |
-| edge (packaging) | `.vscodeignore does not exclude syntaxes/` | packaged file list still contains `syntaxes/vsdb-sql-injection.tmLanguage.json` |
-| edge (regex safety) | `no grammar pattern matches the empty string` | for every `match`, `new RegExp(m).exec("")` is `null` (an empty-matching rule hangs the TextMate engine) |
-| happy | `semantic tokens mark a known table as class` | `SELECT * FROM users` with `users` in cache → one token at the `users` range with type `class` |
-| happy | `semantic tokens mark a known column as property` | `SELECT email FROM users` → token for `email` typed `property` |
-| edge (no connection) | `provider returns empty tokens when no connection` | `provideDocumentSemanticTokens` resolves to a `SemanticTokens` with `data.length === 0`, and does not throw |
-| edge (unknown identifier) | `unknown identifier gets no token` | `SELECT * FROM not_a_table` → zero tokens emitted, so TextMate coloring shows through |
-| edge (cache failure) | `adapter throwing does not reject the provider` | cache provider rejects → resolves to empty tokens, no unhandled rejection |
-| edge (async readiness) | `cold cache emits nothing, then refresh() fires onDidChangeSemanticTokens` | first provide (adapter still pending) → `data.length === 0`; after the adapter settles and `refresh()` runs, the listener fired exactly once and a re-provide returns the `class` token |
-| edge (event lifecycle) | `refresh() is safe with zero listeners and does not coalesce` | 3 `refresh()` calls with no listener → no throw; with one listener → 3 firings |
-| happy | `tokenizer splits keywords, strings, numbers, comments` | `SELECT 1 FROM t -- c` → span classes in order `keyword,number,keyword,ident,comment` |
-| edge (injection) | `hostile SQL is never rendered as markup` | input `SELECT '<img src=x onerror=alert(1)>'` → fragment contains zero `HTMLImageElement`; the literal text is present via `textContent` |
-| edge (unterminated literal) | `unterminated string does not loop` | `SELECT 'abc` returns in < 50 ms with the tail as one `string` span |
-| happy | `buildFilterWhere emits IN list for one column` | `{name:{values:["a","b"]}}`, postgres → `"name" IN ('a', 'b')` |
-| edge (blanks) | `(Blanks) maps to IS NULL and OR-joins` | `{name:{values:["(Blanks)","a"]}}` → `("name" IS NULL OR "name" IN ('a'))` |
-| edge (quote injection) | `value with a single quote is doubled` | value `O'Brien` → `'O''Brien'`, never an unescaped `'` |
-| edge (identifier injection) | `column name with a delimiter is quoted per dialect` | mssql column `a]b` → `[a]]b]`; mysql `` a`b `` → `` `a``b` `` |
-| edge (empty model) | `empty filter model returns empty string` | `{}` and `{name:{values:[]}}` → `""` (caller omits the WHERE) |
-| edge (value typing) | `numeric filter values stay unquoted on all 3 dialects` | typed `[42,7]` → `IN (42, 7)` for postgres/mysql/mssql — no `'` around the digits (quoting them costs the index on MySQL and hard-fails an MSSQL `int` column) |
-| edge (temporal typing) | `an ISO timestamp is normalized per dialect` | postgres keeps `'2024-03-01T10:30:00.000Z'`; mysql/mssql get `'2024-03-01 10:30:00.000'` (no `T`, no `Z`) |
-| edge (no sniffing) | `a numeric-looking string with no typed[] stays quoted` | `values:["007"]` without `typed` → `IN ('007')`, so a zero-padded varchar code still matches |
-| edge (malformed payload) | `typed[] of mismatched length is ignored` | `values:["1","2"], typed:[1]` → falls back to `IN ('1', '2')`, never `IN (1, undefined)` |
-| happy | `webview sends typed values alongside display values` | with rows loaded, the posted `requery.filters[col].typed` has the same length as `.values` and holds the raw cell values |
-| happy | `buildPagedQuery appends LIMIT/OFFSET for postgres` | ends with `LIMIT 500 OFFSET 1000` |
-| edge (dialect) | `mssql uses OFFSET/FETCH and forces an ORDER BY` | contains `ORDER BY (SELECT NULL) OFFSET 1000 ROWS FETCH NEXT 500 ROWS ONLY` |
-| edge (boundary) | `offset 0 with limit still pages` | `offset:0` → `OFFSET 0` present, not omitted (omitting it breaks mssql FETCH) |
-| happy | `requery with filters composes a server-side WHERE` | host receives `filters` → the SQL passed to `runner.runSql` contains `IN (` |
-| happy | `append:true concatenates rows instead of replacing` | 500 existing + 500 new → posted state has `rows.length === 1000` |
-| edge (concurrency) | `a second requery while one is in flight does not interleave` | the older run's result never overwrites the newer one's `lastResults` entry |
-| edge (cursor) | `previous batched cursor is closed before a filtered requery` | `batched.close()` called exactly once before `runSql` |
-| edge (back-compat) | `requery without filters/offset behaves exactly as today` | composed SQL is byte-identical to `composeRequery(sql, where, orderBy)` |
-| happy | `mssql getTableSortQuery wraps and orders` | `SELECT * FROM (SELECT 1) vsdb_sort ORDER BY [name] ASC` |
-| edge (injection) | `column name with ] is doubled, stays one identifier` | `name]; DROP TABLE users--` → `[name]]; DROP TABLE users--]` |
-| edge (direction) | `direction is whitelisted` | direction `"ASC; DROP"` cast → falls back to `ASC` |
-| edge (dispatch) | `composeSortQuery routes by dialect` | postgres → `"name"`, mysql → `` `name` ``, mssql → `[name]` |
-| happy (liveness) | `a requery-bar ORDER BY reaches the adapter helper` | driver mssql + `orderBy:"name DESC"` → SQL at `runner.runSql` contains `ORDER BY [name] DESC`; driver postgres → `ORDER BY "name" DESC`. Fails if the helpers are dead code |
-| edge (passthrough) | `a complex ORDER BY is not mangled` | `"a, b DESC"` / `"lower(name)"` / `"1"` → composed SQL byte-identical to `composeRequery(sql, where, orderBy)` |
-| edge (no duplication) | `the composer's mssql arm is a delegation, not a copy` | `queryComposer.ts` source contains no `vsdb_sort` / bracket-quoting string building, yet `composeSortQuery("mssql", …)` returns full T-SQL |
-| regression | `full suite stays at 1327 passed / 2 skipped` | `npm test` reports no fewer passing tests than baseline |
+| happy | `parseOrderBy` single term | `{ ok: true, terms: [{ column: "name", direction: "ASC" }] }` for `"name"` |
+| happy | `parseOrderBy` multi term | `"a, b DESC"` → 2 terms, second `direction: "DESC"` |
+| happy | `buildOrderByClause` per dialect | `[{a,ASC},{b,DESC}]` → `"a" ASC, "b" DESC` / `` `a` ASC, `b` DESC `` / `[a] ASC, [b] DESC` |
+| edge (malformed input) | expression rejected | `parseOrderBy("lower(name)")` → `{ ok: false, error: /not a plain column/ }` |
+| edge (malformed input) | trailing/empty term rejected | `parseOrderBy("a, ")` → `ok: false`; `parseOrderBy("")` → `{ ok: true, terms: [] }` |
+| edge (injection) | quoting neutralizes payload | `parseOrderBy('name"; DROP TABLE t--')` → `ok: false` (not an identifier) |
+| edge (dialect capability) | NULLS native vs rejected | postgres `"a" ASC NULLS LAST`; `parseOrderBy("a NULLS LAST", "mysql")` and `"mssql"` → `{ ok: false, error: /NULLS/i }` |
+| edge (malformed input) | active-dialect quoting only | postgres accepts `parseOrderBy('"First Name" DESC', "postgres")` and unquotes it; postgres rejects backticks/brackets, mysql rejects double quotes, and raw `First Name DESC` is rejected through the same non-empty error |
+| happy | multi-term wrapper is pinned | `orderBy: "a, b DESC"`, no filters/offset → composed SQL `=== 'SELECT * FROM (SELECT id FROM t) AS vsdb_sub ORDER BY "a" ASC, "b" DESC'` |
+| edge (type safety) | `(Blanks)` from declared type | `columnTypes:{n:"varchar"}` → `"n" IS NULL OR "n" = ''`; `LONGTEXT` also widens; `int4`, unknown and absent types remain bare `"n" IS NULL` |
+| happy | composite-PK tiebreaker | `buildPagedQueryTerms(..., [{name,ASC}], ..., ["tenant_id","id"])` emits `ORDER BY "name" ASC, "tenant_id" ASC, "id" ASC` in declared PK order |
+| edge (duplicate) | existing PK term not doubled | terms containing `tenant_id DESC` plus tiebreakers `["tenant_id","id"]` retain the DESC term once and append only `"id" ASC` |
+| edge (boundary) | no usable full PK | `tiebreakers=[]` → output byte-identical to today's `buildPagedQuery`; host passes `[]` when any declared PK column is missing from `r.result.columns` |
+| edge (type safety) | `(Blanks)` opt-in | `columnTypes:{n:"text"}` → `("n" IS NULL OR "n" = '' OR "n" IN ('a'))`; option absent → today's string |
+| edge (integration wiring) | all-NULL varchar window still gets `= ''` | host-side: statement whose loaded rows are all `null` for a `varchar` column composes `IS NULL OR = ''` (proves the type source, not row sniffing) |
+| edge (all-or-nothing) | `typed[]` length parity | a 2-value selection where only 1 resolves from the distinct cache posts `typed` with BOTH resolved (length 2) or omits `typed` entirely — never length 1 |
+| happy | distinct query per dialect | postgres/mysql `… ORDER BY 1 LIMIT 1001`; mssql `SELECT DISTINCT TOP (1001) … ORDER BY 1` |
+| edge (boundary) | distinct truncation flag | `n+1` rows returned → `values.length === n` and `truncated === true` |
+| edge (concurrency) | stale distinct response | request `(index:0,column:"name")`, replace/requery statement 0, then resolve the old request: captured index/column remain on the response object but the handler detects the current statement mismatch, performs no `postMessage`, and leaves the replacement cache unchanged |
+| happy | header click → server sort | `onSortChanged` with one sorted column posts `requery` with `orderBy: "name ASC"` |
+| edge (ordering) | multi-column sort respects `sortIndex` | state `[{b, sortIndex 1}, {a, sortIndex 0}]` → `orderBy: "a ASC, b DESC"` |
+| edge (idempotence) | clearing sort | all `sort: null` → `orderBy: ""`, exactly one `requery` posted |
+| regression | ORDER BY pass-through no longer silent | `resultsPanelServerFilter.test.ts` case 16 (`"lower(name)"`) now expects a rejection, not `composeRequery` parity — RED against today's code |
+| regression | single-identifier ORDER BY unchanged | `"name DESC"` still composes `ORDER BY "name" DESC` / `[name] DESC` (cycle V case 15 stays green) |
 
 ## §5 Verification
 
-Run from the repo root. The project has **no lint script** — `package.json` `scripts` are
-exactly `compile, watch, test, test:integration, typecheck, package, vscode:prepublish`.
-`typecheck` is therefore the mandatory static gate and must run for every task.
+Package manager is **npm** (`package.json` scripts verified). There is no `lint` script; the
+type gate is `typecheck`.
 
 ```bash
-npm run typecheck
-npm run compile
-npx vitest run <the task's test files>
-npm test
+npm run typecheck                       # tsc --noEmit, must be clean
+npm run compile                         # node esbuild.js — REQUIRED before any webview bundle test
+npx vitest run <the task's test files>  # per-task targeted run
+npm test                                # full suite, boundary run only
 ```
 
-Notes for executors:
+**Webview tsc gate (TASK-003 only).** `tsconfig.webview.json` sets `rootDir: webview`, so
+`webview/main.ts` carries 14 *pre-existing* errors (TS6059 rootDir escapes, TS2304 for the
+`LoadMoreMsg`/`CopyMsg`/`ExportFileMsg` aliases, AG Grid v36 colDef variance). Verification is a
+**per-file count snapshot diff**, never "no errors":
 
-- `npm run typecheck` runs `tsc --noEmit` against `tsconfig.json`, which **excludes
-  `webview/`**. Tasks touching `webview/**` must additionally run
-  `npx tsc -p tsconfig.webview.json --noEmit`.
+```bash
+npx tsc -p tsconfig.webview.json --noEmit 2>&1 | grep -oE "^[^ (]+\.ts" | sort | uniq -c
+```
 
-  That config has **pre-existing** errors in six files. The bulk are `TS2393`/`TS2451`
-  redeclarations caused by the webview files sharing one global scope, but the set is
-  mixed — measured at HEAD `08c8de3` on 2026-08-25 the codes are `TS2393`×21,
-  `TS2451`×14, `TS2339`×7, `TS2304`×3, `TS2678`×3, `TS2300`×2, `TS2353`×2, `TS2551`×2,
-  `TS2739`×2, `TS6059`×2, `TS2322`×1, `TS2345`×1. That is **61 error lines** (77 lines of
-  raw output once multi-line messages are counted). Per file:
+Baseline at cycle W start (`main`, total 40):
 
-  | File | Baseline errors |
-  |------|-----------------|
-  | `webview/aiSettingsFormMain.ts` | 21 |
-  | `webview/main.ts` | 14 |
-  | `webview/connectionFormMain.ts` | 10 |
-  | `webview/aiChatPanelMain.ts` | 10 |
-  | `webview/schemaFormMain.ts` | 5 |
-  | `webview/newTableFormMain.ts` | 1 |
-  | **total** | **61** |
+```
+14 webview/main.ts
+10 webview/connectionFormMain.ts
+10 webview/aiSettingsFormMain.ts
+ 5 webview/schemaFormMain.ts
+ 1 webview/newTableFormMain.ts
+```
 
-  A "no new *file*" rule is inert for this cycle, because the two files TASK-003 and
-  TASK-005 edit (`webview/main.ts`, `webview/aiChatPanelMain.ts`) are already in the
-  table. Use a **snapshot diff on the per-file counts** instead. Before editing:
+The per-file counts must be **identical** after the change. Any increase — including importing
+a `src/` module into `webview/main.ts`, which adds a TS6059 line — is a failure.
 
-  ```bash
-  npx tsc -p tsconfig.webview.json --noEmit 2>&1 \
-    | grep -oE '^[a-zA-Z0-9_/.-]+\.ts' | sort | uniq -c | sort -rn > /tmp/vsdb-webview-tsc-before.txt
-  ```
-
-  After editing, run the same pipeline into `/tmp/vsdb-webview-tsc-after.txt` and assert
-  the two are identical:
-
-  ```bash
-  diff /tmp/vsdb-webview-tsc-before.txt /tmp/vsdb-webview-tsc-after.txt && echo "WEBVIEW TSC BASELINE UNCHANGED"
-  ```
-
-  The gate is **`diff` exits 0**. Any count that rises — including on a file already in
-  the table — is a new error introduced by the task and must be fixed, not waived. Do not
-  "fix" the 61 baseline errors; reducing a count also fails the diff, so if a task
-  legitimately removes one, say so in its Executor Report and paste both files.
-  Executors must paste the `diff` output (or the "UNCHANGED" line) into their report.
-- `npm run compile` must run **before** any test that loads `dist/*.js` (the bundle tests:
-  `webviewSetFilter`, `webviewBundle`, `aiChatPanelBundle`, …). Those tests skip
-  themselves when `dist/` is missing, which would silently hide a failure.
-- `npm test` is `vitest run` and excludes `**/*.integration.test.ts`; no DB is required.
+**Full-suite baseline (post-cycle-V):** 1400 passed / 2 skipped / 0 failed. One known flake:
+`src/ui/__tests__/resultsGridModelNull.test.ts` test 6 (value-viewer overlay) fails under the
+full suite and passes in isolation — pre-existing, not a cycle-W regression.
 
 ## §6 Acceptance
 
-- [ ] `node -e "JSON.parse(require('fs').readFileSync('syntaxes/vsdb-sql-injection.tmLanguage.json','utf8'))"` exits 0.
-- [ ] `node -e "const c=require('./package.json').contributes; if(!c.grammars) process.exit(1)"` exits 0.
-- [ ] `src/ui/sqlSemanticTokens.ts` exists and `src/extension.ts` registers it behind a
-      `typeof vscode.languages.registerDocumentSemanticTokensProvider === "function"` guard.
-- [ ] `SqlSemanticTokensProvider` exposes `onDidChangeSemanticTokens` + `refresh()`, and
-      `src/extension.ts` calls `refresh()` from both cache-invalidation sites (`:141`
-      `onDidChangeActive`, `:233-237` `vsdb.refreshSchema`) — without this the first open of
-      a `.sql` file paints against a cold, empty `SchemaCache` and stays uncolored.
-- [ ] `webview/sqlHighlight.ts` exists, exports `highlightSql(sql: string): DocumentFragment`,
-      and contains no `innerHTML`. Gate command (exits 0 on success — `grep -c` on zero
-      matches exits 1, so it cannot be used bare):
-      `! grep -q innerHTML webview/sqlHighlight.ts`
-- [ ] `src/ui/queryComposer.ts` exports `buildFilterWhere`, `buildPagedQuery`, `composeSortQuery`.
-- [ ] `RequeryMessage` in `src/ui/messages.ts` has `filters?`, `offset?`, `limit?`, `append?`
-      all optional (no existing call site needs edits to compile).
-- [ ] `ColumnFilterModel` entries carry `typed?: unknown[]`, and a numeric filter selection
-      composes to `IN (42, 7)` — not `IN ('42', '7')` — on all three dialects.
-- [ ] `getTableSortQuery` is exported from `src/adapters/mssql.ts` with the same 4-arg
-      signature as the Postgres one, **and is reachable from the live requery path**: an
-      mssql requery with `orderBy:"name DESC"` produces SQL containing `ORDER BY [name] DESC`.
-      No sort helper ships as an orphan export this cycle.
-- [ ] `npm run typecheck` → clean.
-- [ ] Webview typecheck snapshot diff is empty — see §5. Command:
-      `diff /tmp/vsdb-webview-tsc-before.txt /tmp/vsdb-webview-tsc-after.txt` exits 0
-      (61 pre-existing errors across six files, unchanged).
-- [ ] `npm run compile` → **7** bundles written, no esbuild error (`esbuild.js` defines
-      `dist/extension.js`, `webview.js`, `connectionForm.js`, `newTableForm.js`,
-      `aiSettingsForm.js`, `aiChatPanel.js`, `schemaForm.js`).
-- [ ] `npm test` → ≥ 1327 passed, 0 failed.
-- [ ] Every task's Test Cases table is GREEN, each verified by a fresh run pasted into its
-      Executor Report.
-- [ ] `CHANGELOG.md` gains a Cycle V section (user-facing: coloring, server filter, MSSQL
-      sort). **Owned by cycle-close, not by any TASK** — deliberately not split into a task
-      because a single writer avoids six conflicting edits to one file; it is the release
-      step's job after all six tasks are approved.
-
-Criterion → task trace: syntaxes/grammar → TASK-001; semantic tokens + extension
-registration + `onDidChangeSemanticTokens`/`refresh()` → TASK-002; `webview/sqlHighlight.ts`
-→ TASK-003; `queryComposer.ts` exports + `typed[]` value handling → TASK-004;
-`RequeryMessage` optional fields + `typed[]` population + sort call path (liveness) →
-TASK-005; mssql `getTableSortQuery` + delegation → TASK-006; typecheck / webview-snapshot /
-compile / test gates → all six.
+- [ ] `npm run typecheck` clean. (all tasks)
+- [ ] `npm run compile` succeeds. (all tasks)
+- [ ] `npx vitest run` green for every test file listed in every task. (all tasks)
+- [ ] `parseOrderBy` accepts `a, b DESC`, the active dialect's quoted `"First Name"` equivalent,
+      and `a NULLS LAST` on postgres; rejects `lower(a)`, `(a)`, `1`, `t.a`, raw `First Name ASC`,
+      mismatched quote styles under a live dialect, and `a NULLS LAST` on mysql/mssql, each with a
+      non-empty `error` string. → TASK-001 (§1 item 2)
+- [ ] `buildOrderByClause` output for the same terms differs per dialect in quoting only. → TASK-001
+- [ ] A multi-term ORDER BY with no filters/offset composes exactly
+      `SELECT * FROM (<sql>) AS vsdb_sub[ WHERE …] ORDER BY <quoted terms>` — alias
+      `AS vsdb_sub`, no LIMIT/OFFSET. → TASK-004 (§3.1)
+- [ ] A header click on a column whose name is not a bare identifier posts a **quoted** `colId`
+      in `orderBy` and the host composes it successfully (no rejection). → TASK-003 + TASK-004
+- [ ] `buildPagedQueryTerms` appends all usable PK columns in declared order, and with
+      `tiebreakers: []` is byte-identical to today's `buildPagedQuery`; TASK-004 passes `[]` if any
+      PK component is absent from `r.result.columns`. → TASK-001 + TASK-004 (§1 item 5)
+- [ ] `(Blanks)` emits `IS NULL OR = ''` only for columns whose `columnTypes` entry is a string
+      type; unknown/absent type ⇒ bare `IS NULL`. → TASK-001 (§1 item 4)
+- [ ] The host derives `columnTypes` from adapter column metadata (not from loaded row values),
+      so an all-NULL `varchar` window still gets the `= ''` arm. → TASK-004 (§1 item 4)
+- [ ] `buildDistinctValuesQuery` is a pure function with no `vscode` / driver import, and
+      quotes the column through `quoteIdent`. → TASK-002 (§1 item 3)
+- [ ] Clicking a grid column header posts a `requery` whose `orderBy` reflects the grid's
+      column state, carrying the active filter model. → TASK-003 (§1 item 1)
+- [ ] The set-filter list renders host-supplied distinct values when present and falls back to
+      loaded rows when not. → TASK-003 (§1 item 3)
+- [ ] `webview/main.ts` per-file tsc error count is still exactly 14. → TASK-003
+- [ ] The host answers `requestDistinctValues` with `distinctValues`, caches per
+      `(index, column)`, and drops responses for a replaced statement. → TASK-004 (§1 item 3)
+- [ ] A rejected ORDER BY surfaces an error to the user and runs no SQL. → TASK-004 (§1 item 2)
+- [ ] `npm test` full suite ≥ 1400 passed, 0 unexpected failures (known flake excepted). → boundary run
 
 ## §7 Global Constraints
 
-Every `TASK-xxx.md` inherits this section by reference; it is not repeated per task.
+Every `TASK-xxx.md` in this cycle inherits this section by reference.
 
-- Package manager is **npm**. Never `yarn`, never `pnpm`.
-- Node ≥ 18 (`esbuild target: node18`); VS Code engine floor `^1.75.0` — do not use any
-  `vscode` API newer than 1.75 without a `typeof` capability guard.
-- **No new runtime dependencies.** `dependencies` stays `@types/pg, ag-grid-community,
-  mysql2, pg, tedious`. No `vscode-textmate`, no `vscode-oniguruma`, no highlight library.
-- TypeScript `strict: true` in both tsconfigs. No `any` in new code; use `unknown` + narrowing.
-- Webview code must never use `innerHTML` for content derived from SQL, DB values, or agent
-  output. Build DOM with `createElement` + `textContent`.
-- All SQL identifier interpolation goes through `quoteIdent(name, dialect)`
-  (`src/core/saveStatements.ts:136`); all value interpolation through `sqlLiteral(v)`
-  (`src/ui/resultsGridModel.ts:378`). Do not hand-roll escaping.
-- Postgres runs `pg.Pool` with `max: 1` and server-side cursors: any new query path must
-  close an open batched cursor before issuing another statement, or it deadlocks.
-- Comments in new files follow the existing house style: a file header explaining *why*,
-  and `TASK-xxx` markers on non-obvious decisions.
-- Do not modify `esbuild.js`, `vitest.config.ts`, `.vscodeignore` unless the task's Target
-  Files list says so.
-- TDD: write the failing test first (RED), then implement (GREEN). Never mark a task done
-  without a fresh pasted PASS.
-
----
-
-## Planner Report
-PLANNER_MODEL: bao-opus
-
----
+- **npm only.** Never `yarn`. Scripts: `compile`, `watch`, `test`, `test:integration`,
+  `typecheck`, `package`.
+- **`npm run compile` before any webview bundle test.** `src/ui/__tests__/webview*.test.ts`
+  loads `dist/webview.js` and self-skips when it is missing — a skipped file reads as green.
+- **Never import `src/**` into `webview/**`.** `tsconfig.webview.json` has `rootDir: webview`;
+  every such import adds a TS6059 error and breaks the snapshot gate. `webview/main.ts` already
+  imports `../src/ui/resultsGridModel` and `../src/ui/undoStack` — those two are baselined; do
+  not add a third. Mirror new host types structurally inside `webview/main.ts` (the file already
+  does this for `ServerFilterModel`, line 132).
+- **Zero hand-rolled SQL escaping.** Identifiers go through `quoteIdent`
+  (`src/core/saveStatements.ts`), values through `sqlLiteral` (`src/ui/resultsGridModel.ts`).
+  Never interpolate a webview-supplied string into SQL unquoted.
+- **Never type-sniff display strings.** A `varchar` `'007'` must stay `'007'`. Typed literals
+  come only from a caller-supplied `typed[]`/DB value.
+- **`queryComposer.test.ts` contains source-text assertions.** It asserts the *file text* of
+  `src/ui/queryComposer.ts` contains `getTableSortQuery(` exactly once and does not contain
+  `quoteIdent(..., "mssql")`. Read those tests before editing that file; a new helper call can
+  break them without touching behaviour.
+- **Back-compat of the `requery` message is load-bearing — behavioural, NOT SQL-text identity.**
+  Three pre-existing senders (Re-Run, Refresh, post-save auto-requery) omit `filters`/`offset`.
+  The guarantee is: **when `msg.filters` is absent, `handleRequery` keeps its EXACT cycle-V
+  behaviour** — same message flow, same `requerySeq` guard, same `setBusy`/`running` post order,
+  same cursor close, same `adopt`, and the same *dispatch* through `composeRequerySql`:
+  - no dialect ⇒ `composeRequery(sql, where, orderBy)` — unchanged;
+  - 0 terms ⇒ `composeRequery(sql, where, "")` — unchanged;
+  - exactly 1 bare term, no `offset` ⇒ **`composeSortQuery` — unchanged**, i.e. it keeps emitting
+    `SELECT * FROM (…) vsdb_sort ORDER BY "name" DESC` with cycle-V's dialect quoting.
+  There is **no** claim that this path is byte-identical to `composeRequery`, and none must be
+  introduced: `composeRequery` wraps as `vsdb_sub` with an *unquoted* ORDER BY
+  (`resultsGridModel.ts:1108`) while the live-dialect sort path is `vsdb_sort` + quoted
+  (`resultsPanel.ts:913-918`). Asserting text identity across those two would revert cycle V's
+  dialect quoting and break `resultsPanelServerFilter.test.ts:556-571` (case 15). The only
+  byte-identity claims in this cycle are TASK-004 case 11 (`orderBy: ""` ⇒
+  `toBe(composeRequery(sql, "", ""))`) and cases 13/13b (no usable full PK ⇒
+  `toBe(buildPagedQuery(...))`).
+- **Paging's gap-free guarantee is conditional.** Append the full PK in declared order only when
+  every PK component is present in `r.result.columns`; otherwise pass no tiebreakers and expose no
+  gap-free promise. Never substitute all projected columns. See §2/§3.2 and the `INDEX.md`
+  follow-up for safely projecting missing PK columns.
+- **DISTINCT values are base-table scoped (accepted limitation).** `buildDistinctValuesQuery`
+  is called with `where = ""`; the dropdown is not narrowed by the active filter/WHERE, because
+  the host retains no per-statement WHERE. Do not invent host state to fix this inside cycle W —
+  see §2 out-of-scope and the `INDEX.md` follow-up.
+- **New webview→host messages must be additive and optional.** Unknown message types are
+  ignored on both sides; an older webview bundle must keep working against the new host.
+- **TypeScript strict.** No `any` in new code; use the structural-type style the surrounding
+  files already use.
+- **Do not commit.** The orchestrator owns commit/version/CHANGELOG.
+- **Comment language:** existing files mix English and Vietnamese comments — match the file you
+  are editing.
 
 ## Planner Self-Audit
 
 Checklist: 12/12 pass
 
-Coverage
-1. Every §6 criterion traces to a task — trace line added under §6. PASS.
-2. No orphan tasks: all six trace to §1's three problems (001-003 coloring, 004-005 filter/paging, 004+006 MSSQL sort). PASS.
-3. §1 success definition is delivered, minus the header-click sort wiring, which §1 does not claim (see Known gaps). PASS.
-4. Unhappy paths planned: no-connection / adapter-rejection (TASK-002 #6-7), unterminated literal (TASK-003 #5), empty filter model and empty `IN ()` (TASK-004 #4,#7), failed append leaves rows intact (TASK-005 #8), missing-API registration guard (TASK-002 #8). PASS.
-
-Correctness
-5. Every Target File verified on disk; the four new files (`syntaxes/vsdb-sql-injection.tmLanguage.json`, `src/ui/queryComposer.ts`, `src/ui/sqlSemanticTokens.ts`, `webview/sqlHighlight.ts`) are marked `(new)` and their parent dirs exist (`syntaxes/` is created by TASK-001). PASS.
-6. Every verification command is a real script: `typecheck`, `compile`, `test` are defined in `package.json`; `npx vitest run <path>` and `npx tsc -p tsconfig.webview.json --noEmit` both verified to run. No lint script exists — stated in §5 rather than omitted. PASS.
-7. No same-wave file sharing. Wave 1 owners are disjoint (001: `package.json`+`syntaxes/`; 002: `src/extension.ts`+`src/ui/sqlSemanticTokens.ts`; 003: `webview/*`; 004: `src/ui/queryComposer.ts`). Wave 2: 005 owns `src/ui/messages.ts`/`resultsPanel.ts`/`webview/main.ts`, 006 owns `src/adapters/*` + the `queryComposer.ts` mssql arm — disjoint. `webview/main.ts` is 003 (wave 1) then 005 (wave 2); `queryComposer.ts` is 004 (wave 1) then 006 (wave 2). Both serialized by wave, not concurrent. PASS.
-8. No task depends on a symbol no earlier task creates: TASK-005/006 consume only TASK-004 exports plus HEAD symbols. PASS.
-
-Test quality
-9. Every task has ≥1 happy + ≥2 edge cases of different kinds (kind labels listed under each table). PASS.
-10. Every `Expected` states a concrete value or a concrete assertion — no "works correctly". PASS.
-11. Regression tripwires named per task rather than generic: TASK-005 re-runs `resultsPanelRequery.test.ts` + `webviewSetFilter.test.ts`; TASK-006 re-runs `postgres.sortQuery.test.ts` unmodified; TASK-002 re-runs `src/extension.test.ts`. TASK-005 #4 is the true regression case (byte-identical composition for the legacy 3-field message). PASS.
-12. No case passes against an empty implementation: each asserts on a produced string, token kind, DOM node, or call ordering. PASS.
+- **Coverage.** Every §6 criterion names its owning task. Every task traces to a §1 gap:
+  TASK-001 → gaps 2/4/5, TASK-002 → gap 3, TASK-003 → gaps 1/3, TASK-004 → gaps 1-5 (wiring).
+  Unhappy paths are planned: DISTINCT query failure (T4 case 5), no active connection (T4 case
+  6), no or partially projected PK (T1 case 13 / T4 cases 13/13b), rejected ORDER BY (T4 case 9),
+  stale in-flight DISTINCT response after replacement (T4 case 6b), mismatched webview response
+  (T3 case 10), and sort-restore re-entrancy loop (T3 case 6).
+- **Correctness.** All target paths verified on disk; the six new files are marked `(new)`.
+  Verification commands use only scripts defined in `package.json` (`typecheck`, `compile`,
+  `test`) plus `npx vitest run` / `npx tsc -p tsconfig.webview.json`. No file is shared between
+  any two tasks, so no same-wave collision exists (re-audited after the round-1 revision added
+  `src/extension.ts` to TASK-004 — TASK-004 is alone in wave 2 and no wave-1 task names that
+  file). TASK-004's dependencies cover every symbol it imports.
+- **Test quality.** Each task has ≥1 happy path and ≥2 edge cases of different kinds (malformed
+  input, injection, dialect capability, duplicate, boundary, concurrency/re-entrancy, cache
+  invalidation, permission error). Every `Expected` is a concrete string, count or strict value;
+  none would pass against an empty implementation. Regression cases exist for the two
+  behaviour-preserving guarantees (T1 case 13, T4 cases 10/11/13/13b) and for the one deliberate
+  behaviour change (T4 case 9, RED against today's pass-through).
 
 Fixed during audit:
-- §6 gained an explicit criterion → task trace line.
-- §6's `CHANGELOG.md` criterion was unowned; it is now explicitly assigned to cycle-close rather than to a task (a single writer avoids six conflicting edits to one file).
-- TASK-003's Target Files omitted `src/ui/__tests__/webviewSqlHighlight.test.ts`, which its Test Files section already required; added.
-- §2's collision table was annotated to record that `webview/main.ts` is touched by TASK-003 (wave 1) and TASK-005 (wave 2) — different waves, and TASK-005 must re-read the file.
+- Moved `buildDistinctValuesQuery` out of `queryComposer.ts` into a new `src/ui/distinctValues.ts`
+  — it would otherwise have put TASK-002 on TASK-001's file in wave 1 and risked the source-text
+  assertions at `queryComposer.test.ts:161-182`.
+- Merged what began as separate "webview sort" and "webview set-filter" tasks into TASK-003, and
+  separate "messages" and "resultsPanel" tasks into TASK-004; both pairs shared a file, so one
+  task with two test groups beats two serialized waves.
+- Dropped a planned MySQL `getTableSortQuery` adapter twin (would have been a second source of
+  truth with no call site) — recorded in §2 out-of-scope.
+- Made TASK-004 responsible for resolving the PK *before* calling `composeRequerySql` after
+  reading the `requerySeq` guard at `resultsPanel.ts:956`; an async composer would have reordered
+  it.
+- Verified the webview tsc baseline by running it (40 errors total; 14 in `webview/main.ts`) and
+  pasted the real counts into §5 rather than trusting the briefed numbers.
 
-Re-audit after Round 1 review (all 12 re-checked, still 12/12):
-- Item 3 (does the plan deliver §1?) had been marked PASS on a §1 that overclaimed MSSQL header-click sort. §1 is now scoped to what actually ships — the adapter API plus a live requery-bar call path — so §1, §3, §6 and Known gaps agree.
-- Item 6 (real commands) had accepted a webview-typecheck note that was both factually wrong (one file, not six; 61 mixed error codes, not just `TS2451`/`TS2393`) and defined an inert gate. Replaced with a measured per-file snapshot diff.
-- Item 12 (no case passes an empty implementation) now also covers dead-code risk: TASK-006's export is asserted reachable from the live path by TASK-005 case 15, not merely constructible.
-- Item 4 (unhappy paths) gained the cold-cache first-paint case (TASK-002 #9) and the malformed/partial `typed[]` payload cases (TASK-004 #19, TASK-005 #14).
-- Item 9 (edge-case variety) re-counted after the additions: TASK-002 10 cases, TASK-004 19, TASK-005 17, TASK-006 9.
+Known gaps:
+- **`resultsPanelServerFilter.test.ts` case 16 must be rewritten by TASK-004.** It is the one
+  existing test this cycle intentionally invalidates (silent ORDER BY pass-through becomes an
+  explicit rejection). Called out in that task's Discussion so the reviewer sees it as planned,
+  not as a broken test quietly patched.
+- ~~**Whether the panel retains a per-statement `where` for the DISTINCT query is unverified.**~~
+  **RESOLVED in the round-1 revision.** Verified: it does not. TASK-004 passes `""`, the DISTINCT
+  list is base-table scoped, and this is now an explicit accepted limitation in §2/§7 with an
+  `INDEX.md` follow-up — not an open unknown.
+- **Whether AG Grid v36 gives `SetFilterComponent` a popup-open hook is unverified.** TASK-003
+  may fire the distinct request from `init`; the cache case (T3 case 9) bounds the cost.
+- **Deep-offset paging performance is not addressed.** Full-PK tiebreakers make paging
+  deterministic only when all PK columns are projected; statements missing any PK component keep
+  cycle-V paging with no gap-free promise. Keyset paging and safe PK projection are re-queued in
+  `INDEX.md`.
+- **`NULLS FIRST/LAST` is parse-only on mysql/mssql** (round-1 revision): accepted by the
+  grammar, native on postgres, rejected with a message elsewhere. A user who wants that ordering
+  on mysql/mssql still cannot get it — deliberate, since no producer emits the clause. Re-queued.
+- **The webview infers the dialect from the `state` header string** (`extension.ts:623`) rather
+  than from a typed field, in order to quote non-bare `colId`s. It falls back to postgres
+  double-quoting on an unparseable header. A typed `dialect` field on `StateMessage` would be
+  cleaner but is a host-side change that would put TASK-003 and TASK-004 on the same contract in
+  the same cycle. Re-queued in `INDEX.md`.
+- **MySQL/MSSQL non-UTC session timestamps stay wrong.** Evidence gathered (no `timezone` /
+  `dateStrings` on `mysql.createPool`, no `useUTC` on tedious `new Connection`), but a fix needs
+  a session-timezone probe. Re-queued.
 
-Known gaps (deliberate, queued in INDEX.md "Next cycles"):
-- **Sort header-click wiring.** The AG Grid column-header click still sorts client-side for every dialect. (Round 2: the helpers themselves are no longer orphaned — the requery-bar ORDER BY is now a real call path, TASK-005 cases 15-17.) The click handler lives in `webview/main.ts`, which TASK-005 already owns in wave 2, and a second wave-2 editor would be a same-file collision. Deferred, not forgotten.
-- **Requery-bar ORDER BY is dialect-quoted only for a single bare identifier.** Anything more complex (`a, b DESC`, `lower(name)`, ordinals) passes through raw exactly as today. Writing a general ORDER BY parser is out of scope and would risk corrupting valid user SQL; TASK-005 case 16 pins the passthrough.
-- **Typed filter values depend on the row still being loaded.** `typed[]` is derived from loaded grid rows; when a selected value's row has been evicted the webview drops `typed` for that column and the predicate falls back to string literals — correct on Postgres, index-losing on MySQL, and still the pre-cycle behavior everywhere. Also, timestamps are normalized as UTC-naive for MySQL/MSSQL, which disagrees with a non-UTC session timezone on a local-time column.
-- **`(Blanks)` maps to `col IS NULL` only.** AG Grid groups `null`/`undefined`/`""`; server-side that misses empty strings, so a `(Blanks)` selection can return fewer rows than the client-side filter did.
-- **OFFSET/LIMIT, not keyset paging.** Correct at any depth but slow at large offsets, and rows can shift under a concurrent write between pages. Keyset needs a guaranteed-unique sort key that arbitrary user SQL does not provide.
-- **Set-filter dropdown values still come from loaded rows.** With server-side filtering, a value present in the table but outside the loaded window cannot be picked from the list.
-- **TASK-001's grammar is verified structurally, not visually.** Tests assert the JSON's regex patterns and the `package.json` contribution; nothing in CI renders a token in a real editor. Actual colorization needs a manual F5 Extension Host check at cycle close.
-
----
 
 ## Plan Review Log
 
-### Round 1 — 2026-08-25 · bao-opus
+### Round 1 — 2026-08-26 · bao-opus
+
 Status: Issues Found
 
-Verified against repo: npm scripts (`compile,watch,test,test:integration,typecheck,package,vscode:prepublish`, no lint) ✓; baseline `1327 passed / 2 skipped / 0 failed` re-run green ✓; `contributes` keys ✓; deps list ✓; `getTableSortQuery` 4-arg signature ✓; `quoteIdent`/`sqlLiteral`/`SET_FILTER_BLANKS_DISPLAY`/`composeRequery` line refs ✓; `.vscodeignore` does not exclude `syntaxes/` ✓; npm-only, no yarn/pnpm ✓; no same-wave file collision ✓; every task has ≥1 happy + ≥2 differently-kinded edge cases ✓.
-
 COMPLETENESS:
-  - **[Important] §5 webview-typecheck baseline is factually wrong and the rule it defines masks regressions.** §5 claims baseline noise is "`webview/schemaFormMain.ts` reports TS2451/TS2393". Actual `npx tsc -p tsconfig.webview.json --noEmit` emits 77 lines across **six** files: `aiChatPanelMain.ts`, `aiSettingsFormMain.ts`, `connectionFormMain.ts`, `main.ts`, `newTableFormMain.ts`, `schemaFormMain.ts` — including TS2300/TS2739 and AG Grid `CellStyle` errors in `main.ts`. The stated gate ("only assert no **new file** appears in the output") is therefore inert for exactly the two files this cycle edits: TASK-003 writes `aiChatPanelMain.ts` and TASK-005 writes `webview/main.ts`, both already on the baseline list, so any new error they introduce is invisible. *Fix:* replace both the §5 note and the §6 checkbox with a snapshot rule — capture `npx tsc -p tsconfig.webview.json --noEmit 2>&1 | sort > /tmp/webview-tsc-base.txt` at task start and require `diff` against it to be empty, or at minimum require the **error-line count per edited file** not to increase (currently 77 lines total).
-  - **[Important] TASK-002 has no plan for the async/cold `SchemaCache`.** `SchemaCache.getTables`/`getColumns` (`src/ui/schemaCache.ts:75,104`) are `async` with a 60 s TTL. On the first `provideDocumentSemanticTokens` call the cache is cold, so the provider returns zero tokens; §3 and §4 never specify an `onDidChangeSemanticTokens` event to re-fire once the schema resolves, nor a test for it. As written the user opens a `.sql` file, sees no schema coloring, and it only appears after an unrelated edit — the headline feature silently fails. *Fix:* add to §3 Layer 2 that the provider exposes `onDidChangeSemanticTokens` and fires it when the cache fills / connection changes, and add a §4 case: "cold cache → first call empty, tokens appear after the change event fires".
+  - §3.1/§4/TASK-001 never define the identifier grammar `parseOrderBy` accepts. TASK-003
+    Discussion #4 builds the string as `` `${colId} ${sort.toUpperCase()}` `` from
+    `webview/main.ts:1533` (`field: spec.field` = the raw DB column name, `sortable: true`
+    at `:1535`). A column named `First Name` or a non-ASCII name therefore yields
+    `orderBy: "First Name ASC"`, which cannot match `identifier [ASC|DESC]` and is REJECTED
+    by TASK-004 (error toast, no SQL) — a user-visible regression versus today's client-side
+    sort. `quoteIdent` (`src/core/saveStatements.ts:136-148`) and its own comment exist
+    precisely because this codebase supports mixed-case/spaced/non-ASCII identifiers, so the
+    parser is narrower than the rest of the system. Decide the charset (or have TASK-003 post
+    structured terms) before wave 1.
+  - Gap 4 (`(Blanks)` matching `''`) has zero integration coverage. TASK-001 cases 14/16 pass
+    `emptyIsBlank` explicitly and TASK-004 has no case for deriving it, so the §6 criterion
+    for gap 4 only exercises the builder, never the wiring that decides which columns qualify.
+  - §2 "Same-file constraint (checked)" table is incomplete as a collision audit: it omits
+    `src/ui/__tests__/webviewDistinctValues.test.ts` (TASK-003 Target Files) and
+    `src/ui/__tests__/resultsPanelServerFilter.test.ts` (TASK-004 modifies case 16). No actual
+    collision results, but the table is billed as the authoritative check.
 
 CONSISTENCY:
-  - **[Important] §1 success definition contradicts the Self-Audit and the Known gaps.** §1 line 38-39 claims "Clicking a column header on an MSSQL connection issues a server-side `ORDER BY` requery with the same contract Postgres already has." Self-Audit item 3 asserts the opposite — "minus the header-click sort wiring, which §1 does not claim" — and Known gaps confirms both sort helpers "stay call-site-free after this cycle". One of the two is wrong; as planned, the user-visible MSSQL sort does **not** ship. *Fix:* rewrite §1's fourth bullet to what is actually delivered ("a T-SQL `getTableSortQuery` + `composeSortQuery` dispatch, ready for wiring") and correct Self-Audit item 3, or move the wiring into TASK-005 (which already owns `webview/main.ts` in wave 2, so it is not a new collision).
-  - **[Minor] §2's "Sole owner" table is wrong for two files.** `src/ui/queryComposer.ts` is listed as sole-owner TASK-004, but §3 (lines 190-194) has TASK-006 adding `composeSortQuery` to that same file; and `webview/main.ts` is absent from the table entirely though two tasks write it. The prose below the table and Self-Audit item 7 both get this right — only the table is stale. *Fix:* add a `webview/main.ts | TASK-003 (w1) → TASK-005 (w2)` row and change the `queryComposer.ts` row to `TASK-004 (w1) → TASK-006 (w2)`; retitle the column "Owner(s) by wave".
-  - **[Minor] §6 asserts `npm run compile` writes "6 bundles"; `esbuild.js` defines 7** (`dist/extension.js`, `webview.js`, `connectionForm.js`, `newTableForm.js`, `aiSettingsForm.js`, `aiChatPanel.js`, `schemaForm.js`). An executor checking that criterion literally reports a false failure. *Fix:* change to 7.
+  - **§7 "Back-compat of the `requery` message is load-bearing"** is factually wrong and
+    contradicts TASK-004 case 10 and §4's "single-identifier ORDER BY unchanged". It states
+    the three filter-less senders' SQL "must stay byte-identical to
+    `composeRequery(sql, where, orderBy)`". With a live dialect and a simple ORDER BY,
+    `composeRequerySql` (`src/ui/resultsPanel.ts:913-918`) today returns `composeSortQuery`
+    → `SELECT * FROM (...) vsdb_sort ORDER BY "name" DESC`, whereas `composeRequery`
+    (`src/ui/resultsGridModel.ts:1090-1108`) returns `... vsdb_sub ORDER BY name DESC` —
+    different alias AND unquoted. Taken literally, TASK-004's executor reverts cycle V's
+    dialect quoting and breaks `resultsPanelServerFilter.test.ts:556-571` (case 15). Scope the
+    bullet to the no-dialect / empty-orderBy paths.
+  - The composition path for a **multi-term ORDER BY with no `filters` and no `offset`** is
+    unspecified. `composeSortQuery` takes a single `column`+`direction` and cannot express two
+    terms, so TASK-004 must invent a different wrapper for `"a, b DESC"` than for `"name DESC"`
+    — TASK-004 case 7 only asserts `toContain("ORDER BY ...")` and pins no alias/shape, while
+    case 10 pins the single-term path to cycle V. Two wrappers for the same user gesture is a
+    coin flip the plan should decide, not the executor.
+  - TASK-003 case 12 (`typed[]` from the distinct cache) does not state the length-parity
+    invariant. `buildFilterWhere` (`src/ui/queryComposer.ts:106`) gates on
+    `typed.length === values.length` — all-or-nothing. A 2-value selection where only one
+    resolves from the cache silently degrades BOTH to string literals, i.e. exactly gap 3's
+    MySQL failure mode. Case 12 uses a single value and cannot catch it.
 
 CLARITY:
-  - **[Important] `buildFilterWhere` is specified against display strings, not typed values, and no test covers a non-text column.** The set-filter model TASK-004 consumes is built at `src/ui/resultsGridModel.ts:1161` as `display.set(key, blank ? SET_FILTER_BLANKS_DISPLAY : String(v))` — every value is already `String()`-coerced. Feeding those through `sqlLiteral` (`resultsGridModel.ts:378`) emits `'123'` / `'2024-01-01'` / `'true'` for int, date, uuid and bool columns. Postgres coerces some of these; MSSQL and MySQL will either fail the comparison or do a silent implicit conversion that changes the result set — i.e. the server-side filter returns different rows than the client-side one it replaces. §4's five `buildFilterWhere` cases are all text-valued, so nothing catches it. *Fix:* state in §3 how typed values survive the round trip (carry the raw value alongside the display string in the filter model, or pass the column type so `buildFilterWhere` can emit an unquoted numeric/`CAST`ed literal), and add a §4 edge case: "integer column filtered on `123` does not emit a quoted `'123'` literal on mssql".
-  - **[Minor] §6's `grep -c innerHTML webview/sqlHighlight.ts → 0` is a self-defeating check** — `grep -c` exits 1 on zero matches, so it fails any `&&`-chained or `set -e` acceptance script. *Fix:* use `! grep -q innerHTML webview/sqlHighlight.ts`.
+  - TASK-004 Discussion #4 derives `emptyIsBlank` from "at least one loaded value is a
+    `string`". This is loaded-window-dependent, so the same filter selection composes
+    `IS NULL` on one page and `IS NULL OR = ''` on the next; and when a varchar column's
+    loaded window is all-NULL — the case the user actually notices — the fix does not fire at
+    all. Prefer the column type metadata already available at `src/ui/resultsPanel.ts:1014`
+    (`freshResult.columns`) or TASK-002's distinct values.
+  - The DISTINCT `where` question is listed under "Known gaps" as unverified, but it is
+    decidable and I confirmed it: `src/ui/resultsPanel.ts` retains no per-statement `where`
+    (no `lastWhere`/`whereByStatement`), and TASK-003's `RequestDistinctValuesMsg` carries only
+    `{index, column}`. So TASK-004 will pass `""` and the dropdown will offer values the
+    current filtered view cannot contain. Because §2 freezes that contract for wave-1
+    parallelism, fixing it in wave 2 means re-opening a completed TASK-003. Add an optional
+    `where?: string` to the message now (additive, host may ignore) or move this to §2
+    out-of-scope as an accepted limitation.
+  - Minor line drift: §1 item 4 cites `queryComposer.ts:123` for the `IS NULL` predicate
+    (actual push is `:126`); TASK-004 Discussion #1 cites
+    `resultsPanelServerFilter.test.ts:576-590` (actual describe is `:578-591`).
 
 SCOPE:
-  - none — 6 tasks across 3 coherent features in 2 waves, out-of-scope list is explicit and the deferrals (AG Grid server-side row model, SetFilterComponent redesign, distinct-values fetch) are the right cuts.
+  - none. Four tasks stay inside one subsystem (results-grid query composition); the wave
+    graph (001+002+003 ∥ → 004) matches the stated dependencies, and no source file is shared
+    between two tasks.
 
 YAGNI:
-  - **[Minor] TASK-006 reproduces the exact dead-code condition §1 uses to justify the work.** §1 item 3 criticises Postgres's `getTableSortQuery` for having "**no production call site**"; this cycle ships an MSSQL twin plus a `composeSortQuery` dispatch that are *also* uncalled. Shipping a second unreachable helper is only justified if the wiring lands — see the §1 contradiction above. Not a blocker if §1 is corrected, but the two findings must be resolved together.
+  - `NULLS FIRST/LAST` with per-dialect emulation (§3.1, TASK-001 cases 9-10, plus the mssql
+    `CASE` branch that must also dodge the `queryComposer.test.ts:161-182` source-text
+    assertions) traces to no §1 gap and to no producer: TASK-003's `onSortChanged` emits only
+    `"col ASC|DESC"`. It is reachable solely by hand-typing into the requery bar. The plan
+    debates *how* to emulate it but never whether to accept the clause at all. Consider
+    deferring to a later cycle and rejecting `NULLS` in `parseOrderBy` for now.
 
-NOTES: The plan is unusually well-grounded — line references, symbol names, baseline count and the npm/no-lint constraint all check out against the repo, and the wave/collision discipline is sound. Blocking work is concentrated in four items: the miscalibrated webview typecheck gate, the untyped filter-value round trip, the cold-cache semantic-token refresh, and the §1-vs-audit contradiction over whether MSSQL sort actually ships.
+NOTES: Verified on disk — every non-`(new)` Target File exists, `src/ui/distinctValues.ts` is
+correctly marked new, `package.json` has no `lint` script (so §5's `typecheck` gate is right),
+and I re-ran the webview tsc snapshot: it matches the §5 baseline exactly (14/10/10/5/1). The
+two CONSISTENCY items (§7's back-compat bullet and the unspecified multi-term composition path)
+should be resolved before TASK-004 starts; the identifier-grammar item should be resolved before
+wave 1, since it binds TASK-001 and TASK-003 simultaneously.
 
-### Round 2 — 2026-08-25 · planner · bao-opus
-Status: findings applied — ready for re-review
+### Planner Revision — Round 1 findings applied — 2026-08-26 · bao-opus
 
-All 8 Round 1 findings applied to `PLAN.md` and the affected task files. Round 1 entry left
-intact above. Reviewer not re-run (orchestrated separately).
+1. **§7 back-compat bullet rewritten (CRITICAL).** The "byte-identical to `composeRequery`" claim
+   is gone. §7 now states the contract behaviourally: with `msg.filters` absent, `handleRequery`
+   keeps its exact cycle-V flow and dispatch — including `composeSortQuery` (`vsdb_sort`, quoted)
+   for the single-bare-term path — and explicitly notes that `composeRequery` (`vsdb_sub`,
+   unquoted) is a *different* string, so no text-identity assertion may be introduced across the
+   two. Round 2 later adds the same `buildPagedQuery` parity assertion for case 13b when only part
+   of a composite PK is projected; no identity claim compares `composeSortQuery` to
+   `composeRequery`.
+2. **Identifier charset defined (§3.1 new sub-section "Accepted identifier charset").** Accepted:
+   bare `[A-Za-z_][A-Za-z0-9_$]*`, or already-quoted per dialect (`"…"` / `` `…` `` / `[…]`,
+   escapes un-doubled into an unquoted logical name that `quoteIdent` re-quotes). Raw unquoted
+   names with spaces/dots/quotes/non-ASCII are rejected and NEVER reach SQL unquoted. TASK-003
+   now quotes a non-bare `colId` (dialect taken from the `state` header, postgres fallback)
+   before building the sort message; TASK-001's `parseOrderBy` grammar, Test Cases and Interfaces
+   updated to match, plus §4 and §6 rows.
+3. **Multi-term composition path pinned (§3.1 new sub-section + table).** ≥2 terms (or 1 term with
+   `NULLS`) and no filters/offset compose exactly
+   `SELECT * FROM (<sql, ; stripped>) AS vsdb_sub[ WHERE …] ORDER BY <clause>` — alias `AS vsdb_sub`,
+   no LIMIT/OFFSET. Pre-existing "wrap replaces an inner ORDER BY" behaviour documented as
+   unchanged. TASK-004 case 7 now asserts the exact string; case 8 mirrors it for mssql.
+4. **`emptyIsBlank` row-sniffing removed.** `FilterWhereOptions` is now
+   `{ columnTypes?: Record<string, string> }` with a declared-type predicate (char/varchar/text/
+   enum/set families), unknown ⇒ `false` ⇒ cycle-V `IS NULL`. §3.3 rewritten; TASK-001 cases
+   14/15/16 + Interfaces updated; TASK-004 Discussion #4 replaced with an adapter-metadata
+   derivation (`ColumnInfo.dataType` via a new optional `SaveContext.listColumnTypes`) and a new
+   integration case 14 covering the all-NULL varchar window.
+5. **DISTINCT scope decided, not deferred.** Verified the panel keeps no per-statement `where`;
+   §3.4 + §2 out-of-scope + §7 now state plainly that the list is composed over the base
+   statement with `where = ""` and its own LIMIT, that `RequestDistinctValuesMsg` stays
+   `{index, column}` (no contract change, wave-1 parallelism intact), and that the un-scoped
+   dropdown is an accepted limitation with an `INDEX.md` follow-up. TASK-002 Interfaces annotated;
+   TASK-004 Discussion #6 rewritten from "unverified" to the decided call. Self-audit "Known gaps"
+   entry marked RESOLVED.
+6. **NULLS emulation cut (YAGNI).** §3.1's mysql/mssql `IS NULL` / `CASE` emulation is deleted and
+   recorded in §2 out-of-scope. The parser still accepts `NULLS FIRST|LAST` and postgres renders
+   it natively; on mysql/mssql `parseOrderBy(orderBy, dialect)` rejects it through the same single
+   error channel. TASK-001 cases 9/10 rewritten (native + rejection), the mssql `CASE`
+   source-text hazard is gone from the cycle, and §4's emulation row is replaced.
 
-| # | Finding | Applied |
-|---|---------|---------|
-| 1 | §5 webview-typecheck baseline wrong + gate inert | §5 now carries a **measured** per-file baseline (61 error lines across 6 files, mixed codes: `TS2393`×21, `TS2451`×14, `TS2339`×7, `TS2304`/`TS2678`×3, others; 77 raw output lines) and replaces "no new filename" with a snapshot diff: capture per-file counts before and after, gate on `diff` exiting 0. §6 checkbox updated. TASK-003 and TASK-005 verification blocks carry the same commands, each naming why a filename check is inert for the file *it* edits. TASK-003 additionally requires `webview/sqlHighlight.ts` to be absent from the after-snapshot (a new file must add zero errors). |
-| 2 | Cold `SchemaCache` → no coloring on first open | TASK-002 now specifies `onDidChangeSemanticTokens` + `refresh()` + `dispose()` on the provider, `refresh()` calls wired into the two existing invalidation sites (`src/extension.ts:141` `onDidChangeActive`, `:233-237` `vsdb.refreshSchema`), and a guarded one-shot re-fire when a provide call hits a cold cache (with an "already scheduled" boolean, since fire→re-request→still-cold loops). New cases 9 (cold cache → refresh → token appears, listener fired exactly once) and 10 (event lifecycle: safe with zero listeners, does not coalesce). §4, §6 and the Interfaces block updated; the vscode mock now needs `EventEmitter`. |
-| 3 | §1 claimed MSSQL sort ships; audit said it stays orphaned | Resolved by **making it true rather than softening it**: §1 now says MSSQL sort ships as a live path — TASK-005's `handleRequery` routes a single-identifier requery-bar ORDER BY through `composeSortQuery`, so both adapter helpers get a real call site (this also retires the Postgres orphan from cycle U). §1, §3 and §6 all state the same thing, and column-header-click wiring is explicitly out of scope for **every** dialect in §2. New TASK-005 cases 15 (liveness: mssql → `ORDER BY [name] DESC` at `runner.runSql`), 16 (complex ORDER BY passes through byte-identically), 17 (empty ORDER BY — the post-save auto-requery path). |
-| 4 | `String()`-coerced filter values break MSSQL/MySQL typing | `ColumnFilterModel` entries gain `typed?: unknown[]`, used only when `typed.length === values.length`, routed through the existing `sqlLiteral` (already emits unquoted numbers, `TRUE`/`FALSE`, `NULL`). New TASK-004 cases 15 (numerics unquoted on all 3 dialects), 16 (ISO timestamp normalized per dialect — PG verbatim, MySQL/MSSQL `T`→space and `Z` stripped), 17 (booleans/nulls typed), 18 (**no** type sniffing: `"007"` without `typed` stays `'007'`), 19 (length mismatch falls back, never `IN (1, undefined)`). TASK-005 owns population (cases 12-14) and must omit `typed` wholesale when a selected value's row is no longer loaded. §4 gained 5 rows; §6 gained a criterion; the UTC-naive timestamp assumption is logged in TASK-004's Discussion and in Known gaps. |
-| 5 | §2 owner table stale | Rebuilt as a wave-1/wave-2 two-column table listing all 22 files including every test file, followed by an explicit note on the three cross-wave files (`webview/main.ts`, `queryComposer.ts`, `queryComposer.test.ts`) and why a wave boundary makes them safe. |
-| 6 | §6 said 6 bundles, esbuild defines 7 | Corrected to 7 in §6 (with the bundle names enumerated) and in TASK-003. |
-| 7 | `grep -c … → 0` fails as a gate | Replaced with `! grep -q innerHTML webview/sqlHighlight.ts` in both §6 and TASK-003, each annotated with why the bare form exits 1. |
-| 8 | TASK-006 ships dead code | Resolved with finding 3: the export is reachable via `composeSortQuery` from the live requery path, asserted by TASK-005 case 15 (which lives there because TASK-005 owns `resultsPanel.ts` and both tasks are in wave 2). TASK-006 keeps its own guard as new case 9: the composer's mssql arm must be a genuine delegation with no duplicated T-SQL left behind. §6 criterion now reads "no sort helper ships as an orphan export this cycle". |
+Also fixed while here (round-1 CLARITY/COMPLETENESS minors): §2's same-file table is now the
+complete file list including both new webview test files and the `resultsPanelServerFilter.test.ts`
+case-16 edit; §1 item 4's `queryComposer.ts:123` citation is annotated with the actual
+`parts.push(...IS NULL)` line; TASK-004 Discussion #1 line reference corrected to `:578-591`; and
+TASK-003 case 12 now pins the `typed[]` all-or-nothing length-parity invariant with a 2-value
+selection (new case 14).
 
-Also recorded, per the coordinator's note: "sort header-click wiring deferred" and
-"`(Blanks)` → `IS NULL` misses `''`" are now explicit **§2 Out of scope** entries with their
-reasons, not only Known-gaps lines, and both remain queued in `INDEX.md`.
+### Round 2 — 2026-08-26 · bao-opus
+Status: Issues Found
 
-Consistency after the fixes: §1 ↔ §3 ↔ §6 ↔ Known gaps now agree on exactly what MSSQL
-sort delivers (adapter API + requery-bar call path; **no** header-click wiring for any
-dialect). Task counts changed — TASK-002 8→10, TASK-004 14→19, TASK-005 11→17, TASK-006
-8→9 — and every §4 row, Test Files line, Acceptance Criteria count and Interfaces block was
-updated to match. Wave structure is unchanged (wave 1: 001-004, wave 2: 005-006) and no new
-same-wave file collision was introduced: all new work lands in files their task already
-owned. Nothing known to be inconsistent.
+COMPLETENESS:
+  - `docs/AI_HANDOFF/PLAN.md:236-243` promises a unique trailing key, but `docs/AI_HANDOFF/tasks/TASK-004.md:215-217` passes only the first PK column. That is not unique for a composite PK and may not even be projected by an arbitrary `r.sql`, causing duplicate/skip paging or an unknown-column SQL error. The interface must support every projected PK component (or explicitly decline the tiebreaker unless a projected unique key is available) and test composite/non-projected PKs.
+  - `docs/AI_HANDOFF/PLAN.md:294,345,419` requires a response for a replaced statement to be dropped, but `docs/AI_HANDOFF/tasks/TASK-004.md:63-64` tests only cache clearing followed by a later request. An old in-flight `runSql` can complete after `render()` and repopulate/post values for the new statement at the same `(index,column)`; add a captured statement identity/generation check and a host integration test for that ordering.
+CONSISTENCY:
+  - The required exact multi-term shape includes `AS vsdb_sub`, but `docs/AI_HANDOFF/PLAN.md:208-210` and `docs/AI_HANDOFF/tasks/TASK-004.md:43-47,67-68` omit `AS` and pin exact tests to the wrong string. Cases 7/8 must assert `SELECT * FROM (…) AS vsdb_sub ...` exactly, still with no LIMIT/OFFSET.
+  - `docs/AI_HANDOFF/PLAN.md:267-270` declares a regex that does not match `LONGTEXT`, while `docs/AI_HANDOFF/tasks/TASK-001.md:65` requires `LONGTEXT` to receive the empty-string arm. Implementing the declared regex makes required case 18 fail; define a predicate that actually covers the stated text families (including MySQL `TINYTEXT`/`MEDIUMTEXT`/`LONGTEXT`) without broad substring false positives.
+CLARITY:
+  - `docs/AI_HANDOFF/PLAN.md:141-146` says pre-quoted identifiers are accepted per dialect, but `docs/AI_HANDOFF/tasks/TASK-001.md:29-33,56` says every quote style is accepted without regard to the supplied dialect. Pin whether `parseOrderBy(input, liveDialect)` rejects mismatched quote styles and add the corresponding test; otherwise TASK-001 and TASK-004 can implement different grammars.
+SCOPE:
+  - none
+YAGNI:
+  - none
 
-### Round 3 — 2026-08-25 · bao-opus
-Status: Approved
+NOTES: The six Round-1 revisions are substantially present: behavioural requery compatibility and untouched case 15 are pinned, declared-type metadata replaces row sniffing without a wave collision, DISTINCT scope is decided, and NULLS emulation is removed. The exact wrapper/identifier contracts still need reconciliation, and the fresh paging/cache findings would otherwise leave advertised correctness gaps.
 
-Verified against repo: `package.json` scripts/contributes/deps/engines ✓; 7 esbuild bundles ✓; `contributes` keys (no `grammars`/`languages` at HEAD) ✓; `getTableSortQuery` at `postgres.ts:167` — zero production call sites confirmed ✓; `sqlLiteral` at `resultsGridModel.ts:378` handles null/number/boolean/bigint/Date/string ✓; `quoteIdent` at `saveStatements.ts:136` covers mysql/mssql/postgres ✓; `SET_FILTER_BLANKS_DISPLAY` at `resultsGridModel.ts:1138` ✓; `composeRequery` at `resultsGridModel.ts:1090` ✓; `SchemaCache` async + 60 s TTL confirmed ✓; `vsdb.refreshSchema` command at `extension.ts:233`, `onDidChangeActive` at `extension.ts:139` ✓; webview baseline: 61 error lines across 6 files, 77 raw lines, codes match plan ✓; full test suite: 1327 passed / 2 skipped / 0 failed ✓; `grep -c` replaced with `! grep -q` ✓.
+### Round 2 — findings applied without re-review — 2026-08-26 · bao-opus
 
-Round 1 findings resolution (8 of 8 verified):
-1. §5 webview baseline — RESOLVED: measured per-file snapshot diff, 61 errors / 6 files / 77 lines / 12 codes, correct gates for TASK-003/TASK-005.
-2. TASK-002 cold cache — RESOLVED: `onDidChangeSemanticTokens` + `refresh()` wired to both invalidation sites, cases 9-10 cover cold-cache lifecycle.
-3. §1 MSSQL sort contradiction — RESOLVED: §1 now describes the shipped adapter API + requery-bar call path; §2 explicitly defers header-click for all dialects; §1/§3/§6/Known gaps agree.
-4. buildFilterWhere value typing — RESOLVED: `typed?: unknown[]` carried alongside display values, §3 describes round-trip, §4 has 5 new edge cases including numeric unquoting and length-mismatch fallback.
-5. §2 owner table — RESOLVED: full wave-1/wave-2 table for all 22 files with cross-wave safety notes.
-6. Bundle count — RESOLVED: §6 says 7, matches esbuild.js.
-7. grep gate — RESOLVED: `! grep -q innerHTML webview/sqlHighlight.ts`.
-8. TASK-006 dead code — RESOLVED: §1 inconsistency fixed, TASK-005 case 15 asserts liveness, §6 criterion says "no orphan export".
+- **1 — Full projected PK only:** §2/§3.2/§4/§6/§7 and TASK-001 cases 11-13 now use ordered
+  `tiebreakers: string[]`; TASK-004 cases 12/13/13b and Discussion #3 resolve all PK columns from
+  `listPkColumns`, verify every component exists in `r.result.columns`, and otherwise pass `[]`
+  with no gap-free promise. The safe-PK-projection limitation is queued in `INDEX.md`.
+- **2 — Stale DISTINCT host guard:** §3.4/§4/§6 and TASK-004 Target Files, case 6b, Acceptance and
+  Discussion #5 now require captured request index/column plus statement identity/generation;
+  a late response after statement replacement performs neither cache write nor `postMessage`.
+- **3 — Pinned wrapper corrected:** every normative multi-term wrapper and TASK-004 cases 7/8 now
+  require exact `SELECT * FROM (<stripped>) AS vsdb_sub ORDER BY <terms>` shape, including `AS`.
+- **4 — String family reconciled:** §3.3 now specifies normalized, family-bounded matching for
+  char/varchar/text (including TINYTEXT/MEDIUMTEXT/LONGTEXT), nchar/nvarchar, enum/set and
+  citext/cstring; TASK-001 case 18 adds accepted families and false-positive probes.
+- **5 — Live-dialect quote grammar pinned:** §3.1 and TASK-001 cases 10b/10c now accept and
+  canonicalize only the active dialect's quote style, accept all styles only when dialect is
+  omitted, and reject mismatched styles through the standard visible parse error. TASK-004 case
+  8b covers the host's matching/mismatched paths.
 
-COMPLETENESS: none
-CONSISTENCY: none
-CLARITY: none
-SCOPE: none
-YAGNI: none
-
-Minor note: §5 error-code breakdown omits `TS2552` (1 occurrence in `webview/main.ts:2306`) from the per-code list — the total of 61 is still correct, and the snapshot-diff gate is code-list-independent, so this is cosmetic only.
-
-NOTES: Plan is internally consistent across all eight Round 1 findings. All factual claims verified against the repo at HEAD 08c8de3. Ready for execution.
+## Planner Report
+PLANNER_MODEL: bao-opus

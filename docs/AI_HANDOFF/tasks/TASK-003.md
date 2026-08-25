@@ -1,247 +1,205 @@
-# TASK-003 — Webview SQL tokenizer + themed styles
+# TASK-003 — Webview: server-side sort on header click + distinct-value set filter
 
 - Status: `ready`
 - Owner: `-`
 - Reviewer: `-`
-- Parent plan: `docs/AI_HANDOFF/PLAN.md` §3 (Coloring, Layer 3)
+- Parent plan: `docs/AI_HANDOFF/PLAN.md` §3.4 / §3.5
 
 ## Goal
 
-Colorize SQL inside VSDB's own webviews, which no TextMate grammar or semantic-token
-provider can reach: the Results panel's Messages tab (`r.sql` rendered flat at
-`webview/main.ts:2758-2761`) and the AI chat's fenced ```` ```sql ```` block
-(`webview/aiChatPanelMain.ts:139`). Ship a dependency-free pure tokenizer that emits a
-`DocumentFragment` of `<span>`s, never an HTML string.
+Make the grid's own UI drive server-side queries: an AG Grid column-header sort posts a
+`requery` carrying the grid's column state as an `orderBy` string (composing with the active
+filter), and `SetFilterComponent` populates its checkbox list from host-supplied DISTINCT
+values (with their real types) instead of only the loaded rows.
+
+**This task is the sole owner of `webview/main.ts` for the whole cycle.**
 
 ## Target Files
 
-- `webview/sqlHighlight.ts` **(new)** — `tokenizeSql` + `highlightSql`. Pure, no imports
-  from `vscode`, `ag-grid-community`, or `src/`.
-- `webview/aiChatPanelMain.ts` — in `renderMarkdown` (line 134) the fenced-code branch
-  (line 139) currently returns an HTML string. Keep the string path for non-SQL langs, but
-  mark SQL blocks so the caller at line 262 (`div.innerHTML = markdown ? renderMarkdown(text) : …`)
-  can post-process: after assigning, query `code.vsdb-md-code-lang-sql` nodes and replace
-  each one's children with `highlightSql(node.textContent ?? "")`. Reading `textContent`
-  from an already-escaped node and writing back via a fragment keeps the existing
-  no-`innerHTML`-for-user-content contract intact.
-- `webview/main.ts` — `renderMessagesInto` (line 2744): replace
-  `sql.textContent = r.sql;` (line 2760) with `sql.appendChild(highlightSql(r.sql));`.
-  This is the only edit to this file in this task. **Wave-1 only** — TASK-005 edits the
-  same file in wave 2 and must re-read it.
-- `webview/styles.css` — add `.vsdb-sql-tok-*` rules keyed off `--vscode-*` theme
-  variables so colors track the user's theme.
-- `src/ui/__tests__/sqlHighlight.test.ts` **(new)** — cases 1-7.
-- `src/ui/__tests__/webviewSqlHighlight.test.ts` **(new)** — case 8 (bundle integration).
+- `webview/main.ts` — (a) `orderByFromColumnState()` helper (**including the colId-quoting rule
+  below**) + `onSortChanged` on `createGrid` (`:1653`) + `suppressSortRequery` re-entrancy guard;
+  (b) `distinctByColumn` cache +
+  `requestDistinctValues` post + `distinctValues` branch in the `window.addEventListener("message")`
+  handler (`:3028`); (c) `SetFilterComponent.recomputeEntries` (`:1261`) prefers cached distinct
+  values; (d) `buildServerFilterModel` (`:1976`) resolves `typed[]` from the distinct cache
+  before falling back to scanning loaded rows.
+- `src/ui/__tests__/webviewServerSort.test.ts` **(new)** — sort cases.
+- `src/ui/__tests__/webviewDistinctValues.test.ts` **(new)** — distinct-value cases.
+
+### colId quoting rule (from `PLAN.md` §3.1 — REQUIRED, prevents a regression)
+
+The host's `parseOrderBy` accepts a column only as a **bare** identifier
+(`/^[A-Za-z_][A-Za-z0-9_$]*$/`) or an **already-quoted** one; anything else is rejected with an
+error toast and no SQL. AG Grid's `colId` is the raw DB column name (`webview/main.ts:1533`,
+`field: spec.field`), so a column named `First Name` or a non-ASCII name would be rejected —
+a user-visible regression versus today's client-side sort. Therefore:
+
+> In `orderByFromColumnState()`, a `colId` that matches the bare-identifier regex is emitted
+> **as-is**; any other `colId` is emitted **quoted with the dialect's quote character**, with
+> the embedded quote character doubled:
+> postgres `"First ""Name"""` · mysql `` `First Name` `` (backtick doubled) · mssql
+> `[First Name]` (`]` doubled).
+
+**Dialect source:** the webview already receives it inside the `state` message `header`
+(`webview/main.ts:3031` assigns `headerText = msg.header`), which the host builds as
+``Run at <ISO> — <driver>@<host>/<db>`` (`src/extension.ts:623`). Parse the driver token out of
+`headerText` (match `postgres` / `mysql` / `mssql`), and **fall back to postgres double-quoting**
+when the header says `no connection`, is a `Browse …` header, or does not match — a
+double-quoted identifier is also what the host's `null`-dialect path composes today. Do **not**
+add a new message or a new `src/` import for this (see Acceptance: no third `../src/...` import).
 
 ## Test Cases (REQUIRED — TDD)
 
 | # | Loại | Tên test | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
-| 1 | unit (happy) | `tokenizes keywords, identifiers, numbers` | `tokenizeSql("SELECT 1 FROM t")` → kinds `["keyword","number","keyword","ident"]` (whitespace skipped or emitted as `ws`, asserted explicitly either way) | none |
-| 2 | unit (happy) | `string literal and line comment are single tokens` | `SELECT 'a b' -- c` → one `string` token with text `'a b'`, one `comment` token with text `-- c` | none |
-| 3 | unit (happy) | `highlightSql returns a fragment whose textContent round-trips` | `frag.textContent === input` for a 5-statement sample | verifies no character is dropped or duplicated |
-| 4 | edge (injection) | `hostile SQL never becomes live markup` | input `SELECT '<img src=x onerror=alert(1)>'` → `frag.querySelectorAll("img").length === 0`; `frag.textContent` contains the literal `<img` | jsdom |
-| 5 | edge (unterminated literal) | `unterminated string terminates and does not hang` | `SELECT 'abc` returns in < 50 ms; the tail is one `string` token `'abc` | asserted with an explicit elapsed-time bound |
-| 6 | edge (empty + whitespace-only) | `empty input yields an empty fragment` | `highlightSql("")` → `childNodes.length === 0`; `highlightSql("   ")` → `textContent === "   "` | boundary |
-| 7 | edge (dialect quoting) | `bracket and backtick identifiers are one ident token each` | `SELECT [a b], \`c d\` FROM t` → `[a b]` and `` `c d` `` each a single `ident` token | mssql/mysql quoting |
-| 8 | integration (bundle) | `Messages tab renders colorized SQL` | after a `state` message with `status:"error"`, `pre.vsdb-msg-sql` contains ≥ 1 `span.vsdb-sql-tok-keyword` and its `textContent` equals the original SQL | loads `dist/webview.js` in jsdom — mirror the skip-if-missing guard in `src/ui/__tests__/webviewSetFilter.test.ts:15-16` |
-
-Kinds: happy (1-3), security (4), malformed-input/hang (5), empty boundary (6),
-dialect-lexical (7), end-to-end wiring (8).
+| 1 | integration (happy) | header sort posts a server requery | a `requery` message with `orderBy: "name ASC"` and `index: 0` | grid rendered, column state `[{colId:"name",sort:"asc",sortIndex:0}]` |
+| 2 | integration (happy) | descending sort | `orderBy: "name DESC"` | `sort:"desc"` |
+| 3 | edge (ordering) | multi-column sort honours `sortIndex`, not colId order | `orderBy: "a ASC, b DESC"` | state `[{b,desc,sortIndex:1},{a,asc,sortIndex:0}]` |
+| 4 | edge (idempotence) | clearing the sort | exactly one `requery` posted, with `orderBy: ""` | previously sorted, then all `sort: null` |
+| 5 | edge (composition) | sort composes with an active filter | the posted message carries BOTH `orderBy: "name ASC"` and a non-undefined `filters` | set filter active on `name`, then sort |
+| 6 | edge (re-entrancy) | host-driven column-state restore posts nothing | `postMessage` call count unchanged after a programmatic sort apply | `suppressSortRequery` path |
+| 7 | integration (happy) | opening a filter requests distinct values | a `requestDistinctValues` message with `{ index: 0, column: "name" }` | filter popup opened for `name` |
+| 8 | integration (happy) | distinct response drives the checkbox list | list shows an entry for a value that appears in NO loaded row | host replies `values: ["zzz"]`, loaded rows contain only `"a"` |
+| 9 | edge (cache) | second open of the same column does not re-request | `requestDistinctValues` posted exactly once across two opens | same column reopened |
+| 10 | edge (stale response) | a response for a different column is ignored | list unchanged; no crash | reply `column: "other"` |
+| 11 | edge (fallback) | no response yet ⇒ loaded-row entries | list equals `buildSetFilterEntries` over loaded values | no `distinctValues` message dispatched |
+| 12 | edge (typed beyond window) | `typed[]` resolves from the distinct cache | posted `filters.name.typed` equals `[42]` (number), not `["42"]` | distinct cache holds `42`; no loaded row has it |
+| 13 | edge (null handling) | a `null` distinct value maps to the `(Blanks)` entry | exactly one `(Blanks)` entry, not a literal `"null"` entry | `values: [null, "a"]` |
+| 14 | edge (all-or-nothing invariant) | `typed[]` length parity on a partial resolve | posted `filters.name.typed` is either `[42, 7]` (length **2**, both resolved) or `undefined` — **never** length 1. `buildFilterWhere` (`src/ui/queryComposer.ts:106`) gates on `typed.length === values.length`, so a length-1 array silently degrades BOTH values to string literals — exactly gap 3's MySQL failure mode | 2 values selected; distinct cache holds `42` only, `7` resolvable only from a loaded row (or not at all) |
+| 15 | edge (identifier charset) | non-bare `colId` is quoted before sending | sorting a column named `First Name` posts `orderBy: '"First Name" ASC'` on postgres, `` '`First Name` ASC' `` on mysql, `"[First Name] ASC"` on mssql — never the raw `First Name ASC` | `headerText` carrying each driver; colId `First Name` |
+| 16 | edge (boundary) | bare `colId` and unknown dialect | a bare colId `name` posts `orderBy: "name ASC"` **unquoted** (byte-identical to what cycle V's regex accepted); with `headerText` = `"Run at … — no connection"` a non-bare colId falls back to postgres double-quoting | colIds `name` and `First Name` |
 
 ## Test Files
 
-- `src/ui/__tests__/sqlHighlight.test.ts` — cases 1-7 (`// @vitest-environment jsdom`;
-  cases 1-2 are pure and need no DOM but keep one file for cohesion).
-- `src/ui/__tests__/webviewSqlHighlight.test.ts` **(new)** — case 8. Copy the bundle-load
-  harness from `src/ui/__tests__/webviewSetFilter.test.ts` (ResizeObserver / matchMedia
-  stubs, `acquireVsCodeApi` stub, skip when `dist/webview.js` is missing).
+- `src/ui/__tests__/webviewServerSort.test.ts` — cases 1-6, 15, 16.
+- `src/ui/__tests__/webviewDistinctValues.test.ts` — cases 7-14.
+
+Both are jsdom bundle tests. Copy the harness from
+`src/ui/__tests__/webviewFilters.test.ts` (`// @vitest-environment jsdom`, `ResizeObserver` /
+`matchMedia` stubs, `acquireVsCodeApi` stub, loads `dist/webview.js` and **skips** when it is
+missing). `src/ui/__tests__/webviewServerFilter.test.ts` and `webviewSetFilter.test.ts` are the
+closest prior art for asserting on posted messages and for driving `SetFilterComponent`.
 
 ## Verification Commands
 
 ```bash
 npm run typecheck
-npx tsc -p tsconfig.webview.json --noEmit
 npm run compile
-npx vitest run src/ui/__tests__/sqlHighlight.test.ts src/ui/__tests__/webviewSqlHighlight.test.ts
-npm test
+npx vitest run src/ui/__tests__/webviewServerSort.test.ts src/ui/__tests__/webviewDistinctValues.test.ts
+npx vitest run src/ui/__tests__/webviewServerFilter.test.ts src/ui/__tests__/webviewSetFilter.test.ts src/ui/__tests__/webviewFilters.test.ts src/ui/__tests__/webviewBundle.test.ts
+npx tsc -p tsconfig.webview.json --noEmit 2>&1 | grep -oE "^[^ (]+\.ts" | sort | uniq -c
 ```
 
-`npm run compile` MUST run before the vitest line — case 8 loads `dist/webview.js` and
-silently skips if it is stale or absent.
+The last command's output must be **exactly**:
 
-Webview tsc gate — **snapshot diff, not "no new filename"**. `tsconfig.webview.json` has 61
-pre-existing errors across six files (mostly `TS2393`/`TS2451` shared-global-scope
-redeclarations, plus `TS2339`/`TS2304`/`TS2678` and others), and `webview/aiChatPanelMain.ts`
-(10 of them) is one of the files this task edits, so a filename-based check would pass no
-matter what this task breaks. Per PLAN.md §5, capture per-file counts before and after and
-require an empty diff:
-
-```bash
-npx tsc -p tsconfig.webview.json --noEmit 2>&1 \
-  | grep -oE '^[a-zA-Z0-9_/.-]+\.ts' | sort | uniq -c | sort -rn > /tmp/vsdb-webview-tsc-before.txt
-# ... make the edits ...
-npx tsc -p tsconfig.webview.json --noEmit 2>&1 \
-  | grep -oE '^[a-zA-Z0-9_/.-]+\.ts' | sort | uniq -c | sort -rn > /tmp/vsdb-webview-tsc-after.txt
-diff /tmp/vsdb-webview-tsc-before.txt /tmp/vsdb-webview-tsc-after.txt && echo "WEBVIEW TSC BASELINE UNCHANGED"
+```
+     14 webview/main.ts
+     10 webview/connectionFormMain.ts
+     10 webview/aiSettingsFormMain.ts
+      5 webview/schemaFormMain.ts
+      1 webview/newTableFormMain.ts
 ```
 
-Note `webview/sqlHighlight.ts` is a **new** file: it must contribute **zero** errors, i.e.
-it must not appear in the after-snapshot at all. Do not fix the 61 baseline errors. Paste
-the diff result into the Executor Report.
+(order may vary; the per-file counts may not). See `PLAN.md` §5 for why this is a snapshot diff
+and not a zero-error gate.
 
 ## Acceptance Criteria
 
-- [ ] `webview/sqlHighlight.ts` exists and uses no `innerHTML`. Gate (exits 0 on success;
-      bare `grep -c` exits 1 on zero matches and would fail a `set -e` script):
-      `! grep -q innerHTML webview/sqlHighlight.ts`
-- [ ] `webview/main.ts:2760`'s `sql.textContent = r.sql` is replaced by an `appendChild`
-      of the fragment; no other line in that file is changed by this task.
-- [ ] AI-chat SQL code blocks contain `span.vsdb-sql-tok-*` children after render.
-- [ ] `webview/styles.css` new rules reference only `var(--vscode-…)` colors — no hardcoded
-      hex values (so light/dark/high-contrast themes all work).
-- [ ] All 8 Test Cases PASS.
-- [ ] `npm run typecheck` clean; webview tsc snapshot diff empty ("WEBVIEW TSC BASELINE
-      UNCHANGED") and `webview/sqlHighlight.ts` absent from the after-snapshot;
-      `npm run compile` writes
-      all 7 bundles without error; `npm test` ≥ 1327 passed, 0 failed.
+- [ ] Every case in §Test Cases passes.
+- [ ] `npm run typecheck` clean and `npm run compile` succeeds.
+- [ ] `npm run compile` was run **before** the vitest commands (bundle tests self-skip
+      otherwise — a skipped file is not a pass).
+- [ ] The webview per-file tsc counts match the baseline above exactly.
+- [ ] **No new `../src/...` import in `webview/main.ts`.** Mirror the host types structurally,
+      the way `ServerFilterModel` (`:132`) already does.
+- [ ] The `requery` payload keeps its existing shape; `filters` / `offset` / `limit` / `append`
+      semantics are unchanged.
+- [ ] Sorting a column while "Load More" paging is active does not double-post: exactly one
+      `requery` per user gesture.
+- [ ] A `colId` that is not a bare identifier is **quoted per dialect** before it enters the
+      `orderBy` string; a bare `colId` is sent unquoted, unchanged from cycle V. (cases 15, 16)
+- [ ] Posted `filters.<col>.typed` is either the same length as `values` or absent — never a
+      partial array. (case 14)
 - [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
 
 ## Dependencies
 
-- (none)
+- (none) — the message contract below is frozen in `PLAN.md` §7 and implemented independently
+  by TASK-004. This task must not import anything TASK-004 writes.
 
 ## Interfaces
 
-- Consumes: (none) — the tokenizer is self-contained by design; it must not import from
-  `src/`, because `webview/aiChatPanelMain.ts` is bundled standalone by esbuild
-  (`esbuild.js` `aiChatPanelConfig`) and pulling in host code would bloat it.
-- Produces (exact signatures TASK-005 and future webview work may reuse):
-  ```ts
-  export type SqlTokenKind =
-    | "keyword" | "string" | "number" | "comment" | "ident" | "punct" | "ws";
-  export interface SqlToken { kind: SqlTokenKind; text: string; start: number; end: number; }
-  export function tokenizeSql(sql: string): SqlToken[];
-  export function highlightSql(sql: string): DocumentFragment;
-  ```
-  CSS class per token: `vsdb-sql-tok-<kind>`.
+- Consumes (host → webview; mirror these structurally inside `webview/main.ts`):
+
+```ts
+// host reply, additive: an older bundle ignores an unknown `type`
+type DistinctValuesMsg = {
+  type: "distinctValues";
+  index: number;        // statement index the values belong to
+  column: string;       // field name
+  values: unknown[];    // raw DB values, may contain null
+  truncated: boolean;   // true ⇒ more values exist than were returned
+  error?: string;       // present ⇒ values is empty, keep the loaded-row fallback
+};
+```
+
+- Produces (webview → host; TASK-004 implements the handler for this exact shape):
+
+```ts
+type RequestDistinctValuesMsg = {
+  type: "requestDistinctValues";
+  index: number;
+  column: string;
+};
+```
+
+- The existing `requery` message is reused unchanged for sort; only its `orderBy` string gains
+  multi-term values like `"a ASC, b DESC"`. `orderBy: ""` means "no ORDER BY".
 
 ---
 
 ## Discussion
 
-### 2026-08-25 · planner · bao-opus
+### 2026-08-26 · planner · bao-opus
 
-The AI-chat path is the delicate one. `renderMarkdown` escapes user text *first*
-(`escapeHtml` at `webview/aiChatPanelMain.ts:102`) and the file's security contract —
-spelled out in `src/ui/__tests__/aiChatPanelWebview.test.ts:1-13` — is that hostile agent
-output never reaches the page as live nodes. The post-process approach here reads
-`textContent` off an already-escaped `<code>` node and writes back a fragment built with
-`createElement`/`textContent`, so no new sink is introduced. Do **not** restructure
-`renderMarkdown` to emit token markup inside the HTML string; that would create one.
+→ @executor Five load-bearing details:
 
-Case 5 exists because a hand-rolled lexer's classic failure is a `while` that never
-advances on an unterminated quote. Note `webview/main.ts` is also edited in wave 2 by
-TASK-005 — this task's edit is deliberately a one-line swap to keep the later merge trivial.
+1. **The tsc snapshot is the trap.** `tsconfig.webview.json` has `rootDir: "webview"`, so
+   `webview/main.ts` already carries two TS6059 errors for its `../src/ui/resultsGridModel` and
+   `../src/ui/undoStack` imports. Adding a third `src/` import adds a third error and fails the
+   gate. That is why the `DistinctValuesMsg` type above is written out for you to copy inline
+   rather than imported from `src/ui/messages.ts`.
+2. **Compile before test, always.** The webview tests read `dist/webview.js` and call
+   `describe.skip`-style bail-outs when it is absent. Running vitest on a stale bundle tests the
+   *previous* build and will happily go green on unchanged code.
+3. **`onSortChanged` fires for programmatic changes too.** AG Grid emits it when you call
+   `applyColumnState`, so without the `suppressSortRequery` guard a host-driven state restore
+   posts a requery, which re-renders, which restores state, which posts again. Case 6 exists
+   specifically to catch that loop. Set the flag, apply, clear it in a `finally`.
+4. **`getColumnState()` is the source of truth, not the event payload.** Read
+   `api.getColumnState()`, filter `sort !== null`, sort by `sortIndex ?? 0`, then map to
+   `` `${quoteColIdIfNeeded(colId)} ${sort.toUpperCase()}` `` joined with `", "`. Do not try to
+   reconstruct order from the event's `columns` array — it is the *changed* columns, not the full
+   sort order. **`quoteColIdIfNeeded` is not optional** — see the colId-quoting rule in
+   §Target Files. Emitting a raw `First Name` gets the whole requery rejected host-side, which is
+   worse than today's client-side sort; cases 15/16 are the guard.
+6. **The `typed[]` array is all-or-nothing** (round-1 review). `buildFilterWhere`
+   (`src/ui/queryComposer.ts:106`) uses `typed.length === values.length` as its gate, so a
+   partially-resolved array is not "half typed" — it is *fully untyped*, and every value degrades
+   to a string literal, which is precisely the MySQL failure this cycle is closing. When you
+   cannot resolve every selected value (distinct cache first, then loaded rows), **omit `typed`
+   entirely** rather than posting a short array. Case 14 uses a 2-value selection because a
+   1-value selection cannot expose this.
+5. **The distinct cache key is `(index, column)` and must be cleared when the statement is
+   replaced.** `render()` swaps `currentStatement`; a cached list from the previous statement at
+   the same index is wrong data, not stale-but-harmless. Clear on every state message whose
+   statement identity changed.
 
-→ @executor: keep `tokenizeSql` dialect-agnostic (accept `"`, `` ` ``, and `[…]` quoting
-all at once). The webview does not know which driver is active at render time.
+Unverified, left to you: whether `SetFilterComponent` sees the popup-open event directly. It has
+`init` and `setModel` today (`webview/main.ts:1200`, `:1245`) and `afterGuiDetached` for close;
+if AG Grid v36 gives no open hook, firing the request from `init` is acceptable — case 9 (cache)
+already covers the resulting repeat calls.
+
+(no other comments)
 
 ---
-
-<!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
--->
-
-## Executor Report
-
-EXECUTOR_TOOL: claude-code
-EXECUTOR_MODEL: bao-sonnet
-EXECUTOR_SUBAGENT: feature-implementer
-
-RED_OUTPUT (before implementation — `npx vitest run src/ui/__tests__/sqlHighlight.test.ts src/ui/__tests__/webviewSqlHighlight.test.ts`, module target absent + dist absent):
-
-```
- ❯ src/ui/__tests__/sqlHighlight.test.ts  (0 test)
- ↓ src/ui/__tests__/webviewSqlHighlight.test.ts  (1 test | 1 skipped)
-
-⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
-
- FAIL  src/ui/__tests__/sqlHighlight.test.ts [ src/ui/__tests__/sqlHighlight.test.ts ]
-Error: Failed to resolve import "../../../webview/sqlHighlight" from "src/ui/__tests__/sqlHighlight.test.ts". Does the file exist?
- ❯ TransformPluginContext._formatError node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:49258:41
- ...
-
- Test Files  1 failed | 1 skipped (2)
-      Tests  1 skipped (1)
-```
-
-Expected RED for a new module (test target not yet implemented); webviewSqlHighlight case 8 skipped per its skip-if-missing guard (dist/webview.js absent at that point). Not a false GREEN.
-
-Verification Output (all §Verification Commands run in the worktree after implementation):
-
-```
-$ npm run typecheck
-> tsc --noEmit          → exit 0 (clean)
-
-$ npx tsc -p tsconfig.webview.json --noEmit   (AFTER snapshot, 5 files / 40 raw errors)
-  14 webview/main.ts
-  10 webview/connectionFormMain.ts
-  10 webview/aiSettingsFormMain.ts
-   5 webview/schemaFormMain.ts
-   1 webview/newTableFormMain.ts
-
-$ diff /tmp/vsdb-webview-tsc-before.txt /tmp/vsdb-webview-tsc-after.txt
-1d0
-<   21 webview/aiSettingsFormMain.ts
-4c3
-<   10 webview/aiChatPanelMain.ts
----
->   10 webview/aiSettingsFormMain.ts
-# => diff shows ONLY reductions (61 → 40), zero additions, and
-#    webview/sqlHighlight.ts is absent from the after-snapshot (0 errors).
-
-$ npm run compile
-⚡ Done in 141ms
-esbuild: build complete          # all 7 bundles (extension/webview/connectionForm/newTableForm/aiSettingsForm/aiChatPanel/schemaForm)
-
-$ npx vitest run src/ui/__tests__/sqlHighlight.test.ts src/ui/__tests__/webviewSqlHighlight.test.ts
- ✓ src/ui/__tests__/sqlHighlight.test.ts  (8 tests) 9ms
- ✓ src/ui/__tests__/webviewSqlHighlight.test.ts  (1 test) 45ms
- Test Files  2 passed (2)
-      Tests  9 passed (9)
-
-$ npm test
- Test Files  97 passed | 1 skipped (98)
-      Tests  1336 passed | 2 skipped (1338)     # baseline 1327 + 9 new, 0 failed
-```
-
-Acceptance gates re-verified: `grep -q innerHTML webview/sqlHighlight.ts` → no match (PASS); new `styles.css` `.vsdb-sql-tok-*` rules reference only `var(--vscode-…)`, no hex; AI-chat ```sql block renders `span.vsdb-sql-tok-keyword` children (manual jsdom check on the bundled aiChatPanel — 3 keyword spans, no `<script>`/`<img>` injection).
-
-Status: PASS
-
-Note:
-1. **Webview tsc snapshot is NOT literally empty — only error reductions.** Adding the required `import { highlightSql }` to `webview/aiChatPanelMain.ts` turns that file into a module, which resolves its 10 global-scope `TS2393/TS2451` redeclarations AND 11 cross-file conflicts they caused in `aiSettingsFormMain.ts`. Total 61 → 40 raw errors. No new errors, no new filenames; `webview/sqlHighlight.ts` contributes zero (absent from after-snapshot). The diff-based gate is a false-negative here (it flags improvements too) — the orchestrator's "assert the diff adds none" holds.
-2. `webview/main.ts` change = import line + the one-line `sql.textContent = r.sql` → `sql.appendChild(highlightSql(r.sql))` swap; nothing else.
-3. `webview/sqlHighlight.ts` is bundled into both `dist/webview.js` and `dist/aiChatPanel.js` by esbuild (dependency-free).
-4. **Required harness fix** (consequence of this task's own edit, otherwise `npm test` regresses): `src/ui/__tests__/aiChatPanelWebview.test.ts` compiled `aiChatPanelMain.ts` standalone via esbuild stdin, which broke once that file gained a relative import (`Could not resolve ./sqlHighlight` → leaked `require`). Changed it to bundle the real file on disk (`--bundle`, no `--outfile` → stdout). 27/27 still pass.
-5. Task file's literal snapshot-diff gate (`diff ... && echo "WEBVIEW TSC BASELINE UNCHANGED"`) will NOT echo the string because of the reductions above; intent (no new errors) is satisfied. Flagged for the reviewer.
-
-NEXT: ready for review.
-
-## Reviewer Verdict
-
-VERDICT: APPROVED-WITH-MINOR
-REVIEWER_MODEL: bao-opus
-EXECUTOR_MODEL: bao-sonnet
-VERIFICATION_RERUN:
-  command: "npm run typecheck && npx vitest run src/ui/__tests__/sqlHighlight.test.ts src/ui/__tests__/webviewSqlHighlight.test.ts src/ui/__tests__/aiChatPanelWebview.test.ts && npx tsc -p tsconfig.webview.json --noEmit 2>&1 | grep -oE '^[a-zA-Z0-9_./-]+\\.ts' | sort | uniq -c | sort -rn"
-  result: typecheck clean; 3 test files 36/36 pass; webview tsc 40 errors in 5 files (baseline 61 in 6; reductions only, zero additions; sqlHighlight.ts absent)
-FINDINGS:
-  critical: none
-  important: none
-  minor:
-    - docs/AI_HANDOFF/tasks/TASK-003.md:104-105 — task acceptance criteria says the webview tsc diff should echo "WEBVIEW TSC BASELINE UNCHANGED" but reductions cause diff output; intent (no new errors) is met. File the acceptance-criteria text for future tasks.
-NEXT_STATUS_FOR_INDEX: approved_minor
-NOTES: All 8 test cases verified with real assertions. highlightSql builds fragments via createElement+textContent (no innerHTML). XSS safety confirmed. aiChatPanelMain post-process reads textContent from escaped nodes, writes back via replaceChildren. Tokenizer covers all edge cases (unterminated strings, bracket/backtick idents, empty input). The minor CSS finding on comment color (operatorForeground) is a design choice, not a defect.
