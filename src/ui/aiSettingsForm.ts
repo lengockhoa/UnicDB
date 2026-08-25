@@ -135,8 +135,12 @@ export class AiSettingsForm {
     // Authoritative re-validation on host side.
     const errors = aiSettingsErrors(submitted);
     if (errors.length > 0) {
+      // B13: a failed SAVE must not be reported through the `testResult`
+      // channel — that makes it look like the Test-button connection check
+      // failed, when nothing was ever tested. Use the dedicated `saveResult`
+      // channel instead.
       this.post({
-        type: "testResult",
+        type: "saveResult",
         ok: false,
         error: errors[0],
       });
@@ -147,9 +151,9 @@ export class AiSettingsForm {
       const stored = await this.options.store.loadApiKey();
       if (stored === undefined) {
         // Empty key, nothing stored ⇒ refuse to save. Mirror the spec guard
-        // ("API key is required"). Surface as testResult-style error.
+        // ("API key is required").
         this.post({
-          type: "testResult",
+          type: "saveResult",
           ok: false,
           error: "API key is required",
         });
@@ -157,7 +161,13 @@ export class AiSettingsForm {
       }
       apiKey = stored;
     }
-    await this.options.store.save(submitted, apiKey);
+    try {
+      await this.options.store.save(submitted, apiKey);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.post({ type: "saveResult", ok: false, error: message });
+      return;
+    }
     this.post({ type: "saved" });
   }
 

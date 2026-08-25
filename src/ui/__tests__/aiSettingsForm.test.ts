@@ -125,6 +125,11 @@ interface TestResultMsg {
 interface SavedMsg {
   type: "saved";
 }
+interface SaveResultMsg {
+  type: "saveResult";
+  ok: false;
+  error: string;
+}
 
 function isInit(m: unknown): m is InitMsg {
   return !!m && typeof m === "object" && (m as { type?: string }).type === "init";
@@ -134,6 +139,9 @@ function isTestResult(m: unknown): m is TestResultMsg {
 }
 function isSaved(m: unknown): m is SavedMsg {
   return !!m && typeof m === "object" && (m as { type?: string }).type === "saved";
+}
+function isSaveResult(m: unknown): m is SaveResultMsg {
+  return !!m && typeof m === "object" && (m as { type?: string }).type === "saveResult";
 }
 
 interface FakeStore {
@@ -265,7 +273,7 @@ describe("AiSettingsForm — save", () => {
     expect(store.save).toHaveBeenCalledWith(validSettings, "sk-1");
   });
 
-  it("empty key + nothing stored: store.save NOT called; testResult error posted", async () => {
+  it("empty key + nothing stored: store.save NOT called; saveResult error posted (B13: not testResult)", async () => {
     const store = makeStore({ settings: validSettings, apiKey: undefined });
     const complete = vi.fn();
     const form = new AiSettingsForm({
@@ -278,15 +286,19 @@ describe("AiSettingsForm — save", () => {
     handler({ type: "ready" });
     await until(() => postedMessages(panel).some(isInit));
     handler({ type: "save", settings: validSettings, apiKey: "" });
-    await until(() => postedMessages(panel).some(isTestResult));
+    await until(() => postedMessages(panel).some(isSaveResult));
     expect(store.save).not.toHaveBeenCalled();
-    const errs = postedMessages(panel).filter(isTestResult);
+    // B13 regression guard: a failed SAVE must never surface on the
+    // testResult channel — that would render as "test failed" when nothing
+    // was ever tested.
+    expect(postedMessages(panel).some(isTestResult)).toBe(false);
+    const errs = postedMessages(panel).filter(isSaveResult);
     expect(errs.length).toBeGreaterThan(0);
     expect(errs[0].ok).toBe(false);
     expect(errs[0].error).toBe("API key is required");
   });
 
-  it("invalid submitted settings: store.save NOT called; testResult error posted; no complete", async () => {
+  it("invalid submitted settings: store.save NOT called; saveResult error posted (B13: not testResult); no complete", async () => {
     const store = makeStore({ settings: validSettings, apiKey: "sk-1" });
     const complete = vi.fn();
     const form = new AiSettingsForm({
@@ -299,13 +311,36 @@ describe("AiSettingsForm — save", () => {
     handler({ type: "ready" });
     await until(() => postedMessages(panel).some(isInit));
     handler({ type: "save", settings: invalidSettings, apiKey: "sk-1" });
-    await until(() => postedMessages(panel).some(isTestResult));
+    await until(() => postedMessages(panel).some(isSaveResult));
     expect(store.save).not.toHaveBeenCalled();
     expect(complete).not.toHaveBeenCalled();
-    const errs = postedMessages(panel).filter(isTestResult);
+    expect(postedMessages(panel).some(isTestResult)).toBe(false);
+    const errs = postedMessages(panel).filter(isSaveResult);
     expect(errs.length).toBeGreaterThan(0);
     expect(errs[0].ok).toBe(false);
     expect(errs[0].error).toMatch(/Base URL/);
+  });
+
+  it("B13 edge: store.save() itself throws → saveResult{ok:false} posted, NOT testResult", async () => {
+    const store = makeStore({ settings: validSettings, apiKey: "sk-1" });
+    store.save.mockRejectedValue(new Error("disk full"));
+    const complete = vi.fn();
+    const form = new AiSettingsForm({
+      extensionUri: extUri,
+      store: store as unknown as Pick<AiConfigStore, "loadSettings" | "loadApiKey" | "save">,
+      complete,
+    });
+    form.show();
+    const { panel, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(panel).some(isInit));
+    handler({ type: "save", settings: validSettings, apiKey: "sk-2" });
+    await until(() => postedMessages(panel).some(isSaveResult));
+    expect(postedMessages(panel).some(isTestResult)).toBe(false);
+    expect(postedMessages(panel).some(isSaved)).toBe(false);
+    const errs = postedMessages(panel).filter(isSaveResult);
+    expect(errs[0].ok).toBe(false);
+    expect(errs[0].error).toBe("disk full");
   });
 });
 

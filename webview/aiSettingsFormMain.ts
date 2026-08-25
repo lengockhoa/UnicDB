@@ -42,7 +42,13 @@ interface SavedMsg {
   type: "saved";
 }
 
-type HostMsg = InitMsg | TestResultMsg | SavedMsg;
+interface SaveResultMsg {
+  type: "saveResult";
+  ok: false;
+  error: string;
+}
+
+type HostMsg = InitMsg | TestResultMsg | SavedMsg | SaveResultMsg;
 
 const root = document.getElementById("vsdb-root") as HTMLDivElement;
 
@@ -356,6 +362,11 @@ window.addEventListener("message", (ev: MessageEvent) => {
       input("apiKey").value = "";
       input("apiKey").placeholder = "•••• stored";
       refreshOkButton(validateSettings(state.settings));
+      break;
+    case "saveResult":
+      // B13: a failed SAVE renders through its own status message — never
+      // conflated with a failed connection Test.
+      setStatus(false, msg.error || "Save failed");
       break;
   }
 });

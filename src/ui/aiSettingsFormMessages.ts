@@ -35,10 +35,24 @@ export interface AiSettingsFormSaved {
   type: "saved";
 }
 
+/**
+ * Host → webview: a Save attempt FAILED (validation error, or missing API
+ * key with nothing stored). Distinct from `testResult` (B13 fix) — a failed
+ * *save* must not be rendered as a failed connection *test*; they are
+ * different user actions with different recovery messaging.
+ */
+export interface AiSettingsFormSaveResult {
+  type: "saveResult";
+  ok: false;
+  /** apiKey-FREE error string. */
+  error: string;
+}
+
 export type AiSettingsFormHostMessage =
   | AiSettingsFormInit
   | AiSettingsFormTestResult
-  | AiSettingsFormSaved;
+  | AiSettingsFormSaved
+  | AiSettingsFormSaveResult;
 
 // ---- Webview → Host --------------------------------------------------------
 

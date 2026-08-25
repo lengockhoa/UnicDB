@@ -211,7 +211,10 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
       icon: DRIVER_ICONS[c.driver] ?? "database",
       tooltip: `${c.name}\n${c.driver}@${c.host}:${c.port}/${c.database}\nClick để đổi active connection`,
       contextValue: "connection",
-      collapsible: vscode.TreeItemCollapsibleState.Expanded,
+      // TASK-010/D3 — Collapsed (không phải Expanded): tránh VS Code auto-expand
+      // MỌI connection lúc activation → mở socket + listSchemas cho từng DB dù
+      // user chưa từng đụng tới. Click-to-activate command bên dưới không đổi.
+      collapsible: vscode.TreeItemCollapsibleState.Collapsed,
       // Click → switch active (statusBar + icon tint cập nhật qua onDidChangeActive).
       command: {
         command: "vsdb.selectConnectionFromTree",
@@ -483,13 +486,13 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
       });
 
       // Row count fetch fire-and-forget chỉ cho tables.
+      // TASK-010/D2 — batch: 1 estimateTableRowsBatch cho CẢ schema thay vì
+      // N estimateTableRows (1 mỗi table). Guard rỗng TRƯỚC khi gọi — 0 table
+      // node → không issue query nào.
       if (category === "tables" && !isError) {
-        for (const tNode of children) {
-          if (tNode.contextValue !== "table") continue;
-          const tSchema = tNode.meta?.schema;
-          const tName = tNode.meta?.objectName;
-          if (!tSchema || !tName) continue;
-          this.fetchRowCount(tNode, conn, tSchema, tName);
+        const tableNodes = children.filter((c) => c.contextValue === "table");
+        if (tableNodes.length > 0) {
+          this.fetchRowCountsBatch(tableNodes, conn, schema);
         }
       }
     }
@@ -512,42 +515,66 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
   }
 
   /**
-   * Fire-and-forget fetch row count cho 1 table node.
-   * - Cache hit: set description sync.
-   * - Cache miss + in-flight: skip (đã có promise đang chạy).
-   * - Cache miss + not in-flight: gọi adapter.estimateTableRows, update description
-   *   khi count != null (giữ schema fallback khi null). Fire change event.
+   * TASK-010/D2 — Fire-and-forget fetch row count cho CẢ schema (1 round trip)
+   * thay vì 1 fetch mỗi table. Giữ nguyên hành vi cũ:
+   * - Per-table cache hit (rowCountCache, TTL 60s): set description sync, không
+   *   đưa table đó vào batch request.
+   * - Nếu MỌI table đều cache hit → không gọi estimateTableRowsBatch (0 query).
+   * - In-flight dedup theo (connId, schema) — re-expand khi batch đang chạy sẽ
+   *   không bắn thêm request.
+   * - Table bị adapter OMIT khỏi Map (dropped mid-flight) hoặc count === null
+   *   → giữ nguyên description fallback (schema), không set, không lỗi.
+   * - Reject → nuốt lỗi, tree vẫn render đủ mọi table node (fire-and-forget).
    */
-  private fetchRowCount(
-    tNode: VsdbNode,
+  private fetchRowCountsBatch(
+    tableNodes: VsdbNode[],
     conn: ConnectionConfig,
     schema: string,
-    table: string,
   ): void {
-    const key = `rowcount|${conn.id}|${schema}|${table}`;
-    const cached = this.rowCountCache.get(key);
-    if (cached && cached.expiresAt > Date.now()) {
-      tNode.description = formatRows(cached.data);
-      this._onDidChangeTreeData.fire(tNode);
-      return;
+    const now = Date.now();
+    const pendingNodes: VsdbNode[] = [];
+    const pendingNames: string[] = [];
+    for (const tNode of tableNodes) {
+      const tName = tNode.meta?.objectName;
+      if (!tName) continue;
+      const key = `rowcount|${conn.id}|${schema}|${tName}`;
+      const cached = this.rowCountCache.get(key);
+      if (cached && cached.expiresAt > now) {
+        tNode.description = formatRows(cached.data);
+      } else {
+        pendingNodes.push(tNode);
+        pendingNames.push(tName);
+      }
     }
-    if (this.rowCountFetching.has(key)) return;
-    this.rowCountFetching.add(key);
+    if (pendingNames.length === 0) return;
+
+    const inFlightKey = `rowcountbatch|${conn.id}|${schema}`;
+    if (this.rowCountFetching.has(inFlightKey)) return;
+    this.rowCountFetching.add(inFlightKey);
 
     this.getAdapterFor(conn)
-      .then((adapter) => adapter.estimateTableRows(schema, table))
-      .then((count) => {
-        this.rowCountFetching.delete(key);
-        if (count === null) return; // giữ schema fallback, không ghi đè
-        this.rowCountCache.set(key, {
-          data: count,
-          expiresAt: Date.now() + CACHE_TTL_MS,
-        });
-        tNode.description = formatRows(count);
-        this._onDidChangeTreeData.fire(tNode);
+      .then((adapter) => adapter.estimateTableRowsBatch(schema, pendingNames))
+      .then((counts) => {
+        this.rowCountFetching.delete(inFlightKey);
+        let changed = false;
+        for (const tNode of pendingNodes) {
+          const tName = tNode.meta?.objectName;
+          if (!tName) continue;
+          const count = counts.get(tName);
+          // Omitted (dropped mid-flight) hoặc null → giữ schema fallback.
+          if (count === undefined || count === null) continue;
+          const key = `rowcount|${conn.id}|${schema}|${tName}`;
+          this.rowCountCache.set(key, {
+            data: count,
+            expiresAt: Date.now() + CACHE_TTL_MS,
+          });
+          tNode.description = formatRows(count);
+          changed = true;
+        }
+        if (changed) this._onDidChangeTreeData.fire(undefined);
       })
       .catch(() => {
-        this.rowCountFetching.delete(key);
+        this.rowCountFetching.delete(inFlightKey);
       });
   }
 
@@ -749,7 +776,8 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
         icon: DRIVER_ICONS[conn.driver] ?? "database",
         tooltip: `${conn.name}\n${conn.driver}@${conn.host}:${conn.port}/${conn.database}\nClick để đổi active connection`,
         contextValue: "connection",
-        collapsible: vscode.TreeItemCollapsibleState.Expanded,
+        // TASK-010/D3 — giữ nhất quán với getRoot(): connection nodes Collapsed.
+        collapsible: vscode.TreeItemCollapsibleState.Collapsed,
         command: {
           command: "vsdb.selectConnectionFromTree",
           title: "Select as Active Connection",

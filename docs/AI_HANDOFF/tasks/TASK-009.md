@@ -172,3 +172,177 @@ getting this backwards produces a *silent wrong-row update*, the worst failure m
 separate `runSql` calls does not guarantee the same connection and would make the rollback a lie.
 
 ---
+
+## Executor Report
+
+### 2026-08-25 · executor · claude-sonnet-5
+
+- EXECUTOR_TOOL: claude-code
+- EXECUTOR_MODEL: claude-sonnet-5
+- EXECUTOR_SUBAGENT: -
+- STATUS: DONE
+
+**SUMMARY:** Fixed A3 (batched-cursor leak in `fetchPostgresCtids`), A4 (post-save refresh
+never posted state on a batched driver), A12-host (ctid map + `serverIndexByRowId` now keyed
+by `rowId`, not server-row-loop-index), A14 (`this.header` was never assigned in `render()`),
+A15 (save statements now run as one atomic `BEGIN…COMMIT` combined `runSql` call, with
+`ROLLBACK` on first failure), and A19-skip (`buildSaveStatements`' `skippedRows` is now
+forwarded as `SaveResultMessage.rowErrors`). Also wired `schema` + `serverIndexByRowId` +
+`ctidByRowId` into every `buildSaveStatements` call, and switched the post-commit refresh /
+ctid-lookup reads to `pickResult()` (mirroring `handleRequery`'s existing pattern) so no
+`.results[0]` remains in `resultsPanel.ts`.
+
+**Fake correction (explicit, per acceptance criteria):** `makeRecordingRunner` in
+`resultsPanelSaveEdits.test.ts` previously returned `{results:[{...}]}` unconditionally for
+every `runSql` call, regardless of SQL shape — this is why A3 (`res.results[0]?.rows` against a
+batched `{results:[], batched}` response) was invisible in the suite. It now mirrors
+`PostgresAdapter.runQuery` / `shouldUseCursor`: a single `SELECT`/`WITH` statement with no `;`
+boundary returns the batched cursor shape (`{results:[], batched:{fetchBatch,close,...}}`);
+anything else (multi-statement text, e.g. the new `BEGIN;...;COMMIT;` transaction envelope, or
+a non-SELECT) returns `{results:[...]}`. A new `makeBatchAwareRunner` helper (built on the same
+`isSingleSelectNoSemicolon` routing rule) drives the new batched-fake tests and tracks
+open/close counts. The A3 regression was observed FAILING against this corrected fake on the
+pre-fix baseline (see RED output below — "ctid resolve via CORRECTED batched fake" test).
+
+**TEST_PLAN_FOLLOWED:** task §"Test Cases (REQUIRED — TDD)" — all 15 rows implemented as
+listed; several rows share one test where the underlying mechanism is identical (documented
+below).
+
+**FILES_CHANGED:**
+- `src/ui/resultsPanel.ts`: `render()` now assigns `this.header`; `handleMessage`'s `saveEdits`
+  case forwards `msg.serverIndexByRowId`; `handleSaveEdits` gained a 5th param
+  (`serverIndexByRowId?`), builds a `Map<number,number>` from it, narrows ctid-resolution to
+  only the rowIds that actually need one (excluding pure `__vsdb_new_row__` inserts), always
+  passes `{ schema, serverIndexByRowId, ctidByRowId }` to `buildSaveStatements`, runs the whole
+  statement batch as one combined `runner.runSql(BEGIN;...;COMMIT;)` call (dialect-aware
+  keywords via new `transactionKeywords()` — plain `BEGIN/COMMIT/ROLLBACK` for
+  postgres/mysql, `BEGIN/COMMIT/ROLLBACK TRANSACTION` for mssql), issues a best-effort separate
+  `ROLLBACK` call on failure, refreshes via `pickResult()` + `runner.adopt()` (mirroring
+  `handleRequery`), and forwards `built.skippedRows` as `rowErrors` on the `ok:true` ack.
+  `fetchPostgresCtids` was redesigned to accept `rowIds: number[]` +
+  `resolveServerIndex(rowId): number` instead of looping every `serverRows` index, uses
+  `pickResult()` to read the (possibly batched) SELECT, and closes `res.batched` in a `finally`
+  best-effort block; the result map is keyed by `rowId`.
+- `src/ui/__tests__/resultsPanelSaveEdits.test.ts`: fixed `makeRecordingRunner`'s fake to
+  correctly route single-SELECT-no-semicolon SQL through the batched shape (`isSingleSelectNoSemicolon`
+  helper); rewrote the old per-statement "partial failure" describe block into
+  "partial failure / atomic batch (A15)" asserting single-combined-call transaction semantics;
+  extended `saveResultAcks()`/added `stateMessages()` helpers; added a `makeBatchAwareRunner`
+  helper and 8 new describe blocks (ctid-resolve-via-batched-fake, resource open/close-count,
+  atomic-batch happy path, A12 remap, absent-`serverIndexByRowId` back-compat, skippedRows→
+  rowErrors, full-success-has-no-phantom-rowErrors, post-save refresh on a batched driver).
+- `src/ui/__tests__/resultsPanel.test.ts`: added a "header (A14)" describe block asserting the
+  `render()` post AND a later `"ready"`-handshake post both carry the real header, not `""`.
+
+**TESTS_ADDED:**
+- `resultsPanelSaveEdits.test.ts`:
+  - "ResultsPanel — partial failure / atomic batch (A15)" — atomic rollback on 2nd-statement failure (Edge failure/rollback; R-A15)
+  - "ResultsPanel — ctid resolve via CORRECTED batched fake (Happy + R-A3)" — batched shape, keyed by rowId, cursor closed
+  - "ResultsPanel — resource cleanup, 3 dirty rows (Edge — resource)" — open/close counts
+  - "ResultsPanel — atomic batch happy path (Happy — atomic batch)" — exactly one BEGIN…COMMIT call, 2 statements, ok:true
+  - "ResultsPanel — A12 remap via serverIndexByRowId (Edge — remap)" — `{"4":3}` resolves serverRows[3] not serverRows[4]
+  - "ResultsPanel — no serverIndexByRowId field (Edge — absent field, back-compat)"
+  - "ResultsPanel — skippedRows → rowErrors (Edge partial success / R A19-skip)"
+  - "ResultsPanel — full success has no phantom rowErrors (Edge — nothing skipped)"
+  - "ResultsPanel — post-save refresh on a batched driver (R-A4)"
+- `resultsPanel.test.ts`:
+  - "ResultsPanel — header (A14)" — render() post + later "ready" post both carry the real header (Happy — header; R-A14)
+- Ambiguity case (`{ok:false, reason:"ambiguous_only"}`) and A3-original-invisible/A3-leak-count
+  were already exercised by the pre-existing "fetchPostgresCtids correctness (important #1)"
+  describe block once the fake was corrected — no separate new test needed; verified still
+  green above.
+
+**RED_OUTPUT (captured against the pre-fix baseline, restored via `git show HEAD:src/ui/resultsPanel.ts`
+then swapped back after capture — no `git stash`/`checkout`/`commit` used):**
+
+```
+ ❯ src/ui/__tests__/resultsPanelSaveEdits.test.ts  (22 tests | 7 failed) 16ms
+   ❯ ResultsPanel — partial failure / atomic batch (A15) > first UPDATE ok, second throws → ...
+     → expected true to be false // Object.is equality
+   ❯ ResultsPanel — ctid resolve via CORRECTED batched fake (Happy + R-A3) > ctid SELECT returns the batched shape ...
+     → expected [ …(2) ] to have a length of 1 but got 2
+   ❯ ResultsPanel — resource cleanup, 3 dirty rows (Edge — resource) > 3 dirty rows needing ctid ...
+     → expected 3 to be 4 // Object.is equality
+   ❯ ResultsPanel — atomic batch happy path (Happy — atomic batch) > 2 statements ⇒ exactly ONE BEGIN…COMMIT call ...
+     → expected [] to have a length of 1 but got +0
+   ❯ ResultsPanel — A12 remap via serverIndexByRowId (Edge — remap) > message carries serverIndexByRowId: {"4":3} ...
+     → expected 'SELECT ctid FROM "t" WHERE "name" IS …' to match /'target'/
+   ❯ ResultsPanel — skippedRows → rowErrors (Edge partial success / R A19-skip) > 1 row updates, 1 row (rowId 7) ...
+     → expected undefined not to be undefined
+   ❯ ResultsPanel — post-save refresh on a batched driver (R-A4) > refresh SQL is a single SELECT (batched) ...
+     → expected [ [ 1, 'alice' ] ] to deeply equal [ [ 1, 'alice-2' ] ]
+ ❯ src/ui/__tests__/resultsPanel.test.ts  (16 tests | 1 failed) 19ms
+   ❯ ResultsPanel — header (A14) > render(results, "Browse x at T") → ... carry that header, not blank
+     → expected '' to be 'Browse x at T' // Object.is equality
+
+ Test Files  2 failed (2)
+      Tests  8 failed | 30 passed (38)
+```
+
+Each failure matches the task's stated regression exactly: A15 (`ok` was `true` — statement 1
+silently committed), A3 (2 ctid-lookup calls instead of the batched fake's 1 — meaning the
+resolver never even reached the "closed" bookkeeping the corrected fake models), resource
+open/close mismatch, atomic-batch call never combined (`[]` — zero `BEGIN` calls recorded), A12
+remap read the wrong row (`'a'` instead of `'target'`), A19-skip `rowErrors` was `undefined`,
+A4 refresh rows stayed stale (`'alice'` not `'alice-2'`), A14 header was `''`.
+
+**VERIFICATION (all 6 commands, run fresh after restoring the fix):**
+
+```
+$ npm run typecheck
+> tsc --noEmit
+(clean, exit 0)
+
+$ npm test -- src/ui/__tests__/resultsPanelSaveEdits.test.ts
+ ✓ src/ui/__tests__/resultsPanelSaveEdits.test.ts  (22 tests) 10ms
+ Test Files  1 passed (1)
+      Tests  22 passed (22)
+
+$ npm test -- src/ui/__tests__/resultsPanel.test.ts
+ ✓ src/ui/__tests__/resultsPanel.test.ts  (16 tests) 15ms
+ Test Files  1 passed (1)
+      Tests  16 passed (16)
+
+$ npm test -- src/ui/__tests__/resultsPanelRequery.test.ts
+ ✓ src/ui/__tests__/resultsPanelRequery.test.ts  (10 tests) 5ms
+ Test Files  1 passed (1)
+      Tests  10 passed (10)
+
+$ npm test -- src/adapters/__tests__/saveStatements.test.ts
+ ✓ src/adapters/__tests__/saveStatements.test.ts  (23 tests) 7ms
+ Test Files  1 passed (1)
+      Tests  23 passed (23)
+
+$ npm test -- src/ui/__tests__/browseCommands.test.ts
+ ✓ src/ui/__tests__/browseCommands.test.ts  (16 tests) 5ms
+ Test Files  1 passed (1)
+      Tests  16 passed (16)
+```
+
+**Full-suite regression check (`npm run compile` once, then `npm test`):**
+
+```
+ Test Files  84 passed | 1 skipped (85)
+      Tests  1167 passed | 2 skipped (1169)
+```
+
+vs. wave-1 baseline (1158 passed / 2 skipped / 84 files) — net +9 new tests (8 in
+`resultsPanelSaveEdits.test.ts`, 1 in `resultsPanel.test.ts`), zero regressions, zero new
+skips.
+
+**ISSUES:** none. One design decision made without a human to ask (per Handoff-mode autonomy
+rule): dialect-aware transaction keywords — postgres/mysql use plain `BEGIN`/`COMMIT`/`ROLLBACK`;
+mssql uses `BEGIN TRANSACTION`/`COMMIT TRANSACTION`/`ROLLBACK TRANSACTION` because plain `BEGIN`
+in T-SQL is block syntax, not transaction syntax. No test case in the task's required 15
+specifically exercises the mssql keyword branch (none of the 15 rows call for it), so this
+branch is defensive/untested-by-name here — it reuses the same `runner.runSql` combined-call
+path already covered for postgres, and `src/adapters/__tests__/saveStatements.test.ts` (owned
+by TASK-001, unmodified) already covers mssql identifier quoting independently.
+
+**HANDOFF_TO_REVIEWER:** yes — `handoff.reviewer.enabled` per `.ukit/storage/config.json`;
+task status will be set to `pending_review` in `docs/AI_HANDOFF/INDEX.md` by the orchestrator
+per the standard wave pipeline (this executor does not edit `INDEX.md` per task instructions).
+
+**NEXT:** ready for review.
+
+---

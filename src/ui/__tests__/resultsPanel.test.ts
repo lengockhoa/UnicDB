@@ -457,3 +457,42 @@ describe("ResultsPanel — handleMessage loadMore (TASK-204)", () => {
   });
 });
 
+describe("ResultsPanel — header (A14)", () => {
+  it('render(results, "Browse x at T") → the render post AND every later post (e.g. "ready") carry that header, not blank', async () => {
+    const runner = makeRunnerStub();
+    const panel = new ResultsPanel({ runner });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT 1",
+          status: "done",
+          result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "Browse x at T",
+    );
+    const fake = lastPanel.current!;
+    const firstState = fake.webview.postMessage.mock.calls
+      .map((c) => c[0] as { type?: string; header?: string })
+      .find((m) => m.type === "state");
+    expect(firstState?.header).toBe("Browse x at T");
+
+    // A14 regression: `this.header` was never assigned in render(), so a
+    // LATER post (the "ready" handshake re-sends the last known state)
+    // sent an empty string instead of the real header.
+    fake.webview.postMessage.mockClear();
+    fake.webview.dispatch({ type: "ready" });
+    for (let i = 0; i < 200; i++) {
+      if (fake.webview.postMessage.mock.calls.length > 0) break;
+      await Promise.resolve();
+    }
+    const readyState = fake.webview.postMessage.mock.calls
+      .map((c) => c[0] as { type?: string; header?: string })
+      .find((m) => m.type === "state");
+    expect(readyState?.header).toBe("Browse x at T");
+    expect(readyState?.header).not.toBe("");
+  });
+});
+

@@ -188,4 +188,221 @@ do not re-fix its defects here, and do not revert its turn-lifecycle changes.
 omp wins. If that feels wrong during implementation, record the objection here rather than
 changing the behavior.
 
+### 2026-08-25 · executor · claude-sonnet-5
+
+**Scope decision — two sibling files not in the Target Files list:** `src/ui/aiSettingsFormMessages.ts`
+and `webview/aiSettingsFormMain.ts`. B13 requires the webview to render the new `saveResult` error
+channel distinctly from `testResult`; without touching the message-type file and its webview
+consumer, the fix in `aiSettingsForm.ts` would post a `saveResult` message that the webview drops
+silently (no `case "saveResult"` in its switch), which is not "fixed" in any user-visible sense.
+This mirrors why `aiChatPanelMessages.ts` + `webview/aiChatPanelMain.ts` are explicitly named for
+B8 — same shape of problem, so the same two-file pattern applies for B13's sibling pair. No other
+out-of-scope files were touched (confirmed `resultsPanel.ts` / `schemaTree.ts` untouched via `git
+status`).
+
+---
+
+## Executor Report
+
+- EXECUTOR_TOOL: claude-code
+- EXECUTOR_MODEL: claude-sonnet-5
+- EXECUTOR_SUBAGENT: -
+- STATUS: DONE
+
+### SUMMARY
+
+Implemented all four defects (B3, B8, B13, D1). `commandOpenAiChat` now resolves the engine via a
+new pure `resolveEngine()` policy fed by a real `detectOmp()` call, so omp-present + zero-config
+opens the chat panel directly (locked decision #2). The engine banner is wired to real detection
+(`version`/`hint` fields) and re-posts on ACP→builtin failover. `aiSettingsForm.ts` reports save
+failures (validation, empty-key-nothing-stored, and `store.save()` throwing) through a new
+`saveResult` channel instead of `testResult`, rendered distinctly by the webview. `applyKeywordQualify`
+now hoists one `createKeywordTableCache()` per run instead of creating a fresh cache-less lookup per
+statement.
+
+### TEST_PLAN_FOLLOWED
+
+Task §Test Cases (12-row table) — all 12 covered. RED confirmed for every new/changed assertion via
+either `git show HEAD:<path> > <path>` reverts (behavioral changes) or `tsc --noEmit` (pure
+interface-shape additions that esbuild's non-typechecking transform can't fail on — confirmed this
+empirically for the `AiChatPanelEngine.version` field; documented below).
+
+### FILES_CHANGED
+
+- `src/extension.ts`: B3 — `commandOpenAiChat` now calls `detectOmp()` + `resolveEngine()` before
+  deciding on the config interstitial; only routes to AI Settings when `choice.requiresConfig`.
+  Passes `choice.version`/`choice.hint` into `AiChatPanel`. D1 — `applyKeywordQualify` hoists one
+  `createKeywordTableCache()` per `runStatements()` call, passed into every `qualifyKeywordTables`
+  call in that run instead of one cache-less lookup per statement.
+- `src/ai/engineChoice.ts` (new): pure `resolveEngine({detection, config})` policy — no `vscode`
+  import. omp `ok:true` ⇒ `{engine:"omp", requiresConfig:false, version}`; else `{engine:"builtin",
+  requiresConfig: config == null, hint: OMP_INSTALL_HINT|OMP_UPDATE_HINT}`.
+- `src/ui/aiChatPanel.ts`: B8 — new `postEngine(name)` private helper centralizes the `engine`
+  message (adds `version` for omp / `hint` for builtin from the new `AiChatPanelOptions.engineVersion`
+  / `.engineHint` fields); `handleReady()` uses it; the ACP `ensureAcpSession()` failover catch block
+  now calls `postEngine("builtin")` so the banner self-corrects.
+- `src/ui/aiChatPanelMessages.ts`: `AiChatPanelEngine` gains `version?: string`.
+- `webview/aiChatPanelMain.ts`: `EngineMsg` gains `version?: string`; banner label renders
+  `"Engine: oh-my-pi (omp) v<version> — streaming"` when present, unchanged fallback otherwise.
+- `src/ui/aiSettingsForm.ts`: B13 — `handleSave()` posts `{type:"saveResult", ok:false, error}` for
+  validation failure and empty-key-nothing-stored, and wraps `store.save()` in try/catch posting the
+  same channel on rejection (previously an unhandled rejection with no user feedback at all).
+- `src/ui/aiSettingsFormMessages.ts` (sibling, see Discussion above): adds `AiSettingsFormSaveResult`
+  and widens `AiSettingsFormHostMessage`.
+- `webview/aiSettingsFormMain.ts` (sibling, see Discussion above): adds `SaveResultMsg` + a
+  `case "saveResult"` branch that renders the error via the existing `setStatus(false, ...)`.
+
+### TESTS_ADDED
+
+- `src/ai/__tests__/engineChoice.test.ts` (new, 6 tests): Happy (omp ok, no config), edge missing
+  binary (`OMP_INSTALL_HINT`), edge version floor (`OMP_UPDATE_HINT`), edge both-available
+  (omp wins, config untouched), builtin+valid-config (`requiresConfig:false`), `config===undefined`
+  treated like `null`.
+- `src/ui/__tests__/aiChatPanel.test.ts` (extended, pre-existing from earlier in this session): `#5`
+  banner posts `version` on show, `#5b` `hint` populated for builtin, `#5c` failover re-posts a
+  second `engine{name:"builtin"}` message.
+- `src/ui/__tests__/aiChatPanelMessages.test.ts` (extended, 3 tests, `describe("... B8: version
+  field)")`): `version` field round-trips through the `AiChatPanelEngine` shape.
+- `src/ui/__tests__/aiChatPanelWebview.test.ts` (+1, `#5d`): banner renders
+  `"Engine: oh-my-pi (omp) v18.0.1 — streaming"` when `version` is present.
+- `src/ui/__tests__/aiSettingsForm.test.ts` (+3, now 12 total): validation-failure and
+  empty-key-nothing-stored rewritten to assert `saveResult` (not `testResult`) + a regression guard
+  that `testResult` was never posted; new test for `store.save()` throwing → `saveResult{ok:false}`.
+- `src/ui/__tests__/aiSettingsFormBundle.test.ts` (+1, `#12`): dispatches `saveResult{ok:false,
+  error:"disk full"}` into the compiled webview bundle, asserts `#status` renders the error text
+  with an `err` class.
+- `src/extension.test.ts`: added a file-wide hoisted `detectOmp` mock (default `not-installed`,
+  reset in a top-level `beforeEach`) so the ~50 pre-existing `vsdb.aiChat`-invoking tests stay
+  deterministic now that `commandOpenAiChat` shells out for real. Added
+  `describe("TASK-011 (B3) — commandOpenAiChat resolves engine via detectOmp() + resolveEngine()")`
+  (Happy: omp ok + no config → panel constructed with `engineVersion`, no interstitial;
+  R(B3): omp not-installed + no config → interstitial unchanged) with an `afterEach(() =>
+  deactivate())` to reset the module-level `aiChatPanel` singleton between the two tests (needed
+  because the file statically imports `extension.ts` once — without the reset the second test's
+  `if (aiChatPanel) { show(); return; }` guard short-circuits before ever calling `detectOmp()`).
+  Added `#3 D1` test in the existing `describe("TASK-007 — runStatement rewrites reserved-keyword
+  tables...")` block: a 2-statement `vsdb.runQuery` selection-mode run asserts `listTables` is
+  called exactly once, not once per statement.
+
+### RED_OUTPUT (representative excerpts — full reverts done via `git show HEAD:<path> > <path>`,
+restored via `cp` from `/tmp/task011-green-backup/` after capture)
+
+**B3/D1 — `src/extension.ts` reverted to HEAD, `npx vitest run src/extension.test.ts`:**
+```
+❯ TASK-011 (B3) ... Happy — omp detected + ok, NO ai config saved → panel opens directly, no config interstitial
+  AssertionError: expected "spy" to not be called at all, but actually been called 1 times
+  Received: 1st spy call: [ "VSDB: Configure AI settings first." ]
+
+❯ TASK-007 ... #3 D1: multi-statement run reuses ONE cache — listTables called once (not once per statement)
+  AssertionError: expected "spy" to be called 1 times, but got 2 times
+
+Test Files  1 failed (1)
+     Tests  2 failed | 54 passed (56)
+```
+
+**B8 (aiChatPanel.ts banner + failover) — captured earlier in this session by reverting
+`src/ui/aiChatPanel.ts` to HEAD:** 3 failures in `aiChatPanel.test.ts` (`#5` missing `version` on
+the posted engine message, `#5b` missing `hint`, `#5c` no second `engine` post on ACP failover) —
+33/33 restored to GREEN after `cp` back.
+
+**B8 (webview version rendering) — `webview/aiChatPanelMain.ts` reverted to HEAD, `npm test --
+src/ui/__tests__/aiChatPanelWebview.test.ts`:**
+```
+❯ #5d B8 omp with version: banner text reads "Engine: oh-my-pi (omp) v18.0.1 — streaming"
+  AssertionError: expected 'Engine: oh-my-pi (omp) — streaming' to be 'Engine: oh-my-pi (omp) v18.0.1 — stre…'
+  - Engine: oh-my-pi (omp) v18.0.1 — streaming
+  + Engine: oh-my-pi (omp) — streaming
+
+Tests  1 failed | 26 passed (27)
+```
+
+**B8 (`AiChatPanelEngine.version` interface field) — `src/ui/aiChatPanelMessages.ts` reverted to
+HEAD:** `vitest run` on the reverted state still showed 18/18 passing (esbuild's TS transform does
+not typecheck — an extra property on an object literal is runtime-valid regardless of the declared
+interface). RED evidence instead comes from `npx tsc --noEmit -p .`:
+```
+src/ui/aiChatPanel.ts(1263,11): error TS2339: Property 'version' does not exist on type 'AiChatPanelEngine'.
+```
+
+**B13 — `src/ui/aiSettingsForm.ts` reverted to HEAD, `npm test -- src/ui/__tests__/aiSettingsForm.test.ts`:**
+3 failures: 2× `expected true to be false` (save-failure paths still posting through `testResult`),
+1× `TypeError: Cannot read properties of undefined (reading 'ok')` plus an unhandled rejection
+`"disk full"` for the `store.save()`-throws case. Restored to GREEN: 12/12 pass.
+
+**B13 (webview `saveResult` rendering) — `webview/aiSettingsFormMain.ts` reverted to HEAD +
+`npm run compile`, `npm test -- src/ui/__tests__/aiSettingsFormBundle.test.ts`:**
+```
+❯ #12 B13: host posts saveResult{ok:false} → status shows the save error, distinct from testResult
+  AssertionError: expected '' to be 'disk full'
+
+Tests  1 failed | 4 passed (5)
+```
+
+**B3 pure policy — `src/ai/engineChoice.ts` did not exist on HEAD:** importing it in
+`engineChoice.test.ts` failed module resolution before any assertion ran (module-not-found RED).
+After creation: 6/6 pass.
+
+### VERIFICATION (all commands run fresh this turn, in order, after every RED revert was restored)
+
+```
+command: npm run typecheck
+result: exit 0, clean (no output beyond the npm script banner)
+
+command: npm run compile
+result: exit 0 — dist/aiSettingsForm.js, dist/schemaForm.js, dist/connectionForm.js,
+        dist/aiChatPanel.js, dist/newTableForm.js, dist/extension.js, dist/webview.js all emitted
+
+command: npm test -- src/ai/__tests__/engineChoice.test.ts
+result: 6 passed (6)
+
+command: npm test -- src/ui/__tests__/aiChatPanel.test.ts
+result: 33 passed (33)
+
+command: npm test -- src/ui/__tests__/aiChatPanelMessages.test.ts
+result: 18 passed (18)
+
+command: npm test -- src/ui/__tests__/aiChatPanelWebview.test.ts
+result: 27 passed (27)
+
+command: npm test -- src/ui/__tests__/aiSettingsForm.test.ts
+result: 12 passed (12)
+
+command: npm test -- src/ui/__tests__/aiSettingsFormBundle.test.ts
+result: 5 passed (5)
+
+command: npm test -- src/ai/omp/__tests__/detect.test.ts
+result: 14 passed (14)
+
+command: npm test -- src/core/__tests__/keywordQualify.test.ts
+result: 27 passed (27)
+```
+
+**Full-suite regression check (not one of the 9 listed commands, run as an additional safety net
+given the module-singleton risk in `extension.test.ts`):**
+```
+command: npm run typecheck && npm test
+result: typecheck clean; Test Files 85 passed | 1 skipped (86); Tests 1176 passed | 2 skipped (1178)
+        — 0 failures, same 2 pre-existing skips as the wave-1 baseline (1158 pass/2 skip/84 files);
+        delta is entirely new/extended TASK-011 tests.
+```
+
+### ISSUES
+
+- `git status --porcelain` confirms `src/ui/resultsPanel.ts` and `src/ui/schemaTree.ts` were never
+  touched (TASK-009/TASK-010 boundary respected).
+- Live `omp` smoke test was not run per instruction; `detectOmp()` correctness itself is TASK-006's
+  contract (consumed here, not re-verified).
+- `src/ui/aiSettingsFormMessages.ts` / `webview/aiSettingsFormMain.ts` touched beyond the literal
+  Target Files list — justified above under Discussion and re-verified via targeted RED/GREEN.
+
+### HANDOFF_TO_REVIEWER: yes — reason: Handoff mode + STATUS DONE; `handoff.reviewer.enabled` per
+`.ukit/storage/config.json` governs whether the next AI session picks this up from
+`pending_review`; task status update belongs to `INDEX.md` per the orchestrator's own state
+machine, not edited here.
+
+### NEXT: ready for review. Reviewer should confirm the two sibling-file scope additions
+(`aiSettingsFormMessages.ts`, `webview/aiSettingsFormMain.ts`) are acceptable, and that the
+`extension.test.ts` file-wide `detectOmp` mock does not mask any other test's real-detection
+assumptions.
+
 ---

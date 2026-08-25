@@ -442,6 +442,17 @@ describe("AiChatPanelWebview — engine banner (built-in streaming)", () => {
     expect(banner).not.toBeNull();
     expect(banner!.textContent).toBe("Engine: oh-my-pi (omp) — streaming");
   });
+
+  it('#5d B8 omp with version: banner text reads "Engine: oh-my-pi (omp) v18.0.1 — streaming"', () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false });
+    h.dispatch({ type: "engine", name: "omp", version: "18.0.1" });
+    const banner = document.getElementById("engineBanner");
+    expect(banner).not.toBeNull();
+    expect(banner!.textContent).toBe(
+      "Engine: oh-my-pi (omp) v18.0.1 — streaming",
+    );
+  });
 });
 
 // ---- TASK-003 #7: regression — done/error de-streams open bubble ----------

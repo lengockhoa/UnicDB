@@ -106,27 +106,63 @@ interface SaveFakeOpts {
   rejectWith?: Error;
 }
 
+/** Mirrors `shouldUseCursor` (postgres.ts) — a lone SELECT/WITH statement
+ *  with NO `;` boundary routes through DECLARE CURSOR, `{results: [],
+ *  batched}`. Anything else (multi-statement text like our BEGIN/…/COMMIT
+ *  transaction envelope, or a non-SELECT statement) goes through
+ *  `{results: [...]}`. TASK-009 — fixing this fake is what makes the A3
+ *  regression (`res.results[0]?.rows` on a batched response) observable;
+ *  before this fix every SELECT here returned a non-batched shape
+ *  unconditionally, which is why the bug was invisible in this suite. */
+function isSingleSelectNoSemicolon(sql: string): boolean {
+  const trimmed = sql.trim();
+  const parts = trimmed.split(";").map((s) => s.trim()).filter((s) => s.length > 0);
+  return parts.length === 1 && /^(SELECT|WITH)\b/i.test(parts[0]);
+}
+
 function makeRecordingRunner(opts: SaveFakeOpts = {}): {
   runner: QueryRunner;
   recorded: RecordedCall[];
   calls: { sql: string }[];
+  openCount: () => number;
+  closeCount: () => number;
 } {
   const recorded: RecordedCall[] = [];
+  let opens = 0;
+  let closes = 0;
   const runQuery = async (sql: string): Promise<RunResult> => {
     recorded.push({ sql });
     if (opts.rejectWith) throw opts.rejectWith;
-    return (
-      opts.runResult ?? {
-        results: [
-          {
-            columns: [],
-            rows: [],
-            rowCount: 0,
-            durationMs: 0,
+    if (opts.runResult) return opts.runResult;
+    if (isSingleSelectNoSemicolon(sql)) {
+      opens++;
+      let served = false;
+      return {
+        results: [],
+        batched: {
+          columns: [],
+          fetchBatch: async () => {
+            if (served) return null;
+            served = true;
+            return [];
           },
-        ],
-      }
-    );
+          cancel: async () => undefined,
+          close: async () => {
+            closes++;
+          },
+        },
+      };
+    }
+    return {
+      results: [
+        {
+          columns: [],
+          rows: [],
+          rowCount: 0,
+          durationMs: 0,
+        },
+      ],
+    };
   };
   const runner = {
     loadMore: vi.fn(async () => [] as StatementResult[]),
@@ -136,7 +172,7 @@ function makeRecordingRunner(opts: SaveFakeOpts = {}): {
   } as unknown as QueryRunner;
   // runner.runSql IS the recorder.
   (runner as unknown as { runQuery?: typeof runQuery }).runQuery = runQuery;
-  return { runner, recorded, calls: recorded };
+  return { runner, recorded, calls: recorded, openCount: () => opens, closeCount: () => closes };
 }
 
 function makeSaveContext(
@@ -174,8 +210,32 @@ function newPanelWithState(
 
 function saveResultAcks(fake: FakeWebviewPanel) {
   return fake.webview.postMessage.mock.calls
-    .map((c) => c[0] as { type?: string; ok?: boolean; refused?: boolean; reason?: string; errors?: string[]; index?: number })
+    .map(
+      (c) =>
+        c[0] as {
+          type?: string;
+          ok?: boolean;
+          refused?: boolean;
+          reason?: string;
+          errors?: string[];
+          index?: number;
+          rowErrors?: Array<{ rowId: number; error: string }>;
+        },
+    )
     .filter((m) => m.type === "saveResult");
+}
+
+function stateMessages(fake: FakeWebviewPanel) {
+  return fake.webview.postMessage.mock.calls
+    .map(
+      (c) =>
+        c[0] as {
+          type?: string;
+          header?: string;
+          results?: Array<{ result?: { columns: string[]; rows: unknown[][] } }>;
+        },
+    )
+    .filter((m) => m.type === "state");
 }
 
 beforeEach(() => {
@@ -572,17 +632,45 @@ describe("ResultsPanel — fetchPostgresCtids correctness (important #1)", () =>
 
 // ---- partial failure surfacing ---------------------------------------------
 
-describe("ResultsPanel — partial failure (per-statement errors)", () => {
-  it("first UPDATE succeeds, second fails → ack ok:false with errors[] (NOT silent clear)", async () => {
+describe("ResultsPanel — partial failure / atomic batch (A15)", () => {
+  it("first UPDATE ok, second throws → whole batch runs as ONE transaction call, ROLLBACK issued, ack ok:false, no COMMIT", async () => {
     const saveCtx: SaveContext = {
       getDriver: () => "postgres",
       listPkColumns: async () => ["id"],
     };
-    let n = 0;
+    const recorded: RecordedCall[] = [];
+    let committed = false;
+    let rolledBack = false;
     const fakeRunQuery = vi.fn(async (sql: string): Promise<RunResult> => {
-      n++;
-      if (/UPDATE/i.test(sql) && n === 2) {
-        throw new Error("constraint violated");
+      recorded.push({ sql });
+      const trimmed = sql.trim();
+      if (/^ROLLBACK\s*;?$/i.test(trimmed)) {
+        rolledBack = true;
+        return { results: [{ columns: [], rows: [], rowCount: 0, durationMs: 0 }] };
+      }
+      // Transaction envelope: BEGIN;<stmt1>;<stmt2>;COMMIT; — split and
+      // walk it the way a real driver would (statement-by-statement on one
+      // session), throwing partway through so COMMIT never runs.
+      const parts = trimmed
+        .split(";")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      if (parts.length > 1 || /^BEGIN$/i.test(parts[0] ?? "")) {
+        let updateCount = 0;
+        for (const part of parts) {
+          if (/^BEGIN$/i.test(part)) continue;
+          if (/^COMMIT$/i.test(part)) {
+            committed = true;
+            continue;
+          }
+          if (/UPDATE/i.test(part)) {
+            updateCount++;
+            if (updateCount === 2) {
+              throw new Error("constraint violated");
+            }
+          }
+        }
+        return { results: [{ columns: [], rows: [], rowCount: 0, durationMs: 0 }] };
       }
       return {
         results: [
@@ -640,6 +728,9 @@ describe("ResultsPanel — partial failure (per-statement errors)", () => {
     expect(ack.ok).toBe(false);
     expect(Array.isArray(ack.errors)).toBe(true);
     expect((ack.errors ?? []).join(" ")).toMatch(/constraint/i);
+    // A15 — no COMMIT after a mid-batch failure; ROLLBACK WAS issued.
+    expect(committed).toBe(false);
+    expect(rolledBack).toBe(true);
   });
 });
 
@@ -1074,5 +1165,561 @@ describe("ResultsPanel — PK table does NOT use ctid (TASK-006 #6)", () => {
     const acks = saveResultAcks(f);
     const successAck = acks.find((a) => a.ok === true);
     expect(successAck).toBeDefined();
+  });
+});
+
+// ---- TASK-009 — A3 (batched ctid fake) / atomic batch / A12 remap /
+// A19-skip rowErrors / A4 (batched refresh) ----------------------------
+
+/** Generic batched-aware fake: single SELECT with no `;` ⇒ batched shape
+ *  (mirrors `PostgresAdapter.runQuery` / `shouldUseCursor`), anything else
+ *  (multi-statement, e.g. the BEGIN/…/COMMIT transaction envelope) ⇒
+ *  non-batched `{results:[...]}`. `responder` supplies the row payload per
+ *  call; returning `"throw"` rejects with `onThrow`. Tracks open/close
+ *  counts on the batched path so leak regressions (A3) are observable. */
+function makeBatchAwareRunner(
+  responder: (sql: string) => { rows: unknown[][]; columns?: string[] } | "throw",
+  onThrow?: Error,
+): {
+  runner: QueryRunner;
+  recorded: RecordedCall[];
+  openCount: () => number;
+  closeCount: () => number;
+} {
+  const recorded: RecordedCall[] = [];
+  let opens = 0;
+  let closes = 0;
+  const runQuery = async (sql: string): Promise<RunResult> => {
+    recorded.push({ sql });
+    const r = responder(sql);
+    if (r === "throw") throw onThrow ?? new Error("fail");
+    const { rows, columns = [] } = r;
+    if (isSingleSelectNoSemicolon(sql)) {
+      opens++;
+      let served = false;
+      return {
+        results: [],
+        batched: {
+          columns,
+          fetchBatch: async () => {
+            if (served) return null;
+            served = true;
+            return rows;
+          },
+          cancel: async () => undefined,
+          close: async () => {
+            closes++;
+          },
+        },
+      };
+    }
+    return {
+      results: [{ columns, rows, rowCount: rows.length, durationMs: 0 }],
+    };
+  };
+  const runner = {
+    loadMore: vi.fn(async () => [] as StatementResult[]),
+    cancel: vi.fn(async () => undefined),
+    runSql: runQuery,
+  } as unknown as QueryRunner;
+  return { runner, recorded, openCount: () => opens, closeCount: () => closes };
+}
+
+describe("ResultsPanel — ctid resolve via CORRECTED batched fake (Happy + R-A3)", () => {
+  it("ctid SELECT returns the batched shape ⇒ map has one entry, keyed by rowId, cursor is closed", async () => {
+    const saveCtx: SaveContext = {
+      getDriver: () => "postgres",
+      listPkColumns: async () => [], // no PK
+    };
+    const columns = ["name"];
+    // 2 server rows; the dirty row is rowId 1 ("bob").
+    const { runner, recorded, openCount, closeCount } = makeBatchAwareRunner(
+      (sql) => {
+        if (/ctid\s+FROM\s+/i.test(sql) && !/UPDATE/i.test(sql)) {
+          // Before the fix this SELECT went through `res.results[0]?.rows`
+          // against a `{results:[], batched}` response ⇒ always `[]` ⇒
+          // every row "fails". The corrected fake returns the batched
+          // shape here on purpose so pickResult() is what makes this pass.
+          return { rows: [["(0,2)"]], columns: ["ctid"] };
+        }
+        if (/UPDATE/i.test(sql) || /^BEGIN/i.test(sql.trim())) {
+          return { rows: [], columns: [] };
+        }
+        // Refresh / original SELECT.
+        return { rows: [["alice"], ["bob-2"]], columns };
+      },
+    );
+    const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT name FROM t",
+          status: "done",
+          result: { columns, rows: [["alice"], ["bob"]], rowCount: 2, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    const fake = lastPanel.current!;
+    fake.webview.dispatch({
+      type: "saveEdits",
+      index: 0,
+      tableName: null,
+      pkColumns: [],
+      edits: [{ rowId: 1, colIndex: 0, value: "bob-2" }],
+    });
+    for (let i = 0; i < 200; i++) {
+      if (saveResultAcks(fake).length > 0) break;
+      await Promise.resolve();
+    }
+    const ctidLookup = recorded.find(
+      (c) => /ctid\s+FROM\s+/i.test(c.sql) && !/UPDATE/i.test(c.sql),
+    );
+    expect(ctidLookup).toBeDefined();
+    // Exactly one ctid lookup — issued for rowId 1 only (the dirty row).
+    const ctidLookups = recorded.filter(
+      (c) => /ctid\s+FROM\s+/i.test(c.sql) && !/UPDATE/i.test(c.sql),
+    );
+    expect(ctidLookups).toHaveLength(1);
+    // UPDATE used the resolved ctid — proves the batched-shape read
+    // succeeded (no "failed for every dirty row" refusal).
+    const combined = recorded.find((c) => /^BEGIN/i.test(c.sql.trim()));
+    expect(combined).toBeDefined();
+    expect(combined!.sql).toMatch(/ctid='\(0,2\)'/);
+    const acks = saveResultAcks(fake);
+    const successAck = acks.find((a) => a.ok === true);
+    expect(successAck).toBeDefined();
+    // A3 — the ctid-lookup cursor was closed. openCount() here is 2 (the
+    // ctid lookup + the post-commit refresh's own single-SELECT cursor,
+    // which is deliberately NOT closed — it is adopted for loadMore, see
+    // the R-A4 describe block below). closeCount() === openCount() - 1
+    // asserts exactly the refresh cursor is left open and every OTHER
+    // (ctid) cursor was closed. Before the fix, `fetchPostgresCtids`
+    // never awaited/closed `res.batched` at all — it read
+    // `res.results[0]` directly, leaking the ctid cursor too.
+    expect(openCount()).toBe(2);
+    expect(closeCount()).toBe(openCount() - 1);
+  });
+});
+
+describe("ResultsPanel — resource cleanup, 3 dirty rows (Edge — resource)", () => {
+  it("3 dirty rows needing ctid ⇒ 3 opens, 3 closes (today: 3 opens, 0 closes)", async () => {
+    const saveCtx: SaveContext = {
+      getDriver: () => "postgres",
+      listPkColumns: async () => [],
+    };
+    const columns = ["name"];
+    const serverRows = [["a"], ["b"], ["c"]];
+    const { runner, openCount, closeCount } = makeBatchAwareRunner((sql) => {
+      if (/ctid\s+FROM\s+/i.test(sql) && !/UPDATE/i.test(sql)) {
+        return { rows: [["(0,1)"]], columns: ["ctid"] };
+      }
+      if (/UPDATE/i.test(sql) || /^BEGIN/i.test(sql.trim())) {
+        return { rows: [], columns: [] };
+      }
+      return { rows: serverRows, columns };
+    });
+    const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT name FROM t",
+          status: "done",
+          result: { columns, rows: serverRows, rowCount: 3, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    const fake = lastPanel.current!;
+    fake.webview.dispatch({
+      type: "saveEdits",
+      index: 0,
+      tableName: null,
+      pkColumns: [],
+      edits: [
+        { rowId: 0, colIndex: 0, value: "a2" },
+        { rowId: 1, colIndex: 0, value: "b2" },
+        { rowId: 2, colIndex: 0, value: "c2" },
+      ],
+    });
+    for (let i = 0; i < 200; i++) {
+      if (saveResultAcks(fake).length > 0) break;
+      await Promise.resolve();
+    }
+    // 3 ctid-lookup cursors + 1 post-commit refresh cursor (kept open by
+    // design — adopted for loadMore, see R-A4 below) = 4 opens. All 3
+    // ctid cursors are closed; the refresh cursor is not. Today (pre-fix)
+    // this was 3 (or 4) opens and ZERO closes — the ctid resolver never
+    // closed anything.
+    expect(openCount()).toBe(4);
+    expect(closeCount()).toBe(3);
+  });
+});
+
+describe("ResultsPanel — atomic batch happy path (Happy — atomic batch)", () => {
+  it("2 statements ⇒ exactly ONE BEGIN…COMMIT call carrying both statements, ack ok:true", async () => {
+    const saveCtx: SaveContext = {
+      getDriver: () => "postgres",
+      listPkColumns: async () => ["id"],
+    };
+    const recorded: RecordedCall[] = [];
+    const fakeRunQuery = vi.fn(async (sql: string): Promise<RunResult> => {
+      recorded.push({ sql });
+      const trimmed = sql.trim();
+      const parts = trimmed.split(";").map((s) => s.trim()).filter((s) => s.length > 0);
+      if (parts.length > 1 || /^BEGIN$/i.test(parts[0] ?? "")) {
+        return { results: [{ columns: [], rows: [], rowCount: 0, durationMs: 0 }] };
+      }
+      return {
+        results: [
+          {
+            columns: ["id", "name"],
+            rows: [[1, "a"], [2, "b"]],
+            rowCount: 2,
+            durationMs: 0,
+          },
+        ],
+      };
+    });
+    const runner = {
+      loadMore: vi.fn(async () => [] as StatementResult[]),
+      cancel: vi.fn(async () => undefined),
+      runSql: fakeRunQuery,
+    } as unknown as QueryRunner;
+    const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT id, name FROM t",
+          status: "done",
+          result: { columns: ["id", "name"], rows: [[1, "a"], [2, "b"]], rowCount: 2, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    const fake = lastPanel.current!;
+    fake.webview.dispatch({
+      type: "saveEdits",
+      index: 0,
+      tableName: null,
+      pkColumns: [],
+      edits: [
+        { rowId: 0, colIndex: 1, value: "x" },
+        { rowId: 1, colIndex: 1, value: "y" },
+      ],
+    });
+    for (let i = 0; i < 200; i++) {
+      if (saveResultAcks(fake).length > 0) break;
+      await Promise.resolve();
+    }
+    // Exactly one combined call carries the whole transaction.
+    const beginCalls = recorded.filter((c) => /^BEGIN\b/i.test(c.sql.trim()));
+    expect(beginCalls).toHaveLength(1);
+    const combinedSql = beginCalls[0].sql;
+    expect((combinedSql.match(/UPDATE/gi) ?? []).length).toBe(2);
+    expect((combinedSql.match(/\bCOMMIT\b/gi) ?? []).length).toBe(1);
+    // No separate per-statement runSql calls — only the combined call and
+    // (after commit) the refresh SELECT.
+    const separateUpdateCalls = recorded.filter(
+      (c) => /^UPDATE/i.test(c.sql.trim()),
+    );
+    expect(separateUpdateCalls).toHaveLength(0);
+    const acks = saveResultAcks(fake);
+    const successAck = acks.find((a) => a.ok === true);
+    expect(successAck).toBeDefined();
+  });
+});
+
+describe("ResultsPanel — A12 remap via serverIndexByRowId (Edge — remap)", () => {
+  it('message carries serverIndexByRowId: {"4":3} ⇒ ctid resolver reads serverRows[3], not serverRows[4]', async () => {
+    const saveCtx: SaveContext = {
+      getDriver: () => "postgres",
+      listPkColumns: async () => [],
+    };
+    const columns = ["name"];
+    // Only 4 rows (indices 0-3). rowId 4 has NO direct serverRows[4] —
+    // without the remap, resolveServerIndex(4) === 4 ⇒ `serverRows[4]` is
+    // undefined ⇒ the row is skipped entirely ⇒ resolver sees ZERO
+    // candidates ⇒ "failed for every dirty row" (ok:false). WITH the
+    // remap, resolveServerIndex(4) === 3 ⇒ resolves against the "target"
+    // row and the save succeeds.
+    const serverRows = [["a"], ["b"], ["c"], ["target"]];
+    const { runner, recorded } = makeBatchAwareRunner((sql) => {
+      if (/ctid\s+FROM\s+/i.test(sql) && !/UPDATE/i.test(sql)) {
+        return { rows: [["(0,4)"]], columns: ["ctid"] };
+      }
+      if (/UPDATE/i.test(sql) || /^BEGIN/i.test(sql.trim())) {
+        return { rows: [], columns: [] };
+      }
+      return { rows: serverRows, columns };
+    });
+    const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT name FROM t",
+          status: "done",
+          result: { columns, rows: serverRows, rowCount: 4, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    const fake = lastPanel.current!;
+    fake.webview.dispatch({
+      type: "saveEdits",
+      index: 0,
+      tableName: null,
+      pkColumns: [],
+      edits: [{ rowId: 4, colIndex: 0, value: "target-2" }],
+      serverIndexByRowId: { "4": 3 },
+    });
+    for (let i = 0; i < 200; i++) {
+      if (saveResultAcks(fake).length > 0) break;
+      await Promise.resolve();
+    }
+    const ctidLookup = recorded.find(
+      (c) => /ctid\s+FROM\s+/i.test(c.sql) && !/UPDATE/i.test(c.sql),
+    );
+    expect(ctidLookup).toBeDefined();
+    // The WHERE clause was built from serverRows[3] ("target"), NOT
+    // serverRows[4] (out of range / undefined).
+    expect(ctidLookup!.sql).toMatch(/'target'/);
+    const acks = saveResultAcks(fake);
+    const successAck = acks.find((a) => a.ok === true);
+    expect(successAck).toBeDefined();
+    const blocking = acks.find(
+      (a) =>
+        (a.reason ?? "").includes("ctid lookup failed for every dirty row") ||
+        (a.errors ?? []).some((e) => e.includes("ctid lookup failed for every dirty row")),
+    );
+    expect(blocking).toBeUndefined();
+  });
+});
+
+describe("ResultsPanel — no serverIndexByRowId field (Edge — absent field, back-compat)", () => {
+  it("older-webview message with NO serverIndexByRowId key ⇒ identity mapping, save succeeds as before", async () => {
+    const saveCtx: SaveContext = {
+      getDriver: () => "postgres",
+      listPkColumns: async () => ["id"],
+    };
+    const columns = ["id", "name"];
+    const rows: unknown[][] = [[1, "alice"]];
+    const recorded: RecordedCall[] = [];
+    const fakeRunQuery = vi.fn(async (sql: string): Promise<RunResult> => {
+      recorded.push({ sql });
+      return { results: [{ columns, rows, rowCount: rows.length, durationMs: 0 }] };
+    });
+    const runner = {
+      loadMore: vi.fn(async () => [] as StatementResult[]),
+      cancel: vi.fn(async () => undefined),
+      runSql: fakeRunQuery,
+    } as unknown as QueryRunner;
+    const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT id, name FROM t",
+          status: "done",
+          result: { columns, rows, rowCount: rows.length, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    const fake = lastPanel.current!;
+    // NOTE: no `serverIndexByRowId` key at all on the dispatched message —
+    // mirrors a pre-TASK-002 webview build.
+    fake.webview.dispatch({
+      type: "saveEdits",
+      index: 0,
+      tableName: null,
+      pkColumns: [],
+      edits: [{ rowId: 0, colIndex: 1, value: "alice-2" }],
+    });
+    for (let i = 0; i < 200; i++) {
+      if (saveResultAcks(fake).length > 0) break;
+      await Promise.resolve();
+    }
+    const update = recorded.find((c) => /UPDATE/i.test(c.sql));
+    expect(update).toBeDefined();
+    expect(update!.sql).toMatch(/WHERE\s+"id"=1/);
+    const acks = saveResultAcks(fake);
+    const successAck = acks.find((a) => a.ok === true);
+    expect(successAck).toBeDefined();
+  });
+});
+
+describe("ResultsPanel — skippedRows → rowErrors (Edge partial success / R A19-skip)", () => {
+  it("1 row updates, 1 row (rowId 7) has no server row ⇒ ok:true statements.length===1 AND rowErrors===[{rowId:7,...}]", async () => {
+    const saveCtx: SaveContext = {
+      getDriver: () => "postgres",
+      listPkColumns: async () => ["id"],
+    };
+    const columns = ["id", "name"];
+    // Only 2 server rows (indices 0-1) — rowId 7 has NO server row, so
+    // buildSaveStatements' own "no server row for UPDATE" skip fires
+    // (A19-skip §3.4a), independent of the ctid/A12 path.
+    const rows: unknown[][] = [[1, "alice"], [2, "bob"]];
+    const recorded: RecordedCall[] = [];
+    const fakeRunQuery = vi.fn(async (sql: string): Promise<RunResult> => {
+      recorded.push({ sql });
+      return { results: [{ columns, rows, rowCount: rows.length, durationMs: 0 }] };
+    });
+    const runner = {
+      loadMore: vi.fn(async () => [] as StatementResult[]),
+      cancel: vi.fn(async () => undefined),
+      runSql: fakeRunQuery,
+    } as unknown as QueryRunner;
+    const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT id, name FROM t",
+          status: "done",
+          result: { columns, rows, rowCount: rows.length, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    const fake = lastPanel.current!;
+    fake.webview.dispatch({
+      type: "saveEdits",
+      index: 0,
+      tableName: null,
+      pkColumns: [],
+      edits: [
+        { rowId: 0, colIndex: 1, value: "alice-2" },
+        { rowId: 7, colIndex: 1, value: "ghost" },
+      ],
+    });
+    for (let i = 0; i < 200; i++) {
+      if (saveResultAcks(fake).length > 0) break;
+      await Promise.resolve();
+    }
+    // Exactly 1 UPDATE was emitted (row 7 was skipped by the builder, not
+    // by the host).
+    const combined = recorded.find((c) => /^BEGIN/i.test(c.sql.trim()));
+    expect(combined).toBeDefined();
+    expect((combined!.sql.match(/UPDATE/gi) ?? []).length).toBe(1);
+    const acks = saveResultAcks(fake);
+    const ack = acks.find((a) => a.ok === true);
+    expect(ack).toBeDefined();
+    // Before the fix: `rowErrors` was never forwarded — the ack looked
+    // identical to a FULL success and the webview's else-branch (no
+    // rowErrors) ran `editState.clear()`, silently discarding row 7's
+    // edit with no banner and no undo. After the fix, row 7 surfaces
+    // here so the webview keeps it dirty.
+    expect(ack!.rowErrors).toBeDefined();
+    expect(ack!.rowErrors).toHaveLength(1);
+    expect(ack!.rowErrors![0].rowId).toBe(7);
+    expect(ack!.rowErrors![0].error).toMatch(/no server row for UPDATE/);
+  });
+});
+
+describe("ResultsPanel — full success has no phantom rowErrors (Edge — nothing skipped)", () => {
+  it("builder returns ok:true with skippedRows absent ⇒ ack has NO rowErrors key (or empty)", async () => {
+    const saveCtx: SaveContext = {
+      getDriver: () => "postgres",
+      listPkColumns: async () => ["id"],
+    };
+    const columns = ["id", "name"];
+    const rows: unknown[][] = [[1, "alice"]];
+    const fakeRunQuery = vi.fn(async (_sql: string): Promise<RunResult> => {
+      return { results: [{ columns, rows, rowCount: rows.length, durationMs: 0 }] };
+    });
+    const runner = {
+      loadMore: vi.fn(async () => [] as StatementResult[]),
+      cancel: vi.fn(async () => undefined),
+      runSql: fakeRunQuery,
+    } as unknown as QueryRunner;
+    const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT id, name FROM t",
+          status: "done",
+          result: { columns, rows, rowCount: rows.length, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    const fake = lastPanel.current!;
+    fake.webview.dispatch({
+      type: "saveEdits",
+      index: 0,
+      tableName: null,
+      pkColumns: [],
+      edits: [{ rowId: 0, colIndex: 1, value: "alice-2" }],
+    });
+    for (let i = 0; i < 200; i++) {
+      if (saveResultAcks(fake).length > 0) break;
+      await Promise.resolve();
+    }
+    const acks = saveResultAcks(fake);
+    const ack = acks.find((a) => a.ok === true);
+    expect(ack).toBeDefined();
+    expect(ack!.rowErrors === undefined || ack!.rowErrors!.length === 0).toBe(true);
+  });
+});
+
+describe("ResultsPanel — post-save refresh on a batched driver (R-A4)", () => {
+  it("refresh SQL is a single SELECT (batched) ⇒ state IS posted with fresh rows, not blank", async () => {
+    const saveCtx: SaveContext = {
+      getDriver: () => "postgres",
+      listPkColumns: async () => ["id"],
+    };
+    const { runner } = makeBatchAwareRunner((sql) => {
+      const trimmed = sql.trim();
+      const parts = trimmed.split(";").map((s) => s.trim()).filter((s) => s.length > 0);
+      if (parts.length > 1 || /^BEGIN$/i.test(parts[0] ?? "")) {
+        return { rows: [], columns: [] };
+      }
+      // Refresh SQL: single SELECT, no `;` ⇒ batched shape. Before the
+      // fix, `refreshed.results[0]` was always undefined here (results
+      // is `[]` on the batched shape) and NO state post happened at all.
+      return { rows: [[1, "alice-2"]], columns: ["id", "name"] };
+    });
+    const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT id, name FROM t",
+          status: "done",
+          result: { columns: ["id", "name"], rows: [[1, "alice"]], rowCount: 1, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    const fake = lastPanel.current!;
+    fake.webview.dispatch({
+      type: "saveEdits",
+      index: 0,
+      tableName: null,
+      pkColumns: [],
+      edits: [{ rowId: 0, colIndex: 1, value: "alice-2" }],
+    });
+    for (let i = 0; i < 200; i++) {
+      if (saveResultAcks(fake).length > 0) break;
+      await Promise.resolve();
+    }
+    const states = stateMessages(fake);
+    const last = states[states.length - 1];
+    expect(last).toBeDefined();
+    expect(last!.results?.[0]?.result?.rows).toEqual([[1, "alice-2"]]);
   });
 });

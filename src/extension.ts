@@ -16,7 +16,10 @@ import { registerTableCommands } from "./ui/tableCommands";
 import { VsdbCodeLensProvider } from "./ui/codeLensProvider";
 import { ConnectionForm } from "./ui/connectionForm";
 import { sqlToRun } from "./core/statementParser";
-import { qualifyKeywordTables } from "./core/keywordQualify";
+import {
+  createKeywordTableCache,
+  qualifyKeywordTables,
+} from "./core/keywordQualify";
 import { analyzeStatement, guardTier } from "./core/dangerousStatement";
 import { truncateAtBoundary } from "./core/text";
 import { AiConfigStore } from "./ai/config";
@@ -26,6 +29,8 @@ import type { AdapterFactory } from "./ai/tools/types";
 import type { AgentDeps } from "./ai/agent";
 import { AiChatPanel, type AcpPanelDeps } from "./ui/aiChatPanel";
 import { AcpProcess } from "./ai/omp/acpProcess";
+import { detectOmp } from "./ai/omp/detect";
+import { resolveEngine } from "./ai/engineChoice";
 import type { ConnectionConfig } from "./config/types";
 import { registerBrowseCommands } from "./ui/browseCommands";
 import type { ParsedStatement } from "./config/types";
@@ -384,22 +389,37 @@ async function commandOpenAiChat(
   adapterFactory: AdapterFactory,
   deps: AgentDeps,
 ): Promise<void> {
-  const cfg = await aiStore.loadConfig();
-  if (!cfg) {
+  // B3: locked decision #2 — omp is the default AI engine and opening chat
+  // requires no configuration. An already-open panel keeps its engine
+  // choice from when it was constructed (reveal-on-reshow); only a fresh
+  // construction needs a fresh detectOmp()/resolveEngine() pass, which also
+  // keeps detection at-most-once per show rather than once per command
+  // invocation.
+  if (aiChatPanel) {
+    aiChatPanel.show();
+    return;
+  }
+  const [detection, cfg] = await Promise.all([
+    detectOmp(),
+    aiStore.loadConfig(),
+  ]);
+  const choice = resolveEngine({ detection, config: cfg });
+  if (choice.requiresConfig) {
+    // Only the builtin engine ever requires config — omp needs none.
     void vscode.window.showInformationMessage(
       "VSDB: Configure AI settings first.",
     );
     await vscode.commands.executeCommand("vsdb.openAiSettings");
     return;
   }
-  if (!aiChatPanel) {
-    aiChatPanel = new AiChatPanel({
-      extensionUri: extensionUriForForm,
-      deps,
-      adapterFactory,
-      acp: buildAcpDeps(),
-    });
-  }
+  aiChatPanel = new AiChatPanel({
+    extensionUri: extensionUriForForm,
+    deps,
+    adapterFactory,
+    acp: choice.engine === "omp" ? buildAcpDeps() : undefined,
+    engineVersion: choice.version,
+    engineHint: choice.hint,
+  });
   aiChatPanel.show();
 }
 async function runQueryFromEditor(
@@ -470,10 +490,16 @@ async function applyKeywordQualify(
   // Only Postgres supports unquoted reserved-keyword ambiguity — skip others.
   const active = mgr.getActive();
   if (active?.driver !== "postgres") return statements;
+  // D1: one cache for the WHOLE run, not one catalog round-trip per
+  // statement — a multi-statement script previously paid `listTables` once
+  // per statement even though the schema can't change mid-run.
+  const cache = createKeywordTableCache();
   const rewritten: ParsedStatement[] = [];
   for (const stmt of statements) {
-    const res = await qualifyKeywordTables(stmt.text, (schema) =>
-      adapter.listTables(schema).then((rows) => rows.map((r) => r.name)),
+    const res = await qualifyKeywordTables(
+      stmt.text,
+      (schema) => adapter.listTables(schema).then((rows) => rows.map((r) => r.name)),
+      { cache },
     );
     rewritten.push(res.changed ? { ...stmt, text: res.sql } : stmt);
   }

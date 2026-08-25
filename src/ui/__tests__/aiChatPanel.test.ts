@@ -36,7 +36,7 @@ vi.mock("../../ai/agent", async (importOriginal) => {
 });
 
 // Import AFTER mocks are registered.
-import { AiChatPanel, buildMessages } from "../aiChatPanel";
+import { AiChatPanel, buildMessages, type AcpPanelDeps } from "../aiChatPanel";
 
 // ---- vscode mock -----------------------------------------------------------
 type Listener<T> = (e: T) => void;
@@ -918,6 +918,81 @@ describe("AiChatPanel — builtin streaming", () => {
     expect(postedMessages(p).some(isDone)).toBe(true);
     const all = JSON.stringify(postedMessages(p));
     expect(all).not.toMatch(/sk-/i);
+  });
+
+  // ---- TASK-011 B8: honest engine banner ------------------------------------
+  it("#5 (B8 happy) engine{name:'omp', version} posted exactly once on first ready when acp deps + engineVersion supplied", async () => {
+    const acpStub: AcpPanelDeps = { start: vi.fn() };
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      acp: acpStub,
+      engineVersion: "18.0.1",
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+
+    const engineMsgs = postedMessages(p).filter(isEngine);
+    expect(engineMsgs).toHaveLength(1);
+    expect(engineMsgs[0]).toMatchObject({
+      type: "engine",
+      name: "omp",
+      version: "18.0.1",
+    });
+  });
+
+  it("#5b (B8 edge — missing binary) engine{name:'builtin', hint} posted when acp deps absent and engineHint supplied", async () => {
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      engineHint: "curl -fsSL https://omp.sh/install | sh",
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+
+    const engineMsgs = postedMessages(p).filter(isEngine);
+    expect(engineMsgs).toHaveLength(1);
+    expect(engineMsgs[0]).toMatchObject({
+      type: "engine",
+      name: "builtin",
+      hint: "curl -fsSL https://omp.sh/install | sh",
+    });
+  });
+
+  it("#5c (B8 edge — failover) ACP session start failure posts a SECOND engine message name:'builtin' — banner self-corrects", async () => {
+    const failingAcp: AcpPanelDeps = {
+      start: vi.fn().mockRejectedValue(new Error("spawn ENOENT")),
+    };
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      acp: failingAcp,
+      engineVersion: "18.0.1",
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+
+    handler({ type: "send", text: "hello" });
+    await until(() => postedMessages(p).filter(isEngine).length >= 2);
+
+    const engineMsgs = postedMessages(p).filter(isEngine);
+    expect(engineMsgs).toHaveLength(2);
+    expect(engineMsgs[0]).toMatchObject({ name: "omp" });
+    expect(engineMsgs[1]).toMatchObject({ name: "builtin" });
+    // R(B8): today the banner never self-corrects on ACP start failure — this
+    // second post is the regression fix.
+    const secondEngineHasNoStaleVersion = !("version" in (engineMsgs[1] as object)) ||
+      (engineMsgs[1] as { version?: string }).version === undefined;
+    expect(secondEngineHasNoStaleVersion).toBe(true);
   });
 });
 

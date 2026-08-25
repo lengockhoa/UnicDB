@@ -125,6 +125,10 @@ export class ResultsPanel {
    * Render results mới vào panel. Nếu panel chưa mở → show().
    */
   render(results: StatementResult[], header: string): void {
+    // A14 — this.header was never assigned, so every later post (loadMore,
+    // requery, saveEdits refresh, ready) sent an empty header and the query
+    // duration/title was always blank.
+    this.header = header;
     this.lastResults = results;
     // Derive (schema?, table) per statement FROM the parsed SQL — host-side
     // truth. The webview's tableName/pkColumns message is IGNORED (Fix R1
@@ -262,7 +266,13 @@ export class ResultsPanel {
         await this.handleExportFile(msg.format, msg.text);
         break;
       case "saveEdits":
-        await this.handleSaveEdits(msg.index, msg.tableName, msg.pkColumns, msg.edits);
+        await this.handleSaveEdits(
+          msg.index,
+          msg.tableName,
+          msg.pkColumns,
+          msg.edits,
+          msg.serverIndexByRowId,
+        );
         break;
       case "requery":
         await this.handleRequery(msg.index, msg.where, msg.orderBy);
@@ -345,6 +355,7 @@ export class ResultsPanel {
     _webviewTableName: string | null,
     _webviewPkColumns: string[],
     edits: Array<{ rowId: number; colIndex: number; value: unknown }>,
+    serverIndexByRowId?: Record<string, number>,
   ): Promise<void> {
     if (!this.saveContext) {
       this.postMessage({
@@ -402,30 +413,51 @@ export class ResultsPanel {
     const columns = r.result.columns;
     const serverRows = r.result.rows;
 
+    // A12 — __rowId (webview's stable per-row id) diverges from the index
+    // into serverRows once rows are added/streamed after the initial page.
+    // The webview supplies rowId → serverRows-index; without this map the
+    // ctid resolver (and buildSaveStatements' own row lookup) silently
+    // reads the WRONG server row.
+    const serverIndexMap: Map<number, number> | undefined = serverIndexByRowId
+      ? new Map(
+          Object.entries(serverIndexByRowId).map(([k, v]) => [Number(k), v]),
+        )
+      : undefined;
+    const resolveServerIndex = (rowId: number): number =>
+      serverIndexMap?.get(rowId) ?? rowId;
+
     // TASK-002 — Postgres no-PK lazy ctid resolver. Single collapsed
     // path: no fast-path that trusts a result-set `ctid` column (the
     // host never appends one — TASK-001 — and a user-named column
     // called `ctid` is data, not a row address). The resolver runs ONCE
-    // at save time, ONLY when we actually need ctids to address any
-    // UPDATE cell edit or DELETE marker; pure INSERT saves (only
-    // `__vsdb_new_row__` markers) skip the resolver entirely.
+    // at save time, ONLY for the specific dirty rowIds that actually
+    // need a ctid (UPDATE cell edit or DELETE marker); pure INSERT rows
+    // (only `__vsdb_new_row__` markers) are excluded.
     let ctidByRowId: ReadonlyMap<number, string> | undefined;
-    const needsCtid =
-      driver === "postgres" &&
-      pkColumns.length === 0 &&
-      edits.some((e) => {
+    const rowIdsNeedingCtid: number[] = [];
+    if (driver === "postgres" && pkColumns.length === 0) {
+      const seen = new Set<number>();
+      for (const e of edits) {
+        if (seen.has(e.rowId)) continue;
         const v = e.value;
-        if (typeof v !== "object" || v === null) return true;
-        // Add-Row markers carry their own values inline — INSERT path
-        // has no ctid requirement.
-        return (v as Record<string, unknown>)["__vsdb_new_row__"] !== true;
-      });
-    if (needsCtid) {
+        const isPureInsert =
+          typeof v === "object" &&
+          v !== null &&
+          (v as Record<string, unknown>)["__vsdb_new_row__"] === true;
+        if (!isPureInsert) {
+          seen.add(e.rowId);
+          rowIdsNeedingCtid.push(e.rowId);
+        }
+      }
+    }
+    if (rowIdsNeedingCtid.length > 0) {
       const ctidRes = await this.fetchPostgresCtids(
         tableName,
         parsed.schema,
         columns,
         serverRows,
+        rowIdsNeedingCtid,
+        resolveServerIndex,
       );
       if (!ctidRes.ok) {
         const reason =
@@ -444,15 +476,11 @@ export class ResultsPanel {
       }
       ctidByRowId = ctidRes.map;
     }
-    const built = buildSaveStatements(
-      driver as Dialect,
-      tableName,
-      pkColumns,
-      columns,
-      edits,
-      serverRows,
-      ctidByRowId ? { ctidByRowId } : {},
-    );
+    const built = buildSaveStatements(driver as Dialect, tableName, pkColumns, columns, edits, serverRows, {
+      ...(ctidByRowId ? { ctidByRowId } : {}),
+      ...(serverIndexMap ? { serverIndexByRowId: serverIndexMap } : {}),
+      ...(parsed.schema ? { schema: parsed.schema } : {}),
+    });
 
     // Refusal from build (no_pk / invalid_identifier). Banner with reason.
     if (built.ok === false) {
@@ -498,42 +526,64 @@ export class ResultsPanel {
 
     this.setBusy(true);
     const refreshStart = Date.now();
-    const errors: string[] = [];
     try {
-      for (const stmt of built.statements) {
+      // A15 — bundle BEGIN + every generated statement + COMMIT into a
+      // SINGLE combined runner.runSql call. The adapter contract does
+      // NOT guarantee session/connection affinity across separate calls
+      // (a fresh call may land on a different pooled connection), so
+      // issuing BEGIN and the statements as separate calls made the
+      // "transaction" meaningless — a mid-batch failure could not be
+      // rolled back because later statements might already be
+      // committed autocommit-style on their own connection. Bundling
+      // into one call guarantees they share a session.
+      const kw = transactionKeywords(driver as Dialect);
+      const combined = [kw.begin, ...built.statements, kw.commit].join(";\n") + ";";
+      try {
+        await this.runner.runSql(combined);
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err);
+        // Best-effort rollback — separate call is fine here: the
+        // combined call above already failed/aborted server-side, so
+        // there is no "must share a session" requirement left to honor.
         try {
-          await this.runner.runSql(stmt);
-        } catch (err) {
-          const m = err instanceof Error ? err.message : String(err);
-          errors.push(m);
+          await this.runner.runSql(kw.rollback);
+        } catch {
+          // ignore — connection may already be back to a clean state
         }
-      }
-      if (errors.length > 0) {
-        // Partial-failure path: ack ok:false with per-statement errors
-        // so the banner shows exactly which statement(s) failed. The
-        // webview keeps dirty state so the user can retry.
         this.postMessage({
           type: "saveResult",
           index,
           ok: false,
-          errors,
+          errors: [m],
         });
         return;
       }
-      // Re-run the original SQL to refresh the grid.
+      // Re-run the original SQL to refresh the grid. Mirrors
+      // handleRequery: pickResult() handles both batched (Postgres
+      // single SELECT → cursor) and non-batched shapes; `.results[0]`
+      // is always undefined for the batched case (A4).
       const refreshed = await this.runner.runSql(r.sql);
-      const freshResult = refreshed.results[0];
+      const freshResult = await pickResult(refreshed);
       if (freshResult) {
-        const next = this.lastResults.slice();
-        next[index] = {
+        const newStmt: StatementResult = {
           ...r,
           result: freshResult,
+          batched: refreshed.batched,
           // Deferred minor (v1.4.1): elapsed ms of the refresh run — was
           // `r.durationMs` (the ORIGINAL query's duration), so the footer
           // showed a stale number after commit.
           durationMs: Date.now() - refreshStart,
         };
+        const next = this.lastResults.slice();
+        next[index] = newStmt;
         this.lastResults = next;
+        // Sync the runner-internal entry so loadMore(index) reaches the
+        // NEW cursor (mirrors handleRequery's adopt() call).
+        try {
+          this.runner.adopt(r.index, newStmt);
+        } catch {
+          // adopt is best-effort; loadMore path failure is non-fatal here.
+        }
         this.postMessage({
           type: "state",
           header: this.header,
@@ -547,6 +597,15 @@ export class ResultsPanel {
       // webview sees a silent ok:true and the user can't tell which
       // edits were dropped. TASK-006 #4.
       const nonFatalWarnings = built.warnings;
+      // A19-skip — skippedRows (per-row "this row was NOT included in
+      // the save batch" reasons, e.g. no server row for UPDATE) must
+      // travel to the webview as rowErrors so clearExceptRowIds keeps
+      // those specific rows dirty instead of the ack wiping ALL dirty
+      // state on ok:true.
+      const rowErrors = built.skippedRows?.map((s) => ({
+        rowId: s.rowId,
+        error: s.reason,
+      }));
       this.postMessage({
         type: "saveResult",
         index,
@@ -554,6 +613,7 @@ export class ResultsPanel {
         ...(nonFatalWarnings.length > 0
           ? { warnings: nonFatalWarnings, errors: nonFatalWarnings }
           : {}),
+        ...(rowErrors && rowErrors.length > 0 ? { rowErrors } : {}),
       });
     } finally {
       this.setBusy(false);
@@ -740,10 +800,18 @@ export class ResultsPanel {
     schema: string | undefined,
     columns: string[],
     serverRows: unknown[][],
+    rowIds: number[],
+    resolveServerIndex: (rowId: number) => number,
   ): Promise<
     | { ok: true; map: ReadonlyMap<number, string> }
     | { ok: false; reason: "all_failed" | "ambiguous_only" }
   > {
+    // A12 — the map MUST be keyed by rowId (the webview's stable id),
+    // NOT by the loop index into serverRows. Once rows are added/streamed
+    // after the initial page, rowId and serverRows-index diverge; keying
+    // by loop index silently attached the wrong row's ctid to a later
+    // save. resolveServerIndex(rowId) is the ONLY place serverRows is
+    // indexed.
     const map = new Map<number, string>();
     let anySucceeded = false;
     let anyAmbiguous = false;
@@ -751,8 +819,9 @@ export class ResultsPanel {
     const qTable = quoteIdent(tableName, "postgres");
     const fullTable = qSchema ? `${qSchema}.${qTable}` : qTable;
     try {
-      for (let i = 0; i < serverRows.length; i++) {
-        const row = serverRows[i];
+      for (const rowId of rowIds) {
+        const serverIndex = resolveServerIndex(rowId);
+        const row = serverRows[serverIndex];
         if (!row) continue;
         const conds: string[] = [];
         for (let c = 0; c < columns.length && c < row.length; c++) {
@@ -767,14 +836,31 @@ export class ResultsPanel {
           }
         }
         const sql = `SELECT ctid FROM ${fullTable} WHERE ${conds.join(" AND ")}`;
+        // A3 — runSql may return a batched (cursor) RunResult for a
+        // single-SELECT-no-semicolon query on postgres. pickResult()
+        // fetches the initial page from either shape; the batched
+        // handle is then closed (best-effort) so the pooled (max:1)
+        // connection is released immediately instead of leaking a live
+        // cursor that starves every subsequent save/query.
         const res = await this.runner.runSql(sql);
-        const rows = res.results[0]?.rows ?? [];
-        if (rows.length === 1) {
-          map.set(i, String(rows[0][0]));
-          anySucceeded = true;
-        } else if (rows.length > 1) {
-          // Ambiguous — refuse this row.
-          anyAmbiguous = true;
+        try {
+          const picked = await pickResult(res);
+          const rows = picked?.rows ?? [];
+          if (rows.length === 1) {
+            map.set(rowId, String(rows[0][0]));
+            anySucceeded = true;
+          } else if (rows.length > 1) {
+            // Ambiguous — refuse this row.
+            anyAmbiguous = true;
+          }
+        } finally {
+          if (res.batched) {
+            try {
+              await res.batched.close();
+            } catch {
+              // best-effort — connection may already be released
+            }
+          }
         }
       }
     } catch {
@@ -892,6 +978,25 @@ function sanitizeCell(v: any, seen: WeakSet<object>): any {
     }
   }
   return out;
+}
+
+/**
+ * A15 — dialect-aware transaction keywords. Postgres/mysql use plain
+ * BEGIN/COMMIT/ROLLBACK. MSSQL's plain `BEGIN` is T-SQL BLOCK syntax
+ * (BEGIN...END), not a transaction start — it must be `BEGIN
+ * TRANSACTION` / `COMMIT TRANSACTION` / `ROLLBACK TRANSACTION`.
+ */
+function transactionKeywords(
+  dialect: Dialect,
+): { begin: string; commit: string; rollback: string } {
+  if (dialect === "mssql") {
+    return {
+      begin: "BEGIN TRANSACTION",
+      commit: "COMMIT TRANSACTION",
+      rollback: "ROLLBACK TRANSACTION",
+    };
+  }
+  return { begin: "BEGIN", commit: "COMMIT", rollback: "ROLLBACK" };
 }
 
 function escapeHtml(s: string): string {

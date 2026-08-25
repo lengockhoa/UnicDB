@@ -60,6 +60,8 @@ export interface AiChatPanelEngine {
   name: "omp" | "builtin";
   /** Hint shown to user when engine is not omp (install/update instructions). */
   hint?: string;
+  /** Detected omp version for the banner, e.g. "18.0.1". Absent for builtin. */
+  version?: string;
 }
 
 /** A single permission choice the user may grant for an ACP server request.

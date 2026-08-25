@@ -48,6 +48,7 @@ interface EngineMsg {
   type: "engine";
   name: "omp" | "builtin";
   hint?: string;
+  version?: string;
 }
 /** ACP permission request — host-generated opaque requestId, opaque optionIds,
  * and tool name/detail that MUST be rendered as plain text only. */
@@ -324,7 +325,9 @@ function applyEngine(msg: EngineMsg): void {
   banner.className = `vsdb-chat-engine vsdb-chat-engine-${msg.name}`;
   const label =
     msg.name === "omp"
-      ? "Engine: oh-my-pi (omp) — streaming"
+      ? msg.version
+        ? `Engine: oh-my-pi (omp) v${msg.version} — streaming`
+        : "Engine: oh-my-pi (omp) — streaming"
       : msg.hint
         ? `Engine: builtin — ${msg.hint} — streaming`
         : `Engine: builtin — streaming`;

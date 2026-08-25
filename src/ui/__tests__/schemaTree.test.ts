@@ -121,6 +121,14 @@ function makeFakeAdapter(opts: {
   /** Optional override for estimateTableRows. Receives (schema, table) and
    * returns Promise<number | null>. Defaults to resolving null. */
   estimateTableRowsImpl?: (schema: string, table: string) => Promise<number | null>;
+  /** Optional override for estimateTableRowsBatch (TASK-010/D2). Receives
+   * (schema, tables) and returns Promise<Map<string, number|null>>. Defaults
+   * to resolving an empty Map (mirrors "no data" — descriptions fall back to
+   * schema). */
+  estimateTableRowsBatchImpl?: (
+    schema: string,
+    tables: readonly string[],
+  ) => Promise<Map<string, number | null>>;
 } = {}) {
   const listSchemas = vi.fn().mockImplementation(() => {
     if (opts.throw) throw new Error("connect failed");
@@ -158,6 +166,12 @@ function makeFakeAdapter(opts: {
       opts.estimateTableRowsImpl
         ? opts.estimateTableRowsImpl(schema, table)
         : Promise.resolve<number | null>(null),
+    ),
+    estimateTableRowsBatch: vi.fn().mockImplementation(
+      (schema: string, tables: readonly string[]) =>
+        opts.estimateTableRowsBatchImpl
+          ? opts.estimateTableRowsBatchImpl(schema, tables)
+          : Promise.resolve(new Map<string, number | null>()),
     ),
     testConnection: vi.fn().mockResolvedValue(undefined),
   };
@@ -812,13 +826,13 @@ describe("SchemaTreeProvider — DataGrip-style root behavior", () => {
     state.workspaceFolders = undefined;
   });
 
-  it("connection node collapsible=Expanded (danh sách connected hiện sẵn)", async () => {
+  it("connection node collapsible=Collapsed (TASK-010/D3 — không mở socket ở activation)", async () => {
     const { mgr } = setupTree();
     await mgr.addConnection(makeCfg({ id: "a", name: "Local" }), "p");
     const provider = new SchemaTreeProvider(mgr);
 
     const root = await provider.getChildren(undefined);
-    expect(root[0].collapsible).toBe(2); // TreeItemCollapsibleState.Expanded
+    expect(root[0].collapsible).toBe(1); // TreeItemCollapsibleState.Collapsed
   });
 
   it("connection node có icon theo driver (postgres=mysql=mssql khác nhau, no codicon prefix trong label)", async () => {
@@ -880,17 +894,20 @@ describe("SchemaTreeProvider — TASK-302 row-count badges + filter engine", () 
     expect(formatRows(1234567)).toBe("1.2M");
   });
 
-  it("getCategoryChildren tables → sau microtask table node description = '176', label giữ nguyên (happy)", async () => {
+  it("getCategoryChildren tables → sau microtask table node description = '176', label giữ nguyên (happy) [TASK-010: batch API]", async () => {
     const { mgr, adapter } = setupTree({
       schemas: [{ name: "app" }],
       tables: [
         { name: "users", schema: "app" },
         { name: "orders", schema: "app" },
       ],
-      estimateTableRowsImpl: async (schema, table) => {
-        if (table === "users") return 176;
-        if (table === "orders") return 42;
-        return null;
+      estimateTableRowsBatchImpl: async (_schema, tables) => {
+        const m = new Map<string, number | null>();
+        for (const t of tables) {
+          if (t === "users") m.set(t, 176);
+          else if (t === "orders") m.set(t, 42);
+        }
+        return m;
       },
     });
     await mgr.addConnection(makeCfg({ id: "rc1", name: "RC1" }), "p");
@@ -917,8 +934,9 @@ describe("SchemaTreeProvider — TASK-302 row-count badges + filter engine", () 
     const users = tables.find((t) => t.label === "users")!;
     expect(users.label).toBe("users"); // label không đổi
     expect(users.description).toBe("176");
-    // estimateTableRows được gọi với đúng (schema, table).
-    expect(adapter.estimateTableRows).toHaveBeenCalled();
+    // TASK-010/D2 — batch API được gọi 1 lần cho cả schema, KHÔNG còn per-table.
+    expect(adapter.estimateTableRowsBatch).toHaveBeenCalledTimes(1);
+    expect(adapter.estimateTableRowsBatch).toHaveBeenCalledWith("app", ["users", "orders"]);
   });
 
   it("setFilter('po_log') tables gồm api_po_log + users → chỉ api_po_log được trả về (happy, ancestors expanded)", async () => {
@@ -1458,5 +1476,239 @@ describe("SchemaTreeProvider — TASK-003 findSchemaNode + revealSchemaNode", ()
       "missing",
     );
     expect(treeView.reveal).not.toHaveBeenCalled();
+  });
+});
+
+// =============================================================================
+// TASK-010 — D2: batch row-count on schema expand (one estimateTableRowsBatch
+// call per category expand instead of one estimateTableRows per table). D3:
+// connection nodes start Collapsed so activation never opens a socket.
+// =============================================================================
+const waitMicrotasks = async (): Promise<void> => {
+  const step = () => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    setImmediate(resolve);
+    return promise;
+  };
+  await step();
+  await step();
+};
+
+describe("SchemaTreeProvider — TASK-010 D2 batch row-count + D3 collapsed connections", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.emitters = [];
+    state.treeItemCalls = [];
+    state.workspaceFolders = undefined;
+  });
+
+  it("expand a 3-table schema → estimateTableRowsBatch called ONCE with (schema, tables); descriptions updated (happy)", async () => {
+    const { mgr, adapter } = setupTree({
+      schemas: [{ name: "public" }],
+      tables: [
+        { name: "a", schema: "public" },
+        { name: "b", schema: "public" },
+        { name: "c", schema: "public" },
+      ],
+      estimateTableRowsBatchImpl: async (_schema, tables) => {
+        const m = new Map<string, number | null>();
+        const values: Record<string, number> = { a: 10, b: 20, c: 30 };
+        for (const t of tables) m.set(t, values[t]);
+        return m;
+      },
+    });
+    await mgr.addConnection(makeCfg({ id: "batch1" }), "p");
+    await mgr.setActive("batch1");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    const cats = await provider.getChildren(schemas[0]);
+    const tables = await provider.getChildren(cats[0]);
+
+    expect(adapter.estimateTableRowsBatch).toHaveBeenCalledTimes(1);
+    expect(adapter.estimateTableRowsBatch).toHaveBeenCalledWith("public", ["a", "b", "c"]);
+    // Old per-table API must NOT be used from the expand path anymore.
+    expect(adapter.estimateTableRows).not.toHaveBeenCalled();
+
+    await waitMicrotasks();
+
+    expect(tables.find((t) => t.label === "a")!.description).toBe("10");
+    expect(tables.find((t) => t.label === "b")!.description).toBe("20");
+    expect(tables.find((t) => t.label === "c")!.description).toBe("30");
+  });
+
+  it("connection nodes Collapsed; expanding one still lists schemas normally (happy, D3)", async () => {
+    const { mgr, adapter } = setupTree({ schemas: [{ name: "app" }] });
+    await mgr.addConnection(makeCfg({ id: "d3happy", name: "Local" }), "p");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    expect(root[0].collapsible).toBe(1); // Collapsed
+
+    const schemas = await provider.getChildren(root[0]);
+    expect(adapter.listSchemas).toHaveBeenCalledWith(false);
+    expect(schemas.map((s) => s.label)).toEqual(["app"]);
+  });
+
+  it("schema with 0 tables → no estimateTableRowsBatch call at all (edge, empty)", async () => {
+    const { mgr, adapter } = setupTree({
+      schemas: [{ name: "public" }],
+      tables: [],
+    });
+    await mgr.addConnection(makeCfg({ id: "empty10" }), "p");
+    await mgr.setActive("empty10");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    const cats = await provider.getChildren(schemas[0]);
+    const tables = await provider.getChildren(cats[0]);
+
+    expect(tables).toHaveLength(0);
+    expect(adapter.estimateTableRowsBatch).not.toHaveBeenCalled();
+  });
+
+  it("expand, collapse, re-expand within TTL → zero additional estimateTableRowsBatch calls (edge, cache)", async () => {
+    vi.useFakeTimers();
+    try {
+      const { mgr, adapter } = setupTree({
+        schemas: [{ name: "public" }],
+        tables: [
+          { name: "a", schema: "public" },
+          { name: "b", schema: "public" },
+        ],
+      });
+      await mgr.addConnection(makeCfg({ id: "cachebatch1" }), "p");
+      await mgr.setActive("cachebatch1");
+      const provider = new SchemaTreeProvider(mgr);
+
+      const root = await provider.getChildren(undefined);
+      const schemas = await provider.getChildren(root[0]);
+      const cats = await provider.getChildren(schemas[0]);
+
+      await provider.getChildren(cats[0]); // expand
+      expect(adapter.estimateTableRowsBatch).toHaveBeenCalledTimes(1);
+
+      // "Collapse" (VS Code just stops calling getChildren) then re-expand
+      // within TTL — cache hit, no new round trip.
+      vi.advanceTimersByTime(30 * 1000);
+      await provider.getChildren(cats[0]); // re-expand
+      expect(adapter.estimateTableRowsBatch).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("batch omits one table (dropped mid-flight) → present tables get counts, missing renders without count, no error node (edge, partial failure)", async () => {
+    const { mgr } = setupTree({
+      schemas: [{ name: "public" }],
+      tables: [
+        { name: "kept", schema: "public" },
+        { name: "dropped", schema: "public" },
+      ],
+      estimateTableRowsBatchImpl: async () => {
+        // "dropped" omitted entirely — mirrors adapter contract (table
+        // vanished between listTables and estimateTableRowsBatch).
+        const m = new Map<string, number | null>();
+        m.set("kept", 99);
+        return m;
+      },
+    });
+    await mgr.addConnection(makeCfg({ id: "partial1" }), "p");
+    await mgr.setActive("partial1");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    const cats = await provider.getChildren(schemas[0]);
+    const tables = await provider.getChildren(cats[0]);
+
+    await waitMicrotasks();
+
+    const kept = tables.find((t) => t.label === "kept")!;
+    const dropped = tables.find((t) => t.label === "dropped")!;
+    expect(kept.description).toBe("99");
+    // Missing table renders without a count (schema fallback), no error.
+    expect(dropped.description).toBe("public");
+    expect(dropped.contextValue).toBe("table");
+    expect(tables.every((t) => t.contextValue !== "error")).toBe(true);
+  });
+
+  it("estimateTableRowsBatch rejects → tree still renders every table node, failure swallowed (edge, rejection)", async () => {
+    const { mgr } = setupTree({
+      schemas: [{ name: "public" }],
+      tables: [
+        { name: "x", schema: "public" },
+        { name: "y", schema: "public" },
+      ],
+      estimateTableRowsBatchImpl: () => Promise.reject(new Error("boom")),
+    });
+    await mgr.addConnection(makeCfg({ id: "reject1" }), "p");
+    await mgr.setActive("reject1");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    const cats = await provider.getChildren(schemas[0]);
+    const tables = await provider.getChildren(cats[0]);
+
+    await waitMicrotasks();
+
+    expect(tables.map((t) => t.label)).toEqual(["x", "y"]);
+    expect(tables.every((t) => t.contextValue === "table")).toBe(true);
+    // Fallback description (schema) — no count applied, no crash.
+    expect(tables.every((t) => t.description === "public")).toBe(true);
+  });
+
+  it("300-table schema → estimateTableRowsBatch called exactly ONCE (regression D2 — today 300 calls)", async () => {
+    const tables = Array.from({ length: 300 }, (_, i) => ({
+      name: `t${i}`,
+      schema: "public",
+    }));
+    const { mgr, adapter } = setupTree({
+      schemas: [{ name: "public" }],
+      tables,
+    });
+    await mgr.addConnection(makeCfg({ id: "big300" }), "p");
+    await mgr.setActive("big300");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    const cats = await provider.getChildren(schemas[0]);
+    const tableNodes = await provider.getChildren(cats[0]);
+
+    expect(tableNodes).toHaveLength(300);
+    expect(adapter.estimateTableRowsBatch).toHaveBeenCalledTimes(1);
+    expect(adapter.estimateTableRows).not.toHaveBeenCalled();
+    const [, calledTables] = adapter.estimateTableRowsBatch.mock.calls[0];
+    expect(calledTables).toHaveLength(300);
+  });
+
+  it("activation with 3 saved connections → 0 listSchemas calls (regression D3 — today 3× listSchemas)", async () => {
+    const { mgr, adapters } = setupTree({
+      schemas: [{ name: "public" }],
+      factoryPerCall: true,
+    });
+    await mgr.addConnection(makeCfg({ id: "c1", name: "C1" }), "p");
+    await mgr.addConnection(makeCfg({ id: "c2", name: "C2" }), "p");
+    await mgr.addConnection(makeCfg({ id: "c3", name: "C3" }), "p");
+    const provider = new SchemaTreeProvider(mgr);
+
+    // Simulate what VS Code does at activation: render root, then auto-expand
+    // any node whose collapsibleState is Expanded (that's the whole D3 bug —
+    // Expanded roots force VS Code to eagerly call getChildren on them).
+    const root = await provider.getChildren(undefined);
+    expect(root).toHaveLength(3);
+    for (const node of root) {
+      if (node.collapsible === 2 /* Expanded */) {
+        await provider.getChildren(node);
+      }
+    }
+
+    for (const a of adapters) {
+      expect(a.listSchemas).not.toHaveBeenCalled();
+    }
   });
 });

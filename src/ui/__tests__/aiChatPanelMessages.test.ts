@@ -312,3 +312,34 @@ describe("AiChatPanelMessages — resume_sessions / history (host → webview)",
     expect(HISTORY_RENDER_CAP).toBe(50);
   });
 });
+
+// ---- TASK-011 (B8) — AiChatPanelEngine gains an optional `version` field --
+describe("AiChatPanelMessages — engine (B8: version field)", () => {
+  it("#B8a version round-trips on the engine message when omp is active", () => {
+    const msg: AiChatPanelHostMessage = {
+      type: "engine",
+      name: "omp",
+      version: "18.0.1",
+    };
+    expect(msg.type).toBe("engine");
+    if (msg.type === "engine") {
+      expect(msg.name).toBe("omp");
+      expect(msg.version).toBe("18.0.1");
+    }
+  });
+
+  it("#B8b version is absent (not present, not undefined-on-wire) for builtin", () => {
+    const msg: AiChatPanelHostMessage = { type: "engine", name: "builtin", hint: "x" };
+    expect("version" in msg).toBe(false);
+    expect(JSON.stringify(msg)).not.toMatch(/version/);
+  });
+
+  it("#B8c engine message with hint + no version still narrows correctly (backward compatible)", () => {
+    const msg: AiChatPanelHostMessage = { type: "engine", name: "builtin" };
+    expect(msg.type).toBe("engine");
+    if (msg.type === "engine") {
+      expect(msg.hint).toBeUndefined();
+      expect(msg.version).toBeUndefined();
+    }
+  });
+});

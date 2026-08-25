@@ -62,6 +62,7 @@ import {
 } from "../ai/omp/acp";
 import {
   HISTORY_RENDER_CAP,
+  type AiChatPanelEngine,
   type AiChatPanelHostMessage,
   type AiChatPanelWebviewMessage,
 } from "./aiChatPanelMessages";
@@ -108,6 +109,19 @@ export interface AiChatPanelOptions {
   adapterFactory: AdapterFactory;
   /** Optional ACP engine deps. When absent, panel runs builtin only. */
   acp?: AcpPanelDeps;
+  /**
+   * Detected omp version (B8) — set by the caller from a single upstream
+   * `detectOmp()` call (see `resolveEngine` in `src/ai/engineChoice.ts`).
+   * Rendered in the "engine" banner when the engine is "omp"; absent for
+   * builtin.
+   */
+  engineVersion?: string;
+  /**
+   * Install/update hint (B8) — `OMP_INSTALL_HINT` | `OMP_UPDATE_HINT` from
+   * the same upstream `resolveEngine` call. Rendered in the "engine" banner
+   * when the engine is "builtin" because omp was unavailable/too old.
+   */
+  engineHint?: string;
   /** Optional tuning for tests (permission timeout, etc). */
   tuning?: AiChatPanelTuning;
 }
@@ -434,10 +448,13 @@ export class AiChatPanel {
 
   private async handleReady(): Promise<void> {
     if (this.engine === null) {
-      // Default to builtin if no acp deps — keeps the regression path.
-      const wireEngine: "omp" | "builtin" = this.options.acp === undefined ? "builtin" : "omp";
+      // The engine itself was already decided upstream (caller resolved it
+      // via `resolveEngine()`/`detectOmp()` before constructing this panel —
+      // see `options.acp` being present iff the engine is "omp"). This is
+      // just the wire announcement; it must not re-run detection (B8: at
+      // most once per show).
       this.engine = this.options.acp === undefined ? "builtin" : "omp";
-      this.post({ type: "engine", name: wireEngine });
+      this.postEngine(this.engine);
     }
     this.post({ type: "init", hasHistory: this.history.length > 0 });
   }
@@ -610,6 +627,10 @@ export class AiChatPanel {
       this.post({ type: "error", message: `ACP session failed: ${message}` });
       this.post({ type: "done" });
       this.engine = "builtin";
+      // B8: the banner must self-correct on failover — without this repost
+      // the webview keeps showing "omp" forever even though every
+      // subsequent turn now runs builtin.
+      this.postEngine("builtin");
       this.token = null;
       return;
     }
@@ -1226,6 +1247,25 @@ export class AiChatPanel {
 
   private post(msg: AiChatPanelHostMessage): void {
     void this.panel?.webview.postMessage(msg);
+  }
+
+  /**
+   * Post an `engine` banner message (B8). Called once on first `ready` and
+   * again on ACP→builtin failover so the banner self-corrects instead of
+   * permanently claiming an engine that is no longer active. `version`
+   * (omp only) and `hint` (builtin only) come from the single upstream
+   * `detectOmp()`/`resolveEngine()` call the caller made — this method never
+   * calls `detectOmp()` itself, so detection stays at-most-once per show.
+   */
+  private postEngine(name: EngineKind): void {
+    const msg: AiChatPanelEngine = { type: "engine", name };
+    if (name === "omp" && this.options.engineVersion !== undefined) {
+      msg.version = this.options.engineVersion;
+    }
+    if (name === "builtin" && this.options.engineHint !== undefined) {
+      msg.hint = this.options.engineHint;
+    }
+    this.post(msg);
   }
 
   private buildHtml(webview: vscode.Webview): string {

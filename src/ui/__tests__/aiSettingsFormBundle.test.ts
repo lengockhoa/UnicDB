@@ -270,4 +270,29 @@ describeIfBundle("webview/aiSettingsFormMain.ts bundle (TASK-004)", () => {
     const msg = testMsgs[0] as { apiKey: string };
     expect(msg.apiKey).toBe("sk-9");
   });
+
+  itIfBundle(
+    "#12 B13: host posts saveResult{ok:false} → status shows the save error, distinct from testResult",
+    () => {
+      loadBundle();
+      dispatch({
+        type: "init",
+        settings: {
+          baseUrl: "",
+          method: "chat/completions",
+          timeoutMs: 60000,
+          maxSteps: 12,
+          models: {
+            work: { modelId: "", vision: true },
+            smart: { modelId: "", vision: false },
+          },
+        },
+        hasApiKey: false,
+      });
+      dispatch({ type: "saveResult", ok: false, error: "disk full" });
+      const status = document.getElementById("status") as HTMLElement;
+      expect(status.textContent).toBe("disk full");
+      expect(status.className).toContain("err");
+    },
+  );
 });

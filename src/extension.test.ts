@@ -5,7 +5,7 @@
 //   - status bar dispose không throw.
 //
 // Pattern: vi.mock('vscode') đầy đủ.
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { Mock } from "vitest";
 import * as path from "node:path";
 
@@ -181,7 +181,45 @@ vi.mock("vscode", () => {
   };
 });
 
+// TASK-011 (B3/B8): `commandOpenAiChat` now calls the REAL `detectOmp()`
+// before deciding whether AI chat needs config. Every extension.test.ts test
+// that invokes `vsdb.aiChat` must not shell out to a real `which omp` on the
+// machine running the suite — that would make tests nondeterministic (and
+// slow) depending on whatever happens to be on the test runner's PATH.
+// Default: omp NOT installed, so all pre-existing "unconfigured → interstitial"
+// tests keep their exact prior behavior (only the builtin engine needs
+// config). Individual TASK-011 tests below reassign `detectOmpState.impl` to
+// exercise the omp-present paths.
+const detectOmpState = vi.hoisted(() => ({
+  impl: async () =>
+    ({ available: false, ok: false, reason: "not-installed" }) as {
+      available: boolean;
+      ok: boolean;
+      path?: string;
+      version?: string;
+      reason?: string;
+    },
+}));
+vi.mock("./ai/omp/detect", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./ai/omp/detect")>();
+  return {
+    ...actual,
+    detectOmp: (...args: unknown[]) =>
+      (detectOmpState.impl as (...a: unknown[]) => unknown)(...args),
+  };
+});
+
 import { activate, deactivate } from "./extension";
+
+// File-wide reset — every test starts from "omp not installed" unless it
+// explicitly reassigns detectOmpState.impl for its own scope.
+beforeEach(() => {
+  detectOmpState.impl = async () => ({
+    available: false,
+    ok: false,
+    reason: "not-installed",
+  });
+});
 
 // ---- helpers used by TASK-003 case #6 (declared above all uses) ------------
 const panelConstructorCalls: Array<unknown> = [];
@@ -1008,6 +1046,98 @@ describe("TASK-004 — vsdb.aiChat wiring", () => {
     expect(called).toBe(true);
   });
 });
+
+// =============================================================================
+// TASK-011 (B3) — commandOpenAiChat resolves the engine via a real
+// detectOmp() + pure resolveEngine() policy call BEFORE deciding whether the
+// config interstitial is needed. Locked decision #2: omp is zero-config —
+// requiresConfig must be false whenever detectOmp() reports ok:true, even
+// with no AiConfigStore.loadConfig() result at all.
+// =============================================================================
+describe("TASK-011 (B3) — commandOpenAiChat resolves engine via detectOmp() + resolveEngine()", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+    state.createdWebviewPanels.length = 0;
+    // `./ui/aiChatPanel` is mocked file-wide (see the hoisted vi.mock below,
+    // whose factory closes over this same array) — assert construction via
+    // panelConstructorCalls, not real vscode.window.createWebviewPanel calls.
+    panelConstructorCalls.length = 0;
+    // Restore the file-wide default (not-installed) before each test; the
+    // Happy test below overrides it locally.
+    detectOmpState.impl = async () => ({
+      available: false,
+      ok: false,
+      reason: "not-installed",
+    });
+  });
+
+  afterEach(async () => {
+    // extension.ts keeps a module-level `aiChatPanel` singleton; without
+    // resetting it here, a panel opened by one test short-circuits the next
+    // test's `if (aiChatPanel) { show(); return; }` guard before it ever
+    // reaches detectOmp()/resolveEngine().
+    await deactivate();
+  });
+
+  it("Happy — omp detected + ok, NO ai config saved → panel opens directly, no config interstitial", async () => {
+    detectOmpState.impl = async () => ({
+      available: true,
+      ok: true,
+      path: "/usr/bin/omp",
+      version: "18.0.1",
+    });
+    const ctx = makeCtx(); // unconfigured: globalState.get returns undefined
+    activate(ctx as never);
+    const showInfoSpy = vi.mocked(vscodeMock.window.showInformationMessage);
+    const executeCommandSpy = vi.mocked(vscodeMock.commands.executeCommand);
+    showInfoSpy.mockClear();
+    executeCommandSpy.mockClear();
+
+    const fn = state.registeredCommands.get("vsdb.aiChat");
+    expect(fn).toBeDefined();
+    await fn!();
+
+    // B3: no interstitial — never routed to AI Settings, never shown the
+    // "configure AI first" info message, because omp needs zero config.
+    expect(showInfoSpy).not.toHaveBeenCalled();
+    const routedToSettings = executeCommandSpy.mock.calls.some(
+      (c) => c[0] === "vsdb.openAiSettings",
+    );
+    expect(routedToSettings).toBe(false);
+    // The chat panel actually opened, wired for the omp engine.
+    expect(panelConstructorCalls.length).toBe(1);
+    const opts = panelConstructorCalls[0] as {
+      engineVersion?: string;
+      engineHint?: string;
+      acp?: unknown;
+    };
+    expect(opts.engineVersion).toBe("18.0.1");
+    expect(opts.acp).toBeDefined();
+  });
+
+  it("R(B3) regression — omp NOT available + no config → config interstitial still shown (unchanged pre-TASK-011 behavior)", async () => {
+    // Default detectOmpState.impl (not-installed) from beforeEach above.
+    const ctx = makeCtx();
+    activate(ctx as never);
+    const showInfoSpy = vi.mocked(vscodeMock.window.showInformationMessage);
+    const executeCommandSpy = vi.mocked(vscodeMock.commands.executeCommand);
+    showInfoSpy.mockClear();
+    executeCommandSpy.mockClear();
+
+    const fn = state.registeredCommands.get("vsdb.aiChat");
+    expect(fn).toBeDefined();
+    await fn!();
+
+    expect(showInfoSpy).toHaveBeenCalled();
+    const routedToSettings = executeCommandSpy.mock.calls.some(
+      (c) => c[0] === "vsdb.openAiSettings",
+    );
+    expect(routedToSettings).toBe(true);
+    expect(panelConstructorCalls.length).toBe(0);
+  });
+});
+
 // =============================================================================
 // TASK-002 (wave 2) — wire `vsdb.browseTableData` from schemaTree nodes:
 //   * extension.activate() registers the command via registerBrowseCommands.
@@ -1373,6 +1503,75 @@ describe("TASK-007 — runStatement rewrites reserved-keyword tables to public s
     );
     expect(res.changed).toBe(true);
     expect(res.sql).toBe('SELECT * FROM "public"."order";');
+  });
+
+  it("#3 D1: multi-statement run reuses ONE cache — listTables called once (not once per statement)", async () => {
+    const ctx = makeCtx();
+    ctx.globalState.get = vi.fn((key: string) => {
+      if (key === "vsdb.connections") {
+        return [
+          {
+            id: "c1",
+            name: "c",
+            driver: "postgres",
+            host: "h",
+            port: 5432,
+            user: "u",
+            database: "d",
+          },
+        ];
+      }
+      if (key === "vsdb.activeConnection") return "c1";
+      return undefined;
+    }) as never;
+
+    const connectionMgrMod = await import("./core/connectionManager");
+    listTablesSpy = vi.fn().mockResolvedValue([{ name: "order", schema: "public" }]);
+    const adapter: Partial<DbAdapter> = {
+      listTables: listTablesSpy as unknown as DbAdapter["listTables"],
+      testConnection: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    vi.spyOn(connectionMgrMod.ConnectionManager.prototype, "getAdapter").mockResolvedValue(
+      adapter as DbAdapter,
+    );
+
+    const runnerMod = await import("./core/queryRunner");
+    runSpy = vi
+      .spyOn(runnerMod.QueryRunner.prototype, "run")
+      .mockResolvedValue([]);
+
+    const ext = await import("./extension");
+    await ext.activate(ctx as never);
+
+    const sql = "SELECT * FROM order;\nSELECT * FROM order WHERE id = 1;";
+    state.activeEditor = {
+      document: {
+        languageId: "sql",
+        getText: () => sql,
+        offsetAt: (p: unknown) => (p as { character: number }).character,
+      },
+      selection: {
+        isEmpty: false,
+        active: { line: 0, character: sql.length },
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: sql.length },
+      },
+      insertSnippet: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const runQueryFn = state.registeredCommands.get("vsdb.runQuery");
+    expect(runQueryFn).toBeDefined();
+    await runQueryFn!();
+
+    expect(runSpy).toHaveBeenCalled();
+    const passed = runSpy.mock.calls[0]?.[0] as ParsedStatement[];
+    expect(passed.length).toBe(2);
+    expect(passed[0]!.text).toContain('"public"."order"');
+    expect(passed[1]!.text).toContain('"public"."order"');
+    // D1: cache reused across both statements within the same run — exactly
+    // ONE catalog round-trip, not one per statement.
+    expect(listTablesSpy).toHaveBeenCalledTimes(1);
   });
 });
 
