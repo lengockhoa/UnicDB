@@ -1838,6 +1838,15 @@ function renderGrid(): void {
       onSortChanged: () => {
         if (suppressSortRequery) return;
         if (!gridApi) return;
+        // Fix round: a sort landing inside the 150ms filter debounce must
+        // supersede the pending timer — this post already carries the live
+        // filter model, and letting the timer fire afterwards would post a
+        // newer, sort-less requery right behind it (which the host treats
+        // as the current query).
+        if (filterRequeryTimer !== null) {
+          clearTimeout(filterRequeryTimer);
+          filterRequeryTimer = null;
+        }
         const orderBy = orderByFromColumnState(gridApi);
         postFilterRequeryWithOrder(orderBy);
       },
@@ -2154,11 +2163,20 @@ const BARE_IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_$]*$/;
 type SqlDialect = "postgres" | "mysql" | "mssql" | "unknown";
 
 /** Parse the driver out of the state header the host builds as
- *  `Run at <ISO> — <driver>@<host>/<db>` (or `… — no connection`). */
+ *  `Run at <ISO> — <driver>@<host>/<db>` (or `… — no connection`).
+ *  Fix round: parse ONLY the driver token (between the em dash and the
+ *  `@`) with whole-token matching — substring-matching the entire header
+ *  misfires on hosts/databases that name a rival engine
+ *  (`mysql@postgres.internal/postgres_prod` must stay mysql). No explicit
+ *  dialect field exists in the state message (its shape is frozen for
+ *  TASK-004), so this strict token parse IS the dialect source; a header
+ *  that does not match (`no connection`, `Browse …`, mangled) yields
+ *  `unknown` and quoting falls back to postgres double-quoting. */
 function detectDialectFromHeader(header: string): SqlDialect {
-  if (/postgres/i.test(header)) return "postgres";
-  if (/mysql/i.test(header)) return "mysql";
-  if (/mssql/i.test(header)) return "mssql";
+  const token = /—\s*([A-Za-z0-9_-]+)@/.exec(header)?.[1] ?? "";
+  if (/^postgres$/i.test(token)) return "postgres";
+  if (/^mysql$/i.test(token)) return "mysql";
+  if (/^mssql$/i.test(token)) return "mssql";
   return "unknown";
 }
 
@@ -2195,12 +2213,18 @@ function orderByFromColumnState(api: GridApi): string {
 }
 
 /** Post a server-side requery carrying the current grid filter model.
- *  `opts.offset` present ⇒ paged ("Load More"); omitted ⇒ fresh page 0. */
+ *  `opts.offset` present ⇒ paged ("Load More"); omitted ⇒ fresh page 0.
+ *  Fix round: when the grid has an active header sort, its orderBy takes
+ *  precedence over the manual requery-bar input — a filter change or Load
+ *  More requery used to post the (empty) bar value, silently dropping the
+ *  user's column sort; the host then returned unsorted rows. The bar input
+ *  still applies when no column is sorted. */
 function postFilterRequery(opts: { offset?: number } = {}): void {
   if (!gridApi) return;
   const filters = buildServerFilterModel();
   const where = dom?.requeryWhere.value ?? "";
-  const orderBy = dom?.requeryOrderBy.value ?? "";
+  const gridOrder = orderByFromColumnState(gridApi);
+  const orderBy = gridOrder !== "" ? gridOrder : dom?.requeryOrderBy.value ?? "";
   postToHost({
     type: "requery",
     index: activeTab,
@@ -3275,6 +3299,17 @@ window.addEventListener("message", (ev: MessageEvent) => {
       statementGeneration++;
       distinctStatementToken = statementGeneration;
       distinctByColumn.clear();
+      // Fix round (review finding 3): cleared cache + still-mounted filter
+      // instances = a live popup/list showing stale values that would never
+      // re-request (requests only fire from init). Re-request for every
+      // mounted column and recompute their lists off the (now empty) cache
+      // so they fall back to loaded rows until the fresh reply arrives.
+      // The filter model is untouched — selections survive.
+      for (const inst of setFilterInstances) {
+        const col = inst.getColumnId();
+        if (col) requestDistinctValues(col);
+        inst.refreshEntries();
+      }
     }
     render();
   } else if (msg.type === "busy") {

@@ -54,6 +54,7 @@ import {
   type OrderByTerm,
 } from "./queryComposer";
 import {
+  DISTINCT_VALUES_LIMIT,
   buildDistinctValuesQuery,
   takeDistinctValues,
 } from "./distinctValues";
@@ -127,7 +128,8 @@ export class ResultsPanel {
   /** TASK-004 — cached DISTINCT-values replies keyed by `${index}::${column}`.
    *  Cleared wholesale in render(): a new result set invalidates every
    *  dropdown list. Populated only by completed, non-stale requests. */
-  private distinctCache: Map<string, unknown[]> = new Map();
+  private distinctCache: Map<string, { values: unknown[]; truncated: boolean }> =
+    new Map();
   /** TASK-004 — statement identity generation. Incremented in render() (and
    *  when a requery replaces a statement) so an in-flight DISTINCT response
    *  for a replaced statement can be detected and dropped: its captured
@@ -944,7 +946,7 @@ export class ResultsPanel {
     const key = `${index}::${column}`;
     const cached = this.distinctCache.get(key);
     if (cached) {
-      reply(cached, false);
+      reply(cached.values, cached.truncated);
       return;
     }
     const dialect = this.saveContext?.getDriver() ?? null;
@@ -959,17 +961,41 @@ export class ResultsPanel {
     // Capture identity BEFORE awaiting: index/column/generation.
     const generation = this.statementGeneration;
     const sql = buildDistinctValuesQuery(r.sql, column, dialect, "");
+    // FIX R2 — a batched DISTINCT response (postgres/mysql single SELECT →
+    // server cursor) must not leak the cursor: pool.max=1 means a live
+    // cursor pins the only pooled client and any later query deadlocks.
+    // Drain fetchBatch() through the probe limit, then close in finally —
+    // best-effort, idempotent (closeStatementCursor pattern).
     try {
       const runResult = this.transaction
         ? await this.transaction.runQuery(sql)
         : await this.runner.runSql(sql);
-      const fresh = await pickResult(runResult);
+      let rows: unknown[][];
+      if (runResult.batched) {
+        const batched = runResult.batched;
+        try {
+          rows = (await pickResult(runResult)).rows as unknown[][];
+          // Probe is LIMIT cap+1 — keep fetching pages until we have more
+          // than the cap, or the cursor hits EOF (fetchBatch → null).
+          while (rows.length <= DISTINCT_VALUES_LIMIT) {
+            const batch = await batched.fetchBatch();
+            if (!batch || batch.length === 0) break;
+            rows = rows.concat(batch);
+          }
+        } finally {
+          try {
+            await batched.close();
+          } catch {
+            // ignore — cursor may already be closed
+          }
+        }
+      } else {
+        rows = (await pickResult(runResult)).rows as unknown[][];
+      }
       // Stale completion (statement replaced while in flight): drop entirely.
       if (generation !== this.statementGeneration) return;
-      const { values, truncated } = takeDistinctValues(
-        fresh.rows as unknown[][],
-      );
-      this.distinctCache.set(key, values);
+      const { values, truncated } = takeDistinctValues(rows);
+      this.distinctCache.set(key, { values, truncated });
       reply(values, truncated);
     } catch (err) {
       if (generation !== this.statementGeneration) return;

@@ -268,3 +268,66 @@ FINDINGS:
     - none
 NEXT_STATUS_FOR_INDEX: changes_requested
 NOTES: Model isolation passed; configured reviewer alias is unic-smart and the actual bound model is bao-opus. Fresh targeted verification passed, but the three runtime paths above are not covered by the submitted tests.
+
+---
+
+## Executor Report (fix round 1)
+
+- EXECUTOR_TOOL: claude-code
+- EXECUTOR_MODEL: bao-sonnet
+- EXECUTOR_SUBAGENT: feature-implementer
+
+### Fixes (all three important findings)
+
+1. **:2158 dialect misparse** — `detectDialectFromHeader` now parses ONLY the
+   driver token: `/—\s*([A-Za-z0-9_-]+)@/` extracts the token between the em
+   dash and `@`, then whole-token (`^…$`) match against postgres/mysql/mssql.
+   `mysql@postgres.internal/postgres_prod` resolves mysql. No explicit dialect
+   field exists in the frozen state-message shape (it belongs to TASK-004), so
+   the strict token parse IS the dialect source; non-matching headers
+   (`no connection`, `Browse …`) still yield `unknown` → postgres quoting,
+   unchanged. Fallback documented in the function's doc comment.
+2. **:2199 requeries drop the grid sort** — `postFilterRequery` (used by both
+   the filter debounce and Load More paging) now prefers
+   `orderByFromColumnState(gridApi)` when it is non-empty, falling back to the
+   manual requery-bar input only when no column is sorted. Additionally
+   `onSortChanged` cancels a pending `filterRequeryTimer` — the sort post
+   already carries the live filter model, so the stale timer firing 150ms
+   later would have posted a newer, sort-less requery right behind it.
+3. **:3273 stale live filters after invalidation** — the statement-identity
+   change branch (cache clear) now iterates `setFilterInstances`: for each
+   mounted instance it re-fires `requestDistinctValues(col)` (cache is empty,
+   so the request actually posts) and calls `refreshEntries()` so the visible
+   list immediately recomputes off loaded rows until the fresh reply lands.
+   The filter model is untouched — user selections survive.
+
+### RED_OUTPUT (before fix, after `npm run compile`)
+
+```
+ FAIL ...webviewServerSort.test.ts > 17. dialect parsed from the driver TOKEN only...
+ FAIL ...webviewServerSort.test.ts > 18. filter requery while a column is sorted...
+ FAIL ...webviewDistinctValues.test.ts > 15. statement replacement invalidates the distinct cache...
+ Test Files  2 failed (2)
+      Tests  3 failed | 16 passed (19)
+```
+
+### Verification Output
+
+- `npm run typecheck` → clean (exit 0)
+- `npm run compile` → `esbuild: build complete`
+- `npx vitest run src/ui/__tests__/webviewServerSort.test.ts src/ui/__tests__/webviewDistinctValues.test.ts`
+  → `Test Files 2 passed (2)` · `Tests 19 passed (19)` (16 pre-existing + 3 new)
+- `npx vitest run src/ui/__tests__/webviewServerFilter.test.ts src/ui/__tests__/webviewSetFilter.test.ts src/ui/__tests__/webviewFilters.test.ts src/ui/__tests__/webviewBundle.test.ts`
+  → `Tests 31 passed (31)`
+- `npx tsc -p tsconfig.webview.json --noEmit | grep … | uniq -c | sort -rn` →
+  `14 main.ts / 10 connectionFormMain / 10 aiSettingsFormMain / 5 schemaFormMain / 1 newTableFormMain`
+  — byte-identical to the baseline (main.ts still 14, not increased).
+
+- Files changed: `webview/main.ts` (3 fixes), `src/ui/__tests__/webviewServerSort.test.ts`
+  (cases 17, 18), `src/ui/__tests__/webviewDistinctValues.test.ts` (case 15).
+- Status: PASS
+- Note: no new `../src` imports added in webview/main.ts (still exactly the two
+  pre-existing ones); no new message types — finding 1's "explicit field" option
+  was rejected because the state-message shape is frozen for TASK-004, so the
+  reviewer-endorsed strict token parse was implemented instead. No git
+  add/commit performed.

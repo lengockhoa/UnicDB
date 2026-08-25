@@ -53,6 +53,60 @@ describe("buildDistinctValuesQuery", () => {
     );
   });
 
+  // Case 4b — edge (injection, exact SQL): escaped identifiers, quote doubled
+  it("postgres identifier with embedded quote is doubled (exact SQL)", () => {
+    expect(
+      buildDistinctValuesQuery("SELECT * FROM t", 'we"ird', "postgres", "", 1000),
+    ).toBe(
+      `SELECT DISTINCT "we""ird" FROM (SELECT * FROM t) vsdb_distinct ORDER BY 1 LIMIT 1001`,
+    );
+  });
+
+  it("mysql identifier with embedded backtick is doubled (exact SQL)", () => {
+    expect(
+      buildDistinctValuesQuery("SELECT * FROM t", "we`ird", "mysql", "", 1000),
+    ).toBe(
+      "SELECT DISTINCT `we``ird` FROM (SELECT * FROM t) vsdb_distinct ORDER BY 1 LIMIT 1001",
+    );
+  });
+
+  it("mssql identifier with embedded ] is doubled (exact SQL)", () => {
+    expect(
+      buildDistinctValuesQuery("SELECT * FROM t", "we]ird", "mssql", "", 1000),
+    ).toBe(
+      `SELECT DISTINCT TOP (1001) [we]]ird] FROM (SELECT * FROM t) vsdb_distinct ORDER BY 1`,
+    );
+  });
+
+  // Case 4c — edge (exact SQL): schema-qualified base stays verbatim
+  it("schema-qualified base stays verbatim (postgres, exact SQL)", () => {
+    expect(
+      buildDistinctValuesQuery(
+        "SELECT * FROM analytics.events",
+        "name",
+        "postgres",
+        "",
+        1000,
+      ),
+    ).toBe(
+      `SELECT DISTINCT "name" FROM (SELECT * FROM analytics.events) vsdb_distinct ORDER BY 1 LIMIT 1001`,
+    );
+  });
+
+  it("schema-qualified base stays verbatim (mssql, exact SQL)", () => {
+    expect(
+      buildDistinctValuesQuery(
+        "SELECT * FROM dbo.Events",
+        "name",
+        "mssql",
+        "",
+        1000,
+      ),
+    ).toBe(
+      `SELECT DISTINCT TOP (1001) [name] FROM (SELECT * FROM dbo.Events) vsdb_distinct ORDER BY 1`,
+    );
+  });
+
   // Case 5 — edge (boundary): trailing semicolon on inner SQL is stripped
   it("trailing semicolon on inner SQL is stripped", () => {
     const out = buildDistinctValuesQuery(

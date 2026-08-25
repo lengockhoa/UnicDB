@@ -511,3 +511,54 @@ describe("buildFilterWhere — columnTypes (TASK-001)", () => {
     }
   });
 });
+
+// Fix round 1 — reviewer findings (IMPORTANT): comma inside a quoted identifier,
+// and unbounded string-type prefix matching.
+describe("parseOrderBy — quoted identifier containing a comma (fix round 1)", () => {
+  it("parses a pg quoted identifier with an embedded comma as ONE term", () => {
+    expect(parseOrderBy('"my,col" DESC', "postgres")).toEqual({
+      ok: true,
+      terms: [{ column: "my,col", direction: "DESC" }],
+    });
+  });
+  it("parses a mysql backtick identifier with an embedded comma", () => {
+    expect(parseOrderBy("`last, first`", "mysql")).toEqual({
+      ok: true,
+      terms: [{ column: "last, first", direction: "ASC" }],
+    });
+  });
+  it("parses an mssql bracket identifier with an embedded comma next to other terms", () => {
+    expect(parseOrderBy("id, [my,col] DESC", "mssql")).toEqual({
+      ok: true,
+      terms: [
+        { column: "id", direction: "ASC" },
+        { column: "my,col", direction: "DESC" },
+      ],
+    });
+  });
+});
+
+describe("isStringColumnType false positives (fix round 1)", () => {
+  it("charset, enumeration, and setting are NOT string types", () => {
+    for (const t of ["charset", "enumeration", "setting"]) {
+      expect(
+        buildFilterWhere(
+          { c: { values: ["(Blanks)"] } },
+          "postgres",
+          { columnTypes: { c: t } },
+        ),
+      ).toBe(`"c" IS NULL`);
+    }
+  });
+  it("known string families still get the = '' arm", () => {
+    for (const t of ["char", "character varying(30)", "varchar(255)", "set('x,y')"]) {
+      expect(
+        buildFilterWhere(
+          { c: { values: ["(Blanks)"] } },
+          "postgres",
+          { columnTypes: { c: t } },
+        ),
+      ).toBe(`("c" IS NULL OR "c" = '')`);
+    }
+  });
+});

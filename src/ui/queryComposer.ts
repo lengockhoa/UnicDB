@@ -96,9 +96,14 @@ function isStringColumnType(declared: string | undefined): boolean {
   if (!declared) return false;
   const t = declared.trim().toLowerCase();
   if (t.length === 0) return false;
-  if (/^(char|varchar|nchar|nvarchar|character varying|character|enum|set)\b/.test(t)) return true;
-  if (/^(char|varchar|nchar|nvarchar|character varying|character|enum|set)/.test(t)) return true;
-  if (t === "text" || t === "tinytext" || t === "mediumtext" || t === "longtext" || t === "ntext") return true;
+  // Exact base tokens (optionally with a modifier/size suffix like "(50)" or
+  // "('a','b')"). Family-bounded: `charset`, `enumeration`, `setting` etc. do
+  // NOT match — an unknown type must stay false (NULL-only `(Blanks)`).
+  if (/^(character varying|character|char|varchar|nchar|nvarchar|enum|set)(\s*\(|$)/.test(t)) {
+    return true;
+  }
+  // TEXT family — exact base names or the (tiny|medium|long)text suffix rule.
+  if (/^(tiny|medium|long)?text$/.test(t) || t === "ntext") return true;
   if (t === "citext" || t === "cstring") return true;
   return false;
 }
@@ -295,7 +300,7 @@ function isSafeLogicalIdent(name: string): boolean {
 export function parseOrderBy(orderBy: string, dialect?: Dialect): ParseOrderByResult {
   const trimmed = orderBy.trim();
   if (trimmed.length === 0) return { ok: true, terms: [] };
-  const rawTerms = trimmed.split(",");
+  const rawTerms = splitTopLevel(trimmed);
   const terms: OrderByTerm[] = [];
   for (const raw of rawTerms) {
     const text = raw.trim();
@@ -321,6 +326,46 @@ export function parseOrderBy(orderBy: string, dialect?: Dialect): ParseOrderByRe
     terms.push({ column: logical, direction, ...(nulls ? { nulls } : {}) });
   }
   return { ok: true, terms };
+}
+
+/** Split an ORDER BY string on commas that are OUTSIDE any quoted identifier,
+ *  honoring each style's doubled escape ("" / `` / ]]) so a comma inside a
+ *  quoted identifier — `"my,col"` — stays in one term. */
+function splitTopLevel(orderBy: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let i = 0;
+  const openers: Record<string, string> = { '"': '"', "`": "`", "[": "]" };
+  while (i < orderBy.length) {
+    const ch = orderBy[i];
+    const close = openers[ch];
+    if (close) {
+      // Copy the whole quoted section (including delimiters) verbatim.
+      let j = i + 1;
+      while (j < orderBy.length) {
+        if (orderBy[j] === close) {
+          if (j + 1 < orderBy.length && orderBy[j + 1] === close) { j += 2; continue; }
+          break;
+        }
+        j += 1;
+      }
+      // Unterminated quote: copy the rest; the term parser rejects it later.
+      const end = j < orderBy.length ? j + 1 : orderBy.length;
+      current += orderBy.slice(i, end);
+      i = end;
+      continue;
+    }
+    if (ch === ",") {
+      parts.push(current);
+      current = "";
+      i += 1;
+      continue;
+    }
+    current += ch;
+    i += 1;
+  }
+  parts.push(current);
+  return parts;
 }
 
 /** Split `ident[ ASC|DESC][ NULLS FIRST|NULLS LAST]` respecting quoted identifiers.

@@ -153,6 +153,20 @@ typecheck verified in-worktree. queryComposer.ts NOT modified.
 
 ---
 
+## Executor Report (fix round 1)
+
+EXECUTOR_MODEL: bao-sonnet
+RED_OUTPUT: n/a — builder already correct, tests added. Verified `quoteIdent` (src/core/saveStatements.ts:136) doubles every quote char per dialect and the builder passes inner SQL verbatim, so escaped-identifier and schema-qualified inputs were already handled; the new exact-SQL tests went GREEN on first run.
+Verification Output: |
+  npx vitest run src/ui/__tests__/distinctValues.test.ts → 17 passed / 0 failed
+  ✓ src/ui/__tests__/distinctValues.test.ts (17 tests) 3ms — 1 passed (17)
+  npx vitest run src/ui/__tests__/queryComposer.test.ts → 42 passed / 0 failed
+  npm run typecheck (tsc --noEmit) → clean, exit 0
+Status: PASS
+Note: Added 5 exact-SQL tests (postgres/mysql/mssql escaped identifiers + postgres/mssql schema-qualified bases); fixed minor doc comment at distinctValues.ts:78-81 to match implemented first-cell behavior.
+
+---
+
 ## Reviewer Verdict
 
 VERDICT: CHANGES-REQUESTED

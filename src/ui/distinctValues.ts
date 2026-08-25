@@ -77,8 +77,8 @@ export function buildDistinctValuesQuery(
  *
  * Each row is expected to be a single-element array (one projected column,
  * see `StatementResult.result.rows: unknown[][]`). Ragged input — non-array
- * entries, empty arrays, or rows with extra columns — is skipped, not
- * crashed on; the first cell of any surviving row is taken as the value.
+ * entries or empty arrays — is skipped, not crashed on; any non-empty
+ * row contributes its FIRST cell as the value (extra columns ignored).
  * NULL survives as `null`. When the input has more than `limit` rows the
  * extra probe row(s) are dropped and `truncated: true` is reported.
  */

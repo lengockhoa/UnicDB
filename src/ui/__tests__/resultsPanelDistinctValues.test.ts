@@ -458,4 +458,85 @@ describe("TASK-004 case 15 — no type metadata means cycle-V bare IS NULL", () 
     expect(sql).toContain('"n" IS NULL');
     expect(sql).not.toContain(`"n" = ''`);
   });
+
+  it("tableByStatement miss (no-FROM sql): bare IS NULL, requery still runs, no throw", async () => {
+    const { runSql, fake } = makePanel({
+      columns: ["n"],
+      rows: [["a"]],
+      sql: "SELECT now()", // no FROM clause → tableByStatement miss
+    });
+    fake.webview.dispatch({
+      type: "requery",
+      index: 0,
+      where: "",
+      orderBy: "",
+      filters: { n: { values: ["(Blanks)"] } },
+    });
+    for (let i = 0; i < 500; i++) await Promise.resolve();
+    expect(runSql).toHaveBeenCalledTimes(1);
+    const sql = runSql.mock.calls[0]![0] as string;
+    expect(sql).toContain('"n" IS NULL');
+    expect(sql).not.toContain(`"n" = ''`);
+  });
+});
+
+// =============================================================================
+// Fix round 1 — regression: cached truncated flag survives cache replay
+// =============================================================================
+
+describe("fix round 1 — a truncated:true first response replays truncated (not false)", () => {
+  it("second (cached) request still reports truncated:true", async () => {
+    // 1001 distinct rows: DISTINCT_VALUES_LIMIT probe is 1000+1 → truncated.
+    const rows: unknown[][] = [];
+    for (let i = 0; i < 1001; i++) rows.push([`v${i}`]);
+    const { runSql, fake } = makePanel({ rows });
+    fake.webview.dispatch({ type: "requestDistinctValues", index: 0, column: "name" });
+    await waitForDistinct(fake, 1);
+    expect(distinctMessages(fake)[0]!.truncated).toBe(true);
+    expect(runSql).toHaveBeenCalledTimes(1);
+    // Second request is served from cache — must replay truncated:true.
+    fake.webview.dispatch({ type: "requestDistinctValues", index: 0, column: "name" });
+    await waitForDistinct(fake, 2);
+    expect(runSql).toHaveBeenCalledTimes(1);
+    expect(distinctMessages(fake)[1]!.truncated).toBe(true);
+    expect(distinctMessages(fake)[1]!.values).toHaveLength(1000);
+  });
+});
+
+// =============================================================================
+// Fix round 1 — regression: batched DISTINCT response is drained + closed
+// =============================================================================
+
+describe("fix round 1 — batched DISTINCT response drains all pages and closes the cursor", () => {
+  it("two-page batched run is fully drained and batched.close() called", async () => {
+    const fetchBatch = vi.fn(async () => null);
+    const firstBatch: unknown[][] = [];
+    for (let i = 0; i < 500; i++) firstBatch.push([`v${i}`]);
+    const secondBatch: unknown[][] = [];
+    for (let i = 500; i < 900; i++) secondBatch.push([`v${i}`]);
+    let call = 0;
+    fetchBatch.mockImplementation(async () => {
+      call += 1;
+      if (call === 1) return firstBatch;
+      if (call === 2) return secondBatch;
+      return null;
+    });
+    const close = vi.fn(async () => undefined);
+    const runSql = vi.fn(async (_sql: string): Promise<RunResult> => {
+      return {
+        results: [],
+        batched: { columns: ["name"], fetchBatch, close },
+      } as unknown as RunResult;
+    });
+    const { fake } = makePanel({ runSql });
+    fake.webview.dispatch({ type: "requestDistinctValues", index: 0, column: "name" });
+    await waitForDistinct(fake, 1);
+    const msg = distinctMessages(fake)[0]!;
+    // Both pages consumed: 500 + 400 = 900 values, complete (not truncated).
+    expect(msg.values).toHaveLength(900);
+    expect(msg.truncated).toBe(false);
+    // Page 3 returns null (EOF) → cursor drained, then closed exactly once.
+    expect(fetchBatch).toHaveBeenCalledTimes(3);
+    expect(close).toHaveBeenCalledTimes(1);
+  });
 });

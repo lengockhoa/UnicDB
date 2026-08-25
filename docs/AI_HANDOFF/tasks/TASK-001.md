@@ -272,3 +272,34 @@ FINDINGS:
     - none
 NEXT_STATUS_FOR_INDEX: changes_requested
 NOTES: Model isolation passed (bao-opus vs bao-sonnet); configured `unic-smart` reviewer tier is satisfied. Fresh targeted and blast-radius verification passed, but the two parser/type-classification edge failures require fixes.
+
+## Executor Report (fix round 1)
+
+- EXECUTOR_MODEL: bao-sonnet (Claude Sonnet 4.5 via UNIC gateway, code tier)
+- RED_OUTPUT:
+  ```
+  Test Files  1 failed (1)
+       Tests  4 failed | 43 passed (47)
+  parseOrderBy quoted-comma cases + charset/enumeration/setting ⇒ expected "c" IS NULL, got = '' arm
+  ```
+- Verification Output:
+  ```
+  # npx vitest run src/ui/__tests__/queryComposer.test.ts
+   Test Files  1 passed (1)  Tests  47 passed (47)
+  # npm run typecheck
+  > tsc --noEmit   (clean, exit 0)
+  # npx vitest run src/ui/__tests__/resultsPanelServerFilter.test.ts src/ui/__tests__/resultsPanelRequery.test.ts
+   Test Files  2 passed (2)  Tests  27 passed (27)
+  ```
+- Status: PASS
+- Note: |
+  Both IMPORTANT findings fixed. (1) `splitTopLevel` replaces `split(",")` in
+  `parseOrderBy` — copies quoted sections (`"…"`, `` `…` ``, `[…]`) verbatim
+  honoring doubled escapes, splits only on top-level commas; unterminated quotes
+  are passed through and rejected by the existing term parser. (2)
+  `isStringColumnType` now matches exact family tokens with an optional `(`-size
+  suffix (`character varying|character|char|varchar|nchar|nvarchar|enum|set`),
+  the anchored `/^(tiny|medium|long)?text$/` rule + `ntext`, and exact
+  `citext`/`cstring`; `charset`/`enumeration`/`setting` and unknown types stay
+  false. 5 regression tests added (3 comma-in-quoted-identifier, 2
+  type-classification). No CRITICAL findings existed; no minor findings touched.

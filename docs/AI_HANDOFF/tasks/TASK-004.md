@@ -352,3 +352,50 @@ FINDINGS:
     - none
 NEXT_STATUS_FOR_INDEX: changes_requested
 NOTES: Running bao-opus on the configured unic-smart reviewer tier; model isolation is satisfied. Full npm test was intentionally left to the orchestrator.
+
+---
+
+## Executor Report (fix round 1)
+
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer (fix round)
+
+RED_OUTPUT (actual, pre-fix source via `git stash` of resultsPanel.ts — regression
+tests for findings 2-3; finding 4's new test passed against pre-fix code because the
+handler already degrades gracefully on a table-map miss, so it is a pure coverage
+addition, not a behaviour fix; the original cycle's first-run RED output is
+unavailable — this round's RED is the reproduced evidence going forward):
+```
+❯ fix round 1 — a truncated:true first response replays truncated (not false)
+  → expected false to be true // Object.is equality
+❯ fix round 1 — batched DISTINCT response drains all pages and closes the cursor
+  → expected [ Array(500) ] to have a length of 900 but got 500
+Test Files  1 failed (1)   Tests  2 failed | 12 skipped (14)
+```
+
+Fixes:
+- Important #2 (distinct cache truncated): `distinctCache` now stores
+  `{ values, truncated }`; cache hits replay the captured `truncated` instead of
+  hard-coding `false`. (resultsPanel.ts cache decl + hit path)
+- Important #3 (batched cursor leak): the DISTINCT run drains `fetchBatch()` pages
+  through the probe limit (or EOF), then `batched.close()` in `finally` —
+  best-effort/idempotent, mirroring `closeStatementCursor`. Non-batched runs
+  unchanged.
+- Important #4 (table-map-miss case): test added (`SELECT now()` fixture — no FROM,
+  tableByStatement miss) asserting the requery still runs once with bare
+  `"n" IS NULL` and no `= ''`. Handler needed no change: the metadata resolution
+  at `handleRequery` already treats a miss as "no columnTypes" (cycle V).
+- Important #1 (RED evidence): real assertion-failure RED output above, captured
+  by stashing the fix and running the new regression tests against pre-fix source.
+
+Verification Output:
+```
+npm run typecheck                       → clean (no output)
+npx vitest run resultsPanelDistinctValues.test.ts        → 14 passed / 0 failed
+npx vitest run distinctValues+orderBy+serverFilter+requery → 57 passed / 0 failed
+npm run compile                         → esbuild: build complete
+```
+
+Status: PASS
+Note: All four reviewer findings addressed (three code/test, one evidence); full
+`npm test` boundary run left to the orchestrator per round-1 convention.

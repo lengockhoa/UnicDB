@@ -426,5 +426,57 @@ describeIfBundle(
         }
       },
     );
+
+    itIfBundle(
+      "15. statement replacement invalidates the distinct cache: a live filter re-requests and refreshes (fix round)",
+      async () => {
+        const { received } = loadBundle();
+        dispatchState(
+          rowsState(["id", "name"], [
+            [1, "a"],
+          ]),
+        );
+        await flushGridEvents();
+        const api = getGridApi();
+        expect(api).toBeTruthy();
+
+        const filter = await openFilter(api!, "name");
+        dispatchState({
+          type: "distinctValues",
+          index: 0,
+          column: "name",
+          values: ["a"],
+          truncated: false,
+        });
+        await flushGridEvents();
+        expect(entryLabels(filter.getGui() as SetFilterGui)).toEqual(["a"]);
+
+        // Statement replaced: different sql at the same index. The old
+        // cached ["a"] is wrong data; the still-mounted filter must
+        // re-request and its list must pick up the new values.
+        const state2 = rowsState(["id", "name"], [[2, "b"]]);
+        (state2.results![0] as Record<string, unknown>).sql =
+          "SELECT * FROM t2";
+        dispatchState(state2);
+        await flushGridEvents();
+
+        const reqs = requestDistincts(received);
+        expect(reqs.length).toBeGreaterThanOrEqual(2);
+        expect(reqs[reqs.length - 1]!.column).toBe("name");
+
+        dispatchState({
+          type: "distinctValues",
+          index: 0,
+          column: "name",
+          values: ["b", "c"],
+          truncated: false,
+        });
+        await flushGridEvents();
+        expect(entryLabels(filter.getGui() as SetFilterGui).sort()).toEqual([
+          "b",
+          "c",
+        ]);
+      },
+    );
   },
 );

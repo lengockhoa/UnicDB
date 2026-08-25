@@ -409,4 +409,103 @@ describeIfBundle("webview/main.ts bundle — TASK-003 server-side sort", () => {
       }
     },
   );
+
+  // Fix-round regressions (reviewer findings on dialect parse + sort carry).
+
+  itIfBundle(
+    "17. dialect parsed from the driver TOKEN only — mysql connection whose host/db mention postgres stays mysql",
+    async () => {
+      const { received } = loadBundle();
+      // mysql connection on a host literally named postgres.internal with a
+      // database named postgres_prod — substring-matching the whole header
+      // would misdetect postgres and double-quote (rejected by MySQL host).
+      dispatchState(
+        rowsState(
+          "Run at 2026-08-26T00:00:00.000Z — mysql@postgres.internal/postgres_prod",
+          ["id", "First Name"],
+          [
+            [1, "beta"],
+            [2, "alpha"],
+          ],
+        ),
+      );
+      await flushGridEvents();
+      const api = getGridApi();
+      expect(api).toBeTruthy();
+      received.length = 0;
+
+      api!.applyColumnState({
+        state: [{ colId: "First Name", sort: "asc", sortIndex: 0 }],
+      });
+      await flushGridEvents();
+
+      const rq = requeries(received);
+      expect(rq).toHaveLength(1);
+      expect(rq[0]!.orderBy).toBe("`First Name` ASC");
+    },
+  );
+
+  itIfBundle(
+    "18. filter requery while a column is sorted keeps the ORDER BY; a pending filter debounce is superseded by the sort post",
+    async () => {
+      // (a) filter change AFTER a sort: the debounced filter requery must
+      // carry the active grid sort, not the (empty) manual bar input.
+      {
+        const { received } = loadBundle();
+        dispatchState(
+          rowsState(driverHeader("postgres"), ["id", "name"], [
+            [1, "alpha"],
+            [2, "beta"],
+          ]),
+        );
+        await flushGridEvents();
+        const api = getGridApi();
+        expect(api).toBeTruthy();
+
+        api!.applyColumnState({
+          state: [{ colId: "name", sort: "asc", sortIndex: 0 }],
+        });
+        await flushGridEvents();
+        expect(requeries(received)).toHaveLength(1);
+        received.length = 0;
+
+        api!.setFilterModel({ name: { values: ["beta"] } });
+        await new Promise<void>((r) => setTimeout(r, 250));
+
+        const rq = requeries(received);
+        expect(rq).toHaveLength(1);
+        expect(rq[0]!.orderBy).toBe("name ASC");
+        expect(rq[0]!.filters).toBeDefined();
+      }
+      // (b) sort lands INSIDE the 150ms filter debounce: exactly one post —
+      // the sort post already carries the live filter model, so the pending
+      // timer must be cancelled, not fired after it (which would post a
+      // newer, sort-less requery right behind the sorted one).
+      {
+        const { received } = loadBundle();
+        dispatchState(
+          rowsState(driverHeader("postgres"), ["id", "name"], [
+            [1, "alpha"],
+            [2, "beta"],
+          ]),
+        );
+        await flushGridEvents();
+        const api = getGridApi();
+        expect(api).toBeTruthy();
+        received.length = 0;
+
+        api!.setFilterModel({ name: { values: ["beta"] } });
+        await flushGridEvents();
+        api!.applyColumnState({
+          state: [{ colId: "name", sort: "asc", sortIndex: 0 }],
+        });
+        await new Promise<void>((r) => setTimeout(r, 250));
+
+        const rq = requeries(received);
+        expect(rq).toHaveLength(1);
+        expect(rq[0]!.orderBy).toBe("name ASC");
+        expect(rq[0]!.filters).toBeDefined();
+      }
+    },
+  );
 });
