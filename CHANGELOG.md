@@ -3,6 +3,32 @@
 All notable changes to VSDB are documented in this file. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 
+## [1.6.5] — 2026-08-26
+
+Cycle V: SQL coloring everywhere + server-side filter/paging + MSSQL sort.
+
+### Added
+- **SQL syntax coloring in the editor** (TextMate injection grammar into
+  `source.sql`): keywords, strings, numbers, comments, functions, schema/table/
+  column identifiers colorize with a VSDB-scoped theme.
+- **Schema-aware semantic tokens**: the SQL editor also highlights identifiers
+  using the loaded schema cache (tables, columns, views) and refreshes when the
+  schema cache is invalidated.
+- **SQL coloring inside the results grid + AI chat**: SQL text shown in the grid
+  and in the AI chat render path is tokenized and themed (`webview/sqlHighlight.ts`).
+- **Server-side column filter**: the grid's column filter now issues a filtered
+  server requery (`WHERE` built per dialect) instead of filtering only loaded rows.
+- **Load More paging (server-side)**: paging below the grid issues `OFFSET/LIMIT`
+  requeries and appends rows, so deep results stream in without a full reload.
+- **MSSQL server-side sort**: a T-SQL `ORDER BY … OFFSET/FETCH` helper mirrors the
+  Postgres sort contract so the composer can dispatch per dialect.
+
+### Fixed
+- Filter values are carried as typed literals (numbers/dates are not `String()`-
+  coerced), preserving index-friendly predicates per dialect.
+- Webview SQL highlighting never writes user content via `innerHTML`; escaped
+  nodes are re-tokenized through `appendChild`/fragments.
+
 ## [1.6.4] — 2026-08-25
 
 Cycle U: DataGrip parity — per-table tabs, server-side sort, NULL display, failed-row retry,
