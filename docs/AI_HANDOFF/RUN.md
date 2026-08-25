@@ -1,6 +1,6 @@
 Command: handoff-fullstack
 Goal: Cycle W — server-side sort wiring, DISTINCT filter values, deterministic paging
 Base: main
-Phase: R5
-Cursor: review complete — 4/4 approved (2 fix rounds), suite stable at 1494 passed / 0 failed
-Next: R5 close — push main, then release v1.6.6
+Phase: done
+Cursor: cycle W complete — 4/4 approved, pushed to main (089941a)
+Next: release v1.6.6
