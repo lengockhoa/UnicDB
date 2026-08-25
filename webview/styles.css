@@ -256,6 +256,32 @@
 }
 .vsdb-save-banner.vsdb-hidden { display: none; }
 
+/* TASK-005 / A19 — "Retry failed rows" button inside the save banner
+ * (partial save failure). Inline after the banner text; compact and
+ * theme-aware so it reads as an action, not more error copy. */
+.vsdb-save-banner .vsdb-save-retry {
+  display: inline-block;
+  margin-left: 12px;
+  padding: 1px 10px;
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #ffffff);
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 2px;
+  cursor: pointer;
+  font-family: var(--vscode-ui-fontFamily, sans-serif);
+  font-size: 0.9em;
+  line-height: 1.5;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.vsdb-save-banner .vsdb-save-retry:hover {
+  background: var(--vscode-button-hoverBackground, #1177bb);
+}
+.vsdb-save-banner .vsdb-save-retry:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 1px;
+}
+
 /* TASK-007 — Excel-style edit highlights.
  * - cellClassRules drives `vsdb-cell-dirty` per cell from EditState.
  * - getRowClass drives `vsdb-row-new` / `vsdb-row-deleted` per row.

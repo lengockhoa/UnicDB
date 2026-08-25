@@ -129,12 +129,23 @@ type SaveEditsMsg = {
    *  falls back to rowId. */
   serverIndexByRowId?: Record<string, number>;
 };
+type RetryFailedRowsMsg = {
+  /** TASK-005 / A19 — "Retry failed rows" click after a partial save
+   *  failure. Carries ONLY the failed rows' still-dirty edits; the host
+   *  rebuilds a save batch from just those rows. */
+  type: "retryFailedRows";
+  index: number;
+  rowIds: number[];
+  edits: Array<{ rowId: number; colIndex: number; value: unknown }>;
+  serverIndexByRowId?: Record<string, number>;
+};
 type WebviewMsg =
   | LoadMoreMsg
   | CancelMsg
   | CopyMsg
   | ExportFileMsg
   | SaveEditsMsg
+  | RetryFailedRowsMsg
   | RequeryMsg
   | ReadyMsg;
 
@@ -208,6 +219,15 @@ let editState = new EditState();
  *  written; undo past that is out of scope) and on tab switch / new
  *  query alongside editState.clear(). */
 let undoStack = new UndoStack();
+/** TASK-005 / A19 — last partial-save failure record: which statement and
+ *  which rowIds failed. Drives the "Retry failed rows" button in the save
+ *  banner; set when a saveResult ack carries rowErrors (per-row partial
+ *  failure) and cleared on any ack WITHOUT rowErrors (full success,
+ *  refusal, or all-failed — those have no per-row subset, and the Commit
+ *  button already retries everything). Also implicitly disarmed when the
+ *  failed rows' edits are gone: onRetryFailedRowsClick no-ops on an empty
+ *  filtered snapshot. */
+let lastFailedRows: { index: number; rowIds: number[] } | null = null;
 /** When true, data cells display the raw value (CSV preview mode). Flipped
  *  by the CSV toggle toolbar button. */
 let csvMode = false;
@@ -2384,6 +2404,58 @@ function onRequeryClick(): void {
   postToHost({ type: "requery", index: activeTab, where, orderBy });
 }
 
+/** TASK-005 / A19 — build the "Retry failed rows" button shown inside the
+ *  save banner on a partial save failure. Plain text button (title +
+ *  aria-label for screen readers); the click handler reads
+ *  `lastFailedRows` at CLICK time, not construction time, so it always
+ *  reflects the freshest failure record. */
+function makeRetryButton(): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "vsdb-save-retry";
+  btn.setAttribute("data-vsdb-retry-failed", "");
+  btn.title = "Retry failed rows — resend only the rows that failed";
+  btn.setAttribute("aria-label", "Retry failed rows");
+  btn.textContent = "Retry failed rows";
+  btn.addEventListener("click", () => onRetryFailedRowsClick());
+  return btn;
+}
+
+/** TASK-005 / A19 — Retry click: rebuild a save batch from ONLY the failed
+ *  rows' still-dirty edits (successful rows were already cleared from
+ *  editState by clearExceptRowIds on the partial-failure ack) and post
+ *  `retryFailedRows`. No-op when there is no failure record or no dirty
+ *  edit left for those rows — never posts an empty retry batch and never
+ *  falls back to Commit (a fresh full save would re-send rows that
+ *  already succeeded). */
+function onRetryFailedRowsClick(): void {
+  if (!lastFailedRows || lastFailedRows.rowIds.length === 0) return;
+  const failed = new Set(lastFailedRows.rowIds);
+  const failedEdits = editState.snapshot().filter((e) => failed.has(e.rowId));
+  if (failedEdits.length === 0) return;
+  // Same addressing map contract as onCommitClick (A12): lets the host
+  // resolve each failed row's original position in result.rows. JSON keys
+  // must be strings.
+  const serverIndexByRowIdJson: Record<string, number> = {};
+  for (const [rowId, idx] of serverIndexByRowId) {
+    serverIndexByRowIdJson[String(rowId)] = idx;
+  }
+  postToHost({
+    type: "retryFailedRows",
+    index: lastFailedRows.index,
+    rowIds: [...lastFailedRows.rowIds],
+    edits: failedEdits,
+    serverIndexByRowId: serverIndexByRowIdJson,
+  });
+  // While the host re-runs the subset, hide the banner (re-shown with
+  // fresh rowErrors if rows fail again).
+  if (dom?.saveBanner) {
+    dom.saveBanner.classList.add("vsdb-hidden");
+    dom.saveBanner.setAttribute("hidden", "");
+    dom.saveBanner.textContent = "";
+  }
+}
+
 /** CSV toggle: flip csvMode and rebuild the valueFormatter on every visible
  *  data column so the user sees raw values vs formatted. */
 function onCsvToggleClick(): void {
@@ -2659,13 +2731,22 @@ function handleSaveResult(msg: SaveResultMsg): void {
     if (msg.rowErrors && msg.rowErrors.length > 0) {
       const erroredRowIds = new Set(msg.rowErrors.map((e) => e.rowId));
       editState.clearExceptRowIds(erroredRowIds);
+      // TASK-005 / A19 — arm the retry affordance: remember WHICH rows of
+      // WHICH statement failed so the banner's "Retry failed rows" button
+      // can rebuild a save batch from just those rows.
+      lastFailedRows = { index: msg.index, rowIds: Array.from(erroredRowIds) };
       if (banner) {
+        banner.textContent = "";
+        const text = document.createElement("span");
+        text.className = "vsdb-save-banner-text";
         const lines = msg.rowErrors.map(
           (e) => `row ${e.rowId}: ${e.error}`,
         );
-        banner.textContent =
+        text.textContent =
           `${erroredRowIds.size} row${erroredRowIds.size === 1 ? "" : "s"} failed · ` +
           lines.join(" · ");
+        banner.appendChild(text);
+        banner.appendChild(makeRetryButton());
         banner.classList.remove("vsdb-hidden");
         banner.removeAttribute("hidden");
       }
@@ -2680,6 +2761,9 @@ function handleSaveResult(msg: SaveResultMsg): void {
       // of the stack alongside the dirty-map clear. The partial-failure
       // branch above intentionally keeps the stack — the user retries
       // the errored rows.
+      // TASK-005 / A19 — no per-row failure subset on this path; disarm
+      // the retry affordance (the banner clear below removes the button).
+      lastFailedRows = null;
       editState.clear();
       undoStack.clear();
       if (banner) {
@@ -2701,6 +2785,10 @@ function handleSaveResult(msg: SaveResultMsg): void {
   } else {
     // ok:false path — host says "everything failed (or the build was
     // refused)". Keep editState; banner shows per-statement errors.
+    // TASK-005 / A19 — no per-row subset here (the banner textContent
+    // rewrite below removes any stale retry button); the Commit button
+    // already retries the full dirty set.
+    lastFailedRows = null;
     const errs = msg.errors ?? ["Unknown save error"];
     if (banner) {
       banner.textContent = errs.join(" · ");
@@ -2804,5 +2892,9 @@ function debugSetSpecs(specs: readonly ColumnSpec[]): void {
   commit: onCommitClick,
   simulateCellEdit,
   addRow: onAddRowClick,
+  /** TASK-005 / A19 — retry-failed-rows handler for tests (the button
+   *  only renders after a rowErrors ack; this seam exercises the guard
+   *  paths directly). */
+  retry: onRetryFailedRowsClick,
 };
 

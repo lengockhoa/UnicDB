@@ -274,6 +274,14 @@ export class ResultsPanel {
           msg.serverIndexByRowId,
         );
         break;
+      case "retryFailedRows":
+        await this.handleRetryFailedRows(
+          msg.index,
+          msg.rowIds,
+          msg.edits,
+          msg.serverIndexByRowId,
+        );
+        break;
       case "requery":
         await this.handleRequery(msg.index, msg.where, msg.orderBy);
         break;
@@ -647,6 +655,29 @@ export class ResultsPanel {
     } finally {
       this.setBusy(false);
     }
+  }
+
+  /**
+   * TASK-005 / A19 — "Retry failed rows". The webview clicked the banner's
+   * retry button after a partial save failure; `edits` carries only the
+   * failed rows' still-dirty entries (successful rows were cleared by the
+   * webview's clearExceptRowIds on the rowErrors ack). The host
+   * defensively re-filters `edits` against `rowIds` (the webview is
+   * semi-trusted) and runs the subset through the SAME save pipeline as
+   * saveEdits — host-derived table + PK, single combined transaction,
+   * saveResult ack, post-save refresh. An empty subset (stale or malformed
+   * message) is a silent no-op: nothing to run, nothing to ack.
+   */
+  private async handleRetryFailedRows(
+    index: number,
+    rowIds: number[],
+    edits: Array<{ rowId: number; colIndex: number; value: unknown }>,
+    serverIndexByRowId?: Record<string, number>,
+  ): Promise<void> {
+    const allow = new Set(rowIds);
+    const subset = edits.filter((e) => allow.has(e.rowId));
+    if (subset.length === 0) return;
+    await this.handleSaveEdits(index, null, [], subset, serverIndexByRowId);
   }
 
   /**

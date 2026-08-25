@@ -61,4 +61,63 @@ npm run typecheck
 
 ## Discussion
 
-(chua co comment)
+**Executor (cycle U) — decisions recorded:**
+1. Retry payload field is named `edits` (not `failedEdits` as the cycle prompt phrased it) — the task file's Acceptance Criteria ("`retryFailedRows` message is posted with correct `rowIds` and `edits`") is authoritative and matches `SaveEditsMessage.edits`; the payload also carries `serverIndexByRowId` (same A12 addressing contract as `saveEdits`) so the host resolves failed rows' server indexes correctly on streamed/added results.
+2. Host coverage lives in a SECOND new test file `src/ui/__tests__/resultsPanelRetry.test.ts` (node env) because `vi.mock("vscode")` does not resolve under jsdom — no existing test combines jsdom + the vscode mock, and `vitest.config.ts` (not a Target File) would have needed an alias otherwise. The task's listed Test File `webviewRetry.test.ts` holds all 6 required webview-side cases.
+3. RED nuance: R2 (button absent on no-rowErrors ack) and H3 (empty retry no-op) pass in RED by design — they pin ABSENCE/no-op behavior that trivially holds pre-implementation and guard the GREEN implementation from over-showing/over-acking. The other 7 tests failed for the expected reasons (missing button, missing `retry` seam, missing host `retryFailedRows` handling).
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  Tests written first into the task's Test Files, run against the pre-feature
+  bundle (dist/webview.js compiled from unmodified source). 7 failed | 2 passed:
+
+  Test Files  2 failed (2)
+        Tests  7 failed | 2 passed (9)
+
+  [1/7] FAIL resultsPanelRetry.test.ts > H1. retryFailedRows → same save pipeline:
+        combined transaction with exactly ONE UPDATE for the failed row + ok:true ack
+        AssertionError: expected undefined not to be undefined
+        ❯ const combined = recorded.find((c) => /^BEGIN/i.test(c.sql.trim()));
+          (host ignored retryFailedRows — no BEGIN/UPDATE was ever emitted)
+  [2/7] FAIL resultsPanelRetry.test.ts > H2. edits whose rowId is NOT in rowIds are dropped
+        AssertionError: expected undefined not to be undefined (same root cause)
+  [3/7] FAIL webviewRetry.test.ts > R1. retry button appears when saveResult has rowErrors
+        AssertionError: expected null to be truthy  (findRetryButton() → null)
+  [4/7] FAIL webviewRetry.test.ts > R3. clicking retry posts retryFailedRows message
+        AssertionError: expected null to be truthy  (no retry button in banner)
+  [5/7] FAIL webviewRetry.test.ts > R4. retry message contains only failed row IDs
+        AssertionError: expected null to be truthy  (no retry button in banner)
+  [6/7] FAIL webviewRetry.test.ts > R5. retry with 0 failed rows → no message posted
+        AssertionError: expected 'undefined' to be 'function'
+        ❯ expect(typeof vsdbApi()?.retry).toBe("function")  (retry seam absent)
+  [7/7] FAIL webviewRetry.test.ts > R6. retry edits come from editState for failed rows only
+        AssertionError: expected null to be truthy  (no retry button in banner)
+
+  R2 + H3 passed in RED by design (absence/no-op pinning — see Discussion #3).
+Verification Output: |
+  $ npm run compile
+  (esbuild output)
+    dist/webview.js  2.3mb
+    dist/extension.js  4.8mb
+    dist/extension.js.map  8.0mb
+  ⚡ Done in 209ms
+  esbuild: build complete
+
+  $ npm test src/ui/__tests__/webviewRetry.test.ts   (task §Verification cmd 1)
+   ✓ src/ui/__tests__/webviewRetry.test.ts  (6 tests) 828ms
+   Test Files  1 passed (1)
+        Tests  6 passed (6)
+
+  $ npm test   (full suite — baseline 1298 passed / 2 skipped; +9 new tests)
+   Test Files  92 passed | 1 skipped (93)
+        Tests  1307 passed | 2 skipped (1309)
+   (0 failed)
+
+  $ npm run typecheck
+  > tsc --noEmit
+  (no output — clean, exit code 0)
+Status: PASS
+Note: none

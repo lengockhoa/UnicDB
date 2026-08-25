@@ -64,6 +64,7 @@ export type WebviewMessage =
   | CopyMessage
   | ExportFileMessage
   | SaveEditsMessage
+  | RetryFailedRowsMessage
   | RequeryMessage
   | ReadyMessage;
 
@@ -95,6 +96,30 @@ export interface SaveEditsMessage {
   /** cycle T / TASK-002 (A12): __rowId → index into the host's
    *  result.rows. Keys are stringified numbers (JSON). Absent ⇒ host
    *  falls back to rowId. */
+  serverIndexByRowId?: Record<string, number>;
+}
+
+export interface RetryFailedRowsMessage {
+  /** TASK-005 / A19 — webview "Retry failed rows" click after a partial
+   *  save failure (saveResult carried rowErrors). Carries ONLY the failed
+   *  rows: successful rows' edits were already cleared from the webview's
+   *  EditState by `clearExceptRowIds`, and the snapshot here is filtered
+   *  again to `rowIds`. The host defensively re-filters against `rowIds`
+   *  and runs the subset through the same save pipeline as saveEdits. */
+  type: "retryFailedRows";
+  /** Statement index whose snapshot owns the edits. */
+  index: number;
+  /** Stable rowIds of the rows that failed in the previous save ack. */
+  rowIds: number[];
+  /** Only the failed rows' dirty edits — same entry shape as
+   *  SaveEditsMessage.edits (mirrors EditState.snapshot() filtered to
+   *  rowIds). */
+  edits: Array<{
+    rowId: number;
+    colIndex: number;
+    value: unknown;
+  }>;
+  /** Same __rowId → result.rows index map as SaveEditsMessage (A12). */
   serverIndexByRowId?: Record<string, number>;
 }
 
