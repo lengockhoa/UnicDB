@@ -399,13 +399,12 @@ describe("formatCell", () => {
 });
 
 // =============================================================================
-// 11. TASK-006 #5 — hidden columns excluded from export TSV/CSV
+// 11. hidden columns excluded from export TSV/CSV
 // =============================================================================
-// The ctid column is a postgres-only addressing hint the host carries in the
-// result set so no-PK saves have an exact row reference. It MUST NOT leak
-// into user-facing exports (TSV, CSV) — users would not understand what
-// "(0,1)" means in their spreadsheet. The grid hides it visually (webview
-// concern) AND the host serializers strip it.
+// The host may mark columns as hidden (spec.hidden → hiddenColumns) — e.g. a
+// user or host explicitly suppressing an internal column from exports. Hidden
+// columns MUST NOT leak into user-facing exports (TSV, CSV); the grid also
+// hides them visually (webview concern).
 
 describe("hidden columns excluded from export (TASK-006 #5)", () => {
   it("serializeTsv with hiddenColumns: ['ctid'] → header + rows omit ctid", () => {

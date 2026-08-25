@@ -214,3 +214,23 @@ $ npx vitest run src/ui/__tests__/resultsGridModel.test.ts src/ui/__tests__/resu
 (webviewBundle/webviewExport skipped because they eval `dist/webview.js` and need `npm run compile`; this fix round only touched the browseCommands test file, not the bundle input surface, so no recompile was performed per task instructions.)
 Status: PASS
 Note: #7b + #8b added at the end of the `describe("registerBrowseCommands", …)` block (current lines 396-459) before the closing `});`. Both tests pass; total goes from 14 → 16. No source files (browseCommands.ts, resultsGridModel.ts, webview/main.ts) were touched, so prior executor's webview tests and resultsGridModel changes remain byte-identical.
+
+## Reviewer Verdict (fix round 1)
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code (differs from reviewer — isolation satisfied)
+VERIFICATION_RERUN:
+  command: npm run typecheck && npx vitest run src/ui/__tests__/browseCommands.test.ts (+ resultsGridModel/export + webviewBundle/webviewExport sweep)
+  result: typecheck clean / 16 pass, 0 fail / sweep 85 pass, 0 fail
+TEST_PLAN_COVERAGE: all-followed — fix round scoped to restoring #7b/#8b; both restored and passing
+FINDINGS:
+  critical: (none)
+  important: (none)
+    - #7b restored at src/ui/__tests__/browseCommands.test.ts:404-424 — asserts setActive NOT called when node conn === active (equality branch of browseCommands.ts:145) + runner.run called once; matches 68e033e case 7b assertions verbatim.
+    - #8b restored at src/ui/__tests__/browseCommands.test.ts:433-459 — runner.run rejects → 1 errorMessage containing "runner boom", final setBusy === false, render NEVER called; equivalent to 68e033e case 8b (original asserted toEqual([true,false]) for setBusy sequence; restored asserts last element false — same finally-branch lock, acceptable).
+    - Fix delta (git diff c4dc816) touches only src/ui/__tests__/browseCommands.test.ts (+docs) — no source files, no regression surface; prior-round webview/resultsGridModel work untouched (85-test sweep green).
+  minor:
+    - file: src/ui/__tests__/resultsGridModel.test.ts:402-405 — carried over from round 1, not in fix-round scope: comment block still says "the host carries [ctid] in the result set so no-PK saves have an exact row reference" — stale after TASK-001/TASK-002 (host never appends ctid; lazy save-time resolution). Reword to describe the generic hiddenColumns option. Test itself valid.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Both previously-deleted regression locks restored with correct assertions; suite 16+85 all green on re-run. Only the stale comment above remains, non-blocking.
