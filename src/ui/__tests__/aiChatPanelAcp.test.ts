@@ -269,9 +269,12 @@ function feedPermissionRequest(
   );
 }
 
+// ACP `agent_message_chunk` carries `content: {type:"text", text}` — the
+// SAME envelope `user_message_chunk` already uses (TASK-007 B2 fix). This
+// fake must encode the real protocol, not the removed `delta` shape.
 function feedAgentMessageChunk(
   transport: FakeAcpTransport,
-  delta: string,
+  text: string,
 ): void {
   transport.feed(
     JSON.stringify({
@@ -279,9 +282,32 @@ function feedAgentMessageChunk(
       method: "session/update",
       params: {
         sessionId: "sess-1",
-        update: { sessionUpdate: "agent_message_chunk", delta },
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text },
+        },
       },
     }),
+  );
+}
+
+/** Find the `id` of the most recently written `session/prompt` request. */
+function lastPromptRequestId(transport: FakeAcpTransport): unknown {
+  const frames = transport.allWritten().filter((f) => f["method"] === "session/prompt");
+  const last = frames[frames.length - 1];
+  return last?.["id"];
+}
+
+/** Feed the `session/prompt` JSON-RPC RESPONSE — this is what settles a
+ * turn in real ACP (`{stopReason: "end_turn" | "cancelled" | ...}`), never
+ * a `session/update` notification. */
+function respondPrompt(
+  transport: FakeAcpTransport,
+  id: unknown,
+  stopReason: string,
+): void {
+  transport.feed(
+    JSON.stringify({ jsonrpc: "2.0", id, result: { stopReason } }),
   );
 }
 
@@ -910,6 +936,433 @@ describe("AiChatPanel — permission detail sanitizer (TASK-001 #6)", () => {
     await until(() => postedMessages(p).some(isPermissionRequest));
     const req = postedMessages(p).find(isPermissionRequest) as PermissionRequestMsg;
     expect(req.tool.detail).toBe("SQL:\nSELECT 1 FROM t");
+  });
+});
+
+// ============================================================================
+// TASK-007 — ACP turn lifecycle. The turn settles on the `session/prompt`
+// RESPONSE ({stopReason}), never on a `session/update` notification (ACP has
+// no `agent_end`/`turn_complete` kind). agent_message_chunk carries
+// `content: {type:"text", text}` — same envelope user_message_chunk already
+// uses. 14 cases from TASK-007.md §Test Cases.
+// ============================================================================
+describe("AiChatPanel — ACP turn lifecycle (TASK-007)", () => {
+  function schemaAdapter(): {
+    listSchemas: Mock;
+    listTables: Mock;
+    listViews: Mock;
+    listColumns: Mock;
+  } {
+    return {
+      listSchemas: vi.fn(async () => [{ name: "public" }]),
+      listTables: vi.fn(async (schema: string) =>
+        schema === "public" ? [{ name: "users", schema: "public" }] : [],
+      ),
+      listViews: vi.fn(async () => []),
+      listColumns: vi.fn(async () => [
+        { name: "id", dataType: "integer", nullable: false, isPrimaryKey: true },
+      ]),
+    };
+  }
+
+  // ---- Happy #1 — full ACP turn: delta, assistant, done — in order, once each.
+  it("Happy#1 full ACP turn: delta(\"Hi\") then assistant(\"Hi\", markdown) then done, in order, exactly once each", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const { start, sessions } = makeFakeAcpDeps();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      acp: { start },
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "go" });
+    await until(() => sessions.length > 0);
+    const session = sessions[0] as FakeAcpSession;
+    await until(() => lastPromptRequestId(session.transport) !== undefined);
+
+    feedAgentMessageChunk(session.transport, "Hi");
+    await until(() => postedMessages(p).some(isDelta));
+    respondPrompt(session.transport, lastPromptRequestId(session.transport), "end_turn");
+
+    await until(() => postedMessages(p).some(isDone));
+    const posted = postedMessages(p);
+    const deltas = posted.filter(isDelta);
+    const assistants = posted.filter(isAssistant);
+    const dones = posted.filter(isDone);
+    expect(deltas).toHaveLength(1);
+    expect((deltas[0] as { text: string }).text).toBe("Hi");
+    expect(assistants).toHaveLength(1);
+    expect(assistants[0]).toMatchObject({ text: "Hi", markdown: true });
+    expect(dones).toHaveLength(1);
+    const deltaIdx = posted.findIndex(isDelta);
+    const assistantIdx = posted.findIndex(isAssistant);
+    const doneIdx = posted.findIndex(isDone);
+    expect(deltaIdx).toBeLessThan(assistantIdx);
+    expect(assistantIdx).toBeLessThan(doneIdx);
+  });
+
+  // ---- Happy #2 — history append.
+  it("Happy#2 history append: after the turn, history ends with {role:assistant, content:'Hi'}", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const { start, sessions } = makeFakeAcpDeps();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      acp: { start },
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "go" });
+    await until(() => sessions.length > 0);
+    const session = sessions[0] as FakeAcpSession;
+    await until(() => lastPromptRequestId(session.transport) !== undefined);
+    feedAgentMessageChunk(session.transport, "Hi");
+    respondPrompt(session.transport, lastPromptRequestId(session.transport), "end_turn");
+    await until(() => postedMessages(p).some(isDone));
+
+    const history = (panel as unknown as { history: Array<{ role: string; content: string }> })
+      .history;
+    expect(history[history.length - 1]).toEqual({ role: "assistant", content: "Hi" });
+  });
+
+  // ---- Edge (cancel stopReason) — no assistant history entry.
+  it("Edge cancel: response {stopReason:'cancelled'} posts done, no assistant history entry", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const { start, sessions } = makeFakeAcpDeps();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      acp: { start },
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "go" });
+    await until(() => sessions.length > 0);
+    const session = sessions[0] as FakeAcpSession;
+    await until(() => lastPromptRequestId(session.transport) !== undefined);
+    feedAgentMessageChunk(session.transport, "partial");
+    respondPrompt(session.transport, lastPromptRequestId(session.transport), "cancelled");
+    await until(() => postedMessages(p).some(isDone));
+
+    expect(postedMessages(p).some(isAssistant)).toBe(false);
+    const history = (panel as unknown as { history: unknown[] }).history;
+    expect(history).toHaveLength(0);
+  });
+
+  // ---- Edge (concurrency) — Stop mid-stream.
+  it("Edge concurrency: Stop mid-stream sends session/cancel once, settles pending resolvers, posts done exactly once, no late assistant", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const { start, sessions } = makeFakeAcpDeps();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      acp: { start },
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "go" });
+    await until(() => sessions.length > 0);
+    const session = sessions[0] as FakeAcpSession;
+    await until(() => lastPromptRequestId(session.transport) !== undefined);
+    feedAgentMessageChunk(session.transport, "streaming...");
+    await until(() => postedMessages(p).some(isDelta));
+
+    handler({ type: "stop" });
+    await until(() => postedMessages(p).some(isDone));
+
+    const cancelFrames = session.transport
+      .allWritten()
+      .filter((f) => f["method"] === "session/cancel");
+    expect(cancelFrames).toHaveLength(1);
+    expect(postedMessages(p).filter(isDone)).toHaveLength(1);
+    expect(postedMessages(p).some(isAssistant)).toBe(false);
+
+    // A late server response arriving AFTER Stop settled the turn MUST NOT
+    // post a second done or a late assistant.
+    respondPrompt(session.transport, lastPromptRequestId(session.transport), "end_turn");
+    await flush(20);
+    expect(postedMessages(p).filter(isDone)).toHaveLength(1);
+    expect(postedMessages(p).some(isAssistant)).toBe(false);
+  });
+
+  // ---- Edge (state reset) — token resets between turns; resume_list works.
+  it("Edge state reset: token===null between turns; resume_list is handled after a completed turn, not swallowed", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const { start, sessions } = makeFakeAcpDeps();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      acp: { start },
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "go" });
+    await until(() => sessions.length > 0);
+    const session = sessions[0] as FakeAcpSession;
+    await until(() => lastPromptRequestId(session.transport) !== undefined);
+    respondPrompt(session.transport, lastPromptRequestId(session.transport), "end_turn");
+    await until(() => postedMessages(p).some(isDone));
+
+    expect((panel as unknown as { token: unknown }).token).toBeNull();
+
+    handler({ type: "resume_list" });
+    await until(() =>
+      session.transport.written.some((l) => JSON.parse(l)["method"] === "session/list"),
+    );
+    const listReq = session.transport.allWritten().find((f) => f["method"] === "session/list");
+    expect(listReq).toBeDefined();
+    session.transport.feed(
+      JSON.stringify({ jsonrpc: "2.0", id: listReq!["id"], result: { sessions: [] } }),
+    );
+    await until(() =>
+      postedMessages(p).some((m) => (m as { type?: string }).type === "resume_sessions"),
+    );
+    expect(
+      postedMessages(p).some((m) => (m as { type?: string }).type === "resume_sessions"),
+    ).toBe(true);
+  });
+
+  // ---- Edge (lifecycle) — panel disposed mid-turn (via webview onDidDispose,
+  // i.e. the user closes the tab — NOT the explicit AiChatPanel.dispose()).
+  it("Edge lifecycle: closing the panel tab mid-turn cancels pending permissions + disposes the ACP session", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const { start, sessions } = makeFakeAcpDeps();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      acp: { start },
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "go" });
+    await until(() => sessions.length > 0);
+    const session = sessions[0] as FakeAcpSession;
+    await flush();
+    feedPermissionRequest(session.transport, 201, [
+      { optionId: "allow", label: "Allow" },
+    ]);
+    await until(() => postedMessages(p).some(isPermissionRequest));
+
+    // Simulate the user closing the webview tab directly — this fires the
+    // vscode onDidDispose event WITHOUT going through AiChatPanel.dispose().
+    p.dispose();
+    await flush(20);
+
+    const resultFrames = session.transport.allWritten().filter((f) => f["id"] === 201);
+    expect(resultFrames).toHaveLength(1);
+    const r = resultFrames[0]!["result"] as { outcome: { outcome: string } };
+    expect(r.outcome.outcome).toBe("cancelled");
+    // The ACP session was torn down — dispose() called on the handle.
+    expect(session.disposeCalls).toBeGreaterThanOrEqual(1);
+  });
+
+  // ---- Edge (empty stream) — zero chunks then end_turn: no blank bubble.
+  it("Edge empty stream: zero chunks then end_turn does not post a blank assistant bubble; done still posted", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const { start, sessions } = makeFakeAcpDeps();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      acp: { start },
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "go" });
+    await until(() => sessions.length > 0);
+    const session = sessions[0] as FakeAcpSession;
+    await until(() => lastPromptRequestId(session.transport) !== undefined);
+    respondPrompt(session.transport, lastPromptRequestId(session.transport), "end_turn");
+    await until(() => postedMessages(p).some(isDone));
+
+    expect(postedMessages(p).some(isAssistant)).toBe(false);
+    expect(postedMessages(p).filter(isDone)).toHaveLength(1);
+  });
+
+  // ---- Edge (cache) — two turns, same connection: introspection runs once.
+  it("Edge cache: two turns on the same connection introspect the schema once, not twice", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const { start, sessions } = makeFakeAcpDeps();
+    const adapter = schemaAdapter();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => adapter),
+      acp: { start },
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+
+    handler({ type: "send", text: "first" });
+    await until(() => sessions.length > 0);
+    const session = sessions[0] as FakeAcpSession;
+    await until(() => lastPromptRequestId(session.transport) !== undefined);
+    respondPrompt(session.transport, lastPromptRequestId(session.transport), "end_turn");
+    await until(() => postedMessages(p).filter(isDone).length >= 1);
+
+    handler({ type: "send", text: "second" });
+    await until(
+      () =>
+        session.transport.allWritten().filter((f) => f["method"] === "session/prompt").length >=
+        2,
+    );
+    respondPrompt(session.transport, lastPromptRequestId(session.transport), "end_turn");
+    await until(() => postedMessages(p).filter(isDone).length >= 2);
+
+    expect(adapter.listSchemas).toHaveBeenCalledTimes(1);
+  });
+
+  // ---- R (B1) — turn settles on the response alone; no notification needed.
+  it("R(B1) regression: session/prompt response alone (no terminal notification) settles the turn", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const { start, sessions } = makeFakeAcpDeps();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      acp: { start },
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "go" });
+    await until(() => sessions.length > 0);
+    const session = sessions[0] as FakeAcpSession;
+    await until(() => lastPromptRequestId(session.transport) !== undefined);
+    feedAgentMessageChunk(session.transport, "Hi");
+    // No `agent_end`/`turn_complete` notification is ever fed — only the
+    // session/prompt response. Pre-fix, this hangs forever.
+    respondPrompt(session.transport, lastPromptRequestId(session.transport), "end_turn");
+
+    await until(() => postedMessages(p).some(isAssistant));
+    await until(() => postedMessages(p).some(isDone));
+    expect(postedMessages(p).find(isAssistant)).toMatchObject({ text: "Hi" });
+  });
+
+  // ---- R (B2) — content.text with no delta field still streams.
+  it("R(B2) regression: agent_message_chunk with content.text and no delta field posts delta(text)", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const { start, sessions } = makeFakeAcpDeps();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      acp: { start },
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "go" });
+    await until(() => sessions.length > 0);
+    const session = sessions[0] as FakeAcpSession;
+    await until(() => lastPromptRequestId(session.transport) !== undefined);
+    // Deliberately no `delta` key anywhere in this frame.
+    session.transport.feed(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: "sess-1",
+          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "no-delta-field" } },
+        },
+      }),
+    );
+    await until(() => postedMessages(p).some(isDelta));
+    expect((postedMessages(p).find(isDelta) as { text: string }).text).toBe("no-delta-field");
+  });
+
+  // ---- R (B9) — ACP prompt payload carries schema context.
+  it("R(B9) regression: session/prompt text carries the schema DDL context, not just the raw user text", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const { start, sessions } = makeFakeAcpDeps();
+    const adapter = schemaAdapter();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => adapter),
+      acp: { start },
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "list users" });
+    await until(() => sessions.length > 0);
+    const session = sessions[0] as FakeAcpSession;
+    await until(() => lastPromptRequestId(session.transport) !== undefined);
+
+    const promptFrame = session.transport
+      .allWritten()
+      .find((f) => f["method"] === "session/prompt")!;
+    const params = promptFrame["params"] as { prompt: Array<{ type: string; text: string }> };
+    const sentText = params.prompt[0]?.text ?? "";
+    expect(sentText).toContain("CREATE TABLE public.users");
+    expect(sentText).toContain("list users");
+  });
+
+  // ---- Negative-path regression pin: stale cycle-L kinds (agent_end /
+  // turn_complete) are UNKNOWN update kinds in real ACP and MUST be ignored
+  // — they never drive turn completion. Labelled per TASK-007 acceptance:
+  // this is a negative-path assertion, not a fake that drives a turn.
+  it("Regression pin: unknown update kinds agent_end/turn_complete are ignored, never settle the turn", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const { start, sessions } = makeFakeAcpDeps();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      acp: { start },
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "go" });
+    await until(() => sessions.length > 0);
+    const session = sessions[0] as FakeAcpSession;
+    await until(() => lastPromptRequestId(session.transport) !== undefined);
+
+    for (const kind of ["agent_end", "turn_complete"]) {
+      session.transport.feed(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: { sessionId: "sess-1", update: { sessionUpdate: kind } },
+        }),
+      );
+    }
+    await flush(20);
+    expect(postedMessages(p).some(isDone)).toBe(false);
+
+    // Only the real terminal signal — the session/prompt response — settles it.
+    respondPrompt(session.transport, lastPromptRequestId(session.transport), "end_turn");
+    await until(() => postedMessages(p).some(isDone));
+    expect(postedMessages(p).filter(isDone)).toHaveLength(1);
   });
 });
 

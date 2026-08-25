@@ -71,8 +71,9 @@ describe("parseFromClause — host-derive table name from SELECT", () => {
 });
 
 describe("quoteIdent — identifier quoting per dialect (important #3)", () => {
-  it("postgres: plain identifier", () => {
-    expect(quoteIdent("users", "postgres")).toBe("users");
+  it("postgres: double-quoted with double-quote escape (TASK-001 A9)", () => {
+    expect(quoteIdent("users", "postgres")).toBe('"users"');
+    expect(quoteIdent('we"ird', "postgres")).toBe('"we""ird"');
   });
 
   it("mysql: backtick-quoted with backtick escape", () => {
@@ -83,5 +84,22 @@ describe("quoteIdent — identifier quoting per dialect (important #3)", () => {
   it("mssql: square-bracket quoted with bracket escape", () => {
     expect(quoteIdent("users", "mssql")).toBe("[users]");
     expect(quoteIdent("we]ird", "mssql")).toBe("[we]]ird]");
+  });
+});
+
+// ---- TASK-001 A20: parseFromClause must be a single forward pass ----------
+
+describe("parseFromClause — perf (A20, single-pass, no O(n²) inSkippedRegion re-scan)", () => {
+  it("200 KB SQL completes in well under 50ms (today's per-character re-scan is quadratic)", () => {
+    // A large SQL string dominated by a long string literal (worst case for
+    // the old per-character `inSkippedRegion` re-scan, which walked from 0
+    // to i on every character).
+    const filler = "x".repeat(200 * 1024);
+    const sql = `SELECT * FROM t WHERE note = '${filler}'`;
+    const t0 = performance.now();
+    const result = parseFromClause(sql);
+    const elapsed = performance.now() - t0;
+    expect(result).toEqual({ table: "t" });
+    expect(elapsed).toBeLessThan(50);
   });
 });

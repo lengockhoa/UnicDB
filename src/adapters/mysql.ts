@@ -269,6 +269,47 @@ export class MySqlAdapter implements DbAdapter {
     }
   }
 
+  /**
+   * D2 API — one round trip cho nhiều table qua `information_schema.TABLES
+   * ... WHERE TABLE_NAME IN (...)`. KHÔNG lặp `SHOW TABLE STATUS` per-table —
+   * form đó buộc MySQL collect statistics riêng cho từng table (chậm).
+   * `tables` rỗng → Map rỗng, KHÔNG issue query. Table drop giữa list và
+   * estimate → không có trong kết quả → OMIT khỏi Map, không throw.
+   */
+  async estimateTableRowsBatch(
+    schema: string,
+    tables: readonly string[],
+  ): Promise<Map<string, number | null>> {
+    const result = new Map<string, number | null>();
+    if (tables.length === 0) return result;
+    try {
+      const placeholders = tables.map(() => "?").join(", ");
+      const res = await this.query(
+        `SELECT TABLE_NAME AS name, TABLE_ROWS AS row_estimate
+           FROM information_schema.TABLES
+          WHERE TABLE_SCHEMA = ? AND TABLE_NAME IN (${placeholders})
+            AND TABLE_TYPE = 'BASE TABLE'`,
+        [schema, ...tables],
+      );
+      const rows = res.rows;
+      if (Array.isArray(rows)) {
+        for (const row of rows as Record<string, unknown>[]) {
+          const name = String(row.name);
+          const raw = row.row_estimate;
+          if (raw === null || raw === undefined) {
+            result.set(name, null);
+            continue;
+          }
+          const value = typeof raw === "string" ? Number(raw) : Number(raw);
+          result.set(name, !Number.isFinite(value) || value < 0 ? null : value);
+        }
+      }
+    } catch {
+      // best-effort — mirrors estimateTableRows.
+    }
+    return result;
+  }
+
   async listTableDetail(_schema: string, _table: string): Promise<TableDetail> {
     // MySQL adapter does not implement table-detail introspection (TASK-005
     // wires only Postgres; the editor guards driver === "postgres" before

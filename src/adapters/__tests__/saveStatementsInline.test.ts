@@ -40,7 +40,7 @@ describe("buildSaveStatements — INLINE LITERAL contract (Fix R1)", () => {
     // Inline string with single-quote escape.
     expect(stmt).toContain(`'new-name'`);
     expect(stmt).toContain(`42`);
-    expect(stmt).toContain(`WHERE id=7`);
+    expect(stmt).toContain(`WHERE "id"=7`);
     // parameters field is GONE — call sites MUST NOT read it.
     expect((r as unknown as { parameters?: unknown[] }).parameters).toBeUndefined();
   });
@@ -80,7 +80,7 @@ describe("buildSaveStatements — INLINE LITERAL contract (Fix R1)", () => {
     );
     expect(r.ok).toBe(true);
     if (r.ok !== true) return;
-    expect(r.statements[0]).toContain(`name=NULL`);
+    expect(r.statements[0]).toContain(`"name"=NULL`);
   });
 
   it("mysql PK present: backtick identifiers + inline literal values", () => {
@@ -186,6 +186,6 @@ describe("buildSaveStatements — INLINE LITERAL contract (Fix R1)", () => {
     expect(r.ok).toBe(true);
     if (r.ok !== true) return;
     expect(r.statements[0]).not.toMatch(/\$\d+/);
-    expect(r.statements[0]).toContain("DELETE FROM t WHERE id=42");
+    expect(r.statements[0]).toContain('DELETE FROM "t" WHERE "id"=42');
   });
 });

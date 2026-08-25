@@ -92,6 +92,10 @@ export interface SaveEditsMessage {
   tableName: string | null;
   /** PK columns derived via DbAdapter.listColumns (empty = caller must fall back). */
   pkColumns: string[];
+  /** cycle T / TASK-002 (A12): __rowId → index into the host's
+   *  result.rows. Keys are stringified numbers (JSON). Absent ⇒ host
+   *  falls back to rowId. */
+  serverIndexByRowId?: Record<string, number>;
 }
 
 export interface SaveResultMessage {

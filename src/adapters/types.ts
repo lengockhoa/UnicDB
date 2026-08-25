@@ -111,6 +111,17 @@ export interface DbAdapter {
    */
   estimateTableRows(schema: string, table: string): Promise<number | null>;
   /**
+   * D2 (TASK-005): batch row estimate — one round trip cho nhiều table thay
+   * vì gọi estimateTableRows() N lần (đặc biệt tốn kém trên pool `max: 1`).
+   * Table không tồn tại / bị drop giữa list và estimate → OMIT khỏi Map
+   * (không map sang null, không throw). `tables` rỗng → Map rỗng, KHÔNG
+   * issue query nào.
+   */
+  estimateTableRowsBatch(
+    schema: string,
+    tables: readonly string[],
+  ): Promise<Map<string, number | null>>;
+  /**
    * One-shot introspection: trả columns + constraints cho (schema, table) qua
    * parameterized SQL. PostgresAdapter.pool.query(sql, [schema, table]) bind
    * $1/$2 an toàn — không phải regex SQL. Tách khỏi runQuery vì runQuery

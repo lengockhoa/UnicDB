@@ -482,8 +482,8 @@ describe("AcpProcess", () => {
     await startPromise;
 
     const frames = readStdinFrames(child);
-    // Frame layout: [initialize id=1, session/new id=2]
-    const sessionNew = frames[1];
+    // Frame layout: [initialize id=1, initialized (notification), session/new id=2]
+    const sessionNew = frames[2];
     expect(sessionNew).toBeDefined();
     expect(sessionNew?.["method"]).toBe("session/new");
     expect(sessionNew?.["params"]).toEqual({ cwd: "/w", mcpServers: [] });
@@ -529,7 +529,8 @@ describe("AcpProcess", () => {
     expect(captured.args ?? []).not.toContain("--cwd");
 
     const frames = readStdinFrames(child);
-    const sessionNew = frames[1];
+    // Frame layout: [initialize id=1, initialized (notification), session/new id=2]
+    const sessionNew = frames[2];
     expect(sessionNew?.["method"]).toBe("session/new");
     expect(sessionNew?.["params"]).toEqual({ cwd: "/w", mcpServers: [] });
   });
@@ -610,8 +611,9 @@ describe("AcpProcess", () => {
     ]);
 
     // Outgoing frame for session/load carries the evidence-frozen envelope.
+    // Frame layout: [initialize, initialized (notification), session/new, session/load]
     const frames = readStdinFrames(child);
-    const loadFrame = frames[2];
+    const loadFrame = frames[3];
     expect(loadFrame?.["method"]).toBe("session/load");
     expect(loadFrame?.["params"]).toEqual({
       sessionId: "s1",
@@ -676,5 +678,140 @@ describe("AcpProcess", () => {
   // Case #5 — regression-lifecycle: existing suite (above) must keep passing. Implicit:
   // if any of the existing tests fail post-fix, vitest reports it. No explicit
   // assertion here — this test is the documentation anchor for the contract.
+
+  // ---- TASK-006 (B4a/B4b/B10) ------------------------------------------------
+
+  // R (B4a) — assert on the ACTUAL recorded frames, not a comment. Today (pre-fix)
+  // the handshake writes only [initialize, session/new] — `initialized` is missing.
+  it("handshake sends exactly initialize, initialized (notification, no id), session/new — in that order", async () => {
+    const proc = new AcpProcess(
+      {
+        ompPath: "omp",
+        cwd: "/tmp/proj",
+        supportCwdFlag: true,
+        execFn: async () => "omp/18.0.1\n",
+      },
+      captureSpawn(child, captured),
+    );
+
+    const startPromise = proc.start();
+    queueMicrotask(() => {
+      void driveHandshake(child);
+    });
+    const handle = await startPromise;
+
+    const frames = readStdinFrames(child);
+    expect(frames).toHaveLength(3);
+
+    expect(frames[0]?.["method"]).toBe("initialize");
+    expect(typeof frames[0]?.["id"]).toBe("number");
+
+    expect(frames[1]?.["method"]).toBe("initialized");
+    expect("id" in (frames[1] ?? {})).toBe(false);
+
+    expect(frames[2]?.["method"]).toBe("session/new");
+    expect(typeof frames[2]?.["id"]).toBe("number");
+
+    // Happy — session id resolves from the session/new result.
+    expect(handle.sessionId).toBe("01a02f96-beda-7564-b313-2d0e5e515a22");
+
+    handle.dispose();
+  });
+
+  // R (B4b) — today (pre-fix) a stalled handshake hangs `start()` forever: no
+  // timeout exists anywhere in AcpClient. After the fix it rejects within the
+  // configured bound, the message names the phase ("initialize"), and the
+  // child is killed (no orphan process).
+  it("rejects within the configured bound when the agent never answers initialize; message names the phase; child killed", async () => {
+    const proc = new AcpProcess(
+      {
+        ompPath: "omp",
+        cwd: "/tmp/proj",
+        supportCwdFlag: true,
+        execFn: async () => "omp/18.0.1\n",
+        requestTimeoutMs: 25,
+      },
+      captureSpawn(child, captured),
+    );
+
+    const startPromise = proc.start();
+    // Deliberately never feed any stdout response — agent stays silent.
+    const err = await startPromise.catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/initialize/i);
+    expect((err as Error).message).toMatch(/timed out|timeout/i);
+    expect(child.killed).toBe(true);
+  });
+
+  // R (B10) — today (pre-fix) stderr is discarded entirely. After the fix, a
+  // startup error surfaces the stderr tail so omp's own auth/model/config
+  // error text is visible instead of silently lost.
+  it("surfaces the stderr tail in the startup error when the child exits non-zero before handshake completes", async () => {
+    const proc = new AcpProcess(
+      {
+        ompPath: "omp",
+        cwd: "/tmp/proj",
+        supportCwdFlag: true,
+        execFn: async () => "omp/18.0.1\n",
+      },
+      captureSpawn(child, captured),
+    );
+
+    const startPromise = proc.start();
+    queueMicrotask(() => {
+      void (async () => {
+        // Wait for our production stderr listener (registered synchronously
+        // during start()) to actually receive the chunk before exiting, so
+        // the exit-triggered rejection races AFTER the tail is captured.
+        const received = new Promise<void>((resolve) => {
+          child.stderr.once("data", () => resolve());
+        });
+        (child.stderr as PassThrough).write("omp: auth failed: invalid API key\n");
+        await received;
+        child.emitChildExit(1);
+      })();
+    });
+
+    const err = await startPromise.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toContain("auth failed: invalid API key");
+    expect((err as Error & { stderrTail?: string }).stderrTail).toContain(
+      "auth failed: invalid API key",
+    );
+  });
+
+  // Edge (backpressure) — 1 MB of stderr must be drained (no unbounded buffer,
+  // no blocked child) and the retained tail bounded to <= 8 KB.
+  it("drains 1 MB of stderr without unbounded buffering; retained tail is bounded to <= 8 KB", async () => {
+    const proc = new AcpProcess(
+      {
+        ompPath: "omp",
+        cwd: "/tmp/proj",
+        supportCwdFlag: true,
+        execFn: async () => "omp/18.0.1\n",
+      },
+      captureSpawn(child, captured),
+    );
+
+    const startPromise = proc.start();
+    queueMicrotask(() => {
+      void (async () => {
+        const chunk = "x".repeat(64 * 1024); // 64 KB
+        for (let i = 0; i < 16; i++) {
+          // 16 * 64 KB = 1 MB total
+          (child.stderr as PassThrough).write(chunk);
+          await Promise.resolve();
+        }
+        child.emitChildExit(1);
+      })();
+    });
+
+    const err = await startPromise.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    const tail = (err as Error & { stderrTail?: string }).stderrTail ?? "";
+    expect(tail.length).toBeGreaterThan(0);
+    expect(tail.length).toBeLessThanOrEqual(8 * 1024);
+  });
 });
 

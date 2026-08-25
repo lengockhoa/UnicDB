@@ -116,30 +116,84 @@ export interface QualifyResult {
 }
 
 /**
+ * Caller-owned handle around a per-schema, TTL-expiring table-name cache.
+ * Deliberately NOT a module-level singleton — a hidden global would keep
+ * serving a stale table list after a DDL change in the same session (see
+ * docs/AI_HANDOFF/tasks/TASK-008.md §Discussion). Callers that want reuse
+ * across multiple `qualifyKeywordTables` calls (e.g. a multi-statement run)
+ * create one cache and pass it via `opts.cache`.
+ */
+export interface KeywordTableCache {
+  /** Returns the cached lowercase table-name set, or fetches via `load` and stores it. */
+  get(schema: string, load: () => Promise<string[]>): Promise<Set<string>>;
+  clear(): void;
+}
+
+interface CacheEntry {
+  value: Promise<Set<string>>;
+  timestamp: number;
+}
+
+/** TTL default 30_000 ms. `now` is injectable for tests. */
+export function createKeywordTableCache(
+  ttlMs = 30_000,
+  now: () => number = Date.now,
+): KeywordTableCache {
+  const entries = new Map<string, CacheEntry>();
+  return {
+    async get(schema, load) {
+      const nowMs = now();
+      const cached = entries.get(schema);
+      if (cached && nowMs - cached.timestamp < ttlMs) {
+        return cached.value;
+      }
+      const value = load().then((rows) => new Set(rows.map((n) => n.toLowerCase())));
+      entries.set(schema, { value, timestamp: nowMs });
+      // Failed fetches must not poison the cache for the next attempt.
+      value.catch(() => {
+        if (entries.get(schema)?.value === value) entries.delete(schema);
+      });
+      return value;
+    },
+    clear() {
+      entries.clear();
+    },
+  };
+}
+
+/**
  * Rewrite SQL as described in the module header.
  *
  * `listTables` is async because callers need to hit the live adapter. It is
- * only ever invoked with `"public"` and only when at least one reserved-keyword
- * candidate is encountered, so it's cheap on queries that don't reference any.
+ * only ever invoked with `"public"`, and only lazily — the very first time a
+ * reserved-keyword table candidate is actually encountered while scanning
+ * `sql` — so a query with no such candidate never touches the catalog at all
+ * (TASK-008 / D1). `opts.cache` is an opt-in, caller-owned cache so a
+ * multi-statement run can share a single catalog round trip; omitted, this
+ * call pays its own round trip at most once (today's semantics).
  */
 export async function qualifyKeywordTables(
   sql: string,
   listTables: (schema: string) => Promise<string[]>,
+  opts?: { cache?: KeywordTableCache },
 ): Promise<QualifyResult> {
-  // Public table set — fetched eagerly so callers (extension.ts runStatements,
-  // browseCommands) always exercise the listTables path even when the SQL has
-  // no reserved-keyword candidates. Cheap: one round trip per query.
+  // Public table set — resolved lazily, on the first candidate lookup below,
+  // and memoized locally so a single call never issues more than one fetch.
   let publicTableSet: Set<string> | null = null;
   const publicTables = async (): Promise<Set<string>> => {
     if (publicTableSet) return publicTableSet;
-    const rows = await listTables("public");
-    publicTableSet = new Set(rows.map((n) => n.toLowerCase()));
+    try {
+      publicTableSet = opts?.cache
+        ? await opts.cache.get("public", () => listTables("public"))
+        : new Set((await listTables("public")).map((n) => n.toLowerCase()));
+    } catch {
+      // Best-effort: on adapter failure, fall through with no known tables
+      // so the original SQL passes through unchanged (matches the browse
+      // path's `?? rawSql` fallback) instead of throwing.
+      publicTableSet = new Set();
+    }
     return publicTableSet;
   };
-  // Eager warm-up — guarantees listTables("public") is invoked exactly once
-  // per qualifyKeywordTables call. Awaited here so the lazy `publicTables()`
-  // cache is populated before any loop candidate lookup.
-  await publicTables();
 
   // Per-statement state, reset at every `;` boundary.
   let prevTrigger: "" | "from" | "into" | "update" | "join" = "";

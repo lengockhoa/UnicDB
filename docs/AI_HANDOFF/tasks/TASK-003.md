@@ -86,6 +86,80 @@ which owns that file in this wave. Do not touch it here.
 
 ---
 
+## Executor Report
+EXECUTOR_TOOL: Claude Code
+EXECUTOR_MODEL: claude-sonnet-5
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  ❯ src/ui/__tests__/resultsGridModel.test.ts  (35 tests | 3 failed) 9ms
+     ❯ inferColumns — unique field (TASK-003 / A17) > Edge (duplicate): ["id","id"] -> fields ["id","id__2"], both headerName "id"
+       → expected [ 'id', 'id' ] to deeply equal [ 'id', 'id__2' ]
+     ❯ inferColumns — unique field (TASK-003 / A17) > Edge (triple + collision bait): ["id","id","id__2"] -> all fields unique
+       → expected 2 to be 3 // Object.is equality
+     ❯ inferColumns — unique field (TASK-003 / A17) > Regression (A17): ["id","id"] with rows [[1,2]] -- second spec resolves data index 1, not 0
+       → expected 'number' to be 'string' // Object.is equality
+  Test Files  1 failed (1)
+       Tests  3 failed | 32 passed (35)
+  (the other 3 table rows — distinct names, kind inference, empty input — were
+  already satisfied by pre-existing behavior and passed immediately; only the
+  3 duplicate-name-dependent cases required the fix, confirming RED for the
+  actual bug this task targets.)
+
+Verification Output: |
+  $ npm run typecheck
+  > vsdb@1.6.3 typecheck
+  > tsc --noEmit
+  (clean, no output)
+
+  $ npm test -- src/ui/__tests__/resultsGridModel.test.ts
+  ✓ src/ui/__tests__/resultsGridModel.test.ts  (35 tests) 5ms
+  Test Files  1 passed (1)
+       Tests  35 passed (35)
+
+  $ npm test -- src/ui/__tests__/resultsGridModelEdit.test.ts
+  ✓ src/ui/__tests__/resultsGridModelEdit.test.ts  (20 tests) 3ms
+  Test Files  1 passed (1)
+       Tests  20 passed (20)
+
+  $ npm test -- src/ui/__tests__/resultsGridModelExport.test.ts
+  ✓ src/ui/__tests__/resultsGridModelExport.test.ts  (39 tests) 62ms
+  Test Files  1 passed (1)
+       Tests  39 passed (39)
+
+  $ npm test -- src/ui/__tests__/resultsGridModelRequery.test.ts
+  ✓ src/ui/__tests__/resultsGridModelRequery.test.ts  (14 tests) 2ms
+  Test Files  1 passed (1)
+       Tests  14 passed (14)
+
+  $ npm test -- src/ui/__tests__/agGridSmoke.test.ts
+  (first run failed: ENOENT dist/webview.css — this worktree had no dist/
+  build output yet, unrelated to the code change. Ran `npm run compile` to
+  generate dist/, matching the state main's baseline run assumed, then
+  re-ran clean:)
+  ✓ src/ui/__tests__/agGridSmoke.test.ts  (3 tests) 148ms/175ms
+  Test Files  1 passed (1)
+       Tests  3 passed (3)
+
+  $ npm test  (full suite, post-compile)
+  Test Files  81 passed | 1 skipped (82)
+       Tests  1050 passed | 2 skipped (1052)
+  (baseline was 1044 passed/2 skipped/81 files passed; +6 = the 6 new tests
+  added to resultsGridModel.test.ts. No regressions.)
+
+Status: PASS
+Note: dist/ did not exist in this worktree before verification (fresh worktree,
+no prior `npm run compile`) — ran it once to make agGridSmoke.test.ts
+runnable per the task's own Verification Commands list; this is a build
+artifact, not a source change, and is git-ignored (confirmed via `git status
+--short` showing only the two Target Files as modified). No other issues.
+`webview/main.ts` was not touched, per the scope boundary; no further
+`field`-as-database-name consumer was found inside
+`src/ui/resultsGridModel.ts` itself — the export serializers
+(serializeTsv/Csv/Xml/Json/SqlInserts/SqlUpdates/WhereClause) all take raw
+`columns: string[]` (never `ColumnSpec[]`) and are keyed by array position or
+Map<name,index> built from that same `columns` array, so `field` never enters
+their code path.
+
 ## Discussion
 
 ### 2026-08-25 · planner · claude-opus-5

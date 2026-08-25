@@ -465,7 +465,7 @@ describe("registerBrowseCommands", () => {
 // the normal `public/users` browse. Test verifies the wiring: listTables is
 // consulted (called with "public") and the existing pipeline stays intact.
 // =============================================================================
-it("#11 browse path applies qualifyKeywordTables — listTables('public') consulted, SQL unchanged for normal browse", async () => {
+it("#11 browse path applies qualifyKeywordTables — already-qualified SQL, no rewrite, no catalog round trip (TASK-008: lazy lookup)", async () => {
   const conn: ConnectionConfig = {
     id: "c1",
     name: "Test PG",
@@ -497,9 +497,13 @@ it("#11 browse path applies qualifyKeywordTables — listTables('public') consul
   expect(runner.run).toHaveBeenCalledTimes(1);
   const [stmts] = runner.run.mock.calls[0] as [ParsedStatement[], unknown];
   expect(stmts[0]!.text).toBe('SELECT * FROM "public"."users"');
-  // RED: listTables must be called with "public" — currently NOT called because
-  // browseCommands has no wiring to the transform.
-  expect(listTablesSpy).toHaveBeenCalledWith("public");
+  // TASK-008: qualifyKeywordTables is now lazy — it only calls listTables when
+  // the SQL actually contains an unquoted reserved-keyword candidate. Browse
+  // SQL is generated fully quoted (buildBrowseSelect always double-quotes
+  // schema + table), so it is never such a candidate and listTables must NOT
+  // be consulted. This replaces the pre-TASK-008 assertion that relied on the
+  // (now removed) eager `information_schema.tables` warm-up firing on every call.
+  expect(listTablesSpy).not.toHaveBeenCalled();
 });
 
 // Suppress lint warning about unused vscode import — needed to wire the mock.

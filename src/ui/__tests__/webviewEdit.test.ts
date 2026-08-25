@@ -523,6 +523,41 @@ describeIfBundle("webview/main.ts bundle (TASK-501)", () => {
     expect(newRowMarkers.length).toBeGreaterThanOrEqual(1);
   });
 
+  // TASK-002 (cycle T) — A7: the insert marker used to live at colIndex 0,
+  // the same key a real edit on column 0 uses. EditState.markDirty
+  // coalesces same-key writes, so typing in the new row's first column
+  // silently destroyed the insert marker (the row would never be sent as
+  // an INSERT). The marker now lives at MARKER_COL_INSERT (-1).
+  itIfBundle(
+    "10i. Add Row then edit its column 0 keeps BOTH the insert marker and the cell edit",
+    async () => {
+      const { root } = loadBundle();
+      void root;
+      dispatchState(threeRowsState());
+      await flushGridEvents();
+
+      const api = vsdbApi()!;
+      const grid = api.gridApi!;
+      const before = grid.getDisplayedRowCount();
+      api.addRow!();
+      await flushGridEvents();
+
+      const newRow = grid.getDisplayedRowAtIndex(before);
+      const newRowId = newRow!.data.__rowId as number;
+      const sim = getSimulateEdit()!;
+      sim(newRowId, "id", 42, "");
+      await flushGridEvents();
+
+      const editState = getEditState()!;
+      const forRow = editState.snapshot().filter((s) => s.rowId === newRowId);
+      expect(forRow).toHaveLength(2);
+      const colIndices = forRow.map((s) => s.colIndex).sort((a, b) => a - b);
+      expect(colIndices).toEqual([-1, 0]);
+      const cellEdit = forRow.find((s) => s.colIndex === 0);
+      expect(cellEdit!.value).toBe(42);
+    },
+  );
+
   // Tab switch must clear stale EditState (no phantom edits across statements).
   itIfBundle("10h. tab switch clears stale EditState", async () => {
     const { root } = loadBundle();

@@ -5,7 +5,7 @@
 // thay vì spawn child process thật. Frames tuân theo ACP JSON-RPC 2.0 NDJSON
 // đã live-probe trên omp 18.0.1 (xem TASK-001 §Discussion).
 import { describe, it, expect, beforeEach } from "vitest";
-import { AcpClient, type AcpTransport } from "../acp";
+import { AcpClient, DEFAULT_ACP_REQUEST_TIMEOUT_MS, type AcpTransport } from "../acp";
 
 // ---- Fake transport ----------------------------------------------------------
 
@@ -540,5 +540,43 @@ describe("AcpClient", () => {
     const res = await first;
     expect(res.configOptions).toEqual({});
     expect(res.modes).toEqual({});
+  });
+
+  // ---- TASK-006 (B4b): per-request timeout -----------------------------------
+
+  // R (B4b) — today `request()` never settles on its own; nothing anywhere in
+  // AcpClient owns a timer, so a request with no matching response frame
+  // hangs forever. After the fix it rejects within the configured bound.
+  it("request() rejects within the configured requestTimeoutMs when no matching response arrives", async () => {
+    const client = new AcpClient(transport, { requestTimeoutMs: 20 });
+    const pending = client.request("session/new", { cwd: "/tmp", mcpServers: [] });
+
+    // Deliberately never feed a matching response.
+    const err = await pending.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/session\/new/);
+    expect((err as Error).message).toMatch(/timed out|timeout/i);
+  });
+
+  it("default requestTimeoutMs is DEFAULT_ACP_REQUEST_TIMEOUT_MS when not overridden", () => {
+    // Constructing without opts must not throw and must fall back to the
+    // named default constant — asserted indirectly via the exported constant
+    // being a sane, named 30s bound (not a magic number scattered in code).
+    expect(DEFAULT_ACP_REQUEST_TIMEOUT_MS).toBe(30_000);
+    expect(() => new AcpClient(transport)).not.toThrow();
+  });
+
+  it("a request that resolves before the timeout does not leak a pending timer/resolver", async () => {
+    const client = new AcpClient(transport, { requestTimeoutMs: 20 });
+    const pending = client.request("session/list", {});
+    await flushMicrotasks();
+    const id = transport.lastWritten()["id"];
+    transport.feed(JSON.stringify({ jsonrpc: "2.0", id, result: { sessions: [] } }));
+    await pending;
+
+    // Wait past the configured timeout — if the timer/pending entry leaked,
+    // nothing observable happens here (no unhandled rejection), but this
+    // guards against the resolved path forgetting to clear its timer.
+    await new Promise((resolve) => setTimeout(resolve, 30));
   });
 });

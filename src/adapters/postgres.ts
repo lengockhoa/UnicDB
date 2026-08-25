@@ -49,6 +49,50 @@ import { splitStatements } from "../core/statementParser";
 
 const DEFAULT_BATCH_SIZE = 500;
 
+/**
+ * D5 fix — cursor-routing decision as a single, pure, exported-for-test
+ * helper instead of the inline `/^\s*SELECT\b/i.test(text) &&
+ * !text.includes(";")` regex that used to guard `runQuery`'s fast path.
+ *
+ * The old predicate had two independent defects:
+ *  - A leading comment (which `splitStatements` always keeps as part of the
+ *    statement text) defeats `/^\s*SELECT\b/` — the comment isn't whitespace.
+ *  - `!text.includes(";")` rejects any statement containing a literal `;`
+ *    even INSIDE a string ('...;...') — a false negative, since
+ *    `splitStatements()` has already isolated real statement boundaries
+ *    before `text` ever reaches this function.
+ *
+ * Fix: strip leading whitespace + `--`/`/* *\/` comments, then check the
+ * leading keyword is `SELECT` or `WITH` (mirrors mssql.ts, which already
+ * accepts `WITH`). No `;` check at all — `text` is always ONE statement by
+ * the time it gets here, so any `;` remaining in it is by construction
+ * inside a string/comment/dollar-quote, not a second statement boundary.
+ */
+export function shouldUseCursor(text: string): boolean {
+  const stripped = stripLeadingCommentsAndWhitespace(text);
+  return /^(SELECT|WITH)\b/i.test(stripped);
+}
+
+function stripLeadingCommentsAndWhitespace(text: string): string {
+  let i = 0;
+  const n = text.length;
+  for (;;) {
+    while (i < n && /\s/.test(text[i])) i += 1;
+    if (text.startsWith("--", i)) {
+      const nl = text.indexOf("\n", i);
+      i = nl === -1 ? n : nl + 1;
+      continue;
+    }
+    if (text.startsWith("/*", i)) {
+      const end = text.indexOf("*/", i + 2);
+      i = end === -1 ? n : end + 2;
+      continue;
+    }
+    break;
+  }
+  return text.slice(i);
+}
+
 type CursorState = "open" | "eof" | "closed" | "error";
 
 interface OpenCursorRecord {
@@ -159,9 +203,7 @@ export class PostgresAdapter implements DbAdapter {
     const statements = splitStatements(sql);
 
     const singleSelect =
-      statements.length === 1 &&
-      /^\s*SELECT\b/i.test(statements[0].text) &&
-      !statements[0].text.includes(";");
+      statements.length === 1 && shouldUseCursor(statements[0].text);
 
     if (singleSelect) {
       const batched = await this.openCursorForStatement(statements[0].text);
@@ -297,56 +339,45 @@ export class PostgresAdapter implements DbAdapter {
     }));
   }
 
+  /**
+   * D4 fix — pg_catalog only, zero `information_schema` references, at most
+   * ONE `::regclass` cast per call.
+   *
+   * Old query joined `information_schema.columns` (which evaluates
+   * `has_column_privilege()` per column, DB-wide — slow) purely to get
+   * column_name/data_type/is_nullable that `pg_attribute` already has, then
+   * cast `::regclass` up to 3 times across 2 queries. `INTROSPECT_COLUMNS_SQL`
+   * (pgIntrospect.ts, shared with listTableDetail) is a strictly faster
+   * pure-pg_catalog equivalent for the columns half — zero regclass casts.
+   * PK detection folds into a single `pg_index` lookup that casts once.
+   */
   async listColumns(
     table: string,
     schema: string = "public",
   ): Promise<ColumnInfo[]> {
     const colsRes = await this.query<{
       column_name: string;
-      data_type: string;
-      udt_name: string;
-      is_nullable: string;
       format_type: string;
-    }>(
-      `SELECT c.column_name,
-              c.data_type,
-              c.udt_name,
-              c.is_nullable,
-              pg_catalog.format_type(a.atttypid, a.atttypmod) AS format_type
-         FROM information_schema.columns c
-         JOIN pg_attribute a
-           ON a.attrelid =
-              (quote_ident($1) || '.' || quote_ident($2))::regclass
-          AND a.attname = c.column_name
-          AND a.attnum > 0
-          AND NOT a.attisdropped
-         WHERE c.table_schema = $1 AND c.table_name = $2
-         ORDER BY c.ordinal_position`,
-      [schema, table],
-    );
+      is_nullable: "YES" | "NO";
+    }>(INTROSPECT_COLUMNS_SQL(schema, table), [schema, table]);
 
     const pkRes = await this.query<{ column_name: string }>(
       `SELECT a.attname AS column_name
          FROM pg_index i
          JOIN pg_attribute a
-           ON a.attrelid =
-              (quote_ident($1) || '.' || quote_ident($2))::regclass
+           ON a.attrelid = i.indrelid
           AND a.attnum = ANY(i.indkey)
-         WHERE i.indrelid =
+        WHERE i.indrelid =
               (quote_ident($1) || '.' || quote_ident($2))::regclass
-           AND i.indisprimary`,
+          AND i.indisprimary`,
       [schema, table],
     );
     const pkCols = new Set(pkRes.rows.map((row) => row.column_name));
 
     return colsRes.rows.map((row) => {
-      const dataType =
-        row.format_type && row.format_type.length > 0
-          ? row.format_type
-          : row.udt_name || row.data_type;
       const info: ColumnInfo = {
         name: row.column_name,
-        dataType,
+        dataType: row.format_type,
         nullable: row.is_nullable === "YES",
       };
       if (pkCols.has(row.column_name)) info.isPrimaryKey = true;
@@ -375,6 +406,46 @@ export class PostgresAdapter implements DbAdapter {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * D2 API — one round trip cho nhiều table thay vì N lần estimateTableRows()
+   * (đặc biệt tốn kém trên pool `max: 1` — mỗi lần gọi tuần tự xếp hàng).
+   * `tables` rỗng → Map rỗng, KHÔNG issue query nào. Table không tồn tại /
+   * bị drop giữa list và estimate → đơn giản không xuất hiện trong kết quả
+   * `pg_class` → OMIT khỏi Map (không map null, không throw).
+   */
+  async estimateTableRowsBatch(
+    schema: string,
+    tables: readonly string[],
+  ): Promise<Map<string, number | null>> {
+    const result = new Map<string, number | null>();
+    if (tables.length === 0) return result;
+    try {
+      const res = await this.query<{
+        relname: string;
+        row_estimate: string | number;
+      }>(
+        `SELECT c.relname, c.reltuples::bigint AS row_estimate
+           FROM pg_class c
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = $1 AND c.relname = ANY($2)
+            AND c.relkind IN ('r','p')`,
+        [schema, tables],
+      );
+      for (const row of res.rows) {
+        const raw = row.row_estimate;
+        const value = typeof raw === "string" ? Number(raw) : raw;
+        result.set(
+          row.relname,
+          !Number.isFinite(value) || value < 0 ? null : value,
+        );
+      }
+    } catch {
+      // best-effort — mirrors estimateTableRows: lỗi metadata query không
+      // được làm hỏng cả tree, trả về những gì đã có (có thể rỗng).
+    }
+    return result;
   }
 
   /**

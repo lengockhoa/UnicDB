@@ -266,6 +266,15 @@ export class MsSqlAdapter implements DbAdapter {
     }));
   }
 
+  /**
+   * D6 fix (cost only — see PLAN §3.9 scope note) — one round trip, zero
+   * correlated `EXISTS` subqueries. The old query ran `EXISTS (SELECT 1
+   * FROM sys.indexes ⋈ sys.index_columns WHERE ...)` PER COLUMN ROW; this
+   * replaces it with a single `LEFT JOIN` against the PK's index_columns so
+   * every column's PK flag comes back from the same query. `this.literal()`
+   * interpolation stays as-is (no parameter-binding path on this adapter —
+   * see the D6 scope note in TASK-005; `literal()` already escapes `'`).
+   */
   async listColumns(
     table: string,
     schema = "dbo",
@@ -274,20 +283,19 @@ export class MsSqlAdapter implements DbAdapter {
       `SELECT c.name AS name,
               ty.name AS dataType,
               c.is_nullable AS nullable,
-              CASE WHEN EXISTS (
-                SELECT 1
-                  FROM sys.indexes i
-                  JOIN sys.index_columns ic
-                    ON ic.object_id = i.object_id
-                   AND ic.index_id = i.index_id
-                 WHERE i.object_id = t.object_id
-                   AND i.is_primary_key = 1
-                   AND ic.column_id = c.column_id
-              ) THEN 1 ELSE 0 END AS isPrimaryKey
+              CASE WHEN pk.column_id IS NOT NULL THEN 1 ELSE 0 END AS isPrimaryKey
          FROM sys.tables t
          JOIN sys.schemas s ON s.schema_id = t.schema_id
          JOIN sys.columns c ON c.object_id = t.object_id
          JOIN sys.types ty ON ty.user_type_id = c.user_type_id
+         LEFT JOIN (
+           SELECT ic.object_id, ic.column_id
+             FROM sys.indexes i
+             JOIN sys.index_columns ic
+               ON ic.object_id = i.object_id
+              AND ic.index_id = i.index_id
+            WHERE i.is_primary_key = 1
+         ) pk ON pk.object_id = t.object_id AND pk.column_id = c.column_id
         WHERE s.name = ${this.literal(schema)}
           AND t.name = ${this.literal(table)}
         ORDER BY c.column_id`,
@@ -339,6 +347,47 @@ export class MsSqlAdapter implements DbAdapter {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * D2 API — one round trip cho nhiều table (thay vì N lần
+   * estimateTableRows()). `this.literal()` interpolation — no
+   * parameter-binding path (see D6 scope note). `tables` rỗng → Map rỗng,
+   * KHÔNG issue query. Table drop giữa list và estimate → không có trong
+   * `GROUP BY` result → OMIT khỏi Map, không throw.
+   */
+  async estimateTableRowsBatch(
+    schema: string,
+    tables: readonly string[],
+  ): Promise<Map<string, number | null>> {
+    const result = new Map<string, number | null>();
+    if (tables.length === 0) return result;
+    try {
+      const inList = tables.map((t) => this.literal(t)).join(", ");
+      const res = await this.execute(
+        `SELECT t.name AS name, SUM(p.rows) AS row_count
+           FROM sys.partitions p
+           JOIN sys.tables t ON t.object_id = p.object_id
+           JOIN sys.schemas s ON s.schema_id = t.schema_id
+          WHERE s.name = ${this.literal(schema)}
+            AND t.name IN (${inList})
+            AND p.index_id IN (0, 1)
+          GROUP BY t.name`,
+      );
+      for (const row of res.rows) {
+        const name = String(row[0]);
+        const raw = row[1];
+        if (raw === null || raw === undefined) {
+          result.set(name, null);
+          continue;
+        }
+        const value = Number(raw);
+        result.set(name, !Number.isFinite(value) || value < 0 ? null : value);
+      }
+    } catch {
+      // best-effort — mirrors estimateTableRows.
+    }
+    return result;
   }
 
   private createConnection(): Connection {

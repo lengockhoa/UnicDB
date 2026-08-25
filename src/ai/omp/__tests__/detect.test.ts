@@ -1,5 +1,5 @@
 // src/ai/omp/__tests__/detect.test.ts — TASK-003 TDD tests
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   MIN_OMP_VERSION,
   OMP_INSTALL_HINT,
@@ -89,6 +89,74 @@ describe("compareVersions — frozen contract", () => {
     expect(compareVersions("18.0.1-beta.2", "18.0.0")).toBe(1);
     expect(compareVersions("18.0.1-beta.2", "18.0.1")).toBe(0);
     expect(compareVersions("18.0.1-beta.2", "18.0.2")).toBe(-1);
+  });
+});
+
+// ---- TASK-006 (B12) --------------------------------------------------------
+
+describe("detectOmp — platform + quoting (TASK-006 B12)", () => {
+  const originalPlatform = process.platform;
+
+  function setPlatform(value: NodeJS.Platform): void {
+    Object.defineProperty(process, "platform", { value, configurable: true });
+  }
+
+  afterEach(() => {
+    setPlatform(originalPlatform);
+  });
+
+  // R (B12) — today the code always runs `which omp`, even on Windows, so it
+  // reports "not-installed" there (ENOENT: `which` does not exist on win32).
+  it("edge (platform): win32 uses `where`, not `which`", async () => {
+    setPlatform("win32");
+    const calls: string[] = [];
+    const execFn = async (cmd: string) => {
+      calls.push(cmd);
+      if (cmd === "where omp") return "C:\\Tools\\omp.exe\r\n";
+      if (cmd.endsWith(" --version")) return "omp/18.0.1 windows/amd64";
+      throw new Error("unexpected: " + cmd);
+    };
+    const result = await detectOmp(execFn);
+    expect(calls[0]).toBe("where omp");
+    expect(calls[0]).not.toBe("which omp");
+    expect(result.available).toBe(true);
+    expect(result.ok).toBe(true);
+    expect(result.path).toBe("C:\\Tools\\omp.exe");
+  });
+
+  it("non-windows platforms still use `which`", async () => {
+    setPlatform("darwin");
+    const calls: string[] = [];
+    const execFn = async (cmd: string) => {
+      calls.push(cmd);
+      if (cmd === "which omp") return "/usr/local/bin/omp\n";
+      if (cmd.endsWith(" --version")) return "omp/18.0.1 darwin/arm64";
+      throw new Error("unexpected: " + cmd);
+    };
+    await detectOmp(execFn);
+    expect(calls[0]).toBe("which omp");
+  });
+
+  // Edge (path with spaces) — the version probe must still succeed; the path
+  // is quoted/argv-passed rather than shell-concatenated word-by-word.
+  it("edge (path with spaces): version probe succeeds; path is quoted, not shell-split", async () => {
+    const calls: string[] = [];
+    const execFn = async (cmd: string) => {
+      calls.push(cmd);
+      if (cmd === "which omp") return "/opt/my apps/omp\n";
+      // A correct implementation quotes the path into a single argv token.
+      // A naive `${path} --version` concatenation would produce
+      // `/opt/my apps/omp --version` with no quotes, which a real shell
+      // would split into `/opt/my`, `apps/omp`, `--version` — we assert the
+      // quoted form is what's actually sent.
+      if (cmd === '"/opt/my apps/omp" --version') return "omp/18.0.1 darwin/arm64";
+      throw new Error("unexpected/unquoted cmd: " + cmd);
+    };
+    const result = await detectOmp(execFn);
+    expect(calls).toEqual(["which omp", '"/opt/my apps/omp" --version']);
+    expect(result.available).toBe(true);
+    expect(result.ok).toBe(true);
+    expect(result.version).toBe("18.0.1");
   });
 });
 

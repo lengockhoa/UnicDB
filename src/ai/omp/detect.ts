@@ -56,6 +56,26 @@ async function defaultExecFn(cmd: string): Promise<string> {
 }
 
 /**
+ * TASK-006 (B12): the locator command differs per platform — `which` does
+ * not exist on Windows.
+ */
+function locateCommand(): string {
+  return process.platform === "win32" ? "where omp" : "which omp";
+}
+
+/**
+ * TASK-006 (B12): `ExecFn` takes a single shell command string, so the path
+ * still round-trips through a shell — but an unquoted path with spaces
+ * (e.g. `/opt/my apps/omp`) previously split into multiple shell tokens.
+ * Quote it so it is passed through as a single argv entry instead of being
+ * shell-concatenated word-by-word.
+ */
+function quoteForShell(path: string): string {
+  if (!/\s/.test(path)) return path;
+  return `"${path.replace(/"/g, '\\"')}"`;
+}
+
+/**
  * Locate the omp binary, read its version, and decide whether to use it
  * or fall back to the built-in engine.
  *
@@ -69,15 +89,17 @@ export async function detectOmp(
 ): Promise<OmpDetection> {
   let path: string | undefined;
   try {
-    const out = await execFn("which omp");
-    path = out.trim() || undefined;
+    const out = await execFn(locateCommand());
+    // `where` can print multiple matches, one per line; take the first.
+    const first = out.split(/\r?\n/).find((line) => line.trim().length > 0);
+    path = first?.trim() || undefined;
   } catch {
     return { available: false, ok: false, reason: "not-installed" };
   }
 
   let version: string | undefined;
   try {
-    const raw = await execFn(`${path} --version`);
+    const raw = await execFn(`${quoteForShell(path ?? "")} --version`);
     version = parseVersion(raw);
   } catch {
     return {

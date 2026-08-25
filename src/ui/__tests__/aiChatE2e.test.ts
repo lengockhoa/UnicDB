@@ -20,6 +20,8 @@ import type { AgentDeps } from "../../ai/agent";
 import type { ProviderRequest, ProviderResult } from "../../ai/provider";
 import type { AdapterFactory } from "../../ai/tools/types";
 import type { DbAdapter } from "../../adapters/types";
+import { AcpClient, type AcpTransport } from "../../ai/omp/acp";
+import type { AcpProcessHandle } from "../../ai/omp/acpProcess";
 
 // Mock vscode BEFORE importing the panel.
 type Listener<T> = (e: T) => void;
@@ -87,6 +89,7 @@ vi.mock("vscode", () => ({
     })),
   },
   ViewColumn: { Active: 1 },
+  workspace: { workspaceFolders: undefined },
   EventEmitter: vi.fn().mockImplementation(() => new FakeEventEmitter<unknown>()),
 }));
 
@@ -536,5 +539,132 @@ describe("AiChatPanel — E2E full-DB context", () => {
     expect(assistant).toBeDefined();
     expect(assistant!.text).toBe("Here is your schema.");
     expect(posted.some(isDone)).toBe(true);
+  });
+});
+
+// ============================================================================
+// TASK-007 — ACP engine E2E: real AcpClient + FakeAcpTransport (mirrors the
+// pattern in aiChatPanelAcp.test.ts), reaching `assistant` + `done` through
+// the actual `session/prompt` JSON-RPC RESPONSE (B1 fix) — never a fake
+// `agent_end`/`turn_complete` notification, which real ACP does not send.
+// This is the end-to-end proof that the omp/ACP chat path is not just
+// unit-testable but actually completes a turn from the panel's perspective.
+// ============================================================================
+class FakeAcpTransport implements AcpTransport {
+  written: string[] = [];
+  private listeners: Array<(line: string) => void> = [];
+  private closed = false;
+  write(line: string): void {
+    if (this.closed) return;
+    this.written.push(line);
+  }
+  onLine(cb: (line: string) => void): void {
+    this.listeners.push(cb);
+  }
+  close(): void {
+    this.closed = true;
+    this.listeners.length = 0;
+  }
+  feed(line: string): void {
+    for (const cb of this.listeners.slice()) cb(line);
+  }
+  allWritten(): Array<Record<string, unknown>> {
+    return this.written.map((l) => JSON.parse(l) as Record<string, unknown>);
+  }
+}
+
+interface FakeAcpSession {
+  acp: AcpClient;
+  transport: FakeAcpTransport;
+}
+
+function makeFakeAcpDeps(): {
+  start: (ompPath: string, cwd: string) => Promise<AcpProcessHandle>;
+  sessions: FakeAcpSession[];
+} {
+  const sessions: FakeAcpSession[] = [];
+  return {
+    sessions,
+    start: async (): Promise<AcpProcessHandle> => {
+      const transport = new FakeAcpTransport();
+      const acp = new AcpClient(transport);
+      sessions.push({ acp, transport });
+      return {
+        acp,
+        sessionId: "sess-1",
+        version: "18.0.1",
+        dispose: () => {
+          transport.close();
+          acp.dispose();
+        },
+      };
+    },
+  };
+}
+
+function feedAgentMessageChunk(transport: FakeAcpTransport, text: string): void {
+  transport.feed(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "sess-1",
+        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } },
+      },
+    }),
+  );
+}
+
+/** Find the `id` of the most recently written `session/prompt` request. */
+function lastPromptRequestId(transport: FakeAcpTransport): unknown {
+  const frames = transport.allWritten().filter((f) => f["method"] === "session/prompt");
+  const last = frames[frames.length - 1];
+  return last?.["id"];
+}
+
+/** Feed the `session/prompt` JSON-RPC RESPONSE — the real ACP turn-completion
+ * signal (`{stopReason: "end_turn" | ...}`), never a notification. */
+function respondPrompt(transport: FakeAcpTransport, id: unknown, stopReason: string): void {
+  transport.feed(JSON.stringify({ jsonrpc: "2.0", id, result: { stopReason } }));
+}
+
+describe("AiChatPanel — E2E ACP engine turn completion (TASK-007)", () => {
+  it("streams agent_message_chunk deltas then settles on the session/prompt response, posting assistant + done", async () => {
+    const { start, sessions } = makeFakeAcpDeps();
+    const adapter = createFakeAdapter();
+    const adapterFactory: AdapterFactory = async () => adapter;
+    const panel = new AiChatPanel({
+      extensionUri: vscode.Uri.file("/ext"),
+      deps: makeDepsWithFetch(vi.fn() as unknown as typeof fetch, makeConfig()),
+      adapterFactory,
+      acp: { start },
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some((m) => (m as { type?: string }).type === "init"));
+
+    handler({ type: "send", text: "list tables" });
+    await until(() => sessions.length > 0);
+    const session = sessions[0] as FakeAcpSession;
+    await until(() => lastPromptRequestId(session.transport) !== undefined);
+
+    feedAgentMessageChunk(session.transport, "Here ");
+    feedAgentMessageChunk(session.transport, "are your tables.");
+
+    const id = lastPromptRequestId(session.transport);
+    respondPrompt(session.transport, id, "end_turn");
+
+    await until(() => postedMessages(p).some(isAssistant));
+    await until(() => postedMessages(p).some(isDone));
+
+    const posted = postedMessages(p);
+    const assistant = posted.find(isAssistant) as AssistantMsg | undefined;
+    expect(assistant).toBeDefined();
+    expect(assistant!.text).toBe("Here are your tables.");
+    expect(posted.some(isDone)).toBe(true);
+    // No stray error posted — the turn completed cleanly via the real
+    // stopReason-bearing response, not a fabricated agent_end notification.
+    expect(posted.some(isError)).toBe(false);
   });
 });

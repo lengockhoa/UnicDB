@@ -55,10 +55,10 @@ describe("buildSaveStatements — PK present (postgres)", () => {
     expect(r.statements).toHaveLength(1);
     const stmt = r.statements[0];
     expectNoPlaceholders(stmt);
-    expect(stmt).toMatch(/UPDATE\s+t\s+SET/i);
-    expect(stmt).toContain("name='new-b'");
-    expect(stmt).toContain("qty=42");
-    expect(stmt).toMatch(/WHERE\s+id=6/i);
+    expect(stmt).toMatch(/UPDATE\s+"t"\s+SET/i);
+    expect(stmt).toContain("\"name\"='new-b'");
+    expect(stmt).toContain('"qty"=42');
+    expect(stmt).toMatch(/WHERE\s+"id"=6/i);
   });
 });
 
@@ -213,7 +213,7 @@ describe("buildSaveStatements — Add Row / Delete Row markers", () => {
     expect(r.statements).toHaveLength(1);
     const stmt = r.statements[0];
     expectNoPlaceholders(stmt);
-    expect(stmt).toMatch(/^INSERT INTO t \(a, b\) VALUES \('', ''\)/);
+    expect(stmt).toMatch(/^INSERT INTO "t" \("a", "b"\) VALUES \('', ''\)/);
   });
 
   it("__vsdb_deleted__ marker → DELETE statement (inline WHERE)", () => {
@@ -237,7 +237,7 @@ describe("buildSaveStatements — Add Row / Delete Row markers", () => {
     expect(r.statements).toHaveLength(1);
     const stmt = r.statements[0];
     expectNoPlaceholders(stmt);
-    expect(stmt).toMatch(/^DELETE FROM t WHERE id=99/i);
+    expect(stmt).toMatch(/^DELETE FROM "t" WHERE "id"=99/i);
   });
 
   // ---- postgres no-PK DELETE via ctid (TASK-003) --------------------------
@@ -264,7 +264,7 @@ describe("buildSaveStatements — Add Row / Delete Row markers", () => {
     expect(r.statements).toHaveLength(1);
     const stmt = r.statements[0];
     expectNoPlaceholders(stmt);
-    expect(stmt).toMatch(/^DELETE FROM t WHERE ctid='\(0,2\)'/i);
+    expect(stmt).toMatch(/^DELETE FROM "t" WHERE ctid='\(0,2\)'/i);
     expect(
       r.warnings.some((w) => /not safe under concurrent writes/i.test(w)),
     ).toBe(true);
@@ -298,9 +298,17 @@ describe("buildSaveStatements — Add Row / Delete Row markers", () => {
           "delete row 7 skipped: postgres no-PK + missing ctid",
       ),
     ).toBe(true);
+    // TASK-001 A19-skip: a machine-readable twin of the warning so the
+    // webview never clears an edit that produced no statement.
+    expect(r.skippedRows).toBeDefined();
+    expect(
+      r.skippedRows!.some(
+        (s) => s.rowId === 7 && /ctid/i.test(s.reason),
+      ),
+    ).toBe(true);
   });
 
-  it("mysql no-PK + delete marker → no throw, no DELETE emitted (no_pk rejection still fires for mysql/mssql)", () => {
+  it("mysql no-PK + delete marker → TASK-001: soft per-row skip (ok:true, no DELETE emitted, skippedRows names the row)", () => {
     const marker: EditEntry = {
       rowId: 0,
       colIndex: 0,
@@ -315,13 +323,37 @@ describe("buildSaveStatements — Add Row / Delete Row markers", () => {
       [["x"]],
       { ctidByRowId: new Map([[0, "(0,1)"]]) },
     );
-    // mysql no-PK still triggers the existing no_pk guard at the cell-edits
-    // loop boundary — ok:false. The new postgres-ctid branch must NOT fire
-    // here; importantly no DELETE is emitted.
+    // TASK-001 item 3 (A10-remainder): a delete-only batch on a no-PK
+    // mysql/mssql table is no longer a hard wholesale refusal — mysql has
+    // no ctid-style fallback, so the row is skipped individually with an
+    // explicit warning + skippedRows entry, and the batch still reports
+    // ok:true (statements empty). The blanket no_pk REFUSAL is reserved for
+    // batches that actually contain cell edits needing a PK-based WHERE.
+    expect(r.ok).toBe(true);
+    if (r.ok !== true) return;
+    expect(r.statements).toHaveLength(0);
+    expect(r.warnings.some((w) => /no primary key/i.test(w))).toBe(true);
+    expect(r.skippedRows).toBeDefined();
+    expect(
+      r.skippedRows!.some(
+        (s) => s.rowId === 0 && /no primary key/i.test(s.reason),
+      ),
+    ).toBe(true);
+  });
+
+  it("mysql no-PK + CELL EDIT (not delete-only) → still hard refuses ok:false, reason no_pk (unchanged)", () => {
+    const edits: EditEntry[] = [{ rowId: 0, colIndex: 0, value: "edited" }];
+    const r = buildSaveStatements(
+      "mysql",
+      "t",
+      [],
+      ["x", "y"],
+      edits,
+      [["a", "b"]],
+    );
     expect(r.ok).toBe(false);
     if (r.ok !== false) return;
     expect(r.reason).toBe("no_pk");
-    // The refused shape exposes warnings only — assert via that.
     expect(r.warnings.some((w) => /no PRIMARY KEY/i.test(w))).toBe(true);
   });
 
@@ -361,8 +393,8 @@ describe("buildSaveStatements — Add Row / Delete Row markers", () => {
     const stmt1 = r.statements[1];
     expectNoPlaceholders(stmt0);
     expectNoPlaceholders(stmt1);
-    expect(stmt0).toMatch(/^DELETE FROM t WHERE ctid='\(0,1\)'/i);
-    expect(stmt1).toMatch(/^UPDATE t SET a='new-a' WHERE ctid='\(0,0\)'/i);
+    expect(stmt0).toMatch(/^DELETE FROM "t" WHERE ctid='\(0,1\)'/i);
+    expect(stmt1).toMatch(/^UPDATE "t" SET "a"='new-a' WHERE ctid='\(0,0\)'/i);
   });
 });
 describe("buildSaveStatements — batch shape", () => {
@@ -389,8 +421,8 @@ describe("buildSaveStatements — batch shape", () => {
     if (r.ok !== true) return;
     expect(r.statements).toHaveLength(2);
     // Two-row batch — each statement independent, inline-literal.
-    expect(r.statements[0]).toMatch(/name='X'.*qty=11.*WHERE id=1/);
-    expect(r.statements[1]).toMatch(/name='Y'.*qty=22.*WHERE id=2/);
+    expect(r.statements[0]).toMatch(/"name"='X'.*"qty"=11.*WHERE\s+"id"=1/);
+    expect(r.statements[1]).toMatch(/"name"='Y'.*"qty"=22.*WHERE\s+"id"=2/);
   });
 });
 
@@ -431,5 +463,149 @@ describe("buildSaveStatements — type coverage", () => {
       expect(stmt).toMatch(/=('|")x('|")/);
       expect(stmt).toMatch(/WHERE\s+\S*id\S*=1/);
     }
+  });
+});
+
+// ---- TASK-001 A19-skip (§3.4a): skippedRows must be machine-readable ------
+// A skipped row must never come back as an unrecoverable "ok:true, nothing
+// mentions it" — see docs/AI_HANDOFF/tasks/TASK-001.md §Test Cases.
+
+describe("buildSaveStatements — skippedRows (A19-skip, §3.4a)", () => {
+  it("nothing skipped: all rows emit ⇒ skippedRows is undefined or [] (never a phantom entry)", () => {
+    const edits: EditEntry[] = [
+      { rowId: 0, colIndex: 1, value: "x" },
+      { rowId: 1, colIndex: 1, value: "y" },
+    ];
+    const serverRows: unknown[][] = [
+      [1, "a"],
+      [2, "b"],
+    ];
+    const r = buildSaveStatements(
+      "postgres",
+      "t",
+      ["id"],
+      ["id", "name"],
+      edits,
+      serverRows,
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok !== true) return;
+    expect(r.statements).toHaveLength(2);
+    expect(r.skippedRows === undefined || r.skippedRows!.length === 0).toBe(
+      true,
+    );
+  });
+
+  it("partial skip: 3 dirty rows, row 2 has no server row ⇒ ok:true, statements.length===2, skippedRows exactly [{rowId:2,…}] — the two good rows still emit", () => {
+    const edits: EditEntry[] = [
+      { rowId: 0, colIndex: 1, value: "a-new" },
+      { rowId: 2, colIndex: 1, value: "gone" }, // no server row at index 2
+      { rowId: 1, colIndex: 1, value: "b-new" },
+    ];
+    // Only indices 0 and 1 exist; serverRows[2] is undefined.
+    const serverRows: unknown[][] = [
+      [10, "a"],
+      [11, "b"],
+    ];
+    const r = buildSaveStatements(
+      "postgres",
+      "t",
+      ["id"],
+      ["id", "name"],
+      edits,
+      serverRows,
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok !== true) return;
+    expect(r.statements).toHaveLength(2);
+    expect(r.skippedRows).toEqual([
+      { rowId: 2, reason: expect.stringContaining("no server row") },
+    ]);
+  });
+
+  it("no-warning drop: row whose only edits hit unknown col indexes (cols.length===0 at :453) ⇒ skippedRows contains that rowId (warnings may stay silent — must assert on skippedRows, not warning text)", () => {
+    const edits: EditEntry[] = [
+      { rowId: 0, colIndex: 99, value: "x" }, // unknown col index — the row's ONLY edit
+    ];
+    const serverRows: unknown[][] = [[1, "a"]];
+    const r = buildSaveStatements(
+      "postgres",
+      "t",
+      ["id"],
+      ["id", "name"],
+      edits,
+      serverRows,
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok !== true) return;
+    expect(r.statements).toHaveLength(0);
+    expect(r.skippedRows).toBeDefined();
+    expect(r.skippedRows!.some((s) => s.rowId === 0)).toBe(true);
+  });
+
+  it("false positive guard: row with BOTH an insert marker and cell edits ⇒ one INSERT emitted, skippedRows does NOT contain that rowId (the insertRowIds.has(rowId) skip is correct behavior, not data loss)", () => {
+    const insertMarker: EditEntry = {
+      rowId: 5,
+      colIndex: 0,
+      value: {
+        __vsdb_new_row__: true,
+        __rowId: 5,
+        values: ["new-a", "new-b"],
+      },
+    };
+    // Same rowId also carries a redundant cell edit — the UPDATE loop must
+    // skip it silently (it's already covered by the INSERT above).
+    const cellEdit: EditEntry = { rowId: 5, colIndex: 1, value: "ignored" };
+    const r = buildSaveStatements(
+      "postgres",
+      "t",
+      ["id"],
+      ["a", "b"],
+      [insertMarker, cellEdit],
+      [],
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok !== true) return;
+    expect(r.statements).toHaveLength(1);
+    expect(r.statements[0]).toMatch(/^INSERT INTO "t"/);
+    expect(
+      r.skippedRows === undefined ||
+        !r.skippedRows.some((s) => s.rowId === 5),
+    ).toBe(true);
+  });
+
+  it("live path: postgres no-PK, ctidByRowId empty (what A3 produces today), one cell edit ⇒ ok:true, 0 statements, skippedRows [{rowId, reason:/no-PK \\+ missing ctid/}]", () => {
+    const edits: EditEntry[] = [{ rowId: 3, colIndex: 0, value: "edited" }];
+    const serverRows: unknown[][] = [["", ""], ["", ""], ["", ""], ["a", "b"]];
+    const r = buildSaveStatements(
+      "postgres",
+      "t",
+      [], // no PK
+      ["x", "y"],
+      edits,
+      serverRows,
+      { ctidByRowId: new Map() }, // A3 unfixed today ⇒ always empty
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok !== true) return;
+    expect(r.statements).toHaveLength(0);
+    expect(r.skippedRows).toEqual([
+      { rowId: 3, reason: expect.stringMatching(/no-PK \+ missing ctid/) },
+    ]);
+  });
+
+  it("non-postgres no-PK DELETE now warns (item 3) instead of a silent continue, and records skippedRows", () => {
+    const marker: EditEntry = {
+      rowId: 2,
+      colIndex: 0,
+      value: { __vsdb_deleted__: true, __rowId: 2 },
+    };
+    const r = buildSaveStatements("mssql", "t", [], ["a"], [marker], [["x"]]);
+    expect(r.ok).toBe(true);
+    if (r.ok !== true) return;
+    expect(r.statements).toHaveLength(0);
+    expect(r.warnings.length).toBeGreaterThan(0);
+    expect(r.skippedRows).toBeDefined();
+    expect(r.skippedRows!.some((s) => s.rowId === 2)).toBe(true);
   });
 });

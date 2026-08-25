@@ -73,11 +73,20 @@ const NUMERIC_STRING = /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
  */
 export function inferColumns(columns: string[], rows: unknown[][]): ColumnSpec[] {
   const SAMPLE = Math.min(rows.length, 1000);
-  return columns.map((name) => {
-    const colIdx = columns.indexOf(name);
+  // `field` must be unique across the returned specs — AG Grid keys rows by
+  // `field`, so two specs sharing one field collapse onto the same data
+  // (both display/edit column 0's value for `SELECT a.id, b.id`). Track
+  // fields already produced (both from generated suffixes AND any
+  // pre-existing `name__N` in the input) so a de-dup suffix can never
+  // collide with itself or with an already-unique original name.
+  const usedFields = new Set<string>();
+  return columns.map((name, colIdx) => {
     let allNumber = true;
     let allBoolean = true;
     let sawAny = false;
+    // colIdx = loop index (position in `columns`/`rows[i]`) — NEVER
+    // `columns.indexOf(name)`, which resolves duplicate names to the FIRST
+    // match and misreads every subsequent same-named column's sample data.
     for (let i = 0; i < SAMPLE; i++) {
       const v = rows[i]?.[colIdx];
       if (v === null || v === undefined) continue;
@@ -98,7 +107,18 @@ export function inferColumns(columns: string[], rows: unknown[][]): ColumnSpec[]
     } else {
       kind = "string";
     }
-    const spec: ColumnSpec = { field: name, headerName: name, kind };
+    let field = name;
+    if (usedFields.has(field)) {
+      let n = 2;
+      let candidate = `${name}__${n}`;
+      while (usedFields.has(candidate)) {
+        n++;
+        candidate = `${name}__${n}`;
+      }
+      field = candidate;
+    }
+    usedFields.add(field);
+    const spec: ColumnSpec = { field, headerName: name, kind };
     if (alignRight) spec.alignRight = true;
     return spec;
   });

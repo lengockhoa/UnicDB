@@ -13,6 +13,13 @@
 //   sqlToRun(sql, selection?, cursorOffset): { statements; mode }
 import type { ParsedStatement } from "../config/types";
 
+/**
+ * Dialect SQL — TASK-004: điều khiển các quy tắc tokenizing/split đặc thù
+ * theo dialect (backslash escape của MySQL, batch separator `GO` của MSSQL).
+ * Optional & additive: bỏ qua ⇒ hành vi postgres-ish như trước TASK-004.
+ */
+export type SqlDialect = "postgres" | "mysql" | "mssql";
+
 // ---- Trạng thái tokenizing -------------------------------------------------
 
 enum TokenKind {
@@ -39,10 +46,11 @@ function readToken(
   sql: string,
   i: number,
   state: TokenState,
+  useBackslashEscape: boolean,
 ): { nextState: TokenState; nextIndex: number } {
   // Đang trong token → tìm đóng.
   if (state.kind === TokenKind.String) {
-    return readString(sql, i);
+    return readString(sql, i, useBackslashEscape);
   }
   if (state.kind === TokenKind.Identifier) {
     return readIdentifier(sql, i);
@@ -63,10 +71,18 @@ function readToken(
 function readString(
   sql: string,
   i: number,
+  useBackslashEscape: boolean,
 ): { nextState: TokenState; nextIndex: number } {
   // Vào đây khi đã thấy `'` mở; i trỏ tới ký tự SAU dấu `'` mở.
   while (i < sql.length) {
     const ch = sql[i];
+    // MySQL (dialect-conditional, TASK-004 C3): `\x` escape bất kỳ ký tự
+    // theo sau, kể cả `\'` — postgres/mssql giữ nguyên hành vi cũ (backslash
+    // là ký tự thường, KHÔNG escape).
+    if (useBackslashEscape && ch === "\\" && i + 1 < sql.length) {
+      i += 2;
+      continue;
+    }
     if (ch === "'") {
       // Có thể là escape `''` hoặc đóng string.
       if (i + 1 < sql.length && sql[i + 1] === "'") {
@@ -255,6 +271,58 @@ function isIdContinue(ch: string): boolean {
 type ConstructKind = "BLOCK" | "IF" | "CASE" | "LOOP";
 
 /**
+ * TASK-004 C1: phân biệt `BEGIN` transaction-control (`BEGIN;`, `BEGIN
+ * TRANSACTION`, `BEGIN WORK`, `BEGIN ISOLATION LEVEL ...`) với `BEGIN ... END`
+ * block plpgsql/T-SQL. Nhìn (peek) từ `afterIndex` (ngay SAU từ `BEGIN`,
+ * CHƯA include ký tự tại vị trí này) — bỏ qua whitespace rồi kiểm tra:
+ *   - Ký tự tiếp theo là `;` → transaction control.
+ *   - Từ tiếp theo là TRANSACTION / WORK / ISOLATION → transaction control.
+ *   - Ngược lại (vd `SELECT`, `IF`, `DECLARE`...) → block thật, giữ hành vi cũ.
+ */
+function isBeginTransactionControl(sql: string, afterIndex: number): boolean {
+  let j = afterIndex;
+  const n = sql.length;
+  while (j < n && isWhitespace(sql[j])) j += 1;
+  if (j >= n) return false;
+  if (sql[j] === ";") return true;
+  let k = j;
+  while (k < n && isIdContinue(sql[k])) k += 1;
+  const word = sql.substring(j, k).toUpperCase();
+  return word === "TRANSACTION" || word === "WORK" || word === "ISOLATION";
+}
+
+/**
+ * TASK-004 C4: `GO` (MSSQL batch separator) CHỈ là boundary khi nó là token
+ * DUY NHẤT trên dòng của nó (bỏ qua whitespace ngang 2 đầu dòng) — tránh
+ * false-friend như cột/alias tên `go` (vd `SELECT go FROM t`).
+ * `wordStart`/`wordEnd` là offset [start, end) của từ `GO` trong `sql`.
+ */
+function isGoAloneOnLine(
+  sql: string,
+  wordStart: number,
+  wordEnd: number,
+): boolean {
+  let b = wordStart - 1;
+  while (b >= 0 && (sql[b] === " " || sql[b] === "\t" || sql[b] === "\r")) {
+    b -= 1;
+  }
+  if (b >= 0 && sql[b] !== "\n") return false;
+  let f = wordEnd;
+  const n = sql.length;
+  while (f < n && (sql[f] === " " || sql[f] === "\t" || sql[f] === "\r")) {
+    f += 1;
+  }
+  if (f < n && sql[f] !== "\n") return false;
+  return true;
+}
+
+interface SplitResult {
+  statements: ParsedStatement[];
+  /** TEST-ONLY: kích thước constructStack còn lại sau khi parse hết `sql`. */
+  finalConstructStackSize: number;
+}
+
+/**
  * Tách SQL thành các statement theo boundary `;` (NGOÀI string/comment/dollar-quote).
  * Trả về mảng `ParsedStatement[]`. Thứ tự theo xuất hiện trong SQL.
  *
@@ -263,19 +331,56 @@ type ConstructKind = "BLOCK" | "IF" | "CASE" | "LOOP";
  * - Bỏ qua `;` trong comment dòng (`--`) và comment khối (`/` `* ... *` `/`).
  * - Từ khoá SQL không phân biệt hoa/thường (`begin` ≡ `BEGIN`).
  * - Khối `BEGIN ... END` là 1 statement; `;` bên trong là NỘI DUNG, không phải boundary.
+ * - `BEGIN;` / `BEGIN TRANSACTION|WORK|ISOLATION ...` (TASK-004 C1) là điều khiển
+ *   transaction, KHÔNG mở block — `;` sau nó là boundary bình thường.
  * - `END IF` / `END LOOP` / `END CASE` đóng construct đó chứ KHÔNG đóng `BEGIN` cha
  *   → plpgsql/T-SQL body lồng IF/CASE/LOOP vẫn là 1 statement.
+ * - `FOR`/`WHILE` (TASK-004 C2) CHỈ mở construct LOOP khi keyword `LOOP` thực sự
+ *   xuất hiện tiếp theo — `SELECT ... FOR UPDATE` không leak construct.
+ * - `dialect === "mysql"` (TASK-004 C3): backslash `\` escape ký tự theo sau
+ *   trong string literal (kể cả `\'`). Dialect khác giữ nguyên hành vi cũ.
+ * - `dialect === "mssql"` (TASK-004 C4): `GO` đứng một mình trên 1 dòng là
+ *   batch separator (không phải nội dung statement nào).
  * - Statement có thể KHÔNG có terminating `;` (vd file thiếu `;` cuối).
  * - Statement rỗng (chỉ whitespace + comment) bị BỎ QUA — không trả về.
  *
  * `start` / `end` là character offset trong SQL gốc, sao cho
  * `sql.substring(start, end) === text`. Text KHÔNG trim — giữ nguyên vị trí.
  *
+ * `dialect` là optional (TASK-004) — bỏ qua ⇒ hành vi postgres-ish như trước.
+ *
  * Limitation (documented): chuỗi escape PostgreSQL `E'...\'...'`
- * (backslash escape) KHÔNG được nhận — parser chỉ hiểu `''` escape trong string literal.
- * Tương tự `U&'...'`. Đây là giới hạn cố ý của TASK-002 (spec chỉ yêu cầu `''`).
+ * (backslash escape) KHÔNG được nhận khi KHÔNG phải dialect `mysql` — parser
+ * chỉ hiểu `''` escape trong string literal ở các dialect khác. Tương tự
+ * `U&'...'`. Đây là giới hạn cố ý của TASK-002 (spec chỉ yêu cầu `''`).
  */
-export function splitStatements(sql: string): ParsedStatement[] {
+export function splitStatements(
+  sql: string,
+  dialect?: SqlDialect,
+): ParsedStatement[] {
+  return splitStatementsInternal(sql, dialect).statements;
+}
+
+/**
+ * TEST-ONLY (TASK-004 acceptance criteria cho C2): kích thước construct stack
+ * còn lại SAU KHI parse toàn bộ `sql` — dùng để assert TRỰC TIẾP rằng không
+ * còn construct nào bị "leak" (vd sau `SELECT ... FOR UPDATE`), thay vì chỉ
+ * suy luận gián tiếp qua statement count. KHÔNG dùng trong runtime code khác.
+ */
+export function debugFinalConstructStackSizeForTest(
+  sql: string,
+  dialect?: SqlDialect,
+): number {
+  return splitStatementsInternal(sql, dialect).finalConstructStackSize;
+}
+
+function splitStatementsInternal(
+  sql: string,
+  dialect?: SqlDialect,
+): SplitResult {
+  const useBackslashEscape = dialect === "mysql";
+  const goEnabled = dialect === "mssql";
+
   const out: ParsedStatement[] = [];
   const n = sql.length;
 
@@ -283,59 +388,84 @@ export function splitStatements(sql: string): ParsedStatement[] {
   let state: TokenState = { kind: TokenKind.Code, tag: "" };
   let stmtStart = -1; // start của statement hiện tại (đã skip whitespace đầu)
 
-  // Stack các construct đang mở (push khi gặp BEGIN/IF/CASE/LOOP/WHILE/FOR,
+  // Stack các construct đang mở (push khi gặp BEGIN block/IF/CASE/LOOP,
   // pop khi gặp END tương ứng). BLOCK depth = số phần tử BLOCK trong stack.
   const constructStack: ConstructKind[] = [];
 
-  // Buffer lưu từ khoá gần nhất để phát hiện BEGIN/END/IF/CASE/LOOP/WHILE/FOR.
+  // Buffer lưu từ khoá gần nhất để phát hiện BEGIN/END/IF/CASE/LOOP/WHILE/FOR/GO.
   // So sánh CASE-INSENSITIVE (SQL keyword không phân biệt hoa/thường).
   let kwBuffer = "";
+  let kwStart = -1; // offset ký tự đầu của kwBuffer hiện tại trong sql
   // Cờ: keyword vừa xử lý là `END` — keyword kế tiếp (IF/CASE/LOOP) là phần của
   // cùng 1 cụm `END IF`/`END CASE`/`END LOOP`, KHÔNG mở construct mới.
   let prevWasEnd = false;
-  // Cờ: keyword vừa xử lý là `FOR` hoặc `WHILE` — keyword `LOOP` tiếp theo
-  // chỉ là syntactic marker của cú pháp `FOR ... LOOP` / `WHILE ... LOOP`,
-  // KHÔNG mở construct mới.
-  let prevWasLoopStarter = false;
 
   while (i < n) {
-    const { nextState, nextIndex } = readToken(sql, i, state);
+    const { nextState, nextIndex } = readToken(sql, i, state, useBackslashEscape);
     // Nếu đang trong Code, cập nhật keyword buffer.
     if (state.kind === TokenKind.Code) {
       // Vùng vừa duyệt là ký tự đơn (nextIndex === i+1).
       const ch = sql[i];
       if (isIdContinue(ch)) {
+        if (kwBuffer.length === 0) kwStart = i;
         kwBuffer += ch;
       } else {
         // Kết thúc 1 keyword → phân tích.
         if (kwBuffer.length > 0) {
-          const result = handleKeyword(
-            kwBuffer,
-            constructStack,
-            prevWasEnd,
-            prevWasLoopStarter,
-          );
-          // Chỉ cập nhật cờ khi keyword thực sự được nhận (BEGIN/IF/CASE/
-          // LOOP/WHILE/FOR/END). Non-keyword identifier (vd "i", "1") giữ
-          // nguyên cờ trước đó — và `LOOP` sau `FOR`/`WHILE` cũng vậy
-          // (handleKeyword đã trả về wasLoopStarter=false).
-          if (result.matched) {
-            prevWasEnd = result.wasEnd;
-            prevWasLoopStarter = result.wasLoopStarter;
+          const upper = kwBuffer.toUpperCase();
+          const blockDepthNow = countBlocks(constructStack);
+          if (
+            goEnabled &&
+            upper === "GO" &&
+            blockDepthNow === 0 &&
+            isGoAloneOnLine(sql, kwStart, i)
+          ) {
+            // TASK-004 C4: `GO` batch separator — flush statement hiện tại,
+            // KHÔNG bao gồm text "GO".
+            const candidateStart = stmtStart;
+            const candidateEnd = kwStart;
+            if (
+              candidateStart !== -1 &&
+              candidateEnd > candidateStart &&
+              sql.substring(candidateStart, candidateEnd).trim().length > 0
+            ) {
+              out.push({
+                text: sql.substring(candidateStart, candidateEnd),
+                start: candidateStart,
+                end: candidateEnd,
+              });
+            }
+            stmtStart = -1;
+            prevWasEnd = false;
+          } else {
+            const isTxnBegin =
+              upper === "BEGIN" ? isBeginTransactionControl(sql, i) : false;
+            const result = handleKeyword(
+              kwBuffer,
+              constructStack,
+              prevWasEnd,
+              isTxnBegin,
+            );
+            // Chỉ cập nhật cờ khi keyword thực sự được nhận (BEGIN/IF/CASE/
+            // LOOP/WHILE/FOR/END). Non-keyword identifier (vd "i", "1") giữ
+            // nguyên cờ trước đó.
+            if (result.matched) {
+              prevWasEnd = result.wasEnd;
+            }
           }
         } else {
-          // kwBuffer rỗng — ta đang ở giữa 2 identifier. CHỈ reset prevWasEnd
-          // (vì whitespace/special cắt cụm `END ...`); giữ nguyên prevWasLoopStarter
-          // để `FOR i IN 1..3 LOOP` vẫn nhận diện `LOOP` cuối.
+          // kwBuffer rỗng — ta đang ở giữa 2 identifier/token. Reset prevWasEnd
+          // (vì whitespace/special cắt cụm `END ...`).
           prevWasEnd = false;
         }
         kwBuffer = "";
+        kwStart = -1;
       }
     } else {
       // Trong string/identifier/dollar-quote/comment → reset keyword buffer.
       kwBuffer = "";
+      kwStart = -1;
       prevWasEnd = false;
-      prevWasLoopStarter = false;
     }
 
     // Xử lý `;` chỉ khi ở Code và KHÔNG có block BEGIN đang mở.
@@ -375,19 +505,33 @@ export function splitStatements(sql: string): ParsedStatement[] {
     i = nextIndex;
   }
 
+  // EOF: `GO` cuối buffer (không có ký tự theo sau để trigger flush trong vòng
+  // lặp) — nếu đủ điều kiện batch separator, cắt tail TRƯỚC "GO" thay vì gộp
+  // "GO" vào statement cuối.
+  let tailEnd = n;
+  if (
+    goEnabled &&
+    kwBuffer.length > 0 &&
+    kwBuffer.toUpperCase() === "GO" &&
+    countBlocks(constructStack) === 0 &&
+    isGoAloneOnLine(sql, kwStart, n)
+  ) {
+    tailEnd = kwStart;
+  }
+
   // EOF: nếu statement đang mở và có nội dung thực (sau khi strip comment) → flush.
-  if (stmtStart !== -1 && stmtStart < n) {
-    const tail = sql.substring(stmtStart, n);
+  if (stmtStart !== -1 && stmtStart < tailEnd) {
+    const tail = sql.substring(stmtStart, tailEnd);
     if (isMeaningful(tail)) {
       out.push({
         text: tail,
         start: stmtStart,
-        end: n,
+        end: tailEnd,
       });
     }
   }
 
-  return out;
+  return { statements: out, finalConstructStackSize: constructStack.length };
 }
 
 /**
@@ -400,27 +544,41 @@ function handleKeyword(
   kw: string,
   stack: ConstructKind[],
   prevWasEnd: boolean,
-  prevWasLoopStarter: boolean,
-): { matched: boolean; wasEnd: boolean; wasLoopStarter: boolean } {
+  isTxnBegin: boolean,
+): { matched: boolean; wasEnd: boolean } {
   const upper = kw.toUpperCase();
   if (upper === "BEGIN") {
+    // TASK-004 C1: `BEGIN;` / `BEGIN TRANSACTION|WORK|ISOLATION ...` là điều
+    // khiển transaction, KHÔNG phải block plpgsql/T-SQL — không push gì cả,
+    // để `;` sau nó là 1 boundary bình thường và COMMIT/ROLLBACK không cần xử
+    // lý riêng (không có gì phải pop). CHỈ áp dụng ở top-level (block depth 0)
+    // — 1 `BEGIN` xuất hiện khi đã lồng trong block khác luôn coi là block
+    // body thật (an toàn hơn, theo gợi ý của planner).
+    if (isTxnBegin && countBlocks(stack) === 0) {
+      return { matched: true, wasEnd: false };
+    }
     stack.push("BLOCK");
-    return { matched: true, wasEnd: false, wasLoopStarter: false };
+    return { matched: true, wasEnd: false };
   }
   if (upper === "IF" || upper === "CASE" || upper === "LOOP") {
     // `END IF` / `END CASE` / `END LOOP` — KHÔNG push construct mới.
-    // `FOR ... LOOP` / `WHILE ... LOOP` — `LOOP` là syntactic marker, không push.
-    if (prevWasEnd || (upper === "LOOP" && prevWasLoopStarter)) {
-      return { matched: true, wasEnd: false, wasLoopStarter: false };
+    // Ngược lại: `LOOP` đứng một mình HOẶC đóng 1 header `FOR ... LOOP` /
+    // `WHILE ... LOOP` (TASK-004 C2: `FOR`/`WHILE` KHÔNG push nữa — chỉ
+    // `LOOP` thực sự xuất hiện mới push, nên không còn double-push cần tránh).
+    if (prevWasEnd) {
+      return { matched: true, wasEnd: false };
     }
     if (upper === "IF") stack.push("IF");
     else if (upper === "CASE") stack.push("CASE");
     else stack.push("LOOP");
-    return { matched: true, wasEnd: false, wasLoopStarter: false };
+    return { matched: true, wasEnd: false };
   }
   if (upper === "WHILE" || upper === "FOR") {
-    stack.push("LOOP");
-    return { matched: true, wasEnd: false, wasLoopStarter: true };
+    // TASK-004 C2: KHÔNG push ở đây — `FOR`/`WHILE` chỉ là ứng viên loop
+    // header. Chỉ push khi keyword `LOOP` THỰC SỰ xuất hiện tiếp theo (nhánh
+    // trên). Nếu không có `LOOP` nào theo sau trong statement này (vd
+    // `SELECT ... FOR UPDATE`) thì không có gì bị đẩy vào stack → không leak.
+    return { matched: true, wasEnd: false };
   }
   if (upper === "END") {
     // Pop top construct; CHỈ giảm block depth khi top là BLOCK.
@@ -429,10 +587,12 @@ function handleKeyword(
     if (stack.length > 0) {
       stack.pop();
     }
-    return { matched: true, wasEnd: true, wasLoopStarter: false };
+    return { matched: true, wasEnd: true };
   }
-  // Non-keyword identifier (vd `i`, `1`) — không khớp, caller giữ nguyên cờ.
-  return { matched: false, wasEnd: false, wasLoopStarter: false };
+  // Non-keyword identifier (vd `i`, `1`, `COMMIT`, `ROLLBACK`, `TRANSACTION`)
+  // — không khớp, caller giữ nguyên cờ. COMMIT/ROLLBACK không cần xử lý pop
+  // riêng vì `BEGIN` transaction-control (nhánh trên) không push gì để pop.
+  return { matched: false, wasEnd: false };
 }
 
 function countBlocks(stack: ConstructKind[]): number {

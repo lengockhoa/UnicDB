@@ -443,7 +443,10 @@ describe("AiChatPanel — resume_pick (TASK-003 #2)", () => {
         method: "session/update",
         params: {
           sessionId: "picked-77",
-          update: { sessionUpdate: "agent_message_chunk", delta: "hello" },
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "hello" },
+          },
         },
       },
       {
@@ -492,7 +495,13 @@ describe("AiChatPanel — resume_pick (TASK-003 #2)", () => {
     )!;
     const params = promptFrame["params"] as { sessionId: string; prompt: Array<{ type: string; text: string }> };
     expect(params.sessionId).toBe("picked-77");
-    expect(params.prompt).toEqual([{ type: "text", text: "next" }]);
+    // TASK-007 B9: the ACP prompt text is now prefixed with the cached
+    // system+schema context, so assert the user text is carried through
+    // rather than an exact-equal (this test's focus is the re-based
+    // sessionId, not the prompt-composition behavior covered elsewhere).
+    expect(params.prompt).toHaveLength(1);
+    expect(params.prompt[0].type).toBe("text");
+    expect(params.prompt[0].text.endsWith("next")).toBe(true);
   });
 });
 
@@ -537,7 +546,10 @@ describe("AiChatPanel — deriveHistoryFromReplay skips agent_thought_chunk (TAS
         method: "session/update",
         params: {
           sessionId: "p1",
-          update: { sessionUpdate: "agent_message_chunk", delta: "hello" },
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "hello" },
+          },
         },
       },
       {
@@ -611,7 +623,10 @@ describe("AiChatPanel — history cap 50 (TASK-003 #4)", () => {
           method: "session/update",
           params: {
             sessionId: "p-cap",
-            update: { sessionUpdate: "agent_message_chunk", delta: `a${i}` },
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: `a${i}` },
+            },
           },
         });
       }
@@ -677,7 +692,10 @@ describe("AiChatPanel — deriveHistoryFromReplay tolerates malformed entries (T
         method: "session/update",
         params: {
           sessionId: "p-mal",
-          update: { sessionUpdate: "agent_message_chunk", delta: "a-good" },
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "a-good" },
+          },
         },
       },
       {
@@ -825,9 +843,11 @@ describe("AiChatPanel — resume_list guards (TASK-003 #7)", () => {
 // ============================================================================
 // #R5b — resume_pick is dropped while a turn is streaming (R5 streaming
 // guard). Mirrors the resume_list streaming guard. Without the guard,
-// `resume_pick` re-bases sessionId mid-turn: the in-flight agent_end
-// arrives for the OLD sessionId while session.sessionId is already the
-// NEW one — acpTurnResolvers never settles and the panel streams forever.
+// `resume_pick` re-bases sessionId mid-turn: the in-flight session/prompt
+// RESPONSE (the real ACP terminal signal — TASK-007 B1) would settle
+// against session state that's already been re-based to the NEW
+// sessionId — the panel streams forever / attributes the response to the
+// wrong session.
 // ============================================================================
 describe("AiChatPanel — resume_pick streaming guard (TASK-003 R5b)", () => {
   it("while a turn is streaming: resume_pick is dropped, no session/load frame written, sessionId unchanged", async () => {
@@ -837,7 +857,8 @@ describe("AiChatPanel — resume_pick streaming guard (TASK-003 R5b)", () => {
 
     // Send a real prompt — this creates the AcpSession lazily, writes
     // session/prompt, and the turn stays in flight because we never feed
-    // agent_end. token is set so resume_pick must be dropped.
+    // the session/prompt response. token is set so resume_pick must be
+    // dropped.
     handler({ type: "send", text: "first-turn" });
     const session = await awaitFakeSession();
     await until(() =>
@@ -861,13 +882,9 @@ describe("AiChatPanel — resume_pick streaming guard (TASK-003 R5b)", () => {
 
     // The handle's sessionId is unchanged (still sess-active, not
     // would-mid-turn-rebase). We assert it indirectly: settle the
-    // in-flight turn (feed agent_end + result for the original prompt)
-    // and then verify the next prompt uses sess-active.
-
-    // The handle's sessionId is unchanged (still sess-active, not
-    // would-mid-turn-rebase). We assert it indirectly: settle the
-    // in-flight turn (feed agent_end + result for the original prompt)
-    // and then verify the next prompt uses sess-active.
+    // in-flight turn by feeding the session/prompt RESPONSE (the real ACP
+    // terminal signal — TASK-007 B1) for the original prompt id, then
+    // verify the next prompt uses sess-active.
     const originalPrompt = session.transport
       .allWritten()
       .find((f) => f["method"] === "session/prompt")!;
@@ -875,18 +892,8 @@ describe("AiChatPanel — resume_pick streaming guard (TASK-003 R5b)", () => {
     session.transport.feed(
       JSON.stringify({
         jsonrpc: "2.0",
-        method: "session/update",
-        params: {
-          sessionId: "sess-active",
-          update: { sessionUpdate: "agent_end" },
-        },
-      }),
-    );
-    session.transport.feed(
-      JSON.stringify({
-        jsonrpc: "2.0",
         id: originalPromptId,
-        result: {},
+        result: { stopReason: "end_turn" },
       }),
     );
     await until(() => postedMessages(p).some(isDone));
@@ -935,7 +942,10 @@ describe("AiChatPanel — drop-guard during load window (TASK-003 #8)", () => {
         method: "session/update",
         params: {
           sessionId: "guard-1",
-          update: { sessionUpdate: "agent_message_chunk", delta: "replayed" },
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "replayed" },
+          },
         },
       }),
     );
@@ -992,7 +1002,7 @@ describe("AiChatPanel — drop-guard during load window (TASK-003 #8)", () => {
           sessionId: "guard-1",
           update: {
             sessionUpdate: "agent_message_chunk",
-            delta: "leaked-should-not-render",
+            content: { type: "text", text: "leaked-should-not-render" },
           },
         },
       }),
@@ -1021,7 +1031,10 @@ describe("AiChatPanel — drop-guard during load window (TASK-003 #8)", () => {
         method: "session/update",
         params: {
           sessionId: "guard-1",
-          update: { sessionUpdate: "agent_message_chunk", delta: "live-stream" },
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "live-stream" },
+          },
         },
       }),
     );

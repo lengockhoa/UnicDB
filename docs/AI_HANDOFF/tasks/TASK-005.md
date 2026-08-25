@@ -147,4 +147,179 @@ For MySQL's batch estimate, prefer `SHOW TABLE STATUS` filtered by schema, or a 
 `information_schema.TABLES` query with `WHERE TABLE_SCHEMA = ? AND TABLE_NAME IN (…)` — the
 current per-table form at `mysql.ts:254-258` is the shape that forces statistics collection.
 
+### 2026-08-25 · executor · claude-sonnet-5
+
+Scope decisions recorded (no ambiguity required asking anyone):
+
+- D5's `shouldUseCursor` helper is scoped to `PostgresAdapter` only, per the defect description
+  ("`PostgresAdapter.runQuery` routes..."). `mysql.ts`'s existing (also-buggy) routing regex and
+  `mssql.ts`'s existing (already `WITH`-aware) routing regex were left untouched — not in this
+  task's Target Files, and no Test Case in the table requires cross-adapter sharing.
+- Old `!text.includes(";")` guard in the Postgres predicate was dropped entirely, not patched: by
+  the time `runQuery` sees `statements[0].text`, `splitStatements()` has already isolated real
+  statement boundaries, so any `;` still present is guaranteed to be inside a string/comment —
+  the check was redundant at best, a false-negative source at worst (Edge literal case).
+- `tsconfig.json` excludes `**/*.test.ts` from `tsc --noEmit`, and vitest transpiles via esbuild
+  (no type-check pass), so pre-existing `DbAdapter`-typed fixture literals in unrelated test files
+  (`resultsPanelRequery.test.ts`, `sqlTool.test.ts`, `hostTools.test.ts`, `schemaTree.test.ts`,
+  `tableCommands.test.ts`, `aiChatE2e.test.ts`) do not need an `estimateTableRowsBatch` stub added
+  — confirmed by a clean `npm run typecheck` after the interface change, no scope creep into files
+  outside Target Files.
+
+---
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: claude-sonnet-5
+EXECUTOR_SUBAGENT: -
+SUMMARY: Fixed D5 (Postgres cursor-routing predicate defeated by comments/CTEs/literal `;`),
+D4 (`PostgresAdapter.listColumns` rewritten onto pure `pg_catalog`, single `::regclass` cast),
+D6 (`MssqlAdapter.listColumns` correlated `EXISTS`-per-column replaced with one `LEFT JOIN`,
+`literal()` escaping preserved unchanged), and added `estimateTableRowsBatch(schema, tables)` to
+`DbAdapter` + all three adapter implementations (Postgres/MySQL/MSSQL), each one round trip.
+
+TEST_PLAN_FOLLOWED: task §Test Cases (12 rows) — followed exactly; all 12 cases covered by the
+21 tests in `adapterQueryShape.test.ts` (new) plus 2 shape-parity tests appended to
+`postgres.test.ts`.
+
+FILES_CHANGED:
+  - src/adapters/types.ts: added `estimateTableRowsBatch(schema, tables)` to `DbAdapter` interface
+    (D2 API), doc comment specifies omit-on-missing / empty-array-no-query contract.
+  - src/adapters/postgres.ts: added exported `shouldUseCursor(text)` pure helper + private
+    `stripLeadingCommentsAndWhitespace` (D5); `runQuery`'s `singleSelect` now calls
+    `shouldUseCursor` instead of the old `/^\s*SELECT\b/.test() && !text.includes(";")` guard;
+    rewrote `listColumns` onto `INTROSPECT_COLUMNS_SQL` + a single-cast `pg_index` PK lookup (D4,
+    2 queries total, was `information_schema.columns` join with 3× `::regclass`); added
+    `estimateTableRowsBatch` (D2, `pg_class`/`pg_namespace`, one query, `relname = ANY($2)`).
+  - src/adapters/mysql.ts: added `estimateTableRowsBatch` (D2) — single
+    `information_schema.TABLES ... TABLE_NAME IN (...)` query, `TABLE_TYPE = 'BASE TABLE'` filter
+    avoids forcing statistics collection. D5 routing regex in this file intentionally untouched
+    (out of scope — task targets `PostgresAdapter.runQuery` only).
+  - src/adapters/mssql.ts: rewrote `listColumns` (D6) — `sys.tables`/`sys.columns`/`sys.types`
+    joined with one `LEFT JOIN` subquery over `sys.indexes`/`sys.index_columns` (`is_primary_key =
+    1`) instead of a correlated `EXISTS` per column; `this.literal(...)` interpolation kept as-is
+    per the D6 scope note. Added `estimateTableRowsBatch` (D2) — one query over
+    `sys.partitions`/`sys.tables`/`sys.schemas`, `p.index_id IN (0,1)`, `GROUP BY t.name`.
+  - src/adapters/__tests__/postgres.test.ts: extended — new
+    `describe("PostgresAdapter — listColumns shape parity (TASK-005 D4)")` block, 2 tests (happy
+    with PK flag, edge with no PK), using the file's existing `queue`-based `vi.mock("pg")`
+    pattern; asserts identical `ColumnInfo[]` shape round-tripping through the real mocked
+    `pool.query(sql, params)` call path (not a monkeypatched private method).
+
+TESTS_ADDED:
+  - src/adapters/__tests__/adapterQueryShape.test.ts (new, 21 tests):
+    - `shouldUseCursor — pure predicate (D5)`: plain SELECT, leading line comment, leading block
+      comment, WITH CTE, literal semicolon, non-SELECT statement (6 tests).
+    - `PostgresAdapter.runQuery — cursor routing (D5)`: Happy plain SELECT, Edge comment / R(D5)
+      regression, Edge CTE, Edge literal, Edge must-NOT-batch (5 tests).
+    - `PostgresAdapter.listColumns — pg_catalog rewrite (D4)`: no `information_schema`, ≤1
+      `::regclass` cast, correct shape (1 test).
+    - `PostgresAdapter.estimateTableRowsBatch (D2)`: happy 3-tables/1-query, empty/no-query,
+      missing-table-omitted (3 tests).
+    - `MySqlAdapter.estimateTableRowsBatch (D2)`: happy, empty (2 tests).
+    - `MsSqlAdapter.listColumns — single round trip, no correlated EXISTS (D6)`: shape + one-query
+      + no-EXISTS + has-LEFT-JOIN; Edge quoting `'O''Brien'` exactly once (2 tests).
+    - `MsSqlAdapter.estimateTableRowsBatch (D2)`: happy, empty (2 tests).
+  - src/adapters/__tests__/postgres.test.ts (extended, +2 tests): D4 shape-parity happy/edge
+    cases through the real `vi.mock("pg")` client/pool path.
+
+RED (captured before implementation, `npx vitest run src/adapters/__tests__/adapterQueryShape.test.ts`):
+```
+18 failed | 3 passed (21)
+
+ ❯ shouldUseCursor — pure predicate (D5) — 6 tests
+   TypeError: shouldUseCursor is not a function
+   (plain SELECT / leading line comment / leading block comment / WITH CTE /
+   literal semicolon / non-SELECT — all 6, function did not exist yet)
+
+ ❯ PostgresAdapter.runQuery — cursor routing (D5)
+   AssertionError: expected undefined not to be undefined
+   (Edge comment / Edge CTE / Edge literal — 3 cases: old regex fell through to
+   pool.query, result.batched stayed undefined instead of being set)
+
+ ❯ PostgresAdapter.listColumns — pg_catalog rewrite (D4)
+   AssertionError: expected 'SELECT c.column_name, ... information_schema.columns ...'
+   not to match /information_schema/i
+   (old query still joined information_schema.columns)
+
+ ❯ *.estimateTableRowsBatch (D2) — Postgres/MySQL/MSSQL — 7 tests
+   TypeError: adapter.estimateTableRowsBatch is not a function
+   (method did not exist on any of the three adapters yet)
+
+ ❯ MsSqlAdapter.listColumns — no correlated EXISTS (D6)
+   AssertionError: expected 'SELECT c.name AS name, ... EXISTS (...) ...'
+   not to match /EXISTS/i
+   (old query still had the correlated EXISTS per column)
+```
+All failures were for the expected reason (missing implementation / old buggy SQL still
+in place) — no test was wrong or trivially passing.
+
+VERIFICATION (all commands run fresh in this turn, in order, from the task's Verification
+Commands section):
+  command: npm run typecheck
+  result: clean, exit 0, no output beyond the npm script banner
+
+  command: npm test -- src/adapters/__tests__/postgres.test.ts
+  result: 12 passed (12), 1 file passed
+
+  command: npm test -- src/adapters/__tests__/adapterQueryShape.test.ts
+  result: 21 passed (21), 1 file passed
+
+  command: npm test -- src/adapters/__tests__/factory.test.ts
+  result: 4 passed (4), 1 file passed
+
+  command: npm test -- src/adapters/__tests__/schemas.test.ts
+  result: 9 passed (9), 1 file passed
+
+  command: npm test -- src/core/__tests__/pgIntrospect.test.ts
+  result: 14 passed (14), 1 file passed
+
+  command: npm test -- src/core/__tests__/resultBatcher.test.ts
+  result: 8 passed (8), 1 file passed
+
+  command: npm test  (full suite, fresh in this turn, after `npm run compile` regenerated the
+    worktree's missing `dist/` build artifacts — the worktree had never been built, which is
+    what caused 2 unrelated pre-existing dist-dependent tests, `extension.test.ts` "npm run
+    compile emits dist/schemaForm.js" and `agGridSmoke.test.ts` "dist/webview.css", to fail on
+    the first full-suite run; neither file is in this task's Target Files and neither test
+    touches adapters — confirmed environment artifact, not a regression, by re-running clean
+    after `npm run compile`)
+  result: 1067 passed, 2 skipped (1069 total) across 82 passed files + 1 skipped file (83).
+    Baseline was 1044 passed / 2 skipped / 81 files passed. Delta is exactly +23 passed tests
+    (21 in adapterQueryShape.test.ts + 2 appended to postgres.test.ts) and +1 file — an exact
+    superset of baseline, zero regressions, skip count unchanged.
+  output_excerpt: |
+    Test Files  82 passed | 1 skipped (83)
+         Tests  1067 passed | 2 skipped (1069)
+      Duration  6.94s
+
+  command: npm run test:integration  (live-DB verification — explicitly separate from the
+    per-task gate per the task file, run for completeness against Acceptance Criteria's
+    "green on a live Postgres" line)
+  result: 4 files skipped, 27 tests skipped — 0 run. `VSDB_IT` env var is unset (tests self-gate
+    on `process.env.VSDB_IT === "1"`), and the fixture port these tests target (Postgres 5433,
+    MSSQL 1434) is not reachable in this sandbox (port 5433 closed; only an unrelated port-5432
+    Postgres was reachable, not the docker-compose fixture these tests expect). This is an
+    out-of-repo blocker (no live DB fixture available in this environment), not a code defect —
+    documented per Handoff-mode rule rather than silently skipped.
+
+ISSUES: `npm run test:integration` could not be exercised live in this sandbox (no reachable
+docker-compose DB fixture, `VSDB_IT` unset) — this is explicitly listed in the task file as
+separate from the per-task verification gate, but is called out here since the Acceptance
+Criteria checklist also references it. All other Acceptance Criteria checkboxes are satisfied:
+one named exported helper (`shouldUseCursor`) covers all D5 cases; `listColumns` (Postgres) is
+`pg_catalog`-only with ≤1 `::regclass` cast; `listColumns` (MSSQL) is one query, zero `EXISTS`,
+`literal()` preserved; `estimateTableRowsBatch` implemented on all three adapters and declared on
+`DbAdapter`; `estimateTableRows` (singular) untouched; `npm run typecheck` clean.
+
+HANDOFF_TO_REVIEWER: yes — Handoff mode, STATUS: DONE, per §7 the next session should pick this
+up as `pending_review`.
+
+NEXT: ready for review. Reviewer should double check the D6 scope boundary (literal()
+interpolation preserved, not hardened) matches the review-round-1 note in this file's Discussion
+section, and that TASK-010 (schemaTree.ts, wave 2) can consume `estimateTableRowsBatch` as typed
+here without further interface changes.
+
 ---

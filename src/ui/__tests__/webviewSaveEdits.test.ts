@@ -320,4 +320,54 @@ describeIfBundle("webview/main.ts bundle (TASK-503)", () => {
       banner!.getAttribute("hidden") !== null;
     expect(hidden).toBe(false);
   });
+
+  // TASK-002 (cycle T) — A6/A12: Add Row's marker payload shape + the new
+  // serverIndexByRowId field.
+  itIfBundle(
+    "T5. Add Row → commit: marker.values is unknown[] of columns.length (DEFAULT_CELL, never '') AND payload carries serverIndexByRowId",
+    async () => {
+      const { received } = loadBundle();
+      dispatchState(threeRowsState());
+      await flushGridEvents();
+
+      const api = vsdbApi()!;
+      expect(typeof api.addRow).toBe("function");
+      api.addRow!();
+      await flushGridEvents();
+
+      received.length = 0;
+      api.commit!();
+      await flushGridEvents();
+
+      const saveMsgs = received.filter((m) => m.type === "saveEdits");
+      expect(saveMsgs).toHaveLength(1);
+      const payload = saveMsgs[0] as {
+        edits: Array<{ rowId: number; colIndex: number; value: unknown }>;
+        serverIndexByRowId?: Record<string, number>;
+      };
+      const markerEntry = payload.edits.find(
+        (e) =>
+          typeof e.value === "object" &&
+          e.value !== null &&
+          (e.value as Record<string, unknown>).__vsdb_new_row__ === true,
+      );
+      expect(markerEntry).toBeTruthy();
+      // Marker colIndex is the MARKER_COL_INSERT sentinel (-1), never 0 —
+      // colliding with a real column-0 edit's key would coalesce them.
+      expect(markerEntry!.colIndex).toBe(-1);
+      const values = (markerEntry!.value as { values: unknown }).values;
+      expect(Array.isArray(values)).toBe(true);
+      // threeRowsState has 2 columns (id, name).
+      expect(values as unknown[]).toHaveLength(2);
+      for (const cell of values as unknown[]) {
+        expect(cell).toEqual({ __vsdb_default__: true });
+      }
+      expect(payload.serverIndexByRowId).toBeTruthy();
+      expect(payload.serverIndexByRowId).toMatchObject({
+        "0": 0,
+        "1": 1,
+        "2": 2,
+      });
+    },
+  );
 });

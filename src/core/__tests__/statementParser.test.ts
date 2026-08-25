@@ -5,6 +5,7 @@ import {
   splitStatements,
   statementAtCursor,
   sqlToRun,
+  debugFinalConstructStackSizeForTest,
 } from "../statementParser";
 import type { ParsedStatement } from "../../config/types";
 
@@ -458,5 +459,127 @@ describe("statementParser — cursor-mode regression lock (cycle R)", () => {
     // Ranges không lệch — substring[start,end] === text.
     expect(sql.substring(out!.start, out!.end)).toBe(out!.text);
     expect(out!.start).toBeLessThan(stmt2Start);
+  });
+});
+
+// ---- TASK-004 — transaction scripts, loop-stack leak, MySQL escapes, MSSQL GO ----
+
+describe("statementParser — TASK-004 splitStatements dialect fixes", () => {
+  // Happy
+  it("Happy — plain script splits into 2", () => {
+    const out = splitStatements("SELECT 1; SELECT 2;");
+    expect(out).toHaveLength(2);
+  });
+
+  it("Happy — transaction script BEGIN; INSERT; COMMIT; → 3, correct texts", () => {
+    const sql = "BEGIN; INSERT INTO t VALUES (1); COMMIT;";
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(3);
+    expect(out[0].text).toBe("BEGIN");
+    expect(out[1].text.trim()).toBe("INSERT INTO t VALUES (1)");
+    expect(out[2].text.trim()).toBe("COMMIT");
+  });
+
+  // Edge — nesting
+  it("Edge (nesting) — plpgsql BEGIN...END body inside $$ is NOT split (2 statements total)", () => {
+    const sql =
+      "CREATE FUNCTION f() RETURNS int AS $$ BEGIN RETURN 1; END $$ LANGUAGE plpgsql; SELECT 1;";
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(2);
+    expect(out[0].text).toContain("BEGIN RETURN 1; END");
+    expect(out[1].text.trim()).toBe("SELECT 1");
+  });
+
+  it("Edge (nesting) — BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE; SELECT 1; ROLLBACK; → 3", () => {
+    const sql =
+      "BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE; SELECT 1; ROLLBACK;";
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(3);
+    expect(out[2].text.trim()).toBe("ROLLBACK");
+  });
+
+  // Edge — dialect (C3)
+  it("Edge (dialect) — MySQL backslash escape `\\'` does not split the string", () => {
+    const out = splitStatements("SELECT 'it\\'s'; SELECT 2;", "mysql");
+    expect(out).toHaveLength(2);
+    expect(out[0].text).toBe("SELECT 'it\\'s'");
+    expect(out[1].text.trim()).toBe("SELECT 2");
+  });
+
+  it("Edge (dialect) — postgres dialect keeps today's (buggy-for-mysql) result unchanged", () => {
+    const withDialect = splitStatements(
+      "SELECT 'it\\'s'; SELECT 2;",
+      "postgres",
+    );
+    const withoutDialect = splitStatements("SELECT 'it\\'s'; SELECT 2;");
+    expect(withDialect).toEqual(withoutDialect);
+    expect(withDialect).toHaveLength(1);
+  });
+
+  // Edge — batch separator (C4)
+  it("Edge (batch separator) — MSSQL GO alone on its own line splits into 2, no GO in text", () => {
+    const out = splitStatements("SELECT 1\nGO\nSELECT 2\nGO", "mssql");
+    expect(out).toHaveLength(2);
+    for (const s of out) {
+      expect(s.text.toUpperCase()).not.toContain("GO");
+    }
+    expect(out[0].text.trim()).toBe("SELECT 1");
+    expect(out[1].text.trim()).toBe("SELECT 2");
+  });
+
+  it("Edge (false friend) — column named `go` (mssql) is NOT treated as a separator", () => {
+    const out = splitStatements("SELECT go FROM t", "mssql");
+    expect(out).toHaveLength(1);
+    expect(out[0].text).toBe("SELECT go FROM t");
+  });
+
+  // Regression (C1)
+  it("R (C1) — BEGIN; INSERT...; COMMIT; used to collapse into 1 statement", () => {
+    const out = splitStatements("BEGIN; INSERT INTO t VALUES (1); COMMIT;");
+    expect(out).toHaveLength(3);
+  });
+
+  // Regression (C2)
+  it("R (C2) — SELECT ... FOR UPDATE; SELECT 1; splits into 2 with an empty construct stack", () => {
+    const sql = "SELECT * FROM t FOR UPDATE; SELECT 1;";
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(2);
+    expect(out[0].text.trim()).toBe("SELECT * FROM t FOR UPDATE");
+    expect(out[1].text.trim()).toBe("SELECT 1");
+    // Direct assertion on the construct stack (not just statement count) —
+    // guards against the leaked LOOP entry silently desyncing later parses.
+    expect(debugFinalConstructStackSizeForTest(sql)).toBe(0);
+  });
+
+  it("R (C2) — leaked FOR UPDATE stack entry does not desync a later BEGIN...END block", () => {
+    const sql =
+      "SELECT * FROM t FOR UPDATE; BEGIN\n SELECT 1;\nEND;\nSELECT 2;";
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(3);
+    expect(out[0].text.trim()).toBe("SELECT * FROM t FOR UPDATE");
+    expect(out[1].text).toBe("BEGIN\n SELECT 1;\nEND");
+    expect(out[2].text).toBe("SELECT 2");
+    expect(debugFinalConstructStackSizeForTest(sql)).toBe(0);
+  });
+
+  // Regression (C3)
+  it("R (C3) — MySQL `\\'` used to collapse into 1 statement", () => {
+    const out = splitStatements("SELECT 'it\\'s'; SELECT 2;", "mysql");
+    expect(out).toHaveLength(2);
+  });
+
+  // Regression (C4)
+  it("R (C4) — MSSQL GO used to collapse into 1 statement", () => {
+    const out = splitStatements("SELECT 1\nGO\nSELECT 2\nGO", "mssql");
+    expect(out).toHaveLength(2);
+  });
+
+  // Interface / no-dialect-arg regression guard — must stay byte-identical to
+  // today's behavior when dialect is omitted (optional & additive).
+  it("no dialect argument behaves exactly like today for an existing case", () => {
+    const sql = "BEGIN\n SELECT 1;\n SELECT 2;\nEND";
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(1);
+    expect(out[0].text).toBe(sql);
   });
 });

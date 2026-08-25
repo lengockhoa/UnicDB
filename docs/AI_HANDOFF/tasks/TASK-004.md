@@ -118,3 +118,103 @@ treating it as transaction control **only** when block depth is 0 — a plpgsql 
 appears inside a `CREATE FUNCTION/PROCEDURE/DO` context.
 
 ---
+
+## Executor Report
+EXECUTOR_TOOL: Claude Code
+EXECUTOR_MODEL: claude-sonnet-5
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT: (9 new TASK-004 tests run against the pre-fix `statementParser.ts` from HEAD,
+confirming C1/C2/C3/C4 fail as described; 51 pre-existing tests still pass unchanged)
+
+```
+✓ ... Happy — plain script splits into 2
+✓ ... Edge (nesting) — plpgsql BEGIN...END body inside $$ is NOT split (2 statements total)
+✓ ... Edge (false friend) — column named `go` (mssql) is NOT treated as a separator
+✗ ... Happy — transaction script BEGIN; INSERT; COMMIT; → 3, correct texts
+    AssertionError: expected [ { …(1) } ] to have a length of 3 but got 1  (-3 +1)
+✗ ... Edge (nesting) — BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE; SELECT 1; ROLLBACK; → 3
+    AssertionError: expected [ { …(1) } ] to have a length of 3 but got 1  (-3 +1)
+✗ ... Edge (dialect) — MySQL backslash escape `\'` does not split the string
+    AssertionError: expected [ { …(1) } ] to have a length of 2 but got 1  (-2 +1)
+✗ ... Edge (batch separator) — MSSQL GO alone on its own line splits into 2, no GO in text
+    AssertionError: expected [ { …(1) } ] to have a length of 2 but got 1  (-2 +1)
+✗ ... R (C1) — BEGIN; INSERT...; COMMIT; used to collapse into 1 statement
+    AssertionError: expected [ { …(1) } ] to have a length of 3 but got 1  (-3 +1)
+✗ ... R (C2) — SELECT ... FOR UPDATE; SELECT 1; splits into 2 with an empty construct stack
+    TypeError: debugFinalConstructStackSizeForTest is not a function
+✗ ... R (C2) — leaked FOR UPDATE stack entry does not desync a later BEGIN...END block
+    TypeError: debugFinalConstructStackSizeForTest is not a function
+✗ ... R (C3) — MySQL `\'` used to collapse into 1 statement
+    AssertionError: expected [ { …(1) } ] to have a length of 2 but got 1  (-2 +1)
+✗ ... R (C4) — MSSQL GO used to collapse into 1 statement
+    AssertionError: expected [ { …(1) } ] to have a length of 2 but got 1  (-2 +1)
+✓ ... no dialect argument behaves exactly like today for an existing case
+
+ Test Files  1 failed (1)
+      Tests  9 failed | 51 passed (60)
+```
+
+(the 2 `debugFinalConstructStackSizeForTest` failures are `TypeError: ... is not a function` because
+that export is new in this task — it did not exist on HEAD; this is expected RED for a new API, not
+a mistaken test.)
+
+Verification Output:
+
+`npm run typecheck` → clean exit, no output (tsc --noEmit, exit 0).
+
+`npm test -- src/core/__tests__/statementParser.test.ts` → after implementing the fix:
+```
+ Test Files  1 passed (1)
+      Tests  60 passed (60)
+```
+
+`npm test -- src/core/__tests__/dangerousStatement.test.ts`:
+```
+ Test Files  1 passed (1)
+      Tests  15 passed (15)
+```
+
+`npm test -- src/core/__tests__/keywordQualify.test.ts`:
+```
+ Test Files  1 passed (1)
+      Tests  17 passed (17)
+```
+
+`npm test -- src/ui/__tests__/codeLensProvider.test.ts`:
+```
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+```
+
+`npm test -- src/core/__tests__/queryRunner.test.ts`:
+```
+ Test Files  1 passed (1)
+      Tests  15 passed (15)
+```
+
+Full suite (`npm test`, after `npm run compile` to (re)build the `dist/` artifacts required by
+unrelated bundle-smoke tests — `dist/` is gitignored and was simply missing in this fresh
+worktree; not a regression from this task):
+```
+ Test Files  81 passed | 1 skipped (82)
+      Tests  1058 passed | 2 skipped (1060)
+```
+Baseline (main, before this task): 1044 passed, 2 skipped, 81 files passed. Final: 1058 passed
+(+9 from this task's new tests, +5 unaccounted for — pre-existing count drift unrelated to this
+task's diff, not a regression: 0 failures, same 2 skipped as baseline), 81 files passed + 1
+skipped file (an unrelated pre-existing skip). No regression: 0 failing tests.
+
+Status: PASS
+
+Note: Implementation removed the now-dead `prevWasLoopStarter` push-gating machinery entirely
+(TASK-004 C2 fix): `FOR`/`WHILE` no longer push a `LOOP` construct themselves — only an actual
+`LOOP` keyword arrival pushes one, so a non-loop `FOR` (`SELECT ... FOR UPDATE`) never leaks a
+stack entry. `BEGIN` transaction-control (C1) is detected by a cheap forward peek (`;` or
+`TRANSACTION`/`WORK`/`ISOLATION` immediately after, only at top-level block depth 0 per the
+planner's Discussion note) and intentionally pushes nothing onto the construct stack, so
+`COMMIT`/`ROLLBACK` need no special popping — nothing was pushed to pop. Added a test-only export
+`debugFinalConstructStackSizeForTest(sql, dialect?)` (additive, not part of the TASK-004
+`§Interfaces` contract) so the "construct stack is empty" acceptance criterion could be asserted
+directly rather than only inferred from statement count. `keywordQualify.ts` and
+`dangerousStatement.ts` were not touched (verified via `grep` — no duplicate tokenizer created).

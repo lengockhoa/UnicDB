@@ -106,6 +106,67 @@ describe("inferColumns", () => {
 });
 
 // =============================================================================
+// 1b. inferColumns — unique `field` per spec (TASK-003 / A17)
+// =============================================================================
+// `field` must be unique across the returned specs so AG Grid does not key
+// two distinct columns on the same field (which collapses both onto data
+// index 0 via `columns.indexOf(name)`'s first-match behavior). `headerName`
+// always stays the raw column name (may repeat).
+describe("inferColumns — unique field (TASK-003 / A17)", () => {
+  it("Happy: distinct names -> fields identical to headerName", () => {
+    const rows: unknown[][] = [["a1", "b1"]];
+    const cols = inferColumns(["a", "b"], rows);
+    expect(cols.map((c) => c.field)).toEqual(["a", "b"]);
+    expect(cols.map((c) => c.headerName)).toEqual(["a", "b"]);
+  });
+
+  it("Happy: kind inference intact for second (numeric) column", () => {
+    const rows: unknown[][] = [
+      ["x", 1],
+      ["y", 2],
+    ];
+    const cols = inferColumns(["s", "n"], rows);
+    expect(cols[1]).toEqual({ field: "n", headerName: "n", kind: "number", alignRight: true });
+  });
+
+  it('Edge (duplicate): ["id","id"] -> fields ["id","id__2"], both headerName "id"', () => {
+    const rows: unknown[][] = [[1, 2]];
+    const cols = inferColumns(["id", "id"], rows);
+    expect(cols.map((c) => c.field)).toEqual(["id", "id__2"]);
+    expect(cols.every((c) => c.headerName === "id")).toBe(true);
+  });
+
+  it('Edge (triple + collision bait): ["id","id","id__2"] -> all fields unique', () => {
+    const rows: unknown[][] = [[1, 2, 3]];
+    const cols = inferColumns(["id", "id", "id__2"], rows);
+    const fields = cols.map((c) => c.field);
+    expect(new Set(fields).size).toBe(3);
+    expect(fields[0]).not.toBe(fields[1]);
+    expect(fields[0]).not.toBe(fields[2]);
+    expect(fields[1]).not.toBe(fields[2]);
+    // headerName stays the raw (possibly-repeated) original name.
+    expect(cols.map((c) => c.headerName)).toEqual(["id", "id", "id__2"]);
+  });
+
+  it("Edge (empty): inferColumns([], []) -> [], no throw", () => {
+    expect(() => inferColumns([], [])).not.toThrow();
+    expect(inferColumns([], [])).toEqual([]);
+  });
+
+  it('Regression (A17): ["id","id"] with rows [[1,2]] -- second spec resolves data index 1, not 0', () => {
+    // Today `colIdx = columns.indexOf(name)` returns 0 for BOTH specs (first
+    // match), so kind inference for the second "id" reads rows[i][0] instead
+    // of rows[i][1]. Prove per-spec resolution by giving each index an
+    // incompatible type: index 0 numeric, index 1 non-numeric string. If the
+    // second spec were still reading index 0, it would also infer "number".
+    const rows: unknown[][] = [[1, "not-a-number"]];
+    const cols = inferColumns(["id", "id"], rows);
+    expect(cols[0].kind).toBe("number");
+    expect(cols[1].kind).toBe("string");
+  });
+});
+
+// =============================================================================
 // 2. loadMore gate fires exactly once per request→sync cycle (dedup)
 // =============================================================================
 describe("createResultsGridModel — loadMore gate", () => {

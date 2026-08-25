@@ -232,4 +232,47 @@ describe("PostgresAdapter — listRoutineParams (TASK-008)", () => {
     await adapter.close();
   });
 });
+
+// =============================================================================
+// TASK-005 D4 — listColumns pg_catalog rewrite shape parity. Full end-to-end
+// (through the real pg mock, not a monkeypatched private query()) — proves
+// the rewritten SQL still round-trips through pool.query(sql, params) and
+// produces the identical ColumnInfo[] shape (names, types, nullability, PK
+// flags) that the pre-rewrite information_schema-joined query produced.
+// =============================================================================
+describe("PostgresAdapter — listColumns shape parity (TASK-005 D4)", () => {
+  it("happy: columns + PK flags → same ColumnInfo[] shape as before the rewrite", async () => {
+    queue.push({ rows: [{ "?column?": 1 }] }); // connect probe
+    queue.push({
+      rows: [
+        { column_name: "id", format_type: "bigint", is_nullable: "NO" },
+        { column_name: "email", format_type: "text", is_nullable: "NO" },
+        { column_name: "bio", format_type: "text", is_nullable: "YES" },
+      ],
+    });
+    queue.push({ rows: [{ column_name: "id" }] });
+    const adapter = new PostgresAdapter(cfg(), "pw");
+    await adapter.connect();
+    const result = await adapter.listColumns("users", "public");
+    expect(result).toEqual([
+      { name: "id", dataType: "bigint", nullable: false, isPrimaryKey: true },
+      { name: "email", dataType: "text", nullable: false },
+      { name: "bio", dataType: "text", nullable: true },
+    ]);
+    await adapter.close();
+  });
+
+  it("edge: no primary key → no column carries isPrimaryKey", async () => {
+    queue.push({ rows: [{ "?column?": 1 }] }); // probe
+    queue.push({
+      rows: [{ column_name: "note", format_type: "text", is_nullable: "YES" }],
+    });
+    queue.push({ rows: [] }); // no PK rows
+    const adapter = new PostgresAdapter(cfg(), "pw");
+    await adapter.connect();
+    const result = await adapter.listColumns("logs", "public");
+    expect(result).toEqual([{ name: "note", dataType: "text", nullable: true }]);
+    await adapter.close();
+  });
+});
 });

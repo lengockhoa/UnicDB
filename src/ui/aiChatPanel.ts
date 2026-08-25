@@ -52,7 +52,7 @@ import {
   buildDatabaseStructure,
   type ExportColumn,
 } from "./exportStructure";
-import type { TableInfo, ViewInfo, ColumnInfo } from "../adapters/types";
+import type { TableInfo, ViewInfo, ColumnInfo, DbAdapter } from "../adapters/types";
 import {
   type AcpServerRequest,
   type AcpNotification,
@@ -125,11 +125,32 @@ export interface AiChatPanelOptions {
  * the cost of generating 12_000 chars of fixtures; production call sites
  * omit it and the production constants apply.
  */
+/**
+ * Schema-context cache entry (TASK-007 B9). `adapter` is the object
+ * REFERENCE returned by the adapter factory, used as a minimal proxy for
+ * "connection identity": `DbAdapter` has no explicit connection-id field,
+ * but `ConnectionManager.getAdapter()` returns the SAME instance while the
+ * active connection is unchanged and a NEW instance after a connection
+ * switch — so reference equality is a valid cache key that self-invalidates
+ * on connection change without any extra bookkeeping.
+ */
+export interface SchemaContextCacheEntry {
+  adapter: DbAdapter;
+  context: string;
+}
+
 export async function buildMessages(
   factory: AdapterFactory,
   history: ChatMessage[],
   userMsg: ChatMessage,
-  opts?: { contextBudgetChars?: number; contextTableLimit?: number },
+  opts?: {
+    contextBudgetChars?: number;
+    contextTableLimit?: number;
+    /** Optional mutable cache cell — populated/read by reference identity
+     * of the resolved adapter. Only `AiChatPanel` instance call sites pass
+     * this; bare test calls omit it and always re-introspect. */
+    cache?: { current: SchemaContextCacheEntry | null };
+  },
 ): Promise<ChatMessage[]> {
   const budget = opts?.contextBudgetChars ?? SCHEMA_CONTEXT_BUDGET;
   const limit = opts?.contextTableLimit ?? SCHEMA_CONTEXT_TABLE_LIMIT;
@@ -137,107 +158,116 @@ export async function buildMessages(
   try {
     const adapter = await factory();
     if (adapter) {
-      const schemas = await adapter.listSchemas(false);
-      const collected: Array<
-        | { kind: "table"; schema: string; name: string }
-        | { kind: "view"; schema: string; name: string }
-      > = [];
+      const cache = opts?.cache;
+      if (cache?.current !== undefined && cache?.current !== null && cache.current.adapter === adapter) {
+        // Cache hit — same connection identity as the last built context.
+        context = cache.current.context;
+      } else {
+        const schemas = await adapter.listSchemas(false);
+        const collected: Array<
+          | { kind: "table"; schema: string; name: string }
+          | { kind: "view"; schema: string; name: string }
+        > = [];
 
-      for (const s of schemas) {
-        let schemaTables: TableInfo[] = [];
-        try {
-          schemaTables = await adapter.listTables(s.name);
-        } catch {
-          // Per-schema failure: skip schema, keep going.
-          continue;
-        }
-        for (const t of schemaTables) {
-          collected.push({ kind: "table", schema: t.schema, name: t.name });
-        }
-        let schemaViews: ViewInfo[] = [];
-        try {
-          schemaViews = await adapter.listViews(s.name);
-        } catch {
-          continue;
-        }
-        for (const v of schemaViews) {
-          collected.push({ kind: "view", schema: v.schema, name: v.name });
-        }
-      }
-
-      const total = collected.length;
-      const kept = collected.slice(0, limit);
-      const capDropped = total - kept.length;
-
-      const tables: Array<{ schema: string; name: string }> = [];
-      const views: Array<{ schema: string; name: string }> = [];
-      const columns: Record<string, ExportColumn[]> = {};
-
-      for (const obj of kept) {
-        const key = `${obj.schema}.${obj.name}`;
-        // Per-object listColumns failure: retain it with an empty column
-        // list so its DDL (table name / schema) still surfaces in context.
-        // Dropping the object entirely would hide a real table from the
-        // model when introspection is flaky; missing columns is recoverable
-        // (the model can call export_structure) but a missing table is not.
-        let mapped: ExportColumn[] = [];
-        try {
-          const cols = await adapter.listColumns(obj.name, obj.schema);
-          mapped = cols.map((c) => ({
-            name: c.name,
-            dataType: c.dataType,
-            nullable: c.nullable,
-            isPrimaryKey: c.isPrimaryKey,
-          }));
-        } catch {
-          // Keep the object; columns default to [].
-        }
-        columns[key] = mapped;
-        if (obj.kind === "table") {
-          tables.push({ schema: obj.schema, name: obj.name });
-        } else {
-          views.push({ schema: obj.schema, name: obj.name });
-        }
-      }
-
-      let ddl = buildDatabaseStructure({
-        schemas,
-        tables,
-        views,
-        columns,
-      });
-      // Budget cut at block boundaries (blocks = text between blank lines).
-      // Tables AND views share ONE pool in render order; keep leading blocks
-      // until the next one would push us over budget. The first block is
-      // always kept even when it alone exceeds budget (oversize single-
-      // table rule from review #4) — context stays non-empty.
-      if (ddl.length > budget) {
-        const blocks = ddl.split(/\n\n+/);
-        const keptBlocks: string[] = [];
-        let acc = 0;
-        for (let i = 0; i < blocks.length; i++) {
-          const piece = blocks[i] ?? "";
-          const sep = keptBlocks.length > 0 ? 2 : 0;
-          const next = acc + sep + piece.length;
-          if (next > budget) {
-            if (i === 0) {
-              // First block alone exceeds budget — keep it anyway.
-              keptBlocks.push(piece);
-              acc = piece.length;
-            }
-            break;
+        for (const s of schemas) {
+          let schemaTables: TableInfo[] = [];
+          try {
+            schemaTables = await adapter.listTables(s.name);
+          } catch {
+            // Per-schema failure: skip schema, keep going.
+            continue;
           }
-          keptBlocks.push(piece);
-          acc = next;
+          for (const t of schemaTables) {
+            collected.push({ kind: "table", schema: t.schema, name: t.name });
+          }
+          let schemaViews: ViewInfo[] = [];
+          try {
+            schemaViews = await adapter.listViews(s.name);
+          } catch {
+            continue;
+          }
+          for (const v of schemaViews) {
+            collected.push({ kind: "view", schema: v.schema, name: v.name });
+          }
         }
-        const omitted = blocks.length - keptBlocks.length + capDropped;
-        ddl = keptBlocks.join("\n\n");
-        if (omitted > 0) {
-          const footer = `\n\n-- (+${omitted} more objects omitted — call export_structure for full context)`;
-          if (ddl.length + footer.length <= budget) ddl += footer;
+
+        const total = collected.length;
+        const kept = collected.slice(0, limit);
+        const capDropped = total - kept.length;
+
+        const tables: Array<{ schema: string; name: string }> = [];
+        const views: Array<{ schema: string; name: string }> = [];
+        const columns: Record<string, ExportColumn[]> = {};
+
+        for (const obj of kept) {
+          const key = `${obj.schema}.${obj.name}`;
+          // Per-object listColumns failure: retain it with an empty column
+          // list so its DDL (table name / schema) still surfaces in context.
+          // Dropping the object entirely would hide a real table from the
+          // model when introspection is flaky; missing columns is recoverable
+          // (the model can call export_structure) but a missing table is not.
+          let mapped: ExportColumn[] = [];
+          try {
+            const cols = await adapter.listColumns(obj.name, obj.schema);
+            mapped = cols.map((c) => ({
+              name: c.name,
+              dataType: c.dataType,
+              nullable: c.nullable,
+              isPrimaryKey: c.isPrimaryKey,
+            }));
+          } catch {
+            // Keep the object; columns default to [].
+          }
+          columns[key] = mapped;
+          if (obj.kind === "table") {
+            tables.push({ schema: obj.schema, name: obj.name });
+          } else {
+            views.push({ schema: obj.schema, name: obj.name });
+          }
+        }
+
+        let ddl = buildDatabaseStructure({
+          schemas,
+          tables,
+          views,
+          columns,
+        });
+        // Budget cut at block boundaries (blocks = text between blank lines).
+        // Tables AND views share ONE pool in render order; keep leading blocks
+        // until the next one would push us over budget. The first block is
+        // always kept even when it alone exceeds budget (oversize single-
+        // table rule from review #4) — context stays non-empty.
+        if (ddl.length > budget) {
+          const blocks = ddl.split(/\n\n+/);
+          const keptBlocks: string[] = [];
+          let acc = 0;
+          for (let i = 0; i < blocks.length; i++) {
+            const piece = blocks[i] ?? "";
+            const sep = keptBlocks.length > 0 ? 2 : 0;
+            const next = acc + sep + piece.length;
+            if (next > budget) {
+              if (i === 0) {
+                // First block alone exceeds budget — keep it anyway.
+                keptBlocks.push(piece);
+                acc = piece.length;
+              }
+              break;
+            }
+            keptBlocks.push(piece);
+            acc = next;
+          }
+          const omitted = blocks.length - keptBlocks.length + capDropped;
+          ddl = keptBlocks.join("\n\n");
+          if (omitted > 0) {
+            const footer = `\n\n-- (+${omitted} more objects omitted — call export_structure for full context)`;
+            if (ddl.length + footer.length <= budget) ddl += footer;
+          }
+        }
+        context = ddl;
+        if (cache) {
+          cache.current = { adapter, context };
         }
       }
-      context = ddl;
     }
   } catch {
     // Introspection failure (factory rejection, listSchemas throw, …) →
@@ -306,8 +336,13 @@ export class AiChatPanel {
   /** Set while a `resume_list` round-trip is in flight, so the webview
    * can post a fresh `resume_list` only after the previous list resolves. */
   private resumeListInFlight = false;
-
-
+  /** Schema-context cache cell (TASK-007 B9) — shared by builtin and ACP
+   * turns, keyed by adapter object-reference identity. See
+   * `SchemaContextCacheEntry` for why reference equality is a valid,
+   * self-invalidating "connection identity" proxy. */
+  private schemaCacheRef: { current: SchemaContextCacheEntry | null } = {
+    current: null,
+  };
 
   constructor(
     private readonly options: AiChatPanelOptions,
@@ -342,6 +377,12 @@ export class AiChatPanel {
     );
     this.disposables.push(
       this.panel.onDidDispose(() => {
+        // TASK-007 B7: closing the webview tab is a SEPARATE code path from
+        // the explicit AiChatPanel.dispose() method below — it must tear
+        // down the ACP session and cancel pending permissions the same way,
+        // or the omp child process (and its permission timers) leaks.
+        this.cancelAllPending();
+        this.disposeAcpSession();
         this.panel = null;
         for (const d of this.disposables) d.dispose();
         this.disposables = [];
@@ -446,6 +487,7 @@ export class AiChatPanel {
       this.options.adapterFactory,
       this.history,
       userMsg,
+      { cache: this.schemaCacheRef },
     );
     const token = this.token;
     const signal = this.currentAbort?.signal;
@@ -519,6 +561,10 @@ export class AiChatPanel {
     } finally {
       this.post({ type: "done" });
       this.currentAbort = null;
+      // TASK-007 B6: reset on every turn exit path (success, error, abort)
+      // so the resume guards (`token !== null`) don't permanently swallow
+      // resume_list/resume_pick after the first message.
+      this.token = null;
     }
   }
 
@@ -529,6 +575,19 @@ export class AiChatPanel {
     // call would have already posted via onToolCall.
   }
 
+  /**
+   * ACP engine turn (TASK-007 rewrite — B1/B5/B6/B9).
+   *
+   * Completion: real ACP has no terminal `session/update` notification kind
+   * (no `agent_end`/`turn_complete`) — the turn settles on the
+   * `session/prompt` JSON-RPC RESPONSE itself, carrying
+   * `{stopReason: "end_turn" | "cancelled" | "refusal" | "max_tokens" | ...}`
+   * (B1). `acpTurnResolvers` is repurposed as a "belt": Stop/dispose push a
+   * resolver there to force early settlement of a turn whose response may
+   * never arrive, without hanging indefinitely. `turnDonePosted` remains the
+   * single guard against double-posting `assistant`/`done`, whichever path
+   * settles first.
+   */
   private async runAcpTurn(
     text: string,
     userMsg: ChatMessage,
@@ -539,6 +598,7 @@ export class AiChatPanel {
       this.engine = "builtin";
       this.post({ type: "error", message: "ACP engine unavailable; falling back" });
       this.post({ type: "done" });
+      this.token = null;
       return;
     }
 
@@ -550,10 +610,10 @@ export class AiChatPanel {
       this.post({ type: "error", message: `ACP session failed: ${message}` });
       this.post({ type: "done" });
       this.engine = "builtin";
+      this.token = null;
       return;
     }
     const token = this.token;
-    let aborted = false;
 
     // Reset per-turn buffer so this turn's assistant text doesn't accumulate
     // over previous turn's text (which would leak thinking across turns).
@@ -567,40 +627,113 @@ export class AiChatPanel {
       // silently dropped. From here on, agent_message_chunk streams as
       // deltas normally.
       this.dropReplayFrames = false;
-      await session.handle.acp.request("session/prompt", {
+
+      // B9: the ACP prompt previously carried only the raw user text,
+      // discarding schema context entirely. Build (or reuse the cached)
+      // schema context the same way the builtin engine does and prepend it.
+      const contextMessages = await buildMessages(
+        this.options.adapterFactory,
+        [],
+        userMsg,
+        { cache: this.schemaCacheRef },
+      );
+      const systemMsg = contextMessages.find((m) => m.role === "system");
+      const promptText =
+        systemMsg && systemMsg.content.length > 0
+          ? `${systemMsg.content}\n\n${text}`
+          : text;
+
+      const requestPromise = session.handle.acp.request<
+        { stopReason?: unknown } | undefined
+      >("session/prompt", {
         sessionId: session.sessionId,
-        prompt: [{ type: "text", text }],
-      });
-      await new Promise<void>((resolve) => {
-        this.acpTurnResolvers.push(() => {
-          aborted = token?.aborted === true;
-          resolve();
-        });
+        prompt: [{ type: "text", text: promptText }],
       });
 
+      // Primary settlement path: the session/prompt RESPONSE. This wrapper
+      // is engineered to NEVER reject (both branches resolve normally) so
+      // it can safely race the forced-settlement belt below without an
+      // unhandled-rejection warning.
+      let stopReason: string | undefined;
+      const responseSettled: Promise<void> = requestPromise.then(
+        (result) => {
+          const r = result?.stopReason;
+          if (typeof r === "string") stopReason = r;
+        },
+        () => undefined,
+      );
+
+      // Belt: Stop/dispose push a resolver here (see handleStop /
+      // disposeAcpSession) to force early settlement of a turn that may
+      // never receive a response (hung/killed process).
+      let forced = false;
+      let myResolve: () => void = () => {};
+      const forcedSettled: Promise<void> = new Promise((resolve) => {
+        myResolve = () => {
+          forced = true;
+          resolve();
+        };
+        this.acpTurnResolvers.push(myResolve);
+      });
+
+      await Promise.race([responseSettled, forcedSettled]);
+      const idx = this.acpTurnResolvers.indexOf(myResolve);
+      if (idx !== -1) this.acpTurnResolvers.splice(idx, 1);
+
+      const userAborted = token?.aborted === true;
+
+      // Every stopReason is handled explicitly — no silent fallthrough.
+      let postAssistant: boolean;
+      if (forced || userAborted) {
+        // Stop/dispose forced early settlement — never surface a (possibly
+        // partial) assistant bubble for a turn the user cancelled.
+        postAssistant = false;
+      } else {
+        switch (stopReason) {
+          case "end_turn":
+          case "max_tokens":
+            // Real model content — surface it even when max_tokens
+            // truncated it.
+            postAssistant = true;
+            break;
+          case "cancelled":
+          case "refusal":
+            // Server-side cancel or refusal carries no usable final text.
+            postAssistant = false;
+            break;
+          default:
+            // Unrecognized/missing stopReason — conservatively surface
+            // whatever text streamed rather than losing it silently.
+            postAssistant = true;
+            break;
+        }
+      }
+
       if (!this.turnDonePosted) {
-        const finalText = session.buffer;
-        this.post({ type: "assistant", text: finalText, markdown: true });
-        if (!aborted) {
+        if (postAssistant && session.buffer.length > 0) {
+          const finalText = session.buffer;
+          this.post({ type: "assistant", text: finalText, markdown: true });
           this.history = [
             ...this.history,
             userMsg,
             { role: "assistant", content: finalText },
           ];
         }
-      }
-      if (!this.turnDonePosted) {
         this.post({ type: "done" });
         this.turnDonePosted = true;
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.post({ type: "error", message });
-    } finally {
       if (!this.turnDonePosted) {
         this.post({ type: "done" });
         this.turnDonePosted = true;
       }
+    } finally {
+      // TASK-007 B6: reset on every turn exit path (success, error, abort)
+      // so the resume guards (`token !== null`) don't permanently swallow
+      // resume_list/resume_pick after the first message.
+      this.token = null;
     }
   }
 
@@ -679,23 +812,26 @@ export class AiChatPanel {
     const sessionUpdate = (update as { sessionUpdate?: unknown }).sessionUpdate;
     if (sessionUpdate === "agent_message_chunk") {
       if (this.token?.aborted) return;
-      const delta = (update as { delta?: unknown }).delta;
-      if (typeof delta === "string" && delta.length > 0) {
-        session.buffer += delta;
-        this.post({ type: "delta", text: delta });
+      // TASK-007 B2: ACP `agent_message_chunk` carries
+      // `content: {type:"text", text}` — the SAME envelope
+      // `user_message_chunk` already uses. There is no `delta` field.
+      const content = (update as { content?: unknown }).content;
+      let text: string | undefined;
+      if (content !== null && typeof content === "object") {
+        const t = (content as { text?: unknown }).text;
+        if (typeof t === "string") text = t;
+      }
+      if (typeof text === "string" && text.length > 0) {
+        session.buffer += text;
+        this.post({ type: "delta", text });
       }
       return;
     }
-    // agent_thought_chunk + every other update kind: deliberately ignored
-    // (TASK-004 §3: agent_thought_chunk must never render or surface).
-    if (sessionUpdate === "agent_thought_chunk") return;
-    if (sessionUpdate === "agent_end" || sessionUpdate === "turn_complete") {
-      // Terminal marker — settle in-flight turn.
-      const resolvers = this.acpTurnResolvers.splice(0);
-      for (const r of resolvers) r();
-      return;
-    }
-    // Other update kinds: ignore.
+    // agent_thought_chunk + every other update kind (including the stale
+    // cycle-L `agent_end`/`turn_complete` names, which real ACP never
+    // emits — see runAcpTurn's response-based settlement, TASK-007 B1):
+    // deliberately ignored. agent_thought_chunk must never render or
+    // surface (TASK-004 §3).
   }
 
   private handleAcpServerRequest(
@@ -834,6 +970,22 @@ export class AiChatPanel {
     }
     if (this.engine === "omp" && this.acpSession !== null) {
       this.cancelAllPending();
+      // TASK-007 B5: previously Stop never resolved `acpTurnResolvers`,
+      // never posted `done`, and never told the server to stop generating
+      // — the UI stayed busy forever and omp kept running. Best-effort
+      // fire-and-forget `session/cancel` notification (no response
+      // expected — see AcpClient.notify), then force the belt so
+      // runAcpTurn's Promise.race settles immediately instead of waiting
+      // on a response that may never distinguish this as a cancel.
+      try {
+        this.acpSession.handle.acp.notify("session/cancel", {
+          sessionId: this.acpSession.sessionId,
+        });
+      } catch {
+        // Best-effort — process may already be gone.
+      }
+      const resolvers = this.acpTurnResolvers.splice(0);
+      for (const r of resolvers) r();
     }
   }
   private disposeAcpSession(): void {
@@ -915,9 +1067,13 @@ export class AiChatPanel {
       if (update === null || typeof update !== "object") continue;
       const sessionUpdate = (update as { sessionUpdate?: unknown }).sessionUpdate;
       if (sessionUpdate === "agent_message_chunk") {
-        const delta = (update as { delta?: unknown }).delta;
-        if (typeof delta === "string" && delta.length > 0) {
-          items.push({ kind: "assistant", text: delta });
+        // TASK-007 B2: same envelope as user_message_chunk below —
+        // `content: {type:"text", text}`, not a `delta` field.
+        const content = (update as { content?: unknown }).content;
+        if (content === null || typeof content !== "object") continue;
+        const text = (content as { text?: unknown }).text;
+        if (typeof text === "string" && text.length > 0) {
+          items.push({ kind: "assistant", text });
         }
         continue;
       }

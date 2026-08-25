@@ -492,9 +492,10 @@ describe("ResultsPanel — fetchPostgresCtids correctness (important #1)", () =>
     // Find the ctid SELECT.
     const ctidQuery = recorded.find((c) => /ctid/i.test(c.sql));
     expect(ctidQuery).toBeDefined();
-    // Identifier quoting — the table name (and column names) MUST appear
-    // quoted or as plain safe identifiers, NEVER raw interpolated user data.
-    expect(ctidQuery!.sql).toMatch(/FROM\s+(?:"public\.t"|public\.t)\b/i);
+    // Identifier quoting — schema and table are quoted SEPARATELY. A single
+    // `"public.t"` would name a table literally called `public.t` (A8), so
+    // each part gets its own quotes; never raw interpolated user data.
+    expect(ctidQuery!.sql).toMatch(/FROM\s+"public"\."t"/i);
     // The value `c` is a literal in the WHERE — quote-doubled safe.
     expect(ctidQuery!.sql).toMatch(/'c'/);
   });
@@ -723,7 +724,7 @@ describe("ResultsPanel — no-PK lazy ctid resolver (TASK-002 case 1)", () => {
     );
     expect(ctidLookup).toBeDefined();
     expect(ctidLookup!.sql).toMatch(
-      /SELECT\s+ctid\s+FROM\s+(?:"public\.t"|public\.t)\b[\s\S]*WHERE\s+name\s+IS\s+NOT\s+DISTINCT\s+FROM\s+'alice'/i,
+      /SELECT\s+ctid\s+FROM\s+"public"\."t"[\s\S]*WHERE\s+"name"\s+IS\s+NOT\s+DISTINCT\s+FROM\s+'alice'/i,
     );
     // UPDATE was issued with the resolver's literal.
     const update = recorded.find((c) => /UPDATE/i.test(c.sql));
@@ -1061,7 +1062,9 @@ describe("ResultsPanel — PK table does NOT use ctid (TASK-006 #6)", () => {
     // UPDATE was issued using id PK — no ctid lookup, no ctid column.
     const updates = recorded.filter((c) => /UPDATE/i.test(c.sql));
     expect(updates).toHaveLength(1);
-    expect(updates[0].sql).toMatch(/WHERE\s+id=1/);
+    // PK column is quoted (A9) — an unquoted `id` breaks for reserved-word
+    // column names such as `order` or `user`.
+    expect(updates[0].sql).toMatch(/WHERE\s+"id"=1/);
     // No SELECT ctid lookup was issued.
     const ctidLookups = recorded.filter(
       (c) => /ctid\s+FROM\s+/i.test(c.sql) && !/UPDATE/i.test(c.sql),

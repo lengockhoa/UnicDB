@@ -8,9 +8,20 @@
 // requests are correlated by monotonically increasing client IDs.
 //
 // Scope intentionally narrow:
-// - No timeout/cancellation ownership. Reserved for TASK-004 panel state.
 // - No envelope invention. Method names and parameter shapes are derived
 //   from live evidence in docs/AI_HANDOFF/queue/ACP-APPROVAL-research.md.
+//
+// TASK-006 (B4b): every request() is bounded by a per-request timeout
+// (DEFAULT_ACP_REQUEST_TIMEOUT_MS, overridable via AcpClientOptions for
+// tests). A stalled agent now rejects instead of hanging forever.
+
+/** Default per-request timeout bound (ms). Overridable via AcpClientOptions. */
+export const DEFAULT_ACP_REQUEST_TIMEOUT_MS = 30_000;
+
+export interface AcpClientOptions {
+  /** Per-request timeout bound in ms. Tests should pass a small value. */
+  requestTimeoutMs?: number;
+}
 
 export interface AcpTransport {
   write(line: string): void;
@@ -105,9 +116,11 @@ export class AcpClient {
   } | null = null;
   /** Set to the sessionId while a session/load request is outstanding. */
   private loadInFlight: string | null = null;
+  private readonly requestTimeoutMs: number;
 
-  constructor(transport: AcpTransport) {
+  constructor(transport: AcpTransport, opts: AcpClientOptions = {}) {
     this.transport = transport;
+    this.requestTimeoutMs = opts.requestTimeoutMs ?? DEFAULT_ACP_REQUEST_TIMEOUT_MS;
     this.lineListener = (line: string) => {
       this.handleLine(line);
     };
@@ -117,7 +130,8 @@ export class AcpClient {
   /**
    * Send a JSON-RPC request. Writes `{jsonrpc:"2.0", id, method, params}` and
    * resolves with the matching `result`, or rejects with the matching `error`.
-   * No timeout/cancellation is owned by this client — see TASK-004.
+   * Bounded by `requestTimeoutMs` (TASK-006 B4b) — a request that never gets
+   * a matching response frame rejects instead of hanging forever.
    */
   request<T = unknown>(method: string, params: unknown): Promise<T> {
     if (this.disposed) {
@@ -136,9 +150,20 @@ export class AcpClient {
   private requestRaw<T = unknown>(method: string, params: unknown): Promise<T> {
     const id = this.nextClientId++;
     return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (this.pending.delete(id)) {
+          reject(
+            new Error(`ACP request "${method}" timed out after ${this.requestTimeoutMs}ms`),
+          );
+        }
+      }, this.requestTimeoutMs);
       this.pending.set(id, {
-        resolve: resolve as (result: unknown) => void,
+        resolve: (result: unknown) => {
+          clearTimeout(timer);
+          resolve(result as T);
+        },
         reject: (err: Error) => {
+          clearTimeout(timer);
           reject(err);
         },
       });

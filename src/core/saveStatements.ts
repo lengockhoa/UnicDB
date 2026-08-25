@@ -51,13 +51,42 @@ export interface DeleteRowMarker {
   __rowId: number;
 }
 
+/** Marker shape for an INSERT cell whose value was never touched by the
+ *  user — the column is omitted from the INSERT column/value lists so the
+ *  server applies its own DEFAULT instead of receiving `''` (A11). */
+export interface DefaultValueMarker {
+  __vsdb_default__: true;
+}
+
+export function isDefaultValueMarker(v: unknown): v is DefaultValueMarker {
+  if (typeof v !== "object" || v === null) return false;
+  return (v as Record<string, unknown>)["__vsdb_default__"] === true;
+}
+
+/** Reserved `EditEntry.colIndex` slots for row-level markers (insert /
+ *  delete). TASK-002 declares the same two values locally in
+ *  webview/main.ts (same wave — it must not import from here). Values
+ *  must match. Never used to index into `columns[]`. */
+export const MARKER_COL_INSERT = -1;
+export const MARKER_COL_DELETE = -2;
+
 /** Optional postgres-only ctid lookup for no-PK tables. Used by the
  *  UPDATE branch (cell edits) AND the DELETE branch (delete markers) when
  *  `dialect === "postgres"` and `pkColumns.length === 0` — without a ctid
  *  the row is skipped and a warning is emitted. */
 export interface SaveStatementsOptions {
-  /** rowId → ctid. Missing keys → row is skipped with a warning. */
+  /** rowId → ctid. KEYED BY rowId (not server row index). Missing keys →
+   *  row is skipped with a warning. */
   ctidByRowId?: ReadonlyMap<number, string>;
+  /** rowId → index into `serverRows` (A12). The webview's high-water-mark
+   *  `rowId` and the server's row index diverge after Add Row / streamed
+   *  appends; this remaps producer→consumer. Absent ⇒ identity
+   *  (`serverIndex(rowId) = rowId`), i.e. today's behavior. Applies to
+   *  both the UPDATE and the DELETE (PK) branch. */
+  serverIndexByRowId?: ReadonlyMap<number, number>;
+  /** Schema parsed from the query's FROM clause (A8). Absent ⇒ emit
+   *  `"table"` unqualified, matching today's behavior. */
+  schema?: string;
 }
 
 /** Successful build — `statements` are pushed in execution order; the
@@ -70,6 +99,10 @@ export interface SaveStatementsOk {
   statements: string[];
   /** Non-fatal notes (ctid warnings, no_pk warnings, ambiguous rows). */
   warnings: string[];
+  /** NEW (A19-skip, §3.4a): rows whose edits produced NO statement, so the
+   *  host can keep them dirty instead of the webview clearing them as
+   *  saved. `undefined`/empty ⇒ every row's edits were emitted. */
+  skippedRows?: ReadonlyArray<{ rowId: number; reason: string }>;
 }
 
 /** Soft failure — caller MUST surface `reason` to the user (banner).
@@ -107,14 +140,21 @@ export function quoteIdent(name: string, dialect: Dialect): string {
   if (dialect === "mssql") {
     return "[" + name.replace(/]/g, "]]") + "]";
   }
-  // postgres: caller must pre-validate the identifier shape.
-  return name;
+  // postgres (A9): double-quote + escape embedded double quotes by
+  // doubling — the standard SQL identifier-quoting rule. This makes
+  // mixed-case, spaced and non-ASCII identifiers addressable instead of
+  // being silently mismatched against `search_path`-resolved lower-case
+  // names.
+  return '"' + name.replace(/"/g, '""') + '"';
 }
 
-/** Validate a single SQL identifier. Used by the host's CTID helper and
- *  by buildSaveStatements when verifying host-derived identifiers. */
+/** Validate a single SQL identifier before interpolation. `quoteIdent`
+ *  now quotes every identifier for every dialect, so this gate only needs
+ *  to reject what quoting cannot make safe: empty names and embedded
+ *  control characters (NUL, newline, etc). Mixed-case, spaced and
+ *  non-ASCII identifiers are allowed through — quoted, not refused. */
 function isSafeIdent(name: string): boolean {
-  return /^[A-Za-z_][A-Za-z0-9_$]*$/.test(name);
+  return name.length > 0 && !/[\x00-\x1f]/.test(name);
 }
 
 /** Parsed FROM clause: schema (if any) + table. Returned as null when
@@ -183,63 +223,56 @@ function isKeyword(sql: string, i: number, kw: string): boolean {
   return !/[A-Za-z0-9_]/.test(before) && !/[A-Za-z0-9_]/.test(after);
 }
 
-/** Walk the SQL, skipping over string literals and SQL comments.
- *  Returns true when `i` is inside one of those — used to make sure we
- *  do not trip over a FROM token that lives inside a string or a
- *  comment. */
-function inSkippedRegion(sql: string, i: number): boolean {
-  let j = 0;
-  while (j < i && j < sql.length) {
-    const c = sql[j];
-    if (c === "'") {
-      // Single-quoted string: skip until next single quote. Doubled quotes
-      // inside ('') are one literal escape.
-      j++;
-      while (j < sql.length) {
-        if (sql[j] === "'") {
-          if (sql[j + 1] === "'") {
-            j += 2;
-            continue;
-          }
-          j++;
-          break;
-        }
-        j++;
-      }
-      continue;
-    }
-    if (c === '"') {
-      j++;
-      while (j < sql.length && sql[j] !== '"') j++;
-      if (j < sql.length) j++;
-      continue;
-    }
-    if (c === "-" && sql[j + 1] === "-") {
-      while (j < sql.length && sql[j] !== "\n") j++;
-      continue;
-    }
-    if (c === "/" && sql[j + 1] === "*") {
-      j += 2;
-      while (
-        j < sql.length &&
-        !(sql[j] === "*" && sql[j + 1] === "/")
-      ) {
-        j++;
-      }
-      if (j < sql.length) j += 2;
-      continue;
-    }
-    j++;
-  }
-  return j > i;
-}
-
+/** Walk the SQL ONCE (A20), skipping over string literals and SQL
+ *  comments in place, and collecting FROM/INTO/UPDATE keyword candidates
+ *  as it goes. The old version called an `inSkippedRegion(sql, i)` helper
+ *  that itself re-scanned from 0 to `i` on every character — O(n) work per
+ *  character, O(n²) overall on large SQL (a big string literal was the
+ *  worst case). This single forward pass jumps straight past each
+ *  string/comment region instead of re-deriving "am I inside one?" from
+ *  scratch every time, so the whole scan is O(n). */
 export function parseFromClause(sql: string): ParsedFrom | null {
   const lower = sql.toLowerCase();
   type Kw = "from" | "into" | "update";
   const candidates: Array<{ idx: number; key: Kw }> = [];
-  for (let i = 0; i < lower.length; i++) {
-    if (inSkippedRegion(sql, i)) continue;
+  let i = 0;
+  while (i < sql.length) {
+    const c = sql[i];
+    if (c === "'") {
+      // Single-quoted string: skip until next single quote. Doubled quotes
+      // inside ('') are one literal escape.
+      i++;
+      while (i < sql.length) {
+        if (sql[i] === "'") {
+          if (sql[i + 1] === "'") {
+            i += 2;
+            continue;
+          }
+          i++;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+    if (c === '"') {
+      i++;
+      while (i < sql.length && sql[i] !== '"') i++;
+      if (i < sql.length) i++;
+      continue;
+    }
+    if (c === "-" && sql[i + 1] === "-") {
+      while (i < sql.length && sql[i] !== "\n") i++;
+      continue;
+    }
+    if (c === "/" && sql[i + 1] === "*") {
+      i += 2;
+      while (i < sql.length && !(sql[i] === "*" && sql[i + 1] === "/")) {
+        i++;
+      }
+      if (i < sql.length) i += 2;
+      continue;
+    }
     if (isKeyword(lower, i, "from")) {
       candidates.push({ idx: i, key: "from" });
       i += 4;
@@ -255,11 +288,12 @@ export function parseFromClause(sql: string): ParsedFrom | null {
       i += 6;
       continue;
     }
+    i++;
   }
   if (candidates.length === 0) return null;
   const first = candidates[0];
-  const i = skipWs(sql, first.idx + first.key.length);
-  const ident = readIdent(sql, i);
+  const identStart = skipWs(sql, first.idx + first.key.length);
+  const ident = readIdent(sql, identStart);
   if (!ident) return null;
   // Optionally read schema-qualified `.<ident>`.
   if (sql[ident.end] === ".") {
@@ -318,11 +352,31 @@ export function buildSaveStatements(
     }
   }
 
-  const qTable = quoteIdent(tableName, dialect);
+  // A8: schema-qualify the emitted table when the caller parsed one.
+  // Absent ⇒ unqualified, byte-identical to today.
+  const qTable = options.schema
+    ? `${quoteIdent(options.schema, dialect)}.${quoteIdent(tableName, dialect)}`
+    : quoteIdent(tableName, dialect);
 
   if (edits.length === 0) {
     return { ok: true, statements, warnings };
   }
+
+  // A19-skip (§3.4a): every `continue`/`break` below that leaves a row's
+  // edits unemitted records a `{rowId, reason}` entry here, so the host can
+  // tell the webview exactly which rows to keep dirty instead of silently
+  // acking `ok:true` and losing the edit. Sites that do NOT belong here:
+  //   - `insertRowIds.has(rowId)` (loop 3): the row IS addressed, by its
+  //     own INSERT — recording it would produce a false "edit lost" banner.
+  //   - `!rowEdits` (loop 3): defensive, unreachable (rowId always comes
+  //     from `editsByRow.keys()`).
+  const skippedRows: { rowId: number; reason: string }[] = [];
+
+  // A12: rowId → index into `serverRows`. Absent option ⇒ identity, i.e.
+  // today's `serverRows[rowId]` behavior. Applies to both the UPDATE and
+  // the DELETE (PK) branch below.
+  const resolveServerIndex = (rowId: number): number =>
+    options.serverIndexByRowId?.get(rowId) ?? rowId;
 
   const colIdx = new Map<string, number>();
   for (let i = 0; i < columns.length; i++) colIdx.set(columns[i], i);
@@ -332,29 +386,45 @@ export function buildSaveStatements(
     if (!isNewRowMarker(e.value)) continue;
     const values = e.value.values;
     if (!Array.isArray(values) || values.length !== columns.length) {
-      warnings.push(
-        `insert row ${e.rowId}: values length (${values?.length ?? "?"}) does not match column count (${columns.length}); skipped`,
-      );
+      const reason = `insert row ${e.rowId}: values length (${values?.length ?? "?"}) does not match column count (${columns.length}); skipped`;
+      warnings.push(reason);
+      skippedRows.push({ rowId: e.rowId, reason });
       continue;
     }
-    const colList = columns.map((c) => quoteIdent(c, dialect)).join(", ");
-    const valueList = values.map((v) => sqlLiteral(v)).join(", ");
-    statements.push(
-      `INSERT INTO ${qTable} (${colList}) VALUES (${valueList})`,
-    );
+    // A11: DEFAULT-value sentinel — omit untouched columns entirely so the
+    // server applies its own DEFAULT instead of receiving `''`/`NULL`. If
+    // every column is untouched, emit bare `DEFAULT VALUES`.
+    const insertCols: string[] = [];
+    const insertVals: unknown[] = [];
+    for (let i = 0; i < columns.length; i++) {
+      if (isDefaultValueMarker(values[i])) continue;
+      insertCols.push(columns[i]);
+      insertVals.push(values[i]);
+    }
+    if (insertCols.length === 0) {
+      statements.push(`INSERT INTO ${qTable} DEFAULT VALUES`);
+    } else {
+      const colList = insertCols
+        .map((c) => quoteIdent(c, dialect))
+        .join(", ");
+      const valueList = insertVals.map((v) => sqlLiteral(v)).join(", ");
+      statements.push(
+        `INSERT INTO ${qTable} (${colList}) VALUES (${valueList})`,
+      );
+    }
   }
 
   // ---- 2) Delete markers → one DELETE per row ----------------------------
   for (const e of edits) {
     if (!isDeleteMarker(e.value)) continue;
     if (pkColumns.length === 0) {
+      const delRowId = e.value.__rowId;
       if (dialect === "postgres") {
-        const delRowId = e.value.__rowId;
         const ctid = options.ctidByRowId?.get(delRowId);
         if (!ctid) {
-          warnings.push(
-            `delete row ${delRowId} skipped: postgres no-PK + missing ctid`,
-          );
+          const reason = `delete row ${delRowId} skipped: postgres no-PK + missing ctid`;
+          warnings.push(reason);
+          skippedRows.push({ rowId: delRowId, reason });
         } else {
           statements.push(
             `DELETE FROM ${qTable} WHERE ctid=${sqlLiteral(ctid)}`,
@@ -363,24 +433,33 @@ export function buildSaveStatements(
             `delete row ${delRowId}: postgres no-PK fallback used (ctid) — not safe under concurrent writes`,
           );
         }
+      } else {
+        // A10-remainder: mysql/mssql have no ctid-style fallback — the row
+        // is skipped, but explicitly (warning + skippedRows), never a
+        // silent no-op.
+        const reason = `delete row ${delRowId} skipped: ${dialect} has no primary key for "${tableName}"`;
+        warnings.push(reason);
+        skippedRows.push({ rowId: delRowId, reason });
       }
       continue;
     }
     const rowId = e.value.__rowId;
-    const serverRow = serverRows[rowId];
+    const serverRow = serverRows[resolveServerIndex(rowId)];
     if (!serverRow) {
-      warnings.push(`delete row ${rowId} skipped: no server row`);
+      const reason = `delete row ${rowId} skipped: no server row`;
+      warnings.push(reason);
+      skippedRows.push({ rowId, reason });
       continue;
     }
     const whereParts: string[] = [];
     let whereOk = true;
+    let breakReason = "";
     for (const pk of pkColumns) {
       const ci = colIdx.get(pk);
       if (ci === undefined) {
         whereOk = false;
-        warnings.push(
-          `delete row ${rowId} skipped: pk column "${pk}" not in result`,
-        );
+        breakReason = `delete row ${rowId} skipped: pk column "${pk}" not in result`;
+        warnings.push(breakReason);
         break;
       }
       whereParts.push(
@@ -391,6 +470,8 @@ export function buildSaveStatements(
       statements.push(
         `DELETE FROM ${qTable} WHERE ${whereParts.join(" AND ")}`,
       );
+    } else {
+      skippedRows.push({ rowId, reason: breakReason });
     }
   }
 
@@ -416,8 +497,12 @@ export function buildSaveStatements(
   const sortedRowIds = Array.from(editsByRow.keys()).sort((a, b) => a - b);
 
   const hasPk = pkColumns.length > 0;
-  if (!hasPk && dialect !== "postgres") {
-    // mysql/mssql without PK: REJECT.
+  if (!hasPk && dialect !== "postgres" && sortedRowIds.length > 0) {
+    // mysql/mssql without PK: REJECT — but only when there is actual cell
+    // (UPDATE) work needing a PK-based WHERE. A delete-only or insert-only
+    // batch on a no-PK table does not need this hard refusal; deletes are
+    // already skipped per-row above (with a warning + skippedRows entry),
+    // and inserts never need a PK.
     return {
       ok: false,
       reason: "no_pk",
@@ -432,7 +517,8 @@ export function buildSaveStatements(
     if (!rowEdits) continue;
     // Rows with an INSERT marker are already addressed by the INSERT; skip
     // the redundant UPDATE. insertRowIds is precomputed above the loop —
-    // the old per-row `edits.some(...)` scan was O(rows×edits).
+    // the old per-row `edits.some(...)` scan was O(rows×edits). NOT a
+    // skippedRows site: the row's edits WERE emitted, via the INSERT.
     if (insertRowIds.has(rowId)) continue;
 
     const cols: string[] = [];
@@ -440,17 +526,32 @@ export function buildSaveStatements(
     for (const e of rowEdits
       .slice()
       .sort((a, b) => a.colIndex - b.colIndex)) {
+      // Reserved marker slots (MARKER_COL_INSERT/DELETE) must never index
+      // into `columns[]` — those rows are handled by loops 1/2 above by
+      // value shape already; this is a belt-and-suspenders guard against
+      // a stray negative colIndex reaching `columns[e.colIndex]`.
+      if (e.colIndex < 0) continue;
       const c = columns[e.colIndex];
       if (c === undefined) {
-        warnings.push(
-          `row ${rowId}: skipped unknown col index ${e.colIndex}`,
-        );
+        const reason = `row ${rowId}: skipped unknown col index ${e.colIndex}`;
+        warnings.push(reason);
+        skippedRows.push({ rowId, reason });
         continue;
       }
       cols.push(c);
       vals.push(e.value);
     }
-    if (cols.length === 0) continue;
+    if (cols.length === 0) {
+      // Whole row dropped — every edit targeted an unknown col index.
+      // Unlike the per-cell case above, no warning is pushed here today
+      // (that's the `warnings.push` grep miss called out in TASK-001); the
+      // skippedRows entry is the only signal, and it must not be skipped.
+      skippedRows.push({
+        rowId,
+        reason: `row ${rowId} skipped: no editable columns (all edited col indexes unknown)`,
+      });
+      continue;
+    }
 
     if (hasPk) {
       const pkSet = new Set(pkColumns);
@@ -463,32 +564,39 @@ export function buildSaveStatements(
         );
       }
       if (setParts.length === 0) {
-        warnings.push(`row ${rowId} skipped: only PK columns edited`);
+        const reason = `row ${rowId} skipped: only PK columns edited`;
+        warnings.push(reason);
+        skippedRows.push({ rowId, reason });
         continue;
       }
       const setClause = setParts.join(", ");
 
-      const serverRow = serverRows[rowId];
+      const serverRow = serverRows[resolveServerIndex(rowId)];
       if (!serverRow) {
-        warnings.push(`row ${rowId} skipped: no server row for UPDATE`);
+        const reason = `row ${rowId} skipped: no server row for UPDATE`;
+        warnings.push(reason);
+        skippedRows.push({ rowId, reason });
         continue;
       }
       const whereParts: string[] = [];
       let whereOk = true;
+      let breakReason = "";
       for (const pk of pkColumns) {
         const i = colIdx.get(pk);
         if (i === undefined) {
           whereOk = false;
-          warnings.push(
-            `row ${rowId} skipped: pk column "${pk}" missing`,
-          );
+          breakReason = `row ${rowId} skipped: pk column "${pk}" missing`;
+          warnings.push(breakReason);
           break;
         }
         whereParts.push(
           `${quoteIdent(pk, dialect)}=${sqlLiteral(serverRow[i])}`,
         );
       }
-      if (!whereOk) continue;
+      if (!whereOk) {
+        skippedRows.push({ rowId, reason: breakReason });
+        continue;
+      }
       statements.push(
         `UPDATE ${qTable} SET ${setClause} WHERE ${whereParts.join(" AND ")}`,
       );
@@ -496,9 +604,9 @@ export function buildSaveStatements(
       // postgres no-PK fallback: WHERE ctid = '<literal>'
       const ctid = options.ctidByRowId?.get(rowId);
       if (!ctid) {
-        warnings.push(
-          `row ${rowId} skipped: postgres no-PK + missing ctid`,
-        );
+        const reason = `row ${rowId} skipped: postgres no-PK + missing ctid`;
+        warnings.push(reason);
+        skippedRows.push({ rowId, reason });
         continue;
       }
       const setParts: string[] = [];
@@ -517,5 +625,10 @@ export function buildSaveStatements(
     }
   }
 
-  return { ok: true, statements, warnings };
+  return {
+    ok: true,
+    statements,
+    warnings,
+    skippedRows: skippedRows.length > 0 ? skippedRows : undefined,
+  };
 }

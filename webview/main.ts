@@ -123,6 +123,10 @@ type SaveEditsMsg = {
   edits: Array<{ rowId: number; colIndex: number; value: unknown }>;
   tableName: string | null;
   pkColumns: string[];
+  /** cycle T / TASK-002 (A12): __rowId → index into the host's
+   *  result.rows. Keys are stringified numbers (JSON). Absent ⇒ host
+   *  falls back to rowId. */
+  serverIndexByRowId?: Record<string, number>;
 };
 type WebviewMsg =
   | LoadMoreMsg
@@ -132,6 +136,19 @@ type WebviewMsg =
   | SaveEditsMsg
   | RequeryMsg
   | ReadyMsg;
+
+// ---- Row-marker sentinels (cycle T / TASK-002) -----------------------------
+// Add Row / Delete Row use a dedicated marker colIndex so they never collide
+// with a real cell edit's colIndex 0 in EditState's `${rowId}:${colIndex}`
+// dirty map. Declared locally here (not imported from
+// src/core/saveStatements.ts) this wave — see task Interfaces section.
+const MARKER_COL_INSERT = -1;
+const MARKER_COL_DELETE = -2;
+/** Sentinel used to fill untouched cells in a new-row marker's `values`
+ *  array. A plain object literal (not `undefined` — arrays serialize it to
+ *  `null` on the wire — nor a magic string that could collide with real
+ *  data). */
+const DEFAULT_CELL = { __vsdb_default__: true } as const;
 
 
 // ---- Acquire VS Code API ---------------------------------------------------
@@ -1298,6 +1315,30 @@ class SetFilterComponent {
 }
 
 
+/** Date-aware cell equality — `Date` objects compare by identity via `===`
+ *  in a naive check, so two distinct Date instances holding the same
+ *  instant would spuriously read as "changed". */
+function cellsEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a instanceof Date && b instanceof Date) return a.getTime() === b.getTime();
+  return false;
+}
+
+/** True when `a` and `b` (same-length raw row arrays, positionally aligned
+ *  with the same statement's columns) hold at least one differing cell. */
+function rowsDiffer(a: readonly unknown[][], b: readonly unknown[][]): boolean {
+  if (a.length !== b.length) return true;
+  for (let i = 0; i < a.length; i++) {
+    const ra = a[i];
+    const rb = b[i];
+    if (ra.length !== rb.length) return true;
+    for (let j = 0; j < ra.length; j++) {
+      if (!cellsEqual(ra[j], rb[j])) return true;
+    }
+  }
+  return false;
+}
+
 function renderGrid(): void {
   if (!dom) return;
   const r = results[activeTab];
@@ -1534,12 +1575,12 @@ function renderGrid(): void {
       rowHeight: 28,
       headerHeight: 28,
       floatingFiltersHeight: 28,
-      onCellKeyDown: (e) => {
-        const ev = (e as unknown as { event: KeyboardEvent }).event;
-        if (ev && (ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "c") {
-          copySelectionToHost();
-        }
-      },
+      // A16: Ctrl/Cmd+C is bound in exactly one place — the gridWrap
+      // capture-phase `keydown` listener above. `onCellKeyDown` used to
+      // ALSO call copySelectionToHost(), causing a real Ctrl+C on a
+      // focused cell to double-fire (capture-phase ancestor listener +
+      // this grid-option callback both firing for the same keystroke).
+      //
       // Keep `colFilterActive` in sync with grid state. Re-poll
       // `isColumnFilterPresent()` instead of trusting a stale bool — the
       // event source can be 'api' (programmatic setFilterModel) or 'ui'
@@ -1630,6 +1671,21 @@ function renderGrid(): void {
         highestAllocatedId = id;
       }
     }
+    statementRows.set(activeTab, r.result.rows.slice());
+  } else if (
+    !rowsGrew &&
+    r.result.rows.length === previousRows.length &&
+    rowsDiffer(r.result.rows, previousRows)
+  ) {
+    // A5 — same statement, same row count, but the server-truth values
+    // differ from what's currently displayed (e.g. the host echoes back
+    // authoritative rows right after a successful commit, or a Refresh
+    // re-fetch returns changed data for an unchanged row count). Swap
+    // rowData wholesale so the grid shows the fresh values. This is NOT a
+    // "reset" — dirty/undo/local-row state is left alone; by the time a
+    // commit's echo arrives, saveResult ok:true has already cleared
+    // editState/undoStack via its own handler.
+    gridApi!.setGridOption("rowData", rowsToObjects(r.result.rows, specs));
     statementRows.set(activeTab, r.result.rows.slice());
   }
   lastRenderedIndex = activeTab;
@@ -1824,15 +1880,31 @@ function onGridPaste(ev: ClipboardEvent): void {
   gridApi.refreshCells({ force: true });
   updateFooterNow();
 }
-/** Refresh button: visual noop reset of dirty state + re-post the current
- *  state to the host so the host's "saved" snapshot matches. */
+/** Refresh button (A13): discard any local edits and re-fetch the current
+ *  statement from the host. When there are dirty edits we MUST confirm
+ *  before discarding them — a stray click should never silently lose
+ *  in-progress work. On decline: dirtyCount is left untouched and NOTHING
+ *  is posted to the host. On accept (or when nothing is dirty): local edit
+ *  state is cleared and a requery is posted so the host re-runs the
+ *  statement and sends back fresh rows. */
 function onRefreshClick(): void {
+  if (editState.dirtyCount > 0) {
+    const confirmFn =
+      typeof window !== "undefined" && typeof window.confirm === "function"
+        ? window.confirm.bind(window)
+        : null;
+    const proceed = confirmFn
+      ? confirmFn("Discard unsaved edits and refresh?")
+      : true;
+    if (!proceed) return;
+  }
   editState.clear();
   undoStack.clear();
-  // No-op for the host today — TASK-503 will define the host message; for
-  // now this just clears the local dirty map (which is the user-visible
-  // "reset" semantics).
   refreshUndoRedoButtons();
+  if (!dom) return;
+  const where = dom.requeryWhere.value;
+  const orderBy = dom.requeryOrderBy.value;
+  postToHost({ type: "requery", index: activeTab, where, orderBy });
 }
 /** Add Row: append a real blank row to the grid. The row gets a stable
  *  __rowId past every id we have ever allocated (server OR local) — the
@@ -1857,10 +1929,20 @@ function onAddRowClick(): void {
   // TASK-007: mark dirty FIRST so when AG Grid renders the new row,
   // getRowClass already sees isRowNew(newRowId)=true and appends the
   // `vsdb-row-new` class on first render — no second redraw needed.
+  //
+  // A6/A11: the marker lives at MARKER_COL_INSERT (not colIndex 0 — that
+  // would collide with a real edit on column 0's dirty key). `values` is
+  // an array of exactly `currentSpecs.length`, filled with the DEFAULT_CELL
+  // sentinel for untouched cells — NOT a field-keyed Record and NOT "" —
+  // so src/core/saveStatements.ts can build a correctly-shaped INSERT.
   editState.markDirty(
     newRowId,
-    0,
-    { __vsdb_new_row__: true, __rowId: newRowId, values: blank },
+    MARKER_COL_INSERT,
+    {
+      __vsdb_new_row__: true,
+      __rowId: newRowId,
+      values: currentSpecs.map(() => DEFAULT_CELL),
+    },
     undefined,
   );
   // TASK-008 — record the add-row on the unified undo stack so undo can
@@ -1893,7 +1975,14 @@ function onDeleteRowClick(): void {
   // alone re-evaluates cellClassRules (the cell-level highlight) but
   // does NOT re-run getRowClass — we need redrawRows for the row-level
   // class to re-evaluate.
-  editState.markDirty(rowId, 0, { __vsdb_deleted__: true, __rowId: rowId }, undefined);
+  // A6/A11: marker lives at MARKER_COL_DELETE — never colIndex 0 (would
+  // collide with a real cell edit's dirty key).
+  editState.markDirty(
+    rowId,
+    MARKER_COL_DELETE,
+    { __vsdb_deleted__: true, __rowId: rowId },
+    undefined,
+  );
   if (focusedNode) {
     const node = gridApi.getRowNode(String(rowId));
     if (node) gridApi.redrawRows({ rowNodes: [node] });
@@ -1945,7 +2034,7 @@ function applyUndoAction(action: UndoAction, mode: "undo" | "redo"): void {
       const node = gridApi.getRowNode(String(action.rowId));
       const data = node?.data;
       gridApi.applyTransaction({ remove: data ? [data] : [] });
-      editState.clearCell(action.rowId, 0);
+      editState.clearCell(action.rowId, MARKER_COL_INSERT);
       if (newRowCount > 0) newRowCount--;
     } else {
       const blank: Record<string, unknown> = { __rowId: action.rowId };
@@ -1957,8 +2046,12 @@ function applyUndoAction(action: UndoAction, mode: "undo" | "redo"): void {
       }
       editState.markDirty(
         action.rowId,
-        0,
-        { __vsdb_new_row__: true, __rowId: action.rowId, values: blank },
+        MARKER_COL_INSERT,
+        {
+          __vsdb_new_row__: true,
+          __rowId: action.rowId,
+          values: currentSpecs.map(() => DEFAULT_CELL),
+        },
         undefined,
       );
       gridApi.applyTransaction({ add: [blank] });
@@ -1969,11 +2062,11 @@ function applyUndoAction(action: UndoAction, mode: "undo" | "redo"): void {
     // values themselves were never mutated, only the marker was added).
     // Redo: re-mark the row deleted.
     if (mode === "undo") {
-      editState.clearCell(action.rowId, 0);
+      editState.clearCell(action.rowId, MARKER_COL_DELETE);
     } else {
       editState.markDirty(
         action.rowId,
-        0,
+        MARKER_COL_DELETE,
         { __vsdb_deleted__: true, __rowId: action.rowId },
         undefined,
       );
@@ -2024,12 +2117,22 @@ function onCommitClick(): void {
   // parsed out of the original SQL (extension.ts has the parsed statement).
   // Until that's wired through the state message we send empty hints —
   // the host then falls back to its own parser / listColumns lookup.
+  //
+  // A12: serverIndexByRowId lets the host resolve a dirty row's original
+  // position in `result.rows` (needed for ctid/no-PK fallback lookups)
+  // without re-deriving it. Built from the module-level map that
+  // rowsToObjects maintains — JSON keys must be strings.
+  const serverIndexByRowIdJson: Record<string, number> = {};
+  for (const [rowId, idx] of serverIndexByRowId) {
+    serverIndexByRowIdJson[String(rowId)] = idx;
+  }
   postToHost({
     type: "saveEdits",
     index: activeTab,
     edits,
     tableName: null,
     pkColumns: [],
+    serverIndexByRowId: serverIndexByRowIdJson,
   });
   // While the host is processing, hide any previous banner. Re-shown if
   // the host returns an error.
@@ -2108,9 +2211,17 @@ function readExportInput():
   // with whatever the grid shows: any column with `spec.hidden` is
   // excluded from TSV/CSV/JSON/XML and from generated UPDATE/INSERT SET
   // clauses.
+  //
+  // A7: this list is matched against `r.result.columns` (the RAW column
+  // name list from the wire, which can contain duplicates for a query
+  // like `SELECT a.id, b.id`) — so it must use `headerName` (the
+  // display/raw name), NOT `field` (TASK-003's deduped unique key like
+  // "id__2", which would never appear in the raw columns array and so
+  // would never match anything). This is the ONLY hiddenColumns/field
+  // site converted this wave — see task Discussion.
   const hiddenColumns = currentSpecs
     .filter((s) => s.hidden === true)
-    .map((s) => s.field);
+    .map((s) => s.headerName);
   return {
     format,
     includeHeader,
@@ -2175,26 +2286,40 @@ function onExportFileClick(): void {
 
 function copySelectionToHost(): void {
   if (!gridApi) return;
-  const selected = gridApi.getSelectedRows();
-  if (selected.length === 0) return;
   // Re-shape: AG Grid returns row objects; we need arrays of original values.
   // There is no `__select__` synthetic field anymore (TASK-402 Fix #3) — just
   // pass through the known spec field names.
-  const specsForCopy: readonly ColumnSpec[] = currentStatement?.result
-    ? inferColumns(
-        currentStatement.result.columns,
-        currentStatement.result.rows.slice(0, 1),
-      )
-    : [];
-  const arr = selected.map((obj) => {
+  //
+  // A16: use the live `currentSpecs` (source of truth for column order AND
+  // the `hidden` flag) — NOT a freshly recomputed inferColumns() call. The
+  // old code recomputed specs from currentStatement.result here, which
+  // always produces `hidden: undefined` and would leak a hidden column's
+  // values straight into the clipboard.
+  let selected: Array<Record<string, unknown>> = gridApi.getSelectedRows() as Array<
+    Record<string, unknown>
+  >;
+  if (selected.length === 0) {
+    // No checkbox selection — fall back to the focused cell's row so a
+    // plain Ctrl+C with just a cell focused (no explicit row selection)
+    // still copies that row, matching spreadsheet-app expectations.
+    const focused = gridApi.getFocusedCell();
+    const node =
+      focused?.rowIndex !== undefined
+        ? gridApi.getDisplayedRowAtIndex(focused.rowIndex)
+        : null;
+    if (node?.data) selected = [node.data as Record<string, unknown>];
+  }
+  if (selected.length === 0) return;
+  const visibleSpecs = currentSpecs.filter((s) => s.hidden !== true);
+  const arr = selected.map((r) => {
     const row: unknown[] = [];
-    const r = obj as Record<string, unknown>;
-    if (specsForCopy.length === 0) {
+    if (visibleSpecs.length === 0) {
       for (const k of Object.keys(r)) {
+        if (k === "__rowId") continue;
         row.push(r[k]);
       }
     } else {
-      for (const s of specsForCopy) {
+      for (const s of visibleSpecs) {
         row.push(r[s.field]);
       }
     }
@@ -2383,6 +2508,28 @@ postToHost({ type: "ready" });
 // Initial render.
 render();
 
+/** Test-only seam (cycle T / TASK-002). Lets tests inject ColumnSpecs
+ *  shaped like TASK-003's dedup output (`field` unique even when
+ *  `headerName` repeats, e.g. "id" / "id__2") or carrying a `hidden`
+ *  flag — neither has a live production trigger in THIS worktree yet
+ *  (TASK-003's inferColumns dedup lands in a parallel worktree this
+ *  wave; no UI sets `hidden` today). Production code never calls this.
+ *  Overrides `currentSpecs` AND pushes matching columnDefs
+ *  (field/headerName/hide) onto the live grid so Add Row / copy paths
+ *  that read `gridApi.getColumnDefs()` stay consistent with the
+ *  injected specs. */
+function debugSetSpecs(specs: readonly ColumnSpec[]): void {
+  currentSpecs = specs;
+  if (!gridApi) return;
+  const next = specs.map((s) => ({
+    field: s.field,
+    headerName: s.headerName,
+    hide: s.hidden === true,
+    editable: true,
+  }));
+  gridApi.setGridOption("columnDefs", next);
+}
+
 // Expose for debugging + tests.
 (window as unknown as { __vsdb: unknown }).__vsdb = {
   render,
@@ -2403,6 +2550,10 @@ render();
   get editState(): EditState {
     return editState;
   },
+  get currentSpecs(): readonly ColumnSpec[] {
+    return currentSpecs;
+  },
+  debugSetSpecs,
   /** TASK-008 — unified undo/redo stack handle for tests. */
   get undoStack(): UndoStack {
     return undoStack;

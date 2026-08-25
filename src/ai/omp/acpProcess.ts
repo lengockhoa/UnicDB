@@ -26,6 +26,9 @@ export type AcpSpawnFn = (
 
 export type AcpExecFn = (cmd: string) => Promise<string>;
 
+/** Bounded tail of the child's stderr retained for startup-error messages. */
+const STDERR_TAIL_LIMIT = 8 * 1024; // 8 KB
+
 export interface AcpProcessOptions {
   /**
    * Resolved omp binary path. Defaults to "omp"; callers should pass the path
@@ -41,6 +44,12 @@ export interface AcpProcessOptions {
    */
   supportCwdFlag: boolean;
   execFn?: AcpExecFn;
+  /**
+   * TASK-006 (B4b): per-request bound in ms passed through to AcpClient.
+   * Default 30_000 (AcpClient's DEFAULT_ACP_REQUEST_TIMEOUT_MS); tests pass
+   * a small value so a stalled handshake fails fast instead of hanging.
+   */
+  requestTimeoutMs?: number;
 }
 
 export interface AcpStartHandlers {
@@ -117,6 +126,19 @@ export class AcpProcess {
     };
     this.child = spawnLike;
 
+    // TASK-006 (B10): drain stderr continuously from spawn onwards — an
+    // unread pipe can block the child once its OS buffer fills, and omp's
+    // own auth/model/config error text was previously discarded entirely.
+    // Keep a bounded tail so startup errors can surface it.
+    let stderrTail = "";
+    spawnLike.stderr.on("data", (chunk: Buffer | string) => {
+      const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      stderrTail += text;
+      if (stderrTail.length > STDERR_TAIL_LIMIT) {
+        stderrTail = stderrTail.slice(stderrTail.length - STDERR_TAIL_LIMIT);
+      }
+    });
+
     // Race: ready handshake vs spawn 'error' / child 'exit' failure.
     const startError = new Promise<never>((_, reject) => {
       spawnLike.on("error", (err) => reject(err));
@@ -128,7 +150,7 @@ export class AcpProcess {
     });
 
     const transport: AcpTransport = createAcpLineTransport(spawnLike.stdin, spawnLike.stdout);
-    const acp = new AcpClient(transport);
+    const acp = new AcpClient(transport, { requestTimeoutMs: this.opts.requestTimeoutMs });
     if (handlers.onNotification !== undefined) acp.onNotification(handlers.onNotification);
     if (handlers.onServerRequest !== undefined) acp.onServerRequest(handlers.onServerRequest);
 
@@ -161,6 +183,12 @@ export class AcpProcess {
         }),
         startError,
       ])) as { agentInfo?: { version?: string } };
+
+      // TASK-006 (B4a): the handshake is initialize → initialized →
+      // session/new. `initialized` is a notification (no `id`, no reply
+      // expected) — sending it was previously skipped entirely.
+      acp.notify("initialized", {});
+
       const sessionResult = (await Promise.race([
         acp.request("session/new", { cwd: this.opts.cwd, mcpServers: [] }),
         startError,
@@ -195,7 +223,7 @@ export class AcpProcess {
       };
     } catch (err) {
       this.disposeClient();
-      throw err;
+      throw attachStderrTail(err, stderrTail);
     }
   }
 
@@ -221,6 +249,20 @@ export class AcpProcess {
 }
 
 // ---- helpers ----------------------------------------------------------------
+
+/**
+ * TASK-006 (B10): append the retained stderr tail (if any) to a startup
+ * error's message and expose it as `.stderrTail` for callers/tests that want
+ * it without string-parsing the message.
+ */
+function attachStderrTail(err: unknown, tail: string): Error {
+  const base = err instanceof Error ? err : new Error(String(err));
+  if (tail.length > 0) {
+    base.message = `${base.message}\n--- omp stderr (tail) ---\n${tail}`;
+  }
+  (base as Error & { stderrTail?: string }).stderrTail = tail;
+  return base;
+}
 
 function defaultExecFn(cmd: string): Promise<string> {
   return new Promise<string>((resolve, reject) => {
