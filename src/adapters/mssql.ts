@@ -1,4 +1,4 @@
-import { Connection, Request } from "tedious";
+import { Connection, Request, TYPES } from "tedious";
 import type { ConnectionConfig } from "../config/types";
 import { resolveSslOptions } from "../core/sslOptions";
 import { splitStatements } from "../core/statementParser";
@@ -22,6 +22,19 @@ type MssqlColumn = {
   colName?: string;
   name?: string;
   [key: string]: any;
+};
+
+/**
+ * TASK-002 — typed parameter bound into a tedious Request via
+ * `addParameter`, so values never get interpolated into the SQL text.
+ * `null` values keep their declared type; tedious serializes them as the
+ * TDS NULL marker (tedious 18.x has no `TYPES.Null` export — declared type +
+ * null value is the canonical way to send NULL).
+ */
+export type MssqlQueryParam = {
+  name: string;
+  type: (typeof TYPES)[keyof typeof TYPES];
+  value: string | null;
 };
 
 type RequestState = "open" | "eof" | "cancelled" | "closed" | "error";
@@ -221,8 +234,9 @@ export class MsSqlAdapter implements DbAdapter {
       `SELECT t.name AS name, s.name AS [schema]
          FROM sys.tables t
          JOIN sys.schemas s ON s.schema_id = t.schema_id
-        WHERE s.name = ${this.literal(schema)}
+        WHERE s.name = @schema
         ORDER BY t.name`,
+      [{ name: "schema", type: TYPES.NVarChar, value: schema }],
     );
     return result.rows.map((row) => ({
       name: String(row[0]),
@@ -235,8 +249,9 @@ export class MsSqlAdapter implements DbAdapter {
       `SELECT v.name AS name, s.name AS [schema]
          FROM sys.views v
          JOIN sys.schemas s ON s.schema_id = v.schema_id
-        WHERE s.name = ${this.literal(schema)}
+        WHERE s.name = @schema
         ORDER BY v.name`,
+      [{ name: "schema", type: TYPES.NVarChar, value: schema }],
     );
     return result.rows.map((row) => ({
       name: String(row[0]),
@@ -256,9 +271,10 @@ export class MsSqlAdapter implements DbAdapter {
          FROM sys.objects o
          JOIN sys.schemas s ON s.schema_id = o.schema_id
          JOIN sys.sql_modules m ON m.object_id = o.object_id
-        WHERE s.name = ${this.literal(schema)}
+        WHERE s.name = @schema
           AND o.type IN ('P', 'IF', 'TF', 'FN')
         ORDER BY o.name`,
+      [{ name: "schema", type: TYPES.NVarChar, value: schema }],
     );
     return result.rows.map((row) => ({
       name: String(row[0]),
@@ -274,9 +290,9 @@ export class MsSqlAdapter implements DbAdapter {
    * correlated `EXISTS` subqueries. The old query ran `EXISTS (SELECT 1
    * FROM sys.indexes ⋈ sys.index_columns WHERE ...)` PER COLUMN ROW; this
    * replaces it with a single `LEFT JOIN` against the PK's index_columns so
-   * every column's PK flag comes back from the same query. `this.literal()`
-   * interpolation stays as-is (no parameter-binding path on this adapter —
-   * see the D6 scope note in TASK-005; `literal()` already escapes `'`).
+   * every column's PK flag comes back from the same query. TASK-002 binds
+   * schema/table as typed NVarChar parameters instead of `this.literal()`
+   * interpolation.
    */
   async listColumns(
     table: string,
@@ -299,9 +315,13 @@ export class MsSqlAdapter implements DbAdapter {
               AND ic.index_id = i.index_id
             WHERE i.is_primary_key = 1
          ) pk ON pk.object_id = t.object_id AND pk.column_id = c.column_id
-        WHERE s.name = ${this.literal(schema)}
-          AND t.name = ${this.literal(table)}
+        WHERE s.name = @schema
+          AND t.name = @table
         ORDER BY c.column_id`,
+      [
+        { name: "schema", type: TYPES.NVarChar, value: schema },
+        { name: "table", type: TYPES.NVarChar, value: table },
+      ],
     );
     return result.rows.map((row) => ({
       name: String(row[0]),
@@ -337,9 +357,13 @@ export class MsSqlAdapter implements DbAdapter {
            FROM sys.partitions p
            JOIN sys.tables t ON t.object_id = p.object_id
            JOIN sys.schemas s ON s.schema_id = t.schema_id
-          WHERE s.name = ${this.literal(schema)}
-            AND t.name = ${this.literal(table)}
+          WHERE s.name = @schema
+            AND t.name = @table
             AND p.index_id IN (0, 1)`,
+        [
+          { name: "schema", type: TYPES.NVarChar, value: schema },
+          { name: "table", type: TYPES.NVarChar, value: table },
+        ],
       );
       if (result.rows.length === 0) return null;
       const raw = result.rows[0][0];
@@ -354,10 +378,10 @@ export class MsSqlAdapter implements DbAdapter {
 
   /**
    * D2 API — one round trip cho nhiều table (thay vì N lần
-   * estimateTableRows()). `this.literal()` interpolation — no
-   * parameter-binding path (see D6 scope note). `tables` rỗng → Map rỗng,
-   * KHÔNG issue query. Table drop giữa list và estimate → không có trong
-   * `GROUP BY` result → OMIT khỏi Map, không throw.
+   * estimateTableRows()). TASK-002: mỗi table name là một parameter
+   * `@tableN` (NVarChar) — không còn `this.literal()` interpolation. `tables`
+   * rỗng → Map rỗng, KHÔNG issue query. Table drop giữa list và estimate →
+   * không có trong `GROUP BY` result → OMIT khỏi Map, không throw.
    */
   async estimateTableRowsBatch(
     schema: string,
@@ -366,16 +390,25 @@ export class MsSqlAdapter implements DbAdapter {
     const result = new Map<string, number | null>();
     if (tables.length === 0) return result;
     try {
-      const inList = tables.map((t) => this.literal(t)).join(", ");
+      const tableParams: MssqlQueryParam[] = tables.map((table, index) => ({
+        name: `table${index}`,
+        type: TYPES.NVarChar,
+        value: table,
+      }));
+      const inList = tableParams.map((p) => `@${p.name}`).join(", ");
       const res = await this.execute(
         `SELECT t.name AS name, SUM(p.rows) AS row_count
            FROM sys.partitions p
            JOIN sys.tables t ON t.object_id = p.object_id
            JOIN sys.schemas s ON s.schema_id = t.schema_id
-          WHERE s.name = ${this.literal(schema)}
+          WHERE s.name = @schema
             AND t.name IN (${inList})
             AND p.index_id IN (0, 1)
           GROUP BY t.name`,
+        [
+          { name: "schema", type: TYPES.NVarChar, value: schema },
+          ...tableParams,
+        ],
       );
       for (const row of res.rows) {
         const name = String(row[0]);
@@ -436,9 +469,16 @@ export class MsSqlAdapter implements DbAdapter {
     });
   }
 
-  /** Execute one statement and return the normalized query result. */
-  private async execute(sql: string): Promise<QueryResult> {
-    return this.enqueue(() => this.runRequest(sql));
+  /**
+   * Execute one statement and return the normalized query result.
+   * TASK-002 — `params` are bound into the tedious Request via
+   * `addParameter` (typed, never interpolated into the SQL text).
+   */
+  private async execute(
+    sql: string,
+    params?: MssqlQueryParam[],
+  ): Promise<QueryResult> {
+    return this.enqueue(() => this.runRequest(sql, params));
   }
 
   private async enqueue<T>(operation: () => Promise<T>): Promise<T> {
@@ -456,13 +496,16 @@ export class MsSqlAdapter implements DbAdapter {
     }
   }
 
-  private async runRequest(sql: string): Promise<QueryResult> {
+  private async runRequest(
+    sql: string,
+    params?: MssqlQueryParam[],
+  ): Promise<QueryResult> {
     if (!this.connection) {
       throw new Error("MsSqlAdapter: connect() chưa được gọi");
     }
 
     const startedAt = Date.now();
-    const request = this.newRequest(sql);
+    const request = this.newRequest(sql, params);
     this.activeRequests.add(request);
     try {
       return await new Promise<QueryResult>((resolve, reject) => {
@@ -523,8 +566,16 @@ export class MsSqlAdapter implements DbAdapter {
     }
   }
 
-  private newRequest(sql: string): Request {
-    return new Request(sql, () => undefined);
+  private newRequest(sql: string, params?: MssqlQueryParam[]): Request {
+    const request = new Request(sql, () => undefined);
+    // TASK-002 — typed parameter binding. `null` values keep their declared
+    // type; tedious serializes them as the TDS NULL marker (tedious 18.x has
+    // no `TYPES.Null` export — declared type + null value is the canonical
+    // way to send NULL).
+    for (const param of params ?? []) {
+      request.addParameter(param.name, param.type, param.value);
+    }
+    return request;
   }
 
   private async openStreamingQuery(sql: string): Promise<BatchedQuery> {

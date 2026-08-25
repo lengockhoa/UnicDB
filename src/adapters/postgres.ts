@@ -144,6 +144,40 @@ function stripLeadingCommentsAndWhitespace(text: string): string {
   return text.slice(i);
 }
 
+/**
+ * TASK-003 — server-side column sort as pure SQL composition.
+ *
+ * Wraps `originalSql` (the query whose result the webview table is showing)
+ * in a subquery aliased `vsdb_sort` and appends an ORDER BY on the sorted
+ * column. The webview composes the requery by putting column sort into the
+ * `orderBy` field of the existing `requery` message; this helper is the
+ * Postgres side of that composition.
+ *
+ *   getTableSortQuery("SELECT * FROM t WHERE id>5", "", "name", "ASC")
+ *     → SELECT * FROM (SELECT * FROM t WHERE id>5) vsdb_sort ORDER BY "name" ASC
+ *
+ * Injection safety: `column` is emitted as a single double-quoted identifier
+ * (embedded `"` doubled per Postgres rules), so a payload like
+ * `name; DROP TABLE users--` stays one inert identifier token. `direction`
+ * is whitelist-normalized to ASC/DESC. `whereFromBar` (requery-bar filter)
+ * is appended as the OUTER query's WHERE clause when non-empty — the
+ * original SQL stays verbatim inside the subquery.
+ */
+export function getTableSortQuery(
+  originalSql: string,
+  whereFromBar: string,
+  column: string,
+  direction: "ASC" | "DESC",
+): string {
+  const inner = originalSql.trim();
+  const quotedColumn = `"${column.replace(/"/g, '""')}"`;
+  const dir = direction === "DESC" ? "DESC" : "ASC";
+  const whereClause = whereFromBar.trim().length
+    ? ` WHERE ${whereFromBar.trim()}`
+    : "";
+  return `SELECT * FROM (${inner}) vsdb_sort${whereClause} ORDER BY ${quotedColumn} ${dir}`;
+}
+
 type CursorState = "open" | "eof" | "closed" | "error";
 
 interface OpenCursorRecord {

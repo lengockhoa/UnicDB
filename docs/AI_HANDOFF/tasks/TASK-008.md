@@ -72,3 +72,55 @@ npm run typecheck
 ## Discussion
 
 (chua co comment)
+
+---
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT:
+```
+❯ src/ui/__tests__/sqlCompletionProvider.test.ts  (0 test)
+⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯
+ FAIL  src/ui/__tests__/sqlCompletionProvider.test.ts [ src/ui/__tests__/sqlCompletionProvider.test.ts ]
+Error: Failed to load url ../sqlCompletionProvider (resolved id: ../sqlCompletionProvider) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-008/src/ui/__tests__/sqlCompletionProvider.test.ts. Does the file exist?
+ ❯ loadAndTransform ../../node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17
+ Test Files  1 failed (1)
+      Tests  no tests
+   Duration  222ms
+
+❯ src/ui/__tests__/schemaCache.test.ts  (0 test)
+⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯
+ FAIL  src/ui/__tests__/schemaCache.test.ts [ src/ui/__tests__/schemaCache.test.ts ]
+Error: Failed to load url ../schemaCache (resolved id: ../schemaCache) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-008/src/ui/__tests__/schemaCache.test.ts. Does the file exist?
+ ❯ loadAndTransform ../../node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17
+ Test Files  1 failed (1)
+      Tests  no tests
+   Duration  181ms
+```
+Verification Output:
+```
+$ npm test src/ui/__tests__/sqlCompletionProvider.test.ts src/ui/__tests__/schemaCache.test.ts
+ ✓ src/ui/__tests__/schemaCache.test.ts  (3 tests) 1ms
+ ✓ src/ui/__tests__/sqlCompletionProvider.test.ts  (6 tests) 3ms
+ Test Files  2 passed (2)
+      Tests  9 passed (9)
+
+$ npm test            (first run failed on 2 pre-existing dist/ artifact tests — dist/schemaForm.js, dist/webview.css missing; fixed by `npm run compile` per task instructions, then re-run)
+ Test Files  87 passed | 1 skipped (88)
+      Tests  1268 passed | 2 skipped (1270)
+   Duration  9.95s
+
+$ npm run compile
+ dist/extension.js      4.8mb
+ dist/webview.js        2.2mb
+ dist/webview.css      19.7kb
+ esbuild: build complete
+
+$ npm run typecheck
+ > tsc --noEmit
+ (no output — clean, exit 0)
+```
+Status: PASS
+Note: Decisions recorded: (1) registration of `vscode.languages.registerCompletionItemProvider` in extension.ts is availability-guarded because `src/extension.test.ts`'s partial vscode mock (outside this task's editable files) stubs only `registerCodeLensProvider`; unguarded call would throw in every activate() smoke test. Real VS Code always has the API. (2) `vsdb.refreshSchema` now calls `schemaCache.invalidate()` before `tree.refresh()`. (3) Test #6 uses the dot-trigger path (`public.`) since listTables is what that path calls; test #4 keyword list intentionally contains no "us"-prefixed keywords. (4) schemaCache is vscode-free (no mock needed in its tests).

@@ -441,6 +441,13 @@ export interface SerializeOptions {
    * user must not see goes here. Skip applies to all serializers
    * (TSV/CSV/JSON/XML/SQL) so the column is uniformly hidden. */
   hiddenColumns?: string[];
+  /** TASK-001: column POSITIONS (0-based array indices) to exclude from the
+   * rendered output. Takes precedence over `hiddenColumns` whenever present
+   * (including when empty — empty hides nothing, names are then ignored).
+   * Unlike name-based hiding, positional hiding distinguishes duplicate
+   * column names (`SELECT a.id, b.id`): hiding one position leaves the other
+   * visible. Out-of-range and non-integer indices are skipped. */
+  hiddenIndices?: number[];
 }
 
 /** Build a Set<number> of indices to KEEP from `columns` — every column
@@ -462,6 +469,43 @@ function keepIndices(
     indices.push(i);
   }
   return any ? { indices, hidden } : null;
+}
+
+/** TASK-001: normalize `hiddenIndices` into a Set of VALID column positions.
+ * Out-of-range and non-integer entries are dropped — `hiddenIndices=[0,99]`
+ * on a 3-column schema hides only position 0. The caller decides what an
+ * empty result means (for `resolveKeepIndices` it means "hide nothing"). */
+function hiddenIndexSet(
+  hiddenIndices: number[],
+  columnCount: number,
+): ReadonlySet<number> {
+  const hidden = new Set<number>();
+  for (const i of hiddenIndices) {
+    if (Number.isInteger(i) && i >= 0 && i < columnCount) hidden.add(i);
+  }
+  return hidden;
+}
+
+/** TASK-001: resolve visible-column indices from `opts`. Positional
+ * `hiddenIndices` wins whenever it is present (even when empty → no
+ * filtering, names ignored); otherwise the name-based `keepIndices` path
+ * runs exactly as before. Returns null when nothing is hidden so callers
+ * can fast-path the unfiltered case. */
+function resolveKeepIndices(
+  columns: string[],
+  opts: SerializeOptions,
+): number[] | null {
+  if (opts.hiddenIndices !== undefined) {
+    const hidden = hiddenIndexSet(opts.hiddenIndices, columns.length);
+    if (hidden.size === 0) return null;
+    const indices: number[] = [];
+    for (let i = 0; i < columns.length; i++) {
+      if (!hidden.has(i)) indices.push(i);
+    }
+    return indices;
+  }
+  const keep = keepIndices(columns, opts.hiddenColumns);
+  return keep ? keep.indices : null;
 }
 
 function headerLine(
@@ -487,14 +531,14 @@ export function serializeTsv(
   rows: unknown[][],
   opts: SerializeOptions,
 ): string {
-  const keep = keepIndices(columns, opts.hiddenColumns);
+  const keep = resolveKeepIndices(columns, opts);
   if (keep) {
     const out: string[] = [];
     if (opts.includeHeader) {
-      out.push(keep.indices.map((i) => formatCell(columns[i])).join("\t"));
+      out.push(keep.map((i) => formatCell(columns[i])).join("\t"));
     }
     for (const row of rows) {
-      out.push(keep.indices.map((i) => formatCell(row[i] ?? null)).join("\t"));
+      out.push(keep.map((i) => formatCell(row[i] ?? null)).join("\t"));
     }
     return out.join("\n");
   }
@@ -511,14 +555,14 @@ export function serializeCsv(
   rows: unknown[][],
   opts: SerializeOptions,
 ): string {
-  const keep = keepIndices(columns, opts.hiddenColumns);
+  const keep = resolveKeepIndices(columns, opts);
   if (keep) {
     const out: string[] = [];
     if (opts.includeHeader) {
-      out.push(keep.indices.map((i) => csvEscape(columns[i])).join(","));
+      out.push(keep.map((i) => csvEscape(columns[i])).join(","));
     }
     for (const row of rows) {
-      out.push(keep.indices.map((i) => csvEscape(row[i] ?? null)).join(","));
+      out.push(keep.map((i) => csvEscape(row[i] ?? null)).join(","));
     }
     return out.join("\n");
   }
@@ -544,8 +588,8 @@ export function serializeXml(
   opts: SerializeOptions,
 ): string {
   const decl = '<?xml version="1.0" encoding="UTF-8"?>';
-  const keep = keepIndices(columns, opts.hiddenColumns);
-  const colIdx = keep ? keep.indices : columns.map((_, i) => i);
+  const keep = resolveKeepIndices(columns, opts);
+  const colIdx = keep ?? columns.map((_, i) => i);
   const body = rows
     .map((row) => {
       const cells = colIdx
@@ -563,10 +607,10 @@ export function serializeJson(
   rows: unknown[][],
   opts: SerializeOptions,
 ): string {
-  const keep = keepIndices(columns, opts.hiddenColumns);
+  const keep = resolveKeepIndices(columns, opts);
   if (!keep) return JSON.stringify({ columns, rows });
-  const cols = keep.indices.map((i) => columns[i]);
-  const rs = rows.map((row) => keep.indices.map((i) => row[i] ?? null));
+  const cols = keep.map((i) => columns[i]);
+  const rs = rows.map((row) => keep.map((i) => row[i] ?? null));
   return JSON.stringify({ columns: cols, rows: rs });
 }
 
@@ -578,15 +622,15 @@ export function serializeSqlInserts(
   opts: SerializeOptions & { multirow?: boolean },
 ): string {
   if (rows.length === 0) return "";
-  const keep = keepIndices(columns, opts.hiddenColumns);
-  const visibleCols = keep ? keep.indices.map((i) => columns[i]) : columns;
+  const keep = resolveKeepIndices(columns, opts);
+  const visibleCols = keep ? keep.map((i) => columns[i]) : columns;
   const colList = visibleCols.join(", ");
   if (opts.multirow) {
     const tuples = rows.map(
       (row) =>
         `(${
           keep
-            ? keep.indices.map((i) => sqlLiteral(row[i] ?? null)).join(", ")
+            ? keep.map((i) => sqlLiteral(row[i] ?? null)).join(", ")
             : row.map(sqlLiteral).join(", ")
         })`,
     );
@@ -595,7 +639,7 @@ export function serializeSqlInserts(
   return rows
     .map((row) => {
       const vals = keep
-        ? keep.indices.map((i) => sqlLiteral(row[i] ?? null)).join(", ")
+        ? keep.map((i) => sqlLiteral(row[i] ?? null)).join(", ")
         : row.map(sqlLiteral).join(", ");
       return `INSERT INTO ${opts.tableName} (${colList}) VALUES (${vals});`;
     })
@@ -617,21 +661,39 @@ export function serializeSqlUpdates(
   opts: SerializeOptions,
 ): string {
   if (rows.length === 0) return "";
+  // TASK-001: with positional hiddenIndices, name lookups must resolve to
+  // a VISIBLE position — otherwise `SELECT a.id, b.id` with one id hidden
+  // would read the hidden duplicate's value for SET/WHERE.
+  const hiddenIdx =
+    opts.hiddenIndices !== undefined
+      ? hiddenIndexSet(opts.hiddenIndices, columns.length)
+      : null;
   // Build a column→index Map ONCE — indexOf per column is O(n²) on
   // wide rows AND silently produces `col=NULL` when a PK column is
   // missing from the schema (indexOf −1 yields undefined → NULL). With
   // the Map an absent key is detectable; we still skip silently for
   // schema drift rather than throw, matching the rest of the file.
   const colIdx = new Map<string, number>();
-  for (let i = 0; i < columns.length; i++) colIdx.set(columns[i], i);
+  for (let i = 0; i < columns.length; i++) {
+    if (hiddenIdx && hiddenIdx.has(i)) continue;
+    colIdx.set(columns[i], i);
+  }
   // hidden columns must NOT appear in generated SQL — the user never
   // sees them in the grid, so exporting them would produce meaningless
   // SET/WHERE clauses on metadata that the user can't edit.
   const hidden = new Set(opts.hiddenColumns ?? []);
-  const visibleCols = columns.filter((c) => !hidden.has(c));
-  const pkCols = (opts.pkColumns.length > 0 ? opts.pkColumns : visibleCols).filter(
-    (c) => !hidden.has(c),
-  );
+  const visibleCols = hiddenIdx
+    ? columns.filter((_, i) => !hiddenIdx.has(i))
+    : columns.filter((c) => !hidden.has(c));
+  const pkCols = hiddenIdx
+    ? // Positional: a PK name qualifies only if some visible position
+      // carries it (colIdx holds visible positions only).
+      (opts.pkColumns.length > 0 ? opts.pkColumns : visibleCols).filter((c) =>
+        colIdx.has(c),
+      )
+    : (opts.pkColumns.length > 0 ? opts.pkColumns : visibleCols).filter(
+        (c) => !hidden.has(c),
+      );
   const pkSet = new Set(pkCols);
   const setCols = visibleCols.filter((c) => !pkSet.has(c));
   const out: string[] = [];
@@ -679,16 +741,34 @@ export function serializeWhereClause(
   const useRows =
     opts.selectedRows && opts.selectedRows.length > 0 ? opts.selectedRows : rows;
   if (useRows.length === 0) return "";
+  // TASK-001: positional hiddenIndices takes precedence; name lookups then
+  // resolve against visible positions only (see serializeSqlUpdates).
+  const hiddenIdx =
+    opts.hiddenIndices !== undefined
+      ? hiddenIndexSet(opts.hiddenIndices, columns.length)
+      : null;
   // Same index Map rationale as serializeSqlUpdates — O(n²) → O(n) per
   // row, and a missing PK column no longer silently yields `col=NULL`.
   const colIdx = new Map<string, number>();
-  for (let i = 0; i < columns.length; i++) colIdx.set(columns[i], i);
+  for (let i = 0; i < columns.length; i++) {
+    if (hiddenIdx && hiddenIdx.has(i)) continue;
+    colIdx.set(columns[i], i);
+  }
   // Skip hidden columns so the exported `WHERE …` is built from
   // user-visible PK columns only — host metadata never matches.
   const hidden = new Set(opts.hiddenColumns ?? []);
-  const keyCols = (opts.pkColumns.length > 0 ? opts.pkColumns : columns).filter(
-    (c) => !hidden.has(c),
-  );
+  // Positional fallback (no PK): one term per VISIBLE position, so hiding
+  // one duplicate of `a.id, b.id` yields a single id term, not two.
+  const visibleCols = hiddenIdx
+    ? columns.filter((_, i) => !hiddenIdx.has(i))
+    : columns;
+  const keyCols = hiddenIdx
+    ? (opts.pkColumns.length > 0 ? opts.pkColumns : visibleCols).filter((c) =>
+        colIdx.has(c),
+      )
+    : (opts.pkColumns.length > 0 ? opts.pkColumns : columns).filter(
+        (c) => !hidden.has(c),
+      );
   const groups = useRows.map((row) => {
     const parts = keyCols
       .map((c) => {

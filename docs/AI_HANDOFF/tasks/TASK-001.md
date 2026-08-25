@@ -61,3 +61,87 @@ npm run typecheck
 ## Discussion
 
 (chua co comment)
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT (step 1 - tests written first, run BEFORE implementation):
+
+Command: npm test src/ui/__tests__/resultsGridModelExport.test.ts
+
+    Test Files  1 failed (1)
+          Tests  5 failed | 41 passed (46)
+       Start at  18:38:36
+       Duration  549ms
+
+Failing tests (all 5 are the new hiddenIndices cases):
+
+    FAIL ... hiddenIndices positional > 1. serializeJson with hiddenIndices hides only specified positions
+    FAIL ... hiddenIndices positional > 2. serializeJson with hiddenIndices preserves duplicate columns
+    FAIL ... hiddenIndices positional > 3. hiddenIndices takes precedence over hiddenColumns
+      AssertionError: expected '{"columns":["id","id__2"],"rows":[[1,2]]}' to be
+                       '{"columns":["id__2","name"],"rows":[[2,"x"]]}'
+      at src/ui/__tests__/resultsGridModelExport.test.ts:685:17
+    FAIL ... hiddenIndices positional > 5. hiddenIndices out of range -> invalid indices skipped, valid filtered
+      AssertionError: expected '{"columns":["id","name","active"],"rows":[[1,"x",true]]}' to be
+                       '{"columns":["name","active"],"rows":[["x",true]]}'
+      at src/ui/__tests__/resultsGridModelExport.test.ts:701:17
+    FAIL ... hiddenIndices positional > 7. every serializer applies positional hiddenIndices (TSV/CSV/XML/SQL)
+      AssertionError: expected 'id\tid\tname\n9\t1\tx' to be 'id\tname\n1\tx'
+      at src/ui/__tests__/resultsGridModelExport.test.ts:724:44
+
+Tests 4 (empty array -> no filtering) and 6 (regression: hiddenColumns name
+path unchanged) passed pre-implementation by design: they assert pre-existing
+behavior, which is correct for an additive optional field. The run as a whole
+is RED for the new behavior: 5 failed.
+
+Verification Output:
+
+Command 1: npm test src/ui/__tests__/resultsGridModelExport.test.ts  (after implementation)
+
+     RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-001
+     OK   src/ui/__tests__/resultsGridModelExport.test.ts  (46 tests) 270ms
+
+    Test Files  1 passed (1)
+          Tests  46 passed (46)
+       Start at  18:41:09
+       Duration  1.30s (transform 93ms, setup 0ms, collect 698ms, environment 0ms, prepare 89ms)
+
+Command 2: npm test  (full suite; first attempt failed on 2 pre-existing
+missing-dist/ artifact tests - dist/schemaForm.js and dist/webview.css - so
+per instructions `npm run compile` was run once, then the suite retried)
+
+    npm run compile:
+      dist/webview.js.map    3.9mb
+      dist/webview.css.map  36.7kb
+      Done in 134ms
+      esbuild: build complete
+
+    npm test (after compile):
+      Test Files  85 passed | 1 skipped (86)
+           Tests  1266 passed | 2 skipped (1268)
+        Start at  18:40:44
+        Duration  10.59s (transform 3.27s, setup 5ms, collect 9.00s, tests 43.80s, environment 14.05s, prepare 5.21s)
+
+Command 3: npm run typecheck
+
+    > vsdb@1.6.3 typecheck
+    > tsc --noEmit
+    (no output, exit code 0)
+
+Status: PASS
+
+Note: Implementation adds `hiddenIndices?: number[]` to SerializeOptions plus
+two module-local helpers (hiddenIndexSet normalizer, resolveKeepIndices which
+checks hiddenIndices first and falls back to the unchanged keepIndices name
+path). All 7 serializers handle both paths; serializeSqlUpdates and
+serializeWhereClause additionally rebuild their column->index Map over
+visible positions only when hiddenIndices is present, so SET/WHERE read the
+VISIBLE duplicate's value, never the hidden one. keepIndices() signature and
+behavior unchanged. Files changed: src/ui/resultsGridModel.ts,
+src/ui/__tests__/resultsGridModelExport.test.ts (7 new tests, incl. the 6
+required table cases + 1 all-serializer coverage case). No git commands run;
+no files outside Target Files + Test Files modified.

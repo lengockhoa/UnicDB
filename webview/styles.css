@@ -168,6 +168,8 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
+  /* TASK-004 — anchoring context for the .vsdb-value-viewer overlay. */
+  position: relative;
 }
 
 /* Host div of the grid (JS Theming API manages the theme class itself) —
@@ -1002,4 +1004,43 @@ button.vsdb-requery-clear:disabled {
 .vsdb-setfilter-selectall-row,
 .vsdb-setfilter-entry {
   padding-left: 8px;
+}
+
+/* --- TASK-004: null cell placeholder + cell value viewer ------------------
+ * Null/undefined cells render "(NULL)" in an italic muted span so users
+ * can tell "no value" apart from an empty string at a glance. The class
+ * is attached by the cellRenderer in webview/main.ts; the underlying row
+ * data keeps the real null (display-only change).
+ */
+.vsdb-null {
+  font-style: italic;
+  color: var(--vscode-descriptionForeground, #888);
+}
+
+/* Cell value viewer overlay — opened by double-clicking a cell with no
+ * editor (read-only column). Shows the FULL raw cell value; the grid
+ * itself ellipsizes long text. Content is plain text only (main.ts sets
+ * textContent, never innerHTML). Fallback anchor is the bottom-left of
+ * the grid panel; main.ts positions it near the clicked cell when a
+ * usable rect exists.
+ */
+.vsdb-value-viewer {
+  position: absolute;
+  left: 24px;
+  bottom: 48px;
+  z-index: 60;
+  max-width: 560px;
+  max-height: 260px;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--vscode-panel-border, #3c3c3c);
+  border-radius: 3px;
+  background: var(--vscode-editor-background, #1e1e1e);
+  color: var(--vscode-editor-foreground, #cccccc);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-all;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
 }

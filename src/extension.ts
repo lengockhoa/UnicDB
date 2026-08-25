@@ -33,6 +33,8 @@ import { detectOmp } from "./ai/omp/detect";
 import { resolveEngine } from "./ai/engineChoice";
 import type { ConnectionConfig } from "./config/types";
 import { registerBrowseCommands } from "./ui/browseCommands";
+import { SchemaCache } from "./ui/schemaCache";
+import { SqlCompletionProvider } from "./ui/sqlCompletionProvider";
 import type { ParsedStatement } from "./config/types";
 let disposables: vscode.Disposable[] = [];
 let state: ExtensionState | null = null;
@@ -125,6 +127,32 @@ export async function activate(
     ),
   );
 
+  // ---- TASK-008 — SQL schema-aware completion (SchemaCache 60s TTL) ----
+  const schemaCache = new SchemaCache(async () => {
+    if (!mgr.getActive()) return null;
+    try {
+      return await mgr.getAdapter();
+    } catch {
+      // No password / testConnection fail → completion im lặng, không crash.
+      return null;
+    }
+  });
+  const sqlCompletion = new SqlCompletionProvider({
+    cache: schemaCache,
+    hasConnection: () => mgr.getActive() !== null,
+  });
+  // Guard: partial `vscode` test mocks (extension.test.ts) chỉ stub
+  // registerCodeLensProvider — real VS Code luôn có API này.
+  if (typeof vscode.languages.registerCompletionItemProvider === "function") {
+    disposables.push(
+      vscode.languages.registerCompletionItemProvider(
+        { scheme: "file", language: "sql" },
+        sqlCompletion,
+        ".",
+      ),
+    );
+  }
+
   state = { mgr, runner, panel, tree, codeLens, statusBar };
 
   // ---- Register all 12 package commands + 1 internal tree command -----------
@@ -200,9 +228,13 @@ export async function activate(
     ),
   );
 
-  // 10. vsdb.refreshSchema
+  // 10. vsdb.refreshSchema — TASK-008: invalidate completion schema cache
+  // trước khi refresh tree để completion không phục vụ data cũ.
   disposables.push(
-    vscode.commands.registerCommand("vsdb.refreshSchema", () => tree.refresh()),
+    vscode.commands.registerCommand("vsdb.refreshSchema", () => {
+      schemaCache.invalidate();
+      tree.refresh();
+    }),
   );
 
   // 11. vsdb.filterSchemaTree — open input box, apply filter (TASK-303).

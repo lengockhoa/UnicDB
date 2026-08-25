@@ -515,7 +515,7 @@ describe("MsSqlAdapter.listColumns — single round trip, no correlated EXISTS (
     expect(sql).toMatch(/LEFT JOIN/i);
   });
 
-  it("Edge (quoting): listColumns(\"dbo\", \"O'Brien\") emits 'O''Brien' exactly once", async () => {
+  it("Edge (quoting): listColumns(\"O'Brien\", \"dbo\") binds the name as a typed parameter, never into the SQL text (TASK-002)", async () => {
     const adapter = new MsSqlAdapter(cfg("mssql"), "pw");
     const execute = vi.fn().mockResolvedValue({
       columns: [],
@@ -528,8 +528,19 @@ describe("MsSqlAdapter.listColumns — single round trip, no correlated EXISTS (
     await adapter.listColumns("O'Brien", "dbo");
 
     const sql = execute.mock.calls[0][0] as string;
-    const matches = sql.match(/'O''Brien'/g) ?? [];
-    expect(matches.length).toBe(1);
+    // TASK-002 replaced `this.literal()` interpolation with typed
+    // parameters — the quote-bearing value must never appear in the SQL
+    // text (neither raw nor ''-escaped); it travels as @table.
+    expect(sql).not.toContain("O'Brien");
+    expect(sql).not.toContain("O''Brien");
+    expect(sql).toContain("@table");
+    const params = execute.mock.calls[0][1] as Array<{
+      name: string;
+      value: unknown;
+    }>;
+    expect(params).toContainEqual(
+      expect.objectContaining({ name: "table", value: "O'Brien" }),
+    );
   });
 });
 

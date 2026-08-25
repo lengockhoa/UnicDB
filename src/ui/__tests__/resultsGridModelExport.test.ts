@@ -651,3 +651,93 @@ describe("serializeSqlUpdates — no-SET degrade emits skip-comment (Fix R2)", (
     expect(out).toBe("");
   });
 });
+
+// ---- TASK-001: positional hiddenIndices (duplicate-column export fix) -------
+//
+// `SELECT a.id, b.id` yields two columns with the SAME name. Name-based
+// `hiddenColumns` can only hide both at once; `hiddenIndices` hides by
+// array POSITION so one duplicate can be hidden while the other stays.
+
+describe("hiddenIndices positional", () => {
+  it("1. serializeJson with hiddenIndices hides only specified positions", () => {
+    const out = serializeJson(["id", "id__2", "name"], [[1, 2, "x"]], {
+      ...NO_OPT,
+      hiddenIndices: [0],
+    });
+    expect(out).toBe('{"columns":["id__2","name"],"rows":[[2,"x"]]}');
+  });
+
+  it("2. serializeJson with hiddenIndices preserves duplicate columns", () => {
+    const out = serializeJson(["id", "id", "name"], [[1, 1, "x"]], {
+      ...NO_OPT,
+      hiddenIndices: [1],
+    });
+    expect(out).toBe('{"columns":["id","name"],"rows":[[1,"x"]]}');
+  });
+
+  it("3. hiddenIndices takes precedence over hiddenColumns", () => {
+    const out = serializeJson(["id", "id__2", "name"], [[1, 2, "x"]], {
+      ...NO_OPT,
+      hiddenIndices: [0],
+      hiddenColumns: ["name"],
+    });
+    // Positional [0] wins; the name-based "name" hide is ignored entirely.
+    expect(out).toBe('{"columns":["id__2","name"],"rows":[[2,"x"]]}');
+  });
+
+  it("4. hiddenIndices empty array → no filtering, all columns preserved", () => {
+    const out = serializeJson(["id", "name"], [[1, "x"]], {
+      ...NO_OPT,
+      hiddenIndices: [],
+    });
+    expect(out).toBe('{"columns":["id","name"],"rows":[[1,"x"]]}');
+  });
+
+  it("5. hiddenIndices out of range → invalid indices skipped, valid filtered", () => {
+    const out = serializeJson(["id", "name", "active"], [[1, "x", true]], {
+      ...NO_OPT,
+      hiddenIndices: [0, 99],
+    });
+    expect(out).toBe('{"columns":["name","active"],"rows":[["x",true]]}');
+  });
+
+  it("6. regression: hiddenColumns still works when hiddenIndices absent", () => {
+    const out = serializeJson(["id", "id"], [[1, 1]], {
+      ...NO_OPT,
+      hiddenColumns: ["id"],
+    });
+    // Name-based hiding still hides BOTH duplicates — the pre-TASK-001
+    // path is unchanged when hiddenIndices is not supplied.
+    expect(out).toBe('{"columns":[],"rows":[[]]}');
+  });
+
+  it("7. every serializer applies positional hiddenIndices (TSV/CSV/XML/SQL)", () => {
+    const cols = ["id", "id", "name"];
+    const rows: unknown[][] = [[9, 1, "x"]];
+    const opts = {
+      ...NO_OPT,
+      includeHeader: true,
+      pkColumns: ["id"],
+      hiddenIndices: [0],
+    };
+    // TSV: header keeps positions 1,2 only; hidden value 9 never appears.
+    expect(serializeTsv(cols, rows, opts)).toBe("id\tname\n1\tx");
+    // CSV: same columns, RFC4180 shape.
+    expect(serializeCsv(cols, rows, opts)).toBe("id,name\n1,x");
+    // XML: exactly 2 <col> wrappers; visible id value is 1, not 9.
+    const xml = serializeXml(cols, rows, opts);
+    expect((xml.match(/<col /g) ?? []).length).toBe(2);
+    expect(xml).toContain('<col name="id">1</col>');
+    expect(xml).not.toContain("9");
+    // SQL inserts: column list built from visible positions only.
+    expect(serializeSqlInserts(cols, rows, opts)).toBe(
+      "INSERT INTO t (id, name) VALUES (1, 'x');",
+    );
+    // SQL updates: SET/WHERE read the VISIBLE id (1), never the hidden 9.
+    expect(serializeSqlUpdates(cols, rows, opts)).toBe(
+      "UPDATE t SET name='x' WHERE id=1;",
+    );
+    // SQL where: key term uses the visible id value.
+    expect(serializeWhereClause(cols, rows, opts)).toBe("WHERE (id=1)");
+  });
+});

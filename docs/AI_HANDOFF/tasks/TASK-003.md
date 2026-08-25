@@ -62,3 +62,77 @@ npm run typecheck
 ## Discussion
 
 (chua co comment)
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT (step 1 — tests written first, run before any implementation):
+
+```
+ ❯ src/adapters/__tests__/postgres.sortQuery.test.ts  (7 tests | 7 failed) 3ms
+   ❯ src/adapters/__tests__/postgres.sortQuery.test.ts > getTableSortQuery > getTableSortQuery basic sort
+     → getTableSortQuery is not a function
+   ❯ src/adapters/__tests__/postgres.sortQuery.test.ts > getTableSortQuery > getTableSortQuery with WHERE
+     → getTableSortQuery is not a function
+   ❯ src/adapters/__tests__/postgres.sortQuery.test.ts > getTableSortQuery > getTableSortQuery DESC direction
+     → getTableSortQuery is not a function
+   ❯ src/adapters/__tests__/postgres.sortQuery.test.ts > getTableSortQuery > getTableSortQuery empty where
+     → getTableSortQuery is not a function
+   ❯ src/adapters/__tests__/postgres.sortQuery.test.ts > getTableSortQuery > getTableSortQuery SQL injection in column name
+     → getTableSortQuery is not a function
+   ❯ src/adapters/__tests__/postgres.sortQuery.test.ts > getTableSortQuery > getTableSortQuery empty originalSql
+     → getTableSortQuery is not a function
+   ❯ src/adapters/__tests__/postgres.sortQuery.test.ts > getTableSortQuery > getTableSortQuery preserves original SQL
+     → getTableSortQuery is not a function
+
+ Test Files  1 failed (1)
+      Tests  7 failed (7)
+   Start at  18:41:18
+   Duration  372ms (transform 72ms, setup 0ms, collect 85ms, tests 3ms, environment 0ms, prepare 127ms)
+
+EXIT_CODE=1
+```
+
+All 7 failures are `TypeError: getTableSortQuery is not a function` — the expected
+reason (export did not exist yet). After implementation, the same file went
+`1 passed (1) / 7 passed (7)`, exit 0.
+
+Verification Output:
+
+```
+$ npm run compile
+  dist/webview.js.map    3.9mb
+  dist/webview.css.map  36.7kb
+
+⚡ Done in 166ms
+esbuild: build complete
+EXIT_CODE=0
+
+$ npm test
+ Test Files  86 passed | 1 skipped (87)
+      Tests  1266 passed | 2 skipped (1268)
+   Start at  18:42:07
+   Duration  12.26s (transform 3.54s, setup 8ms, collect 9.09s, tests 55.51s, environment 13.77s, prepare 5.76s)
+EXIT_CODE=0
+
+$ npm run typecheck
+> vsdb@1.6.3 typecheck
+> tsc --noEmit
+EXIT_CODE=0
+```
+
+Full suite: 1266 passed / 0 failed — matches the previous successful run of this
+task (1259 baseline + 7 new tests).
+
+Status: PASS
+Note: none. Implementation decisions: WHERE from the requery bar is appended as
+the OUTER query's WHERE (original SQL stays verbatim inside the subquery);
+`direction` is whitelist-normalized to ASC/DESC; column is emitted as one
+double-quoted identifier with embedded `"` doubled (Postgres identifier rule),
+which is what the injection edge case exercises. Empty `originalSql` composes
+without throwing (kept lenient per Test Case 6 — no trailing-`;` stripping,
+out of scope).
+

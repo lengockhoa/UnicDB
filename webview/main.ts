@@ -36,6 +36,7 @@ import {
   type BodyScrollEvent,
   type FilterChangedEvent,
   type CellValueChangedEvent,
+  type CellDoubleClickedEvent,
   type CellStyle,
 } from "ag-grid-community";
 import type { GridApi } from "ag-grid-community";
@@ -1341,6 +1342,11 @@ function rowsDiffer(a: readonly unknown[][], b: readonly unknown[][]): boolean {
 
 function renderGrid(): void {
   if (!dom) return;
+  // TASK-004 — the value viewer overlay is transient: any state re-render
+  // (tab switch, new query, busy toggle) closes it and unbinds its
+  // document-level listeners (the child-cleanup below would remove the
+  // element, but not the listeners).
+  closeValueViewer();
   const r = results[activeTab];
   if (!r) return;
   // Reference the persistent elements (do NOT create new ones).
@@ -1426,6 +1432,27 @@ function renderGrid(): void {
       // sees raw vs formatted values.
       editable: true,
       valueFormatter: (p: { value: unknown }) => formatDataCell(p.value),
+      // TASK-004 — null/undefined cells render an italic muted "(NULL)"
+      // placeholder. valueFormatter alone cannot attach a CSS class, so
+      // this cellRenderer wraps the formatted display: null/undefined →
+      // `<span class="vsdb-null">(NULL)</span>`; every other value → a
+      // plain text span. Text is set via textContent (never innerHTML),
+      // so cell content can never inject markup. Only the DISPLAY
+      // changes — the underlying row data (and everything editors,
+      // copy/export read through getValue) keeps the real null.
+      cellRenderer: (p: {
+        value?: unknown;
+        valueFormatted?: string | null;
+      }) => {
+        const el = document.createElement("span");
+        if (p.value === null || p.value === undefined) {
+          el.className = "vsdb-null";
+          el.textContent = "(NULL)";
+          return el;
+        }
+        el.textContent = p.valueFormatted ?? formatDataCell(p.value);
+        return el;
+      },
       // TASK-007: cellClassRules paints `vsdb-cell-dirty` on a cell whose
       // (rowId, colIndex) is in the local EditState. The rule re-evaluates
       // when AG Grid calls `api.refreshCells({ rowNodes, force: true })` —
@@ -1590,6 +1617,10 @@ function renderGrid(): void {
         colFilterActive = e.api.isColumnFilterPresent();
         updateFooterNow();
       },
+      // TASK-004 — double-click value viewer for read-only cells. Editable
+      // cells keep AG Grid's default double-click-to-edit; the handler
+      // defers one tick and only opens the overlay when NO editor started.
+      onCellDoubleClicked: onCellDoubleClickedHandler,
       // TASK-501: record cell edits into the local EditState. Edits are
       // keyed by STABLE row identity (`__rowId`) so sort/filter/column
       // reorder cannot misaddress a cell. colIndex is resolved against
@@ -1849,12 +1880,112 @@ function onBodyScroll(
 }
 // ---- TASK-501: edit / paste / toolbar wiring ------------------------------
 
+// ---- TASK-004: null display + cell value viewer ----------------------------
+
+/** Overlay element for the value viewer, or null when closed. */
+let valueViewerEl: HTMLDivElement | null = null;
+/** Escape-to-close listener bound while the viewer is open (removed on close). */
+let valueViewerKeydown: ((ev: KeyboardEvent) => void) | null = null;
+/** Outside-mousedown-to-close listener bound while the viewer is open. */
+let valueViewerOutsideClick: ((ev: MouseEvent) => void) | null = null;
+
+/** Close the value viewer overlay and unbind its document-level listeners. */
+function closeValueViewer(): void {
+  if (valueViewerKeydown) {
+    document.removeEventListener("keydown", valueViewerKeydown, true);
+    valueViewerKeydown = null;
+  }
+  if (valueViewerOutsideClick) {
+    document.removeEventListener("mousedown", valueViewerOutsideClick, true);
+    valueViewerOutsideClick = null;
+  }
+  valueViewerEl?.remove();
+  valueViewerEl = null;
+}
+
+/** Open the value viewer overlay showing the FULL raw cell value. The grid
+ *  itself ellipsizes long text (cellStyle white-space/overflow), so this is
+ *  the "see everything" affordance. Content is set via textContent — never
+ *  innerHTML — so cell values cannot inject markup. */
+function openValueViewer(value: unknown, anchor?: HTMLElement | null): void {
+  if (!dom) return;
+  closeValueViewer();
+  const overlay = document.createElement("div");
+  overlay.className = "vsdb-value-viewer";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-label", "Cell value viewer");
+  overlay.textContent =
+    value === null || value === undefined ? "(NULL)" : formatCell(value);
+
+  // Position near the double-clicked cell when a usable rect exists (jsdom
+  // rects are all-zero — the CSS fallback anchor applies there instead).
+  if (anchor && anchor.isConnected) {
+    const rect = anchor.getBoundingClientRect();
+    const hostRect = dom.gridWrap.getBoundingClientRect();
+    if (rect.left !== 0 || rect.top !== 0) {
+      overlay.style.left = `${Math.max(0, rect.left - hostRect.left)}px`;
+      overlay.style.top = `${Math.max(0, rect.bottom - hostRect.top + 4)}px`;
+      overlay.style.bottom = "auto";
+    }
+  }
+  dom.gridWrap.appendChild(overlay);
+  valueViewerEl = overlay;
+
+  valueViewerKeydown = (ev: KeyboardEvent): void => {
+    if (ev.key === "Escape") closeValueViewer();
+  };
+  document.addEventListener("keydown", valueViewerKeydown, true);
+  // Any mousedown OUTSIDE the overlay closes it. The dblclick that opened
+  // the viewer finishes dispatching before openValueViewer runs (it is
+  // deferred a tick in onCellDoubleClickedHandler), so this listener can
+  // never immediately close the overlay it just opened.
+  valueViewerOutsideClick = (ev: MouseEvent): void => {
+    if (
+      valueViewerEl &&
+      ev.target instanceof Node &&
+      !valueViewerEl.contains(ev.target)
+    ) {
+      closeValueViewer();
+    }
+  };
+  document.addEventListener("mousedown", valueViewerOutsideClick, true);
+}
+
+/** TASK-004 — cellDoubleClicked handler. Editable columns keep AG Grid's
+ *  default double-click-to-edit (null cells included: the editor starts
+ *  from the RAW value, so a null cell edits as empty). Columns with no
+ *  editor (read-only) instead open the value viewer overlay with the full
+ *  raw cell value.
+ *
+ * AG Grid starts the cell editor for editable columns on the SAME dblclick,
+ * AFTER this callback — so the editability check is deferred one tick: if
+ * an editor is active by then, the double-click was an edit and the viewer
+ * stays closed; if not, the viewer opens. */
+function onCellDoubleClickedHandler(e: CellDoubleClickedEvent): void {
+  if (!gridApi) return;
+  const colId = e.column ? e.column.getColId() : undefined;
+  // Only data columns (mapped in currentSpecs) are candidates — the
+  // auto-generated selection column has no value to view.
+  if (!colId || currentSpecs.every((s) => s.field !== colId)) return;
+  const raw = e.value;
+  const target = (e.event as Event | undefined)?.target;
+  const anchor = target instanceof HTMLElement ? target : null;
+  setTimeout(() => {
+    if (!gridApi) return;
+    if (gridApi.getEditingCells().length > 0) return;
+    openValueViewer(raw, anchor);
+  }, 0);
+}
+
 /** Format a data cell value. csvMode off → formatted (formatCell, the
  *  default display); csvMode on → raw (toString, so a Date renders as the
- *  Date object's toString rather than an ISO string). */
+ *  Date object's toString rather than an ISO string). TASK-004: null and
+ *  undefined both display as the "(NULL)" placeholder text (the
+ *  cellRenderer above wraps it in the styled `.vsdb-null` span) — the
+ *  underlying data keeps the real null, this only changes display. */
 function formatDataCell(v: unknown): string {
+  if (v === null || v === undefined) return "(NULL)";
   if (csvMode) {
-    if (v === null || v === undefined) return "";
     return String(v);
   }
   return formatCell(v);
