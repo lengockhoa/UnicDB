@@ -386,3 +386,19 @@ Verification Output:
     → 14 main.ts / 10 connectionFormMain.ts / 10 aiSettingsFormMain.ts / 5 schemaFormMain.ts / 1 newTableFormMain.ts (baseline exact)
 Status: PASS
 Note: Single finding fixed by reordering only; no behavior change outside the statement-replacement path.
+
+---
+## Reviewer Verdict (fix round 2)
+
+VERDICT: APPROVED
+REVIEWER_MODEL: bao-opus (configured: unic-smart)
+EXECUTOR_MODEL: bao-sonnet
+VERIFICATION_RERUN:
+  command: npm run typecheck; npx vitest run src/ui/__tests__/webviewServerSort.test.ts src/ui/__tests__/webviewDistinctValues.test.ts; npx tsc -p tsconfig.webview.json --noEmit 2>&1 | grep -oE "^[^ (]+\.ts" | sort | uniq -c
+  result: typecheck PASS; 20 pass / 0 fail; tsc baseline 14/10/10/5/1 exact
+FINDINGS:
+  critical: none
+  important: none
+  minor: none
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Isolation passed and RED_OUTPUT contains a real assertion failure. The identity flag clears cache before render, then re-requests and refreshes mounted filters only after replacement rowData is installed; dialect-token parsing, grid-sort carry/debounce cancellation, and invalidation re-request remain intact.

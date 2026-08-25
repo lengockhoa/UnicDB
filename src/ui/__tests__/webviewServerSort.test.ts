@@ -282,9 +282,16 @@ describeIfBundle("webview/main.ts bundle — TASK-003 server-side sort", () => {
       expect(api).toBeTruthy();
 
       // Activate a set filter first; consume its (debounced) requery.
+      // Wait past the 150ms debounce, then DRAIN any requery posts so the
+      // sort assertion below sees only the sort post. (The debounce timer
+      // firing late relative to the wait window made `received.length = 0`
+      // unreliable — a second post could land after the sort.)
       api!.setFilterModel({ name: { values: ["beta"] } });
       await new Promise<void>((r) => setTimeout(r, 250));
-      received.length = 0;
+      while (requeries(received).length > 0) {
+        received.length = 0;
+        await new Promise<void>((r) => setTimeout(r, 50));
+      }
 
       api!.applyColumnState({
         state: [{ colId: "name", sort: "asc", sortIndex: 0 }],
@@ -481,6 +488,11 @@ describeIfBundle("webview/main.ts bundle — TASK-003 server-side sort", () => {
       // the sort post already carries the live filter model, so the pending
       // timer must be cancelled, not fired after it (which would post a
       // newer, sort-less requery right behind the sorted one).
+      // NOTE: no `await flushGridEvents()` between setFilterModel and
+      // applyColumnState — both are synchronous AG Grid API dispatches, and
+      // yielding a macrotask there opens a real window for the 150ms debounce
+      // to fire before the sort post on a slow runner (observed as a flaky
+      // 2-posts failure in aggregate runs).
       {
         const { received } = loadBundle();
         dispatchState(
@@ -495,7 +507,6 @@ describeIfBundle("webview/main.ts bundle — TASK-003 server-side sort", () => {
         received.length = 0;
 
         api!.setFilterModel({ name: { values: ["beta"] } });
-        await flushGridEvents();
         api!.applyColumnState({
           state: [{ colId: "name", sort: "asc", sortIndex: 0 }],
         });
