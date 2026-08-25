@@ -152,7 +152,9 @@ function stripLeadingCommentsAndWhitespace(text: string): string {
  * in a subquery aliased `vsdb_sort` and appends an ORDER BY on the sorted
  * column. The webview composes the requery by putting column sort into the
  * `orderBy` field of the existing `requery` message; this helper is the
- * Postgres side of that composition.
+ * Postgres side of that composition — the mssql twin lives in
+ * `src/adapters/mssql.ts`, and `composeSortQuery` (src/ui/queryComposer.ts)
+ * is the dialect dispatch entry that selects between them.
  *
  *   getTableSortQuery("SELECT * FROM t WHERE id>5", "", "name", "ASC")
  *     → SELECT * FROM (SELECT * FROM t WHERE id>5) vsdb_sort ORDER BY "name" ASC

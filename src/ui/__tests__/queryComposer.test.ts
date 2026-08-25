@@ -6,12 +6,14 @@
 // per numbered case from the task's §Test Cases table (19 cases, incl. the
 // typed-value cases 15-19).
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   buildFilterWhere,
   buildPagedQuery,
   composeSortQuery,
 } from "../queryComposer";
 import { getTableSortQuery } from "../../adapters/postgres";
+import { getTableSortQuery as mssqlGetTableSortQuery } from "../../adapters/mssql";
 
 describe("buildFilterWhere", () => {
   // Case 1 — unit (happy): emits an IN list
@@ -133,6 +135,49 @@ describe("composeSortQuery", () => {
     );
     expect(composeSortQuery("mssql", "SELECT 1", "", "name", "ASC")).toContain(
       "ORDER BY [name] ASC",
+    );
+  });
+
+  // TASK-006 Case 8 — unit (dispatch): composeSortQuery's mssql arm equals the
+  // adapter helper byte-identically; postgres still equals its helper too (the
+  // dispatch did not drift).
+  it("composeSortQuery(mssql) equals the adapter helper; postgres still equals too", () => {
+    const originalSql = "SELECT * FROM t";
+    const whereFromBar = "age > 18";
+    const column = "name";
+    const direction = "DESC" as "ASC" | "DESC";
+    expect(
+      composeSortQuery("mssql", originalSql, whereFromBar, column, direction),
+    ).toBe(mssqlGetTableSortQuery(originalSql, whereFromBar, column, direction));
+    expect(
+      composeSortQuery("postgres", originalSql, whereFromBar, column, direction),
+    ).toBe(getTableSortQuery(originalSql, whereFromBar, column, direction));
+  });
+
+  // TASK-006 Case 9 — unit (no dead export): mssql.getTableSortQuery is
+  // reachable only through composeSortQuery, and the composer's mssql arm holds
+  // no duplicated T-SQL (it is a one-line delegation, not a copy-paste).
+  // Source-text assertion plus a behavioral one.
+  it("mssql.getTableSortQuery is wired through composeSortQuery, not duplicated", () => {
+    const source = readFileSync(
+      new URL("../queryComposer.ts", import.meta.url),
+      "utf8",
+    );
+    // The composer imports the adapter helper and never re-derives the sort
+    // wrapper for mssql: no bracket-quoting string building of its own.
+    expect(source).toContain('from "../adapters/mssql"');
+    expect(source).not.toMatch(/quoteIdent\([^)]*"mssql"\)/);
+    expect(source).not.toContain("replace(/]/g");
+    // The mssql arm is a single one-line delegation — getTableSortQuery( is
+    // called exactly once in the module (the import does not match `(`).
+    expect(source.match(/getTableSortQuery\(/g)).toHaveLength(1);
+    expect(source).toMatch(
+      /if \(dialect === "mssql"\)[\s\S]*?return getTableSortQuery\(originalSql, whereFromBar, column, direction\);/,
+    );
+    // Behavioral: composeSortQuery("mssql", …) still returns the full T-SQL —
+    // proving the export is wired, not orphaned.
+    expect(composeSortQuery("mssql", "SELECT 1", "", "name", "ASC")).toBe(
+      "SELECT * FROM (SELECT 1) vsdb_sort ORDER BY [name] ASC",
     );
   });
 });

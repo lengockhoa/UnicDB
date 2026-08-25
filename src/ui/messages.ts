@@ -5,6 +5,7 @@
 // All messages use a `type` discriminator. Unknown messages are ignored.
 import type { StatementResult } from "../core/queryRunner";
 import type { ExportFormat } from "./resultsGridModel";
+import type { ColumnFilterModel } from "./queryComposer";
 
 export interface InitMessage {
   type: "init";
@@ -98,6 +99,19 @@ export interface RequeryMessage {
   index: number;
   where: string;
   orderBy: string;
+  /** TASK-005 — AG Grid set-filter model (display values + optional typed
+   *  raw values) pushed down as a server-side WHERE. Optional is
+   *  load-bearing: the three pre-TASK-005 senders (Re-Run, Refresh,
+   *  post-save auto-requery) omit it and must behave byte-identically. */
+  filters?: ColumnFilterModel;
+  /** 0-based row offset; present ⇒ host pages via buildPagedQuery.
+   *  Omitted ⇒ no paging (unless filters force a server-side wrap). */
+  offset?: number;
+  /** Page size; omitted ⇒ adapter default batch (500). */
+  limit?: number;
+  /** true ⇒ concatenate the fresh page onto the existing result.rows
+   *  instead of replacing (server-side "Load More"). */
+  append?: boolean;
 }
 
 export interface SaveEditsMessage {

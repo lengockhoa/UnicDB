@@ -28,7 +28,12 @@ import type {
 } from "../core/queryRunner";
 import type { DbTransaction } from "../adapters/types";
 import { pickResult } from "../core/queryRunner";
-import type { HostMessage, WebviewMessage, ExportFileMessage } from "./messages";
+import type {
+  HostMessage,
+  WebviewMessage,
+  ExportFileMessage,
+  RequeryMessage,
+} from "./messages";
 import type { ConnectionConfig } from "../config/types";
 import {
   buildSaveStatements,
@@ -37,6 +42,23 @@ import {
   type Dialect,
 } from "../core/saveStatements";
 import { sqlLiteral, composeRequery } from "./resultsGridModel";
+import {
+  buildFilterWhere,
+  buildPagedQuery,
+  composeSortQuery,
+  type ColumnFilterModel,
+} from "./queryComposer";
+
+/** Page size used when a server-side filter/paging requery omits `limit`
+ *  (matches the adapters' DEFAULT_BATCH_SIZE of 500). */
+const DEFAULT_PAGE_SIZE = 500;
+
+/** A single bare SQL identifier with an optional ASC/DESC suffix — the only
+ *  ORDER BY shape that may be routed through `composeSortQuery` for dialect
+ *  quoting. Anything else (lists, expressions, function calls) passes through
+ *  `composeRequery` byte-identically; the bar is free text and a half-parser
+ *  would turn working SQL into a syntax error. */
+const SIMPLE_ORDER_BY_RE = /^\s*([A-Za-z_][A-Za-z0-9_$]*)\s*(?:(ASC|DESC))?\s*$/i;
 
 /**
  * Host-side save flow hook. The extension wires this so the panel knows:
@@ -86,6 +108,11 @@ export class ResultsPanel {
   private busy: boolean = false;
   /** A session-pinned manual transaction owned by this panel. */
   private transaction: DbTransaction | null = null;
+  /** Monotonic requery sequence. Each handleRequery increments it and
+   *  captures the current value; a completion whose captured seq is stale
+   *  (a newer requery already started) drops its result so an out-of-order
+   *  slow requery can never overwrite a newer one. */
+  private requerySeq = 0;
   /** Host-derived (schema?, table) per statement index, populated by
    *  render() so handleSaveEdits can derive metadata without trusting the
    *  webview-supplied tableName / pkColumns (Fix R1 critical #1). */
@@ -364,7 +391,7 @@ export class ResultsPanel {
         );
         break;
       case "requery":
-        await this.handleRequery(msg.index, msg.where, msg.orderBy);
+        await this.handleRequery(msg);
         break;
       case "commitTransaction":
         await this.handleCommitTransaction();
@@ -857,11 +884,60 @@ export class ResultsPanel {
     }
   }
 
-  private async handleRequery(
-    index: number,
-    where: string,
-    orderBy: string,
-  ): Promise<void> {
+  /** Compose the requery SQL for a message, dispatching to the TASK-004
+   *  builders when server-side filtering/paging applies.
+   *
+   *  - No live dialect (no active connection): never guess quoting against
+   *    a live DB — keep today's `composeRequery` path.
+   *  - A single bare-identifier ORDER BY is dialect-quoted through
+   *    `composeSortQuery` (pure-sort requery) or a quoted ORDER BY inside
+   *    `buildPagedQuery` (when paging/filtering); anything else passes
+   *    through byte-identically.
+   *  - `filters` or `offset` present ⇒ buildPagedQuery over the combined
+   *    WHERE (bar AND filter); offset/limit default to 0 / adapter batch. */
+  private composeRequerySql(
+    r: StatementResult,
+    msg: RequeryMessage,
+    dialect: Dialect | null,
+  ): string {
+    const where = msg.where ?? "";
+    const orderBy = msg.orderBy ?? "";
+    if (!dialect) return composeRequery(r.sql, where, orderBy);
+
+    const filterWhere = msg.filters
+      ? buildFilterWhere(msg.filters, dialect)
+      : "";
+    const combinedWhere = [where.trim(), filterWhere]
+      .filter(Boolean)
+      .join(" AND ");
+    const sort = SIMPLE_ORDER_BY_RE.exec(orderBy.trim());
+
+    if (sort && msg.offset === undefined && !msg.filters) {
+      const dir = (sort[2] ?? "ASC").toUpperCase() as "ASC" | "DESC";
+      return composeSortQuery(dialect, r.sql, where, sort[1]!, dir);
+    }
+
+    if (msg.offset !== undefined || msg.filters) {
+      const orderClause = sort
+        ? `${quoteIdent(sort[1]!, dialect)} ${(sort[2] ?? "ASC").toUpperCase()}`
+        : orderBy.trim();
+      return buildPagedQuery(
+        r.sql,
+        combinedWhere,
+        orderClause,
+        msg.offset ?? 0,
+        msg.limit ?? DEFAULT_PAGE_SIZE,
+        dialect,
+      );
+    }
+
+    return composeRequery(r.sql, where, orderBy);
+  }
+
+  private async handleRequery(msg: RequeryMessage): Promise<void> {
+    const index = msg.index;
+    const where = msg.where ?? "";
+    const orderBy = msg.orderBy ?? "";
     const r = this.lastResults[index];
     if (!r) {
       void vscode.window.showErrorMessage(
@@ -875,7 +951,11 @@ export class ResultsPanel {
     // timeout. Best-effort — close() alone is sufficient (Fix R2
     // minor); cancel() was redundant.
     await this.closeStatementCursor(r);
-    const composed = composeRequery(r.sql, where, orderBy);
+    // Concurrency guard: a stale (slower) in-flight requery must never
+    // overwrite a newer one that already started.
+    const seq = ++this.requerySeq;
+    const dialect = this.saveContext?.getDriver() ?? null;
+    const composed = this.composeRequerySql(r, msg, dialect);
     this.setBusy(true);
     const start = Date.now();
     try {
@@ -919,7 +999,24 @@ export class ResultsPanel {
       // Without this the entry swapped to `{ status:"done", result: undefined }`
       // and the grid blanked.
       const freshResult = await pickResult(runResult);
+      // A newer requery already started while we were awaiting the run →
+      // drop this (stale) result entirely; it must not clobber the newer
+      // entry (nor adopt its cursor into the runner).
+      if (seq !== this.requerySeq) return;
       const next = this.lastResults.slice();
+      // TASK-005 — `append:true` concatenates the fresh page onto the
+      // existing rows instead of replacing (server-side "Load More"). The
+      // combined rowCount is unknown across pages → null keeps hasMore
+      // honest so the next paged requery still fires.
+      const newResult =
+        msg.append && r.result
+          ? {
+              columns: freshResult.columns,
+              rows: [...r.result.rows, ...freshResult.rows],
+              rowCount: null,
+              durationMs: freshResult.durationMs,
+            }
+          : freshResult;
       // Synthesize the new StatementResult. We keep `index`, `sql` (the
       // ORIGINAL — what the user wrote). `batched` is the NEW cursor
       // (mirrors QueryRunner.executeAll behaviour) so loadMore still
@@ -928,7 +1025,7 @@ export class ResultsPanel {
         index: r.index,
         sql: r.sql,
         status: "done",
-        result: freshResult,
+        result: newResult,
         batched: runResult.batched,
         durationMs: Date.now() - start,
       };
@@ -960,15 +1057,19 @@ export class ResultsPanel {
         this.runner.isCancelled?.() === true ||
         /cancel/i.test(err instanceof Error ? err.message : String(err));
       if (!cancelled) {
+        if (seq !== this.requerySeq) return;
         const m = err instanceof Error ? err.message : String(err);
         void vscode.window.showErrorMessage(`VSDB requery failed: ${m}`);
         // Surface as a per-statement error so the webview grid shows the
-        // existing error placeholder instead of the stale result.
+        // existing error placeholder instead of the stale result. On an
+        // append failure the ORIGINAL rows are preserved (no row loss) —
+        // the error rides along on the still-valid loaded result.
         const next = this.lastResults.slice();
         next[index] = {
           index: r.index,
           sql: r.sql,
           status: "error",
+          result: msg.append ? r.result : undefined,
           error: m,
           durationMs: Date.now() - start,
         };

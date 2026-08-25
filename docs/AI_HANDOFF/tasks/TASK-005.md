@@ -245,3 +245,44 @@ higher one — not merely that both promises settled.
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+---
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+SUMMARY: Wired server-side column filtering (AG Grid set-filter model → WHERE via buildFilterWhere) and OFFSET/LIMIT paging (buildPagedQuery) into resultsPanel.handleRequery, with a monotonic requerySeq staleness guard and append-requery concatenation; webview main.ts now debounces filter changes into host requeries and drives Load More via paged append requeries while a filter is active. All optional fields on RequeryMessage preserve the three pre-existing call sites byte-identically.
+TEST_PLAN_FOLLOWED: task §4 Test Plan (17 cases) — 1-8, 13, 15-17 in resultsPanelServerFilter.test.ts; 9-12, 14 in webviewServerFilter.test.ts
+FILES_CHANGED:
+  - src/ui/messages.ts: RequeryMessage + filters?/offset?/limit?/append? (optional)
+  - src/ui/resultsPanel.ts: handleRequery filter/paged composition, requerySeq staleness guard, append concatenation, composeSortQuery dispatch
+  - webview/main.ts: ServerFilterModel (local structural mirror), buildServerFilterModel, postFilterRequery/scheduleFilterRequery debounce, dispatchLoadMore paged-requery branch
+  - src/ui/__tests__/resultsPanelServerFilter.test.ts (new): cases 1-8, 13, 15-17
+  - src/ui/__tests__/webviewServerFilter.test.ts (new): cases 9-12, 14
+TESTS_ADDED:
+  - resultsPanelServerFilter.test.ts: 16 tests (filter IN, paging, append, back-compat, cursor-close order, out-of-order seq, transaction path, append error atomicity, typed literals, mssql/postgres sort ident, non-simple ORDER BY, empty ORDER BY)
+  - webviewServerFilter.test.ts: 5 tests (filter-clear re-requery, paged Load More vs loadMore, debounce collapse, typed values same-length, unresolvable display → typed omitted)
+VERIFICATION:
+  - npm run typecheck: exit 0
+  - npx tsc -p tsconfig.webview.json --noEmit: per-file error counts identical to baseline (14/10/10/5/1); verified via diff of sorted counts
+  - npm run compile: exit 0
+  - vitest (4 target files): 42 passed / 42
+  - npm test: 1392 passed, 0 failed, 2 skipped (floor was 1327)
+ISSUES: none
+HANDOFF_TO_REVIEWER: yes — 17-case matrix covered; review welcome
+NEXT: ready for review
+
+RED_OUTPUT (pre-implementation, host tests):
+  8 failed | 8 passed (16)
+  ✓ resultsPanelServerFilter.test.ts — 8 passed
+  FAIL 1. WHERE IN … ✕ filter values → WHERE col IN (…)
+  FAIL 2. LIMIT/OFFSET … ✕ paged SQL
+  FAIL 3. append … ✕ rows concatenated
+  FAIL 5. cursor … ✕ closes before run
+  FAIL 6. out-of-order … ✕ staleness guard
+  FAIL 7. transaction … ✕ routes through transaction
+  FAIL 13. typed 42 … ✕ unquoted numeric literal
+  FAIL 16. non-simple … ✕ byte-identical

@@ -53,6 +53,8 @@ import {
   buildSetFilterEntries,
   setFilterPass,
   selectedKeysFromModel,
+  SET_FILTER_BLANKS_KEY,
+  SET_FILTER_BLANKS_DISPLAY,
   type SetFilterEntry,
   type ColumnSpec,
   type ResultsGridModel,
@@ -121,11 +123,29 @@ interface StatementResult {
    *  browse). Absent/empty → "Statement N" fallback. */
   label?: string;
 }
+/** TASK-005 — structural mirror of the host's ColumnFilterModel
+ *  (src/ui/queryComposer.ts), defined locally so the webview program never
+ *  pulls queryComposer/saveStatements across tsconfig.webview rootDir
+ *  (per-file tsc error counts must stay byte-identical to the baseline).
+ *  `values` = display text; `typed[i]` = raw value behind `values[i]`,
+ *  ignored by the host unless typed.length === values.length. */
+type ServerFilterModel = {
+  [field: string]: { values: string[]; typed?: unknown[] };
+};
 type RequeryMsg = {
   type: "requery";
   index: number;
   where: string;
   orderBy: string;
+  /** TASK-005 — server-side set-filter model (display values + optional
+   *  typed raw values). Omitted when no column filter is active. */
+  filters?: ServerFilterModel;
+  /** 0-based row offset for a paged server-side requery ("Load More"). */
+  offset?: number;
+  /** Page size; omitted ⇒ host adapter default batch. */
+  limit?: number;
+  /** true ⇒ append the fresh page onto existing rows. */
+  append?: boolean;
 };
 type SaveEditsMsg = {
   type: "saveEdits";
@@ -219,6 +239,10 @@ let quickFilterActive = false;
  *  by `onFilterChanged` reading `api.isColumnFilterPresent()`. Reset on
  *  grid recreate and on columnDefs swap. */
 let colFilterActive = false;
+/** TASK-005 — debounce timer for the server-side filter requery. Rapid
+ *  filter changes collapse into one post (the debounce window). */
+let filterRequeryTimer: ReturnType<typeof setTimeout> | null = null;
+const FILTER_REQUERY_DEBOUNCE_MS = 150;
 /** Local edit state — pure-logic dirty map. Cleared on tab switch / new query.
  *  TASK-503 will read `editState.snapshot()` to build the save payload. */
 let editState = new EditState();
@@ -1706,6 +1730,9 @@ function renderGrid(): void {
       onFilterChanged: (e: FilterChangedEvent) => {
         colFilterActive = e.api.isColumnFilterPresent();
         updateFooterNow();
+        // TASK-005 — push the filter down to the database (debounced so
+        // rapid checkbox toggles collapse into one requery).
+        scheduleFilterRequery();
       },
       // TASK-004 — double-click value viewer for read-only cells. Editable
       // cells keep AG Grid's default double-click-to-edit; the handler
@@ -1907,7 +1934,7 @@ function renderGrid(): void {
   // Expose the checkLoadMore hook on the grid host (so tests / external code
   // can trigger a loadMore programmatically).
   (container as unknown as { __checkLoadMore?: () => void }).__checkLoadMore = () => {
-    if (loadMoreInFlight || busy || quickFilterActive || colFilterActive) return;
+    if (loadMoreInFlight || busy || quickFilterActive) return;
     if (!model.getState().hasMore()) return;
     dispatchLoadMore();
   };
@@ -1934,10 +1961,116 @@ function ensureModel(index: number): ResultsGridModel {
   return m;
 }
 
+/** Sentinel for "no loaded row carries this display value". */
+const RAW_NOT_FOUND = Symbol("raw-not-found");
+
+/** Build the server-side filter model from the grid's current filter model.
+ *  For each filtered column, each selected display value is mapped back to a
+ *  loaded row's RAW cell value (same normalization `selectedKeysFromModel`
+ *  uses — lowercased String(v); "(Blanks)" resolves to the raw null/"" of a
+ *  loaded blank row). `typed` is attached ONLY when EVERY selected value
+ *  resolves — a stale selection (row scrolled past / evicted) degrades to
+ *  the display-string-only model so `buildFilterWhere` quotes everything
+ *  rather than emit a length-mismatched array. Returns undefined when no
+ *  column has a non-empty selection (the host then re-queries unfiltered). */
+function buildServerFilterModel(): ServerFilterModel | undefined {
+  const api = gridApi;
+  if (!api) return undefined;
+  const gridModel = api.getFilterModel() as Record<
+    string,
+    { values?: string[] } | null
+  >;
+  const r = currentStatement;
+  const rows = r?.result?.rows ?? [];
+  const specs = currentSpecs;
+  const out: ServerFilterModel = {};
+  let anyActive = false;
+  for (const [field, m] of Object.entries(gridModel)) {
+    const values = m?.values;
+    if (!Array.isArray(values) || values.length === 0) continue;
+    const specIndex = specs.findIndex((s) => s.field === field);
+    const typed: unknown[] = [];
+    let allResolved = true;
+    for (const display of values) {
+      const key =
+        display === SET_FILTER_BLANKS_DISPLAY
+          ? SET_FILTER_BLANKS_KEY
+          : String(display).toLowerCase();
+      let raw: unknown = RAW_NOT_FOUND;
+      if (specIndex >= 0) {
+        for (const row of rows) {
+          const v = row[specIndex];
+          const blank = v === null || v === undefined || v === "";
+          const rowKey = blank ? SET_FILTER_BLANKS_KEY : String(v).toLowerCase();
+          if (rowKey === key) {
+            raw = v;
+            break;
+          }
+        }
+      }
+      if (raw === RAW_NOT_FOUND) {
+        allResolved = false;
+        break;
+      }
+      typed.push(raw);
+    }
+    out[field] = allResolved ? { values, typed } : { values };
+    anyActive = true;
+  }
+  return anyActive ? out : undefined;
+}
+
+/** Post a server-side requery carrying the current grid filter model.
+ *  `opts.offset` present ⇒ paged ("Load More"); omitted ⇒ fresh page 0. */
+function postFilterRequery(opts: { offset?: number } = {}): void {
+  if (!gridApi) return;
+  const filters = buildServerFilterModel();
+  const where = dom?.requeryWhere.value ?? "";
+  const orderBy = dom?.requeryOrderBy.value ?? "";
+  postToHost({
+    type: "requery",
+    index: activeTab,
+    where,
+    orderBy,
+    filters,
+    ...(opts.offset !== undefined
+      ? { offset: opts.offset, limit: 500, append: true }
+      : {}),
+  });
+}
+
+/** Debounced wrapper — rapid filter changes collapse into one requery. */
+function scheduleFilterRequery(): void {
+  if (filterRequeryTimer !== null) {
+    clearTimeout(filterRequeryTimer);
+    filterRequeryTimer = null;
+  }
+  filterRequeryTimer = setTimeout(() => {
+    filterRequeryTimer = null;
+    postFilterRequery();
+  }, FILTER_REQUERY_DEBOUNCE_MS);
+}
+
 function dispatchLoadMore(): void {
   if (loadMoreInFlight || busy) return;
   if (quickFilterActive) return;
-  if (colFilterActive) return;
+  if (colFilterActive) {
+    // A server-side filter is active: the current cursor is a finite page
+    // that does NOT carry the filter. Load More re-runs the filtered query
+    // for the next page (offset = rows already loaded) and appends. Bail on
+    // offset 0 — appending page 0 onto itself would duplicate rows.
+    const offset =
+      statementRows.get(activeTab)?.length ??
+      currentStatement?.result?.rows.length ??
+      0;
+    if (offset <= 0) return;
+    // Deliberately NOT setting loadMoreInFlight here: the host posts a
+    // busy:running state for the requery, and that `busy` gate (plus the
+    // host-side requery staleness guard) dedupes concurrent triggers
+    // without wedging the flag open when the filter is later cleared.
+    postFilterRequery({ offset });
+    return;
+  }
   loadMoreInFlight = true;
   postToHost({ type: "loadMore", index: activeTab });
 }
@@ -1954,7 +2087,9 @@ function onBodyScroll(
   _index: number,
   model: ResultsGridModel,
 ): void {
-  if (loadMoreInFlight || busy || quickFilterActive || colFilterActive) return;
+  // TASK-005 — a column filter no longer gates scroll-based load-more;
+  // dispatchLoadMore posts a paged requery when a server filter is active.
+  if (loadMoreInFlight || busy || quickFilterActive) return;
   if (e.direction !== "vertical") return;
   const api = gridApi;
   if (!api) return;

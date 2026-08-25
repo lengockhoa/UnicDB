@@ -2,6 +2,7 @@ import { Connection, Request, TYPES } from "tedious";
 import type { ConnectionConfig } from "../config/types";
 import { resolveSslOptions } from "../core/sslOptions";
 import { splitStatements } from "../core/statementParser";
+import { quoteIdent } from "../core/saveStatements";
 import {
   NotImplementedError,
   type BatchedQuery,
@@ -42,6 +43,43 @@ type BatchWaiter = {
   resolve: (rows: any[][] | null) => void;
   reject: (error: Error) => void;
 };
+
+/**
+ * TASK-006 — server-side column sort as pure SQL composition (T-SQL dialect).
+ *
+ * Mirrors `getTableSortQuery` (src/adapters/postgres.ts) exactly: same 4-arg
+ * signature, same `vsdb_sort` subquery wrap, same ASC/DESC whitelist — but
+ * identifiers are quoted with T-SQL `[…]` brackets (embedded `]` doubled)
+ * instead of Postgres double quotes, and the emitted `ORDER BY` is exactly
+ * what T-SQL `OFFSET/FETCH` paging can attach to (see `buildPagedQuery`).
+ *
+ *   getTableSortQuery("SELECT * FROM t WHERE id>5", "", "name", "ASC")
+ *     → SELECT * FROM (SELECT * FROM t WHERE id>5) vsdb_sort ORDER BY [name] ASC
+ *
+ * Injection safety: `column` is emitted as a single bracket-quoted identifier
+ * (`]` doubled per T-SQL rules via `quoteIdent`), so a payload like
+ * `name]; DROP TABLE users--` stays one inert identifier token. `direction`
+ * is whitelist-normalized to ASC/DESC. `whereFromBar` (requery-bar filter)
+ * is appended as the OUTER query's WHERE clause when non-empty — the
+ * original SQL stays verbatim inside the subquery.
+ *
+ * Dispatch: `composeSortQuery("mssql", …)` in src/ui/queryComposer.ts
+ * delegates here, and TASK-005's requery path is the live call site.
+ */
+export function getTableSortQuery(
+  originalSql: string,
+  whereFromBar: string,
+  column: string,
+  direction: "ASC" | "DESC",
+): string {
+  const inner = originalSql.trim();
+  const quotedColumn = quoteIdent(column, "mssql");
+  const dir = direction === "DESC" ? "DESC" : "ASC";
+  const whereClause = whereFromBar.trim().length
+    ? ` WHERE ${whereFromBar.trim()}`
+    : "";
+  return `SELECT * FROM (${inner}) vsdb_sort${whereClause} ORDER BY ${quotedColumn} ${dir}`;
+}
 
 /** SQL Server adapter. SELECTs are collected from tedious request row events. */
 export class MsSqlAdapter implements DbAdapter {

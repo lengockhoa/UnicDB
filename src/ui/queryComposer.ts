@@ -6,11 +6,13 @@
 // sort helper per dialect.
 //
 // Constraint highlights:
-//   - No DOM, no vscode, no DB driver, no `src/adapters/*` import — this
-//     module must stay importable from the webview bundle (browser
-//     platform), so the postgres sort arm is composed inline byte-identical
-//     to `getTableSortQuery` (src/adapters/postgres.ts) rather than
-//     imported, which would drag the pg driver into the browser bundle.
+//   - No DOM, no vscode, no DB driver — the postgres/mysql sort arms are
+//     composed inline byte-identical to the adapters' helpers so this module
+//     stays importable from the webview bundle (browser platform) without
+//     dragging the pg/mysql2 drivers in. The mssql arm is the single
+//     exception (TASK-006): it delegates to `getTableSortQuery`
+//     (src/adapters/mssql.ts) — consumed host-side by TASK-005, never from
+//     the webview — so the T-SQL lives in exactly one place.
 //   - Zero hand-rolled escaping: every identifier goes through `quoteIdent`,
 //     every value through `sqlLiteral`.
 //   - Filter values arrive as String()-coerced display strings. Numeric,
@@ -19,6 +21,7 @@
 //     (a `varchar` `'007'` must stay a quoted string).
 import { sqlLiteral, SET_FILTER_BLANKS_DISPLAY } from "./resultsGridModel";
 import { quoteIdent, type Dialect } from "../core/saveStatements";
+import { getTableSortQuery } from "../adapters/mssql";
 
 /**
  * AG Grid set-filter model as returned by GridApi.getFilterModel(), plus an
@@ -181,14 +184,18 @@ export function buildPagedQuery(
 /**
  * Dispatch the table-sort composition per dialect.
  *
- * postgres: byte-identical to `getTableSortQuery` (src/adapters/postgres.ts)
- * — the same subquery wrap, quoted identifier and ASC/DESC whitelist — but
- * composed inline so this module keeps zero `src/adapters/*` imports (the
- * pg driver must not reach the webview bundle). mysql/mssql reuse the same
- * composition with their own `quoteIdent` (backtick / bracket).
+ * postgres/mysql: composed inline byte-identical to the adapters' helpers —
+ * the same subquery wrap, quoted identifier and ASC/DESC whitelist — keeping
+ * this module free of the pg/mysql2 drivers so it stays importable from the
+ * webview bundle. mssql (TASK-006): delegates to `getTableSortQuery`
+ * (src/adapters/mssql.ts) so the T-SQL lives in exactly one place; the
+ * adapter's `ORDER BY [col] ASC|DESC` is also what T-SQL `OFFSET/FETCH`
+ * paging (see `buildPagedQuery`) can attach to.
  *
  *   composeSortQuery("postgres", "SELECT 1", "", "name", "ASC")
  *     → `SELECT * FROM (SELECT 1) vsdb_sort ORDER BY "name" ASC`
+ *   composeSortQuery("mssql", "SELECT 1", "", "name", "ASC")
+ *     → `SELECT * FROM (SELECT 1) vsdb_sort ORDER BY [name] ASC`
  */
 export function composeSortQuery(
   dialect: Dialect,
@@ -197,6 +204,9 @@ export function composeSortQuery(
   column: string,
   direction: "ASC" | "DESC",
 ): string {
+  if (dialect === "mssql") {
+    return getTableSortQuery(originalSql, whereFromBar, column, direction);
+  }
   const inner = originalSql.trim();
   const quotedColumn = quoteIdent(column, dialect);
   const dir = direction === "DESC" ? "DESC" : "ASC";

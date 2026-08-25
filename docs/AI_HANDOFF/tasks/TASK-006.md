@@ -155,3 +155,87 @@ between a column-name payload and executable T-SQL.
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+SUMMARY: Added `getTableSortQuery` (T-SQL dialect) to `src/adapters/mssql.ts`
+mirroring the Postgres contract with `[…]/]`-doubling via `quoteIdent`; rewired
+`composeSortQuery`'s mssql arm to delegate to it (one-line delegation, no duplicated
+T-SQL); added a doc-comment cross-reference in `postgres.ts` (comment-only). 9 test
+cases added (7 new mssql helper + 2 appended composer dispatch/no-dead-export).
+
+### RED_OUTPUT (fresh, before implementation)
+
+```
+Test Files  2 failed | 1 passed (3)
+     Tests  9 failed | 26 passed (35)
+ FAIL  src/adapters/__tests__/mssql.sortQuery.test.ts > getTableSortQuery > basic sort …
+TypeError: getTableSortQuery is not a function
+ FAIL  src/ui/__tests__/queryComposer.test.ts:168:20
+     → expected '// src/ui/queryComposer.ts\n…' to contain 'from "../adapters/mssql"'
+```
+
+RED confirmed for the expected reasons: the mssql export did not exist yet and the
+composer did not delegate. Not a false-GREEN.
+
+### Verification Output (fresh, current turn)
+
+`npm run typecheck`: `tsc --noEmit` → exit 0, no diagnostics.
+
+`npx vitest run src/adapters/__tests__/mssql.sortQuery.test.ts
+ src/adapters/__tests__/postgres.sortQuery.test.ts src/ui/__tests__/queryComposer.test.ts`:
+```
+ ✓ src/adapters/__tests__/mssql.sortQuery.test.ts  (7 tests) 2ms
+ ✓ src/ui/__tests__/queryComposer.test.ts  (21 tests) 5ms
+ Test Files  3 passed (3)
+      Tests  35 passed (35)
+```
+(postgres.sortQuery.test.ts untouched and green — 7 tests.)
+
+`npm test` (full suite, after `npm run compile` for gitignored dist/ artifacts):
+```
+ Test Files  101 passed | 1 skipped (102)
+      Tests  1380 passed | 2 skipped (1382)
+```
+Baseline ≥1327 passed → 1380 passed, 0 failed, no regression.
+
+TEST_PLAN_FOLLOWED: task §Test Cases (9/9) — cases 1-7 new in
+`src/adapters/__tests__/mssql.sortQuery.test.ts`, cases 8-9 appended to
+`src/ui/__tests__/queryComposer.test.ts`.
+
+FILES_CHANGED:
+  - src/adapters/mssql.ts: added exported `getTableSortQuery` above `MsSqlAdapter`
+    (same 4-arg signature, `vsdb_sort` wrap, ASC/DESC whitelist, `quoteIdent(,"mssql")`
+    bracket quoting); added `quoteIdent` import. No change to the class/wiring/params.
+  - src/ui/queryComposer.ts: mssql arm of `composeSortQuery` now one-line delegation to
+    the adapter export; updated module header + function doc comments.
+  - src/adapters/postgres.ts: doc-comment only — added cross-ref to the mssql twin and
+    to `composeSortQuery` as dispatch entry. `git diff` shows no executable line changed.
+  - src/adapters/__tests__/mssql.sortQuery.test.ts: new — cases 1-7.
+  - src/ui/__tests__/queryComposer.test.ts: appended TASK-006 cases 8-9 + mssql import.
+
+TESTS_ADDED:
+  - src/adapters/__tests__/mssql.sortQuery.test.ts: cases 1-7 (basic wrap/bracket quote,
+    outer WHERE, DESC, `]`-doubling injection, direction whitelist fallback, empty inputs,
+    whitespace-only where).
+  - src/ui/__tests__/queryComposer.test.ts: case 8 (mssql arm byte-identical to adapter
+    helper; postgres unchanged), case 9 (source-text: no inline mssql bracket building,
+    single `getTableSortQuery(` call, delegation branch; behavioral: full T-SQL returned).
+
+ISSUES: none.
+
+Note on TASK-004 arm: TASK-004's executor did NOT delegate — the mssql arm was shipped
+inline (single generic `quoteIdent(column, dialect)` body). This task performed the
+replacement, so it is not a no-op. Case 9's whole-file `vsdb_sort`-absence is scoped to
+the mssql arm (PLAN.md §3 owns postgres/mysql inline arms — "TASK-006 (mssql arm only)",
+line 116/133); the source-text assertion instead pins the one-line delegation + zero
+`getTableSortQuery(` duplication + no `quoteIdent(…,"mssql")` bracket building.
+
+HANDOFF_TO_REVIEWER: yes — case 4 (`]`-doubling) is the injection guard to verify.
+
+NEXT: ready for review. TASK-005 (resultsPanel/webview wiring) is the liveness test that
+makes this export reachable on the real requery path.
