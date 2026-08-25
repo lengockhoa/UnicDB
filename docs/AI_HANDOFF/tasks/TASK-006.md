@@ -239,3 +239,19 @@ HANDOFF_TO_REVIEWER: yes — case 4 (`]`-doubling) is the injection guard to ver
 
 NEXT: ready for review. TASK-005 (resultsPanel/webview wiring) is the liveness test that
 makes this export reachable on the real requery path.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: bao-opus
+EXECUTOR_MODEL: bao-sonnet
+VERIFICATION_RERUN:
+  command: npm run typecheck && npx vitest run src/adapters/__tests__/mssql.sortQuery.test.ts src/adapters/__tests__/postgres.sortQuery.test.ts src/ui/__tests__/queryComposer.test.ts
+  result: typecheck clean (exit 0); 3 test files passed, 35 tests passed (0 fail)
+TEST_PLAN_COVERAGE: all-followed — cases 1-7 in mssql.sortQuery.test.ts, cases 8-9 appended to queryComposer.test.ts; postgres.sortQuery.test.ts untouched and green
+FINDINGS:
+  critical: none
+  important: none
+  minor: none
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Clean implementation. T-SQL bracket quoting via quoteIdent is injection-safe (case 4 doubled-] assertion is the key guard). Dispatcher delegation is genuine one-liner, not copy-paste. Doc-comment-only change on postgres.ts confirmed.
