@@ -3,6 +3,37 @@
 All notable changes to VSDB are documented in this file. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 
+## [1.6.6] — 2026-08-26
+
+Cycle W: server-side sort on header click, DISTINCT filter values, deterministic paging.
+
+### Added
+- **Header-click server-side sort (all 3 dialects)**: clicking a column header now
+  issues a server-side `ORDER BY` requery (PostgreSQL, MySQL, SQL Server) instead of
+  client-side sorting; colIds that are not bare identifiers are dialect-quoted before
+  being sent.
+- **DISTINCT set-filter values**: the filter dropdown loads distinct values from the
+  server (`SELECT DISTINCT … LIMIT n`) instead of only the loaded rows window, with a
+  per-statement cache and refresh after statement replacement.
+- **Multi-term ORDER BY support**: the requery bar accepts comma-separated sort terms
+  with per-dialect identifier quoting (`SELECT * FROM (…) AS vsdb_sub ORDER BY …`);
+  true expressions are rejected with a visible error instead of passing through raw.
+
+### Fixed
+- **`(Blanks)` also matches empty strings** for string-typed columns (declared type
+  family: char/varchar/text/nchar/nvarchar/enum/set/citext/cstring) — derived from
+  column metadata, not row sniffing.
+- **Deterministic Load More**: composed ORDER BY now appends the full primary key as a
+  tiebreaker (when all PK columns are projected), so OFFSET paging no longer skips or
+  duplicates rows across pages.
+- Filter/paging requeries carry the active grid sort (a sort no longer drops when a
+  filter change lands inside the debounce window).
+- Late DISTINCT responses for a replaced statement are dropped (statement-index guard);
+  batched DISTINCT results fully drain and close their cursor; the `truncated` flag
+  survives requery merges.
+- Quoted identifiers containing commas parse as a single ORDER BY term; loose
+  string-type matching no longer misclassifies types like `charset`/`enumeration`.
+
 ## [1.6.5] — 2026-08-26
 
 Cycle V: SQL coloring everywhere + server-side filter/paging + MSSQL sort.
