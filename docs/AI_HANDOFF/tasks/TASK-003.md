@@ -203,3 +203,48 @@ already covers the resulting repeat calls.
 (no other comments)
 
 ---
+
+## Executor Report
+
+- EXECUTOR_TOOL: claude-code
+- EXECUTOR_MODEL: bao-sonnet
+- EXECUTOR_SUBAGENT: feature-implementer
+- RED_OUTPUT (bundle unmodified, after `npm run compile`):
+  ```
+   Test Files  2 failed (2)
+        Tests  12 failed | 4 passed (16)
+  ```
+  All 8 sort cases + distinct cases 7/8/12/13 failed for the expected
+  reasons (no `requery` on sort; no `requestDistinctValues`; cache/typed
+  absent). Cases 9/10/11/14 passed pre-implementation (edge shapes whose
+  pre-state is the fallback itself — 9: nothing requested twice, 10: stale
+  reply trivially ignored, 11: loaded-row entries already correct, 14:
+  `typed` undefined is an accepted outcome per the task's own wording).
+- Verification Output:
+  - `npm run typecheck` → clean (no output, exit 0)
+  - `npm run compile` → `esbuild: build complete`
+  - `npx vitest run webviewServerSort.test.ts webviewDistinctValues.test.ts`
+    → `Tests 16 passed (16)`
+  - `npx vitest run webviewServerFilter webviewSetFilter webviewFilters webviewBundle`
+    → `Tests 31 passed (31)`
+  - `npx tsc -p tsconfig.webview.json --noEmit | grep … | uniq -c` →
+    `14 main.ts / 10 connectionFormMain / 10 aiSettingsFormMain / 5 schemaFormMain / 1 newTableFormMain` — byte-identical to baseline.
+- Status: PASS
+- Note: decisions recorded per handoff rules — (1) no popup-open hook
+  exists in AG Grid v36 Community IFilterComp, so the DISTINCT request
+  fires from `init` (first popup open / first setFilterModel) exactly as
+  the planner allowed; cache suppression makes re-opens request-free
+  (case 9 green). (2) `suppressSortRequery` is cleared on the next
+  macrotask, not in `finally` — AG Grid dispatches `sortChanged`
+  asynchronously, and a synchronous clear let the programmatic apply
+  re-post (case 6 caught this mid-run). (3) The distinct cache key is
+  `` `${index}::${column}` `` and the cache is cleared whenever a state
+  message changes the active statement identity
+  (`index|sql|durationMs`), with a generation token dropping stale
+  in-flight replies. (4) `distinctValues` is handled via a structural
+  type-guard branch — `HostMsg` union not widened, no new `../src`
+  import (verified: still exactly the two pre-existing ones). Full
+  `npm test` suite NOT run in the worktree — targeted + typecheck +
+  tsc gate only; orchestrator runs the full suite at the wave boundary.
+
+---

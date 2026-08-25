@@ -1,6 +1,6 @@
 # TASK-002 — `buildDistinctValuesQuery`: pure DISTINCT-values SQL builder
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §3.4
@@ -90,6 +90,28 @@ export function takeDistinctValues(
   limit?: number,          // defaults to DISTINCT_VALUES_LIMIT
 ): { values: unknown[]; truncated: boolean };
 ```
+
+---
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  Error: Failed to load url ../distinctValues (resolved id: ../distinctValues) in
+  .../src/ui/__tests__/distinctValues.test.ts. Does the file exist?
+  Test Files  1 failed (1)
+       Tests  no tests
+Verification Output: |
+  npm run typecheck → clean (tsc --noEmit, exit 0)
+  npx vitest run src/ui/__tests__/distinctValues.test.ts → 12 passed / 0 failed
+  npx vitest run src/ui/__tests__/queryComposer.test.ts → 21 passed / 0 failed
+Status: PASS
+Note: Local copy of stripTrailingSemicolon (queryComposer.ts:136 not exported,
+TASK-001 owns that file) — hoist into a shared module is a queued follow-up.
+Full-suite `npm test` left to the orchestrator's wave boundary; targeted +
+typecheck verified in-worktree. queryComposer.ts NOT modified.
 
 ---
 

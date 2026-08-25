@@ -9,8 +9,11 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import {
   buildFilterWhere,
+  buildOrderByClause,
   buildPagedQuery,
+  buildPagedQueryTerms,
   composeSortQuery,
+  parseOrderBy,
 } from "../queryComposer";
 import { getTableSortQuery } from "../../adapters/postgres";
 import { getTableSortQuery as mssqlGetTableSortQuery } from "../../adapters/mssql";
@@ -236,5 +239,275 @@ describe("buildFilterWhere — typed values (cases 15-19)", () => {
         "postgres",
       ),
     ).toBe(`"id" IN ('1', '2')`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TASK-001 — ORDER BY parser + clause builder + paging tiebreaker + (Blanks)
+// opt-in. Cases 1-18 below; all pre-existing blocks above stay untouched.
+// ---------------------------------------------------------------------------
+
+describe("parseOrderBy (TASK-001)", () => {
+  // Case 1 — unit (happy): single bare identifier
+  it("parses a single bare identifier", () => {
+    expect(parseOrderBy("name")).toEqual({
+      ok: true,
+      terms: [{ column: "name", direction: "ASC" }],
+    });
+  });
+
+  // Case 2 — unit (happy): multi-term with directions
+  it("parses a multi-term orderBy with per-term directions", () => {
+    expect(parseOrderBy("a, b DESC")).toEqual({
+      ok: true,
+      terms: [
+        { column: "a", direction: "ASC" },
+        { column: "b", direction: "DESC" },
+      ],
+    });
+  });
+
+  // Case 4 — edge (malformed input): function call rejected
+  it("rejects a function call with a plain-column error", () => {
+    const r = parseOrderBy("lower(name)");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/plain column/i);
+  });
+
+  // Case 5 — edge (malformed input): parenthesised / dotted / ordinal
+  it("rejects parenthesised, dotted, and ordinal terms", () => {
+    for (const input of ["(a)", "t.a", "1"]) {
+      const r = parseOrderBy(input);
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.error.length).toBeGreaterThan(0);
+    }
+  });
+
+  // Case 6 — edge (boundary): empty / whitespace-only is NOT an error
+  it("empty and whitespace-only input yields zero terms, not an error", () => {
+    expect(parseOrderBy("")).toEqual({ ok: true, terms: [] });
+    expect(parseOrderBy("   ")).toEqual({ ok: true, terms: [] });
+  });
+
+  // Case 7 — edge (malformed input): empty term between commas rejected
+  it("rejects an empty term between commas", () => {
+    expect(parseOrderBy("a, ").ok).toBe(false);
+    expect(parseOrderBy("a,,b").ok).toBe(false);
+  });
+
+  // Case 8 — edge (injection): quote-escape payload is not an identifier
+  it("rejects a quote-escape payload as a term column", () => {
+    const r = parseOrderBy('name"; DROP TABLE t--');
+    expect(r.ok).toBe(false);
+    if (r.ok) {
+      for (const t of r.terms) expect(t.column).not.toContain('"');
+    }
+  });
+
+  // Case 9 — edge (dialect capability): NULLS parsed + native on postgres
+  it("parses NULLS LAST/FIRST and renders natively on postgres", () => {
+    const last = parseOrderBy("a NULLS LAST", "postgres");
+    expect(last.ok).toBe(true);
+    if (last.ok) {
+      expect(last.terms[0].nulls).toBe("LAST");
+      expect(buildOrderByClause(last.terms, "postgres")).toBe(
+        `"a" ASC NULLS LAST`,
+      );
+    }
+    const first = parseOrderBy("a NULLS FIRST", "postgres");
+    expect(first.ok).toBe(true);
+    if (first.ok) {
+      expect(first.terms[0].nulls).toBe("FIRST");
+      expect(buildOrderByClause(first.terms, "postgres")).toBe(
+        `"a" ASC NULLS FIRST`,
+      );
+    }
+  });
+
+  // Case 10 — edge (dialect capability): NULLS rejected on mysql/mssql
+  it("rejects NULLS on mysql and mssql with no emulation", () => {
+    for (const dialect of ["mysql", "mssql"] as const) {
+      const r = parseOrderBy("a NULLS LAST", dialect);
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.error).toMatch(/NULLS/i);
+    }
+  });
+
+  // Case 10b — unit (happy): active-dialect quoted identifier canonicalized
+  it("canonicalizes an active-dialect quoted identifier", () => {
+    const pg = parseOrderBy('"First Name"', "postgres");
+    expect(pg.ok).toBe(true);
+    if (pg.ok) expect(pg.terms[0].column).toBe("First Name");
+    const my = parseOrderBy("`First Name`", "mysql");
+    expect(my.ok).toBe(true);
+    if (my.ok) expect(my.terms[0].column).toBe("First Name");
+    const ms = parseOrderBy("[First Name]", "mssql");
+    expect(ms.ok).toBe(true);
+    if (ms.ok) expect(ms.terms[0].column).toBe("First Name");
+    // doubled delimiter escapes are un-doubled
+    const esc = parseOrderBy('"a""b"', "postgres");
+    expect(esc.ok).toBe(true);
+    if (esc.ok) expect(esc.terms[0].column).toBe('a"b');
+    // omitted dialect accepts all three styles
+    for (const input of ['"x y"', "`x y`", "[x y]"]) {
+      const r = parseOrderBy(input);
+      expect(r.ok).toBe(true);
+      if (r.ok) expect(r.terms[0].column).toBe("x y");
+    }
+  });
+
+  // Case 10c — edge (dialect mismatch): mismatched quote style rejected
+  it("rejects a mismatched quote style under a live dialect", () => {
+    const cases: Array<[string, "postgres" | "mysql" | "mssql"]> = [
+      ["`First Name`", "postgres"],
+      ["[First Name]", "postgres"],
+      ['"First Name"', "mysql"],
+      ['"First Name"', "mssql"],
+      ["First Name DESC", "postgres"],
+    ];
+    for (const [input, dialect] of cases) {
+      const r = parseOrderBy(input, dialect);
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.error.length).toBeGreaterThan(0);
+    }
+  });
+
+  // Case 10d — edge (injection): quoted payload re-quoted, not passed through
+  it("re-quotes a quoted payload instead of passing it through", () => {
+    const r = parseOrderBy('"a"" OR 1=1--"', "postgres");
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(buildOrderByClause(r.terms, "postgres")).toBe(
+        `"a"" OR 1=1--" ASC`,
+      );
+    }
+  });
+});
+
+describe("buildOrderByClause (TASK-001)", () => {
+  // Case 3 — unit (happy): quotes per dialect
+  it("quotes terms per dialect", () => {
+    const terms = [
+      { column: "a", direction: "ASC" as const },
+      { column: "b", direction: "DESC" as const },
+    ];
+    expect(buildOrderByClause(terms, "postgres")).toBe(`"a" ASC, "b" DESC`);
+    expect(buildOrderByClause(terms, "mysql")).toBe("`a` ASC, `b` DESC");
+    expect(buildOrderByClause(terms, "mssql")).toBe("[a] ASC, [b] DESC");
+  });
+});
+
+describe("buildPagedQueryTerms (TASK-001)", () => {
+  const sql = "SELECT * FROM t";
+  const where = "";
+
+  // Case 11 — unit (happy): composite-PK tiebreaker appended in declared order
+  it("appends every tiebreaker in declared order", () => {
+    const terms = [{ column: "name", direction: "ASC" as const }];
+    const q = buildPagedQueryTerms(
+      sql, where, terms, 0, 500, "postgres", ["tenant_id", "id"],
+    );
+    expect(q).toBe(
+      `SELECT * FROM (SELECT * FROM t) vsdb_page ORDER BY "name" ASC, "tenant_id" ASC, "id" ASC LIMIT 500 OFFSET 0`,
+    );
+  });
+
+  // Case 12 — edge (duplicate): existing PK component not doubled
+  it("does not double an existing PK component", () => {
+    const terms = [{ column: "tenant_id", direction: "DESC" as const }];
+    const q = buildPagedQueryTerms(
+      sql, where, terms, 0, 500, "postgres", ["tenant_id", "id"],
+    );
+    expect(q).toContain(`ORDER BY "tenant_id" DESC, "id" ASC`);
+    expect(q.match(/"tenant_id"/g)).toHaveLength(1);
+  });
+
+  // Case 13 — edge (boundary): empty terms + tiebreakers === buildPagedQuery
+  it("with no terms and no tiebreakers is byte-identical to buildPagedQuery", () => {
+    for (const dialect of ["postgres", "mssql"] as const) {
+      expect(
+        buildPagedQueryTerms(sql, where, [], 100, 50, dialect, []),
+      ).toBe(buildPagedQuery(sql, where, "", 100, 50, dialect));
+    }
+  });
+});
+
+describe("buildFilterWhere — columnTypes (TASK-001)", () => {
+  // Case 14 — edge (type safety): string-typed column gets = '' arm
+  it("a string-typed column gets the empty-string arm", () => {
+    expect(
+      buildFilterWhere(
+        { n: { values: ["(Blanks)", "a"] } },
+        "postgres",
+        { columnTypes: { n: "varchar" } },
+      ),
+    ).toBe(`("n" IS NULL OR "n" = '' OR "n" IN ('a'))`);
+  });
+
+  // Case 15 — regression (back-compat): no options ⇒ today's output
+  it("without options the output is byte-identical to cycle V", () => {
+    expect(
+      buildFilterWhere({ n: { values: ["(Blanks)", "a"] } }, "postgres"),
+    ).toBe(`("n" IS NULL OR "n" IN ('a'))`);
+  });
+
+  // Case 16 — edge (type safety): non-string types keep bare IS NULL
+  it("non-string types keep a bare IS NULL", () => {
+    for (const t of ["int4", "numeric", "timestamptz", "bool", "date"]) {
+      expect(
+        buildFilterWhere(
+          { num: { values: ["(Blanks)"] } },
+          "postgres",
+          { columnTypes: { num: t } },
+        ),
+      ).toBe(`"num" IS NULL`);
+    }
+  });
+
+  // Case 17 — edge (boundary): unknown / missing / empty type ⇒ NULL-only
+  it("unknown, missing, and empty types default to NULL-only", () => {
+    expect(
+      buildFilterWhere({ n: { values: ["(Blanks)"] } }, "postgres"),
+    ).toBe(`"n" IS NULL`);
+    expect(
+      buildFilterWhere(
+        { n: { values: ["(Blanks)"] } }, "postgres", { columnTypes: {} },
+      ),
+    ).toBe(`"n" IS NULL`);
+    expect(
+      buildFilterWhere(
+        { n: { values: ["(Blanks)"] } },
+        "postgres",
+        { columnTypes: { n: "" } },
+      ),
+    ).toBe(`"n" IS NULL`);
+  });
+
+  // Case 18 — edge (dialect capability): string-type family coverage
+  it("string-type detection covers all dialects' families", () => {
+    const stringTypes = [
+      "char", "varchar", "character varying", "text", "TINYTEXT",
+      "MEDIUMTEXT", "LONGTEXT", "nvarchar(50)", "NCHAR", "enum('a','b')",
+      "set('x')", "citext", "cstring",
+    ];
+    for (const t of stringTypes) {
+      expect(
+        buildFilterWhere(
+          { c: { values: ["(Blanks)"] } },
+          "postgres",
+          { columnTypes: { c: t } },
+        ),
+      ).toBe(`("c" IS NULL OR "c" = '')`);
+    }
+    // false-positive probes stay NULL-only
+    for (const t of ["context_id", "textbook_code"]) {
+      expect(
+        buildFilterWhere(
+          { c: { values: ["(Blanks)"] } },
+          "postgres",
+          { columnTypes: { c: t } },
+        ),
+      ).toBe(`"c" IS NULL`);
+    }
   });
 });

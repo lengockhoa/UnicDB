@@ -1,6 +1,6 @@
 Command: handoff-fullstack
-Goal: Cycle V — SQL coloring everywhere + server-side filter/paging + MSSQL sort
+Goal: Cycle W — server-side sort wiring, DISTINCT filter values, deterministic paging
 Base: main
-Phase: done
-Cursor: cycle V complete — 6/6 tasks approved, pushed to main (efbd5c5)
-Next: release v1.6.5
+Phase: I3
+Cursor: P1-P3 done — plan reviewed (2 rounds, all findings applied), committed f0bc514; 4 tasks ready (wave 1: 001, 002, 003 parallel; wave 2: 004)
+Next: I3 wave 1 — create worktrees, spawn 3 feature-implementer agents in parallel

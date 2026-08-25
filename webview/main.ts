@@ -38,6 +38,7 @@ import {
   type CellValueChangedEvent,
   type CellDoubleClickedEvent,
   type CellStyle,
+  type ColumnState,
 } from "ag-grid-community";
 import type { GridApi } from "ag-grid-community";
 import {
@@ -176,7 +177,34 @@ type WebviewMsg =
   | SaveEditsMsg
   | RetryFailedRowsMsg
   | RequeryMsg
+  | RequestDistinctValuesMsg
   | ReadyMsg;
+
+// ---- TASK-003: distinct-value round trip (host → webview mirror) ----------
+
+/** Host reply carrying a column's DISTINCT values. Additive: an older bundle
+ *  ignores the unknown `type`. Mirrored structurally here — a `../src/...`
+ *  import would add a third TS6059 rootDir error to the per-file tsc gate. */
+interface DistinctValuesMsg {
+  type: "distinctValues";
+  /** Statement index the values belong to. */
+  index: number;
+  /** Field name. */
+  column: string;
+  /** Raw DB values, may contain null. */
+  values: unknown[];
+  /** true ⇒ more values exist than were returned. */
+  truncated: boolean;
+  /** present ⇒ values is empty, keep the loaded-row fallback. */
+  error?: string;
+}
+
+/** Webview → host: ask for a column's DISTINCT values (TASK-004 handles). */
+type RequestDistinctValuesMsg = {
+  type: "requestDistinctValues";
+  index: number;
+  column: string;
+};
 
 // ---- Row-marker sentinels (cycle T / TASK-002) -----------------------------
 // Add Row / Delete Row use a dedicated marker colIndex so they never collide
@@ -243,6 +271,28 @@ let colFilterActive = false;
  *  filter changes collapse into one post (the debounce window). */
 let filterRequeryTimer: ReturnType<typeof setTimeout> | null = null;
 const FILTER_REQUERY_DEBOUNCE_MS = 150;
+/** TASK-003 — DISTINCT-value cache, keyed by `(statement index, column)`.
+ *  Holds the raw DB values the host returned so (a) the set filter can list
+ *  values beyond the loaded window and (b) buildServerFilterModel can attach
+ *  `typed[]` for values no loaded row carries. Cleared whenever `render()`
+ *  replaces the statement (a cached list from the previous statement at the
+ *  same index is wrong data, not stale-but-harmless). */
+const distinctByColumn = new Map<string, unknown[]>();
+/** TASK-003 — identity token of the statement the cache was filled for.
+ *  `distinctValues` replies carrying a token other than the current one are
+ *  dropped (stale in-flight reply for a replaced statement). */
+let distinctStatementToken = 0;
+/** TASK-003 — bumped on every state message whose active statement identity
+ *  changed; names the cache generation. */
+let statementGeneration = 0;
+/** TASK-003 — true while applying HOST-driven column state (sort restore).
+ *  onSortChanged fires for programmatic applyColumnState too; without this
+ *  guard a host state restore would post a requery → re-render → restore →
+ *  post loop. Set immediately before applyColumnState, cleared in finally. */
+let suppressSortRequery = false;
+/** TASK-003 — last statement identity string the DISTINCT cache was filled
+ *  for; a change on a state message invalidates the cache. */
+let lastStatementIdentity = "none";
 /** Local edit state — pure-logic dirty map. Cleared on tab switch / new query.
  *  TASK-503 will read `editState.snapshot()` to build the save payload. */
 let editState = new EditState();
@@ -1197,8 +1247,42 @@ class SetFilterComponent {
 
   init(params: SetFilterParams): void {
     this.params = params;
+    // TASK-003 — AG Grid v36 Community exposes no popup-open hook on
+    // IFilterComp (init / afterGuiDetached only), so the DISTINCT request
+    // fires from init: the component is created lazily on first popup open
+    // (or first setFilterModel), which is the same instant the user first
+    // sees the list. requestDistinctValues is cached per (index, column),
+    // so re-opens never re-ask the host (task case 9).
+    const colId = this.readColumnId();
+    if (colId) requestDistinctValues(colId);
     this.recomputeEntries();
     this.applyCheckedFromModel();
+    this.render();
+    setFilterInstances.add(this);
+  }
+
+  /** TASK-003 — column this filter is mounted on, from the AG Grid params.
+   *  Used both to key the DISTINCT request and to target refreshes. */
+  private readColumnId(): string | null {
+    const p = this.params as unknown as {
+      column?: { getColId?: () => string };
+      colDef?: { field?: string };
+    } | null;
+    if (p?.column && typeof p.column.getColId === "function") {
+      return p.column.getColId();
+    }
+    return p?.colDef?.field ?? null;
+  }
+
+  /** TASK-003 — registry seam: distinct data for this column arrived. */
+  getColumnId(): string | null {
+    return this.readColumnId();
+  }
+
+  /** TASK-003 — re-derive entries (distinct cache first, loaded rows
+   *  fallback) and re-render the list without touching the model. */
+  refreshEntries(): void {
+    this.recomputeEntries();
     this.render();
   }
 
@@ -1247,6 +1331,7 @@ class SetFilterComponent {
     this.render();
   }
   destroy(): void {
+    setFilterInstances.delete(this);
     this.params = null;
   }
 
@@ -1257,10 +1342,19 @@ class SetFilterComponent {
     /* no-op */
   }
 
-  /** Recompute entries from currently-loaded rows. Called on init + setModel. */
+  /** Recompute entries. TASK-003: prefers the host's DISTINCT values (typed,
+   *  covers rows beyond the loaded window) and falls back to scanning loaded
+   *  rows while no reply has arrived (or on host error). Called on init +
+   *  setModel + refreshEntries. */
   private recomputeEntries(): void {
     if (!this.params) {
       this.entries = [];
+      return;
+    }
+    const colId = this.readColumnId();
+    const distinct = colId ? distinctByColumn.get(`${activeTab}::${colId}`) : undefined;
+    if (distinct) {
+      this.entries = buildSetFilterEntries(distinct);
       return;
     }
     const values: unknown[] = [];
@@ -1734,6 +1828,19 @@ function renderGrid(): void {
         // rapid checkbox toggles collapse into one requery).
         scheduleFilterRequery();
       },
+      // TASK-003 — header-click sort goes to the DATABASE, not the client.
+      // Fires for UI clicks AND programmatic applyColumnState; the
+      // suppressSortRequery guard (set by the host-driven restore seam)
+      // keeps the programmatic path from re-posting. Reuses
+      // postFilterRequery's payload shape so sort + filter + paging compose
+      // instead of racing — the orderBy string replaces the requery-bar
+      // text for this post only.
+      onSortChanged: () => {
+        if (suppressSortRequery) return;
+        if (!gridApi) return;
+        const orderBy = orderByFromColumnState(gridApi);
+        postFilterRequeryWithOrder(orderBy);
+      },
       // TASK-004 — double-click value viewer for read-only cells. Editable
       // cells keep AG Grid's default double-click-to-edit; the handler
       // defers one tick and only opens the overlay when NO editor started.
@@ -1989,6 +2096,9 @@ function buildServerFilterModel(): ServerFilterModel | undefined {
     const values = m?.values;
     if (!Array.isArray(values) || values.length === 0) continue;
     const specIndex = specs.findIndex((s) => s.field === field);
+    // TASK-003 — prefer the host's DISTINCT cache: it holds typed values for
+    // rows beyond the loaded window (gap 3). Loaded rows remain the fallback.
+    const distinct = distinctByColumn.get(`${activeTab}::${field}`);
     const typed: unknown[] = [];
     let allResolved = true;
     for (const display of values) {
@@ -1997,7 +2107,17 @@ function buildServerFilterModel(): ServerFilterModel | undefined {
           ? SET_FILTER_BLANKS_KEY
           : String(display).toLowerCase();
       let raw: unknown = RAW_NOT_FOUND;
-      if (specIndex >= 0) {
+      if (distinct) {
+        for (const v of distinct) {
+          const blank = v === null || v === undefined || v === "";
+          const rowKey = blank ? SET_FILTER_BLANKS_KEY : String(v).toLowerCase();
+          if (rowKey === key) {
+            raw = v;
+            break;
+          }
+        }
+      }
+      if (raw === RAW_NOT_FOUND && specIndex >= 0) {
         for (const row of rows) {
           const v = row[specIndex];
           const blank = v === null || v === undefined || v === "";
@@ -2020,6 +2140,60 @@ function buildServerFilterModel(): ServerFilterModel | undefined {
   return anyActive ? out : undefined;
 }
 
+/** TASK-003 — bare SQL identifier per the host's parseOrderBy grammar.
+ *  Matching colIds pass through UNQUOTED (byte-identical to cycle V);
+ *  anything else (spaces, non-ASCII, digits-first, dots…) is quoted per
+ *  dialect before it enters the orderBy string — the host rejects raw
+ *  non-bare identifiers outright, which would be a user-visible regression
+ *  versus today's client-side sort. */
+const BARE_IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_$]*$/;
+
+/** SQL dialect parsed from the state header's driver token. `unknown` is the
+ *  pre-parse default; quoting falls back to postgres double-quoting (the
+ *  host's null-dialect composition) on unknown/no-connection headers. */
+type SqlDialect = "postgres" | "mysql" | "mssql" | "unknown";
+
+/** Parse the driver out of the state header the host builds as
+ *  `Run at <ISO> — <driver>@<host>/<db>` (or `… — no connection`). */
+function detectDialectFromHeader(header: string): SqlDialect {
+  if (/postgres/i.test(header)) return "postgres";
+  if (/mysql/i.test(header)) return "mysql";
+  if (/mssql/i.test(header)) return "mssql";
+  return "unknown";
+}
+
+/** Quote a colId for the dialect when it is not a bare identifier. Embedded
+ *  quote characters are doubled: postgres `"First ""Name"""` · mysql
+ *  `` `First Name` `` · mssql `[First Name]`. Unknown dialect → postgres. */
+function quoteColIdIfNeeded(colId: string, dialect: SqlDialect): string {
+  if (BARE_IDENTIFIER_RE.test(colId)) return colId;
+  const d = dialect === "mysql" || dialect === "mssql" ? dialect : "postgres";
+  if (d === "mysql") {
+    return "`" + colId.replace(/`/g, "``") + "`";
+  }
+  if (d === "mssql") {
+    return "[" + colId.replace(/]/g, "]]") + "]";
+  }
+  return '"' + colId.replace(/"/g, '""') + '"';
+}
+
+/** TASK-003 — build the orderBy string from the grid's column state:
+ *  keep entries with a non-null `sort`, order by `sortIndex ?? 0` (NOT colId
+ *  order — getColumnState returns column order, not sort priority), and map
+ *  each to `` `${quoteColIdIfNeeded(colId)} ${sort.toUpperCase()}` `` joined
+ *  with ", ". Empty string means "no ORDER BY". */
+function orderByFromColumnState(api: GridApi): string {
+  const dialect = detectDialectFromHeader(headerText);
+  const terms = api
+    .getColumnState()
+    .filter((c) => c.sort !== null && c.sort !== undefined)
+    .sort((a, b) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0))
+    .map(
+      (c) => `${quoteColIdIfNeeded(c.colId, dialect)} ${(c.sort as string).toUpperCase()}`,
+    );
+  return terms.join(", ");
+}
+
 /** Post a server-side requery carrying the current grid filter model.
  *  `opts.offset` present ⇒ paged ("Load More"); omitted ⇒ fresh page 0. */
 function postFilterRequery(opts: { offset?: number } = {}): void {
@@ -2037,6 +2211,60 @@ function postFilterRequery(opts: { offset?: number } = {}): void {
       ? { offset: opts.offset, limit: 500, append: true }
       : {}),
   });
+}
+
+/** TASK-003 — sort variant of postFilterRequery: same payload shape, but the
+ *  orderBy string comes from the grid's column state (which may be "" when
+ *  the user cleared the sort) instead of the requery-bar input. `filters`
+ *  still composes, `append` is never set — a sort is always a fresh page 0. */
+function postFilterRequeryWithOrder(orderBy: string): void {
+  if (!gridApi) return;
+  const filters = buildServerFilterModel();
+  const where = dom?.requeryWhere.value ?? "";
+  postToHost({
+    type: "requery",
+    index: activeTab,
+    where,
+    orderBy,
+    filters,
+  });
+}
+
+/** TASK-003 — ask the host for a column's DISTINCT values. Skipped when the
+ *  cache already holds an entry for `(activeTab, column)` (the popup may be
+ *  re-opened without the data changing). */
+function requestDistinctValues(column: string): void {
+  const key = `${activeTab}::${column}`;
+  if (distinctByColumn.has(key)) return;
+  postToHost({ type: "requestDistinctValues", index: activeTab, column });
+}
+
+/** TASK-003 — handle a host distinctValues reply. Stores the values in the
+ *  cache (keyed by the reply's index+column, generation-checked) and nudges
+ *  any live SetFilterComponent so its list picks them up. Replies carrying
+ *  `error` (or a stale generation) leave the loaded-row fallback in place. */
+function handleDistinctValues(msg: DistinctValuesMsg): void {
+  if (msg.error) return;
+  if (msg.index !== activeTab) return;
+  if (distinctStatementToken !== statementGeneration) return;
+  distinctByColumn.set(`${msg.index}::${msg.column}`, msg.values ?? []);
+  // Refresh any mounted set-filter GUI for this column so the new values
+  // appear without a reopen. AG Grid exposes no per-filter registry; walk
+  // the live DOM for our component roots and let each instance recompute.
+  refreshSetFilterGuis(msg.column);
+}
+
+/** Notify mounted SetFilterComponent GUIs that distinct data arrived. The
+ *  component registers itself here on init (see SetFilterComponent.init). */
+const setFilterInstances = new Set<{
+  getColumnId(): string | null;
+  refreshEntries(): void;
+}>();
+
+function refreshSetFilterGuis(column: string): void {
+  for (const inst of setFilterInstances) {
+    if (inst.getColumnId() === column) inst.refreshEntries();
+  }
 }
 
 /** Debounced wrapper — rapid filter changes collapse into one requery. */
@@ -3034,6 +3262,20 @@ window.addEventListener("message", (ev: MessageEvent) => {
     // Host returned from loadMore → clear in-flight flag.
     loadMoreInFlight = false;
     if (activeTab >= results.length) activeTab = Math.max(0, results.length - 1);
+    // TASK-003 — statement identity changed ⇒ the DISTINCT cache is wrong
+    // data for the new statement (same index, different result). Bump the
+    // generation: in-flight replies for the old statement are dropped by
+    // handleDistinctValues' token check.
+    const nextStatement = results[activeTab] ?? null;
+    const identity = nextStatement
+      ? `${nextStatement.index}|${nextStatement.sql}|${nextStatement.durationMs}`
+      : "none";
+    if (identity !== lastStatementIdentity) {
+      lastStatementIdentity = identity;
+      statementGeneration++;
+      distinctStatementToken = statementGeneration;
+      distinctByColumn.clear();
+    }
     render();
   } else if (msg.type === "busy") {
     busy = msg.busy;
@@ -3045,6 +3287,13 @@ window.addEventListener("message", (ev: MessageEvent) => {
     transactionOpen = msg.open;
     render();
     updateFooterNow();
+  } else if (
+    (msg as { type?: string }).type === "distinctValues"
+  ) {
+    // TASK-003 — host reply with the column's DISTINCT values. Mirrored
+    // structurally (DistinctValuesMsg above), so no union widening of
+    // HostMsg is needed for an additive message type.
+    handleDistinctValues(msg as unknown as DistinctValuesMsg);
   }
 });
 
@@ -3100,6 +3349,25 @@ function debugSetSpecs(specs: readonly ColumnSpec[]): void {
     return currentSpecs;
   },
   debugSetSpecs,
+  /** TASK-003 — host-driven column-state restore (sort replay after a
+   *  requery). Guarded by suppressSortRequery so onSortChanged, which AG
+   *  Grid also fires for programmatic applies, does not re-post. Tests use
+   *  this seam to drive the guard path directly (task case 6). */
+  applyHostColumnState: (state: ColumnState[]) => {
+    if (!gridApi) return;
+    // AG Grid v36 dispatches sortChanged asynchronously (event queue), so
+    // clearing in a finally would race the handler. Clear on the next macrotask;
+    // a real user click can never land inside that window (it needs another
+    // event-loop turn after the timeout).
+    suppressSortRequery = true;
+    try {
+      gridApi.applyColumnState({ state, defaultState: { sort: null } });
+    } finally {
+      setTimeout(() => {
+        suppressSortRequery = false;
+      }, 0);
+    }
+  },
   /** TASK-008 — unified undo/redo stack handle for tests. */
   get undoStack(): UndoStack {
     return undoStack;

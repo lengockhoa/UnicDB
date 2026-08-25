@@ -75,6 +75,35 @@ function typedLiteral(v: unknown, dialect: Dialect): string {
 }
 
 /**
+ * Options for `buildFilterWhere`. `columnTypes` maps a column name to its
+ * DECLARED DB type (e.g. `ColumnInfo.dataType`: "varchar", "int4",
+ * "nvarchar(50)"). A string-typed column's `(Blanks)` predicate also matches
+ * `''` (`col IS NULL OR col = ''`); absent / unknown / empty type ⇒ false ⇒
+ * bare `col IS NULL` (cycle-V behaviour). The decision is static from the
+ * declared type — NEVER derived from sniffing loaded row values (PLAN §3.3:
+ * row-sniffing is page-dependent and inert for an all-NULL varchar window).
+ */
+export interface FilterWhereOptions {
+  columnTypes?: Record<string, string>;
+}
+
+/** True when a declared DB type is in the string family, so `(Blanks)` should
+ *  also match `''`. Normalized via trim().toLowerCase(); matches by bounded
+ *  prefix / exact-name families so `context_id` and `textbook_code` stay
+ *  false. Unknown ⇒ false — the failure mode is "fix did not fire", never a
+ *  type error against an integer/date column. */
+function isStringColumnType(declared: string | undefined): boolean {
+  if (!declared) return false;
+  const t = declared.trim().toLowerCase();
+  if (t.length === 0) return false;
+  if (/^(char|varchar|nchar|nvarchar|character varying|character|enum|set)\b/.test(t)) return true;
+  if (/^(char|varchar|nchar|nvarchar|character varying|character|enum|set)/.test(t)) return true;
+  if (t === "text" || t === "tinytext" || t === "mediumtext" || t === "longtext" || t === "ntext") return true;
+  if (t === "citext" || t === "cstring") return true;
+  return false;
+}
+
+/**
  * Build the WHERE clause for an AG Grid set-filter model.
  *
  *   buildFilterWhere({ name: { values: ["a","b"] } }, "postgres")
@@ -97,6 +126,7 @@ function typedLiteral(v: unknown, dialect: Dialect): string {
 export function buildFilterWhere(
   filters: ColumnFilterModel,
   dialect: Dialect,
+  options?: FilterWhereOptions,
 ): string {
   const predicates: string[] = [];
   for (const [field, model] of Object.entries(filters)) {
@@ -106,6 +136,7 @@ export function buildFilterWhere(
     const useTyped = Array.isArray(typed) && typed.length === values.length;
 
     const quoted = quoteIdent(field, dialect);
+    const stringTyped = isStringColumnType(options?.columnTypes?.[field]);
     let hasNull = false;
     const inList: string[] = [];
     values.forEach((display, i) => {
@@ -121,6 +152,7 @@ export function buildFilterWhere(
 
     const parts: string[] = [];
     if (hasNull) parts.push(`${quoted} IS NULL`);
+    if (hasNull && stringTyped) parts.push(`${quoted} = ''`);
     if (inList.length > 0) parts.push(`${quoted} IN (${inList.join(", ")})`);
     if (parts.length === 0) continue;
 
@@ -179,6 +211,227 @@ export function buildPagedQuery(
       ? ` OFFSET ${offset} ROWS FETCH NEXT ${limit} ROWS ONLY`
       : ` LIMIT ${limit} OFFSET ${offset}`;
   return `SELECT * FROM (${inner}) vsdb_page${whereClause}${orderClause}${pageClause}`;
+}
+
+/**
+ * A single ORDER BY term as parsed by `parseOrderBy`. `column` is the
+ * UNQUOTED logical name (delimiters already stripped, escapes un-doubled) —
+ * exactly what `quoteIdent` expects, so a raw user identifier never reaches
+ * SQL unquoted.
+ */
+export interface OrderByTerm {
+  column: string;
+  direction: "ASC" | "DESC";
+  nulls?: "FIRST" | "LAST";
+}
+
+export type ParseOrderByResult =
+  | { ok: true; terms: OrderByTerm[] }
+  | { ok: false; error: string };
+
+/** Bare identifier charset — the same set `SIMPLE_ORDER_BY_RE` accepted in
+ *  cycle V, so today's accepted inputs are a strict subset of this parser's. */
+const BARE_IDENT_RE = /^[A-Za-z_][A-Za-z0-9_$]*$/;
+
+/** Per-dialect quoted-identifier unquote: strip the matching delimiters and
+ *  un-double the embedded escape. Returns the logical name, or null when the
+ *  token is not quoted in THIS style (or the quotes are unbalanced). */
+function unquoteIdent(token: string, style: "pg" | "backtick" | "bracket"): string | null {
+  const [open, close] =
+    style === "pg" ? ['"', '"'] : style === "backtick" ? ["`", "`"] : ["[", "]"];
+  if (token.length < 2 || !token.startsWith(open) || !token.endsWith(close)) return null;
+  // Guard: the trailing delimiter must not itself be an escaped one.
+  if (token.length >= 2 * open.length + close.length + 0) {
+    // For pg/mysql the escape is the doubled delimiter: a token like `"a""`
+    // would end with the delimiter but its inner remainder ends with an
+    // escape — treat as unbalanced below via the scan.
+  }
+  let inner = "";
+  let i = open.length;
+  while (i < token.length) {
+    if (token.startsWith(token[i] === close ? close : "", i) && token[i] === close) {
+      // possible close or doubled escape
+      if (token.startsWith(close + close, i)) {
+        inner += close;
+        i += close.length * 2;
+        continue;
+      }
+      // real close — must be the last char
+      if (i === token.length - close.length) return inner;
+      return null;
+    }
+    inner += token[i];
+    i += 1;
+  }
+  return null;
+}
+
+/** Reject any logical identifier that quoting cannot make safe (mirrors
+ *  `isSafeIdent` in saveStatements): empty or embedded control characters. */
+function isSafeLogicalIdent(name: string): boolean {
+  return name.length > 0 && !/[\x00-\x1f]/.test(name);
+}
+
+/**
+ * Parse a multi-term ORDER BY string into typed terms.
+ *
+ * Accepted column forms (exactly two — nothing else):
+ *  1. Bare `[A-Za-z_][A-Za-z0-9_$]*`.
+ *  2. Already quoted in the ACTIVE dialect's style (`"…"` pg, `` `…` `` mysql,
+ *     `[…]` mssql); delimiters stripped and doubled escapes un-doubled into a
+ *     logical name. When `dialect` is omitted all three styles are accepted
+ *     (pure-builder use); a mismatched live style is NOT unquoted — it only
+ *     passes as a bare token if it matches the bare charset (which delimiters
+ *     never do), otherwise it is rejected with the standard error.
+ *
+ * Grammar per term: `identifier [ASC|DESC] [NULLS FIRST|NULLS LAST]`.
+ * Function calls, parentheses, dotted qualifiers, ordinals and `*` are all
+ * rejected. Empty / whitespace-only input is `{ ok: true, terms: [] }` — the
+ * normal state of the requery bar, meaning "no ORDER BY clause".
+ *
+ * `NULLS` under mysql/mssql is rejected (`{ ok: false }` naming the clause):
+ * those dialects have no NULLS syntax and this cycle does not emulate it.
+ */
+export function parseOrderBy(orderBy: string, dialect?: Dialect): ParseOrderByResult {
+  const trimmed = orderBy.trim();
+  if (trimmed.length === 0) return { ok: true, terms: [] };
+  const rawTerms = trimmed.split(",");
+  const terms: OrderByTerm[] = [];
+  for (const raw of rawTerms) {
+    const text = raw.trim();
+    if (text.length === 0) {
+      return { ok: false, error: "ORDER BY contains an empty term." };
+    }
+    // Split the column part from the trailing ASC/DESC/NULLS keywords. The
+    // column part may be quoted (and therefore contain spaces), so the
+    // keyword split must respect quotes: scan for the LAST run of keywords.
+    const parsed = splitTermKeywords(text);
+    if (parsed === null) {
+      return { ok: false, error: `"${text}" is not a plain column name with optional ASC/DESC/NULLS — expressions are not supported in ORDER BY.` };
+    }
+    let { column, direction, nulls } = parsed;
+    // Resolve the column token: quoted-in-active-style first, then bare.
+    const logical = resolveColumnToken(column, dialect);
+    if (logical === null) {
+      return { ok: false, error: `"${column}" is not a plain column name (or a correctly quoted identifier) usable in ORDER BY.` };
+    }
+    if (nulls && dialect && dialect !== "postgres") {
+      return { ok: false, error: `NULLS ${nulls} is not supported by the ${dialect} dialect; only PostgreSQL renders NULLS FIRST/LAST natively.` };
+    }
+    terms.push({ column: logical, direction, ...(nulls ? { nulls } : {}) });
+  }
+  return { ok: true, terms };
+}
+
+/** Split `ident[ ASC|DESC][ NULLS FIRST|NULLS LAST]` respecting quoted identifiers.
+ *  Returns null when the keyword section is malformed or empty. */
+function splitTermKeywords(text: string): { column: string; direction: "ASC" | "DESC"; nulls?: "FIRST" | "LAST" } | null {
+  // Find where the identifier ends: scan right while the char is a bare
+  // identifier char OR we are inside a quoted section (quotes may contain
+  // spaces and escaped delimiters). The first whitespace AFTER the identifier
+  // starts the keyword section — but a bare identifier never contains a
+  // space, so the split point is simply the first whitespace that is not
+  // inside quotes.
+  const quotePairs: Array<[string, string]> = [['"', '"'], ["`", "`"], ["[", "]"]];
+  let identEnd = text.length;
+  let i = 0;
+  while (i < text.length) {
+    const pair = quotePairs.find(([o]) => text[i] === o);
+    if (pair) {
+      const [, c] = pair;
+      let j = i + 1;
+      while (j < text.length) {
+        if (text[j] === c) {
+          if (j + 1 < text.length && text[j + 1] === c) { j += 2; continue; }
+          break;
+        }
+        j += 1;
+      }
+      if (j >= text.length) return null; // unterminated quote
+      i = j + 1;
+      continue;
+    }
+    if (/\s/.test(text[i])) { identEnd = i; break; }
+    i += 1;
+  }
+  const column = text.slice(0, identEnd).trim();
+  const rest = text.slice(identEnd).trim();
+  if (column.length === 0) return null;
+  if (rest.length === 0) return { column, direction: "ASC" };
+  const m = /^(ASC|DESC)?\s*(?:(NULLS)\s+(FIRST|LAST))?$/i.exec(rest);
+  if (!m) return null;
+  const direction = (m[1] ? m[1].toUpperCase() : "ASC") as "ASC" | "DESC";
+  const nulls = m[3] ? (m[3].toUpperCase() as "FIRST" | "LAST") : undefined;
+  return { column, direction, ...(nulls ? { nulls } : {}) };
+}
+
+/** Resolve a column token to its logical (unquoted) name, or null when it is
+ *  not accepted. Bare charset first; then the active dialect's quote style
+ *  (or all three when no dialect is supplied). */
+function resolveColumnToken(token: string, dialect?: Dialect): string | null {
+  if (BARE_IDENT_RE.test(token)) return token;
+  const styles: Array<"pg" | "backtick" | "bracket"> = dialect
+    ? dialect === "postgres"
+      ? ["pg"]
+      : dialect === "mysql"
+        ? ["backtick"]
+        : ["bracket"]
+    : ["pg", "backtick", "bracket"];
+  for (const s of styles) {
+    const logical = unquoteIdent(token, s);
+    if (logical !== null && isSafeLogicalIdent(logical)) return logical;
+  }
+  return null;
+}
+
+/**
+ * Render parsed terms as a dialect-quoted ORDER BY clause (without the
+ * `ORDER BY` keyword). Every identifier goes through `quoteIdent` — quoted
+ * input is canonicalized, never passed through. `NULLS FIRST|LAST` renders
+ * natively (postgres); parseOrderBy already rejected `nulls` under
+ * mysql/mssql, so this branch is postgres-only in practice.
+ */
+export function buildOrderByClause(terms: OrderByTerm[], dialect: Dialect): string {
+  return terms
+    .map((t) => {
+      const ident = quoteIdent(t.column, dialect);
+      const nulls = t.nulls ? ` NULLS ${t.nulls}` : "";
+      return `${ident} ${t.direction}${nulls}`;
+    })
+    .join(", ");
+}
+
+/**
+ * `buildPagedQuery` over parsed ORDER BY terms plus PK tiebreakers (PLAN §3.2).
+ *
+ * Every tiebreaker column NOT already present in `terms` (exact, case-
+ * sensitive identifier comparison — we always emit quoted, so `"Id"` and
+ * `"id"` are genuinely different columns) is appended `ASC` in its declared
+ * PK order. With all PK components trailing the user terms, ordering is total
+ * and OFFSET/FETCH pages are disjoint and gap-free. `tiebreakers: []` (no
+ * usable full PK) keeps the output byte-identical to `buildPagedQuery` — the
+ * UI makes no gap-free promise then.
+ */
+export function buildPagedQueryTerms(
+  sql: string,
+  where: string,
+  terms: OrderByTerm[],
+  offset: number,
+  limit: number,
+  dialect: Dialect,
+  tiebreakers: string[],
+): string {
+  const existing = new Set(terms.map((t) => t.column));
+  const all = [...terms];
+  for (const pk of tiebreakers) {
+    if (!existing.has(pk)) {
+      all.push({ column: pk, direction: "ASC" });
+      existing.add(pk);
+    }
+  }
+  const orderBy =
+    all.length > 0 ? buildOrderByClause(all, dialect) : "";
+  return buildPagedQuery(sql, where, orderBy, offset, limit, dialect);
 }
 
 /**

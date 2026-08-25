@@ -8,7 +8,7 @@ AG Grid header-click sort wired to the server. 4 tasks, 2 waves.
 | Task | Title | Status | Executor | Reviewer |
 |------|-------|--------|----------|----------|
 | TASK-001 | ORDER BY parser + dialect clause builder + paging tiebreaker + `(Blanks)` opt-in | ready | - | - |
-| TASK-002 | `buildDistinctValuesQuery`: pure DISTINCT-values SQL builder | ready | - | - |
+| TASK-002 | `buildDistinctValuesQuery`: pure DISTINCT-values SQL builder | pending_review | - | - |
 | TASK-003 | Webview: server-side sort on header click + distinct-value set filter | ready | - | - |
 | TASK-004 | Host wiring: distinct-values round trip + ORDER BY parser + paging tiebreaker | ready | - | - |
 

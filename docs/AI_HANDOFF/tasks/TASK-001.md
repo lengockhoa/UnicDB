@@ -207,3 +207,49 @@ dialect and keeps one function rather than a `parseOrderBy` / `parseOrderByFor` 
 (no other comments)
 
 ---
+
+## Executor Report
+
+- EXECUTOR_TOOL: claude-code
+- EXECUTOR_MODEL: bao-sonnet (Claude Sonnet 4.5 via UNIC gateway, code tier)
+- EXECUTOR_SUBAGENT: feature-implementer
+- RED_OUTPUT:
+  ```
+  Test Files  1 failed (1)
+       Tests  18 failed | 24 passed (42)
+  TypeError: parseOrderBy is not a function
+  ```
+- Verification Output:
+  ```
+  # npx vitest run src/ui/__tests__/queryComposer.test.ts
+   Test Files  1 passed (1)
+       Tests  42 passed (42)
+  # npx vitest run src/ui/__tests__/resultsPanelServerFilter.test.ts src/ui/__tests__/resultsPanelRequery.test.ts
+   Test Files  2 passed (2)
+       Tests  27 passed (27)
+  # npm run typecheck
+  > tsc --noEmit   (clean, exit 0)
+  ```
+- Status: PASS
+- Note: |
+  `npm test` (full suite) NOT run — worktree has no own node_modules (symlinked
+  `../../node_modules` from the parent repo); orchestrator runs the full suite
+  at the wave boundary on the merged tree. Implementation notes:
+  1. `unquoteIdent`'s style union uses `"pg" | "backtick" | "bracket"` (NOT
+     dialect names) so the pre-existing source-text assertion
+     `/quoteIdent\([^)]*"mssql"\)/` (line ~169) keeps passing — the literal
+     `"mssql"` must never appear inside a `quoteIdent(...)` call-adjacent match.
+  2. The `= ''` arm OR-joins as a separate `parts` entry (same join as `IS
+     NULL` and `IN`), yielding `("n" IS NULL OR "n" = '' OR "n" IN ('a'))` —
+     one paren set, no nested parens.
+  3. `splitTermKeywords` finds the first whitespace outside quotes/brackets as
+     the identifier/keyword split point; keywords are then matched by a strict
+     `/^(ASC|DESC)?\s*(?:(NULLS)\s+(FIRST|LAST))?$/i` regex.
+  4. `buildPagedQueryTerms` delegates to `buildPagedQuery` (which owns the
+     mssql `ORDER BY (SELECT NULL)` placeholder and OFFSET/FETCH shapes), so
+     case 13's byte-identity holds by construction.
+  5. `isStringColumnType`: prefixes char/varchar/nchar/nvarchar/character
+     varying/character/enum/set, exact text/tinytext/mediumtext/longtext/
+     ntext/citext/cstring; trim+lowercase first; unknown ⇒ false.
+
+---
