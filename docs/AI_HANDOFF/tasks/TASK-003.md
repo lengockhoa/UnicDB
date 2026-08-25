@@ -1,52 +1,111 @@
-# TASK-003 -- Postgres sort query helper (getTableSortQuery)
+# TASK-003 — Webview SQL tokenizer + themed styles
 
 - Status: `ready`
 - Owner: `-`
 - Reviewer: `-`
-- Parent plan: `docs/AI_HANDOFF/PLAN.md` section 3.3
+- Parent plan: `docs/AI_HANDOFF/PLAN.md` §3 (Coloring, Layer 3)
 
 ## Goal
 
-Add a pure function `getTableSortQuery` to `postgres.ts` that wraps a SQL query with ORDER BY for server-side column sorting. The webview will compose the requery by putting column sort into the `orderBy` field of the existing `requery` message.
+Colorize SQL inside VSDB's own webviews, which no TextMate grammar or semantic-token
+provider can reach: the Results panel's Messages tab (`r.sql` rendered flat at
+`webview/main.ts:2758-2761`) and the AI chat's fenced ```` ```sql ```` block
+(`webview/aiChatPanelMain.ts:139`). Ship a dependency-free pure tokenizer that emits a
+`DocumentFragment` of `<span>`s, never an HTML string.
 
 ## Target Files
 
-- `src/adapters/postgres.ts` (existing) -- add exported pure function `getTableSortQuery(originalSql: string, whereFromBar: string, column: string, direction: "ASC"|"DESC"): string`
-- `src/adapters/__tests__/postgres.sortQuery.test.ts` (new) -- tests for sort query composition
+- `webview/sqlHighlight.ts` **(new)** — `tokenizeSql` + `highlightSql`. Pure, no imports
+  from `vscode`, `ag-grid-community`, or `src/`.
+- `webview/aiChatPanelMain.ts` — in `renderMarkdown` (line 134) the fenced-code branch
+  (line 139) currently returns an HTML string. Keep the string path for non-SQL langs, but
+  mark SQL blocks so the caller at line 262 (`div.innerHTML = markdown ? renderMarkdown(text) : …`)
+  can post-process: after assigning, query `code.vsdb-md-code-lang-sql` nodes and replace
+  each one's children with `highlightSql(node.textContent ?? "")`. Reading `textContent`
+  from an already-escaped node and writing back via a fragment keeps the existing
+  no-`innerHTML`-for-user-content contract intact.
+- `webview/main.ts` — `renderMessagesInto` (line 2744): replace
+  `sql.textContent = r.sql;` (line 2760) with `sql.appendChild(highlightSql(r.sql));`.
+  This is the only edit to this file in this task. **Wave-1 only** — TASK-005 edits the
+  same file in wave 2 and must re-read it.
+- `webview/styles.css` — add `.vsdb-sql-tok-*` rules keyed off `--vscode-*` theme
+  variables so colors track the user's theme.
+- `src/ui/__tests__/sqlHighlight.test.ts` **(new)** — cases 1-7.
+- `src/ui/__tests__/webviewSqlHighlight.test.ts` **(new)** — case 8 (bundle integration).
 
-## Test Cases (REQUIRED -- TDD)
+## Test Cases (REQUIRED — TDD)
 
-| # | Loai | Ten test | Expected | Pre-state / Fixture |
+| # | Loại | Tên test | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
-| 1 | unit | `getTableSortQuery basic sort` | `SELECT * FROM (SELECT 1) vsdb_sort ORDER BY "name" ASC` | originalSql=`"SELECT 1"`, column=`"name"`, direction=`"ASC"` |
-| 2 | unit | `getTableSortQuery with WHERE` | SQL contains both WHERE and ORDER BY | whereFromBar=`"age > 18"` |
-| 3 | unit | `getTableSortQuery DESC direction` | ORDER BY ... DESC | direction=`"DESC"` |
-| 4 | unit | `getTableSortQuery empty where` | No WHERE clause added | whereFromBar=`""` |
-| 5 | edge | `getTableSortQuery SQL injection in column name` | Column quoted as identifier | column=`"name; DROP TABLE users--"` |
-| 6 | edge | `getTableSortQuery empty originalSql` | Returns valid SQL (no crash) | originalSql=`""` |
-| 7 | regression | `getTableSortQuery preserves original SQL` | Original SQL appears in subquery | Any input |
+| 1 | unit (happy) | `tokenizes keywords, identifiers, numbers` | `tokenizeSql("SELECT 1 FROM t")` → kinds `["keyword","number","keyword","ident"]` (whitespace skipped or emitted as `ws`, asserted explicitly either way) | none |
+| 2 | unit (happy) | `string literal and line comment are single tokens` | `SELECT 'a b' -- c` → one `string` token with text `'a b'`, one `comment` token with text `-- c` | none |
+| 3 | unit (happy) | `highlightSql returns a fragment whose textContent round-trips` | `frag.textContent === input` for a 5-statement sample | verifies no character is dropped or duplicated |
+| 4 | edge (injection) | `hostile SQL never becomes live markup` | input `SELECT '<img src=x onerror=alert(1)>'` → `frag.querySelectorAll("img").length === 0`; `frag.textContent` contains the literal `<img` | jsdom |
+| 5 | edge (unterminated literal) | `unterminated string terminates and does not hang` | `SELECT 'abc` returns in < 50 ms; the tail is one `string` token `'abc` | asserted with an explicit elapsed-time bound |
+| 6 | edge (empty + whitespace-only) | `empty input yields an empty fragment` | `highlightSql("")` → `childNodes.length === 0`; `highlightSql("   ")` → `textContent === "   "` | boundary |
+| 7 | edge (dialect quoting) | `bracket and backtick identifiers are one ident token each` | `SELECT [a b], \`c d\` FROM t` → `[a b]` and `` `c d` `` each a single `ident` token | mssql/mysql quoting |
+| 8 | integration (bundle) | `Messages tab renders colorized SQL` | after a `state` message with `status:"error"`, `pre.vsdb-msg-sql` contains ≥ 1 `span.vsdb-sql-tok-keyword` and its `textContent` equals the original SQL | loads `dist/webview.js` in jsdom — mirror the skip-if-missing guard in `src/ui/__tests__/webviewSetFilter.test.ts:15-16` |
+
+Kinds: happy (1-3), security (4), malformed-input/hang (5), empty boundary (6),
+dialect-lexical (7), end-to-end wiring (8).
 
 ## Test Files
 
-- `src/adapters/__tests__/postgres.sortQuery.test.ts` (new) -- unit tests
+- `src/ui/__tests__/sqlHighlight.test.ts` — cases 1-7 (`// @vitest-environment jsdom`;
+  cases 1-2 are pure and need no DOM but keep one file for cohesion).
+- `src/ui/__tests__/webviewSqlHighlight.test.ts` **(new)** — case 8. Copy the bundle-load
+  harness from `src/ui/__tests__/webviewSetFilter.test.ts` (ResizeObserver / matchMedia
+  stubs, `acquireVsCodeApi` stub, skip when `dist/webview.js` is missing).
 
 ## Verification Commands
 
 ```bash
-npm test src/adapters/__tests__/postgres.sortQuery.test.ts
-npm test
 npm run typecheck
+npx tsc -p tsconfig.webview.json --noEmit
+npm run compile
+npx vitest run src/ui/__tests__/sqlHighlight.test.ts src/ui/__tests__/webviewSqlHighlight.test.ts
+npm test
 ```
+
+`npm run compile` MUST run before the vitest line — case 8 loads `dist/webview.js` and
+silently skips if it is stale or absent.
+
+Webview tsc gate — **snapshot diff, not "no new filename"**. `tsconfig.webview.json` has 61
+pre-existing errors across six files (mostly `TS2393`/`TS2451` shared-global-scope
+redeclarations, plus `TS2339`/`TS2304`/`TS2678` and others), and `webview/aiChatPanelMain.ts`
+(10 of them) is one of the files this task edits, so a filename-based check would pass no
+matter what this task breaks. Per PLAN.md §5, capture per-file counts before and after and
+require an empty diff:
+
+```bash
+npx tsc -p tsconfig.webview.json --noEmit 2>&1 \
+  | grep -oE '^[a-zA-Z0-9_/.-]+\.ts' | sort | uniq -c | sort -rn > /tmp/vsdb-webview-tsc-before.txt
+# ... make the edits ...
+npx tsc -p tsconfig.webview.json --noEmit 2>&1 \
+  | grep -oE '^[a-zA-Z0-9_/.-]+\.ts' | sort | uniq -c | sort -rn > /tmp/vsdb-webview-tsc-after.txt
+diff /tmp/vsdb-webview-tsc-before.txt /tmp/vsdb-webview-tsc-after.txt && echo "WEBVIEW TSC BASELINE UNCHANGED"
+```
+
+Note `webview/sqlHighlight.ts` is a **new** file: it must contribute **zero** errors, i.e.
+it must not appear in the after-snapshot at all. Do not fix the 61 baseline errors. Paste
+the diff result into the Executor Report.
 
 ## Acceptance Criteria
 
-- [ ] `getTableSortQuery` wraps SQL in subquery with `vsdb_sort` alias
-- [ ] ORDER BY uses quoted column identifier (injection-safe)
-- [ ] WHERE clause from requery bar is included when non-empty
-- [ ] Empty where produces no WHERE clause
-- [ ] Both ASC and DESC directions work
-- [ ] Empty/original SQL inputs handled without crash
-- [ ] `npm run typecheck` clean
+- [ ] `webview/sqlHighlight.ts` exists and uses no `innerHTML`. Gate (exits 0 on success;
+      bare `grep -c` exits 1 on zero matches and would fail a `set -e` script):
+      `! grep -q innerHTML webview/sqlHighlight.ts`
+- [ ] `webview/main.ts:2760`'s `sql.textContent = r.sql` is replaced by an `appendChild`
+      of the fragment; no other line in that file is changed by this task.
+- [ ] AI-chat SQL code blocks contain `span.vsdb-sql-tok-*` children after render.
+- [ ] `webview/styles.css` new rules reference only `var(--vscode-…)` colors — no hardcoded
+      hex values (so light/dark/high-contrast themes all work).
+- [ ] All 8 Test Cases PASS.
+- [ ] `npm run typecheck` clean; webview tsc snapshot diff empty ("WEBVIEW TSC BASELINE
+      UNCHANGED") and `webview/sqlHighlight.ts` absent from the after-snapshot;
+      `npm run compile` writes
+      all 7 bundles without error; `npm test` ≥ 1327 passed, 0 failed.
+- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
 
 ## Dependencies
 
@@ -54,91 +113,43 @@ npm run typecheck
 
 ## Interfaces
 
-- Consumes: (none -- pure SQL composition)
-- Produces: `getTableSortQuery(originalSql: string, whereFromBar: string, column: string, direction: "ASC"|"DESC"): string`
+- Consumes: (none) — the tokenizer is self-contained by design; it must not import from
+  `src/`, because `webview/aiChatPanelMain.ts` is bundled standalone by esbuild
+  (`esbuild.js` `aiChatPanelConfig`) and pulling in host code would bloat it.
+- Produces (exact signatures TASK-005 and future webview work may reuse):
+  ```ts
+  export type SqlTokenKind =
+    | "keyword" | "string" | "number" | "comment" | "ident" | "punct" | "ws";
+  export interface SqlToken { kind: SqlTokenKind; text: string; start: number; end: number; }
+  export function tokenizeSql(sql: string): SqlToken[];
+  export function highlightSql(sql: string): DocumentFragment;
+  ```
+  CSS class per token: `vsdb-sql-tok-<kind>`.
 
 ---
 
 ## Discussion
 
-(chua co comment)
+### 2026-08-25 · planner · bao-opus
 
-## Executor Report
+The AI-chat path is the delicate one. `renderMarkdown` escapes user text *first*
+(`escapeHtml` at `webview/aiChatPanelMain.ts:102`) and the file's security contract —
+spelled out in `src/ui/__tests__/aiChatPanelWebview.test.ts:1-13` — is that hostile agent
+output never reaches the page as live nodes. The post-process approach here reads
+`textContent` off an already-escaped `<code>` node and writes back a fragment built with
+`createElement`/`textContent`, so no new sink is introduced. Do **not** restructure
+`renderMarkdown` to emit token markup inside the HTML string; that would create one.
 
-EXECUTOR_TOOL: claude-code
-EXECUTOR_MODEL: bao-sonnet
-EXECUTOR_SUBAGENT: feature-implementer
+Case 5 exists because a hand-rolled lexer's classic failure is a `while` that never
+advances on an unterminated quote. Note `webview/main.ts` is also edited in wave 2 by
+TASK-005 — this task's edit is deliberately a one-line swap to keep the later merge trivial.
 
-RED_OUTPUT (step 1 — tests written first, run before any implementation):
+→ @executor: keep `tokenizeSql` dialect-agnostic (accept `"`, `` ` ``, and `[…]` quoting
+all at once). The webview does not know which driver is active at render time.
 
-```
- ❯ src/adapters/__tests__/postgres.sortQuery.test.ts  (7 tests | 7 failed) 3ms
-   ❯ src/adapters/__tests__/postgres.sortQuery.test.ts > getTableSortQuery > getTableSortQuery basic sort
-     → getTableSortQuery is not a function
-   ❯ src/adapters/__tests__/postgres.sortQuery.test.ts > getTableSortQuery > getTableSortQuery with WHERE
-     → getTableSortQuery is not a function
-   ❯ src/adapters/__tests__/postgres.sortQuery.test.ts > getTableSortQuery > getTableSortQuery DESC direction
-     → getTableSortQuery is not a function
-   ❯ src/adapters/__tests__/postgres.sortQuery.test.ts > getTableSortQuery > getTableSortQuery empty where
-     → getTableSortQuery is not a function
-   ❯ src/adapters/__tests__/postgres.sortQuery.test.ts > getTableSortQuery > getTableSortQuery SQL injection in column name
-     → getTableSortQuery is not a function
-   ❯ src/adapters/__tests__/postgres.sortQuery.test.ts > getTableSortQuery > getTableSortQuery empty originalSql
-     → getTableSortQuery is not a function
-   ❯ src/adapters/__tests__/postgres.sortQuery.test.ts > getTableSortQuery > getTableSortQuery preserves original SQL
-     → getTableSortQuery is not a function
+---
 
- Test Files  1 failed (1)
-      Tests  7 failed (7)
-   Start at  18:41:18
-   Duration  372ms (transform 72ms, setup 0ms, collect 85ms, tests 3ms, environment 0ms, prepare 127ms)
-
-EXIT_CODE=1
-```
-
-All 7 failures are `TypeError: getTableSortQuery is not a function` — the expected
-reason (export did not exist yet). After implementation, the same file went
-`1 passed (1) / 7 passed (7)`, exit 0.
-
-Verification Output:
-
-```
-$ npm run compile
-  dist/webview.js.map    3.9mb
-  dist/webview.css.map  36.7kb
-
-⚡ Done in 166ms
-esbuild: build complete
-EXIT_CODE=0
-
-$ npm test
- Test Files  86 passed | 1 skipped (87)
-      Tests  1266 passed | 2 skipped (1268)
-   Start at  18:42:07
-   Duration  12.26s (transform 3.54s, setup 8ms, collect 9.09s, tests 55.51s, environment 13.77s, prepare 5.76s)
-EXIT_CODE=0
-
-$ npm run typecheck
-> vsdb@1.6.3 typecheck
-> tsc --noEmit
-EXIT_CODE=0
-```
-
-Full suite: 1266 passed / 0 failed — matches the previous successful run of this
-task (1259 baseline + 7 new tests).
-
-Status: PASS
-Note: none. Implementation decisions: WHERE from the requery bar is appended as
-the OUTER query's WHERE (original SQL stays verbatim inside the subquery);
-`direction` is whitelist-normalized to ASC/DESC; column is emitted as one
-double-quoted identifier with embedded `"` doubled (Postgres identifier rule),
-which is what the injection edge case exercises. Empty `originalSql` composes
-without throwing (kept lenient per Test Case 6 — no trailing-`;` stripping,
-out of scope).
-
-
-## Reviewer Verdict (R1 — adapters/export group)
-VERDICT: APPROVED-WITH-MINOR
-REVIEWER_MODEL: bao-opus
-FINDINGS: no Critical/Important defects; minor notes only, non-blocking. Verification re-run green.
-SOURCE: R1 review round outcome recorded in RUN.md cursor (adapters/export group).
+<!--
+Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
+Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+-->

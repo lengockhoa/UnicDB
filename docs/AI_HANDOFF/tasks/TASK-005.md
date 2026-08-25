@@ -1,129 +1,247 @@
-# TASK-005 -- A19 failed-row retry affordance
+# TASK-005 — Server-side column filter + Load More paging (host + webview wiring)
 
 - Status: `ready`
 - Owner: `-`
 - Reviewer: `-`
-- Parent plan: `docs/AI_HANDOFF/PLAN.md` section 3.5
+- Parent plan: `docs/AI_HANDOFF/PLAN.md` §3 (Server-side filter + paging)
 
 ## Goal
 
-Add a "Retry failed rows" button in the save banner when a partial save failure occurs (some rows succeed, some fail). Clicking it resends only the failed rows' edits through the existing save pipeline.
+Push per-column filters down to the database and keep paging working while a filter is
+active. Today `colFilterActive` (`webview/main.ts:220`) hard-blocks `loadMore`
+(`webview/main.ts:1936-1941`), so a filter silently searches only the loaded window. Extend
+the existing `requery` message with optional `filters` / `offset` / `limit` / `append`,
+compose the SQL with TASK-004's builders, and dispatch from the grid's filter events.
 
 ## Target Files
 
-- `src/ui/messages.ts` (existing, 127 lines) -- add `retryFailedRows` message type to WebviewMessage union
-- `src/ui/resultsPanel.ts` (existing, 1054 lines) -- add `handleRetryFailedRows` method that receives row IDs + edits and runs them through the save pipeline
-- `webview/main.ts` (existing) -- add retry button rendering in save banner, collect errored rows' edits on click, post `retryFailedRows` message
+- `src/ui/messages.ts` — extend `RequeryMessage` (line 92) with four **optional** fields.
+  Optional is load-bearing: three existing call sites (`webview/main.ts:2216`, `:2473`,
+  `:2868`) must keep compiling and behaving identically.
+- `src/ui/resultsPanel.ts` — `handleRequery` (line 860): when `msg.filters` is present,
+  compose via `buildFilterWhere` + `buildPagedQuery` instead of `composeRequery`; when
+  `msg.append` is true, concatenate onto the existing `result.rows` rather than replacing.
+  Keep every existing guard: `closeStatementCursor` first (line 877), post
+  `status:"running"` before the run (lines 890-906), route through `this.transaction` when
+  open (line 912), `pickResult` (line 921), `runner.adopt` (line 942).
+- `webview/main.ts` — three edits: (a) mirror the message type at line 123; (b) in
+  `onFilterChanged` (line 1705) post a debounced server requery carrying
+  `gridApi.getFilterModel()`; (c) in `dispatchLoadMore` (line 1936) and `onBodyScroll`
+  (line 1956), when a server filter is active, post `requery` with
+  `offset = loadedRows, append: true` instead of returning early.
+- `src/ui/__tests__/resultsPanelServerFilter.test.ts` **(new)**
+- `src/ui/__tests__/webviewServerFilter.test.ts` **(new)**
 
-## Test Cases (REQUIRED -- TDD)
+`webview/styles.css` is NOT edited — reuse existing classes (TASK-003 owns that file).
 
-| # | Loai | Ten test | Expected | Pre-state / Fixture |
+## Test Cases (REQUIRED — TDD)
+
+| # | Loại | Tên test | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
-| 1 | bundle | `retry button appears when saveResult has rowErrors` | Button element exists in banner DOM | saveResult with rowErrors |
-| 2 | bundle | `retry button hidden when saveResult has no rowErrors` | Button not present | saveResult.ok=true, no rowErrors |
-| 3 | bundle | `clicking retry posts retryFailedRows message` | postToHost called with correct payload | Button clicked |
-| 4 | unit | `retry message contains only failed row IDs` | message.rowIds length matches rowErrors length | 3 successes, 2 failures |
-| 5 | edge | `retry with 0 failed rows` | No message posted (no-op) | rowErrors empty array |
-| 6 | edge | `retry edits come from editState for failed rows only` | Snapshot contains entries only for errored rowIds | editState with mixed clean/dirty |
+| 1 | unit (happy) | `requery with filters composes a server-side WHERE` | the SQL handed to `runner.runSql` contains `IN (` and the filtered column's quoted name | fake runner captures the SQL; `filters:{name:{values:["a"]}}` |
+| 2 | unit (happy) | `requery with offset+limit pages` | composed SQL contains `LIMIT 500 OFFSET 500` for a postgres driver | `offset:500, limit:500` |
+| 3 | unit (happy) | `append:true concatenates rows onto the existing result` | posted `state` message's `results[0].result.rows.length === 1000` | 500 rows already in `lastResults`, run returns 500 more |
+| 4 | edge (back-compat) | `requery without the new fields is byte-identical to today` | composed SQL `=== composeRequery(sql, where, orderBy)` | `{type:"requery",index:0,where:"",orderBy:""}` — the exact shape `webview/main.ts:2868` posts after a save |
+| 5 | edge (cursor lifecycle) | `previous batched cursor is closed before a filtered requery` | `batched.close()` called exactly once, before `runSql` | Postgres `pool.max=1`; a leaked cursor wedges the next query |
+| 6 | edge (concurrency) | `a stale in-flight requery never overwrites a newer one` | after requery A (slow) and B (fast) resolve out of order, `lastResults[0]` holds B's rows | resolve A after B |
+| 7 | edge (manual transaction) | `filtered requery routes through the open transaction` | `transaction.runQuery` called; `runner.runSql` NOT called | panel has an open `DbTransaction` |
+| 8 | edge (append + error) | `a failed append leaves the existing rows intact` | `runSql` rejects → posted state still has the original 500 rows and a `status:"error"` entry; no row loss | |
+| 9 | integration (webview) | `clearing every filter re-requeries unfiltered` | posted message has `filters` `{}` (or absent) and `append` falsy | drive `setFilterModel(null)` on the bundle |
+| 10 | integration (webview) | `Load More while a filter is active posts a requery, not a loadMore` | captured host message `type === "requery"` with `append:true` and `offset === 500`; no `{type:"loadMore"}` is posted | `dist/webview.js` in jsdom, 500 rows loaded, filter model set |
+| 11 | edge (debounce) | `rapid filter changes collapse into one requery` | 5 `onFilterChanged` events within the debounce window → exactly 1 posted `requery` | fake timers |
+| 12 | integration (webview, typed values) | `the posted filter model carries typed values beside display values` | for a filtered numeric column, the posted `filters[col].typed` has the **same length** as `.values` and holds raw `number`s (`typeof === "number"`), not strings | `dist/webview.js` in jsdom; rows loaded with a numeric column; select two values |
+| 13 | edge (typed passthrough) | `host emits unquoted numerics end-to-end` | `filters:{id:{values:["42"],typed:[42]}}` → the SQL captured at `runner.runSql` contains `IN (42)` and does **not** contain `IN ('42')` | host-side; pins that `handleRequery` forwards `typed` to `buildFilterWhere` untouched rather than re-`String()`-ing it |
+| 14 | edge (typed unavailable) | `a filtered value whose row is no longer loaded degrades to a string literal` | selection includes a display value with no matching loaded row → `typed` is omitted for that column (not padded with `undefined`), and the composed SQL quotes every value | guards TASK-004 case 19: the webview must drop `typed` wholesale rather than emit a length-mismatched array |
+| 15 | integration (sort call path) | `a simple ORDER BY from the requery bar is dialect-quoted via composeSortQuery` | driver `mssql`, `orderBy:"name DESC"` → the SQL captured at `runner.runSql` contains `ORDER BY [name] DESC`; driver `postgres`, same input → `ORDER BY "name" DESC` | host-side, `FakeWebview` harness. This is the **liveness** test for `composeSortQuery` and (once TASK-006 lands) for `mssql.getTableSortQuery` — without it those exports are dead code |
+| 16 | edge (complex ORDER BY passthrough) | `a non-simple ORDER BY is passed through verbatim, not mangled` | `orderBy:"a, b DESC"`, `orderBy:"lower(name)"`, `orderBy:"1"` → composed SQL is byte-identical to `composeRequery(sql, where, orderBy)`; no bracket/quote injection is attempted | the bar accepts free text; only a **single bare identifier + optional ASC/DESC** may be routed through `composeSortQuery`. Anything else must take today's path or the feature silently corrupts valid SQL |
+| 17 | edge (empty ORDER BY) | `an empty or whitespace-only ORDER BY adds no ORDER BY clause` | `orderBy:""` and `orderBy:"   "` → composed SQL contains no `ORDER BY`, byte-identical to today | boundary; the post-save auto-requery at `webview/main.ts:2868` sends `""` on every save |
+
+Kinds: happy (1-3), backward-compat (4), resource-lifecycle (5), concurrency (6),
+alternate-execution-path (7), failure-atomicity (8), state-reset (9), integration (10),
+timing (11), type-fidelity (12-13), partial-data degradation (14), live-call-path (15),
+passthrough-safety (16), empty boundary (17).
 
 ## Test Files
 
-- `src/ui/__tests__/webviewRetry.test.ts` (new) -- tests for retry message construction and button rendering
+- `src/ui/__tests__/resultsPanelServerFilter.test.ts` — cases 1-8, 13, 15-17. Reuse the
+  `FakeWebview` / `FakeWebviewPanel` + `vi.mock("vscode", …)` harness already written in
+  `src/ui/__tests__/resultsPanelRequery.test.ts:41-110`.
+- `src/ui/__tests__/webviewServerFilter.test.ts` — cases 9-12 and 14. Bundle harness copied from
+  `src/ui/__tests__/webviewSetFilter.test.ts` (skip-if-`dist/webview.js`-missing guard,
+  ResizeObserver + matchMedia stubs).
 
 ## Verification Commands
 
 ```bash
-npm test src/ui/__tests__/webviewRetry.test.ts
-npm test
 npm run typecheck
+npx tsc -p tsconfig.webview.json --noEmit
+npm run compile
+npx vitest run src/ui/__tests__/resultsPanelServerFilter.test.ts src/ui/__tests__/webviewServerFilter.test.ts src/ui/__tests__/resultsPanelRequery.test.ts src/ui/__tests__/webviewSetFilter.test.ts
+npm test
 ```
+
+The two existing requery/set-filter suites are in the list on purpose: this task changes
+the code they cover, and they are the regression tripwire.
+`npm run compile` must precede the vitest line (cases 9-12, 14 load `dist/webview.js`).
+
+Webview tsc gate — **snapshot diff, not "no new filename"**. `tsconfig.webview.json` has 61
+pre-existing errors across six files (mostly `TS2393`/`TS2451` shared-global-scope
+redeclarations, plus `TS2339`/`TS2304`/`TS2678` and others), and `webview/main.ts` (14 of them)
+is one of the files this task edits, so a filename-based check would pass no matter what
+this task breaks. Per PLAN.md §5, capture per-file counts before and after and require an
+empty diff:
+
+```bash
+npx tsc -p tsconfig.webview.json --noEmit 2>&1 \
+  | grep -oE '^[a-zA-Z0-9_/.-]+\.ts' | sort | uniq -c | sort -rn > /tmp/vsdb-webview-tsc-before.txt
+# ... make the edits ...
+npx tsc -p tsconfig.webview.json --noEmit 2>&1 \
+  | grep -oE '^[a-zA-Z0-9_/.-]+\.ts' | sort | uniq -c | sort -rn > /tmp/vsdb-webview-tsc-after.txt
+diff /tmp/vsdb-webview-tsc-before.txt /tmp/vsdb-webview-tsc-after.txt && echo "WEBVIEW TSC BASELINE UNCHANGED"
+```
+
+Paste the diff result into the Executor Report. Do not fix the baseline errors.
 
 ## Acceptance Criteria
 
-- [ ] "Retry failed rows" button appears in save banner when `rowErrors` is present
-- [ ] Button is hidden when there are no row errors
-- [ ] Clicking retry collects only the failed rows' dirty edits from editState
-- [ ] `retryFailedRows` message is posted with correct `rowIds` and `edits`
-- [ ] Host `handleRetryFailedRows` runs edits through the same save pipeline
-- [ ] After retry, successful rows clear dirty state; failed rows stay dirty
-- [ ] `npm run typecheck` clean
+- [ ] `RequeryMessage` has `filters?: ColumnFilterModel`, `offset?: number`,
+      `limit?: number`, `append?: boolean` — all optional; no existing call site edited to
+      satisfy the compiler.
+- [ ] `handleRequery` still closes the previous cursor, posts `running` first, honours an
+      open `DbTransaction`, and calls `runner.adopt` — verified by cases 5, 7 and by
+      `resultsPanelRequery.test.ts` staying green.
+- [ ] `colFilterActive` no longer causes a silent dead end: with a filter active, Load More
+      issues a paged requery (case 10).
+- [ ] The webview populates `filters[col].typed` from the raw loaded cell values whenever
+      every selected display value resolves to a loaded row, and **omits** `typed`
+      entirely otherwise — never a length-mismatched or `undefined`-padded array.
+      `handleRequery` forwards `typed` to `buildFilterWhere` unmodified.
+- [ ] `handleRequery` routes a **single bare identifier** `orderBy` (optionally followed by
+      `ASC`/`DESC`) through `composeSortQuery(dialect, …)` so it is dialect-quoted, and
+      passes anything else through to `composeRequery` byte-identically (cases 15-17).
+      This is what makes `composeSortQuery` — and TASK-006's mssql export — live code
+      rather than an orphaned API.
+- [ ] All 17 Test Cases PASS.
+- [ ] `npm run typecheck` clean; webview tsc snapshot diff empty
+      ("WEBVIEW TSC BASELINE UNCHANGED"); `npm run compile` clean;
+      `npm test` ≥ 1327 passed, 0 failed.
+- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
 
 ## Dependencies
 
-- (none)
+- TASK-004 (needs `buildFilterWhere` / `buildPagedQuery` / `composeSortQuery` /
+  `ColumnFilterModel`).
+
+Not a dependency on TASK-006: `composeSortQuery` is complete in wave 1 (TASK-004 ships the
+mssql arm inline). TASK-006 later swaps that arm's body for a delegation, which case 15
+keeps honest from the other side — both tasks run in wave 2 and touch disjoint files.
 
 ## Interfaces
 
-- Consumes: `SaveResultMessage.rowErrors` (existing), `EditState.snapshot()` (existing), `EditState.isCellDirty()` (existing)
-- Produces: `retryFailedRows` message type in messages.ts; `handleRetryFailedRows` method in resultsPanel.ts; retry button in webview banner
+- Consumes (from TASK-004, `src/ui/queryComposer.ts` — exact):
+  ```ts
+  export interface ColumnFilterModel {
+    [field: string]: { values: string[]; typed?: unknown[] };
+  }
+  export function buildFilterWhere(filters: ColumnFilterModel, dialect: Dialect): string;
+  export function composeSortQuery(
+    dialect: Dialect, originalSql: string, whereFromBar: string,
+    column: string, direction: "ASC" | "DESC",
+  ): string;
+  export function buildPagedQuery(
+    sql: string, where: string, orderBy: string,
+    offset: number, limit: number, dialect: Dialect,
+  ): string;
+  ```
+  From HEAD: `composeRequery(sql, where, orderBy)` (`src/ui/resultsGridModel.ts:1090`) —
+  still the no-filter path; `SaveContext.getDriver(): ConnectionConfig["driver"] | null`
+  (`src/ui/resultsPanel.ts:52`) — how the panel learns the dialect;
+  `pickResult` and `runner.adopt(index, stmt)` (`src/core/queryRunner.ts`).
+- Produces (wire contract; a later cycle's webview work depends on it):
+  ```ts
+  export interface RequeryMessage {
+    type: "requery";
+    index: number;
+    where: string;
+    orderBy: string;
+    filters?: ColumnFilterModel;  // AG Grid getFilterModel() payload + typed[] values
+    offset?: number;              // 0-based row offset; omitted ⇒ no paging
+    limit?: number;               // page size; omitted ⇒ adapter default batch
+    append?: boolean;             // true ⇒ concatenate onto existing rows
+  }
+  ```
 
 ---
 
 ## Discussion
 
-**Executor (cycle U) — decisions recorded:**
-1. Retry payload field is named `edits` (not `failedEdits` as the cycle prompt phrased it) — the task file's Acceptance Criteria ("`retryFailedRows` message is posted with correct `rowIds` and `edits`") is authoritative and matches `SaveEditsMessage.edits`; the payload also carries `serverIndexByRowId` (same A12 addressing contract as `saveEdits`) so the host resolves failed rows' server indexes correctly on streamed/added results.
-2. Host coverage lives in a SECOND new test file `src/ui/__tests__/resultsPanelRetry.test.ts` (node env) because `vi.mock("vscode")` does not resolve under jsdom — no existing test combines jsdom + the vscode mock, and `vitest.config.ts` (not a Target File) would have needed an alias otherwise. The task's listed Test File `webviewRetry.test.ts` holds all 6 required webview-side cases.
-3. RED nuance: R2 (button absent on no-rowErrors ack) and H3 (empty retry no-op) pass in RED by design — they pin ABSENCE/no-op behavior that trivially holds pre-implementation and guard the GREEN implementation from over-showing/over-acking. The other 7 tests failed for the expected reasons (missing button, missing `retry` seam, missing host `retryFailedRows` handling).
+### 2026-08-25 · planner · bao-opus
 
-## Executor Report
-EXECUTOR_TOOL: claude-code
-EXECUTOR_MODEL: bao-sonnet
-EXECUTOR_SUBAGENT: feature-implementer
-RED_OUTPUT: |
-  Tests written first into the task's Test Files, run against the pre-feature
-  bundle (dist/webview.js compiled from unmodified source). 7 failed | 2 passed:
+The three existing `requery` senders are `onRequeryClick` (`webview/main.ts:2469-2473`),
+the Refresh path at `:2214-2216`, and the post-save auto-requery at `:2866-2868`. All three
+send only `{index, where, orderBy}`. Case 4 pins that they keep working untouched — if the
+new fields are made required, TASK-006's reviewer will see three unrelated call-site edits
+and rightly reject the diff.
 
-  Test Files  2 failed (2)
-        Tests  7 failed | 2 passed (9)
+Dialect on the host comes from `this.saveContext?.getDriver()`. When it returns `null` (no
+active connection) fall back to `"postgres"` quoting **only** for composing the string the
+run will reject anyway; better, skip the filter push-down entirely and use plain
+`composeRequery`. Prefer the latter — never guess a dialect against a live DB.
 
-  [1/7] FAIL resultsPanelRetry.test.ts > H1. retryFailedRows → same save pipeline:
-        combined transaction with exactly ONE UPDATE for the failed row + ok:true ack
-        AssertionError: expected undefined not to be undefined
-        ❯ const combined = recorded.find((c) => /^BEGIN/i.test(c.sql.trim()));
-          (host ignored retryFailedRows — no BEGIN/UPDATE was ever emitted)
-  [2/7] FAIL resultsPanelRetry.test.ts > H2. edits whose rowId is NOT in rowIds are dropped
-        AssertionError: expected undefined not to be undefined (same root cause)
-  [3/7] FAIL webviewRetry.test.ts > R1. retry button appears when saveResult has rowErrors
-        AssertionError: expected null to be truthy  (findRetryButton() → null)
-  [4/7] FAIL webviewRetry.test.ts > R3. clicking retry posts retryFailedRows message
-        AssertionError: expected null to be truthy  (no retry button in banner)
-  [5/7] FAIL webviewRetry.test.ts > R4. retry message contains only failed row IDs
-        AssertionError: expected null to be truthy  (no retry button in banner)
-  [6/7] FAIL webviewRetry.test.ts > R5. retry with 0 failed rows → no message posted
-        AssertionError: expected 'undefined' to be 'function'
-        ❯ expect(typeof vsdbApi()?.retry).toBe("function")  (retry seam absent)
-  [7/7] FAIL webviewRetry.test.ts > R6. retry edits come from editState for failed rows only
-        AssertionError: expected null to be truthy  (no retry button in banner)
+`webview/main.ts` is also edited by TASK-003 in wave 1 (a one-line swap at `:2760`).
+Re-read the file at the start of this task; do not work from a wave-1-era copy.
 
-  R2 + H3 passed in RED by design (absence/no-op pinning — see Discussion #3).
-Verification Output: |
-  $ npm run compile
-  (esbuild output)
-    dist/webview.js  2.3mb
-    dist/extension.js  4.8mb
-    dist/extension.js.map  8.0mb
-  ⚡ Done in 209ms
-  esbuild: build complete
+**Populating `typed` (plan review R1, finding 4).** AG Grid's set-filter model only carries
+display strings — VSDB builds those entries with `String(v)` in `buildSetFilterEntries`
+(`src/ui/resultsGridModel.ts:1151-1176`). Sending them as-is would make every server-side
+predicate a string literal, which costs the index on MySQL and hard-fails an MSSQL `int` or
+`datetime2` column. So the webview must attach the raw values too:
 
-  $ npm test src/ui/__tests__/webviewRetry.test.ts   (task §Verification cmd 1)
-   ✓ src/ui/__tests__/webviewRetry.test.ts  (6 tests) 828ms
-   Test Files  1 passed (1)
-        Tests  6 passed (6)
+- On `onFilterChanged`, for each filtered column, map each selected display value back to a
+  loaded row's raw cell value using the same normalization `selectedKeysFromModel` uses
+  (`src/ui/resultsGridModel.ts:1204`) — lowercased `String(v)`, `(Blanks)` sentinel
+  excluded (it becomes `IS NULL` host-side and must not enter `typed`).
+- If **every** selected value resolves, post `typed` alongside `values`, same length, same
+  order. If any does not — the row holding it has been scrolled past and evicted, or the
+  selection is stale model state — omit `typed` for that column entirely (case 14).
+  A partially-filled array is worse than none: TASK-004 case 19 makes a mismatched length
+  fall back silently, but an `undefined` slot would reach `sqlLiteral` and emit `NULL`,
+  quietly changing the predicate.
+- The host forwards `typed` to `buildFilterWhere` untouched. Do not re-`String()` it, and
+  do not JSON-round-trip it in a way that turns numbers into strings — case 13 exists to
+  catch exactly that.
 
-  $ npm test   (full suite — baseline 1298 passed / 2 skipped; +9 new tests)
-   Test Files  92 passed | 1 skipped (93)
-        Tests  1307 passed | 2 skipped (1309)
-   (0 failed)
+**Making the sort helpers live code (plan review R1, finding 8).** At HEAD,
+`getTableSortQuery` (`src/adapters/postgres.ts:167`) has **zero** production call sites —
+it shipped in cycle U as a pure builder. If cycle V only adds an mssql twin, the cycle
+ships two dead exports, which is finding 8.
 
-  $ npm run typecheck
-  > tsc --noEmit
-  (no output — clean, exit code 0)
-Status: PASS
-Note: none
+The requery bar already has an ORDER BY input whose value is posted as `orderBy` on every
+requery (`webview/main.ts:2215-2216`, `:2472-2473`, `:2867-2868`), and today the host
+splices that raw text into the SQL via `composeRequery`. That is the call site. In
+`handleRequery`:
 
-## Reviewer Verdict (R1 — grid/webview group)
-VERDICT: APPROVED-WITH-MINOR
-REVIEWER_MODEL: bao-opus
-FINDINGS: no Critical/Important defects; minor notes only, non-blocking. The observed resultsGridModelNull flake (TASK-004) was not reproduced by the reviewer across two full-suite runs — treated as environment flake, not a code defect.
-SOURCE: R1 review round outcome recorded in RUN.md cursor (grid/webview group).
+- If `orderBy.trim()` matches a **single bare identifier with an optional direction** —
+  approximately `/^\s*([A-Za-z_][A-Za-z0-9_$]*)\s*(ASC|DESC)?\s*$/i` — route it through
+  `composeSortQuery(dialect, sql, where, ident, dir)` so the identifier is quoted for the
+  live dialect (`[name]` on MSSQL, `` `name` `` on MySQL, `"name"` on PG).
+- Otherwise (`a, b DESC`, `lower(name)`, `1`, empty) keep today's `composeRequery` path
+  **byte-identical**. Case 16 pins this. Do not attempt to parse a general ORDER BY list;
+  the bar is free text and a half-parser that quotes `lower(name)` as an identifier turns
+  working SQL into a syntax error.
+- Case 17 covers the empty case because the post-save auto-requery at `:2868` sends
+  `orderBy: ""` on every single save — the highest-traffic path through this code.
+
+This closes the dead-export gap without pulling column-header-click wiring into scope
+(explicitly out of scope per PLAN.md §2): header clicks still sort client-side.
+
+→ @executor: case 6 is the one most likely to be faked. Assert on *ordering*, e.g. tag each
+fake run with a sequence number and check the surviving `lastResults` entry carries the
+higher one — not merely that both promises settled.
+
+---
+
+<!--
+Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
+Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+-->

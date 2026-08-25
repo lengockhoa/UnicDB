@@ -1,51 +1,72 @@
-# TASK-001 -- keepIndices duplicate-column export bug fix
+# TASK-001 — SQL TextMate injection grammar + package.json contribution
 
 - Status: `ready`
 - Owner: `-`
 - Reviewer: `-`
-- Parent plan: `docs/AI_HANDOFF/PLAN.md` section 3.1
+- Parent plan: `docs/AI_HANDOFF/PLAN.md` §3 (Coloring, Layer 1)
 
 ## Goal
 
-Fix the duplicate-column export bug: when two columns share the same raw name (e.g. `SELECT a.id, b.id`), hiding one currently hides both because `keepIndices()` filters by name. The fix adds a positional `hiddenIndices?: number[]` field to `SerializeOptions`. When present, serializers compute visible-column indices directly from positions, bypassing the name-based `keepIndices()` entirely. The existing `keepIndices` function signature is NOT changed -- all 5 existing call sites remain valid.
+Ship a TextMate **injection** grammar layered on top of VS Code's built-in `source.sql`
+so VSDB adds dialect scopes the built-in grammar misses (`ILIKE`, `RETURNING`, `TOP`,
+`OFFSET … FETCH`, `[bracket]` / `` `backtick` `` quoted identifiers) without replacing —
+and therefore without regressing — the built-in grammar.
 
 ## Target Files
 
-- `src/ui/resultsGridModel.ts` (existing, 1134 lines) -- add `hiddenIndices?: number[]` to `SerializeOptions` interface; each serializer (`serializeTsv`, `serializeCsv`, `serializeXml`, `serializeJson`, `serializeSqlInserts`, `serializeSqlUpdates`, `serializeWhereClause`) checks `opts.hiddenIndices` first and computes indices from positions when present, falling back to existing `keepIndices` name-based path when absent
-- `src/ui/__tests__/resultsGridModelExport.test.ts` (existing) -- add tests for positional hiddenIndices behavior
+- `syntaxes/vsdb-sql-injection.tmLanguage.json` **(new)** — the injection grammar. Root
+  keys: `scopeName: "source.sql.vsdb"`, `injectionSelector: "L:source.sql"`, `patterns: []`.
+- `package.json` — add `contributes.grammars` (one entry, `injectTo: ["source.sql"]`,
+  `path: "./syntaxes/vsdb-sql-injection.tmLanguage.json"`, `scopeName: "source.sql.vsdb"`).
+  Do **not** add `contributes.languages` for `sql` — VS Code already owns that languageId
+  and re-declaring it can shadow the built-in grammar. `scripts` / `dependencies` untouched.
+- `src/__tests__/sqlGrammar.test.ts` **(new)** — tests below.
 
-## Test Cases (REQUIRED -- TDD)
+`.vscodeignore` is **not** edited: it lists `src/**`, `webview/**`, `tests/**`, `docs/**`,
+`scripts/**` but not `syntaxes/**`, so the new folder ships in the `.vsix` by default. The
+test below asserts that stays true.
 
-| # | Loai | Ten test | Expected | Pre-state / Fixture |
+## Test Cases (REQUIRED — TDD)
+
+| # | Loại | Tên test | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
-| 1 | unit | `serializeJson with hiddenIndices hides only specified positions` | `{"columns":["id__2","name"],"rows":[[2,"x"]]}` | columns=`["id","id__2","name"]`, rows=`[[1,2,"x"]]`, hiddenIndices=`[0]` |
-| 2 | unit | `serializeJson with hiddenIndices preserves duplicate columns` | `{"columns":["id","name"],"rows":[[1,"x"]]}` | columns=`["id","id","name"]`, rows=`[[1,1,"x"]]`, hiddenIndices=`[1]` |
-| 3 | unit | `hiddenIndices takes precedence over hiddenColumns` | Positional filtering applied, names ignored | Both hiddenIndices and hiddenColumns supplied |
-| 4 | edge | `hiddenIndices empty array` | No filtering, all columns preserved | hiddenIndices=`[]` |
-| 5 | edge | `hiddenIndices out of range` | Invalid indices skipped, valid ones filtered | hiddenIndices=`[0,99]` on 3-col array |
-| 6 | regression | `hiddenColumns still works when hiddenIndices absent` | Name-based filtering unchanged (backward compat) | columns=`["id","id"]`, hiddenColumns=`["id"]`, no hiddenIndices |
+| 1 | unit (happy) | `package.json contributes a grammar injected into source.sql` | `contributes.grammars` has length ≥ 1; entry `.injectTo` contains `"source.sql"`; `.scopeName === "source.sql.vsdb"` | read `package.json` from disk |
+| 2 | unit (happy) | `grammar file exists at the contributed path and parses as JSON` | `fs.existsSync(path)` true; `JSON.parse` does not throw; parsed `.scopeName` equals the contributed `scopeName` | path read out of `package.json`, not hardcoded |
+| 3 | unit (happy) | `grammar declares at least the VSDB dialect keywords` | joined `match` strings contain `ILIKE`, `RETURNING`, `TOP`, `FETCH` | parsed grammar |
+| 4 | edge (regex safety) | `no pattern matches the empty string` | for every `match`/`begin` regex `r`, `new RegExp(r).exec("")` is `null` | an empty-matching rule makes the TextMate engine spin — this is the classic grammar hang |
+| 5 | edge (packaging) | `.vscodeignore does not exclude the syntaxes folder` | `.vscodeignore` contents contain no line matching `/^syntaxes/` | read `.vscodeignore` from disk |
+| 6 | edge (non-regression) | `no contributes.languages entry claims languageId "sql"` | `contributes.languages` is `undefined`, or no entry has `id === "sql"` | guards against shadowing VS Code's built-in SQL language |
+
+Case 4 and case 5 are different kinds on purpose: 4 is a runtime-hang boundary inside the
+artifact, 5 is a packaging/distribution failure outside it.
 
 ## Test Files
 
-- `src/ui/__tests__/resultsGridModelExport.test.ts` -- add `"hiddenIndices positional"` describe block
+- `src/__tests__/sqlGrammar.test.ts` — all six cases. Sits beside the existing
+  `src/__tests__/releaseHygiene.test.ts`, which already uses the read-from-disk style
+  (`repoRoot = path.resolve(__dirname, "..", "..")`, `readJson`) — mirror it.
 
 ## Verification Commands
 
 ```bash
-npm test src/ui/__tests__/resultsGridModelExport.test.ts
-npm test
 npm run typecheck
+npx vitest run src/__tests__/sqlGrammar.test.ts
+npm test
 ```
+
+`npm run compile` is not required: this task adds no TypeScript to any bundle.
 
 ## Acceptance Criteria
 
-- [ ] `SerializeOptions` has optional `hiddenIndices?: number[]` field
-- [ ] When `hiddenIndices` is present, serializers use positional filtering (by array index)
-- [ ] When `hiddenIndices` is absent, existing `keepIndices` name-based path is unchanged
-- [ ] Existing `keepIndices(columns, hiddenColumns)` function signature is NOT modified -- zero call-site breakage
-- [ ] All serializers (TSV/CSV/XML/JSON/SQL-inserts/SQL-updates/SQL-where) handle both paths
-- [ ] All existing export tests still pass
-- [ ] `npm run typecheck` clean
+- [ ] `syntaxes/vsdb-sql-injection.tmLanguage.json` exists and `JSON.parse` succeeds.
+- [ ] `package.json` `contributes.grammars[0].injectTo` includes `"source.sql"`.
+- [ ] No `contributes.languages` entry with `id === "sql"` was added.
+- [ ] All 6 Test Cases PASS.
+- [ ] `npm run typecheck` clean.
+- [ ] `npm test` ≥ 1327 passed, 0 failed.
+- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
+- [ ] `CHANGELOG.md` note deferred to the cycle-close docs sync (user-facing feature is
+      only complete once TASK-002/003 land).
 
 ## Dependencies
 
@@ -53,101 +74,33 @@ npm run typecheck
 
 ## Interfaces
 
-- Consumes: existing `SerializeOptions` interface, existing `keepIndices(columns: string[], hiddenColumns?: string[])` function (unchanged)
-- Produces: `SerializeOptions.hiddenIndices?: number[]`; serializers check `opts.hiddenIndices` first, compute visible-column index array directly when present, fall back to `keepIndices` when absent
+- Consumes: (none)
+- Produces:
+  - grammar scope name `source.sql.vsdb` — TASK-002's semantic token types layer on top of
+    these TextMate scopes; TASK-002 must not assume this grammar exists at runtime.
+  - Token scope names TASK-003's webview tokenizer mirrors for visual consistency:
+    `keyword.other.vsdb.sql`, `string.quoted.single.sql`, `constant.numeric.sql`,
+    `comment.line.double-dash.sql`, `entity.name.function.vsdb.sql`.
 
 ---
 
 ## Discussion
 
-(chua co comment)
+### 2026-08-25 · planner · bao-opus
 
-## Executor Report
+Verified before writing: `package.json` `contributes` currently has exactly
+`commands, keybindings, menus, views, viewsContainers, viewsWelcome, configuration` — no
+`grammars`, no `languages`. So this contribution is genuinely new, not an edit.
 
-EXECUTOR_TOOL: claude-code
-EXECUTOR_MODEL: bao-sonnet
-EXECUTOR_SUBAGENT: feature-implementer
+`syntaxes/` does not exist yet — create the directory. `.vscodeignore` was read in full;
+it has no `syntaxes` line, so no edit is needed there, but test case 5 pins that.
 
-RED_OUTPUT (step 1 - tests written first, run BEFORE implementation):
+→ @executor: resist the urge to also register `.pgsql` / `.tsql` file extensions. That is
+a `contributes.languages` change and case 6 will fail it. Scope is injection only.
 
-Command: npm test src/ui/__tests__/resultsGridModelExport.test.ts
+---
 
-    Test Files  1 failed (1)
-          Tests  5 failed | 41 passed (46)
-       Start at  18:38:36
-       Duration  549ms
-
-Failing tests (all 5 are the new hiddenIndices cases):
-
-    FAIL ... hiddenIndices positional > 1. serializeJson with hiddenIndices hides only specified positions
-    FAIL ... hiddenIndices positional > 2. serializeJson with hiddenIndices preserves duplicate columns
-    FAIL ... hiddenIndices positional > 3. hiddenIndices takes precedence over hiddenColumns
-      AssertionError: expected '{"columns":["id","id__2"],"rows":[[1,2]]}' to be
-                       '{"columns":["id__2","name"],"rows":[[2,"x"]]}'
-      at src/ui/__tests__/resultsGridModelExport.test.ts:685:17
-    FAIL ... hiddenIndices positional > 5. hiddenIndices out of range -> invalid indices skipped, valid filtered
-      AssertionError: expected '{"columns":["id","name","active"],"rows":[[1,"x",true]]}' to be
-                       '{"columns":["name","active"],"rows":[["x",true]]}'
-      at src/ui/__tests__/resultsGridModelExport.test.ts:701:17
-    FAIL ... hiddenIndices positional > 7. every serializer applies positional hiddenIndices (TSV/CSV/XML/SQL)
-      AssertionError: expected 'id\tid\tname\n9\t1\tx' to be 'id\tname\n1\tx'
-      at src/ui/__tests__/resultsGridModelExport.test.ts:724:44
-
-Tests 4 (empty array -> no filtering) and 6 (regression: hiddenColumns name
-path unchanged) passed pre-implementation by design: they assert pre-existing
-behavior, which is correct for an additive optional field. The run as a whole
-is RED for the new behavior: 5 failed.
-
-Verification Output:
-
-Command 1: npm test src/ui/__tests__/resultsGridModelExport.test.ts  (after implementation)
-
-     RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-001
-     OK   src/ui/__tests__/resultsGridModelExport.test.ts  (46 tests) 270ms
-
-    Test Files  1 passed (1)
-          Tests  46 passed (46)
-       Start at  18:41:09
-       Duration  1.30s (transform 93ms, setup 0ms, collect 698ms, environment 0ms, prepare 89ms)
-
-Command 2: npm test  (full suite; first attempt failed on 2 pre-existing
-missing-dist/ artifact tests - dist/schemaForm.js and dist/webview.css - so
-per instructions `npm run compile` was run once, then the suite retried)
-
-    npm run compile:
-      dist/webview.js.map    3.9mb
-      dist/webview.css.map  36.7kb
-      Done in 134ms
-      esbuild: build complete
-
-    npm test (after compile):
-      Test Files  85 passed | 1 skipped (86)
-           Tests  1266 passed | 2 skipped (1268)
-        Start at  18:40:44
-        Duration  10.59s (transform 3.27s, setup 5ms, collect 9.00s, tests 43.80s, environment 14.05s, prepare 5.21s)
-
-Command 3: npm run typecheck
-
-    > vsdb@1.6.3 typecheck
-    > tsc --noEmit
-    (no output, exit code 0)
-
-Status: PASS
-
-Note: Implementation adds `hiddenIndices?: number[]` to SerializeOptions plus
-two module-local helpers (hiddenIndexSet normalizer, resolveKeepIndices which
-checks hiddenIndices first and falls back to the unchanged keepIndices name
-path). All 7 serializers handle both paths; serializeSqlUpdates and
-serializeWhereClause additionally rebuild their column->index Map over
-visible positions only when hiddenIndices is present, so SET/WHERE read the
-VISIBLE duplicate's value, never the hidden one. keepIndices() signature and
-behavior unchanged. Files changed: src/ui/resultsGridModel.ts,
-src/ui/__tests__/resultsGridModelExport.test.ts (7 new tests, incl. the 6
-required table cases + 1 all-serializer coverage case). No git commands run;
-no files outside Target Files + Test Files modified.
-
-## Reviewer Verdict (R1 — adapters/export group)
-VERDICT: APPROVED-WITH-MINOR
-REVIEWER_MODEL: bao-opus
-FINDINGS: no Critical/Important defects; minor notes only, non-blocking. Verification re-run green.
-SOURCE: R1 review round outcome recorded in RUN.md cursor (adapters/export group).
+<!--
+Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
+Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+-->

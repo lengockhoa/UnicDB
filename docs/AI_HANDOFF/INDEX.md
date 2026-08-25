@@ -1,43 +1,60 @@
 # INDEX
 
-Cycle U -- **DATA GRIP PARITY**: export keepIndices bug fix, MSSQL parameter binding, Postgres
-sort query, NULL cell display, A19 retry, post-commit refresh, per-table result tabs,
-schema-aware autocomplete, manual-commit mode. 9 tasks, 5 waves.
+Cycle V -- **SQL COLORING + SERVER-SIDE FILTER/PAGING/SORT**: TextMate injection grammar,
+schema-aware semantic tokens, webview SQL tokenizer, dialect query composer, server-side
+column filter + Load More paging, MSSQL sort helper. 6 tasks, 2 waves.
 
 | Task | Title | Status | Executor | Reviewer |
 |------|-------|--------|----------|----------|
-| TASK-001 | Export keepIndices duplicate-column bug -- positional indices | done | claude-sonnet-5 | bao-opus |
-| TASK-002 | MSSQL adapter: replace literal() with parameterized queries | done | claude-sonnet-5 | bao-opus |
-| TASK-003 | Postgres server-side sort query helper | done | claude-sonnet-5 | bao-opus |
-| TASK-004 | NULL cell display + cell value viewer | done | claude-sonnet-5 | bao-opus |
-| TASK-005 | A19 failed-row retry affordance | done | claude-sonnet-5 | bao-opus |
-| TASK-006 | Post-commit grid refresh after successful save | done | claude-sonnet-5 | bao-opus |
-| TASK-007 | Per-table result tabs with table-name labels | done | claude-sonnet-5 | bao-opus |
-| TASK-008 | Schema-aware autocomplete (CompletionItemProvider + cache) | done | claude-sonnet-5 | bao-opus |
-| TASK-009 | Manual-commit mode (begin/commit/rollback + UI toggle) | done | bao-sonnet | bao-opus |
+| TASK-001 | SQL TextMate injection grammar + package.json contribution | ready | - | - |
+| TASK-002 | Schema-aware SQL semantic tokens provider | ready | - | - |
+| TASK-003 | Webview SQL tokenizer + themed styles | ready | - | - |
+| TASK-004 | Dialect query composer: filter WHERE + OFFSET/LIMIT paging + sort dispatch | ready | - | - |
+| TASK-005 | Server-side column filter + Load More paging (host + webview wiring) | ready | - | - |
+| TASK-006 | MSSQL server-side sort query (T-SQL dialect) | ready | - | - |
 
-Graph: 006 --> 007 --> 009 (same-file chain on webview/main.ts + resultsPanel.ts + messages.ts).
-001-005 and 008 are all independent.
+Graph: 004 --> 005, 004 --> 006. 001, 002, 003, 004 are all independent.
 
-- **Wave 1 (5, parallel):** 001, 002, 003, 004, 008
-- **Wave 2 (1):** 005
-- **Wave 3 (1):** 006
-- **Wave 4 (1):** 007
-- **Wave 5 (1):** 009
+- **Wave 1 (4, parallel):** 001, 002, 003, 004
+- **Wave 2 (2, parallel):** 005, 006
 
-TASK-005 cannot share wave 1 with TASK-004 -- both modify `webview/main.ts` and
-`webview/styles.css`. TASK-006 cannot share wave 2 with TASK-005 -- same collision.
-TASK-007 cannot share wave 3 with TASK-006 -- same collision plus `resultsPanel.ts`
-and `messages.ts`. TASK-009 cannot share wave 4 with TASK-007 -- same collision.
-TASK-008 has no collisions (new files + extension.ts only).
+File-collision decisions:
+- `webview/main.ts` is touched by TASK-003 (wave 1, one-line swap at `:2760`) and TASK-005
+  (wave 2, filter/paging wiring). Different waves, so not a same-wave collision; TASK-005
+  must re-read the file before editing.
+- `src/ui/queryComposer.ts` is created by TASK-004 (wave 1) and amended by TASK-006
+  (wave 2) -- serialized by the dependency, never concurrent.
+- `src/ui/__tests__/queryComposer.test.ts` likewise: created by TASK-004, appended by
+  TASK-006.
+- `webview/styles.css` belongs solely to TASK-003; TASK-005 reuses existing classes.
+- TASK-001 owns `package.json` + `syntaxes/`; TASK-002 owns `src/extension.ts` +
+  `src/ui/sqlSemanticTokens.ts`. No overlap in wave 1.
 
 ## Previous cycles
 
-Cycle T (12 tasks, all done) shipped at `4a35fec`. Its A1/A2/A18 defects no longer
-exist at HEAD. See `archive/cycle-T-*` for completed task files.
+Cycle U (9 tasks, all done) shipped at `08c8de3` (v1.6.4). See `archive/cycle-U-*` for
+completed task files and the cycle plan.
+Cycle T (12 tasks, all done) shipped at `4a35fec`. See `archive/cycle-T-*`.
 
 ## Next cycles (queued)
 
-- **Cycle V -- SQL syntax coloring.** TextMate injection grammar plus a semantic tokens provider.
-- **Server-side column filter + paging** (beyond the sort helper in TASK-003): WHERE clause from AG Grid SetFilter, OFFSET/LIMIT cursor-based paging. Deferred because it requires AG Grid filter event wiring in the webview + host requery composition, a significant UI integration task beyond this cycle's scope.
-- **MSSQL server-side sort:** requires a `getTableSortQuery` equivalent for T-SQL dialect (OFFSET/FETCH syntax differs from Postgres). Deferred because MSSQL sort syntax needs separate adapter-level work.
+- **Sort header-click wiring for all three dialects.** `getTableSortQuery` (postgres) and
+  its MSSQL twin (cycle V TASK-006) exist as pure builders with no production call site;
+  the AG Grid column-header sort event still sorts client-side only. Deferred because the
+  click handler lives in `webview/main.ts`, which cycle V already edits in both waves.
+- **Server-side distinct values for the set-filter list.** The filter dropdown is still
+  built from loaded rows (`buildSetFilterEntries`), so with server-side filtering a value
+  outside the loaded window cannot be selected. Needs a `SELECT DISTINCT col ... LIMIT n`
+  round trip per column plus a cache.
+- **`(Blanks)` should also match empty strings.** Cycle V maps `(Blanks)` to `col IS NULL`
+  only; AG Grid groups `null`/`undefined`/`""` together. Needs a dialect-aware
+  `IS NULL OR col = ''` and a decision about whitespace-only values.
+- **Keyset (cursor) paging.** Cycle V uses OFFSET/LIMIT, which degrades on deep offsets.
+  A keyset scheme needs a stable unique sort key per result set.
+- **Typed filter values beyond the loaded window.** Cycle V derives `typed[]` from loaded
+  grid rows; when a selected value's row has been evicted the predicate falls back to
+  string literals (index-losing on MySQL). Pairs naturally with the server-side distinct
+  values work above, which would carry real types from the server. Also revisit the
+  UTC-naive timestamp normalization for MySQL/MSSQL sessions not running in UTC.
+- **General ORDER BY dialect quoting.** Cycle V only routes a single bare identifier from
+  the requery bar through `composeSortQuery`; `a, b DESC` and expressions pass through raw.

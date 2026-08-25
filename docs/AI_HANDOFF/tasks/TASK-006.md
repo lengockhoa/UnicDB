@@ -1,122 +1,157 @@
-# TASK-006 -- Post-commit grid refresh after save
+# TASK-006 — MSSQL server-side sort query (T-SQL dialect)
 
 - Status: `ready`
 - Owner: `-`
 - Reviewer: `-`
-- Parent plan: `docs/AI_HANDOFF/PLAN.md` section 3.6
+- Parent plan: `docs/AI_HANDOFF/PLAN.md` §3 (MSSQL sort)
 
 ## Goal
 
-After a successful saveEdits operation, automatically requery the server to refresh the grid with fresh data. This prevents stale row values (e.g. computed defaults like `now()` that changed on commit). The previous batched cursor is closed before the requery to avoid connection leaks.
+Give MSSQL the server-side sort helper Postgres already has. `getTableSortQuery` lives only
+in `src/adapters/postgres.ts:167`; T-SQL needs `[…]` identifier quoting (not `"…"`) and,
+when paging is later stacked on top, an `ORDER BY` that `OFFSET/FETCH` can attach to. Then
+point TASK-004's `composeSortQuery` mssql arm at the real adapter export.
 
 ## Target Files
 
-- `webview/main.ts` (existing) -- after `saveResult.ok === true`, post `requery` message to host with current WHERE/ORDER BY; clear dirty state for saved rows before requery
-- `src/ui/resultsPanel.ts` (existing) -- ensure `handleRequery` properly closes previous cursor before requery (already does, verify no regression)
+- `src/adapters/mssql.ts` — add an exported `getTableSortQuery` mirroring the Postgres
+  contract exactly (same 4 args, same return shape, `vsdb_sort` alias). Place it as a
+  module-level function above `export class MsSqlAdapter` (line 47), matching how
+  `src/adapters/postgres.ts` places its own at line 167 above `class PostgresAdapter`
+  (line 190). No change to the class, the tedious wiring, or `MssqlQueryParam`.
+- `src/adapters/postgres.ts` — **doc-comment only**: the comment at lines 148-166 says
+  "this helper is the Postgres side of that composition"; add one line pointing at the
+  mssql twin and at `composeSortQuery` as the dispatch entry. No behavior change; the
+  existing `postgres.sortQuery.test.ts` must stay green untouched.
+- `src/ui/queryComposer.ts` — replace the inline T-SQL body in `composeSortQuery`'s mssql
+  arm with a delegation to the new adapter export. (TASK-004 ships that arm inline; see its
+  Discussion.) If TASK-004's executor already delegated, this reduces to a no-op — record
+  which in the Executor Report.
+- `src/adapters/__tests__/mssql.sortQuery.test.ts` **(new)** — tests below.
 
-## Test Cases (REQUIRED -- TDD)
+## Test Cases (REQUIRED — TDD)
 
-| # | Loai | Ten test | Expected | Pre-state / Fixture |
+| # | Loại | Tên test | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
-| 1 | bundle | `saveResult.ok triggers requery post` | `postToHost` called with `{type:"requery", index, where, orderBy}` | saveResult.ok=true |
-| 2 | bundle | `requery uses current WHERE from requery bar` | message.where matches input value | WHERE bar has value |
-| 3 | bundle | `requery uses current ORDER BY from sort state` | message.orderBy matches sort state | Column sorted |
-| 4 | unit | `dirty state cleared for saved rows after saveResult.ok` | editState.isCellDirty returns false for saved rows | Dirty cells saved |
-| 5 | edge | `post-commit refresh when cursor is open` | Previous cursor closed before requery | Batched cursor active |
-| 6 | edge | `saveResult with rowErrors does NOT trigger auto-requery` | No requery posted when partial failure | saveResult with rowErrors |
+| 1 | unit (happy) | `basic sort wraps in a subquery with bracket quoting` | `getTableSortQuery("SELECT 1","","name","ASC")` → `SELECT * FROM (SELECT 1) vsdb_sort ORDER BY [name] ASC` | none |
+| 2 | unit (happy) | `WHERE from the requery bar is applied to the OUTER query` | `("SELECT * FROM t","age > 18","name","ASC")` → `… ) vsdb_sort WHERE age > 18 ORDER BY [name] ASC`; the inner SQL is verbatim | mirrors postgres semantics at `postgres.ts:176-179` |
+| 3 | unit (happy) | `DESC direction is emitted` | contains `ORDER BY [name] DESC` | |
+| 4 | edge (identifier injection) | `] inside a column name is doubled and stays one identifier` | column `name]; DROP TABLE users--` → `[name]]; DROP TABLE users--]`; the payload never appears outside the brackets | the T-SQL analogue of `postgres.sortQuery.test.ts:40` |
+| 5 | edge (direction whitelist) | `an unexpected direction falls back to ASC` | `("SELECT 1","","n","ASC; DROP TABLE t" as any)` → ends `ASC`, contains no `DROP` | cast through `as unknown as "ASC"` |
+| 6 | edge (empty inputs) | `empty originalSql and empty where produce no stray WHERE` | `("","","n","ASC")` → `SELECT * FROM () vsdb_sort ORDER BY [n] ASC`, and `/\bWHERE\b/` does not match | boundary; mirrors `postgres.sortQuery.test.ts:51` |
+| 7 | edge (whitespace-only where) | `a whitespace-only WHERE is treated as empty` | `("SELECT 1","   ","n","ASC")` → no `WHERE` in output | trims like postgres |
+| 8 | unit (dispatch) | `composeSortQuery("mssql", …) equals the adapter helper` | byte-identical output for the same 4 args; and `composeSortQuery("postgres", …)` still equals `postgres.getTableSortQuery` | pins that the dispatch did not drift |
+| 9 | unit (no dead export) | `mssql.getTableSortQuery is reachable only through composeSortQuery, and the composer's mssql arm holds no duplicated T-SQL` | `queryComposer.ts` source contains no `vsdb_sort` / `[` bracket-quoting string building of its own (the arm is a one-line delegation), while `composeSortQuery("mssql", …)` still returns the full T-SQL — proving the export is wired, not orphaned | source-text assertion plus a behavioral one; guards against the arm being "delegated" by copy-paste |
+
+Kinds: happy (1-3), injection (4), input-validation/whitelist (5), empty boundary (6),
+whitespace normalization (7), cross-module consistency (8), dead-code/duplication (9).
+
+**Liveness of this export is not this task's to prove.** `composeSortQuery` is called on
+the real requery path by TASK-005 (`handleRequery`, `src/ui/resultsPanel.ts`), whose
+**case 15** drives an mssql-driver requery with an `orderBy` and asserts the SQL reaching
+`runner.runSql` contains `ORDER BY [name] DESC`. That is the anti-dead-code test; it lives
+in TASK-005 because TASK-005 owns `resultsPanel.ts` and both tasks run in wave 2, so
+putting it here would be a same-wave file collision. See Discussion.
 
 ## Test Files
 
-- `src/ui/__tests__/webviewPostCommit.test.ts` (new) -- tests for post-commit requery triggering
+- `src/adapters/__tests__/mssql.sortQuery.test.ts` — cases 1-7. Model it directly on
+  `src/adapters/__tests__/postgres.sortQuery.test.ts` (pure string assertions, one `it` per
+  case, **no tedious mock** — this is a pure function, importing `MsSqlAdapter`'s module is
+  safe because `tedious` is only imported, never connected).
+- `src/ui/__tests__/queryComposer.test.ts` — **modify**, append cases 8 and 9. TASK-004
+  created this file and completes before this task, so there is no same-wave collision.
 
 ## Verification Commands
 
 ```bash
-npm test src/ui/__tests__/webviewPostCommit.test.ts
-npm test
 npm run typecheck
+npx vitest run src/adapters/__tests__/mssql.sortQuery.test.ts src/adapters/__tests__/postgres.sortQuery.test.ts src/ui/__tests__/queryComposer.test.ts
+npm test
 ```
+
+`postgres.sortQuery.test.ts` is included because this task touches that file's doc comment
+— it must stay green with zero edits to the test.
 
 ## Acceptance Criteria
 
-- [ ] Successful save (saveResult.ok=true) triggers automatic requery
-- [ ] Requery uses current WHERE/ORDER BY state from the requery bar and sort
-- [ ] Dirty state is cleared for saved rows before requery fires
-- [ ] Previous batched cursor is closed before requery starts
-- [ ] Partial failures (rowErrors present) do NOT trigger auto-requery
-- [ ] Grid re-renders with fresh server data after requery completes
-- [ ] `npm run typecheck` clean
+- [ ] `src/adapters/mssql.ts` exports
+      `getTableSortQuery(originalSql: string, whereFromBar: string, column: string, direction: "ASC" | "DESC"): string`
+      — the same signature as `src/adapters/postgres.ts:167`.
+- [ ] Identifier quoting is `[…]` with `]` doubled; direction is whitelisted to ASC/DESC.
+- [ ] `src/adapters/postgres.ts` change is comment-only (`git diff` shows no executable
+      line changed).
+- [ ] `composeSortQuery`'s mssql arm delegates to the adapter export (no duplicated T-SQL
+      string building left in `queryComposer.ts`).
+- [ ] No dead export: `mssql.getTableSortQuery` is reachable from the live requery path via
+      `composeSortQuery` (wired by TASK-005), and `queryComposer.ts` retains no duplicated
+      T-SQL string building (case 9).
+- [ ] All 9 Test Cases PASS; `postgres.sortQuery.test.ts` still passes unmodified.
+- [ ] `npm run typecheck` clean; `npm test` ≥ 1327 passed, 0 failed.
+- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
 
 ## Dependencies
 
-- (none)
+- TASK-004 (owns `src/ui/queryComposer.ts` and `composeSortQuery`).
 
 ## Interfaces
 
-- Consumes: `SaveResultMessage` (existing), `requery` message type (existing), `handleRequery` in resultsPanel.ts (existing), `EditState.clearExceptRowIds()` (existing)
-- Produces: Updated saveResult.ok handler in webview that posts requery
+- Consumes:
+  - `composeSortQuery(dialect, originalSql, whereFromBar, column, direction): string` —
+    TASK-004, `src/ui/queryComposer.ts`.
+  - `quoteIdent(name, "mssql")` → `[…]` with `]` doubled — `src/core/saveStatements.ts:136,140-142`.
+    Prefer reusing it over hand-rolling the bracket escape.
+  - Reference contract (do not modify): `getTableSortQuery` — `src/adapters/postgres.ts:167`,
+    returns `SELECT * FROM (${inner}) vsdb_sort${whereClause} ORDER BY ${quotedColumn} ${dir}`.
+- Produces:
+  ```ts
+  // src/adapters/mssql.ts
+  export function getTableSortQuery(
+    originalSql: string,
+    whereFromBar: string,
+    column: string,
+    direction: "ASC" | "DESC",
+  ): string;
+  ```
 
 ---
 
 ## Discussion
 
-**Executor decisions (cycle U, feature-implementer):**
+### 2026-08-25 · planner · bao-opus
 
-1. **Test 5 placement.** The task lists one new Test File (`webviewPostCommit.test.ts`, jsdom bundle env), but test case 5 is host-side (`ResultsPanel.handleRequery`). `vi.mock("vscode")` does not resolve under vitest's jsdom environment in this repo — documented precedent: `webviewRetry.test.ts` (jsdom bundle) pairs with `resultsPanelRetry.test.ts` (node). Following that precedent, test 5 was added as a new describe in `src/ui/__tests__/resultsPanelRequery.test.ts` (the existing test file for Target File `src/ui/resultsPanel.ts`). Test cases 1-4 + 6 live in the new `webviewPostCommit.test.ts` as specified.
-2. **RED scope.** Tests 1-4 failed RED as expected (no requery posted after saveResult). Test 5 passed immediately — the task file itself says handleRequery "already does" close the cursor; kept as regression guard. Test 6 (rowErrors → no requery) passed pre-implementation because no requery existed at all; it guards the new gating branch, and was confirmed to still pass after the feature landed.
-3. **`refused` soft-refusal.** Post-commit requery is skipped when `saveResult.refused === true` — nothing was committed (mysql/mssql no-PK refusal), so there is no fresh server data to fetch. Not covered by the task's test table; noted here.
-4. **`index` source.** The requery posts `msg.index` (the statement that was actually saved) rather than `activeTab` — correct if the user switches tabs while the save is in flight. Matches `onRequeryClick`'s message shape otherwise.
-5. **Cycle T overlap.** Cycle T's "refresh after save" was only state-echo re-render handling (grid applies fresh values when the host posts a new state). No auto-requery existed before this task; the delta is the automatic `requery` post on `saveResult.ok === true` without rowErrors.
+Grounding note: `getTableSortQuery` has **no production call site** at HEAD — verified by
+grepping `src/` and `webview/` excluding `__tests__`; only its own doc comment and
+`postgres.sortQuery.test.ts` mention it. So cycle U shipped the builder without wiring it
+to anything.
 
+**No dead code this cycle (plan review R1, finding 8).** Adding an mssql twin to an
+already-orphaned postgres helper would ship *two* dead exports. That is resolved in
+TASK-005, not here: `handleRequery` now routes a single-identifier `orderBy` from the
+requery bar through `composeSortQuery(dialect, …)`, so both adapter helpers sit on a live
+path. TASK-005 case 15 asserts an mssql requery reaches `ORDER BY [name] DESC`; case 16
+pins that a complex ORDER BY still passes through untouched. Do **not** duplicate that
+wiring here — `src/ui/resultsPanel.ts` and `webview/main.ts` belong to TASK-005 in this
+same wave 2, and two tasks editing one file is exactly the collision the plan forbids.
+
+Case 9 is this task's own guard: it asserts the composer's mssql arm is a genuine
+delegation (no `vsdb_sort` or bracket-building string left in `queryComposer.ts`) rather
+than a copy-paste that leaves the adapter export unreferenced.
+
+Column-header-click sort remains out of scope for every dialect (PLAN.md §2) and is queued
+in `INDEX.md`; the requery-bar ORDER BY is the call path this cycle delivers.
+
+Deliberately NOT doing OFFSET/FETCH inside this helper: paging composition belongs to
+`buildPagedQuery` (TASK-004), which already handles the T-SQL `ORDER BY (SELECT NULL)`
+requirement. Keeping sort and paging separate is what lets `composeSortQuery`'s output feed
+`buildPagedQuery` unchanged.
+
+→ @reviewer: case 4 is the one that matters. `]` doubling is the only thing standing
+between a column-name payload and executable T-SQL.
 
 ---
 
-## Executor Report
-EXECUTOR_TOOL: claude-code
-EXECUTOR_MODEL: bao-sonnet
-EXECUTOR_SUBAGENT: feature-implementer
-RED_OUTPUT:
-```
-$ npm test src/ui/__tests__/webviewPostCommit.test.ts   (dist/webview.js built from PRE-change source)
-
- FAIL  src/ui/__tests__/webviewPostCommit.test.ts > webview/main.ts post-commit requery (TASK-006) > 1. saveResult ok:true ⇒ posts exactly one requery { type:'requery', index, where, orderBy }; grid then re-renders with fresh server data
-AssertionError: expected [] to have a length of 1 but got +0
- FAIL  src/ui/__tests__/webviewPostCommit.test.ts > webview/main.ts post-commit requery (TASK-006) > 2. post-commit requery carries the CURRENT WHERE from the requery bar
-AssertionError: expected [] to have a length of 1 but got +0
- FAIL  src/ui/__tests__/webviewPostCommit.test.ts > webview/main.ts post-commit requery (TASK-006) > 3. post-commit requery carries the CURRENT ORDER BY from the sort state
-AssertionError: expected [] to have a length of 1 but got +0
- FAIL  src/ui/__tests__/webviewPostCommit.test.ts > webview/main.ts post-commit requery (TASK-006) > 4. dirty state cleared for saved rows BEFORE the requery fires (isCellDirty false; ordering captured at post time)
-AssertionError: expected [] to have a length of 1 but got +0
-
- Test Files  1 failed (1)
-      Tests  4 failed | 1 passed (5)
-```
-Test 6 (rowErrors → no requery) passed pre-implementation — no requery existed at all yet; it is the gating guard and still passes GREEN after the feature. Test 5 (host-side cursor close) passed immediately — the task file itself states handleRequery "already does" this ("verify no regression"); it is kept as a regression guard with a close-before-runSql ordering assertion.
-
-Verification Output:
-```
-$ npm run compile
-⚡ Done in 128ms
-esbuild: build complete
-
-$ npm test            (final run; one earlier full run hit a known load-timing flake in pre-existing resultsGridModelNull.test.ts test 6 — see Note)
- Test Files  93 passed | 1 skipped (94)
-      Tests  1313 passed | 2 skipped (1315)
-   Start at  19:14:28
-   Duration  10.00s
-
-$ npm run typecheck
-> vsdb@1.6.3 typecheck
-> tsc --noEmit
-(exit 0, no output)
-```
-Baseline was 1307 passed / 2 skipped → now 1313 passed = +6 new tests (5 in webviewPostCommit.test.ts, 1 in resultsPanelRequery.test.ts), 0 failed.
-
-Status: PASS
-Note: One pre-existing flaky test observed: `resultsGridModelNull.test.ts > 6. value viewer overlay shows full content for long strings` failed in 2 of 3 full-suite runs (identical code in all 3), passed in the 3rd full run and in isolation. The test's own comment flags it as load-sensitive ("under full-suite load the flush is not synchronous"), and it never dispatches saveResult / touches the requery path — unrelated to this task's delta (file contains 0 references to saveResult). Implementation: on `saveResult.ok` with no rowErrors, dirty state is cleared first, then exactly one `requery` is posted with the current requery-bar WHERE/ORDER BY (index = msg.index); requery is skipped on soft refusal (`refused`) and on partial failure (rowErrors). No production change was needed in resultsPanel.ts (cursor close verified by new regression test).
-
-## Reviewer Verdict (R1 — grid/webview group)
-VERDICT: APPROVED-WITH-MINOR
-REVIEWER_MODEL: bao-opus
-FINDINGS: no Critical/Important defects; minor notes only, non-blocking. The observed resultsGridModelNull flake (TASK-004) was not reproduced by the reviewer across two full-suite runs — treated as environment flake, not a code defect.
-SOURCE: R1 review round outcome recorded in RUN.md cursor (grid/webview group).
+<!--
+Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
+Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+-->

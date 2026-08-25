@@ -1,51 +1,79 @@
-# TASK-004 -- NULL cell display + cell value viewer
+# TASK-004 — Dialect query composer: filter WHERE + OFFSET/LIMIT paging + sort dispatch
 
 - Status: `ready`
 - Owner: `-`
 - Reviewer: `-`
-- Parent plan: `docs/AI_HANDOFF/PLAN.md` section 3.4
+- Parent plan: `docs/AI_HANDOFF/PLAN.md` §3 (Server-side filter + paging)
 
 ## Goal
 
-Render null cell values as italic "(NULL)" text in the grid. Add a cell value viewer (double-click overlay) that shows the full raw cell value for any cell. The underlying data remains null -- the formatter only changes display.
+Pure-logic SQL composition module for the three dialects: turn an AG Grid set-filter model
+into a `WHERE` clause, add OFFSET/LIMIT-style paging, and expose a dialect dispatch entry
+for the sort helper. No DOM, no `vscode`, no DB driver — unit-testable in isolation, which
+is what lets TASK-005 and TASK-006 be thin wiring tasks.
 
 ## Target Files
 
-- `webview/main.ts` (existing, 2677 lines) -- modify `valueFormatter` in `renderGrid()` to render null as `(NULL)` span; add `cellDoubleClicked` listener for value viewer overlay
-- `webview/styles.css` (existing) -- add `.vsdb-null` italic style and `.vsdb-value-viewer` overlay styles
+- `src/ui/queryComposer.ts` **(new)** — the whole module. Placed in `src/ui/` (not
+  `src/core/`) to sit beside `resultsGridModel.ts`, whose helpers it reuses.
+- `src/ui/__tests__/queryComposer.test.ts` **(new)** — tests below.
 
-## Test Cases (REQUIRED -- TDD)
+Deliberately NOT edited: `src/ui/resultsGridModel.ts` (already 1214 lines and bundled into
+the webview — new host-side composition must not grow the webview bundle).
 
-| # | Loai | Ten test | Expected | Pre-state / Fixture |
+## Test Cases (REQUIRED — TDD)
+
+| # | Loại | Tên test | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
-| 1 | unit | `null value renders "(NULL)" in italic span` | Grid cell HTML contains `class="vsdb-null"` and text `(NULL)` | Cell with null value |
-| 2 | unit | `non-null value renders normally` | Grid cell HTML does NOT contain `vsdb-null` | Cell with `"hello"` |
-| 3 | unit | `undefined value renders "(NULL)" same as null` | Grid cell contains `vsdb-null` class | Cell with undefined |
-| 4 | unit | `valueFormatter preserves underlying data` | AG Grid `getValue()` still returns null | Null cell |
-| 5 | edge | `double-click on null cell enters edit mode` | AG Grid cell editor activates | Null cell double-clicked |
-| 6 | edge | `value viewer overlay shows full content for long strings` | Overlay text matches full value | 500-char string |
+| 1 | unit (happy) | `buildFilterWhere emits an IN list` | `buildFilterWhere({name:{values:["a","b"]}}, "postgres")` → `"name" IN ('a', 'b')` | none |
+| 2 | unit (happy) | `two filtered columns are AND-joined` | `{a:{values:["1"]},b:{values:["2"]}}` → `"a" IN ('1') AND "b" IN ('2')` | matches AG Grid's multi-column AND semantics |
+| 3 | edge (blanks sentinel) | `(Blanks) becomes IS NULL and OR-joins with the IN list` | `{n:{values:["(Blanks)","a"]}}` → `("n" IS NULL OR "n" IN ('a'))` | `(Blanks)` is `SET_FILTER_BLANKS_DISPLAY`, `resultsGridModel.ts:1138` |
+| 4 | edge (blanks only) | `only (Blanks) selected yields a bare IS NULL` | `{n:{values:["(Blanks)"]}}` → `"n" IS NULL` — no empty `IN ()`, which is a syntax error on all three dialects | boundary |
+| 5 | edge (value injection) | `single quote in a value is doubled` | value `O'Brien` → `'O''Brien'`; result contains no unescaped `'` breaking the literal | must route through `sqlLiteral` |
+| 6 | edge (identifier injection) | `delimiter inside a column name is doubled per dialect` | mssql `a]b` → `[a]]b]`; mysql `` a`b `` → `` `a``b` ``; postgres `a"b` → `"a""b"` | must route through `quoteIdent` |
+| 7 | edge (empty model) | `empty or all-empty filter model returns ""` | `{}` → `""`; `{n:{values:[]}}` → `""` | caller then omits the WHERE entirely |
+| 8 | unit (happy) | `buildPagedQuery pages postgres with LIMIT/OFFSET` | ends with `LIMIT 500 OFFSET 1000` | `(sql,"", "", 1000, 500, "postgres")` |
+| 9 | edge (dialect) | `mssql pages with OFFSET/FETCH and injects an ORDER BY` | contains `ORDER BY (SELECT NULL) OFFSET 1000 ROWS FETCH NEXT 500 ROWS ONLY` | T-SQL rejects OFFSET without ORDER BY |
+| 10 | edge (dialect, order supplied) | `mssql keeps the caller's ORDER BY instead of the placeholder` | orderBy `name DESC` → contains `ORDER BY name DESC OFFSET`, and NOT `(SELECT NULL)` | |
+| 11 | edge (boundary) | `offset 0 still emits OFFSET 0` | `offset:0` → `OFFSET 0` present | omitting it makes the mssql FETCH clause invalid |
+| 12 | edge (statement terminator) | `a trailing semicolon in the inner SQL is stripped before wrapping` | `SELECT 1;` → composed SQL has exactly one `;` at most and never `(SELECT 1;)` | same hazard `composeRequery` guards at `resultsGridModel.ts:1101-1105` |
+| 13 | unit (happy) | `composeSortQuery routes postgres to the existing helper` | output byte-identical to `getTableSortQuery("SELECT 1","","name","ASC")` from `src/adapters/postgres.ts:167` | |
+| 14 | edge (dispatch) | `composeSortQuery quotes per dialect` | postgres `"name"`, mysql `` `name` ``, mssql `[name]` | mssql arm lands in TASK-006; until then it may throw `NotImplementedError` — see Discussion |
+| 15 | edge (numeric typing) | `numeric filter values are emitted unquoted on all three dialects` | `{id:{values:["42","7"],typed:[42,7]}}` → `"id" IN (42, 7)` for postgres, `` `id` IN (42, 7) `` for mysql, `[id] IN (42, 7)` for mssql — the digits appear with **no** surrounding `'` | without `typed`, `String()`-coerced values would emit `IN ('42','7')`, which forces an implicit conversion (index-killing on MySQL, and a hard `Conversion failed` on an MSSQL `int` column when any sibling value is non-numeric) |
+| 16 | edge (temporal typing) | `an ISO timestamp is normalized per dialect` | typed `"2024-03-01T10:30:00.000Z"` → postgres `'2024-03-01T10:30:00.000Z'` (kept verbatim; PG parses full ISO incl. the `Z` offset), mysql and mssql `'2024-03-01 10:30:00.000'` (`T`→space, trailing `Z` stripped) | MSSQL `datetime`/`datetime2` raises a conversion error on the trailing `Z`; see Discussion for the UTC-naive assumption this records |
+| 17 | edge (boolean + null typing) | `booleans and nulls are typed, not stringified` | typed `[true]` → `IN (TRUE)` (not `IN ('true')`); a typed `null` is routed to the `IS NULL` branch and never appears inside the `IN` list | `sqlLiteral` already emits `TRUE`/`FALSE`/`NULL` — case 17 pins that the typed path reaches it |
+| 18 | edge (no type sniffing) | `a numeric-looking value stays quoted when no typed[] is supplied` | `{code:{values:["007"]}}` with **no** `typed` → `"code" IN ('007')` — still a string literal | load-bearing: sniffing `/^\d+$/` would turn a `varchar` zero-padded code into `007` and silently match nothing. Typing must come only from `typed[]`, never from the display string |
+| 19 | edge (length mismatch) | `a typed[] of the wrong length is ignored, not zipped` | `{id:{values:["1","2"],typed:[1]}}` → falls back to the all-string form `"id" IN ('1', '2')`, no throw, no `undefined` in the SQL | defensive: a malformed webview payload must degrade to today's behavior rather than emit `IN (1, undefined)` |
 
 ## Test Files
 
-- `src/ui/__tests__/resultsGridModelNull.test.ts` (new) -- tests for null rendering logic in valueFormatter
+- `src/ui/__tests__/queryComposer.test.ts` — all 19 cases. Style reference:
+  `src/adapters/__tests__/postgres.sortQuery.test.ts` (pure string assertions, one `it` per
+  numbered case, no mocks).
 
 ## Verification Commands
 
 ```bash
-npm test src/ui/__tests__/resultsGridModelNull.test.ts
-npm test
 npm run typecheck
+npx vitest run src/ui/__tests__/queryComposer.test.ts
+npm test
 ```
 
 ## Acceptance Criteria
 
-- [ ] Grid renders "(NULL)" italic text for null/undefined cell values
-- [ ] Double-click on null cell still enters edit mode
-- [ ] Double-click on read-only cell shows value viewer overlay
-- [ ] Value viewer displays full cell content as plain text
-- [ ] `.vsdb-null` CSS class styled as italic, muted color
-- [ ] `.vsdb-value-viewer` overlay styled with padding, border, monospace font
-- [ ] `npm run typecheck` clean
+- [ ] `src/ui/queryComposer.ts` exports `buildFilterWhere`, `buildPagedQuery`,
+      `composeSortQuery` with the exact signatures in §Interfaces.
+- [ ] Zero hand-rolled escaping: every identifier goes through `quoteIdent`, every value
+      through `sqlLiteral` (`grep -n "replace(/'" src/ui/queryComposer.ts` → no hits).
+- [ ] The module imports nothing from `vscode`, `ag-grid-community`, or `src/adapters/*`.
+- [ ] `ColumnFilterModel` entries carry an optional `typed?: unknown[]`, and
+      `buildFilterWhere` emits typed values through `sqlLiteral` (numbers/booleans
+      unquoted, `Date`/ISO strings dialect-normalized) while falling back to string
+      literals whenever `typed` is absent or length-mismatched. No type sniffing from
+      display strings.
+- [ ] All 19 Test Cases PASS.
+- [ ] `npm run typecheck` clean; `npm test` ≥ 1327 passed, 0 failed.
+- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
 
 ## Dependencies
 
@@ -53,65 +81,119 @@ npm run typecheck
 
 ## Interfaces
 
-- Consumes: existing `valueFormatter` in `webview/main.ts` renderGrid()
-- Produces: updated `valueFormatter` returning HTML for null; `cellDoubleClicked` handler; CSS classes `.vsdb-null`, `.vsdb-value-viewer`
+- Consumes (all exist at HEAD — import, do not reimplement):
+  - `sqlLiteral(v: unknown): string` — `src/ui/resultsGridModel.ts:378`. Portable
+    single-quote doubling, **no** backslash escaping (deliberate: PG
+    `standard_conforming_strings=on` and MSSQL treat `\` literally).
+  - `quoteIdent(name: string, dialect: Dialect): string` — `src/core/saveStatements.ts:136`.
+    postgres `"…"` (doubling `"`), mysql `` `…` `` (doubling `` ` ``), mssql `[…]` (doubling `]`).
+  - `type Dialect = "postgres" | "mysql" | "mssql"` — `src/core/saveStatements.ts:31`.
+  - `SET_FILTER_BLANKS_DISPLAY = "(Blanks)"` — `src/ui/resultsGridModel.ts:1138`.
+  - `getTableSortQuery(originalSql, whereFromBar, column, direction)` —
+    `src/adapters/postgres.ts:167` (postgres arm of `composeSortQuery`).
+- Produces (TASK-005 and TASK-006 consume these verbatim):
+  ```ts
+  /**
+   * AG Grid set-filter model as returned by GridApi.getFilterModel(), plus an
+   * optional parallel array of the ORIGINAL (uncoerced) cell values.
+   *
+   * `values` is display text — AG Grid's set filter stores what the checkbox
+   * showed, i.e. String()-coerced. `typed[i]` is the raw value behind
+   * `values[i]` and is what buildFilterWhere prefers when present.
+   * `typed` is optional and MUST be ignored unless typed.length === values.length.
+   */
+  export interface ColumnFilterModel {
+    [field: string]: { values: string[]; typed?: unknown[] };
+  }
+
+  export function buildFilterWhere(
+    filters: ColumnFilterModel,
+    dialect: Dialect,
+  ): string;                       // "" when nothing is filtered
+
+  export function buildPagedQuery(
+    sql: string,
+    where: string,
+    orderBy: string,
+    offset: number,
+    limit: number,
+    dialect: Dialect,
+  ): string;
+
+  export function composeSortQuery(
+    dialect: Dialect,
+    originalSql: string,
+    whereFromBar: string,
+    column: string,
+    direction: "ASC" | "DESC",
+  ): string;
+  ```
 
 ---
 
 ## Discussion
 
-**Executor note (TASK-004, cycle U):** design decisions taken while implementing:
-- `valueFormatter` (via `formatDataCell`) now returns the text `(NULL)` for null/undefined, and a new `cellRenderer` wraps it in `<span class="vsdb-null">(NULL)</span>`. valueFormatter alone cannot attach a CSS class, so the renderer pair implements the "italic span" contract; display-only — row data keeps the real null (editors/copy/export read `getValue`, untouched).
-- Non-null cells are rendered via `textContent` on a plain span (never innerHTML), so cell values can never inject markup.
-- `onCellDoubleClicked` defers one tick, then checks `api.getEditingCells()`: editable cells (all data columns) keep AG Grid's default double-click-to-edit; when NO editor started (read-only column), the `.vsdb-value-viewer` overlay opens with the full raw value (`formatCell`, plain text). Test 6 makes its column read-only via `setGridOption("columnDefs", ... editable: false)` to exercise the read-only path.
-- jsdom finding: custom cellRenderer GUI attaches on the next animation frame (the default formatter text path is synchronous), so tests 1-3 await one tick before asserting DOM; test 6 also ticks after the defs swap (under full-suite load the flush is not synchronous).
-- csvMode ("raw" toggle) intentionally still shows `(NULL)` for null — toggling never hides nullness.
+### 2026-08-25 · planner · bao-opus
 
-## Executor Report
-EXECUTOR_TOOL: claude-code
-EXECUTOR_MODEL: bao-sonnet
-EXECUTOR_SUBAGENT: feature-implementer
-RED_OUTPUT: |
-  Command: `npx vitest run src/ui/__tests__/resultsGridModelNull.test.ts` (after baseline `npm run compile`, before implementation)
+Ordering note for case 14: `composeSortQuery`'s mssql arm needs
+`getTableSortQuery` from `src/adapters/mssql.ts`, which TASK-006 creates. To keep this task
+in wave 1 with no dependency, implement the mssql arm here as an **inline** T-SQL
+composition (it is four lines: `quoteIdent(col,"mssql")` + ASC/DESC whitelist + subquery
+wrap), and let TASK-006 replace the inline body with a delegation to its adapter export.
+That keeps case 14 green in wave 1 and keeps TASK-006's diff honest. Record whichever you
+chose in the Executor Report.
 
-  ❯ src/ui/__tests__/resultsGridModelNull.test.ts  (8 tests | 5 failed) 708ms
-   FAIL  src/ui/__tests__/resultsGridModelNull.test.ts > TASK-004 — NULL cell display + value viewer > 1. null value renders "(NULL)" in an italic .vsdb-null span
-     → expected +0 to be 1 // Object.is equality   (nullSpans.length 0 vs 1)
-   FAIL  src/ui/__tests__/resultsGridModelNull.test.ts > TASK-004 — NULL cell display + value viewer > 3. undefined value renders "(NULL)" same as null
-     → expected +0 to be 1 // Object.is equality   (nullSpans.length 0 vs 1)
-   FAIL  src/ui/__tests__/resultsGridModelNull.test.ts > TASK-004 — NULL cell display + value viewer > 6. value viewer overlay shows full content for long strings (read-only cell)
-     → AssertionError: expected null to be truthy   (no .vsdb-value-viewer overlay)
-   FAIL  src/ui/__tests__/resultsGridModelNull.test.ts > TASK-004 — styles.css contract (.vsdb-null / .vsdb-value-viewer) > .vsdb-null is styled italic + muted
-     → AssertionError: expected null to be truthy   (no .vsdb-null rule in styles.css)
-   FAIL  src/ui/__tests__/resultsGridModelNull.test.ts > TASK-004 — styles.css contract (.vsdb-null / .vsdb-value-viewer) > .vsdb-value-viewer overlay has padding, border, monospace font
-     → AssertionError: expected null to be truthy   (no .vsdb-value-viewer rule in styles.css)
-   Test Files  1 failed (1)
-        Tests  5 failed | 3 passed (8)
+`(Blanks)` semantics: AG Grid's set filter treats `null`, `undefined` and `""` as one group
+(`buildSetFilterEntries`, `resultsGridModel.ts:1151`). Server-side, `col IS NULL` does not
+catch `''`. Cases 3-4 only pin the `IS NULL` half; matching empty strings too is a
+deliberate known gap recorded in PLAN.md, not a bug for the reviewer to flag.
 
-  The 3 pre-passing tests lock already-correct behavior (non-null render, underlying data stays null, dblclick→edit) and stay green after implementation.
-Verification Output: |
-  1) `npm test src/ui/__tests__/resultsGridModelNull.test.ts`
-   ✓ src/ui/__tests__/resultsGridModelNull.test.ts  (8 tests) 716ms
-   Test Files  1 passed (1)
-        Tests  8 passed (8)
+→ @executor: `buildPagedQuery` receives the ALREADY-composed inner SQL. Do not re-derive a
+WHERE inside it — TASK-005 passes `buildFilterWhere`'s output through the `where` argument.
 
-  2) `npm test`
-   Test Files  86 passed | 1 skipped (87)
-        Tests  1267 passed | 2 skipped (1269)
-   Duration  9.22s
-   (skips are pre-existing: src/ai/omp/__tests__/acpLiveSmoke.test.ts — live ACP smoke, self-skips; unrelated to TASK-004. Full suite re-run a second time: same result — stable.)
+**Typed filter values (plan review R1, finding 4).** AG Grid's set-filter model holds
+*display strings*: VSDB builds those entries with `String(v)` in `buildSetFilterEntries`
+(`src/ui/resultsGridModel.ts:1151-1176`), and `formatCell` (`:341`) turns `Date` into an
+ISO string and objects into JSON. If `buildFilterWhere` pushed those strings straight
+through `sqlLiteral`, every predicate would be a **string** literal:
 
-  3) `npm run typecheck`
-   > tsc --noEmit
-   (no output, exit code 0)
+- MySQL: `WHERE id IN ('42')` on an `INT` column works, but only via an implicit
+  conversion that discards the index — the exact opposite of the point of pushing the
+  filter to the server.
+- MSSQL: `WHERE id IN ('42')` on an `int` column succeeds, but the moment the selection
+  contains one non-numeric entry the whole batch fails with
+  `Conversion failed when converting the varchar value ... to data type int`. A
+  `datetime2` column with `'2024-03-01T10:30:00.000Z'` fails on the trailing `Z`.
+- Postgres is the forgiving one (`unknown`-typed literals get coerced), which is why this
+  cannot be caught by testing against PG alone. Cases 15-16 therefore assert **all three**
+  dialects.
 
-  Note: `npm run compile` was run after editing webview/main.ts so bundle tests read the new dist/webview.js.
-Status: PASS
-Note: |
-  none — all 6 task Test Cases (plus 2 CSS-contract checks) green; only Target Files (webview/main.ts, webview/styles.css) + the task's Test File were modified; no git commands run.
+Design, in order of precedence:
 
-## Reviewer Verdict (R1 — grid/webview group)
-VERDICT: APPROVED-WITH-MINOR
-REVIEWER_MODEL: bao-opus
-FINDINGS: no Critical/Important defects; minor notes only, non-blocking. The observed resultsGridModelNull flake (TASK-004) was not reproduced by the reviewer across two full-suite runs — treated as environment flake, not a code defect.
-SOURCE: R1 review round outcome recorded in RUN.md cursor (grid/webview group).
+1. If `typed` is present **and** `typed.length === values.length`, build the literal from
+   `typed[i]` via `sqlLiteral`. That already yields unquoted numbers/bigints, `TRUE`/`FALSE`
+   for booleans, and `NULL` for null (`src/ui/resultsGridModel.ts:378-390`) — do not
+   duplicate that logic.
+2. Otherwise fall back to today's behavior: quote every entry as a string literal.
+   **Never** sniff a type from the display string (case 18) — `'007'` in a `varchar` code
+   column must stay `'007'`.
+3. Temporal values need one dialect step `sqlLiteral` does not do: it emits a `Date` as a
+   full ISO string with the `Z` suffix. Keep that for postgres; for mysql and mssql
+   replace the `T` with a space and drop the trailing `Z` before quoting.
+
+*Assumption logged:* step 3 treats the value as UTC and produces a UTC-naive literal for
+MySQL/MSSQL. This matches how the grid displayed it (`formatCell` → `toISOString()`), so
+filtering agrees with what the user saw. It will not agree with a server whose session
+timezone is not UTC, on a column that stores local time. That is out of scope here and is
+recorded as a known gap in PLAN.md rather than silently "fixed" by an executor.
+
+TASK-005 is responsible for populating `typed` from the loaded row values in the webview;
+it is optional precisely so TASK-005 can ship the plumbing incrementally, and so cases
+18-19 keep the fallback honest.
+
+---
+
+<!--
+Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
+Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+-->

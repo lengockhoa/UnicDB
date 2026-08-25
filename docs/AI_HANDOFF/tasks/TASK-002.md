@@ -1,139 +1,174 @@
-# TASK-002 -- MSSQL parameter binding (types.ts + mssql.ts)
+# TASK-002 — Schema-aware SQL semantic tokens provider
 
 - Status: `ready`
 - Owner: `-`
 - Reviewer: `-`
-- Parent plan: `docs/AI_HANDOFF/PLAN.md` section 3.2
+- Parent plan: `docs/AI_HANDOFF/PLAN.md` §3 (Coloring, Layer 2)
 
 ## Goal
 
-Replace all `${this.literal()}` string interpolation in MsSqlAdapter with parameterized queries using `tedious` TYPES and `addParameter`. Add an `execute` helper that accepts optional typed parameters alongside the SQL string.
+Add a `DocumentSemanticTokensProvider` for `.sql` files that colors identifiers by what
+they *are* on the live connection — schema / table / column — by reading the already
+shipped `SchemaCache`. This is the DataGrip-like half of the coloring work: TextMate can
+only match regexes, it cannot know `users` is a real table.
 
 ## Target Files
 
-- `src/adapters/mssql.ts` (existing, 788 lines) -- add `execute(sql, params?)` private method; refactor `listTables`, `listViews`, `listRoutines`, `listColumns`, `estimateTableRowsBatch` to use params instead of `this.literal()`
-- `src/adapters/__tests__/mssql.parameterized.test.ts` (new) -- unit tests for parameterized execute (this file is NOT excluded from the default vitest config, unlike `*.integration.test.ts`)
+- `src/ui/sqlSemanticTokens.ts` **(new)** — `SQL_SEMANTIC_LEGEND` +
+  `class SqlSemanticTokensProvider implements vscode.DocumentSemanticTokensProvider`,
+  including the `onDidChangeSemanticTokens` event and a `refresh()` method (see
+  *Cold-cache refresh* below).
+- `src/extension.ts` — register the provider next to the existing
+  `SqlCompletionProvider` registration (currently `src/extension.ts:142-156`). The
+  `schemaCache` instance already exists there (`src/extension.ts:132`) — reuse it, do not
+  construct a second cache. Also call the provider's `refresh()` from the two places that
+  already invalidate the cache: the `mgr.onDidChangeActive` subscription
+  (`src/extension.ts:141`) and the `vsdb.refreshSchema` command handler
+  (`src/extension.ts:233-237`).
+- `src/ui/__tests__/sqlSemanticTokens.test.ts` **(new)** — tests below.
 
-## Test Cases (REQUIRED -- TDD)
+## Test Cases (REQUIRED — TDD)
 
-| # | Loai | Ten test | Expected | Pre-state / Fixture |
+| # | Loại | Tên test | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
-| 1 | unit | `execute with params sends NVarChar parameters` | Request.addParameter called with TYPES.NVarChar for each param | Mock tedious Request |
-| 2 | unit | `listTables uses parameterized query` | SQL string contains no `${this.literal()}` interpolation | Mock adapter, spy on execute |
-| 3 | unit | `listColumns uses parameterized query` | SQL string contains no `${this.literal()}` interpolation | Mock adapter, spy on execute |
-| 4 | unit | `literal() method still exists for backward compat` | `this.literal("test")` returns `'test'` | Direct method call |
-| 5 | edge | `execute with empty params array` | Runs SQL without parameters | Empty params |
-| 6 | edge | `execute with null param value` | Sends TYPES.Null parameter | Null value in params |
+| 1 | unit (happy) | `known table is tokenized as class` | exactly one token whose range covers `users` and whose type index is `legend.tokenTypes.indexOf("class")` | cache stubbed with `listTables → [{name:"users",schema:"public"}]`; doc `SELECT * FROM users` |
+| 2 | unit (happy) | `known column is tokenized as property` | token for `email` typed `property` | `listColumns → [{name:"email",...}]`; doc `SELECT email FROM users` |
+| 3 | unit (happy) | `known schema is tokenized as namespace` | token for `public` typed `namespace` | `listSchemas → [{name:"public"}]`; doc `SELECT * FROM public.users` |
+| 4 | edge (no connection) | `no active connection returns zero tokens without throwing` | resolved value's `data.length === 0`; no throw | provider built with `hasConnection: () => false` |
+| 5 | edge (adapter failure) | `adapter provider rejecting resolves to empty tokens` | resolves (not rejects); `data.length === 0` | `SchemaCache` built over a provider that throws |
+| 6 | edge (unknown identifier) | `identifier not in the schema emits no token` | zero tokens for doc `SELECT * FROM not_a_table` | cache has only `users` — TextMate coloring must show through untouched |
+| 7 | edge (masked text) | `identifier inside a string literal or comment is not tokenized` | `SELECT 'users' -- users` → zero tokens | reuse `maskLiteralsAndComments` from `src/core/dangerousStatement.ts:89` rather than re-implementing |
+| 8 | edge (registration guard) | `activate() does not throw when the API is absent` | `activate` completes with a `vscode.languages` mock lacking `registerDocumentSemanticTokensProvider` | mirrors the partial mock in `src/extension.test.ts:159-164` |
+| 9 | edge (cold cache → stale coloring) | `first call on a cold cache emits nothing, then refresh() fires onDidChangeSemanticTokens` | call 1 (adapter's `listTables` still pending) resolves with `data.length === 0`; after the adapter settles and `refresh()` is called, the `onDidChangeSemanticTokens` listener has fired **exactly once**; a second `provideDocumentSemanticTokens` then returns the `users` token typed `class` | provider built over a `SchemaCache` whose adapter resolves on a manually released deferred; listener registered via `provider.onDidChangeSemanticTokens(spy)` before call 1 |
+| 10 | edge (event storm) | `refresh() called 3x fires the event 3x and never throws with zero listeners` | with no listener attached, 3 `refresh()` calls do not throw; with one listener attached, 3 calls → 3 firings (the provider must not swallow or coalesce — VS Code debounces re-requests itself) | fresh provider; `SQL_SEMANTIC_LEGEND` unchanged between firings |
+
+Kinds covered: happy (1-3), missing-precondition (4), dependency-failure (5),
+negative-match (6), lexical-context (7), host-capability (8), async-readiness /
+first-paint staleness (9), event-lifecycle (10).
 
 ## Test Files
 
-- `src/adapters/__tests__/mssql.parameterized.test.ts` (new) -- unit tests for parameterized execute
+- `src/ui/__tests__/sqlSemanticTokens.test.ts` — cases 1-7, 9, 10. Follow the
+  `vi.mock("vscode", …)` pattern already used by
+  `src/ui/__tests__/sqlCompletionProvider.test.ts:7-26`; the mock must additionally provide
+  `SemanticTokensLegend`, `SemanticTokensBuilder` (a minimal
+  `push(line, char, length, type)` recorder + `build()`), `Position`, `Range`, and
+  `EventEmitter` (a minimal `{ event, fire, dispose }` recorder — cases 9 and 10 assert on
+  its firings).
+- `src/extension.test.ts` — **modify**, add case 8 only. This file is not a Target File of
+  any other task in this wave, so there is no collision.
 
 ## Verification Commands
 
 ```bash
-npm test src/adapters/__tests__/mssql.parameterized.test.ts
-npm test
 npm run typecheck
+npx vitest run src/ui/__tests__/sqlSemanticTokens.test.ts src/extension.test.ts
+npm test
 ```
 
 ## Acceptance Criteria
 
-- [ ] `execute(sql, params?)` private method created on MsSqlAdapter
-- [ ] All metadata queries (listTables, listViews, listRoutines, listColumns, estimateTableRowsBatch) use parameterized execution
-- [ ] No `${this.literal()}` interpolation remains in SQL strings passed to `execSql`
-- [ ] `literal()` method retained for backward compatibility but no longer called from metadata queries
-- [ ] All existing unit MSSQL tests still pass (`npm test`)
-- [ ] `npm run typecheck` clean
+- [ ] `src/ui/sqlSemanticTokens.ts` exports `SQL_SEMANTIC_LEGEND` and
+      `SqlSemanticTokensProvider`.
+- [ ] Registration in `src/extension.ts` is wrapped in
+      `if (typeof vscode.languages.registerDocumentSemanticTokensProvider === "function")`
+      and pushed onto the same `disposables` array as the completion provider.
+- [ ] Selector is `{ scheme: "file", language: "sql" }` — matches the existing CodeLens /
+      completion selectors at `src/extension.ts:120` and `:151`.
+- [ ] The provider never throws and never rejects; every failure path resolves to an empty
+      token set.
+- [ ] `SqlSemanticTokensProvider` exposes
+      `readonly onDidChangeSemanticTokens: vscode.Event<void>` and a public `refresh(): void`
+      that fires it, plus `dispose()` disposing the underlying `EventEmitter`.
+- [ ] `src/extension.ts` calls `refresh()` from **both** cache-invalidation sites —
+      `mgr.onDidChangeActive` (`:141`) and the `vsdb.refreshSchema` handler (`:233-237`) —
+      and pushes the provider onto `disposables` so its emitter is released on deactivate.
+- [ ] All 10 Test Cases PASS.
+- [ ] `npm run typecheck` clean; `npm test` ≥ 1327 passed, 0 failed.
+- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
 
 ## Dependencies
 
-- (none)
+- (none) — independent of TASK-001. Semantic tokens layer over whatever TextMate grammar
+  is active; they do not require VSDB's injection grammar to exist.
 
 ## Interfaces
 
-- Consumes: existing `tedious` Connection/Request/TYPES imports in mssql.ts
-- Produces: `private execute(sql: string, params?: Array<{name: string, type: typeof TYPES[keyof typeof TYPES], value: string | null}>): Promise<QueryResult>`
+- Consumes (both already exist at HEAD, do not redefine):
+  - `class SchemaCache` — `src/ui/schemaCache.ts:42`. Methods used:
+    `getSchemas(): Promise<SchemaInfo[]>`, `getTables(schema?: string): Promise<TableInfo[]>`,
+    `getColumns(table: string, schema?: string): Promise<ColumnInfo[]>`, `invalidate(): void`.
+  - `maskLiteralsAndComments(sql: string, dialect?: SqlDialect): string` —
+    `src/core/dangerousStatement.ts:89`. Blanks literals/comments in place, preserving
+    offsets, so token ranges stay correct.
+- Produces:
+  - `export const SQL_SEMANTIC_LEGEND: vscode.SemanticTokensLegend` with
+    `tokenTypes = ["namespace", "class", "property", "keyword"]` and `tokenModifiers = []`.
+  - `export class SqlSemanticTokensProvider implements vscode.DocumentSemanticTokensProvider`
+    with constructor `(deps: { cache: SchemaCache; hasConnection?: () => boolean })` — the
+    same dependency shape as `SqlCompletionProvider` (`src/ui/sqlCompletionProvider.ts:31-37`)
+    — and:
+    ```ts
+    readonly onDidChangeSemanticTokens: vscode.Event<void>;
+    refresh(): void;   // fires the event; safe with zero listeners
+    dispose(): void;   // disposes the backing EventEmitter
+    ```
 
 ---
 
 ## Discussion
 
-**Executor (claude-code / feature-implementer) — decisions recorded per handoff ambiguity rule:**
+### 2026-08-25 · planner · bao-opus
 
-1. **`TYPES.Null` does not exist in tedious 18.6.2** (verified: `Object.keys(TYPES)` has no `Null`; the `.d.ts` has no such export either). Test case #6 ("Sends TYPES.Null parameter") is therefore implemented as the tedious-18 canonical NULL wire form: the declared type (`NVarChar`) is kept and the `null` value is passed through `addParameter` — tedious emits the TDS NULL marker for a null value (confirmed against `rpcrequest-payload.js` + `NVarChar.generateParameterData` null path, and `addParameter('p', TYPES.NVarChar, null)` round-trips without error). The test asserts the null value reaches `addParameter` un-stringified.
-2. **`estimateTableRows` (singular) also converted** — it is not in the Target Files method list, but acceptance criterion #3 ("No `${this.literal()}` interpolation remains in SQL strings passed to execSql") is violated if it keeps interpolating, since it funnels through `execute` → `execSql` like the rest. Same one-line pattern as the batch variant; noted here as deliberate.
-3. **One stale test updated in `adapterQueryShape.test.ts`** (outside the Target Files list, flagged): the existing edge test "listColumns(...'O'Brien'...) emits `'O''Brien'` exactly once" asserts the retired literal-escaping behavior and cannot pass alongside acceptance #3/#5. Updated minimally to assert the new contract (value never appears in SQL text — raw or `''`-escaped — and travels as the `@table` parameter). No other assertion in that file touched.
-4. **Tests #4 (literal backward-compat) and #5 (empty params no-op) pass both before and after by design** — they are guard tests for retained/no-op behavior per the Test Cases table, not new-behavior tests. RED was confirmed by the other 6 tests failing for the expected reasons.
+`@types/vscode` is pinned at `1.75.0` and does export `SemanticTokensLegend` /
+`SemanticTokensBuilder` (verified in `node_modules/@types/vscode/index.d.ts:3852,3869`),
+so no engine bump is needed.
 
-## Executor Report
+`SchemaCache.getColumns` needs a table name. For `SELECT email FROM users` the provider
+must first resolve the FROM target, then ask for that table's columns — do not fan out
+`getColumns` across every cached table on every keystroke (60 s TTL or not, that is an
+N-query storm on a large schema). If the FROM target cannot be resolved, emit table and
+schema tokens only and skip columns; that degradation is acceptable and case 6 already
+asserts silence is safe.
 
-EXECUTOR_TOOL: claude-code
-EXECUTOR_MODEL: bao-sonnet
-EXECUTOR_SUBAGENT: feature-implementer
+→ @executor: `provideDocumentSemanticTokens` is called on nearly every edit. Keep it
+allocation-light and never `await` anything but the cache.
 
-RED_OUTPUT:
-```
-$ npm test src/adapters/__tests__/mssql.parameterized.test.ts
- FAIL  src/adapters/__tests__/mssql.parameterized.test.ts > MsSqlAdapter.execute(sql, params) — parameter binding (TASK-002) > #1 execute with params sends NVarChar parameters
-AssertionError: expected "spy" to be called 2 times, but got 0 times
- ❯ src/adapters/__tests__/mssql.parameterized.test.ts:124:26
+**Cold-cache refresh (plan review R1, finding 2).** `SchemaCache` is asynchronous and
+starts empty: `getTables()` on a cold cache calls `resolveAdapter()` and awaits a live
+round trip (`src/ui/schemaCache.ts:75-101`), and with no adapter yet it returns
+`this.stale(existing) ?? []` — i.e. an empty array. VS Code asks for semantic tokens
+**once** when a document opens and then only on document change or on an explicit
+`onDidChangeSemanticTokens` signal. So without that event the very first open of a `.sql`
+file paints with an empty schema and stays uncolored until the user types — the exact
+symptom this task exists to remove.
 
- FAIL  src/adapters/__tests__/mssql.parameterized.test.ts > MsSqlAdapter.execute(sql, params) — parameter binding (TASK-002) > #6 edge: execute with null param value sends the parameter as a typed NULL
-AssertionError: expected "spy" to be called 1 times, but got 0 times
+Required shape:
 
- FAIL  src/adapters/__tests__/mssql.parameterized.test.ts > MsSqlAdapter.metadata queries — parameterized SQL (TASK-002) > #2 listTables uses parameterized query
-AssertionError: expected 'SELECT t.name AS name, s.name AS [sch…' not to contain "'dbo'"
-- Expected
-+ Received
-+ SELECT t.name AS name, s.name AS [schema]
-+          FROM sys.tables t
-+          JOIN sys.schemas s ON s.schema_id = t.schema_id
-+         WHERE s.name = 'dbo'
-+          ORDER BY t.name
+- Own a `vscode.EventEmitter<void>`; expose its `.event` as `onDidChangeSemanticTokens`
+  (the optional member of `vscode.DocumentSemanticTokensProvider` — VS Code re-requests
+  tokens for all visible SQL documents when it fires).
+- `refresh()` just calls `emitter.fire()`. It must be safe with zero listeners and must
+  not coalesce (case 10) — VS Code does its own debouncing, and swallowing a fire can lose
+  the only signal.
+- Call `refresh()` wherever the cache becomes newly-valid. Two sites already exist and
+  need no new plumbing: `mgr.onDidChangeActive` at `src/extension.ts:141` (currently
+  `() => schemaCache.invalidate()`) and the `vsdb.refreshSchema` command at
+  `src/extension.ts:233-237`. Extend both to also call `provider.refresh()`.
+- Additionally, when `provideDocumentSemanticTokens` runs against a **cold** cache — the
+  awaited lookup returned empty *and* `hasConnection()` is true — schedule one `refresh()`
+  after the in-flight cache promise settles. Guard it with a per-provider "already
+  scheduled" boolean so a burst of keystrokes cannot produce a fire-per-edit loop: fire →
+  re-request → still cold → fire again is an infinite cycle, and the boolean is what
+  breaks it. Never fire from inside the provide call synchronously.
+- Push the provider onto `disposables` so the emitter is disposed on deactivate.
 
- FAIL  src/adapters/__tests__/mssql.parameterized.test.ts > MsSqlAdapter.metadata queries — parameterized SQL (TASK-002) > #3 listColumns uses parameterized query
-AssertionError: expected 'SELECT c.name AS name, ty.name AS dataT…' to contain '@table'
+This does not change the "never throw, always resolve" contract: a cold cache still
+resolves to zero tokens (case 4 unchanged), it just gets a second chance once data lands.
 
- FAIL  src/adapters/__tests__/mssql.parameterized.test.ts > MsSqlAdapter.metadata queries — parameterized SQL (TASK-002) > #2b regression: listTables with a quote in the schema name never reaches the SQL text
-AssertionError: expected 'SELECT t.name AS name, s.name AS [sch…' not to contain 'O\'\'Brien'
-+         WHERE s.name = 'O''Brien'
+---
 
- FAIL  src/adapters/__tests__/mssql.parameterized.test.ts > MsSqlAdapter.metadata queries — parameterized SQL (TASK-002) > #3b regression: estimateTableRowsBatch builds an IN list from @tableN parameters
-AssertionError: expected 'SELECT t.name AS name, SUM(p.rows) AS…' to contain 'IN (@table0, @table1)'
-+          WHERE s.name = 'dbo'
-+            AND t.name IN ('a', 'b')
-
- Test Files  1 failed (1)
-      Tests  6 failed | 2 passed (8)
-```
-(6 RED failures = exactly the new-behavior tests; the 2 pre-existing passes are guard tests #4 literal-backward-compat and #5 empty-params-no-op — see Discussion note 4.)
-
-Verification Output:
-```
-$ npm test src/adapters/__tests__/mssql.parameterized.test.ts
- ✓ src/adapters/__tests__/mssql.parameterized.test.ts  (8 tests) 4ms
- Test Files  1 passed (1)
-      Tests  8 passed (8)
-   Duration  311ms
-
-$ npm run compile          # run once first: 2 pre-existing tests read dist/ artifacts
-$ npm test
- Test Files  86 passed | 1 skipped (87)
-      Tests  1267 passed | 2 skipped (1269)
-   Duration  9.34s
-
-$ npm run typecheck
-> vsdb@1.6.3 typecheck
-> tsc --noEmit
-(exit 0, clean)
-```
-
-Status: PASS
-Note: (1) tedious 18.6.2 has no `TYPES.Null` export — test case #6 implemented as declared-type + null value (tedious's canonical TDS NULL wire form); recorded in Discussion. (2) `estimateTableRows` (singular) also converted beyond the Target Files method list to satisfy acceptance criterion #3 (no literal interpolation reaches execSql). (3) One stale edge test in `src/adapters/__tests__/adapterQueryShape.test.ts` (asserted the retired `'O''Brien'` escaping in listColumns SQL) was updated to assert the parameterized contract — required for acceptance #5 (`npm test` green). (4) First full `npm test` run failed 2 pre-existing dist-artifact tests (ENOENT dist/webview.css, dist/schemaForm.js) before `npm run compile`; green after compiling — unrelated to this change.
-
-## Reviewer Verdict (R1 — adapters/export group)
-VERDICT: APPROVED-WITH-MINOR
-REVIEWER_MODEL: bao-opus
-FINDINGS: no Critical/Important defects; minor notes only, non-blocking. Verification re-run green.
-SOURCE: R1 review round outcome recorded in RUN.md cursor (adapters/export group).
+<!--
+Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
+Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+-->
