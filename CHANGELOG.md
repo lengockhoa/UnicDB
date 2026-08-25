@@ -2,7 +2,24 @@
 
 All notable changes to VSDB are documented in this file. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
-adheres to [Semantic Versioning](https://semver.org/).
+
+## [1.6.3] — 2026-08-25
+
+Cycle S: lazy ctid — fix the view-open crash introduced in 1.6.2's no-PK save support.
+
+### Fixed
+- **PostgreSQL views/matviews/foreign tables**: opening them in the results grid no
+  longer fails with `column "ctid" does not exist` — the browse query is a plain
+  `SELECT` again, with no eager ctid wrapping.
+- **No-PK row identity**: `ctid` is now resolved lazily at save time (updates and
+  deletes) via `fetchPostgresCtids`, so it is always fresh at commit and never
+  stale from when the tab was opened.
+- **No-PK deletes**: missing ctid for a row now emits a warning and skips that row
+  instead of silently failing; `DELETE FROM t WHERE ctid='(x,y)'` is built from the
+  save-time lookup.
+- **User column literally named `ctid`**: no longer auto-hidden in the grid nor
+  stripped from exports — it is treated as an ordinary user column.
+
 
 ## [1.6.2] — 2026-08-25
 
