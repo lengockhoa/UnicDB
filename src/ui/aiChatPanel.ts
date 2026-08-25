@@ -48,6 +48,7 @@ import { createDbTools } from "../ai/tools/registry";
 import { createSqlTool } from "../ai/tools/sqlTool";
 import { createExportStructureTool } from "../ai/tools/schemaTools";
 import type { AcpProcessHandle } from "../ai/omp/acpProcess";
+import { createMcpBridge, type McpBridge } from "../ai/omp/mcpBridge";
 import {
   buildDatabaseStructure,
   type ExportColumn,
@@ -90,9 +91,18 @@ export interface ChatAbortToken {
  * permission requests as host `permission_request` messages keyed by opaque
  * IDs. When absent (or `start()` rejects), the panel falls back to the
  * built-in agent loop.
+ *
+ * TASK-012 (B11): `start()` gains an optional 3rd `mcpServers` param — the
+ * panel builds an in-process McpBridge (see `ensureAcpSession()`) exposing
+ * the same DB tool registry the builtin engine uses, and forwards its ACP
+ * `McpServer` descriptor here so the omp engine gets real database access.
  */
 export interface AcpPanelDeps {
-  start(ompPath: string, cwd: string): Promise<AcpProcessHandle>;
+  start(
+    ompPath: string,
+    cwd: string,
+    mcpServers?: ReadonlyArray<Record<string, unknown>>,
+  ): Promise<AcpProcessHandle>;
 }
 
 export interface AiChatPanelOptions {
@@ -316,9 +326,16 @@ interface AcpSession {
   buffer: string;
   /** Active permission requests keyed by host requestId. */
   pending: Map<string, PendingPermission>;
+  /**
+   * TASK-012 (B11): the ACP `McpServer` descriptor array this session was
+   * started with — reused verbatim on `session/load` (resume) so the loaded
+   * session keeps the same DB tool access it had at `session/new` time.
+   */
+  mcpServers: ReadonlyArray<Record<string, unknown>>;
   /** Monotonic counter for host-generated opaque requestIds. */
   bumpRequestSeq(): number;
-  /** Disposal teardown — cancels timers + drops references. */
+  /** Disposal teardown — cancels timers, drops references, closes the
+   * McpBridge listener (TASK-012). */
   dispose(): void;
 }
 
@@ -766,7 +783,31 @@ export class AiChatPanel {
     }
     const cwd =
       vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-    const handle = await acp.start("omp", cwd);
+
+    // TASK-012 (B11): mirror runBuiltinTurn's tool registry (list_tables,
+    // describe_table, run_sql, export_structure) and expose it to the omp
+    // engine over an in-process MCP bridge — same adapterFactory, same
+    // read-only guard on run_sql, no second execution path to the database.
+    const registry = createDbTools(this.options.adapterFactory);
+    registry.register(createSqlTool(this.options.adapterFactory));
+    registry.register(createExportStructureTool(this.options.adapterFactory));
+    const bridge: McpBridge = await createMcpBridge(registry);
+    const mcpServers: ReadonlyArray<Record<string, unknown>> = [bridge.descriptor];
+
+    let handle: AcpProcessHandle;
+    try {
+      handle = await acp.start("omp", cwd, mcpServers);
+    } catch (err) {
+      // start() failed (e.g. omp missing/spawn error) — the bridge's
+      // dispose() closure never gets wired below, so close it here to avoid
+      // an orphan loopback listener.
+      try {
+        bridge.dispose();
+      } catch {
+        /* best-effort */
+      }
+      throw err;
+    }
     const pending = new Map<string, PendingPermission>();
     let nextRequestSeq = 0;
     const session: AcpSession = {
@@ -774,6 +815,7 @@ export class AiChatPanel {
       sessionId: handle.sessionId,
       buffer: "",
       pending,
+      mcpServers,
       bumpRequestSeq: () => ++nextRequestSeq,
       dispose: () => {
         // Cancel timers + drop references; do NOT cancel the server requests
@@ -783,6 +825,13 @@ export class AiChatPanel {
           clearTimeout(p.timeoutHandle);
         }
         pending.clear();
+        // Close the McpBridge listener so no orphan loopback server survives
+        // the session (TASK-012 lifecycle contract).
+        try {
+          bridge.dispose();
+        } catch {
+          /* best-effort */
+        }
       },
     };
     // Wire notification handler — session/update streams assistant text.
@@ -1216,7 +1265,11 @@ export class AiChatPanel {
       // delta path.
       this.dropReplayFrames = true;
       const cwd = this.workspaceCwd();
-      const result = await handle.acp.sessionLoad(sessionId, cwd);
+      const result = await handle.acp.sessionLoad(
+        sessionId,
+        cwd,
+        acpSession.mcpServers,
+      );
       const { items, truncated, truncatedCount } =
         AiChatPanel.deriveHistoryFromReplay(result.replay.notifications);
       // Re-base the active sessionId BEFORE posting the history batch so

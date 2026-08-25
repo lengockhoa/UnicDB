@@ -7,7 +7,11 @@
 //   3. Spawn failure / immediate exit → host-reported failure; no silent swallow.
 //   4. Successful start wires AcpClient, completes initialize → initialized → session/new,
 //      exposes sessionId, version, notification handlers, server-request handlers, dispose.
-//   5. (regression) Host tool executor produced by hostTools still rejects write attempts.
+//
+// TASK-012 (B11a): `hostTools.ts` was dead code (no `set_host_tools` RPC exists in
+// production) and has been deleted along with its dedicated test file; the 3
+// `hostTools:`-prefixed tests that used to live here were deleted with it.
+// mcpServers-threading coverage now lives in the "TASK-012 (B11a)" describe block below.
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { spawn as defaultSpawn } from "child_process";
@@ -17,8 +21,6 @@ import { PassThrough } from "node:stream";
 import type { Readable, Writable } from "node:stream";
 
 import { AcpProcess } from "../acpProcess";
-import { createHostToolExecutor, hostToolDefsFromRegistry } from "../hostTools";
-import type { ToolRegistry } from "../../agent";
 
 // ---- Fakes -------------------------------------------------------------------
 
@@ -352,64 +354,6 @@ describe("AcpProcess", () => {
     handle.dispose();
   });
 
-  it("hostTools: createHostToolExecutor surfaces unknown tool / invalid args without throwing", async () => {
-    const registry: ToolRegistry = {
-      get: () => undefined,
-      list: () => [],
-    };
-    const exec = createHostToolExecutor(registry);
-    expect(await exec("missing", {})).toBe("Unknown tool: missing");
-    expect(await exec("missing", "not-an-object")).toBe("Unknown tool: missing");
-    expect(hostToolDefsFromRegistry(registry)).toEqual([]);
-  });
-
-  it("hostTools: Invalid-args branch fires only when a tool is found but args are non-record", async () => {
-    const seen: Array<unknown> = [];
-    const tool = {
-      name: "noop",
-      description: "",
-      parameters: {} as Record<string, unknown>,
-      execute: async (args: Record<string, unknown>) => {
-        seen.push(args);
-        return "ok";
-      },
-    };
-    const registry: ToolRegistry = {
-      get: (n) => (n === "noop" ? (tool as unknown as ToolRegistry[string]) : undefined),
-      list: () => [tool as unknown as ToolRegistry[string]],
-    };
-    const exec = createHostToolExecutor(registry);
-    expect(await exec("noop", "not-an-object")).toBe("Invalid tool arguments");
-    expect(await exec("noop", 42)).toBe("Invalid tool arguments");
-    expect(await exec("noop", ["array"])).toBe("Invalid tool arguments");
-    expect(await exec("noop", null)).toBe("Invalid tool arguments");
-    expect(await exec("noop", { ok: 1 })).toBe("ok");
-    expect(seen).toEqual([{ ok: 1 }]);
-  });
-
-  it("hostTools: read-only guard is owned by the tool implementation, not the bridge", async () => {
-    const executed: Array<Record<string, unknown>> = [];
-    const fakeWriteTool = {
-      name: "write_table",
-      description: "Writes a table",
-      parameters: {} as Record<string, unknown>,
-      execute: async (args: Record<string, unknown>) => {
-        executed.push(args);
-        return "ok";
-      },
-    };
-    const registry: ToolRegistry = {
-      get: (n) =>
-        n === "write_table" ? (fakeWriteTool as unknown as ToolRegistry[string]) : undefined,
-      list: () => [fakeWriteTool as unknown as ToolRegistry[string]],
-    };
-    const defs = hostToolDefsFromRegistry(registry);
-    expect(defs[0]?.name).toBe("write_table");
-    const exec = createHostToolExecutor(registry);
-    expect(await exec("write_table", { sql: "DROP TABLE x" })).toBe("ok");
-    expect(executed).toEqual([{ sql: "DROP TABLE x" }]);
-  });
-
   // Default-spawn path smoke (no injected spawnFn) — confirms wiring not broken.
   it("default spawnFn signature accepts AcpProcessOptions without throwing at construction", () => {
     expect(
@@ -532,6 +476,60 @@ describe("AcpProcess", () => {
     // Frame layout: [initialize id=1, initialized (notification), session/new id=2]
     const sessionNew = frames[2];
     expect(sessionNew?.["method"]).toBe("session/new");
+    expect(sessionNew?.["params"]).toEqual({ cwd: "/w", mcpServers: [] });
+  });
+
+  // ---- TASK-012 (B11a) — mcpServers threaded into session/new when provided --
+
+  it("session/new forwards a non-empty mcpServers array verbatim when AcpProcessOptions.mcpServers is set", async () => {
+    const descriptor = {
+      type: "http",
+      name: "vsdb",
+      url: "http://127.0.0.1:54321",
+      headers: [{ name: "Authorization", value: "Bearer test-token" }],
+    };
+    const proc = new AcpProcess(
+      {
+        ompPath: "omp",
+        cwd: "/w",
+        supportCwdFlag: true,
+        execFn: async () => "omp/18.0.1\n",
+        mcpServers: [descriptor],
+      },
+      captureSpawn(child, captured),
+    );
+
+    const startPromise = proc.start();
+    queueMicrotask(() => {
+      void driveHandshake(child);
+    });
+    await startPromise;
+
+    const frames = readStdinFrames(child);
+    const sessionNew = frames[2];
+    expect(sessionNew?.["method"]).toBe("session/new");
+    expect(sessionNew?.["params"]).toEqual({ cwd: "/w", mcpServers: [descriptor] });
+  });
+
+  it("session/new still defaults to mcpServers: [] when AcpProcessOptions.mcpServers is omitted (no regression)", async () => {
+    const proc = new AcpProcess(
+      {
+        ompPath: "omp",
+        cwd: "/w",
+        supportCwdFlag: true,
+        execFn: async () => "omp/18.0.1\n",
+      },
+      captureSpawn(child, captured),
+    );
+
+    const startPromise = proc.start();
+    queueMicrotask(() => {
+      void driveHandshake(child);
+    });
+    await startPromise;
+
+    const frames = readStdinFrames(child);
+    const sessionNew = frames[2];
     expect(sessionNew?.["params"]).toEqual({ cwd: "/w", mcpServers: [] });
   });
 

@@ -209,3 +209,158 @@ the database that bypasses `isReadOnlySql`. Route every tool call through the ex
 objects — do not re-implement `run_sql`.
 
 ---
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: claude-sonnet-5
+EXECUTOR_SUBAGENT: -
+SUMMARY: Stage 1 probe (recorded in `docs/AI_HANDOFF/queue/ACP-TOOLS-research.md`) proved omp
+18.0.1 accepts an ACP `McpServer` HTTP descriptor and calls `tools/list`/`tools/call` on it
+synchronously during `session/new` — branch 1 of the Discussion's stop rule (HTTP accepted).
+Implemented `src/ai/omp/mcpBridge.ts`, an in-process `127.0.0.1`-only MCP Streamable-HTTP
+listener with a per-bridge random bearer token, exposing the existing `ToolRegistry`
+(`list_tables`, `describe_table`, `export_structure`, `run_sql`) to omp without adding any second
+path to the database. Fixed both hardcoded `mcpServers: []` sites (`acpProcess.ts`'s
+`session/new` and `acp.ts`'s `sessionLoad`) to forward the descriptor array, defaulting to `[]`
+for backward compatibility. Wired `aiChatPanel.ts::ensureAcpSession()` to build the bridge from
+the same registry the builtin engine uses and dispose it with the session; threaded the same
+`mcpServers` array through `session/load` on resume. Deleted the dead `hostTools.ts` (targeted a
+`set_host_tools` RPC that no longer exists) and its test, unconditionally per Acceptance Criteria.
+Fixed a pre-existing test-helper timing bug uncovered by this change: `http.Server.listen()`'s
+callback is a macrotask, so `aiChatPanelAcp.test.ts`/`aiChatE2e.test.ts`/`aiChatPanelResume.test.ts`
+helpers (`until`/`flush`) needed a `setImmediate`-based wait (captured before any
+`vi.useFakeTimers()` call) instead of pure-microtask polling, or they silently exhausted their
+iteration budget against the now-real listener.
+TEST_PLAN_FOLLOWED: task §Test Cases (11 rows) — all 11 implemented as described.
+FILES_CHANGED:
+  - src/ai/omp/mcpBridge.ts: new — in-process MCP HTTP bridge (`createMcpBridge`, pure
+    `handleMcpRequest`, bearer-token auth, `127.0.0.1`-only listener)
+  - src/ai/omp/acpProcess.ts: `AcpProcessOptions.mcpServers` (default `[]`) forwarded verbatim
+    into `session/new`'s `mcpServers` param (previously hardcoded `[]`)
+  - src/ai/omp/acp.ts: `sessionLoad(sessionId, cwd, mcpServers = [])` forwards `mcpServers` into
+    `session/load`'s params (previously hardcoded `[]`)
+  - src/ui/aiChatPanel.ts: `ensureAcpSession()` builds the bridge from the real
+    `createDbTools`+`run_sql`+`export_structure` registry, passes its descriptor into
+    `acp.start()`, disposes the bridge with the session; `handleResumePick()` forwards the same
+    `mcpServers` array into `sessionLoad()`
+  - src/extension.ts: `buildAcpDeps()`'s `start()` accepts and forwards `mcpServers`
+  - src/ai/omp/hostTools.ts: deleted (dead code, no `set_host_tools` RPC exists)
+  - src/ai/omp/__tests__/hostTools.test.ts: deleted alongside the module
+  - src/ai/omp/__tests__/mcpBridge.test.ts: new — 10 tests (tools/list, tools/call happy +
+    auth/guard/malformed/unknown-tool/lifecycle/no-connection edges)
+  - src/ai/omp/__tests__/acpProcess.test.ts: removed 3 `hostTools:`-prefixed tests (module gone),
+    added 2 tests asserting `session/new`'s `mcpServers` param (populated + default-`[]`)
+  - src/ai/omp/__tests__/acp.test.ts: added 1 test asserting `sessionLoad`'s `mcpServers` param
+  - src/ui/__tests__/aiChatPanelAcp.test.ts: `until`/`flush` switched to a `setImmediate`-based
+    wait (real listener now sits behind `ensureAcpSession()`)
+  - src/ui/__tests__/aiChatE2e.test.ts: same `until` timing fix
+  - src/ui/__tests__/aiChatPanelResume.test.ts: same `until`/`flush` timing fix
+  - docs/AI_HANDOFF/queue/ACP-TOOLS-research.md: new — Stage 1 live-probe evidence (raw
+    initialize/session-new/tools-list/tools-call frames against real omp 18.0.1)
+TESTS_ADDED:
+  - src/ai/omp/__tests__/mcpBridge.test.ts: 10 tests — tools/list happy, tools/call happy, wrong
+    token rejected (tool not invoked), run_sql DELETE refused by isReadOnlySql, malformed args,
+    unknown tool, dispose()/lifecycle (port released), null adapter ("no active connection"),
+    plus auth/shape edges
+  - src/ai/omp/__tests__/acpProcess.test.ts: "session/new forwards a non-empty mcpServers array
+    verbatim…" and "…still defaults to mcpServers: [] when omitted (no regression)"
+  - src/ai/omp/__tests__/acp.test.ts: "sessionLoad forwards a non-empty mcpServers array verbatim
+    as the 3rd request param"
+VERIFICATION:
+  command: npm run typecheck
+  result: clean, exit 0
+  output_excerpt: |
+    > vsdb@1.6.3 typecheck
+    > tsc --noEmit
+    (no errors)
+
+  command: npm test -- src/ai/omp/__tests__/mcpBridge.test.ts
+  result: 10 passed
+  output_excerpt: |
+    ✓ src/ai/omp/__tests__/mcpBridge.test.ts  (10 tests) 10ms
+    Test Files  1 passed (1)
+    Tests  10 passed (10)
+
+  command: npm test -- src/ai/omp/__tests__/acpProcess.test.ts
+  result: 17 passed
+  output_excerpt: |
+    ✓ src/ai/omp/__tests__/acpProcess.test.ts  (17 tests) 32ms
+    Test Files  1 passed (1)
+    Tests  17 passed (17)
+
+  command: npm test -- src/ai/omp/__tests__/acp.test.ts
+  result: 18 passed
+  output_excerpt: |
+    ✓ src/ai/omp/__tests__/acp.test.ts  (18 tests) 56ms
+    Test Files  1 passed (1)
+    Tests  18 passed (18)
+
+  command: npm test -- src/ai/omp/__tests__/hostTools.test.ts
+  result: "No test files found, exiting with code 1" — EXPECTED. hostTools.ts and its test were
+    deleted unconditionally per Acceptance Criteria ("no dead module referencing set_host_tools
+    is left behind"); there is nothing left for this path to match. `grep -rn hostTools src/`
+    confirms zero remaining imports (only explanatory comments referencing the deletion).
+
+  command: npm test -- src/ai/tools/__tests__
+  result: 51 passed
+  output_excerpt: |
+    ✓ src/ai/tools/__tests__/schemaContext.test.ts  (4 tests)
+    ✓ src/ai/tools/__tests__/sqlTool.test.ts  (36 tests)
+    ✓ src/ai/tools/__tests__/schemaTools.test.ts  (9 tests)
+    ✓ src/ai/tools/__tests__/registry.test.ts  (2 tests)
+    Test Files  4 passed (4)
+    Tests  51 passed (51)
+
+  command: npm test -- src/ui/__tests__/aiChatPanelAcp.test.ts
+  result: 25 passed
+  output_excerpt: |
+    ✓ src/ui/__tests__/aiChatPanelAcp.test.ts  (25 tests) 21ms
+    Test Files  1 passed (1)
+    Tests  25 passed (25)
+    (previously timed out at 90s under the pure-microtask `until`/`flush`; fixed by the
+    setImmediate-based wait described in SUMMARY)
+
+  command: npm run compile && npm test (full suite, run once after compile per constraint)
+  result: 1196 passed | 2 skipped, 86 files (85 passed + 1 skipped) — no regression vs the
+    1193/2/85 baseline; net +3 tests, +1 test file (all from this task's changes: +10 mcpBridge,
+    -N hostTools removed, +2 acpProcess, +1 acp)
+  output_excerpt: |
+    Test Files  85 passed | 1 skipped (86)
+    Tests  1196 passed | 2 skipped (1198)
+    Duration  7.53s
+
+  command: manual E2E (Acceptance Criteria, not part of the automated gate) — real omp/18.0.1 on
+    PATH + real Postgres (docker `vsdb-postgres`, 127.0.0.1:5433/vsdb) + the actual
+    acpProcess.ts/acp.ts/mcpBridge.ts/registry.ts/sqlTool.ts/schemaTools.ts modules via tsx, no
+    mocks; two throwaway tables created in the live DB, chat asked "What tables are in this
+    database? Use your tools to check, don't guess."
+  result: PASS — real tool round-trip observed, correct answer
+  output_excerpt: |
+    [BRIDGE] descriptor: {"type":"http","name":"vsdb","url":"http://127.0.0.1:52854",
+      "headers":[{"name":"Authorization","value":"Bearer c9c4dedb…"}]}
+    [HANDSHAKE OK] sessionId=01a0372e-1659-7547-9c0f-881c137735cf version=18.0.1
+    [TOOL CALL] list_tables({})
+    [TOOL RESULT] list_tables -> [{"schema":"public","name":"customers"},
+      {"schema":"public","name":"orders"}]
+    [SESSION/PROMPT RESULT] {"stopReason":"end_turn"}
+    [ASSISTANT TEXT]
+    Two tables:
+    - `public.customers`
+    - `public.orders`
+    (both tables were created fresh in the live DB immediately before this run and dropped
+    immediately after; the answer matches exactly, sourced from the real MCP tools/list call
+    logged above, not from omp's imagination)
+ISSUES:
+  - The `npm test -- src/ai/omp/__tests__/hostTools.test.ts` Verification Command from the task
+    file necessarily exits 1 ("no test files found") because that file is deleted, as required by
+    the Acceptance Criteria's unconditional-deletion clause. This is the expected/correct outcome
+    of that command post-fix, not a regression — documented above rather than silently omitted.
+  - `createDbTools(...)` in `ensureAcpSession()` is intentionally left without an explicit
+    `: ToolRegistry` type annotation — the frozen `ToolRegistry` interface (`get`/`list` only)
+    erases `DbToolRegistry.register()` under TS structural typing if annotated, so the concrete
+    return type is left to inference.
+HANDOFF_TO_REVIEWER: yes — handoff.reviewer.enabled per config; this is the last task of wave 3.
+NEXT: ready for review. INDEX.md is intentionally NOT edited by this report per process
+constraints; the orchestrator/reviewer owns status transitions.

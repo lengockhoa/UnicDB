@@ -366,19 +366,26 @@ function commandOpenAiSettings(aiStore: AiConfigStore): void {
  * TASK-004 — Build the AcpPanelDeps closure that AiChatPanel consumes in
  * ACP mode. Wires AcpProcess (spawn + handshake) and surfaces the
  * AcpProcessHandle to the panel's permission coordinator. The session/prompt
- * call is server-driven from this point; tool definitions are registered
- * out-of-band by the ACP server, so no toolDefs/toolExecutor callbacks are
- * needed here. The DB access boundary is unchanged — still via the
- * createDbTools + createSqlTool registry, but invoked from the host's own
- * agent loop (builtin mode) when ACP falls back.
+ * call is server-driven from this point.
+ *
+ * TASK-012 (B11): the panel now builds an in-process `McpBridge` (see
+ * `ensureAcpSession()` in aiChatPanel.ts) exposing the SAME DB tool registry
+ * the builtin engine uses (createDbTools + run_sql + export_structure), and
+ * passes its ACP `McpServer` descriptor through here as `mcpServers` so the
+ * omp engine gets real database access instead of `mcpServers: []`.
  */
 function buildAcpDeps(): AcpPanelDeps {
   return {
-    start: async (ompPath: string, cwd: string) => {
+    start: async (
+      ompPath: string,
+      cwd: string,
+      mcpServers: ReadonlyArray<Record<string, unknown>> = [],
+    ) => {
       const proc = new AcpProcess({
         ompPath,
         cwd,
         supportCwdFlag: true,
+        mcpServers,
       });
       return await proc.start();
     },

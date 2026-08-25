@@ -112,15 +112,35 @@ vi.mock("vscode", () => ({
 
 const extUri = vscode.Uri.file("/ext");
 
+/**
+ * TASK-012 (B11): ensureAcpSession() now binds a real `node:http` listener
+ * (McpBridge) before calling `acp.start()`. `server.listen()`'s callback
+ * fires on I/O-completion, a macrotask — draining only the microtask queue
+ * (plain `await Promise.resolve()`) never observes it, so `until`/`flush`
+ * yield via `setImmediate` instead. setImmediate always drains any pending
+ * microtasks first, so every assertion that previously relied on pure
+ * microtask-tick counts still holds — this is a strict superset wait.
+ *
+ * The reference is captured at module load time, BEFORE any test can call
+ * `vi.useFakeTimers()` (which replaces `globalThis.setImmediate` with a
+ * fake that never fires without an explicit `advanceTimersByTimeAsync`).
+ * Using the captured original keeps `until`/`flush` real-I/O-driven even
+ * inside a fake-timers test (see "#5d timeout").
+ */
+const realSetImmediate = globalThis.setImmediate.bind(globalThis);
+function tick(): Promise<void> {
+  return new Promise((resolve) => realSetImmediate(resolve));
+}
+
 async function until(cond: () => boolean): Promise<void> {
   for (let i = 0; i < 500; i++) {
     if (cond()) return;
-    await Promise.resolve();
+    await tick();
   }
 }
 
 async function flush(n = 10): Promise<void> {
-  for (let i = 0; i < n; i++) await Promise.resolve();
+  for (let i = 0; i < n; i++) await tick();
 }
 
 function panelHarness(): {

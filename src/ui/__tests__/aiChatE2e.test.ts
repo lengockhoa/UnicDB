@@ -99,10 +99,21 @@ import { defaultAiSettings, type AiConfig } from "../../ai/settings";
 
 // ---- helpers ---------------------------------------------------------------
 
+// TASK-012 (B11): ensureAcpSession() now binds a real `node:http` listener
+// (McpBridge) before calling `acp.start()`. `server.listen()`'s callback
+// fires on I/O-completion, a macrotask — draining only the microtask queue
+// (plain `await Promise.resolve()`) never observes it, so `until` yields via
+// `setImmediate` instead. setImmediate always drains any pending microtasks
+// first, so every assertion that previously relied on pure microtask-tick
+// counts still holds — this is a strict superset wait.
+function tick(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 async function until(cond: () => boolean): Promise<void> {
   for (let i = 0; i < 500; i++) {
     if (cond()) return;
-    await Promise.resolve();
+    await tick();
   }
 }
 

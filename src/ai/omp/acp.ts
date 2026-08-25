@@ -213,15 +213,24 @@ export class AcpClient {
   }
 
   /**
-   * Load a session via `session/load` (params `{sessionId, cwd, mcpServers: []}`)
+   * Load a session via `session/load` (params `{sessionId, cwd, mcpServers}`)
    * and return the load result plus a LIVE replay buffer. The replay window is
    * OPEN at the moment this call's request frame is written, and CLOSED by the
    * next outgoing request()/notify() write. While open, incoming `session/update`
    * notifications whose params.sessionId equals `sessionId` are absorbed into
    * the buffer (in arrival order) instead of being delivered to onNotification.
    * Concurrent calls (before the first settles) reject synchronously.
+   *
+   * TASK-012 (B11b): `mcpServers` was previously hardcoded to `[]`, silently
+   * dropping tool access on session resume. Callers now pass the same
+   * descriptor array used at `session/new` time; defaults to `[]` so every
+   * existing caller that omits it keeps today's behavior exactly.
    */
-  async sessionLoad(sessionId: string, cwd: string): Promise<AcpSessionLoadResult> {
+  async sessionLoad(
+    sessionId: string,
+    cwd: string,
+    mcpServers: ReadonlyArray<Record<string, unknown>> = [],
+  ): Promise<AcpSessionLoadResult> {
     if (this.loadInFlight !== null) {
       throw new Error("session load already in progress");
     }
@@ -238,7 +247,7 @@ export class AcpClient {
       result = await this.requestRaw<unknown>("session/load", {
         sessionId,
         cwd,
-        mcpServers: [],
+        mcpServers,
       });
     } finally {
       this.loadInFlight = null;

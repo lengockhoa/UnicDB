@@ -348,6 +348,38 @@ describe("AcpClient", () => {
     expect(notifs).toEqual([]);
   });
 
+  // TASK-012 (B11b) — sessionLoad forwards a non-empty mcpServers array verbatim
+  // into the session/load request params, instead of always hardcoding [].
+  it("sessionLoad forwards a non-empty mcpServers array verbatim as the 3rd request param", async () => {
+    const client = new AcpClient(transport);
+    const descriptor = {
+      type: "http",
+      name: "vsdb",
+      url: "http://127.0.0.1:54321",
+      headers: [{ name: "Authorization", value: "Bearer test-token" }],
+    };
+
+    const pending = client.sessionLoad("s1", "/w", [descriptor]);
+    await flushMicrotasks();
+
+    const req = transport.lastWritten();
+    expect(req).toMatchObject({
+      jsonrpc: "2.0",
+      method: "session/load",
+      params: { sessionId: "s1", cwd: "/w", mcpServers: [descriptor] },
+    });
+
+    const id = req["id"];
+    transport.feed(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        result: { configOptions: {}, modes: {} },
+      }),
+    );
+    await pending;
+  });
+
   // #8 — TASK-001 case #4: replay after result + drain tick still absorbed (RED baseline)
   it("sessionLoad keeps absorbing session/update across multiple flushes (no drain-tick close)", async () => {
     const client = new AcpClient(transport);

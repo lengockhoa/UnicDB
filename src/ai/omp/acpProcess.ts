@@ -50,6 +50,13 @@ export interface AcpProcessOptions {
    * a small value so a stalled handshake fails fast instead of hanging.
    */
   requestTimeoutMs?: number;
+  /**
+   * TASK-012 (B11a): ACP `McpServer` descriptor array forwarded verbatim into
+   * `session/new`'s `mcpServers` param. Previously hardcoded to `[]`, which
+   * meant the omp engine had zero database tool access. Defaults to `[]` so
+   * every existing caller/test that omits it keeps today's behavior exactly.
+   */
+  mcpServers?: ReadonlyArray<Record<string, unknown>>;
 }
 
 export interface AcpStartHandlers {
@@ -190,7 +197,10 @@ export class AcpProcess {
       acp.notify("initialized", {});
 
       const sessionResult = (await Promise.race([
-        acp.request("session/new", { cwd: this.opts.cwd, mcpServers: [] }),
+        acp.request("session/new", {
+          cwd: this.opts.cwd,
+          mcpServers: this.opts.mcpServers ?? [],
+        }),
         startError,
       ])) as { sessionId?: unknown };
 
