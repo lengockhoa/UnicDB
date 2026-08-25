@@ -124,3 +124,9 @@ $ npm run typecheck
 ```
 Status: PASS
 Note: Decisions recorded: (1) registration of `vscode.languages.registerCompletionItemProvider` in extension.ts is availability-guarded because `src/extension.test.ts`'s partial vscode mock (outside this task's editable files) stubs only `registerCodeLensProvider`; unguarded call would throw in every activate() smoke test. Real VS Code always has the API. (2) `vsdb.refreshSchema` now calls `schemaCache.invalidate()` before `tree.refresh()`. (3) Test #6 uses the dot-trigger path (`public.`) since listTables is what that path calls; test #4 keyword list intentionally contains no "us"-prefixed keywords. (4) schemaCache is vscode-free (no mock needed in its tests).
+
+## Reviewer Verdict (R1 — autocomplete)
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: bao-opus
+FINDINGS: stale-completion-cache defect found in R1 and fixed (extension tests 59/59 + typecheck re-run green); no remaining Critical/Important defects.
+SOURCE: R1 review round outcome recorded in RUN.md cursor.

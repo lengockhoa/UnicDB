@@ -138,6 +138,7 @@ export async function activate(
       return null;
     }
   });
+  context.subscriptions.push(mgr.onDidChangeActive(() => schemaCache.invalidate()));
   const sqlCompletion = new SqlCompletionProvider({
     cache: schemaCache,
     hasConnection: () => mgr.getActive() !== null,

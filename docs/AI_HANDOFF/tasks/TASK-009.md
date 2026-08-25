@@ -228,3 +228,20 @@ Note: Implementation and all checks pass, but the task's hard file boundary forb
 
 ## Orchestrator Resolution
 The missing runtime seam was a planner Target Files omission, not an implementation failure. The orchestrator added `getManualCommit: () => mgr.getActive()?.manualCommit === true` to `src/extension.ts:94`, then reran `npm run compile`, targeted manual-commit tests (7/7), `npm run typecheck`, and the full suite (1326 passed / 2 skipped / 0 failed). The production path is now wired.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: bao-opus (unic-smart)
+EXECUTOR_MODEL: bao-sonnet
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/manualCommit.test.ts && npm run compile && npm run typecheck && npm test
+  result: 8/8 manualCommit passed / compile clean / typecheck clean / 1327 passed / 2 skipped / 0 failed
+TEST_PLAN_COVERAGE: all-followed
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/extension.ts:141 — unrelated schemaCache.invalidate() onDidChangeActive subscription landed in this diff; harmless but not part of TASK-009 scope
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: All four R1 defects confirmed resolved. Transaction is session-pinned via DbTransaction; requery routes through the pinned handle; closeStatementCursor runs before beginTransaction; automatic mode retains its host-side refresh. Dispose and onDidDispose both fire-and-forget rollbackOpenTransaction which clears this.transaction first.

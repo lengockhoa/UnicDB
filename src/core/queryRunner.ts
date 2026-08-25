@@ -25,7 +25,13 @@
 // - `pickResult()` xử lý contract batched: results=[] thì result = batched columns
 //   + rows initial từ fetchBatch().
 import type { ParsedStatement } from "../config/types";
-import type { BatchedQuery, DbAdapter, QueryResult, RunResult } from "../adapters/types";
+import type {
+  BatchedQuery,
+  DbAdapter,
+  DbTransaction,
+  QueryResult,
+  RunResult,
+} from "../adapters/types";
 import { appendBatch } from "./resultBatcher";
 
 export type StatementStatus = "running" | "done" | "error" | "cancelled";
@@ -349,6 +355,14 @@ export class QueryRunner {
   async runSql(sql: string): Promise<RunResult> {
     const adapter = await this.adapterProvider();
     return adapter.runQuery(sql);
+  }
+
+  async beginTransaction(): Promise<DbTransaction> {
+    const adapter = await this.adapterProvider();
+    if (!adapter.beginTransaction) {
+      throw new Error("The active database adapter does not support manual transactions");
+    }
+    return adapter.beginTransaction();
   }
 
   /**

@@ -114,3 +114,9 @@ Baseline was 1307 passed / 2 skipped → now 1313 passed = +6 new tests (5 in we
 
 Status: PASS
 Note: One pre-existing flaky test observed: `resultsGridModelNull.test.ts > 6. value viewer overlay shows full content for long strings` failed in 2 of 3 full-suite runs (identical code in all 3), passed in the 3rd full run and in isolation. The test's own comment flags it as load-sensitive ("under full-suite load the flush is not synchronous"), and it never dispatches saveResult / touches the requery path — unrelated to this task's delta (file contains 0 references to saveResult). Implementation: on `saveResult.ok` with no rowErrors, dirty state is cleared first, then exactly one `requery` is posted with the current requery-bar WHERE/ORDER BY (index = msg.index); requery is skipped on soft refusal (`refused`) and on partial failure (rowErrors). No production change was needed in resultsPanel.ts (cursor close verified by new regression test).
+
+## Reviewer Verdict (R1 — grid/webview group)
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: bao-opus
+FINDINGS: no Critical/Important defects; minor notes only, non-blocking. The observed resultsGridModelNull flake (TASK-004) was not reproduced by the reviewer across two full-suite runs — treated as environment flake, not a code defect.
+SOURCE: R1 review round outcome recorded in RUN.md cursor (grid/webview group).

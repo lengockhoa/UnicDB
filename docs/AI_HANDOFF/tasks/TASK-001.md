@@ -145,3 +145,9 @@ behavior unchanged. Files changed: src/ui/resultsGridModel.ts,
 src/ui/__tests__/resultsGridModelExport.test.ts (7 new tests, incl. the 6
 required table cases + 1 all-serializer coverage case). No git commands run;
 no files outside Target Files + Test Files modified.
+
+## Reviewer Verdict (R1 — adapters/export group)
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: bao-opus
+FINDINGS: no Critical/Important defects; minor notes only, non-blocking. Verification re-run green.
+SOURCE: R1 review round outcome recorded in RUN.md cursor (adapters/export group).

@@ -31,6 +31,7 @@ import type { ConnectionConfig } from "../config/types";
 import { resolveSslOptions } from "../core/sslOptions";
 import type {
   BatchedQuery,
+  DbTransaction,
   ColumnInfo,
   DbAdapter,
   QueryResult,
@@ -337,6 +338,65 @@ export class PostgresAdapter implements DbAdapter {
     } finally {
       client.release();
     }
+  }
+
+  async beginTransaction(): Promise<DbTransaction> {
+    if (!this.pool) throw new Error("PostgresAdapter: connect() chưa được gọi");
+    const client = await this.pool.connect();
+    let finished = false;
+
+    const release = (destroy = false): void => {
+      try {
+        client.release(destroy);
+      } catch {
+        // The client may already be released during adapter shutdown.
+      }
+    };
+    const finish = async (sql: "COMMIT" | "ROLLBACK"): Promise<void> => {
+      if (finished) return;
+      finished = true;
+      try {
+        await client.query(sql);
+      } finally {
+        release(sql === "ROLLBACK");
+      }
+    };
+
+    try {
+      await client.query("BEGIN");
+    } catch (error) {
+      release(true);
+      throw error;
+    }
+
+    return {
+      runQuery: async (sql: string): Promise<RunResult> => {
+        if (finished) throw new Error("Postgres transaction is already closed");
+        return this.runQueryOnClient(client, sql);
+      },
+      commit: () => finish("COMMIT"),
+      rollback: () => finish("ROLLBACK"),
+    };
+  }
+
+  private async runQueryOnClient(client: PoolClient, sql: string): Promise<RunResult> {
+    const statements = splitStatements(sql, "postgres");
+    const results: QueryResult[] = [];
+    for (const stmt of statements) {
+      const text = stmt.text.trim();
+      if (!text) continue;
+      const startedAt = Date.now();
+      const result = await client.query(text);
+      const columns = result.fields.map((field) => field.name);
+      results.push({
+        columns,
+        rows: rowsAsArrays(result.rows, columns),
+        rowCount: result.rowCount ?? null,
+        commandTag: result.command ?? undefined,
+        durationMs: Date.now() - startedAt,
+      });
+    }
+    return { results };
   }
 
   // ---- Metadata -------------------------------------------------------------

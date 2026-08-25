@@ -26,7 +26,7 @@ import type {
   QueryRunner,
   StatementResult,
 } from "../core/queryRunner";
-import type { BatchedQuery } from "../adapters/types";
+import type { DbTransaction } from "../adapters/types";
 import { pickResult } from "../core/queryRunner";
 import type { HostMessage, WebviewMessage, ExportFileMessage } from "./messages";
 import type { ConnectionConfig } from "../config/types";
@@ -84,8 +84,8 @@ export class ResultsPanel {
   private browseLabel: string | null = null;
   private lastResults: StatementResult[] = [];
   private busy: boolean = false;
-  /** True while a manual save transaction remains open on this panel's connection. */
-  private transactionOpen: boolean = false;
+  /** A session-pinned manual transaction owned by this panel. */
+  private transaction: DbTransaction | null = null;
   /** Host-derived (schema?, table) per statement index, populated by
    *  render() so handleSaveEdits can derive metadata without trusting the
    *  webview-supplied tableName / pkColumns (Fix R1 critical #1). */
@@ -256,41 +256,41 @@ export class ResultsPanel {
   }
 
   private postTransactionStatus(): void {
-    this.postMessage({ type: "transactionStatus", open: this.transactionOpen });
+    this.postMessage({ type: "transactionStatus", open: this.transaction !== null });
   }
 
   /** Roll back the active manual transaction, including during panel teardown. */
   private async rollbackOpenTransaction(): Promise<void> {
-    if (!this.transactionOpen) return;
-    const driver = this.saveContext?.getDriver();
+    const transaction = this.transaction;
+    if (!transaction) return;
+    // Clear first so every error and teardown path has an honest local state.
+    this.transaction = null;
     try {
-      if (driver) {
-        await this.runner.runSql(transactionKeywords(driver as Dialect).rollback);
-      }
+      await transaction.rollback();
     } catch {
-      // The connection may already have been closed by its owner. Clear the
-      // local state regardless so this panel never advertises a stale window.
+      // The connection may already have been closed by its owner.
     } finally {
-      this.transactionOpen = false;
       this.postTransactionStatus();
     }
   }
 
   private async handleCommitTransaction(): Promise<void> {
-    if (!this.transactionOpen) return;
-    const driver = this.saveContext?.getDriver();
-    if (!driver) {
-      await this.rollbackOpenTransaction();
-      return;
-    }
+    const transaction = this.transaction;
+    if (!transaction) return;
     this.setBusy(true);
     try {
-      await this.runner.runSql(transactionKeywords(driver as Dialect).commit);
-      this.transactionOpen = false;
+      await transaction.commit();
+      this.transaction = null;
       this.postTransactionStatus();
     } catch (err) {
       // A failed COMMIT must not leave an ambiguous manual window open.
-      await this.rollbackOpenTransaction();
+      this.transaction = null;
+      try {
+        await transaction.rollback();
+      } catch {
+        // The connection may already be unusable after a failed commit.
+      }
+      this.postTransactionStatus();
       const message = err instanceof Error ? err.message : String(err);
       void vscode.window.showErrorMessage(`Commit failed: ${message}`);
     } finally {
@@ -640,60 +640,95 @@ export class ResultsPanel {
 
     this.setBusy(true);
     const refreshStart = Date.now();
+    const kw = transactionKeywords(driver as Dialect);
+    const manualCommit = this.isManualCommitEnabled();
     try {
-      // A15 — bundle BEGIN + every generated statement + COMMIT into a
-      // SINGLE combined runner.runSql call. The adapter contract does
-      // NOT guarantee session/connection affinity across separate calls
-      // (a fresh call may land on a different pooled connection), so
-      // issuing BEGIN and the statements as separate calls made the
-      // "transaction" meaningless — a mid-batch failure could not be
-      // rolled back because later statements might already be
-      // committed autocommit-style on their own connection. Bundling
-      // into one call guarantees they share a session.
-      const kw = transactionKeywords(driver as Dialect);
-      const manualCommit = this.isManualCommitEnabled();
-      // Manual mode deliberately leaves COMMIT out of the save batch. The
-      // first save starts the session-bound transaction; later saves reuse it
-      // until the user explicitly commits or rolls back from the webview.
-      const saveSql = manualCommit
-        ? (this.transactionOpen
-          ? built.statements.join(";\n") + ";"
-          : [kw.begin, ...built.statements].join(";\n") + ";")
-        : [kw.begin, ...built.statements, kw.commit].join(";\n") + ";";
-      // Mark open before awaiting because a driver can execute BEGIN then
-      // reject a later statement; the catch must issue ROLLBACK in that case.
-      if (manualCommit && !this.transactionOpen) this.transactionOpen = true;
-      try {
-        await this.runner.runSql(saveSql);
-      } catch (err) {
-        const m = err instanceof Error ? err.message : String(err);
-        if (manualCommit) {
+      if (manualCommit) {
+        // TASK-009 manual-commit mode — the manual transaction owns the
+        // pooled client for the whole window (Postgres pool.max=1). Every
+        // save statement runs through the pinned DbTransaction so all
+        // statements share ONE server session. This is the R1 fix: the old
+        // path issued BEGIN via a pooled runSql call whose client was then
+        // released, so the post-save requery landed on a DIFFERENT client
+        // and Postgres rejected it with "cannot run inside a transaction
+        // block", silently rolling back the successful save. Close any open
+        // browse cursor FIRST — with pool.max=1 the cursor holds the only
+        // client, so beginTransaction() would deadlock waiting for it.
+        if (!this.transaction) {
+          await this.closeStatementCursor(r);
+          this.transaction = await this.runner.beginTransaction();
+        }
+        try {
+          await this.transaction.runQuery(built.statements.join(";\n") + ";");
+        } catch (err) {
+          const m = err instanceof Error ? err.message : String(err);
           // Explicit invariant: rollback completes before the save error is
           // acknowledged, so a failed manual window is never left dangling.
           await this.rollbackOpenTransaction();
-        } else {
+          this.postMessage({
+            type: "saveResult",
+            index,
+            ok: false,
+            errors: [m],
+          });
+          return;
+        }
+        this.postTransactionStatus();
+      } else {
+        // Automatic mode — A15: bundle BEGIN + every generated statement +
+        // COMMIT into a SINGLE combined runner.runSql call. The adapter
+        // contract does NOT guarantee session/connection affinity across
+        // separate calls (a fresh call may land on a different pooled
+        // connection), so issuing BEGIN and the statements as separate calls
+        // made the "transaction" meaningless — a mid-batch failure could not
+        // be rolled back because later statements might already be committed
+        // autocommit-style on their own connection. Bundling into one call
+        // guarantees they share a session.
+        try {
+          await this.runner.runSql([kw.begin, ...built.statements, kw.commit].join(";\n") + ";");
+        } catch (err) {
+          const m = err instanceof Error ? err.message : String(err);
           // Best-effort rollback for the pre-existing automatic flow.
           try {
             await this.runner.runSql(kw.rollback);
           } catch {
             // The combined call may already have returned the connection clean.
           }
+          this.postMessage({
+            type: "saveResult",
+            index,
+            ok: false,
+            errors: [m],
+          });
+          return;
         }
-        this.postMessage({
-          type: "saveResult",
-          index,
-          ok: false,
-          errors: [m],
-        });
-        return;
       }
-      if (manualCommit) this.postTransactionStatus();
-      // Re-run the original SQL to refresh the grid. Mirrors
-      // handleRequery: pickResult() handles both batched (Postgres
-      // single SELECT → cursor) and non-batched shapes; `.results[0]`
-      // is always undefined for the batched case (A4).
-      const refreshed = await this.runner.runSql(r.sql);
-      const freshResult = await pickResult(refreshed);
+      // Automatic mode only — refresh the grid from server truth. In manual
+      // mode the refresh is left to the webview's auto-requery (fires on
+      // saveResult ok), which routes through handleRequery → this.transaction
+      // so it shares the pinned session instead of deadlocking on
+      // pool.connect(). Computed BEFORE the saveResult ack so the ack and the
+      // refreshed state land back-to-back: a state posted after separate
+      // awaits could race the ack (an observer seeing the ack alone would
+      // miss the fresh rows). Mirrors handleRequery: pickResult() handles
+      // both batched (Postgres single SELECT → cursor) and non-batched
+      // shapes; `.results[0]` is always undefined for the batched case (A4).
+      let newStmt: StatementResult | undefined;
+      if (!manualCommit) {
+        const refreshed = await this.runner.runSql(r.sql);
+        const freshResult = await pickResult(refreshed);
+        if (freshResult) {
+          newStmt = {
+            ...r,
+            result: freshResult,
+            batched: refreshed.batched,
+            // Deferred minor (v1.4.1): elapsed ms of the refresh run — was
+            // `r.durationMs` (the ORIGINAL query's duration), so the footer
+            // showed a stale number after commit.
+            durationMs: Date.now() - refreshStart,
+          };
+        }
+      }
       // Finding 5 (review fix round, cycle T) — `saveResult` MUST be
       // posted before the refreshed `state` message. The webview's
       // `state` handler decides `isReset` off a row-count/columns
@@ -702,18 +737,7 @@ export class ResultsPanel {
       // rowErrors could ever reach clearExceptRowIds to preserve
       // skipped rows' edits. Posting saveResult first lets the webview
       // record rowErrors/preserve-list BEFORE the reset arrives.
-      let newStmt: StatementResult | undefined;
-      if (freshResult) {
-        newStmt = {
-          ...r,
-          result: freshResult,
-          batched: refreshed.batched,
-          // Deferred minor (v1.4.1): elapsed ms of the refresh run — was
-          // `r.durationMs` (the ORIGINAL query's duration), so the footer
-          // showed a stale number after commit.
-          durationMs: Date.now() - refreshStart,
-        };
-      }
+      //
       // Surface non-fatal warnings (e.g. per-row missing ctid on
       // postgres no-PK — that row was skipped, others saved) so the
       // user knows exactly which row did NOT save. Without this the
@@ -757,9 +781,11 @@ export class ResultsPanel {
         });
       }
     } catch (err) {
-      // Refreshing after a successful manual save still uses the same open
-      // transaction. Roll it back before allowing that error to surface.
-      if (this.isManualCommitEnabled() && this.transactionOpen) {
+      // An unexpected error while a manual window is open (e.g. the webview
+      // auto-requery raced a commit, or beginTransaction() failed because the
+      // active driver has no manual-transaction support). Roll back so the
+      // window never dangles, then surface the save failure to the webview.
+      if (manualCommit) {
         const message = err instanceof Error ? err.message : String(err);
         await this.rollbackOpenTransaction();
         this.postMessage({
@@ -816,6 +842,21 @@ export class ResultsPanel {
    * runner reports `cancelled` and we re-post the previous state silently
    * — no toast.
    */
+  /** Close a statement's batched browse cursor (Postgres/MySQL streaming
+   *  SELECT). With pool.max=1 a live cursor holds the only pooled client,
+   *  so a manual transaction (or any later query) would deadlock waiting
+   *  for it. Best-effort — a cursor already closed by an earlier requery
+   *  is a silent no-op. */
+  private async closeStatementCursor(r: StatementResult): Promise<void> {
+    const batched = r.batched;
+    if (!batched || r.status !== "done") return;
+    try {
+      await batched.close();
+    } catch {
+      // ignore — cursor may already be closed
+    }
+  }
+
   private async handleRequery(
     index: number,
     where: string,
@@ -833,14 +874,7 @@ export class ResultsPanel {
     // the client until close(), blocking the next query with a connect
     // timeout. Best-effort — close() alone is sufficient (Fix R2
     // minor); cancel() was redundant.
-    const staleCursor: BatchedQuery | undefined = r.batched;
-    if (staleCursor && r.status === "done") {
-      try {
-        await staleCursor.close();
-      } catch {
-        // ignore — cursor may already be closed
-      }
-    }
+    await this.closeStatementCursor(r);
     const composed = composeRequery(r.sql, where, orderBy);
     this.setBusy(true);
     const start = Date.now();
@@ -870,7 +904,14 @@ export class ResultsPanel {
         results: runningState,
         busy: this.busy,
       });
-      const runResult = await this.runner.runSql(composed);
+      // Manual mode — an open DbTransaction holds the pooled client
+      // (pool.max=1), so `runner.runSql` would deadlock on pool.connect().
+      // Route the requery through the transaction handle so it shares the
+      // pinned session (and correctly sees uncommitted manual-window
+      // changes). Non-manual requeries keep the plain runner path.
+      const runResult = this.transaction
+        ? await this.transaction.runQuery(composed)
+        : await this.runner.runSql(composed);
       // FIX R1 critical #2 — `refreshed.results[0]` is always undefined
       // when the adapter returns a batched handle (Postgres single
       // SELECT). pickResult() handles both shapes: batched → initial

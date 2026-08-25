@@ -4,6 +4,16 @@
 // node-environment test: ResultsPanel imports vscode, which cannot be mocked
 // from jsdom in this repository. Webview controls are exercised through the
 // same fake Webview message boundary.
+//
+// Cycle U / R1: manual-commit now uses a session-pinned DbTransaction
+// (adapter.beginTransaction → transaction.runQuery) instead of bundling BEGIN
+// into a pooled runSql call. The old flow leaked the transaction onto a
+// released pooled client, so the post-save requery landed on a different
+// connection and Postgres rejected it ("cannot run inside a transaction
+// block"), silently discarding the save. These tests assert the NEW contract:
+// the save statements travel through the transaction handle, BEGIN/COMMIT no
+// longer appear in runSql calls, and Commit/Rollback actions invoke the
+// handle's commit()/rollback().
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 type MessageHandler = (msg: unknown) => void;
@@ -62,6 +72,7 @@ vi.mock("vscode", () => ({
 
 import { ResultsPanel, type SaveContext } from "../resultsPanel";
 import type { QueryRunner, RunResult, StatementResult } from "../../core/queryRunner";
+import type { DbTransaction } from "../../adapters/types";
 
 function messages(): Array<Record<string, unknown>> {
   return lastPanel.current!.webview.postMessage.mock.calls.map(
@@ -79,18 +90,33 @@ async function flush(predicate: () => boolean): Promise<void> {
 
 function makePanel(options: { manualCommit: boolean; failSave?: boolean }) {
   const calls: string[] = [];
+  // Statements observed by the fake transaction handle (the session-pinned
+  // connection the manual window owns). The fake transaction runs on the
+  // SAME client as BEGIN/COMMIT — that is exactly what the R1 fix pins.
+  const txStatements: string[] = [];
+  const transaction: DbTransaction & {
+    commit: ReturnType<typeof vi.fn>;
+    rollback: ReturnType<typeof vi.fn>;
+  } = {
+    runQuery: async (sql: string): Promise<RunResult> => {
+      txStatements.push(sql);
+      if (options.failSave) throw new Error("database write failed");
+      return { results: [] };
+    },
+    commit: vi.fn(async () => undefined),
+    rollback: vi.fn(async () => undefined),
+  };
+  const beginTransaction = vi.fn(async (): Promise<DbTransaction> => transaction);
   const runner = {
     loadMore: vi.fn(async () => [] as StatementResult[]),
     cancel: vi.fn(async () => undefined),
     runSql: vi.fn(async (sql: string): Promise<RunResult> => {
       calls.push(sql);
-      if (options.failSave && /^BEGIN/i.test(sql.trim())) {
-        throw new Error("database write failed");
-      }
       return {
         results: [{ columns: ["id", "name"], rows: [[1, "updated"]], rowCount: 1, durationMs: 0 }],
       };
     }),
+    beginTransaction,
   } as unknown as QueryRunner;
   const saveContext: SaveContext = {
     getDriver: () => "mssql",
@@ -105,7 +131,14 @@ function makePanel(options: { manualCommit: boolean; failSave?: boolean }) {
     result: { columns: ["id", "name"], rows: [[1, "original"]], rowCount: 1, durationMs: 0 },
     durationMs: 0,
   }], "manual commit test");
-  return { calls, panel, webview: lastPanel.current!.webview };
+  return { calls, txStatements, transaction, beginTransaction, panel, webview: lastPanel.current!.webview };
+}
+
+function save(webview: FakeWebview): void {
+  webview.dispatch({
+    type: "saveEdits", index: 0, tableName: "people", pkColumns: ["id"],
+    edits: [{ rowId: 0, colIndex: 1, value: "updated" }],
+  });
 }
 
 beforeEach(() => {
@@ -114,42 +147,53 @@ beforeEach(() => {
 });
 
 describe("ResultsPanel manual-commit mode (TASK-009)", () => {
-  it("manualCommit wraps save in BEGIN and leaves commit for explicit action", async () => {
-    const { calls, webview } = makePanel({ manualCommit: true });
-    webview.dispatch({
-      type: "saveEdits", index: 0, tableName: "people", pkColumns: ["id"],
-      edits: [{ rowId: 0, colIndex: 1, value: "updated" }],
-    });
+  it("opens a session-pinned transaction and runs saves through it; COMMIT left for explicit action", async () => {
+    const { calls, txStatements, transaction, beginTransaction, webview } = makePanel({ manualCommit: true });
+    save(webview);
     await flush(() => messages().some((message) => message.type === "transactionStatus" && message.open === true));
 
-    expect(calls[0]).toMatch(/^BEGIN TRANSACTION;\nUPDATE[\s\S]*;$/);
-    expect(calls[0]).not.toMatch(/COMMIT TRANSACTION/i);
+    expect(beginTransaction).toHaveBeenCalledTimes(1);
+    // The save statements travel through the transaction handle — NOT a
+    // pooled runSql call. No BEGIN/COMMIT wrapper: the handle is the window.
+    expect(txStatements).toHaveLength(1);
+    expect(txStatements[0]).toMatch(/UPDATE[\s\S]*name[\s\S]*/i);
+    expect(txStatements[0]).not.toMatch(/^BEGIN/i);
+    expect(txStatements[0]).not.toMatch(/COMMIT/i);
+    expect(calls).toHaveLength(0);
+    expect(transaction.commit).not.toHaveBeenCalled();
     expect(messages()).toContainEqual({ type: "transactionStatus", open: true });
   });
 
+  it("reuses the open transaction for a second save (no new beginTransaction)", async () => {
+    const { txStatements, beginTransaction, webview } = makePanel({ manualCommit: true });
+    save(webview);
+    await flush(() => messages().some((message) => message.type === "transactionStatus" && message.open === true));
+    save(webview);
+    await flush(() => txStatements.length >= 2);
+
+    expect(beginTransaction).toHaveBeenCalledTimes(1);
+    expect(txStatements).toHaveLength(2);
+  });
+
   it("manualCommit off preserves the existing automatic transaction save", async () => {
-    const { calls, webview } = makePanel({ manualCommit: false });
-    webview.dispatch({
-      type: "saveEdits", index: 0, tableName: "people", pkColumns: ["id"],
-      edits: [{ rowId: 0, colIndex: 1, value: "updated" }],
-    });
+    const { calls, txStatements, beginTransaction, webview } = makePanel({ manualCommit: false });
+    save(webview);
     await flush(() => messages().some((message) => message.type === "saveResult"));
 
+    expect(beginTransaction).not.toHaveBeenCalled();
+    expect(txStatements).toHaveLength(0);
     expect(calls[0]).toMatch(/^BEGIN TRANSACTION;[\s\S]*COMMIT TRANSACTION;$/);
     expect(messages()).not.toContainEqual({ type: "transactionStatus", open: true });
   });
 
-  it("rollback sends ROLLBACK TRANSACTION and reports closed state", async () => {
-    const { calls, webview } = makePanel({ manualCommit: true });
-    webview.dispatch({
-      type: "saveEdits", index: 0, tableName: "people", pkColumns: ["id"],
-      edits: [{ rowId: 0, colIndex: 1, value: "updated" }],
-    });
+  it("rollback invokes transaction.rollback and reports closed state", async () => {
+    const { transaction, webview } = makePanel({ manualCommit: true });
+    save(webview);
     await flush(() => messages().some((message) => message.type === "transactionStatus" && message.open === true));
     webview.dispatch({ type: "rollbackTransaction" });
     await flush(() => messages().some((message) => message.type === "transactionStatus" && message.open === false));
 
-    expect(calls).toContain("ROLLBACK TRANSACTION");
+    expect(transaction.rollback).toHaveBeenCalledTimes(1);
     expect(messages()).toContainEqual({ type: "transactionStatus", open: false });
   });
 
@@ -157,10 +201,7 @@ describe("ResultsPanel manual-commit mode (TASK-009)", () => {
     const { webview } = makePanel({ manualCommit: true });
     expect(messages()).not.toContainEqual({ type: "transactionStatus", open: true });
 
-    webview.dispatch({
-      type: "saveEdits", index: 0, tableName: "people", pkColumns: ["id"],
-      edits: [{ rowId: 0, colIndex: 1, value: "updated" }],
-    });
+    save(webview);
     await flush(() => messages().some((message) => message.type === "transactionStatus" && message.open === true));
   });
 
@@ -170,32 +211,25 @@ describe("ResultsPanel manual-commit mode (TASK-009)", () => {
     expect(messages()).not.toContainEqual({ type: "transactionStatus", open: true });
   });
 
-  it("failed manual statement rolls back before sending the error response", async () => {
-    const { calls, webview } = makePanel({ manualCommit: true, failSave: true });
-    webview.dispatch({
-      type: "saveEdits", index: 0, tableName: "people", pkColumns: ["id"],
-      edits: [{ rowId: 0, colIndex: 1, value: "updated" }],
-    });
+  it("failed manual statement rolls back the transaction before sending the error response", async () => {
+    const { transaction, webview } = makePanel({ manualCommit: true, failSave: true });
+    save(webview);
     await flush(() => messages().some((message) => message.type === "saveResult" && message.ok === false));
 
-    const rollbackIndex = calls.indexOf("ROLLBACK TRANSACTION");
-    const errorIndex = messages().findIndex((message) => message.type === "saveResult" && message.ok === false);
-    expect(rollbackIndex).toBeGreaterThanOrEqual(0);
-    expect(errorIndex).toBeGreaterThanOrEqual(0);
-    expect(calls[rollbackIndex]).toBe("ROLLBACK TRANSACTION");
+    expect(transaction.rollback).toHaveBeenCalledTimes(1);
+    const errorAck = messages().find((message) => message.type === "saveResult" && message.ok === false);
+    expect(errorAck).toBeDefined();
+    expect((errorAck as Record<string, unknown>).errors).toEqual(["database write failed"]);
   });
 
-  it("commit sends COMMIT TRANSACTION and reports closed state", async () => {
-    const { calls, webview } = makePanel({ manualCommit: true });
-    webview.dispatch({
-      type: "saveEdits", index: 0, tableName: "people", pkColumns: ["id"],
-      edits: [{ rowId: 0, colIndex: 1, value: "updated" }],
-    });
+  it("commit invokes transaction.commit and reports closed state", async () => {
+    const { transaction, webview } = makePanel({ manualCommit: true });
+    save(webview);
     await flush(() => messages().some((message) => message.type === "transactionStatus" && message.open === true));
     webview.dispatch({ type: "commitTransaction" });
     await flush(() => messages().some((message) => message.type === "transactionStatus" && message.open === false));
 
-    expect(calls).toContain("COMMIT TRANSACTION");
+    expect(transaction.commit).toHaveBeenCalledTimes(1);
     expect(messages()).toContainEqual({ type: "transactionStatus", open: false });
   });
 });

@@ -136,3 +136,9 @@ which is what the injection edge case exercises. Empty `originalSql` composes
 without throwing (kept lenient per Test Case 6 — no trailing-`;` stripping,
 out of scope).
 
+
+## Reviewer Verdict (R1 — adapters/export group)
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: bao-opus
+FINDINGS: no Critical/Important defects; minor notes only, non-blocking. Verification re-run green.
+SOURCE: R1 review round outcome recorded in RUN.md cursor (adapters/export group).

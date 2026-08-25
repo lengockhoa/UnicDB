@@ -1,6 +1,7 @@
 import mysql, {
   type FieldPacket,
   type Pool as PromisePool,
+  type PoolConnection,
 } from "mysql2/promise";
 import type { Connection as CoreConnection, Query } from "mysql2";
 import type { ConnectionConfig } from "../config/types";
@@ -9,6 +10,7 @@ import { splitStatements } from "../core/statementParser";
 import {
   NotImplementedError,
   type BatchedQuery,
+  type DbTransaction,
   type ColumnInfo,
   type DbAdapter,
   type QueryResult,
@@ -152,6 +154,38 @@ export class MySqlAdapter implements DbAdapter {
       results.push(await this.executeText(text));
     }
     return { results };
+  }
+
+  async beginTransaction(): Promise<DbTransaction> {
+    if (!this.pool) throw new Error("MySqlAdapter: connect() chưa được gọi");
+    const connection = await this.pool.getConnection();
+    let finished = false;
+
+    const finish = async (action: "commit" | "rollback"): Promise<void> => {
+      if (finished) return;
+      finished = true;
+      try {
+        await connection[action]();
+      } finally {
+        connection.release();
+      }
+    };
+
+    try {
+      await connection.beginTransaction();
+    } catch (error) {
+      connection.release();
+      throw error;
+    }
+
+    return {
+      runQuery: async (sql: string): Promise<RunResult> => {
+        if (finished) throw new Error("MySQL transaction is already closed");
+        return this.runQueryOnConnection(connection, sql);
+      },
+      commit: () => finish("commit"),
+      rollback: () => finish("rollback"),
+    };
   }
 
   async listSchemas(includeSystem: boolean): Promise<SchemaInfo[]> {
@@ -327,6 +361,28 @@ export class MySqlAdapter implements DbAdapter {
   ): Promise<Array<{ name: string | null; dataType: string }>> {
     throw new NotImplementedError("mysql");
  }
+
+  private async runQueryOnConnection(
+    connection: PoolConnection,
+    sql: string,
+  ): Promise<RunResult> {
+    const statements = splitStatements(sql, "mysql");
+    const results: QueryResult[] = [];
+    for (const statement of statements) {
+      const text = statement.text.trim();
+      if (!text) continue;
+      const startedAt = Date.now();
+      const [rows, fields] = await connection.query(text);
+      const columns = Array.isArray(fields) ? fields.map((field) => field.name) : [];
+      results.push({
+        columns,
+        rows: this.rowsAsArrays(rows, Array.isArray(fields) ? fields : undefined, columns),
+        rowCount: this.resultRowCount(rows),
+        durationMs: Date.now() - startedAt,
+      });
+    }
+    return { results };
+  }
 
   private async executeText(sql: string): Promise<QueryResult> {
     const result = await this.query(sql);

@@ -131,3 +131,9 @@ $ npm run typecheck
 
 Status: PASS
 Note: (1) tedious 18.6.2 has no `TYPES.Null` export — test case #6 implemented as declared-type + null value (tedious's canonical TDS NULL wire form); recorded in Discussion. (2) `estimateTableRows` (singular) also converted beyond the Target Files method list to satisfy acceptance criterion #3 (no literal interpolation reaches execSql). (3) One stale edge test in `src/adapters/__tests__/adapterQueryShape.test.ts` (asserted the retired `'O''Brien'` escaping in listColumns SQL) was updated to assert the parameterized contract — required for acceptance #5 (`npm test` green). (4) First full `npm test` run failed 2 pre-existing dist-artifact tests (ENOENT dist/webview.css, dist/schemaForm.js) before `npm run compile`; green after compiling — unrelated to this change.
+
+## Reviewer Verdict (R1 — adapters/export group)
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: bao-opus
+FINDINGS: no Critical/Important defects; minor notes only, non-blocking. Verification re-run green.
+SOURCE: R1 review round outcome recorded in RUN.md cursor (adapters/export group).

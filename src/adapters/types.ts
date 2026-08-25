@@ -79,6 +79,17 @@ export interface RunResult {
 }
 
 /**
+ * A database session pinned to one physical connection until it is committed or
+ * rolled back. This prevents a manual transaction from leaking across pooled
+ * adapter calls.
+ */
+export interface DbTransaction {
+  runQuery(sql: string): Promise<RunResult>;
+  commit(): Promise<void>;
+  rollback(): Promise<void>;
+}
+
+/**
  * Adapter interface dùng chung cho 3 driver.
  *
  * `runQuery` nhận một SQL string (có thể nhiều statements phân tách bằng `;`,
@@ -90,6 +101,7 @@ export interface DbAdapter {
   connect(): Promise<void>;
   close(): Promise<void>;
   runQuery(sql: string): Promise<RunResult>;
+  beginTransaction?(): Promise<DbTransaction>;
   listSchemas(includeSystem: boolean): Promise<SchemaInfo[]>;
   listTables(schema?: string): Promise<TableInfo[]>;
   listViews(schema?: string): Promise<ViewInfo[]>;

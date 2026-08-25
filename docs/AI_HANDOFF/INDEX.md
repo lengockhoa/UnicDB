@@ -6,15 +6,15 @@ schema-aware autocomplete, manual-commit mode. 9 tasks, 5 waves.
 
 | Task | Title | Status | Executor | Reviewer |
 |------|-------|--------|----------|----------|
-| TASK-001 | Export keepIndices duplicate-column bug -- positional indices | ready | - | - |
-| TASK-002 | MSSQL adapter: replace literal() with parameterized queries | ready | - | - |
-| TASK-003 | Postgres server-side sort query helper | ready | - | - |
-| TASK-004 | NULL cell display + cell value viewer | ready | - | - |
-| TASK-005 | A19 failed-row retry affordance | ready | - | - |
-| TASK-006 | Post-commit grid refresh after successful save | ready | - | - |
-| TASK-007 | Per-table result tabs with table-name labels | ready | - | - |
-| TASK-008 | Schema-aware autocomplete (CompletionItemProvider + cache) | ready | - | - |
-| TASK-009 | Manual-commit mode (begin/commit/rollback + UI toggle) | ready | - | - |
+| TASK-001 | Export keepIndices duplicate-column bug -- positional indices | done | claude-sonnet-5 | bao-opus |
+| TASK-002 | MSSQL adapter: replace literal() with parameterized queries | done | claude-sonnet-5 | bao-opus |
+| TASK-003 | Postgres server-side sort query helper | done | claude-sonnet-5 | bao-opus |
+| TASK-004 | NULL cell display + cell value viewer | done | claude-sonnet-5 | bao-opus |
+| TASK-005 | A19 failed-row retry affordance | done | claude-sonnet-5 | bao-opus |
+| TASK-006 | Post-commit grid refresh after successful save | done | claude-sonnet-5 | bao-opus |
+| TASK-007 | Per-table result tabs with table-name labels | done | claude-sonnet-5 | bao-opus |
+| TASK-008 | Schema-aware autocomplete (CompletionItemProvider + cache) | done | claude-sonnet-5 | bao-opus |
+| TASK-009 | Manual-commit mode (begin/commit/rollback + UI toggle) | done | bao-sonnet | bao-opus |
 
 Graph: 006 --> 007 --> 009 (same-file chain on webview/main.ts + resultsPanel.ts + messages.ts).
 001-005 and 008 are all independent.
