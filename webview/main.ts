@@ -3294,24 +3294,30 @@ window.addEventListener("message", (ev: MessageEvent) => {
     const identity = nextStatement
       ? `${nextStatement.index}|${nextStatement.sql}|${nextStatement.durationMs}`
       : "none";
+    let statementIdentityChanged = false;
     if (identity !== lastStatementIdentity) {
       lastStatementIdentity = identity;
       statementGeneration++;
       distinctStatementToken = statementGeneration;
       distinctByColumn.clear();
-      // Fix round (review finding 3): cleared cache + still-mounted filter
-      // instances = a live popup/list showing stale values that would never
-      // re-request (requests only fire from init). Re-request for every
-      // mounted column and recompute their lists off the (now empty) cache
-      // so they fall back to loaded rows until the fresh reply arrives.
-      // The filter model is untouched — selections survive.
+      statementIdentityChanged = true;
+    }
+    render();
+    // Fix round 2 (review finding): the mounted-filter refresh must run
+    // AFTER render() swaps AG Grid to the replacement rows. Refreshing
+    // before the swap made recomputeEntries' loaded-row fallback scan the
+    // OLD statement's rows — if the fresh DISTINCT round trip then failed
+    // or was slow, the dropdown kept old-statement entries indefinitely.
+    // Sequenced here, the re-request fires after the rows update lands and
+    // the list falls back to the NEW statement's loaded rows at worst.
+    // The filter model is untouched — selections survive.
+    if (statementIdentityChanged) {
       for (const inst of setFilterInstances) {
         const col = inst.getColumnId();
         if (col) requestDistinctValues(col);
         inst.refreshEntries();
       }
     }
-    render();
   } else if (msg.type === "busy") {
     busy = msg.busy;
     if (!busy) loadMoreInFlight = false;

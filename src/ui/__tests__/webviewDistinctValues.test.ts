@@ -478,5 +478,52 @@ describeIfBundle(
         ]);
       },
     );
+
+    itIfBundle(
+      "16. replacement rows render BEFORE the distinct re-request; a failed refresh leaves new-statement loaded-row values (fix round 2)",
+      async () => {
+        const { received } = loadBundle();
+        dispatchState(
+          rowsState(["id", "name"], [
+            [1, "old"],
+          ]),
+        );
+        await flushGridEvents();
+        const api = getGridApi();
+        expect(api).toBeTruthy();
+
+        const filter = await openFilter(api!, "name");
+        dispatchState({
+          type: "distinctValues",
+          index: 0,
+          column: "name",
+          values: ["old-distinct"],
+          truncated: false,
+        });
+        await flushGridEvents();
+        expect(entryLabels(filter.getGui() as SetFilterGui)).toEqual([
+          "old-distinct",
+        ]);
+
+        // Statement replaced with rows [["new"]]. The re-request must fire
+        // AFTER the replacement rows landed (message ordering), and with a
+        // failed/absent DISTINCT reply the mounted list must fall back to
+        // the NEW statement's loaded rows — never the old statement's.
+        received.length = 0;
+        const state2 = rowsState(["id", "name"], [[2, "new"]]);
+        (state2.results![0] as Record<string, unknown>).sql =
+          "SELECT * FROM t2";
+        dispatchState(state2);
+        await flushGridEvents();
+
+        const reqs = requestDistincts(received);
+        expect(reqs.length).toBeGreaterThanOrEqual(1);
+        expect(reqs[reqs.length - 1]!.column).toBe("name");
+        // The fallback list now derives from the NEW loaded rows.
+        expect(entryLabels(filter.getGui() as SetFilterGui)).toEqual([
+          "new",
+        ]);
+      },
+    );
   },
 );

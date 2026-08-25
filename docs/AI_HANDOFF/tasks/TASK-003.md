@@ -351,3 +351,38 @@ FINDINGS:
     - none
 NEXT_STATUS_FOR_INDEX: changes_requested
 NOTES: Isolation passed and fix-round RED_OUTPUT contains real failing-test evidence. Dialect token parsing, grid-sort carry, debounce cancellation, message shape, and fresh verification are otherwise correct.
+
+## Executor Report (fix round 2)
+
+FINDING addressed (webview/main.ts:3308): mounted set-filter refresh ran BEFORE `render()`
+swapped AG Grid to the replacement rows, so the loaded-row fallback scanned the OLD
+statement's rows; a failed/slow DISTINCT reply left old-statement entries in the dropdown.
+
+FIX (minimal reorder): in the `state` message handler, cache invalidation (generation bump +
+`distinctByColumn.clear()`) still runs before render, but the mounted-instance loop
+(`requestDistinctValues(col)` + `inst.refreshEntries()`) now runs AFTER `render()` via a
+`statementIdentityChanged` flag. The re-request therefore fires after the rows update lands,
+and the fallback derives from the NEW statement's loaded rows. Filter model untouched.
+
+REGRESSION TEST: case 16 in `src/ui/__tests__/webviewDistinctValues.test.ts` — statement
+replacement with rows `[["new"]]`, a prior cached `old-distinct` value, and NO distinct
+reply; asserts the re-request fires for `name` and the mounted list equals `["new"]` (new-
+statement loaded-row fallback), never old-statement entries.
+
+EXECUTOR_MODEL: bao-sonnet
+RED_OUTPUT:
+    523|         expect(entryLabels(filter.getGui() as SetFilterGui)).toEqual([
+        |                                                              ^
+      524|           "new",
+      525|         ]);
+     Test Files  1 failed (1)
+          Tests  1 failed | 9 skipped (10)
+Verification Output:
+  npm run typecheck → clean
+  npm run compile → build complete
+  npx vitest run src/ui/__tests__/webviewServerSort.test.ts src/ui/__tests__/webviewDistinctValues.test.ts
+    → Tests 20 passed (20)
+  npx tsc -p tsconfig.webview.json --noEmit | grep -oE "^[^ (]+\.ts" | sort | uniq -c
+    → 14 main.ts / 10 connectionFormMain.ts / 10 aiSettingsFormMain.ts / 5 schemaFormMain.ts / 1 newTableFormMain.ts (baseline exact)
+Status: PASS
+Note: Single finding fixed by reordering only; no behavior change outside the statement-replacement path.
