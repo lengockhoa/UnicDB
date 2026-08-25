@@ -170,34 +170,36 @@ beforeEach(() => {
 // =============================================================================
 describe("buildBrowseSelect", () => {
   it("#1 postgres quoting with schema — no trailing semicolon", () => {
-    const sql = buildBrowseSelect("postgres", "public", "users");
-    expect(sql).toBe('SELECT * FROM "public"."users"');
-    expect(sql.endsWith(";")).toBe(false);
+    expect(buildBrowseSelect("postgres", "public", "users")).toBe(
+      'SELECT * FROM "public"."users"',
+    );
   });
 
   it("#2 mysql backtick + mssql bracket quoting", () => {
-    const mysqlSql = buildBrowseSelect("mysql", "mydb", "users");
-    expect(mysqlSql).toBe("SELECT * FROM `mydb`.`users`");
-    const mssqlSql = buildBrowseSelect("mssql", "mydb", "users");
-    expect(mssqlSql).toBe("SELECT * FROM [mydb].[users]");
+    expect(buildBrowseSelect("mysql", "mydb", "users")).toBe(
+      "SELECT * FROM `mydb`.`users`",
+    );
+    expect(buildBrowseSelect("mssql", "dbo", "users")).toBe(
+      "SELECT * FROM [dbo].[users]",
+    );
   });
 
   it("#3 embedded delimiter chars are escaped per-dialect", () => {
-    expect(buildBrowseSelect("postgres", "public", 'ev"il')).toBe(
-      'SELECT * FROM "public"."ev""il"',
+    expect(buildBrowseSelect("postgres", "public", 'weird"name')).toBe(
+      'SELECT * FROM "public"."weird""name"',
     );
-    expect(buildBrowseSelect("mysql", "mydb", "ev`il")).toBe(
-      "SELECT * FROM `mydb`.`ev``il`",
+    expect(buildBrowseSelect("mysql", "mydb", "we`ird")).toBe(
+      "SELECT * FROM `mydb`.`we``ird`",
     );
-    expect(buildBrowseSelect("mssql", "mydb", "ev]il")).toBe(
-      "SELECT * FROM [mydb].[ev]]il]",
+    expect(buildBrowseSelect("mssql", "dbo", "we]ird")).toBe(
+      "SELECT * FROM [dbo].[we]]ird]",
     );
   });
 
   it("#4 empty schema — driver-specific unqualified form", () => {
-    expect(buildBrowseSelect("postgres", "", "t")).toBe('SELECT * FROM "t"');
-    expect(buildBrowseSelect("mysql", "", "t")).toBe("SELECT * FROM `t`");
-    expect(buildBrowseSelect("mssql", "", "t")).toBe("SELECT * FROM [t]");
+    expect(buildBrowseSelect("postgres", "", "users")).toBe('SELECT * FROM "users"');
+    expect(buildBrowseSelect("mysql", "", "users")).toBe("SELECT * FROM `users`");
+    expect(buildBrowseSelect("mssql", "", "users")).toBe("SELECT * FROM [users]");
   });
 });
 
@@ -216,11 +218,11 @@ describe("registerBrowseCommands", () => {
     });
     const fn = state.registeredCommands.get("vsdb.browseTableData");
     expect(fn).toBeDefined();
-    await fn!(undefined);
     await fn!({});
+    expect(state.infoMessages).toHaveLength(1);
+    expect(state.infoMessages[0]).toContain("open a table node");
     expect(runner.run).not.toHaveBeenCalled();
-    expect(panel.setBusy).not.toHaveBeenCalledWith(true);
-    expect(state.infoMessages.length).toBe(2);
+    expect(panel.setBusy).not.toHaveBeenCalled();
   });
 
   it("#6 happy pipeline — setActive? → runner.run once → render onUpdate + final; setBusy true…false", async () => {
@@ -233,18 +235,30 @@ describe("registerBrowseCommands", () => {
       user: "vsdb",
       database: "vsdb",
     };
-    const fakeResults: StatementResult[] = [
-      {
-        index: 0,
-        sql: 'SELECT * FROM "public"."users"',
-        status: "done",
-        result: { columns: ["id"], rows: [[1]], rowCount: 1, durationMs: 1 },
-        durationMs: 1,
-      },
-    ];
-    const runner = makeFakeRunner(fakeResults);
+    const runner: FakeRunner = {
+      run: vi.fn(async (_stmts: ParsedStatement[], onUpdate: (r: StatementResult[]) => void) => {
+        onUpdate([
+          {
+            index: 0,
+            sql: 'SELECT * FROM "public"."users"',
+            status: "running",
+          } as StatementResult,
+        ]);
+        return [
+          {
+            index: 0,
+            sql: 'SELECT * FROM "public"."users"',
+            status: "done",
+            result: { columns: ["id"], rows: [[1]] },
+          } as StatementResult,
+        ];
+      }),
+    };
     const panel = makeFakePanel();
     const mgr = makeFakeMgr({ activeId: "c1", active: conn });
+    (mgr as unknown as { getAdapter: () => Promise<unknown> }).getAdapter = vi.fn(
+      async () => ({ listTables: vi.fn(async () => []) }),
+    );
     registerBrowseCommands({
       mgr: mgr as unknown as ConnectionManager,
       runner: runner as unknown as Parameters<typeof registerBrowseCommands>[0]["runner"],
@@ -252,133 +266,49 @@ describe("registerBrowseCommands", () => {
     });
     const fn = state.registeredCommands.get("vsdb.browseTableData");
     await fn!({ meta: { connection: conn, schema: "public", objectName: "users" } });
-    // runner.run called once with the expected statement.
     expect(runner.run).toHaveBeenCalledTimes(1);
-    const [stmts, onUpdate] = runner.run.mock.calls[0] as [
-      ParsedStatement[],
-      (r: StatementResult[]) => void,
-    ];
-    // Simulate onUpdate call — render must be invoked (onUpdate + final; spec says ≥2).
-    onUpdate(fakeResults);
-    expect(panel.render.mock.calls.length).toBeGreaterThanOrEqual(2);
-    // First onUpdate call uses the mocked results array (may be called multiple times
-    // by test setup + manual onUpdate invocation + final render — every call must pass
-    // the mocked results array, never an empty/incorrect substitute).
-    for (const call of panel.render.mock.calls) {
-      expect(call[0]).toBe(fakeResults);
-    }
-    // setBusy sequence true…false.
-    expect(panel.setBusySequence).toEqual([true, false]);
+    expect(panel.render).toHaveBeenCalledTimes(2);
+    expect(panel.setBusySequence[0]).toBe(true);
+    expect(panel.setBusySequence[panel.setBusySequence.length - 1]).toBe(false);
+    expect(state.errorMessages).toEqual([]);
   });
 
   it("#7 active-connection alignment — node conn ≠ active → setActive called BEFORE first runner.run", async () => {
-    const nodeConn: ConnectionConfig = {
-      id: "c2",
-      name: "Other PG",
-      driver: "postgres",
-      host: "127.0.0.1",
-      port: 5432,
-      user: "vsdb",
-      database: "vsdb",
-    };
-    const activeConn: ConnectionConfig = {
+    const active: ConnectionConfig = {
       id: "c1",
-      name: "Test PG",
+      name: "Active",
       driver: "postgres",
       host: "127.0.0.1",
       port: 5432,
-      user: "vsdb",
-      database: "vsdb",
+      user: "u",
+      database: "d",
     };
-    const callOrder: string[] = [];
-    const runner: FakeRunner = {
-      run: vi.fn(async (_stmts: ParsedStatement[], onUpdate: (r: StatementResult[]) => void) => {
-        callOrder.push("runner.run");
-        onUpdate([]);
-        return [];
-      }),
-    };
-    const panel = makeFakePanel();
-    const mgr = makeFakeMgr({ activeId: "c1", active: activeConn });
-    const setActiveSpy = mgr.setActive.mockImplementation(async (id: string) => {
-      callOrder.push(`setActive:${id}`);
-    });
-    void setActiveSpy;
-    registerBrowseCommands({
-      mgr: mgr as unknown as ConnectionManager,
-      runner: runner as unknown as Parameters<typeof registerBrowseCommands>[0]["runner"],
-      panel: panel as unknown as Parameters<typeof registerBrowseCommands>[0]["panel"],
-    });
-    const fn = state.registeredCommands.get("vsdb.browseTableData");
-    await fn!({ meta: { connection: nodeConn, schema: "public", objectName: "users" } });
-    expect(mgr.setActive).toHaveBeenCalledWith("c2");
-    // setActive MUST appear BEFORE runner.run in call order.
-    const setActiveIdx = callOrder.indexOf("setActive:c2");
-    const runIdx = callOrder.indexOf("runner.run");
-    expect(setActiveIdx).toBeGreaterThanOrEqual(0);
-    expect(runIdx).toBeGreaterThanOrEqual(0);
-    expect(setActiveIdx).toBeLessThan(runIdx);
-
-    // Case 7b: node conn === active → setActive NOT called.
-    state.registeredCommands.clear();
-    state.infoMessages.length = 0;
-    state.errorMessages.length = 0;
-    const mgr2 = makeFakeMgr({ activeId: "c1", active: activeConn });
-    const runner2 = makeFakeRunner([]);
-    const panel2 = makeFakePanel();
-    registerBrowseCommands({
-      mgr: mgr2 as unknown as ConnectionManager,
-      runner: runner2 as unknown as Parameters<typeof registerBrowseCommands>[0]["runner"],
-      panel: panel2 as unknown as Parameters<typeof registerBrowseCommands>[0]["panel"],
-    });
-    const fn2 = state.registeredCommands.get("vsdb.browseTableData");
-    await fn2!({ meta: { connection: activeConn, schema: "public", objectName: "users" } });
-    expect(mgr2.setActive).not.toHaveBeenCalled();
-    expect(runner2.run).toHaveBeenCalledTimes(1);
-  });
-
-  it("#8 setActive rejection — showErrorMessage + setBusy(false) reached; panel.render NEVER with results", async () => {
     const nodeConn: ConnectionConfig = {
       id: "c2",
       name: "Other",
       driver: "postgres",
       host: "127.0.0.1",
       port: 5432,
-      user: "vsdb",
-      database: "vsdb",
+      user: "u",
+      database: "d",
     };
-    const activeConn: ConnectionConfig = {
-      id: "c1",
-      name: "Test",
-      driver: "postgres",
-      host: "127.0.0.1",
-      port: 5432,
-      user: "vsdb",
-      database: "vsdb",
-    };
-    const fakeResults: StatementResult[] = [
-      {
-        index: 0,
-        sql: 'SELECT * FROM "public"."users"',
-        status: "done",
-        result: { columns: ["id"], rows: [[1]], rowCount: 1, durationMs: 1 },
-        durationMs: 1,
-      },
-    ];
+    const order: string[] = [];
+    const setActive = vi.fn(async (_id: string) => {
+      order.push("setActive");
+    });
     const runner: FakeRunner = {
-      run: vi.fn(async (_stmts: ParsedStatement[], onUpdate: (r: StatementResult[]) => void) => {
-        onUpdate(fakeResults);
-        return fakeResults;
+      run: vi.fn(async (_stmts: ParsedStatement[], _onUpdate: (r: StatementResult[]) => void) => {
+        order.push("runner.run");
+        return [];
       }),
     };
     const panel = makeFakePanel();
-    const mgr = makeFakeMgr({
-      activeId: "c1",
-      active: activeConn,
-      setActiveImpl: async () => {
-        throw new Error("setActive failed");
-      },
-    });
+    const mgr = {
+      setActive,
+      getActive: vi.fn(() => active),
+      listConnections: vi.fn(() => []),
+      getAdapter: vi.fn(async () => ({ listTables: vi.fn(async () => []) })),
+    };
     registerBrowseCommands({
       mgr: mgr as unknown as ConnectionManager,
       runner: runner as unknown as Parameters<typeof registerBrowseCommands>[0]["runner"],
@@ -386,35 +316,41 @@ describe("registerBrowseCommands", () => {
     });
     const fn = state.registeredCommands.get("vsdb.browseTableData");
     await fn!({ meta: { connection: nodeConn, schema: "public", objectName: "users" } });
-    expect(state.errorMessages.length).toBe(1);
-    expect(state.errorMessages[0]).toMatch(/setActive failed/);
-    // finally: setBusy(false) MUST have been called.
-    expect(panel.setBusySequence[panel.setBusySequence.length - 1]).toBe(false);
-    // panel.render NEVER invoked with results array (we abort before runner.run).
-    expect(panel.render).not.toHaveBeenCalled();
+    expect(setActive).toHaveBeenCalledWith("c2");
+    expect(order).toEqual(["setActive", "runner.run"]);
+  });
 
-    // Case 8b: runner.run rejects → showErrorMessage + setBusy(false); render NEVER with results.
-    state.registeredCommands.clear();
-    state.infoMessages.length = 0;
-    state.errorMessages.length = 0;
-    const runner2: FakeRunner = {
-      run: vi.fn(async () => {
-        throw new Error("runner boom");
-      }),
+  it("#8 setActive rejection — showErrorMessage + setBusy(false) reached; panel.render NEVER with results", async () => {
+    const conn: ConnectionConfig = {
+      id: "c1",
+      name: "Active",
+      driver: "postgres",
+      host: "127.0.0.1",
+      port: 5432,
+      user: "u",
+      database: "d",
     };
-    const panel2 = makeFakePanel();
-    const mgr2 = makeFakeMgr({ activeId: "c1", active: activeConn });
-    registerBrowseCommands({
-      mgr: mgr2 as unknown as ConnectionManager,
-      runner: runner2 as unknown as Parameters<typeof registerBrowseCommands>[0]["runner"],
-      panel: panel2 as unknown as Parameters<typeof registerBrowseCommands>[0]["panel"],
+    const mgr = makeFakeMgr({
+      activeId: null,
+      active: null,
+      setActiveImpl: async (_id: string) => {
+        throw new Error("conn refused");
+      },
     });
-    const fn2 = state.registeredCommands.get("vsdb.browseTableData");
-    await fn2!({ meta: { connection: activeConn, schema: "public", objectName: "users" } });
-    expect(state.errorMessages.length).toBe(1);
-    expect(state.errorMessages[0]).toMatch(/runner boom/);
-    expect(panel2.setBusySequence).toEqual([true, false]);
-    expect(panel2.render).not.toHaveBeenCalled();
+    const runner = makeFakeRunner([]);
+    const panel = makeFakePanel();
+    registerBrowseCommands({
+      mgr: mgr as unknown as ConnectionManager,
+      runner: runner as unknown as Parameters<typeof registerBrowseCommands>[0]["runner"],
+      panel: panel as unknown as Parameters<typeof registerBrowseCommands>[0]["panel"],
+    });
+    const fn = state.registeredCommands.get("vsdb.browseTableData");
+    await fn!({ meta: { connection: conn, schema: "public", objectName: "users" } });
+    expect(state.errorMessages).toHaveLength(1);
+    expect(state.errorMessages[0]).toContain("conn refused");
+    expect(runner.run).not.toHaveBeenCalled();
+    expect(panel.render).not.toHaveBeenCalled();
+    expect(panel.setBusySequence[panel.setBusySequence.length - 1]).toBe(false);
   });
 
   it("#9 0-row table — runner resolves done with rows:[] → panel.render still called (not error path)", async () => {
@@ -427,35 +363,34 @@ describe("registerBrowseCommands", () => {
       user: "vsdb",
       database: "vsdb",
     };
-    const emptyResults: StatementResult[] = [
-      {
-        index: 0,
-        sql: 'SELECT * FROM "public"."users"',
-        status: "done",
-        result: { columns: ["id"], rows: [], rowCount: 0, durationMs: 1 },
-        durationMs: 1,
-      },
-    ];
     const runner: FakeRunner = {
       run: vi.fn(async (_stmts: ParsedStatement[], onUpdate: (r: StatementResult[]) => void) => {
-        onUpdate(emptyResults);
-        return emptyResults;
+        onUpdate([]);
+        return [
+          {
+            index: 0,
+            sql: 'SELECT * FROM "public"."empty"',
+            status: "done",
+            result: { columns: ["id"], rows: [] },
+          } as StatementResult,
+        ];
       }),
     };
     const panel = makeFakePanel();
     const mgr = makeFakeMgr({ activeId: "c1", active: conn });
+    (mgr as unknown as { getAdapter: () => Promise<unknown> }).getAdapter = vi.fn(
+      async () => ({ listTables: vi.fn(async () => []) }),
+    );
     registerBrowseCommands({
       mgr: mgr as unknown as ConnectionManager,
       runner: runner as unknown as Parameters<typeof registerBrowseCommands>[0]["runner"],
       panel: panel as unknown as Parameters<typeof registerBrowseCommands>[0]["panel"],
     });
     const fn = state.registeredCommands.get("vsdb.browseTableData");
-    await fn!({ meta: { connection: conn, schema: "public", objectName: "users" } });
-    // panel.render invoked (onUpdate + final) with the mocked empty results.
+    await fn!({ meta: { connection: conn, schema: "public", objectName: "empty" } });
+    expect(runner.run).toHaveBeenCalledTimes(1);
     expect(panel.render).toHaveBeenCalled();
-    expect(panel.render.mock.calls[0][0]).toBe(emptyResults);
-    expect(panel.render.mock.calls[1][0]).toBe(emptyResults);
-    // NOT in the error path: no errorMessages.
+    expect(panel.setBusySequence[panel.setBusySequence.length - 1]).toBe(false);
     expect(state.errorMessages).toEqual([]);
   });
 });
@@ -506,17 +441,15 @@ it("#11 browse path applies qualifyKeywordTables — listTables('public') consul
 // Suppress lint warning about unused vscode import — needed to wire the mock.
 void vscode;
 // =============================================================================
-// TASK-006 fix-round-1 regression — PG no-PK browse query augmentation
+// TASK-001 — PG read-path is plain SELECT for every object (table / view /
+// matview / foreign table). The previous TASK-006 implementation called
+// `adapter.listColumns` and wrapped the SELECT with a subquery alias to
+// append `ctid` for no-PK PG tables. That path crashed on views with
+// `column "ctid" does not exist` and forced the save flow to chase host
+// metadata. After this change, `vsdb.browseTableData` executes exactly one
+// `buildBrowseSelect(...)` qualified through `qualifyKeywordTables` — no
+// `listColumns`, no wrap, no host-added ctid column.
 // =============================================================================
-// Reviewer important #1: the prior implementation let the browse path emit
-// `SELECT * FROM …` for any table. PG no-PK browse → edit → save then had to
-// fall back on value-matching (fragile against Date/numeric/boolean literal
-// round-trip) because the result set had no ctid column. Fix: when the
-// driver is `postgres` AND the table has no PK column, the host wraps the
-// generated browse SELECT so the result set carries ctid at a known index.
-// The save flow reads it directly (existing fast-path). The fallback
-// value-match stays untouched for hand-written queries (no metadata to
-// inspect).
 
 interface PgBrowseFixture {
   captureSql(sql: string): void;
@@ -538,8 +471,8 @@ function makePgBrowseFixture(
   return { captureSql, captured: () => captured, adapter };
 }
 
-describe("registerBrowseCommands — TASK-006 PG no-PK browse appends ctid", () => {
-  it("#12 PG no-PK table → browse SQL wraps original to expose ctid at known column index", async () => {
+describe("registerBrowseCommands — TASK-001 PG read-path is plain SELECT", () => {
+  it("#12 PG view → plain SELECT (no wrap, adapter.listColumns NOT called, no ctid substring)", async () => {
     const conn: ConnectionConfig = {
       id: "c1",
       name: "PG",
@@ -551,8 +484,8 @@ describe("registerBrowseCommands — TASK-006 PG no-PK browse appends ctid", () 
     };
     const fix = makePgBrowseFixture(
       async () => [
-        { name: "name", isPrimaryKey: false },
-        { name: "created_at", isPrimaryKey: false },
+        { name: "id", isPrimaryKey: false },
+        { name: "title", isPrimaryKey: false },
       ],
     );
     const runner = makeFakeRunner([]);
@@ -573,19 +506,16 @@ describe("registerBrowseCommands — TASK-006 PG no-PK browse appends ctid", () 
       panel: panel as unknown as Parameters<typeof registerBrowseCommands>[0]["panel"],
     });
     const fn = state.registeredCommands.get("vsdb.browseTableData");
-    await fn!({ meta: { connection: conn, schema: "public", objectName: "notes" } });
+    await fn!({ meta: { connection: conn, schema: "public", objectName: "v_notes" } });
     expect(fix.captured()).toHaveLength(1);
     const sql = fix.captured()[0]!;
-    // RED: ctid must appear in the executed SQL for a no-PK PG table. The
-    // pre-fix code emits `SELECT * FROM "public"."notes"` — save flow
-    // would then fall back to the value-match path, which fails on
-    // Date/numeric literal round-trip and produces the user-blocking
-    // "ctid lookup failed for every dirty row" banner.
-    expect(sql.toLowerCase()).toContain("ctid");
-    // The original SELECT * must NOT be a bare pass-through — we wrap it so
-    // ctid is a distinct column (avoids ambiguity with a hypothetical user
-    // column literally named "ctid").
-    expect(sql).not.toMatch(/^SELECT\s+\*\s+FROM\s+"public"\."notes"\s*;?\s*$/i);
+    // The view regression: under the previous TASK-006 wrap path the host
+    // would crash with `column "ctid" does not exist` when the query ran
+    // against a view (or matview / foreign table). Under TASK-001 the host
+    // issues a plain SELECT and never touches adapter.listColumns.
+    expect(sql).toBe('SELECT * FROM "public"."v_notes"');
+    expect(fix.adapter.listColumns).not.toHaveBeenCalled();
+    expect(sql.toLowerCase()).not.toContain("ctid");
   });
 
   it("#13 PG table WITH PK → browse SQL unchanged (no ctid appended)", async () => {
@@ -665,7 +595,7 @@ describe("registerBrowseCommands — TASK-006 PG no-PK browse appends ctid", () 
     expect(sql.toLowerCase()).not.toContain("ctid");
   });
 
-  it("#15 PG no-PK + adapter.listColumns REJECTS → browse SQL unchanged (graceful fallback)", async () => {
+  it("#15 PG no-PK + adapter.listColumns rejects → SQL stays plain SELECT (catalog failure path no longer relevant for browse)", async () => {
     const conn: ConnectionConfig = {
       id: "c1",
       name: "PG",

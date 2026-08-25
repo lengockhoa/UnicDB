@@ -51,7 +51,10 @@ export interface DeleteRowMarker {
   __rowId: number;
 }
 
-/** Optional postgres-only ctid lookup for no-PK tables. */
+/** Optional postgres-only ctid lookup for no-PK tables. Used by the
+ *  UPDATE branch (cell edits) AND the DELETE branch (delete markers) when
+ *  `dialect === "postgres"` and `pkColumns.length === 0` — without a ctid
+ *  the row is skipped and a warning is emitted. */
 export interface SaveStatementsOptions {
   /** rowId → ctid. Missing keys → row is skipped with a warning. */
   ctidByRowId?: ReadonlyMap<number, string>;
@@ -344,7 +347,25 @@ export function buildSaveStatements(
   // ---- 2) Delete markers → one DELETE per row ----------------------------
   for (const e of edits) {
     if (!isDeleteMarker(e.value)) continue;
-    if (pkColumns.length === 0) continue;
+    if (pkColumns.length === 0) {
+      if (dialect === "postgres") {
+        const delRowId = e.value.__rowId;
+        const ctid = options.ctidByRowId?.get(delRowId);
+        if (!ctid) {
+          warnings.push(
+            `delete row ${delRowId} skipped: postgres no-PK + missing ctid`,
+          );
+        } else {
+          statements.push(
+            `DELETE FROM ${qTable} WHERE ctid=${sqlLiteral(ctid)}`,
+          );
+          warnings.push(
+            `delete row ${delRowId}: postgres no-PK fallback used (ctid) — not safe under concurrent writes`,
+          );
+        }
+      }
+      continue;
+    }
     const rowId = e.value.__rowId;
     const serverRow = serverRows[rowId];
     if (!serverRow) {

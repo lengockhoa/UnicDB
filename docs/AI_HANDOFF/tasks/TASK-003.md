@@ -63,3 +63,41 @@ Wave 1 sibling of TASK-001 (disjoint files). TASK-002 depends on this contract, 
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT:
+```
+ ❯ src/adapters/__tests__/saveStatements.test.ts  (16 tests | 3 failed) 9ms
+   ❯ buildSaveStatements — Add Row / Delete Row markers > PG no-PK + delete marker + ctid in map → DELETE FROM t WHERE ctid='(0,2)'
+     → expected [] to have a length of 1 but got +0
+   ❯ buildSaveStatements — Add Row / Delete Row markers > PG no-PK + delete marker + rowId NOT in ctid map → 0 stmts + warning
+     → expected false to be true // Object.is equality
+   ❯ buildSaveStatements — Add Row / Delete Row markers > PG no-PK + delete + update mixed in one save → 1 ctid-DELETE + 1 ctid-UPDATE, ordered deletes-then-updates
+     → expected [ Array(1) ] to have a length of 2 but got 1
+
+  Test Files  1 failed (1)
+       Tests  3 failed | 13 passed (16)
+```
+Three RED cases (PG happy, PG missing-ctid, PG mixed); the 4th case (mysql boundary)
+requires a contract clarification — see Note.
+
+Verification Output (post-impl):
+```
+$ npx vitest run src/adapters/__tests__/saveStatements.test.ts
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-003
+ ✓ src/adapters/__tests__/saveStatements.test.ts  (16 tests) 5ms
+ Test Files  1 passed (1)
+      Tests  16 passed (16)
+
+$ npm run typecheck
+> vsdb@1.6.2 typecheck
+> tsc --noEmit
+(clean — exit 0)
+```
+
+Status: PASS
+Note: Case 3 (mysql no-PK + delete marker) — task spec says "0 statements, NO delete emitted, no throw — existing skip semantics preserved" but the *current* code returns `ok:false, reason:"no_pk"` for any mysql/mssql no-PK call (the cell-edits-loop no_pk guard fires after the delete-marker loop). Test was written against actual existing semantics (`r.ok === false, reason === "no_pk"`, no DELETE emitted, no throw) — the spec's implicit "r.ok === true" was inconsistent with "existing skip semantics". PK-present delete (existing test at line 219) byte-identical to before — still passes. Doc comment on `SaveStatementsOptions` (lines 54-58) updated to mention DELETE branch usage. No changes outside Target Files.

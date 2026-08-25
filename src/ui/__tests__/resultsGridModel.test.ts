@@ -74,11 +74,14 @@ describe("inferColumns", () => {
     expect(inferColumns([], [])).toEqual([]);
   });
 
-  // TASK-006 fix-round-1: postgres appends a `ctid` column to no-PK
-  // browse queries as a row-addressing hint. inferColumns auto-tags it
-  // hidden so webview/main.ts can pass `{ hide: spec.hidden }` to AG Grid
-  // and the export input can derive `hiddenColumns`.
-  it("ctid column is auto-tagged hidden (TASK-006)", () => {
+  // TASK-001 — inferColumns NO LONGER auto-tags any column as hidden. The
+  // previous TASK-006 behavior hardcoded `ctid` so the host could ship the
+  // system column through the result set; under TASK-001 the browse path
+  // never adds host metadata columns, so the inference layer has nothing
+  // to hide. `spec.hidden` remains available for callers that explicitly
+  // mark a column (none do today); this test locks the no-auto-hide
+  // contract.
+  it("inferColumns does NOT auto-tag any column as hidden (TASK-001)", () => {
     const rows: unknown[][] = [
       ["alice", "(0,1)"],
       ["bob", "(0,2)"],
@@ -86,11 +89,15 @@ describe("inferColumns", () => {
     const cols = inferColumns(["name", "ctid"], rows);
     expect(cols).toEqual([
       { field: "name", headerName: "name", kind: "string" },
-      { field: "ctid", headerName: "ctid", kind: "string", hidden: true },
+      { field: "ctid", headerName: "ctid", kind: "string" },
     ]);
+    // No column carries a `hidden` key — host-metadata columns are
+    // indistinguishable from user columns at the inference layer.
+    expect(cols[0]?.hidden).toBeUndefined();
+    expect(cols[1]?.hidden).toBeUndefined();
   });
 
-  it("non-ctid columns are NOT marked hidden", () => {
+  it("inferColumns leaves `hidden` undefined for ordinary columns (TASK-001)", () => {
     const rows: unknown[][] = [[1, "x"]];
     const cols = inferColumns(["id", "name"], rows);
     expect(cols[0]?.hidden).toBeUndefined();

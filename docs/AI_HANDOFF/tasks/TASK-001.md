@@ -78,3 +78,93 @@ npx vitest run src/ui/__tests__/webviewBundle.test.ts src/ui/__tests__/webviewEx
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT (case 1 — PG view, captured by reverting src/ui/browseCommands.ts to HEAD and running the rewritten test):
+
+```
+ ❯ src/ui/__tests__/browseCommands.test.ts  (14 tests | 1 failed | 13 skipped) 5ms
+   ❯ src/ui/__tests__/browseCommands.test.ts > registerBrowseCommands — TASK-001 PG read-path is plain SELECT > #12 PG view → plain SELECT (no wrap, adapter.listColumns NOT called, no ctid substring)
+     → expected 'SELECT __vsdb_browse__.*, ctid FROM (…' to be 'SELECT * FROM "public"."v_notes"' // Object.is equality
+
+ ⎯⎯�⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/ui/__tests__/browseCommands.test.ts > registerBrowseCommands — TASK-001 PG read-path is plain SELECT > #12 PG view → plain SELECT (no wrap, adapter.listColumns NOT called, no ctid substring)
+ AssertionError: expected 'SELECT __vsdb_browse__.*, ctid FROM (…' to be 'SELECT * FROM "public"."v_notes"' // Object.is equality
+
+ - Expected
+ + Received
+
+ - SELECT * FROM "public"."v_notes"
+ + SELECT __vsdb_browse__.*, ctid FROM (SELECT * FROM "public"."v_notes") __vsdb_browse__
+
+   ❯ src/ui/__tests__/browseCommands.test.ts:516:17
+      514|     // against a view (or matview / foreign table). Under TASK-001 the…
+      515|     // issues a plain SELECT and never touches adapter.listColumns.
+      516|     expect(sql).toBe('SELECT * FROM "public"."v_notes"');
+         |                 ^
+      517|     expect(fix.adapter.listColumns).not.toHaveBeenCalled();
+      518|     expect(sql.toLowerCase()).not.toContain("ctid");
+
+  Test Files  1 failed (1)
+       Tests  1 failed | 13 skipped (14)
+```
+
+RED_OUTPUT (cases 5/6/7 — resultsGridModel auto-hide + webview bundle/export inverted contracts, captured against the pre-fix compiled bundle):
+
+Case 5 (resultsGridModel.inferColumns — RED against pre-fix `if (name === 'ctid') spec.hidden = true`):
+```
+ FAIL  src/ui/__tests__/resultsGridModel.test.ts > inferColumns > inferColumns does NOT auto-tag any column as hidden (TASK-001)
+ AssertionError: expected { field: 'ctid', …, hidden: true } to equal { field: 'ctid', … }
+
+   expect(cols).toEqual([...])
+     - Expected
+     + Received
+
+       Array [
+         "field": "name",
+         "headerName": "name",
+         "kind": "string",
+       ],
+       Object {
+         "field": "ctid",
+         "headerName": "ctid",
+         "hidden": true,
+         "kind": "string",
+       },
+     ]
+```
+
+Cases 6 + 7 (webview bundle / export — RED against pre-fix `if (name === 'ctid') spec.hidden = true`, observed only when `npm run compile` had not yet been rerun against the new inferColumns):
+```
+ FAIL  src/ui/__tests__/webviewBundle.test.ts > … > 9. TASK-001 — ctid column is visible (an ordinary user column, no host wrap)
+   expected [ 'created_at', 'name' ] to deeply equal [ 'created_at', 'ctid', 'name' ]
+ FAIL  src/ui/__tests__/webviewExport.test.ts > … > TASK-001. ctid column appears in TSV export (an ordinary user column)
+   expected 'alice\t2024-01-01T00:00:00.000Z' to be 'alice\t2024-01-01T00:00:00.000Z\t(0,1)'
+```
+
+Verification Output:
+
+`npm run compile` — completed (`dist/webview.js` 2.2mb, `dist/extension.js` 4.7mb).
+`npm run typecheck` — clean.
+`npx vitest run src/ui/__tests__/browseCommands.test.ts` — 14 tests pass.
+`npx vitest run src/ui/__tests__/resultsGridModel.test.ts src/ui/__tests__/resultsGridModelExport.test.ts` — 29 + 39 = 68 tests pass.
+`npx vitest run src/ui/__tests__/webviewBundle.test.ts src/ui/__tests__/webviewExport.test.ts` — 9 + 8 = 17 tests pass.
+
+All Test Cases PASS (cases 1, 5, 6, 7 were RED against the pre-fix code; cases 2-4 stayed green as the SQL they assert was already unchanged). `grep -rn "__vsdb_browse__\|maybeAppendCtidForNoPk" src/` returns nothing. `webview/main.ts` diff is comment-only (no executable line changed — `hide: spec.hidden === true` and the `hiddenColumns` derivation stay byte-identical at lines 1382 and 2111).
+
+Files changed (all inside the worktree, none touched in main):
+- src/ui/browseCommands.ts — removed `maybeAppendCtidForNoPk`; removed the `noPkSql` step in `registerBrowseCommands`; updated header comment + `AdapterWithTables` doc.
+- src/ui/resultsGridModel.ts — deleted ctid auto-hide block + comment at lines 102-106; reworded comments at lines 30-32, 423-426, 611-613, 670-671 (generic `hiddenColumns` option and behavior retained).
+- src/ui/__tests__/browseCommands.test.ts — rewrote TASK-006 describe block: #12 = view regression (plain SELECT, `listColumns` NOT called), #13/#14/#15 kept as-is with assertion refresh.
+- src/ui/__tests__/resultsGridModel.test.ts — replaced ctid auto-tagged test with no-auto-hide test (kept generic serialize/hiddenColumns tests untouched).
+- src/ui/__tests__/webviewBundle.test.ts — rewrote test 9 with INVERTED contract: ctid is an ordinary user column that IS displayed; `getColumnState()` entry has `hide` falsy.
+- src/ui/__tests__/webviewExport.test.ts — rewrote TASK-006 block with INVERTED contract: header `name\tcreated_at\tctid`, `(0,1)`/`(0,2)` present, text matches `/\bctid\b/`.
+- webview/main.ts — comment-only rewords at :1378-1382, :2105-2111, :2130-2133, :2157 (no code lines touched).
+
+Status: PASS
+Note: None.

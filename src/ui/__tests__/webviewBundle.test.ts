@@ -558,19 +558,23 @@ describeIfBundle("webview/main.ts bundle (TASK-203)", () => {
     expect(getGridApi()!.getDisplayedRowCount()).toBe(4);
   });
 
-  // TASK-006 fix-round-1 regression — pg no-PK browse queries carry a `ctid`
-  // system column for row addressing. The grid must mark that column hidden
-  // (AG Grid `hide: true`) so the user never sees the host metadata, AND
-  // the export path must strip it via `hiddenColumns`. Both depend on
-  // inferColumns tagging `ctid` with `spec.hidden`.
-  itIfBundle("9. TASK-006 fix-round-1 — ctid column hidden in colDefs + absent from copy text", () => {
+  // TASK-001 — INVERTED contract from TASK-006. The browse path no longer
+  // wraps the SELECT to append `ctid`, so the column can only reach the
+  // grid when it is a real user column. inferColumns no longer auto-tags
+  // `ctid` as hidden — the column is rendered as an ordinary string column
+  // and the user sees it like any other data column. This test locks the
+  // end-to-end render path (the unit lock on inferColumns lives in
+  // resultsGridModel.test.ts).
+  itIfBundle("9. TASK-001 — ctid column is visible (an ordinary user column, no host wrap)", () => {
     const { root } = loadBundle();
+    // Plain fixture SQL — no host wrap. ctid is a real user
+    // column on `notes`.
     dispatchState(
       selectState({
         results: [
           {
             index: 0,
-            sql: 'SELECT __vsdb_browse__.*, ctid FROM (SELECT * FROM "public"."notes") __vsdb_browse__',
+            sql: 'SELECT * FROM "public"."notes"',
             status: "done",
             result: {
               columns: ["name", "created_at", "ctid"],
@@ -588,36 +592,31 @@ describeIfBundle("webview/main.ts bundle (TASK-203)", () => {
     );
     const api = getGridApi();
     expect(api).toBeTruthy();
+    // The ctid column is registered (it exists in the schema) and is NOT
+    // marked hidden. Both `getColumnDefs()` and `getColumnState()` should
+    // report `hide` falsy.
     const colDefs = api!.getColumnDefs() ?? [];
     const ctidDef = colDefs.find(
       (c: { colId?: string; field?: string }) =>
         c.colId === "ctid" || c.field === "ctid",
     );
     expect(ctidDef).toBeDefined();
-    // AG Grid honors `hide: true` to remove the column from the visible
-    // layout. AG Grid exposes the column-state via getColumnState(); the
-    // `hide` flag lives there. getColumnDefs() also returns the original
-    // colDef with `hide: true` set — both forms are checked.
+    expect((ctidDef as { hide?: boolean } | undefined)?.hide).not.toBe(true);
     const ctidState = api!
       .getColumnState()
       .find((s: { colId: string }) => s.colId === "ctid");
-    const ctidHidden =
-      (ctidDef as { hide?: boolean } | undefined)?.hide === true ||
-      (ctidState as { hide?: boolean } | undefined)?.hide === true;
-    expect(ctidHidden).toBe(true);
-    // The visible columns are name + created_at (ctid excluded). AG Grid
-    // also auto-creates a selection column for rowSelection; filter it out
-    // so the assertion is about user-visible data columns only.
+    expect(ctidState).toBeDefined();
+    expect((ctidState as { hide?: boolean } | undefined)?.hide).not.toBe(true);
+    // AG Grid also auto-creates a selection column for rowSelection; filter
+    // it out so the assertion is about user-visible data columns only.
     const visibleCols = api!
       .getAllDisplayedColumns()
       .map((c: { getColId(): string }) => c.getColId())
       .filter((id: string) => id !== "ag-Grid-SelectionColumn")
       .sort();
-    expect(visibleCols).toEqual(["created_at", "name"]);
-    // And ctid is explicitly NOT in the displayed set.
-    expect(visibleCols).not.toContain("ctid");
-    // And `root` is referenced so the assertion above is not the only
-    // observable — the test harness teardown uses root.
+    expect(visibleCols).toEqual(["created_at", "ctid", "name"]);
+    // Reference `root` so the assertion above is not the only observable —
+    // the test harness teardown uses root.
     void root;
   });
 });

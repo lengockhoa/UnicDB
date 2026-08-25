@@ -377,13 +377,16 @@ describeIfBundle("webview/main.ts export toolbar (TASK-502)", () => {
     },
   );
 
-  // TASK-006 fix-round-1 regression — when the result set carries a
-  // postgres `ctid` addressing column, the export buttons must strip it
-  // from the output (TSV default). User never sees host metadata.
+  // TASK-001 — INVERTED contract from TASK-006. The browse path no longer
+  // wraps the SELECT to append `ctid`, so the column can only reach the
+  // export when it is a real user column. The serializer's `hiddenColumns`
+  // mechanism is no longer triggered for `ctid` automatically; the column
+  // is exported like any other string column.
   itIfBundle(
-    "TASK-006 fix-round-1. ctid column hidden from TSV export",
+    "TASK-001. ctid column appears in TSV export (an ordinary user column)",
     () => {
       const { root, received } = loadBundle();
+      // Plain fixture SQL — no host wrap.
       dispatchState({
         type: "state",
         header: "Browse public.notes at 2024-01-01T00:00:00.000Z",
@@ -391,7 +394,7 @@ describeIfBundle("webview/main.ts export toolbar (TASK-502)", () => {
         results: [
           {
             index: 0,
-            sql: 'SELECT __vsdb_browse__.*, ctid FROM (SELECT * FROM "public"."notes") __vsdb_browse__',
+            sql: 'SELECT * FROM "public"."notes"',
             status: "done",
             result: {
               columns: ["name", "created_at", "ctid"],
@@ -430,15 +433,15 @@ describeIfBundle("webview/main.ts export toolbar (TASK-502)", () => {
       const m = exportMsgs[0] as { format: string; text: string };
       expect(m.format).toBe("tsv");
       const lines = m.text.split("\n");
-      // Header has only name + created_at — ctid is stripped.
-      expect(lines[0]).toBe("name\tcreated_at");
-      // Data rows have 2 cells each.
-      expect(lines[1]).toBe("alice\t2024-01-01T00:00:00.000Z");
-      expect(lines[2]).toBe("bob\t2024-02-02T00:00:00.000Z");
-      // ctid value never appears anywhere in the output.
-      expect(m.text).not.toContain("(0,1)");
-      expect(m.text).not.toContain("(0,2)");
-      expect(m.text).not.toMatch(/\bctid\b/);
+      // Header has all three columns including ctid.
+      expect(lines[0]).toBe("name\tcreated_at\tctid");
+      // Data rows have 3 cells each, including the ctid value.
+      expect(lines[1]).toBe("alice\t2024-01-01T00:00:00.000Z\t(0,1)");
+      expect(lines[2]).toBe("bob\t2024-02-02T00:00:00.000Z\t(0,2)");
+      // ctid values appear in the output (it is a user column on this fixture).
+      expect(m.text).toMatch(/\bctid\b/);
+      expect(m.text).toContain("(0,1)");
+      expect(m.text).toContain("(0,2)");
     },
   );
 });

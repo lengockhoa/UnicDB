@@ -27,9 +27,10 @@ export interface ColumnSpec {
   headerName: string;
   kind: ColumnKind;
   alignRight?: boolean;
-  /** TASK-006 fix-round-1: when true, the column is hidden in the grid
-   * (AG Grid `hide: true`) AND excluded from exports. Set for postgres
-   * `ctid` addressing hint that the host appends to no-PK browse queries. */
+  /** When true, the column is hidden in the grid (AG Grid `hide: true`)
+   * AND excluded from exports. The grid sets this for any column the host
+   * has flagged via `hiddenColumns`; users opt columns out without editing
+   * the column-inference code. */
   hidden?: boolean;
 }
 
@@ -99,11 +100,6 @@ export function inferColumns(columns: string[], rows: unknown[][]): ColumnSpec[]
     }
     const spec: ColumnSpec = { field: name, headerName: name, kind };
     if (alignRight) spec.alignRight = true;
-    // TASK-006 fix-round-1: postgres appends a `ctid` column to no-PK
-    // browse queries as a row-addressing hint. Server metadata, never user
-    // content, so the grid hides it (AG Grid `hide: true`) and the host
-    // serializers strip it (see `hiddenColumns` on SerializeOptions).
-    if (name === 'ctid') spec.hidden = true;
     return spec;
   });
 }
@@ -420,9 +416,9 @@ export interface SerializeOptions {
   /** When set, sql-where uses these rows instead of `rows`. Other formats
    * ignore this — they always operate on the full dataset. */
   selectedRows?: unknown[][];
-  /** Column names to exclude from the rendered output. Used for postgres
-   * `ctid` addressing hint and any other column the host carries but the
-   * user must not see (TASK-006). Skip applies to all serializers
+  /** Column names to exclude from the rendered output. The webview
+   * derives this from `spec.hidden` columns; any host-side column that the
+   * user must not see goes here. Skip applies to all serializers
    * (TSV/CSV/JSON/XML/SQL) so the column is uniformly hidden. */
   hiddenColumns?: string[];
 }
@@ -608,9 +604,9 @@ export function serializeSqlUpdates(
   // schema drift rather than throw, matching the rest of the file.
   const colIdx = new Map<string, number>();
   for (let i = 0; i < columns.length; i++) colIdx.set(columns[i], i);
-  // TASK-006: hidden columns (e.g. postgres ctid) must NOT appear in
-  // generated SQL — the user never sees them in the grid, so an
-  // exported `UPDATE t SET ctid='(0,1)' WHERE …` is meaningless.
+  // hidden columns must NOT appear in generated SQL — the user never
+  // sees them in the grid, so exporting them would produce meaningless
+  // SET/WHERE clauses on metadata that the user can't edit.
   const hidden = new Set(opts.hiddenColumns ?? []);
   const visibleCols = columns.filter((c) => !hidden.has(c));
   const pkCols = (opts.pkColumns.length > 0 ? opts.pkColumns : visibleCols).filter(
@@ -667,8 +663,8 @@ export function serializeWhereClause(
   // row, and a missing PK column no longer silently yields `col=NULL`.
   const colIdx = new Map<string, number>();
   for (let i = 0; i < columns.length; i++) colIdx.set(columns[i], i);
-  // TASK-006: skip hidden columns (postgres ctid) so the exported
-  // `WHERE …` is built from user-visible PK columns only.
+  // Skip hidden columns so the exported `WHERE …` is built from
+  // user-visible PK columns only — host metadata never matches.
   const hidden = new Set(opts.hiddenColumns ?? []);
   const keyCols = (opts.pkColumns.length > 0 ? opts.pkColumns : columns).filter(
     (c) => !hidden.has(c),

@@ -239,8 +239,132 @@ describe("buildSaveStatements — Add Row / Delete Row markers", () => {
     expectNoPlaceholders(stmt);
     expect(stmt).toMatch(/^DELETE FROM t WHERE id=99/i);
   });
-});
 
+  // ---- postgres no-PK DELETE via ctid (TASK-003) --------------------------
+  it("PG no-PK + delete marker + ctid in map → DELETE FROM t WHERE ctid='(0,2)'", () => {
+    const marker: EditEntry = {
+      rowId: 7,
+      colIndex: 0,
+      value: { __vsdb_deleted__: true, __rowId: 7 },
+    };
+    const serverRows: unknown[][] = Array.from({ length: 8 }, () => ["", ""]).map(
+      (row, idx) => (idx === 7 ? [99, "old-name"] : row),
+    );
+    const r = buildSaveStatements(
+      "postgres",
+      "t",
+      [], // no PK
+      ["id", "name"],
+      [marker],
+      serverRows,
+      { ctidByRowId: new Map([[7, "(0,2)"]]) },
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok !== true) return;
+    expect(r.statements).toHaveLength(1);
+    const stmt = r.statements[0];
+    expectNoPlaceholders(stmt);
+    expect(stmt).toMatch(/^DELETE FROM t WHERE ctid='\(0,2\)'/i);
+    expect(
+      r.warnings.some((w) => /not safe under concurrent writes/i.test(w)),
+    ).toBe(true);
+  });
+
+  it("PG no-PK + delete marker + rowId NOT in ctid map → 0 stmts + warning", () => {
+    const marker: EditEntry = {
+      rowId: 7,
+      colIndex: 0,
+      value: { __vsdb_deleted__: true, __rowId: 7 },
+    };
+    const serverRows: unknown[][] = Array.from({ length: 8 }, () => ["", ""]).map(
+      (row, idx) => (idx === 7 ? [99, "old-name"] : row),
+    );
+    const r = buildSaveStatements(
+      "postgres",
+      "t",
+      [],
+      ["id", "name"],
+      [marker],
+      serverRows,
+      { ctidByRowId: new Map() }, // empty — no ctid for row 7
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok !== true) return;
+    expect(r.statements).toHaveLength(0);
+    expect(
+      r.warnings.some(
+        (w) =>
+          w ===
+          "delete row 7 skipped: postgres no-PK + missing ctid",
+      ),
+    ).toBe(true);
+  });
+
+  it("mysql no-PK + delete marker → no throw, no DELETE emitted (no_pk rejection still fires for mysql/mssql)", () => {
+    const marker: EditEntry = {
+      rowId: 0,
+      colIndex: 0,
+      value: { __vsdb_deleted__: true, __rowId: 0 },
+    };
+    const r = buildSaveStatements(
+      "mysql",
+      "t",
+      [],
+      ["a"],
+      [marker],
+      [["x"]],
+      { ctidByRowId: new Map([[0, "(0,1)"]]) },
+    );
+    // mysql no-PK still triggers the existing no_pk guard at the cell-edits
+    // loop boundary — ok:false. The new postgres-ctid branch must NOT fire
+    // here; importantly no DELETE is emitted.
+    expect(r.ok).toBe(false);
+    if (r.ok !== false) return;
+    expect(r.reason).toBe("no_pk");
+    // The refused shape exposes warnings only — assert via that.
+    expect(r.warnings.some((w) => /no PRIMARY KEY/i.test(w))).toBe(true);
+  });
+
+  it("PG no-PK + delete + update mixed in one save → 1 ctid-DELETE + 1 ctid-UPDATE, ordered deletes-then-updates", () => {
+    const deleteMarker: EditEntry = {
+      rowId: 1,
+      colIndex: 0,
+      value: { __vsdb_deleted__: true, __rowId: 1 },
+    };
+    const cellEdit: EditEntry = {
+      rowId: 0,
+      colIndex: 0,
+      value: "new-a",
+    };
+    const serverRows: unknown[][] = [
+      ["old-a-0", "b-0"],
+      ["old-a-1", "b-1"],
+    ];
+    const r = buildSaveStatements(
+      "postgres",
+      "t",
+      [],
+      ["a", "b"],
+      [deleteMarker, cellEdit],
+      serverRows,
+      {
+        ctidByRowId: new Map([
+          [1, "(0,1)"],
+          [0, "(0,0)"],
+        ]),
+      },
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok !== true) return;
+    expect(r.statements).toHaveLength(2);
+    const stmt0 = r.statements[0];
+    const stmt1 = r.statements[1];
+    expectNoPlaceholders(stmt0);
+    expectNoPlaceholders(stmt1);
+    expect(stmt0).toMatch(/^DELETE FROM t WHERE ctid='\(0,1\)'/i);
+    expect(stmt1).toMatch(/^UPDATE t SET a='new-a' WHERE ctid='\(0,0\)'/i);
+  });
+});
 describe("buildSaveStatements — batch shape", () => {
   it("two rows × two cells → 2 UPDATE statements (one per row)", () => {
     const edits: EditEntry[] = [
