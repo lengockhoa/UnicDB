@@ -43,7 +43,8 @@ export type HostMessage =
   | StateMessage
   | BusyMessage
   | SaveResultMessage
-  | TransactionStatusMessage;
+  | TransactionStatusMessage
+  | DistinctValuesMessage;
 
 // ---- Webview → Host --------------------------------------------------------
 
@@ -80,7 +81,36 @@ export type WebviewMessage =
   | RequeryMessage
   | ReadyMessage
   | CommitTransactionMessage
-  | RollbackTransactionMessage;
+  | RollbackTransactionMessage
+  | RequestDistinctValuesMessage;
+
+/** TASK-004 / TASK-003 — webview asks the host for a column's distinct values
+ *  (set-filter dropdown). The reply echoes `index` + `column` and is cached
+ *  per `(index, column)` host-side until the next render for that index. */
+export interface RequestDistinctValuesMessage {
+  type: "requestDistinctValues";
+  /** Statement index the dropdown belongs to. */
+  index: number;
+  /** Column (field) name. */
+  column: string;
+}
+
+/** Host reply carrying the column's DISTINCT values. Additive: an older
+ *  webview bundle ignores the unknown `type`. */
+export interface DistinctValuesMessage {
+  type: "distinctValues";
+  /** Echoed from the request. */
+  index: number;
+  /** Echoed from the request. */
+  column: string;
+  /** Raw DB values, may contain null. */
+  values: unknown[];
+  /** true when more distinct values exist than were returned. */
+  truncated: boolean;
+  /** present when the query failed — values is empty and the webview keeps
+   *  its loaded-row fallback. */
+  error?: string;
+}
 
 export interface CommitTransactionMessage {
   type: "commitTransaction";

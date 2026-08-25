@@ -104,6 +104,22 @@ export async function activate(
         return [];
       }
     },
+    // TASK-004 — declared column types (name → ColumnInfo.dataType) for the
+    // (Blanks) predicate. Resolves to {} on any failure ⇒ cycle-V IS NULL.
+    listColumnTypes: async (
+      schema: string,
+      table: string,
+    ): Promise<Record<string, string>> => {
+      try {
+        const adapter = await mgr.getAdapter();
+        const cols = await adapter.listColumns(table, schema || undefined);
+        const types: Record<string, string> = {};
+        for (const c of cols) types[c.name] = c.dataType;
+        return types;
+      } catch {
+        return {};
+      }
+    },
   };
   const panel = new ResultsPanel({ runner, saveContext });
   panel.setExtensionUri(context.extensionUri);

@@ -204,7 +204,56 @@ export interface SaveContext {
 
 ---
 
-## Discussion
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT (actual, before implementation — 3 files):
+```
+Test Files  2 failed (2)  Tests  8 failed | 3 passed (11)   [distinct+orderBy new]
+Test Files  1 failed (1)  Tests  3 failed | 13 passed (16)  [serverFilter case 16]
+```
+RED covered: distinct cases 1-6, 6b, 14(varchar); orderBy cases 7, 8 (both),
+8b(backtick), 8c (all three), 9, 10(quoted), 12; serverFilter case 16
+(a,b DESC / lower(name) / 1).
+
+Verification Output:
+```
+npm run typecheck                      → clean (no output)
+vitest distinctValues+orderBy          → 27 passed / 0 failed
+vitest serverFilter+requery+panel+retry+saveEdits → 71 passed / 0 failed
+vitest queryComposer+distinctValues    → 54 passed / 0 failed
+vitest extension+scaffold              → 67 passed / 0 failed
+npm test                               → 1477 passed | 2 skipped | 0 failed (109 files)
+```
+(`npm run compile` run before extension.test.ts per instructions; the
+schemaForm-bundle test needs dist/ present.)
+
+Status: PASS
+Note:
+- Deliberate test change (Discussion note 1): resultsPanelServerFilter.test.ts
+  case 16 rewritten in place — "a, b DESC" now asserts the parsed `AS vsdb_sub`
+  wrapper; "lower(name)" and "1" now assert rejection (no runSql +
+  showErrorMessage). Case 15 (:556-571 area) untouched and green.
+- Accepted limitation restated (Discussion note 6 / PLAN §2 out-of-scope,
+  §7): the DISTINCT list is BASE-STATEMENT scoped (`where = ""`); a filtered
+  view may offer values it cannot contain. Queued follow-up in INDEX.md.
+- waitForTerminal in resultsPanelServerFilter.test.ts and the new orderBy test
+  file gained a `minStates=2` floor: TASK-004 made handleRequery await PK /
+  column-type metadata before composing, so the old helper returned on the
+  initial render state before the requery's first runSql. No assertion logic
+  changed.
+- SIMPLE_ORDER_BY_RE removed from resultsPanel.ts; the only remaining mention
+  is a historical doc comment in queryComposer.ts:232 (TASK-001's file, not a
+  caller).
+- DISTINCT runs route through this.transaction.runQuery when a manual
+  transaction is open (same pinned-session rule as requery).
+- Late-response guard (6b) keys on a statementGeneration counter bumped by
+  render() and by a successful requery replacement; distinctCache cleared in
+  both places too.
+
 
 ### 2026-08-26 · planner · bao-opus
 

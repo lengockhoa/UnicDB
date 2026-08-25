@@ -33,6 +33,7 @@ import type {
   WebviewMessage,
   ExportFileMessage,
   RequeryMessage,
+  RequestDistinctValuesMessage,
 } from "./messages";
 import type { ConnectionConfig } from "../config/types";
 import {
@@ -44,21 +45,22 @@ import {
 import { sqlLiteral, composeRequery } from "./resultsGridModel";
 import {
   buildFilterWhere,
+  buildOrderByClause,
   buildPagedQuery,
+  buildPagedQueryTerms,
   composeSortQuery,
+  parseOrderBy,
   type ColumnFilterModel,
+  type OrderByTerm,
 } from "./queryComposer";
+import {
+  buildDistinctValuesQuery,
+  takeDistinctValues,
+} from "./distinctValues";
 
 /** Page size used when a server-side filter/paging requery omits `limit`
  *  (matches the adapters' DEFAULT_BATCH_SIZE of 500). */
 const DEFAULT_PAGE_SIZE = 500;
-
-/** A single bare SQL identifier with an optional ASC/DESC suffix — the only
- *  ORDER BY shape that may be routed through `composeSortQuery` for dialect
- *  quoting. Anything else (lists, expressions, function calls) passes through
- *  `composeRequery` byte-identically; the bar is free text and a half-parser
- *  would turn working SQL into a syntax error. */
-const SIMPLE_ORDER_BY_RE = /^\s*([A-Za-z_][A-Za-z0-9_$]*)\s*(?:(ASC|DESC))?\s*$/i;
 
 /**
  * Host-side save flow hook. The extension wires this so the panel knows:
@@ -76,6 +78,10 @@ export interface SaveContext {
   getManualCommit?(): boolean;
   /** Return PK columns for the (schema, table) pair via DbAdapter.listColumns. */
   listPkColumns(schema: string, table: string): Promise<string[]>;
+  /** TASK-004 — optional: column name → declared DB type
+   *  (ColumnInfo.dataType). Absent ⇒ no columnTypes ⇒ cycle-V `(Blanks)`
+   *  stays bare `IS NULL`. Resolves to {} on any failure. */
+  listColumnTypes?(schema: string, table: string): Promise<Record<string, string>>;
 }
 
 export interface ResultsPanelOptions {
@@ -118,6 +124,16 @@ export class ResultsPanel {
    *  webview-supplied tableName / pkColumns (Fix R1 critical #1). */
   private tableByStatement: Map<number, { schema?: string; table: string }> =
     new Map();
+  /** TASK-004 — cached DISTINCT-values replies keyed by `${index}::${column}`.
+   *  Cleared wholesale in render(): a new result set invalidates every
+   *  dropdown list. Populated only by completed, non-stale requests. */
+  private distinctCache: Map<string, unknown[]> = new Map();
+  /** TASK-004 — statement identity generation. Incremented in render() (and
+   *  when a requery replaces a statement) so an in-flight DISTINCT response
+   *  for a replaced statement can be detected and dropped: its captured
+   *  generation no longer matches, and its index may even point at a
+   *  different statement. Mirrors the requerySeq stale guard. */
+  private statementGeneration = 0;
 
   constructor(options: ResultsPanelOptions) {
     this.runner = options.runner;
@@ -176,6 +192,10 @@ export class ResultsPanel {
     const browseMatch = /^Browse (.+) at /.exec(header);
     this.browseLabel = browseMatch ? browseMatch[1] : null;
     this.lastResults = results;
+    // TASK-004 — new statement set: every cached DISTINCT list is stale and
+    // every in-flight DISTINCT response must be dropped on arrival.
+    this.distinctCache.clear();
+    this.statementGeneration += 1;
     // Derive (schema?, table) per statement FROM the parsed SQL — host-side
     // truth. The webview's tableName/pkColumns message is IGNORED (Fix R1
     // critical #1). Statements whose SQL has no FROM/INSERT/UPDATE have no
@@ -392,6 +412,9 @@ export class ResultsPanel {
         break;
       case "requery":
         await this.handleRequery(msg);
+        break;
+      case "requestDistinctValues":
+        await this.handleRequestDistinctValues(msg);
         break;
       case "commitTransaction":
         await this.handleCommitTransaction();
@@ -884,54 +907,137 @@ export class ResultsPanel {
     }
   }
 
-  /** Compose the requery SQL for a message, dispatching to the TASK-004
-   *  builders when server-side filtering/paging applies.
+  /**
+   * TASK-004 — answer the webview's requestDistinctValues with a cached
+   * `distinctValues` reply.
+   *
+   * The DISTINCT query is BASE-STATEMENT scoped: built from the statement's
+   * own `r.sql` with `where = ""` (the host retains no per-statement WHERE —
+   * see PLAN §3.4; a filtered-view-scoped dropdown is a queued follow-up).
+   * Replies echo the captured request `index`/`column`.
+   *
+   * Stale guard: the request's `index`, `column` and the statement
+   * generation are captured BEFORE awaiting runSql; a completion whose
+   * generation no longer matches (render() or a replacement requery
+   * happened while in flight) is dropped — no cache write, no postMessage.
+   * Cache hits post the cached list without touching the DB.
+   */
+  private async handleRequestDistinctValues(
+    msg: RequestDistinctValuesMessage,
+  ): Promise<void> {
+    const { index, column } = msg;
+    const r = this.lastResults[index];
+    const reply = (values: unknown[], truncated: boolean, error?: string): void => {
+      this.postMessage({
+        type: "distinctValues",
+        index,
+        column,
+        values,
+        truncated,
+        ...(error ? { error } : {}),
+      });
+    };
+    if (!r) {
+      reply([], false, `No statement at index ${index}.`);
+      return;
+    }
+    const key = `${index}::${column}`;
+    const cached = this.distinctCache.get(key);
+    if (cached) {
+      reply(cached, false);
+      return;
+    }
+    const dialect = this.saveContext?.getDriver() ?? null;
+    if (!dialect) {
+      reply(
+        [],
+        false,
+        "Distinct values unavailable: no active connection.",
+      );
+      return;
+    }
+    // Capture identity BEFORE awaiting: index/column/generation.
+    const generation = this.statementGeneration;
+    const sql = buildDistinctValuesQuery(r.sql, column, dialect, "");
+    try {
+      const runResult = this.transaction
+        ? await this.transaction.runQuery(sql)
+        : await this.runner.runSql(sql);
+      const fresh = await pickResult(runResult);
+      // Stale completion (statement replaced while in flight): drop entirely.
+      if (generation !== this.statementGeneration) return;
+      const { values, truncated } = takeDistinctValues(
+        fresh.rows as unknown[][],
+      );
+      this.distinctCache.set(key, values);
+      reply(values, truncated);
+    } catch (err) {
+      if (generation !== this.statementGeneration) return;
+      const m = err instanceof Error ? err.message : String(err);
+      reply([], false, `Distinct values failed: ${m}`);
+    }
+  }
+
+  /** Compose the requery SQL for a message, dispatching per PLAN §3.1:
    *
    *  - No live dialect (no active connection): never guess quoting against
-   *    a live DB — keep today's `composeRequery` path.
-   *  - A single bare-identifier ORDER BY is dialect-quoted through
-   *    `composeSortQuery` (pure-sort requery) or a quoted ORDER BY inside
-   *    `buildPagedQuery` (when paging/filtering); anything else passes
-   *    through byte-identically.
-   *  - `filters` or `offset` present ⇒ buildPagedQuery over the combined
-   *    WHERE (bar AND filter); offset/limit default to 0 / adapter batch. */
+   *    a live DB — keep the `composeRequery` path.
+   *  - Empty ORDER BY, filter-less requery: `composeRequery(sql, where, "")`
+   *    — byte-identical to cycle V.
+   *  - Single bare term (no NULLS), filter-less, no offset: cycle-V
+   *    `composeSortQuery` path with its own quoting and `vsdb_sort` alias.
+   *  - ≥2 terms (or 1 term with NULLS), filter-less, no offset: multi-term
+   *    wrap `SELECT * FROM (<stripped sql>) AS vsdb_sub[ WHERE …] ORDER BY
+   *    <buildOrderByClause(terms, dialect)>` — no LIMIT/OFFSET.
+   *  - `filters` or `offset` present: `buildPagedQueryTerms` over the
+   *    combined WHERE (bar AND filter), with host-derived PK tiebreakers.
+   *
+   *  A parse failure (`parseOrderBy`) is surfaced by the caller, not here.
+   */
   private composeRequerySql(
     r: StatementResult,
     msg: RequeryMessage,
     dialect: Dialect | null,
+    terms: OrderByTerm[],
+    pkTiebreakers: string[],
+    columnTypes?: Record<string, string>,
   ): string {
     const where = msg.where ?? "";
     const orderBy = msg.orderBy ?? "";
     if (!dialect) return composeRequery(r.sql, where, orderBy);
 
     const filterWhere = msg.filters
-      ? buildFilterWhere(msg.filters, dialect)
+      ? buildFilterWhere(msg.filters, dialect, { columnTypes })
       : "";
     const combinedWhere = [where.trim(), filterWhere]
       .filter(Boolean)
       .join(" AND ");
-    const sort = SIMPLE_ORDER_BY_RE.exec(orderBy.trim());
 
-    if (sort && msg.offset === undefined && !msg.filters) {
-      const dir = (sort[2] ?? "ASC").toUpperCase() as "ASC" | "DESC";
-      return composeSortQuery(dialect, r.sql, where, sort[1]!, dir);
+    // Filter-less, no-offset requeries: pure-sort lane.
+    if (msg.offset === undefined && !msg.filters) {
+      if (terms.length === 0) {
+        return composeRequery(r.sql, where, "");
+      }
+      const first = terms[0]!;
+      if (terms.length === 1 && !first.nulls) {
+        // Cycle-V single-term path — keeps composeSortQuery's quoting.
+        return composeSortQuery(dialect, r.sql, where, first.column, first.direction);
+      }
+      // Multi-term (or NULLS) wrap — pinned alias matches composeRequery's.
+      const inner = r.sql.replace(/\s*;\s*$/, "").trim();
+      const whereClause = where.trim().length ? ` WHERE ${where.trim()}` : "";
+      return `SELECT * FROM (${inner}) AS vsdb_sub${whereClause} ORDER BY ${buildOrderByClause(terms, dialect)}`;
     }
 
-    if (msg.offset !== undefined || msg.filters) {
-      const orderClause = sort
-        ? `${quoteIdent(sort[1]!, dialect)} ${(sort[2] ?? "ASC").toUpperCase()}`
-        : orderBy.trim();
-      return buildPagedQuery(
-        r.sql,
-        combinedWhere,
-        orderClause,
-        msg.offset ?? 0,
-        msg.limit ?? DEFAULT_PAGE_SIZE,
-        dialect,
-      );
-    }
-
-    return composeRequery(r.sql, where, orderBy);
+    return buildPagedQueryTerms(
+      r.sql,
+      combinedWhere,
+      terms,
+      msg.offset ?? 0,
+      msg.limit ?? DEFAULT_PAGE_SIZE,
+      dialect,
+      pkTiebreakers,
+    );
   }
 
   private async handleRequery(msg: RequeryMessage): Promise<void> {
@@ -955,7 +1061,82 @@ export class ResultsPanel {
     // overwrite a newer one that already started.
     const seq = ++this.requerySeq;
     const dialect = this.saveContext?.getDriver() ?? null;
-    const composed = this.composeRequerySql(r, msg, dialect);
+
+    // TASK-004 — parse ORDER BY with the LIVE dialect (that is what rejects
+    // NULLS on mysql/mssql). A parse failure is surfaced to the user AND as
+    // a synthetic error StatementResult; nothing is run. There is exactly
+    // one rejection path in this task.
+    const parsed = dialect ? parseOrderBy(orderBy, dialect) : null;
+    if (parsed && !parsed.ok) {
+      void vscode.window.showErrorMessage(
+        `VSDB: invalid ORDER BY — ${parsed.error}`,
+      );
+      const next = this.lastResults.slice();
+      next[index] = {
+        index: r.index,
+        sql: r.sql,
+        status: "error",
+        result: undefined,
+        error: `Invalid ORDER BY: ${parsed.error}`,
+        durationMs: 0,
+      };
+      this.lastResults = next;
+      this.postMessage({
+        type: "state",
+        header: this.header,
+        results: next,
+        busy: this.busy,
+      });
+      return;
+    }
+    const terms = parsed ? parsed.terms : [];
+
+    // TASK-004 — host-derived PK tiebreakers (paging lane only). Resolve
+    // BEFORE composing so the composer stays sync (the requerySeq guard at
+    // the awaits below keeps its ordering). Full projected PK in declared
+    // order, or [] (cycle-V byte-identical path).
+    let pkTiebreakers: string[] = [];
+    const tableMeta = this.tableByStatement.get(index);
+    if (msg.offset !== undefined && tableMeta && this.saveContext) {
+      try {
+        const pk = await this.saveContext.listPkColumns(
+          tableMeta.schema ?? "",
+          tableMeta.table,
+        );
+        const projected = r.result?.columns ?? [];
+        if (
+          pk.length > 0 &&
+          pk.every((c) => projected.includes(c))
+        ) {
+          pkTiebreakers = pk;
+        }
+      } catch {
+        pkTiebreakers = [];
+      }
+    }
+
+    // TASK-004 — declared column types for the (Blanks) predicate. Any miss
+    // (no table, method absent, rejection) ⇒ no columnTypes ⇒ cycle V.
+    let columnTypes: Record<string, string> | undefined;
+    if (msg.filters && tableMeta && this.saveContext?.listColumnTypes) {
+      try {
+        columnTypes = await this.saveContext.listColumnTypes(
+          tableMeta.schema ?? "",
+          tableMeta.table,
+        );
+      } catch {
+        columnTypes = undefined;
+      }
+    }
+
+    const composed = this.composeRequerySql(
+      r,
+      msg,
+      dialect,
+      terms,
+      pkTiebreakers,
+      columnTypes,
+    );
     this.setBusy(true);
     const start = Date.now();
     try {
@@ -1031,6 +1212,11 @@ export class ResultsPanel {
       };
       next[index] = newStmt;
       this.lastResults = next;
+      // TASK-004 — this statement's data was just replaced: drop any
+      // in-flight DISTINCT response and clear the cached lists (the new
+      // rows may contain values the old cache never saw).
+      this.statementGeneration += 1;
+      this.distinctCache.clear();
       // FIX R2 critical #2 — sync the runner-internal entry so that
       // `runner.loadMore(index)` reaches the NEW batched cursor. Without
       // this, the runner still holds the PRE-requery cursor and a

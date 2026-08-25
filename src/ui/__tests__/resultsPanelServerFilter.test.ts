@@ -103,13 +103,17 @@ function stateMessages(fake: FakeWebviewPanel) {
     .filter((m) => m.type === "state");
 }
 
-/** Wait until statement 0's last state is terminal (done | error). */
-async function waitForTerminal(fake: FakeWebviewPanel): Promise<void> {
+/** Wait until statement 0's last state is terminal (done | error) AND at
+ *  least `minStates` state messages were posted. TASK-004 made the requery
+ *  handler await PK/column-type metadata before composing, adding microtasks
+ *  before the first runSql — without the floor the helper returned on the
+ *  initial render state before the requery even started. */
+async function waitForTerminal(fake: FakeWebviewPanel, minStates = 2): Promise<void> {
   for (let i = 0; i < 500; i++) {
     const states = stateMessages(fake);
     const last = states[states.length - 1];
     const r = (last?.results as Array<{ status?: string }> | undefined)?.[0];
-    if (r && r.status !== "running") return;
+    if (states.length >= minStates && r && r.status !== "running") return;
     await Promise.resolve();
   }
 }
@@ -572,22 +576,43 @@ describe("TASK-005 case 15 — simple ORDER BY from the requery bar is dialect-q
 });
 
 // =============================================================================
-// Case 16 — passthrough safety: non-simple ORDER BY passes through verbatim
+// Case 16 — TASK-004 behaviour change: non-simple ORDER BY is now either
+// parsed+quoted (multi-term) or explicitly rejected (expressions/ordinals).
+// Cycle V passed these through verbatim; PLAN.md §3.1 replaced the pass-through
+// with parseOrderBy. Case 15 above (single bare term) is unchanged.
 // =============================================================================
 
-describe("TASK-005 case 16 — non-simple ORDER BY is passed through verbatim", () => {
-  it.each([
-    ["a, b DESC", "id > 0"],
-    ["lower(name)", ""],
-    ["1", ""],
-  ])("orderBy %j with where %j is byte-identical to composeRequery", async (orderBy, where) => {
+describe("TASK-004 case 16 — non-simple ORDER BY is parsed or rejected, never passed through", () => {
+  it("'a, b DESC' with where 'id > 0' is parsed, quoted and wrapped (not composeRequery)", async () => {
     const sql = "SELECT id FROM t";
     const { runSql, fake } = makePanel({ sql, driver: "postgres" });
-    fake.webview.dispatch(
-      requeryMsg({ where, orderBy } as Record<string, unknown>),
-    );
+    fake.webview.dispatch(requeryMsg({ where: "id > 0", orderBy: "a, b DESC" }));
     await waitForTerminal(fake);
-    expect(runSql.mock.calls[0]![0]).toBe(composeRequery(sql, where, orderBy));
+    const composed = runSql.mock.calls[0]![0] as string;
+    expect(composed).not.toBe(composeRequery(sql, "id > 0", "a, b DESC"));
+    expect(composed).toBe(
+      'SELECT * FROM (SELECT id FROM t) AS vsdb_sub WHERE id > 0 ORDER BY "a" ASC, "b" DESC',
+    );
+  });
+
+  it("'lower(name)' is rejected: no runSql, error surfaced", async () => {
+    const { runSql, fake } = makePanel({ sql: "SELECT id FROM t", driver: "postgres" });
+    fake.webview.dispatch(requeryMsg({ orderBy: "lower(name)" }));
+    await waitForTerminal(fake);
+    expect(runSql).not.toHaveBeenCalled();
+    const showErrorMessage = (await import("vscode")).window
+      .showErrorMessage as ReturnType<typeof vi.fn>;
+    expect(showErrorMessage).toHaveBeenCalled();
+  });
+
+  it("'1' is rejected: no runSql, error surfaced", async () => {
+    const { runSql, fake } = makePanel({ sql: "SELECT id FROM t", driver: "postgres" });
+    fake.webview.dispatch(requeryMsg({ orderBy: "1" }));
+    await waitForTerminal(fake);
+    expect(runSql).not.toHaveBeenCalled();
+    const showErrorMessage = (await import("vscode")).window
+      .showErrorMessage as ReturnType<typeof vi.fn>;
+    expect(showErrorMessage).toHaveBeenCalled();
   });
 });
 
