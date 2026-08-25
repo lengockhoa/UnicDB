@@ -1,6 +1,6 @@
 Command: handoff-fullstack
-Goal: Excel-like grid overhaul (edit/add/delete/undo/commit-to-DB + no-PK ctid fix + alignment) COMBINED with AI chat fixes (results, full-DB context, Export Structure source)
+Goal: Fix `Error: column "ctid" does not exist` on opening views — stop eager ctid wrapping; resolve ctid lazily only at update/delete time
 Base: main
-Phase: done
-Cursor: cycle R implemented, reviewed, auto-fixed (2 rounds max used for T2/T6), released v1.6.2 (tag + GitHub release + local install)
-Next: user can reload VS Code; next work starts as a fresh cycle
+Phase: P3
+Cursor: P2.5 done — Round 1 Issues Found, revision applied, Round 2 Approved (unic/unic-smart)
+Next: P3 commit plan via ukit-small-task-maintainer, then I1 setup

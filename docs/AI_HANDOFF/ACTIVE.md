@@ -1,6 +1,6 @@
 # ACTIVE
 
-Cycle: R   Date: 2026-08-24   Base: main
-Goal: AI overhaul (chat ra kết quả, Clear fix, full-DB DDL context, export_structure tool/command, Cmd+Enter cursor-mode) + Grid Excel hóa (no-PK ctid save bug, edit/add/delete highlight + commit, unified undo/redo, requery/set-filter alignment).
-Tasks: 9 total
-Status: planning_done — ready for executor (sau Round-1 plan review: W1 = TASK-001/005/006; W2 batch A = TASK-002/004/007, batch B = TASK-003/008/009)
+Cycle: S   Date: 2026-08-25   Base: main
+Goal: Fix `Error: column "ctid" does not exist` when opening PG views/matviews/foreign tables in the Results grid by removing the eager no-PK ctid browse wrap, and resolve ctid lazily at save time (updates + deletes) via the existing fetchPostgresCtids value-match path.
+Tasks: 3 total
+Status: planning_done — ready for executor (W1 = TASK-001/003 parallel; W2 = TASK-002)
