@@ -3,6 +3,41 @@
 All notable changes to VSDB are documented in this file. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 
+## [1.6.4] — 2026-08-25
+
+Cycle U: DataGrip parity — per-table tabs, server-side sort, NULL display, failed-row retry,
+schema-aware autocomplete, manual-commit transactions, MSSQL parameter binding, export fix.
+
+### Added
+- **Per-table result tabs**: each statement gets a tab labeled with its table name
+  (e.g. `public.users`) instead of a generic "Statement N".
+- **PostgreSQL server-side sort**: clicking a column header issues a server-side
+  `ORDER BY` requery (via the `getTableSortQuery` helper) instead of client-side sorting.
+- **NULL cell display + value viewer**: NULL cells render distinctly (`␀`) and a cell
+  value viewer shows the full raw value of the focused cell.
+- **Failed-row retry**: after a partial save failure, the banner offers "Retry failed
+  rows" — only the still-dirty failed rows re-run, successful rows are kept clean.
+- **Schema-aware autocomplete**: `CompletionItemProvider` with schema/table/column
+  cache; completions propose table and column names while typing.
+- **Manual-commit mode** (`manualCommit: true` on a connection): saves run inside a
+  session-pinned transaction with explicit Commit/Rollback toolbar buttons and a
+  transaction-open status indicator.
+
+### Fixed
+- **Export**: duplicate-column `keepIndices` now maps positional indices correctly —
+  duplicated columns no longer export the wrong column's data.
+- **MSSQL adapter**: replaced string-literal interpolation with parameterized queries
+  throughout metadata introspection.
+- **Manual-commit saves no longer silently discarded**: the old flow leaked the
+  transaction onto a released pooled client, so the post-save requery landed on a
+  different connection and Postgres rolled back a successful save. Saves now run on a
+  pinned `DbTransaction` session (PostgreSQL + MySQL); the post-save requery shares
+  that session, and the browse cursor is closed before the transaction opens so the
+  single-connection pool can never deadlock.
+- **Post-commit refresh**: the grid refresh after a successful automatic save now lands
+  in the same update as the save acknowledgement, so the grid never shows stale rows
+  after commit.
+
 ## [1.6.3] — 2026-08-25
 
 Cycle S: lazy ctid — fix the view-open crash introduced in 1.6.2's no-PK save support.
