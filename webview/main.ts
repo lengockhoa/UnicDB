@@ -2781,6 +2781,22 @@ function handleSaveResult(msg: SaveResultMsg): void {
       if (gridApi) {
         gridApi.refreshCells({ force: true });
       }
+      // TASK-006 — post-commit grid refresh. The DB may hold values the
+      // grid can't know (computed defaults like `now()`, triggers,
+      // DEFAULT-filled columns). Dirty state is already cleared above, so
+      // requery now with the CURRENT WHERE/ORDER BY from the requery bar;
+      // the host re-runs the statement (closing the previous batched
+      // cursor first — handleRequery's own guard) and echoes a fresh
+      // state that re-renders the grid. Skipped on a soft refusal
+      // (`refused`) — nothing was committed, so there is nothing new to
+      // fetch. Partial failures (rowErrors) never reach this branch: the
+      // errored rows stay dirty and an auto-requery could wipe rows the
+      // user is about to retry.
+      if (!msg.refused) {
+        const where = dom?.requeryWhere.value ?? "";
+        const orderBy = dom?.requeryOrderBy.value ?? "";
+        postToHost({ type: "requery", index: msg.index, where, orderBy });
+      }
     }
   } else {
     // ok:false path — host says "everything failed (or the build was

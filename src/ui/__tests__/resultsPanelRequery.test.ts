@@ -453,6 +453,95 @@ describe("ResultsPanel — handleRequery closes previous batched cursor (Fix R1 
 });
 
 // =============================================================================
+// TASK-006 (cycle U) — post-commit requery with an OPEN batched cursor.
+//
+// The webview now posts the very same `requery` message automatically after
+// saveResult.ok=true; this guards handleRequery's close-before-run ordering
+// against regression on that path (Postgres pool max=1 — a leaked cursor
+// wedges the requery behind a connect timeout).
+// =============================================================================
+
+describe("ResultsPanel — post-commit requery closes previous batched cursor first (TASK-006)", () => {
+  it("Edge. batched cursor open + post-commit requery message ⇒ previous cursor closed BEFORE the requery SQL runs", async () => {
+    // Global call-order log: close:previous vs runSql.
+    const order: string[] = [];
+
+    const previousBatched: BatchedQuery = {
+      columns: ["id"],
+      async fetchBatch() {
+        return [[1], [2], [3]];
+      },
+      async cancel() {
+        order.push("cancel:previous");
+      },
+      async close() {
+        order.push("close:previous");
+      },
+    };
+    const requeryBatched: BatchedQuery = {
+      columns: ["id"],
+      async fetchBatch() {
+        return [[1], [2], [3]];
+      },
+      async cancel() {},
+      async close() {},
+    };
+
+    const runSql = vi.fn(async (_sql: string): Promise<RunResult> => {
+      order.push("runSql");
+      return { results: [], batched: requeryBatched };
+    });
+    const runner = {
+      loadMore: vi.fn(async () => []),
+      cancel: vi.fn(async () => undefined),
+      runSql,
+    } as unknown as QueryRunner;
+
+    // Statement 0 currently holds an OPEN batched cursor (Postgres
+    // single-SELECT streaming shape).
+    const panel = new ResultsPanel({ runner });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT id FROM t",
+          status: "done",
+          result: {
+            columns: ["id"],
+            rows: [[1], [2], [3]],
+            rowCount: 3,
+            durationMs: 0,
+          },
+          batched: previousBatched,
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    const fake = lastPanel.current!;
+    fake.webview.postMessage.mockClear();
+
+    // Exactly the message the webview posts after saveResult.ok=true
+    // (empty WHERE/ORDER BY — the bar defaults).
+    fake.webview.dispatch({
+      type: "requery",
+      index: 0,
+      where: "",
+      orderBy: "",
+    });
+    await waitForTerminal(fake);
+
+    // The stale cursor was released (close alone suffices)…
+    expect(order).toContain("close:previous");
+    // …and it happened BEFORE the requery SQL ran.
+    expect(order.indexOf("close:previous")).toBeLessThan(
+      order.indexOf("runSql"),
+    );
+    expect(runSql).toHaveBeenCalledTimes(1);
+  });
+});
+
+// =============================================================================
 // Fix R1 — plain results path (non-batched adapters)
 // =============================================================================
 
