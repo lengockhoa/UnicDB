@@ -317,21 +317,58 @@ function skipWhitespaceAndComments(sql: string, from: number): number {
 }
 
 /**
- * Review fix round C, Finding #2 — forward-peek from right after an `END`
- * keyword: is the NEXT word (skipping whitespace/comments) `WHILE` / `REPEAT`
- * / `FOR`? Those loop-header keywords (C2) never push onto `constructStack`
- * (to avoid the `SELECT ... FOR UPDATE` leak), so `END WHILE` / `END REPEAT`
- * / `END FOR` must NOT pop the stack either — nothing was ever pushed for
- * them to close. Only a bare `END` or `END IF` / `END CASE` / `END LOOP`
- * (constructs that DID push) should pop.
+ * Review fix round E — root cause fix. Rounds C/D decided whether `END`
+ * should pop the construct stack purely from LOOKAHEAD TEXT after `END`
+ * (`isEndLoopSuffix`), which is wrong on two counts that round E's findings
+ * exposed:
+ *   - Finding #1: mssql has NO `END WHILE` construct — two sequential
+ *     `WHILE ... BEGIN ... END` statements mean the first `END` really DOES
+ *     close its `BEGIN`; the `WHILE` right after it is just the next
+ *     statement's leading keyword, not a suffix to skip.
+ *   - Finding #2: `IF(x=1) THEN ... END IF;` — `IF(` (function-call
+ *     heuristic) skips the push, so an unconditional "END IF → pop" is now
+ *     unbalanced and eats the enclosing BLOCK.
+ *   - Finding #3: `FOR` in the suffix list produced false positives on
+ *     `END FOR UPDATE` / `END FOR XML` (no dialect has a real `END FOR`),
+ *     leaking whatever construct (e.g. CASE) that `END` should have closed.
+ *
+ * Fix: decide the pop from the KIND ON TOP OF THE CONSTRUCT STACK, not from
+ * lookahead text alone:
+ *   - suffix `IF` / `CASE` / `LOOP` → pop ONLY when it matches top-of-stack.
+ *   - suffix `WHILE` / `REPEAT` → dialect-aware. MySQL `WHILE...DO...END
+ *     WHILE` / `REPEAT...UNTIL...END REPEAT` are real constructs whose
+ *     header never pushes (see the WHILE/FOR/REPEAT branch in
+ *     `handleKeyword`) — nothing to pop, true no-op ("NONE"). mssql has no
+ *     such construct at all, so treat it as a bare END ("BARE") — this is
+ *     the "dialect-aware" half of Finding #1.
+ *   - no recognized suffix (bare `END`, or `END` followed by an unrelated
+ *     word like `FOR UPDATE` / `GO`) → "BARE": pop whatever is on top,
+ *     regardless of kind. This is the "stack-aware" half of Finding #1/#3 —
+ *     it no longer special-cases lookahead text that isn't a real construct
+ *     keyword.
+ * `FOR` is intentionally NOT in the recognized-suffix list (Finding #3) —
+ * unreachable as a real construct in any supported dialect, so any `END FOR
+ * ...` now falls through to the bare-END branch above.
  */
-function isEndLoopSuffix(sql: string, afterIndex: number): boolean {
+type EndPopAction = "NONE" | "BARE" | ConstructKind;
+
+function resolveEndPopAction(
+  sql: string,
+  afterIndex: number,
+  dialect: SqlDialect | undefined,
+): EndPopAction {
   const j = skipWhitespaceAndComments(sql, afterIndex);
   const n = sql.length;
   let k = j;
   while (k < n && isIdContinue(sql[k])) k += 1;
   const word = sql.substring(j, k).toUpperCase();
-  return word === "WHILE" || word === "REPEAT" || word === "FOR";
+  if (word === "IF") return "IF";
+  if (word === "CASE") return "CASE";
+  if (word === "LOOP") return "LOOP";
+  if (word === "WHILE" || word === "REPEAT") {
+    return dialect === "mssql" ? "BARE" : "NONE";
+  }
+  return "BARE";
 }
 
 /**
@@ -483,8 +520,8 @@ function splitStatementsInternal(
           } else {
             const isTxnBegin =
               upper === "BEGIN" ? isBeginTransactionControl(sql, i) : false;
-            const isEndLoop =
-              upper === "END" ? isEndLoopSuffix(sql, i) : false;
+            const endPopAction: EndPopAction =
+              upper === "END" ? resolveEndPopAction(sql, i, dialect) : "BARE";
             // Finding #8 (review fix round C): MySQL `IF(a,b,c)` function
             // form — the char immediately after "IF" (no whitespace) is
             // `(` — is an expression, not the control-flow keyword. Without
@@ -501,7 +538,7 @@ function splitStatementsInternal(
               constructStack,
               prevWasEnd,
               isTxnBegin,
-              isEndLoop,
+              endPopAction,
               isIfFunctionCall,
             );
             // Chỉ cập nhật cờ khi keyword thực sự được nhận (BEGIN/IF/CASE/
@@ -603,7 +640,7 @@ function handleKeyword(
   stack: ConstructKind[],
   prevWasEnd: boolean,
   isTxnBegin: boolean,
-  isEndLoop: boolean,
+  endPopAction: EndPopAction,
   isIfFunctionCall: boolean = false,
 ): { matched: boolean; wasEnd: boolean } {
   const upper = kw.toUpperCase();
@@ -652,16 +689,25 @@ function handleKeyword(
     return { matched: true, wasEnd: false };
   }
   if (upper === "END") {
-    // Pop top construct; CHỈ giảm block depth khi top là BLOCK.
-    // Nếu top là IF/CASE/LOOP → construct đó đóng, block depth giữ nguyên.
-    // Cả `END` alone, `END IF`, `END CASE`, `END LOOP` đều pop 1 phần tử.
-    //
-    // Finding #2 (review fix round C): `END WHILE` / `END REPEAT` / `END
-    // FOR` (MySQL `WHILE...DO...END WHILE`, `REPEAT...UNTIL...END REPEAT`)
-    // close a loop header that NEVER pushed anything (see the WHILE/FOR/
-    // REPEAT branch below, C2) — popping here would wrongly consume the
-    // enclosing BEGIN block's entry. Skip the pop for that suffix only.
-    if (!isEndLoop && stack.length > 0) {
+    // Review fix round E (root cause fix) — pop decision comes from
+    // `endPopAction`, itself resolved from BOTH the lookahead word after
+    // `END` AND (implicitly, via the caller) the dialect — see
+    // `resolveEndPopAction`'s doc comment for the full rationale.
+    //   - "NONE": true no-op (mysql `END WHILE` / `END REPEAT` closing a
+    //     loop header that never pushed — popping here would wrongly
+    //     consume the enclosing BEGIN block's entry).
+    //   - "BARE": pop whatever is on top regardless of kind (plain `END`,
+    //     or `END` followed by an unrelated word / non-mysql-loop-header
+    //     dialect case).
+    //   - `IF` / `CASE` / `LOOP`: pop ONLY when it matches the kind on top
+    //     of the stack — keeps the push/pop pair balanced even when the
+    //     matching push was itself suppressed (e.g. `IF(` function-call
+    //     heuristic, Finding #2).
+    if (endPopAction === "NONE") {
+      // no-op
+    } else if (endPopAction === "BARE") {
+      if (stack.length > 0) stack.pop();
+    } else if (stack.length > 0 && stack[stack.length - 1] === endPopAction) {
       stack.pop();
     }
     return { matched: true, wasEnd: true };

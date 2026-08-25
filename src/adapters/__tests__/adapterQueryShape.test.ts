@@ -190,6 +190,37 @@ describe("shouldUseCursor — pure predicate (D5)", () => {
       ),
     ).toBe(true);
   });
+
+  // Review fix round E, Finding #4 — MINOR (pre-existing, not from this
+  // cycle). `SELECT ... INTO newtab FROM t` is a table-creating statement
+  // (Postgres `SELECT INTO`), NOT a plain read-only SELECT. It still matched
+  // `/^(SELECT|WITH)\b/` and routed to `openCursorForStatement`, which issues
+  // `DECLARE "c" CURSOR FOR <sql>` — Postgres REJECTS `SELECT INTO` inside a
+  // cursor declaration ("SELECT ... INTO is not allowed here") with no
+  // fallback, so the statement just errors.
+  it("regression (finding 4): SELECT ... INTO newtab FROM t → false (must not use cursor)", () => {
+    expect(shouldUseCursor("SELECT * INTO newtab FROM t")).toBe(false);
+  });
+
+  it("regression (finding 4): SELECT col1, col2 INTO newtab FROM t WHERE x=1 → false", () => {
+    expect(
+      shouldUseCursor("SELECT col1, col2 INTO newtab FROM t WHERE x=1"),
+    ).toBe(false);
+  });
+
+  it("finding 4 guard: a column merely named 'into_value' does not false-positive", () => {
+    expect(shouldUseCursor("SELECT into_value FROM t")).toBe(true);
+  });
+
+  it("finding 4 guard: the literal word INTO inside a string literal does not false-positive", () => {
+    expect(shouldUseCursor("SELECT 'INTO the woods' AS a FROM t")).toBe(
+      true,
+    );
+  });
+
+  it("finding 4 guard: plain SELECT without INTO is unaffected", () => {
+    expect(shouldUseCursor("SELECT * FROM t")).toBe(true);
+  });
 });
 
 // ---- D5: PostgresAdapter.runQuery routing ----------------------------------

@@ -2,5 +2,5 @@ Command: handoff-fullstack
 Goal: Unbreak the VSDB core — make table edit/save actually work and make AI chat + omp usable zero-config
 Base: main
 Phase: R4.5
-Cursor: auto-fix round 1 complete — FIX-A+FIX-B (6c149bd) and FIX-C (0de34a9) landed; all 6 blocking reviewer findings independently reproduced as fixed by the orchestrator; typecheck clean, 1242 passed / 2 skipped
-Next: R4 re-review of f8d088e..HEAD to confirm the two CRITICALs are closed and no new regression was introduced; then R5 (INDEX -> done, ACTIVE update, commit, single push)
+Cursor: R4 re-review done — both opus reviewers returned CHANGES-REQUESTED; round 1 closed both original CRITICALs (Add Row data loss, 30s ACP prompt bound) but introduced 5 new defects, incl. 2 CRITICAL construct-stack regressions in statementParser (mssql sequential WHILE; END IF asymmetry)
+Next: auto-fix round 2 of 2 (final) — FIX-D (omp spawn quoting, Clear-mid-turn bubble, no-PK insert, phantom placeholders) + FIX-E (construct-stack pop-by-top-of-stack) running in parallel worktrees; then copy back, verify, commit, R5

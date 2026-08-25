@@ -78,10 +78,18 @@ const DEFAULT_BATCH_SIZE = 500;
  * statement just errors and the user's UPDATE/INSERT/DELETE never runs. Fix:
  * when the leading keyword is `WITH`, additionally scan the (literal/
  * comment/dollar-quote-masked) text for a real INSERT/UPDATE/DELETE/MERGE
- * token and reject the cursor path if found. Plain SELECT is unaffected (a
- * bare SELECT can't embed DML without a WITH prefix) and read-only CTEs /
- * comment-prefixed SELECTs keep using the cursor path — that was the point
- * of TASK-005.
+ * token and reject the cursor path if found. Read-only CTEs / comment-
+ * prefixed SELECTs keep using the cursor path — that was the point of
+ * TASK-005.
+ *
+ * Review fix round E, Finding #4 — MINOR (pre-existing, not from this
+ * cycle): a bare `SELECT` CAN still be a table-creating statement via
+ * Postgres `SELECT ... INTO newtab FROM t` — that is not a plain read-only
+ * SELECT, and `DECLARE CURSOR FOR SELECT ... INTO ...` is rejected by
+ * Postgres with no fallback. Guard: scan the masked text for a real `INTO`
+ * token and reject the cursor path if found (mirrors the WITH/DML guard
+ * above — masked so `INTO` inside a string/comment/identifier doesn't
+ * false-positive).
  */
 export function shouldUseCursor(text: string): boolean {
   const stripped = stripLeadingCommentsAndWhitespace(text);
@@ -89,7 +97,20 @@ export function shouldUseCursor(text: string): boolean {
   if (/^WITH\b/i.test(stripped) && containsDataModifyingCteBody(text)) {
     return false;
   }
+  if (containsSelectInto(text)) {
+    return false;
+  }
   return true;
+}
+
+/**
+ * True if `text` contains a real (not inside a string/identifier/comment/
+ * dollar-quote) `INTO` token — i.e. a `SELECT ... INTO newtab FROM ...`
+ * table-creating statement (Finding #4).
+ */
+function containsSelectInto(text: string): boolean {
+  const masked = maskLiteralsAndComments(text);
+  return /\bINTO\b/i.test(masked);
 }
 
 /**

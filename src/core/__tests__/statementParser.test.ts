@@ -671,3 +671,69 @@ describe("statementParser — review fix round C regressions", () => {
     expect(debugFinalConstructStackSizeForTest(sql)).toBe(0);
   });
 });
+
+// ---- Regression tests — fix round E (root cause: pop decided by TOP-OF-STACK
+// KIND, not lookahead text after END) ----
+describe("statementParser — review fix round E regressions (root cause: stack-kind pop)", () => {
+  // Finding #1 — CRITICAL. T-SQL has NO `END WHILE` construct at all: two
+  // sequential `WHILE ... BEGIN ... END` loops mean the first `END` really
+  // does close its `BEGIN`, and the `WHILE` right after it is just the next
+  // unrelated statement's leading keyword — must be dialect-aware (mssql
+  // never treats an `END WHILE` lookahead as a skip-pop).
+  it("regression (finding 1): mssql sequential WHILE BEGIN...END loops — GO after both flushes cleanly, no leak", () => {
+    const sql =
+      "WHILE @i<10 BEGIN\n  SET @i=@i+1\nEND\nWHILE @j<5 BEGIN\n  SET @j=@j+1\nEND\nGO\nSELECT 1;";
+    const out = splitStatements(sql, "mssql");
+    expect(out).toHaveLength(2);
+    for (const s of out) {
+      expect(s.text.toUpperCase()).not.toContain("GO");
+    }
+    expect(out[1].text.trim()).toBe("SELECT 1");
+    expect(debugFinalConstructStackSizeForTest(sql, "mssql")).toBe(0);
+  });
+
+  // Guard: mysql `END WHILE` (real construct, WHILE never pushes) must still
+  // be a true no-op and NOT pop the enclosing BEGIN block.
+  it("regression (finding 1 guard): mysql CREATE PROCEDURE ... END WHILE ... END still parses as ONE statement", () => {
+    const sql =
+      "CREATE PROCEDURE p() BEGIN WHILE i<3 DO SET i=i+1; END WHILE; END; SELECT 1;";
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(2);
+    expect(out[0].text).toBe(
+      "CREATE PROCEDURE p() BEGIN WHILE i<3 DO SET i=i+1; END WHILE; END",
+    );
+    expect(out[1].text.trim()).toBe("SELECT 1");
+    expect(debugFinalConstructStackSizeForTest(sql)).toBe(0);
+  });
+
+  // Finding #2 — CRITICAL. `IF(x=1) THEN ... END IF;` inside a BEGIN block:
+  // IF( skips the push (function-call heuristic), so the later `END IF` must
+  // NOT pop the enclosing BLOCK either — the pop is now conditional on
+  // top-of-stack being IF, not on END IF lookahead text alone.
+  it("regression (finding 2): CREATE PROCEDURE with IF(...) THEN ... END IF; body stays ONE statement (no stored-proc splitting)", () => {
+    const sql =
+      "CREATE PROCEDURE p() BEGIN IF(x=1) THEN SELECT 1; END IF; SELECT 2; END; SELECT 9;";
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(2);
+    expect(out[0].text).toBe(
+      "CREATE PROCEDURE p() BEGIN IF(x=1) THEN SELECT 1; END IF; SELECT 2; END",
+    );
+    expect(out[1].text.trim()).toBe("SELECT 9");
+    expect(debugFinalConstructStackSizeForTest(sql)).toBe(0);
+  });
+
+  // Finding #3 — IMPORTANT. `FOR` is dropped from the END-suffix list
+  // entirely: `END FOR UPDATE` / `END FOR XML` must be treated as a bare
+  // END, popping whatever construct (e.g. CASE) is actually on top.
+  it("regression (finding 3): CASE ... END FOR UPDATE does not leak the CASE frame", () => {
+    const sql =
+      "SELECT * FROM t WHERE s = CASE WHEN a THEN 'x' ELSE 'y' END FOR UPDATE; SELECT 2;";
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(2);
+    expect(out[0].text.trim()).toBe(
+      "SELECT * FROM t WHERE s = CASE WHEN a THEN 'x' ELSE 'y' END FOR UPDATE",
+    );
+    expect(out[1].text.trim()).toBe("SELECT 2");
+    expect(debugFinalConstructStackSizeForTest(sql)).toBe(0);
+  });
+});
