@@ -6,12 +6,12 @@ column filter + Load More paging, MSSQL sort helper. 6 tasks, 2 waves.
 
 | Task | Title | Status | Executor | Reviewer |
 |------|-------|--------|----------|----------|
-| TASK-001 | SQL TextMate injection grammar + package.json contribution | ready | - | - |
-| TASK-002 | Schema-aware SQL semantic tokens provider | ready | - | - |
-| TASK-003 | Webview SQL tokenizer + themed styles | ready | - | - |
-| TASK-004 | Dialect query composer: filter WHERE + OFFSET/LIMIT paging + sort dispatch | ready | - | - |
-| TASK-005 | Server-side column filter + Load More paging (host + webview wiring) | ready | - | - |
-| TASK-006 | MSSQL server-side sort query (T-SQL dialect) | ready | - | - |
+| TASK-001 | SQL TextMate injection grammar + package.json contribution | pending_review | claude-sonnet-5 | - |
+| TASK-002 | Schema-aware SQL semantic tokens provider | pending_review | claude-sonnet-5 | - |
+| TASK-003 | Webview SQL tokenizer + themed styles | pending_review | claude-sonnet-5 | - |
+| TASK-004 | Dialect query composer: filter WHERE + OFFSET/LIMIT paging + sort dispatch | pending_review | claude-sonnet-5 | - |
+| TASK-005 | Server-side column filter + Load More paging (host + webview wiring) | pending_review | claude-sonnet-5 | - |
+| TASK-006 | MSSQL server-side sort query (T-SQL dialect) | pending_review | claude-sonnet-5 | - |
 
 Graph: 004 --> 005, 004 --> 006. 001, 002, 003, 004 are all independent.
 
