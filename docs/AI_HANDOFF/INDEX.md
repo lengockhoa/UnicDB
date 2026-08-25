@@ -7,18 +7,18 @@ longer exist at HEAD (see PLAN.md §2 "Stale-input correction").
 
 | Task | Title | Status | Executor | Reviewer |
 |------|-------|--------|----------|----------|
-| TASK-001 | Save builder: schema qualification, PG quoting, DEFAULT inserts, row addressing (A8/A9/A10/A11/A12/A20) | ready | - | - |
-| TASK-002 | Webview grid: stale values after commit, Add Row, marker collision, Refresh, copy (A5/A6/A7/A11/A12/A13/A16) | ready | - | - |
-| TASK-003 | Grid model: duplicate column names must not collapse onto one field (A17) | ready | - | - |
-| TASK-004 | Statement splitter: transaction scripts, loop-stack leak, MySQL escapes, MSSQL GO (C1-C4) | ready | - | - |
-| TASK-005 | Adapters: cursor fast-path, pg_catalog introspection, MSSQL columns, batch row estimate (D4/D5/D6 + D2 API) | ready | - | - |
-| TASK-006 | ACP transport: `initialized` handshake, bounded timeout, stderr capture, Windows detect (B4/B10/B12) | ready | - | - |
-| TASK-007 | AI chat: turn never settles, blank bubbles, dead Stop/Resume, leaked child, schema cost (B1/B2/B5/B6/B7/B9/B14) | ready | - | - |
-| TASK-008 | Keyword qualifier: stop scanning `information_schema.tables` on every Cmd+Enter (D1) | ready | - | - |
-| TASK-009 | Results host: ctid lookup returns rows, atomic save batch, real header, post-commit refresh (A3/A4/A12/A14/A15) | ready | - | - |
-| TASK-010 | Schema tree: one row-count query per schema, no connection opened at activation (D2/D3) | ready | - | - |
-| TASK-011 | Zero-config omp engine, honest engine banner, settings error label, keyword-cache wiring (B3/B8/B13/D1) | ready | - | - |
-| TASK-012 | DB tools on the omp path: probe the ACP tool transport, then bridge the registry (B11) | ready | - | - |
+| TASK-001 | Save builder: schema qualification, PG quoting, DEFAULT inserts, row addressing (A8/A9/A10/A11/A12/A20) | pending_review | claude-sonnet-5 | - |
+| TASK-002 | Webview grid: stale values after commit, Add Row, marker collision, Refresh, copy (A5/A6/A7/A11/A12/A13/A16) | pending_review | claude-sonnet-5 | - |
+| TASK-003 | Grid model: duplicate column names must not collapse onto one field (A17) | pending_review | claude-sonnet-5 | - |
+| TASK-004 | Statement splitter: transaction scripts, loop-stack leak, MySQL escapes, MSSQL GO (C1-C4) | pending_review | claude-sonnet-5 | - |
+| TASK-005 | Adapters: cursor fast-path, pg_catalog introspection, MSSQL columns, batch row estimate (D4/D5/D6 + D2 API) | pending_review | claude-sonnet-5 | - |
+| TASK-006 | ACP transport: `initialized` handshake, bounded timeout, stderr capture, Windows detect (B4/B10/B12) | pending_review | claude-sonnet-5 | - |
+| TASK-007 | AI chat: turn never settles, blank bubbles, dead Stop/Resume, leaked child, schema cost (B1/B2/B5/B6/B7/B9/B14) | pending_review | claude-sonnet-5 | - |
+| TASK-008 | Keyword qualifier: stop scanning `information_schema.tables` on every Cmd+Enter (D1) | pending_review | claude-sonnet-5 | - |
+| TASK-009 | Results host: ctid lookup returns rows, atomic save batch, real header, post-commit refresh (A3/A4/A12/A14/A15) | pending_review | claude-sonnet-5 | - |
+| TASK-010 | Schema tree: one row-count query per schema, no connection opened at activation (D2/D3) | pending_review | claude-sonnet-5 | - |
+| TASK-011 | Zero-config omp engine, honest engine banner, settings error label, keyword-cache wiring (B3/B8/B13/D1) | pending_review | claude-sonnet-5 | - |
+| TASK-012 | DB tools on the omp path: probe the ACP tool transport, then bridge the registry (B11) | pending_review | claude-sonnet-5 | - |
 
 Graph: 009 → {001, 002}; 010 → 005; 011 → {006, 007, 008}; 012 → {006, 007, 011}.
 All of 001-008 are independent.
