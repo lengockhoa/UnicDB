@@ -22,6 +22,22 @@ For each significant action, append:
 
 ---
 
+## 2026-08-25 — Cycle U (DataGrip parity) complete
+
+- Action: handoff cycle U — 9 tasks / 5 waves: export keepIndices fix, MSSQL parameterized
+  queries, PG server-side sort, NULL display + value viewer, A19 retry, post-commit refresh,
+  per-table tabs, schema autocomplete, manual-commit mode. R1 review TASK-009 =
+  CHANGES-REQUESTED → auto-fix: `DbTransaction` session-pinned handle (adapters PG/MySQL
+  pin PoolClient/PoolConnection), `handleSaveEdits` chạy save qua transaction, requery manual
+  route qua pinned session (tránh deadlock pool.max=1), `closeStatementCursor` trước
+  beginTransaction, R-A4 refresh-state race (compute refresh trước ack). R2 review APPROVED.
+- Files: `src/adapters/{types,postgres,mysql}.ts`, `src/core/queryRunner.ts`,
+  `src/ui/resultsPanel.ts`, `src/extension.ts`, `src/ui/__tests__/manualCommit.test.ts`,
+  docs/AI_HANDOFF/*.
+- Verification: compile clean · typecheck clean · full suite 1327 passed / 2 skipped / 0
+  failed. Commit f5caddd trên main. Worktree sạch. Chưa push (cần xác nhận scope).
+- Queued: Cycle V (SQL syntax coloring), server-side filter/paging, MSSQL sort.
+
 ## 2026-08-25 — Cycle S (lazy ctid) + release v1.6.3
 
 - Action: fix `Error: column "ctid" does not exist` khi mở view PG. Handoff cycle S: 3 tasks
