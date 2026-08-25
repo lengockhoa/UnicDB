@@ -435,6 +435,21 @@ export function buildSaveStatements(
       insertVals.push(values[i]);
     }
     if (insertCols.length === 0) {
+      // Review Finding 3(b), fix round 2: a completely empty Add Row on a
+      // mysql/mssql table with NO PRIMARY KEY would be unidentifiable —
+      // there is no PK-based WHERE (and, unlike postgres, no ctid
+      // fallback) to ever address the row again for a later edit/delete.
+      // Refuse this specific row instead of emitting the anonymous
+      // `INSERT INTO t () VALUES ()` the no_pk guard below exists to
+      // prevent. Postgres is unaffected — its ctid fallback still lets a
+      // later save target the row (Finding 3 discussion; postgres path
+      // stays exactly as it is).
+      if (pkColumns.length === 0 && dialect !== "postgres") {
+        const reason = `insert row ${e.rowId} skipped: ${dialect} has no PRIMARY KEY for "${tableName}"; refusing to insert an unidentifiable empty row.`;
+        warnings.push(reason);
+        skippedRows.push({ rowId: e.rowId, reason });
+        continue;
+      }
       // Finding 3 — MySQL has no `DEFAULT VALUES` syntax; it needs the
       // explicit-empty-list form. Postgres and MSSQL both accept
       // `DEFAULT VALUES` unchanged.
@@ -536,8 +551,20 @@ export function buildSaveStatements(
   }
   const sortedRowIds = Array.from(editsByRow.keys()).sort((a, b) => a - b);
 
+  // Review Finding 3(a), fix round 2: `sortedRowIds` includes rows that are
+  // ALSO covered by an insert marker — a typed value on an Add Row arrives
+  // as its own plain cell-edit EditEntry (see the "Finding 1, cycle T"
+  // discussion above), which lands in `editsByRow`/`sortedRowIds` even
+  // though the UPDATE loop below skips it (`insertRowIds.has(rowId)`) since
+  // the value already went into the INSERT. Gating the no_pk guard on the
+  // raw `sortedRowIds` therefore hard-refused an insert-only batch before
+  // that per-row skip ever ran — exactly the batch the guard's own comment
+  // says is intentionally exempt. Compute the guard over rows that actually
+  // need an UPDATE (i.e. exclude insert-marked rows) instead.
+  const updateOnlyRowIds = sortedRowIds.filter((id) => !insertRowIds.has(id));
+
   const hasPk = pkColumns.length > 0;
-  if (!hasPk && dialect !== "postgres" && sortedRowIds.length > 0) {
+  if (!hasPk && dialect !== "postgres" && updateOnlyRowIds.length > 0) {
     // mysql/mssql without PK: REJECT — but only when there is actual cell
     // (UPDATE) work needing a PK-based WHERE. A delete-only or insert-only
     // batch on a no-PK table does not need this hard refusal; deletes are

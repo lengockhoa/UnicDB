@@ -1560,6 +1560,43 @@ describe("AiChatPanel — ACP turn lifecycle (TASK-007)", () => {
     await until(() => postedMessages(p).filter(isDone).length >= 2);
   });
 
+  // ---- IMPORTANT review finding 2 (fix round 2) --------------------------
+  // handleClear() set `this.token = null` but never marked the live token
+  // `aborted: true`. `runAcpTurn` captures `token` BY REFERENCE before the
+  // await, so after Clear disposes the ACP session mid-turn (AcpClient
+  // .dispose() rejects the pending session/prompt with "disposed"),
+  // `token?.aborted` still read false on the stale reference: `forced` is
+  // also false (Clear doesn't push to acpTurnResolvers), so the rejection
+  // was re-thrown as `promptError` and rendered as a red error bubble in
+  // the freshly-cleared chat.
+  it("R(Finding2, fix round 2) regression: clear mid-turn on the omp engine clears the chat with no error bubble", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const { start, sessions } = makeFakeAcpDeps();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      acp: { start },
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "go" });
+    await until(() => sessions.length > 0);
+    const session = sessions[0] as FakeAcpSession;
+    await until(() => lastPromptRequestId(session.transport) !== undefined);
+
+    // Clear BEFORE the session/prompt response arrives.
+    handler({ type: "clear" });
+    await flush(20);
+
+    expect(postedMessages(p).some(isError)).toBe(false);
+    const lastInit = postedMessages(p).filter(isInit).pop();
+    expect(lastInit?.hasHistory).toBe(false);
+    expect(postedMessages(p).some(isDone)).toBe(true);
+  });
+
   // ---- MINOR review finding 4 -------------------------------------------
   // Pre-fix, the stderr tail was only attached to the error surfaced when the
   // ACP HANDSHAKE itself failed (AcpProcess.start's own catch path). A

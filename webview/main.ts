@@ -1671,6 +1671,65 @@ function renderGrid(): void {
     statementRows.set(activeTab, r.result.rows.slice());
     highestAllocatedId = r.result.rows.length - 1;
     refreshUndoRedoButtons();
+  } else if (rowsGrew && newRowCount > 0) {
+    // Finding 4, fix round 2 (partial commit) — the branch above only
+    // fires when editState.dirtyCount === 0 (every dirty entry cleared).
+    // On a PARTIAL commit (TASK-007 #4), handleSaveResult keeps dirty
+    // entries for ERRORED rows via clearExceptRowIds(erroredRowIds) so
+    // the user can retry them — leaving dirtyCount > 0 even though some
+    // OTHER locally-added row(s) already committed successfully. That
+    // skipped the branch above entirely, so a successfully-committed
+    // row's local placeholder object survived in the grid as a phantom
+    // blank row while `newRowCount` was never decremented for it.
+    //
+    // A full rebuild (like the branch above) is NOT safe here — it would
+    // silently discard the still-dirty errored rows' pending edits
+    // (data loss). Instead, surgically remove ONLY the placeholder rows
+    // that have ALREADY committed: a locally-added row has no entry in
+    // `serverIndexByRowId` (see the "local row — stop" comment
+    // elsewhere in this file), and once its new-row marker is gone from
+    // editState (cleared because it succeeded), `isRowNew` reads false.
+    // Errored placeholders (still `isRowNew === true`) are left
+    // completely untouched, so their pending edits are never lost. The
+    // newly-committed server row(s) are then merged in via the same
+    // append-delta the branch below uses for ordinary streaming growth.
+    const committedPlaceholders: Record<string, unknown>[] = [];
+    gridApi!.forEachNode((node) => {
+      if (!node.data) return;
+      const id = readRowId(node.data);
+      if (id === undefined) return;
+      if (serverIndexByRowId.get(id) !== undefined) return; // real server row
+      if (editState.isRowNew(id)) return; // still dirty/new — errored, keep for retry
+      committedPlaceholders.push(node.data);
+    });
+    let changed = false;
+    if (committedPlaceholders.length > 0) {
+      gridApi!.applyTransaction({ remove: committedPlaceholders });
+      newRowCount = Math.max(0, newRowCount - committedPlaceholders.length);
+      changed = true;
+    }
+    if (syncResult.appendDelta.length > 0) {
+      const startIndex = Math.max(previousRows.length, highestAllocatedId + 1);
+      const newRowObjects = rowsToObjects(
+        syncResult.appendDelta,
+        specs,
+        startIndex,
+        previousRows.length,
+      );
+      const addIndex = previousRows.length;
+      gridApi!.applyTransaction({ add: newRowObjects, addIndex });
+      for (const obj of newRowObjects) {
+        const id = obj.__rowId;
+        if (typeof id === "number" && id > highestAllocatedId) {
+          highestAllocatedId = id;
+        }
+      }
+      changed = true;
+    }
+    if (changed) {
+      statementRows.set(activeTab, r.result.rows.slice());
+      refreshUndoRedoButtons();
+    }
   } else if (rowsGrew && syncResult.appendDelta.length > 0) {
     // Append delta — only new server rows get added (no clobber). Each
     // appended row needs a __rowId so the grid's stable-identity layer

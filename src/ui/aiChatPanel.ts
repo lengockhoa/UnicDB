@@ -1199,6 +1199,16 @@ export class AiChatPanel {
   private handleClear(): void {
     // Full turn reset: Clear giữa turn đang stream phải hủy turn + trả UI
     // về idle. Không reset token/currentAbort → webview busy mãi (D2).
+    // Review Finding 2 (fix round 2): mark the LIVE token aborted before
+    // nulling it. `runAcpTurn` captures `token` by reference before its
+    // await, so a bare `this.token = null` here left that captured
+    // reference's `aborted` still false — the ACP session dispose below
+    // rejects the in-flight session/prompt with "disposed", and with
+    // `token?.aborted` reading false (and `forced` also false, since Clear
+    // doesn't push an acpTurnResolvers entry), that rejection was re-thrown
+    // as `promptError` and rendered as an error bubble into the
+    // freshly-cleared chat instead of being recognized as user-initiated.
+    if (this.token) this.token.aborted = true;
     this.token = null;
     this.currentAbort?.abort();      // hủy SSE đang đọc (builtin)
     this.currentAbort = null;

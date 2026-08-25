@@ -398,6 +398,137 @@ describe("buildSaveStatements — Add Row / Delete Row markers", () => {
   });
 });
 
+// ---- Review Finding 3 (fix round 2): no_pk guard mis-scoped over
+// insert-only rows + empty Add Row on a no-PK table emits an unidentifiable
+// bare INSERT. --------------------------------------------------------------
+describe("buildSaveStatements — no_pk guard scoping (Finding 3, fix round 2)", () => {
+  // Case 1 (unchanged behavior) — a genuine cell edit on a no-PK mysql table
+  // is still hard-refused. Already covered above ("mysql no-PK + CELL EDIT
+  // (not delete-only) → still hard refuses ok:false, reason no_pk
+  // (unchanged)") — repeated here as the anchor case for this describe
+  // block's 3-case contract.
+  it("no-PK + cell edit (no insert marker) → still hard refused, reason no_pk", () => {
+    const edits: EditEntry[] = [{ rowId: 0, colIndex: 0, value: "edited" }];
+    const r = buildSaveStatements(
+      "mysql",
+      "t",
+      [],
+      ["x", "y"],
+      edits,
+      [["a", "b"]],
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok !== false) return;
+    expect(r.reason).toBe("no_pk");
+  });
+
+  // Case 2 (bug) — pre-fix: the no_pk guard counted `sortedRowIds` BEFORE
+  // excluding insert-marker rows (the UPDATE loop skips them via
+  // `insertRowIds.has(rowId)` further down). A typed value on an Add Row
+  // arrives as a SEPARATE plain cell-edit EditEntry for the same rowId
+  // (onCellValueChangedHandler records it apart from the marker's own
+  // `values`, per the "Finding 1, cycle T" describe block above) — that
+  // extra entry populates `sortedRowIds`, so the guard fired and hard-
+  // refused the whole batch with the misleading "cannot save cell edits"
+  // message even though it is an INSERT, not an UPDATE.
+  it("no-PK + Add Row WITH a typed value → INSERT is emitted (not refused)", () => {
+    const edits: EditEntry[] = [
+      {
+        rowId: 5,
+        colIndex: -1,
+        value: {
+          __vsdb_new_row__: true,
+          __rowId: 5,
+          values: [{ __vsdb_default__: true }, { __vsdb_default__: true }],
+        },
+      },
+      { rowId: 5, colIndex: 0, value: "typed-value" },
+    ];
+    const r = buildSaveStatements(
+      "mysql",
+      "t",
+      [], // no PK
+      ["a", "b"],
+      edits,
+      [],
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok !== true) return;
+    expect(r.statements).toHaveLength(1);
+    const stmt = r.statements[0];
+    expectNoPlaceholders(stmt);
+    expect(stmt).toBe("INSERT INTO `t` (`a`) VALUES ('typed-value')");
+  });
+
+  // Case 3 (bug) — pre-fix: a completely empty Add Row (every column still
+  // the DEFAULT-value sentinel) bypassed the no_pk guard entirely (the
+  // guard only looked at `sortedRowIds`, which insert markers never
+  // populate) and fell through to the bare `INSERT INTO \`t\` () VALUES ()`
+  // branch — the exact unidentifiable, unrecoverable row this refusal
+  // exists to prevent on a table with no PK to ever address it again.
+  it("no-PK + completely empty Add Row → no empty INSERT is ever emitted", () => {
+    const marker: EditEntry = {
+      rowId: 9,
+      colIndex: -1,
+      value: {
+        __vsdb_new_row__: true,
+        __rowId: 9,
+        values: [
+          { __vsdb_default__: true },
+          { __vsdb_default__: true },
+        ],
+      },
+    };
+    const r = buildSaveStatements(
+      "mysql",
+      "t",
+      [], // no PK
+      ["a", "b"],
+      [marker],
+      [],
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok !== true) return;
+    expect(r.statements).toHaveLength(0);
+    expect(
+      r.statements.some((s) => /INSERT INTO `t` \(\) VALUES \(\)/.test(s)),
+    ).toBe(false);
+    expect(r.warnings.some((w) => /no primary key/i.test(w))).toBe(true);
+    expect(r.skippedRows).toBeDefined();
+    expect(
+      r.skippedRows!.some((s) => s.rowId === 9 && /no primary key/i.test(s.reason)),
+    ).toBe(true);
+  });
+
+  // Edge — mixed batch: no-PK table with BOTH an insert-with-values (must
+  // proceed) and a genuine cell edit on an existing row (must still be
+  // refused wholesale, per the comment at saveStatements.ts:542-545 — the
+  // hard refusal is reserved for batches containing UPDATE work).
+  it("no-PK + insert-with-values AND a cell edit in the same batch → wholesale no_pk refusal wins (unchanged semantics)", () => {
+    const insertMarker: EditEntry = {
+      rowId: 5,
+      colIndex: -1,
+      value: {
+        __vsdb_new_row__: true,
+        __rowId: 5,
+        values: ["typed-value", "b"],
+      },
+    };
+    const cellEdit: EditEntry = { rowId: 0, colIndex: 0, value: "edited" };
+    const r = buildSaveStatements(
+      "mysql",
+      "t",
+      [],
+      ["a", "b"],
+      [insertMarker, cellEdit],
+      [["old-a", "old-b"]],
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok !== false) return;
+    expect(r.reason).toBe("no_pk");
+  });
+});
+
 // ---- Review Fix Round (cycle T) — Finding 1: Add Row cell edits must not
 // be silently discarded. ----------------------------------------------------
 describe("buildSaveStatements — Add Row cell edits merge into the INSERT (Finding 1, cycle T)", () => {
@@ -470,6 +601,13 @@ describe("buildSaveStatements — Add Row cell edits merge into the INSERT (Find
 // ---- Review Fix Round (cycle T) — Finding 3: MySQL has no `DEFAULT VALUES`
 // syntax. ---------------------------------------------------------------
 describe("buildSaveStatements — dialect-aware all-DEFAULT insert (Finding 3, cycle T)", () => {
+  // Review Finding 3(b), fix round 2: this case originally used pkColumns:
+  // [] (no PK) — which, after the round-2 fix, is now a refused row (see
+  // "buildSaveStatements — no_pk guard scoping (Finding 3, fix round 2)" >
+  // "no-PK + completely empty Add Row → no empty INSERT is ever emitted").
+  // Switched to a table WITH a PK so this test keeps covering its original
+  // concern (mysql's dialect-specific `() VALUES ()` syntax vs
+  // `DEFAULT VALUES`) without colliding with the no-PK refusal.
   it("mysql + all-DEFAULT insert ⇒ INSERT INTO `t` () VALUES () (NOT `DEFAULT VALUES`)", () => {
     const marker: EditEntry = {
       rowId: 1,
@@ -480,7 +618,7 @@ describe("buildSaveStatements — dialect-aware all-DEFAULT insert (Finding 3, c
         values: [{ __vsdb_default__: true }],
       },
     };
-    const r = buildSaveStatements("mysql", "t", [], ["qty"], [marker], []);
+    const r = buildSaveStatements("mysql", "t", ["id"], ["qty"], [marker], []);
     expect(r.ok).toBe(true);
     if (r.ok !== true) return;
     expect(r.statements).toHaveLength(1);
@@ -504,6 +642,8 @@ describe("buildSaveStatements — dialect-aware all-DEFAULT insert (Finding 3, c
     expect(r.statements[0]).toBe('INSERT INTO "t" DEFAULT VALUES');
   });
 
+  // Same round-2 rationale as the mysql case above — switched to a table
+  // WITH a PK so this stays a dialect-syntax test, not a no-PK-refusal one.
   it("mssql + all-DEFAULT insert is unaffected: still DEFAULT VALUES", () => {
     const marker: EditEntry = {
       rowId: 1,
@@ -514,7 +654,7 @@ describe("buildSaveStatements — dialect-aware all-DEFAULT insert (Finding 3, c
         values: [{ __vsdb_default__: true }],
       },
     };
-    const r = buildSaveStatements("mssql", "t", [], ["qty"], [marker], []);
+    const r = buildSaveStatements("mssql", "t", ["id"], ["qty"], [marker], []);
     expect(r.ok).toBe(true);
     if (r.ok !== true) return;
     expect(r.statements[0]).toBe("INSERT INTO [t] DEFAULT VALUES");

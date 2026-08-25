@@ -13,7 +13,7 @@
 // `hostTools:`-prefixed tests that used to live here were deleted with it.
 // mcpServers-threading coverage now lives in the "TASK-012 (B11a)" describe block below.
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { spawn as defaultSpawn } from "child_process";
 import type { ChildProcessWithoutNullStreams, SpawnOptions } from "child_process";
 import { EventEmitter } from "node:events";
@@ -836,6 +836,97 @@ describe("AcpProcess", () => {
     const tail = (err as Error & { stderrTail?: string }).stderrTail ?? "";
     expect(tail.length).toBeGreaterThan(0);
     expect(tail.length).toBeLessThanOrEqual(8 * 1024);
+  });
+
+  // ---- Review Finding 1 (fix round 2): win32 cmd.exe quoting -----------------
+  //
+  // `shell: process.platform === "win32"` (Finding 2, prior round) makes Node
+  // compose `cmd /d /s /c "<ompPath> <arg1> <arg2> ...>"` by PLAIN SPACE-JOINING
+  // `command` + `args`, with no per-token quoting
+  // (see lib/internal/child_process.js normalizeSpawnArguments). Two breakages
+  // follow: an install path with spaces splits into multiple cmd.exe tokens,
+  // and a cwd containing a shell metacharacter (e.g. "&") is interpreted by
+  // cmd.exe as a command separator — arbitrary command execution at session
+  // start. Node's own outer `"${composed}"` wrap does not protect against this:
+  // since `/s` is also passed, cmd.exe's /c quote handling falls into its
+  // "strip first char + strip LAST quote char in the line" fallback (per
+  // `cmd /?`), which — when the composed string has no OTHER quotes — reduces
+  // to stripping exactly the two outer quotes Node just added and nothing
+  // else. So whatever quoting AcpProcess hands to spawnFn is exactly what
+  // cmd.exe re-parses.
+  describe("Review Finding 1 (fix round 2): win32 cmd.exe quoting", () => {
+    const originalPlatform = process.platform;
+
+    afterEach(() => {
+      Object.defineProperty(process, "platform", {
+        value: originalPlatform,
+        configurable: true,
+      });
+    });
+
+    it("quotes ompPath and args for cmd.exe so a path with spaces and a cwd containing '&' survive intact and cannot inject a second command", async () => {
+      Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+
+      const proc = new AcpProcess(
+        {
+          ompPath: "C:\\Program Files\\omp\\omp.cmd",
+          cwd: "C:\\repo & calc",
+          supportCwdFlag: true,
+          execFn: async () => "omp/18.0.1\n",
+        },
+        captureSpawn(child, captured),
+      );
+
+      const startPromise = proc.start();
+      queueMicrotask(() => {
+        void driveHandshake(child);
+      });
+      await startPromise;
+
+      // shell:true on win32 is unchanged from the Finding 2 fix.
+      expect(captured.options?.shell).toBe(true);
+
+      // Every token handed to spawnFn must already be individually quoted:
+      // the whole path (spaces and all) stays ONE token, and the cwd's "&"
+      // is wrapped so cmd.exe cannot treat it as a command separator.
+      expect(captured.command).toBe('"C:\\Program Files\\omp\\omp.cmd"');
+      const args = captured.args ?? [];
+      expect(args).toEqual(['"acp"', '"--cwd"', '"C:\\repo & calc"']);
+
+      // Simulate exactly what Node's shell:true win32 path does next
+      // (space-join command+args, then wrap the WHOLE thing in one more
+      // pair of outer quotes for `cmd /d /s /c`), then simulate cmd.exe's
+      // own /c quote-stripping fallback (strip first char + last quote
+      // char of the line) — our inner per-token quotes must survive intact.
+      const composed = [captured.command, ...args].join(" ");
+      const cmdLine = `"${composed}"`;
+      const afterCmdStrip = cmdLine.slice(1, -1);
+      expect(afterCmdStrip).toBe(composed);
+      expect(afterCmdStrip).toBe(
+        '"C:\\Program Files\\omp\\omp.cmd" "acp" "--cwd" "C:\\repo & calc"',
+      );
+    });
+
+    it("does not quote command/args on non-win32 (spawn path unchanged)", async () => {
+      const proc = new AcpProcess(
+        {
+          ompPath: "/usr/local/bin/omp",
+          cwd: "/tmp/repo & calc",
+          supportCwdFlag: true,
+          execFn: async () => "omp/18.0.1\n",
+        },
+        captureSpawn(child, captured),
+      );
+      const startPromise = proc.start();
+      queueMicrotask(() => {
+        void driveHandshake(child);
+      });
+      await startPromise;
+
+      expect(captured.options?.shell).toBe(false);
+      expect(captured.command).toBe("/usr/local/bin/omp");
+      expect(captured.args).toEqual(["acp", "--cwd", "/tmp/repo & calc"]);
+    });
   });
 });
 

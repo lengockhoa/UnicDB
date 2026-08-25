@@ -88,6 +88,7 @@ interface EditStateHandle {
   clear: () => void;
   dirtyCount: number;
   snapshot: () => Array<{ rowId: number; colIndex: number; value: unknown }>;
+  isRowNew: (rowId: number) => boolean;
 }
 
 interface VsdbApi {
@@ -697,6 +698,104 @@ describeIfBundle("webview/main.ts bundle (TASK-002)", () => {
         if (node.data) names.push(node.data.name as string);
       });
       expect(names.sort()).toEqual(["alpha", "beta", "delta", "gamma"]);
+    },
+  );
+
+  // ---- Finding 4 (fix round 2) — partial commit ------------------------------
+  itIfBundle(
+    "Finding 4 (fix round 2). partial commit: one Add-Row row commits, the other errors ⇒ committed placeholder is replaced by the server row (no phantom), errored placeholder + its edits survive untouched",
+    async () => {
+      const { received } = loadBundle();
+      dispatchMsg(threeRowsState());
+      await flushGridEvents();
+
+      const api = vsdbApi()!;
+      const grid = api.gridApi!;
+      expect(grid.getDisplayedRowCount()).toBe(3);
+
+      // Add two rows: rowId 3 will commit successfully, rowId 4 will be
+      // reported as an errored row in the saveResult ack (TASK-007
+      // per-row error handling).
+      api.addRow!();
+      await flushGridEvents();
+      api.addRow!();
+      await flushGridEvents();
+      expect(grid.getDisplayedRowCount()).toBe(5);
+
+      api.simulateCellEdit!(3, "name", "delta-committed", "");
+      await flushGridEvents();
+      api.simulateCellEdit!(4, "name", "epsilon-failed", "");
+      await flushGridEvents();
+
+      received.length = 0;
+      api.commit!();
+      await flushGridEvents();
+      expect(
+        received.filter((m) => m.type === "saveEdits"),
+      ).toHaveLength(1);
+
+      // Partial success: rowId 3 committed, rowId 4 errored. The old bug
+      // gated the phantom-placeholder cleanup on `dirtyCount === 0`,
+      // which never holds here (rowId 4's edits are intentionally kept
+      // dirty for retry) — so rowId 3's placeholder was never reconciled
+      // away either.
+      dispatchMsg({
+        type: "saveResult",
+        index: 0,
+        ok: true,
+        rowErrors: [{ rowId: 4, error: "constraint violation" }],
+      });
+      await flushGridEvents();
+
+      const editState = getEditState()!;
+      // rowId 4's insert marker + cell edit must survive the ack — this
+      // is the guard against the naive "just clear everything" fix,
+      // which would silently drop the user's still-unsaved edits.
+      expect(editState.dirtyCount).toBe(2);
+
+      // Post-commit refresh: server now has the 3 original rows PLUS the
+      // one committed row (id 4, name "delta-committed"). rowId 4 (the
+      // errored local row) was never persisted, so it is absent from the
+      // server echo.
+      dispatchMsg(
+        stateWith(
+          ["id", "name"],
+          [
+            [1, "alpha"],
+            [2, "beta"],
+            [3, "gamma"],
+            [4, "delta-committed"],
+          ],
+        ),
+      );
+      await flushGridEvents();
+
+      // Must be exactly 5: 4 authoritative server rows + the 1 still-
+      // errored local placeholder (rowId 4, "epsilon-failed") kept for
+      // retry. The old bug left a 6th phantom blank row (rowId 3's
+      // committed placeholder, never reconciled) sitting alongside it.
+      expect(grid.getDisplayedRowCount()).toBe(5);
+      const names: string[] = [];
+      grid.forEachNode((node) => {
+        if (node.data) names.push(node.data.name as string);
+      });
+      expect(names.sort()).toEqual([
+        "alpha",
+        "beta",
+        "delta-committed",
+        "epsilon-failed",
+        "gamma",
+      ]);
+
+      // The still-pending errored row must still be recognized as a
+      // dirty new-row (retry banner / vsdb-row-new styling depend on
+      // this) with its typed value intact.
+      expect(editState.isRowNew(4)).toBe(true);
+      const snap = editState.snapshot();
+      const row4Edits = snap.filter((s) => s.rowId === 4);
+      expect(row4Edits).toHaveLength(2);
+      const cellEdit = row4Edits.find((s) => s.colIndex === 1);
+      expect(cellEdit!.value).toBe("epsilon-failed");
     },
   );
 });

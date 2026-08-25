@@ -122,7 +122,31 @@ export class AcpProcess {
       args.push("--cwd", this.opts.cwd);
     }
 
-    const child = this.spawnFn(ompPath, args, {
+    const isWin32 = process.platform === "win32";
+    // Review Finding 1 (fix round 2): with `shell: true` on win32, Node
+    // composes `cmd /d /s /c "<command> <arg1> <arg2> ...>"` by plain
+    // SPACE-JOINING `command` + `args` — it does NOT quote each token for
+    // cmd.exe (see lib/internal/child_process.js normalizeSpawnArguments).
+    // Two consequences: an install path with spaces (`C:\Program
+    // Files\...\omp.cmd`) splits into multiple cmd.exe tokens and fails to
+    // spawn; a workspace cwd containing a cmd.exe metacharacter (e.g. `&`)
+    // is parsed by cmd.exe as a command separator, i.e. arbitrary command
+    // execution at session start. Node's own outer quote-wrap doesn't save
+    // us: because `/s` is also passed, cmd.exe's own /c handling falls into
+    // its documented fallback ("strip the first char if it's a quote, and
+    // remove the LAST quote character on the line") — which, with no other
+    // quotes in the composed string, just strips the two outer quotes Node
+    // added and hands the unprotected text straight to cmd.exe's parser.
+    // Quoting every token ourselves (mirroring `quoteForShell` in
+    // detect.ts, but always-on since cmd.exe metacharacters need
+    // neutralizing, not just whitespace) keeps our quotes intact through
+    // that same strip-first-and-last-char step, so cmd.exe sees each
+    // token as one already-quoted unit. No-op on macOS/Linux (shell stays
+    // false there; omp is a real executable on those platforms).
+    const spawnCommand = isWin32 ? quoteForCmdExe(ompPath) : ompPath;
+    const spawnArgs = isWin32 ? args.map(quoteForCmdExe) : args;
+
+    const child = this.spawnFn(spawnCommand, spawnArgs, {
       // Pipe stdin/stdout/stderr so AcpClient can talk NDJSON to the child.
       stdio: ["pipe", "pipe", "pipe"],
       cwd: this.opts.cwd,
@@ -133,7 +157,7 @@ export class AcpProcess {
       // ENOENT despite detectOmp() reporting omp usable. No-op on
       // macOS/Linux (spawnFn's default is already effectively `shell:
       // false` there and omp is a real executable on those platforms).
-      shell: process.platform === "win32",
+      shell: isWin32,
     });
     const spawnLike: ChildLike = {
       stdin: child.stdin,
@@ -297,6 +321,18 @@ function attachStderrTail(err: unknown, tail: string): Error {
   }
   (base as Error & { stderrTail?: string }).stderrTail = tail;
   return base;
+}
+
+/**
+ * Review Finding 1 (fix round 2): quote a single argv token so it survives
+ * cmd.exe's `/d /s /c "<command> <args...>"` re-parse as one unit, even when
+ * it contains a space or a cmd.exe metacharacter (`&`, `|`, `<`, `>`, etc).
+ * Always wraps in quotes (unlike detect.ts's `quoteForShell`, which only
+ * quotes on whitespace) because metacharacters — not just spaces — must be
+ * neutralized here. See the call site for the full cmd.exe quoting analysis.
+ */
+function quoteForCmdExe(value: string): string {
+  return `"${value.replace(/"/g, '\\"')}"`;
 }
 
 function defaultExecFn(cmd: string): Promise<string> {
