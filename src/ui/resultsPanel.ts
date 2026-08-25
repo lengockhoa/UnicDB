@@ -73,6 +73,13 @@ export class ResultsPanel {
   private panel: vscode.WebviewPanel | null = null;
   private disposables: vscode.Disposable[] = [];
   private header: string = "";
+  /** TASK-007 — table identity extracted from a browse header
+   *  ("Browse <schema>.<table> at <ISO>", built by browseCommands) and
+   *  attached as the per-statement `label` in every outgoing state message
+   *  so the webview's result tabs show the table name instead of
+   *  "Statement N". Null for non-browse headers (editor runs etc.) — those
+   *  keep the generic tab title. */
+  private browseLabel: string | null = null;
   private lastResults: StatementResult[] = [];
   private busy: boolean = false;
   /** Host-derived (schema?, table) per statement index, populated by
@@ -129,6 +136,11 @@ export class ResultsPanel {
     // requery, saveEdits refresh, ready) sent an empty header and the query
     // duration/title was always blank.
     this.header = header;
+    // TASK-007 — browse headers carry the table identity; mine it once per
+    // render so every later state post (loadMore / requery / save refresh /
+    // ready) re-applies the same label without the caller threading it.
+    const browseMatch = /^Browse (.+) at /.exec(header);
+    this.browseLabel = browseMatch ? browseMatch[1] : null;
     this.lastResults = results;
     // Derive (schema?, table) per statement FROM the parsed SQL — host-side
     // truth. The webview's tableName/pkColumns message is IGNORED (Fix R1
@@ -183,6 +195,17 @@ export class ResultsPanel {
 
   // ---- Private -------------------------------------------------------------
 
+  /**
+   * TASK-007 — attach the browse-derived tab label to a statement that does
+   * not carry one. `sanitizeStatementResult` spreads the result, so the
+   * label survives sanitization; statements that already have a `label`
+   * (even an explicit empty one) are passed through untouched.
+   */
+  private withBrowseLabel(r: StatementResult): StatementResult {
+    if (!this.browseLabel || r.label !== undefined) return r;
+    return { ...r, label: this.browseLabel };
+  }
+
   private postMessage(msg: HostMessage): void {
     if (!this.panel) return;
     // IMPORTANT #5 (fix round 1): sanitize rows trước khi postMessage.
@@ -191,7 +214,7 @@ export class ResultsPanel {
     if (msg.type === "state") {
       payload = {
         ...msg,
-        results: msg.results.map((r) => sanitizeStatementResult(r)),
+        results: msg.results.map((r) => sanitizeStatementResult(this.withBrowseLabel(r))),
       };
     }
     // Catch rejection (BigInt slip-through, internal errors) — surface to user.

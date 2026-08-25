@@ -38,6 +38,13 @@ export interface StatementResult {
   batched?: BatchedQuery;
   error?: string;
   durationMs: number;
+  /**
+   * TASK-007 — optional per-statement tab label (e.g. "public.users" when
+   * browsing table data via the schema tree). The webview's result tab
+   * shows this instead of the generic "Statement N" title. Absent or
+   * empty → the webview falls back to "Statement N".
+   */
+  label?: string;
 }
 
 export interface QueryRunnerOptions {

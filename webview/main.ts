@@ -111,6 +111,9 @@ interface StatementResult {
   batched?: boolean;
   error?: string;
   durationMs: number;
+  /** TASK-007 — per-table tab label (e.g. "public.users" from a schema-tree
+   *  browse). Absent/empty → "Statement N" fallback. */
+  label?: string;
 }
 type RequeryMsg = {
   type: "requery";
@@ -926,6 +929,24 @@ function tabBadge(r: StatementResult): string {
   return "…";
 }
 
+/** TASK-007 — max characters of a per-table tab label before truncation. */
+const TAB_LABEL_MAX = 40;
+
+/** TASK-007 — per-statement tab title. Uses `r.label` (e.g. "public.users"
+ *  set by the host when browsing table data via the schema tree) and falls
+ *  back to the generic "Statement N" when the label is absent or empty.
+ *  Labels longer than TAB_LABEL_MAX chars are truncated at exactly 40 chars
+ *  + "..." so one long table name can't blow out the tab strip. The title
+ *  is assigned via textContent (never innerHTML) so label text is always
+ *  rendered as literal text — no XSS surface. */
+function tabTitle(r: StatementResult, i: number): string {
+  const label = typeof r.label === "string" ? r.label : "";
+  if (label.length === 0) return `Statement ${i + 1}`;
+  return label.length > TAB_LABEL_MAX
+    ? label.slice(0, TAB_LABEL_MAX) + "..."
+    : label;
+}
+
 function rebuildTabs(tabsEl: HTMLDivElement): void {
   tabsEl.innerHTML = "";
   results.forEach((r, i) => {
@@ -933,7 +954,7 @@ function rebuildTabs(tabsEl: HTMLDivElement): void {
     tab.className = "vsdb-tab" + (i === activeTab ? " vsdb-tab-active" : "");
     if (r.status === "error") tab.classList.add("vsdb-tab-error");
     if (r.status === "cancelled") tab.classList.add("vsdb-tab-cancelled");
-    tab.textContent = `Statement ${i + 1} ${tabBadge(r)}`;
+    tab.textContent = `${tabTitle(r, i)} ${tabBadge(r)}`;
     tab.addEventListener("click", () => {
       if (activeTab === i) return;
       activeTab = i;
