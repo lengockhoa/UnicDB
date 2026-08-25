@@ -34,7 +34,7 @@ Mọi AI (planner / executor / reviewer) đọc và ghi vào file NÀY. Không t
 ## Verification Commands
 
 ```bash
-yarn test tests/path/to/file.test.js
+npm test tests/path/to/file.test.js
 ```
 
 ## Acceptance Criteria

@@ -1,495 +1,71 @@
-# TASK-009 — Results host: ctid lookup returns rows, atomic save batch, real header, refresh after commit
+# TASK-009 -- Manual-commit mode (adapter begin/commit/rollback + UI toggle)
 
 - Status: `ready`
 - Owner: `-`
 - Reviewer: `-`
-- Parent plan: `docs/AI_HANDOFF/PLAN.md` §3.4 / §3.5 (A3, A4, A12-host, A14, A15) — §7 Global Constraints applies by reference
+- Parent plan: `docs/AI_HANDOFF/PLAN.md` section 3.9
 
 ## Goal
 
-Fix the host side of save. Today a postgres no-PK save *always* refuses, a successful save leaves
-the grid unrefreshed on batched drivers, the panel header is always blank, and a mid-batch
-failure leaves the table half-written.
-
-- **A3** — `fetchPostgresCtids` (`resultsPanel.ts:770-771`) reads `res.results[0]?.rows`, but
-  `runSql("SELECT ctid FROM …")` has no `;`, so `PostgresAdapter.runQuery` routes it to
-  `DECLARE CURSOR` and returns `{results: [], batched}` (`postgres.ts:161-168`). Every row
-  "fails" ⇒ `all_failed` ⇒ the user-visible "ctid lookup failed for every dirty row" — **and one
-  cursor is leaked per row** against a `max: 1` pool, so later queries hang until
-  `connectionTimeoutMillis`. Use `pickResult()`, which drains and closes.
-- **A4** — the post-save refresh (`:524-526`) reads `refreshed.results[0]`, `undefined` on
-  batched drivers ⇒ no `state` post and `runResult.batched` never closed (another cursor leak).
-  `handleRequery:641` already solves this with `pickResult` — reuse it.
-- **A12-host** — read `serverIndexByRowId` off the `saveEdits` message, convert
-  `Record<string, number>` → `ReadonlyMap<number, number>`, pass it to `buildSaveStatements`, and
-  **use it to key the ctid map by `rowId`** (today `fetchPostgresCtids` keys by server row index,
-  which is no longer interchangeable with `rowId`).
-- **A14** — `render()` (`:127-149`) never assigns `this.header`, so every later post
-  (`:228,245,274,569,660,704`) sends an empty header and the query duration/title is always blank.
-- **A15** — save statements run one-by-one with no transaction (`:533-540`); a partial failure
-  leaves the table half-written and unrollbackable. Wrap the batch in `BEGIN … COMMIT` with
-  `ROLLBACK` on first failure.
-
-- **A19-skip (§3.4a)** — when `buildSaveStatements` returns `ok:true` **with** `skippedRows`, the
-  host must map every entry into `SaveResultMsg.rowErrors` (`{rowId, error: reason}`,
-  `messages.ts:121`). Today those rows are reported nowhere machine-readable, so
-  `handleSaveResult`'s else-branch (`webview/main.ts:2321-2330`) runs `editState.clear()` +
-  `undoStack.clear()` and the user's edit is destroyed with no banner and no undo. The consumer
-  already exists (`clearExceptRowIds`, `webview/main.ts:2304`) — this is pure host wiring, no
-  webview change.
-
-Also pass `{ schema: parsed.schema }` into `buildSaveStatements` so TASK-001's qualification
-actually takes effect.
+Add a user-facing manual-commit mode where save operations are wrapped in explicit BEGIN/COMMIT/ROLLBACK transactions. When enabled, the user sees Commit/Rollback toolbar buttons and a transaction-state indicator in the status bar.
 
 ## Target Files
 
-- `src/ui/resultsPanel.ts`
-- `src/ui/__tests__/resultsPanelSaveEdits.test.ts`
-- `src/ui/__tests__/resultsPanel.test.ts`
+- `src/config/types.ts` (existing) -- add `manualCommit?: boolean` to `ConnectionConfig`
+- `src/ui/resultsPanel.ts` (existing) -- wrap save SQL in transaction keywords when manualCommit is active; handle `commitTransaction` and `rollbackTransaction` messages
+- `src/ui/messages.ts` (existing) -- add `CommitTransactionMessage`, `RollbackTransactionMessage` (webview-to-host), `TransactionStatusMessage` (host-to-webview)
+- `webview/main.ts` (existing) -- add Commit/Rollback toolbar buttons visible only in manual-commit mode; handle `transactionStatus` message to update button state
+- `webview/styles.css` (existing) -- Commit/Rollback button styles
+- `src/ui/__tests__/manualCommit.test.ts` (new) -- unit tests
 
-## Test Cases (REQUIRED — TDD)
+## Test Cases (REQUIRED -- TDD)
 
-| Type | Name | Expected |
-|------|------|----------|
-| Happy | ctid resolve | fake adapter returns the **batched** shape for a single `SELECT` without `;` ⇒ map has one entry per matched row, keyed by `rowId` |
-| Happy | atomic batch | 2 statements ⇒ exactly one `BEGIN`, both statements, one `COMMIT`; `saveResult {ok:true}` |
-| Happy | header | after `render(results, "Browse x at T")`, the next post carries `header === "Browse x at T"` |
-| Edge (resource) | 3 dirty rows | every opened cursor is closed — assert the fake's open/close counts are equal (today: 3 opens, 0 closes) |
-| Edge (failure/rollback) | statement 2 throws | `ROLLBACK` issued, no `COMMIT`, `saveResult {ok:false}` with the error, rows stay dirty |
-| Edge (ambiguity) | two identical rows | `{ok:false, reason:"ambiguous_only"}` banner copy unchanged |
-| Edge (remap) | message carries `serverIndexByRowId: {"4":3}` | `buildSaveStatements` receives a `Map([[4,3]])` **and** `ctidByRowId` keyed by rowId `4` |
-| Edge (absent field) | message without `serverIndexByRowId` | identical behavior to today (back-compat with an older webview) |
-| Edge (partial success) | builder returns `ok:true`, 1 statement, `skippedRows:[{rowId:7,reason:"no server row for UPDATE"}]` | posted `saveResult` has `ok:true` **and** `rowErrors === [{rowId:7, error:"no server row for UPDATE"}]`, so the webview keeps row 7 dirty |
-| Edge (nothing skipped) | builder returns `ok:true`, `skippedRows` absent | `rowErrors` is absent/empty — a full success must not produce a phantom dirty row |
-| R (A19-skip) | 2 dirty rows, row 7 skipped by the builder | today `saveResult` carries no `rowErrors`, the webview hits `editState.clear()` and row 7's edit is silently lost; after fix it stays dirty and the banner names it |
-| R (A3) | corrected batched fake | today `all_failed` + N leaked cursors |
-| R (A4) | post-save refresh on a batched driver | today no `state` posted at all |
-| R (A14) | any post after `render()` | today `header === ""` |
-| R (A15) | mid-batch failure | today statement 1 is committed and unrecoverable |
+| # | Loai | Ten test | Expected | Pre-state / Fixture |
+|---|------|----------|----------|---------------------|
+| 1 | unit | `manualCommit wraps save in BEGIN/COMMIT` | SQL wrapped in `BEGIN TRANSACTION; ...; COMMIT TRANSACTION;` | Connection with manualCommit=true |
+| 2 | unit | `manualCommit off produces bare SQL` | No transaction wrapping | Connection with manualCommit=false (default) |
+| 3 | unit | `rollback sends ROLLBACK TRANSACTION` | `ROLLBACK TRANSACTION` SQL sent to adapter | Rollback button clicked |
+| 4 | unit | `transactionStatus message shows open state` | Webview receives `{type:"transactionStatus", open:true}` | Transaction opened |
+| 5 | edge | `Commit button hidden when manualCommit is off` | Button not in DOM | Default connection config |
+| 6 | edge | `Rollback on failed statement sends ROLLBACK before error` | `ROLLBACK TRANSACTION` sent, then error response | Statement fails mid-transaction |
+| 7 | edge | `transactionStatus open:false after commit` | Webview receives `{type:"transactionStatus", open:false}` | Commit completed |
 
 ## Test Files
 
-- `src/ui/__tests__/resultsPanelSaveEdits.test.ts` (**fix the fake first** — it currently returns
-  `{results:[{…}]}` unconditionally, which is why A3 was invisible; it must mirror
-  `PostgresAdapter.runQuery`: a single `SELECT` with no `;` ⇒ `{results: [], batched}`)
-- `src/ui/__tests__/resultsPanel.test.ts` (extend — header, transaction framing)
+- `src/ui/__tests__/manualCommit.test.ts` (new)
 
 ## Verification Commands
 
 ```bash
+npm test src/ui/__tests__/manualCommit.test.ts
+npm test
 npm run typecheck
-npm test -- src/ui/__tests__/resultsPanelSaveEdits.test.ts
-npm test -- src/ui/__tests__/resultsPanel.test.ts
-npm test -- src/ui/__tests__/resultsPanelRequery.test.ts
-npm test -- src/adapters/__tests__/saveStatements.test.ts
-npm test -- src/ui/__tests__/browseCommands.test.ts
 ```
 
 ## Acceptance Criteria
 
-- [ ] All 15 cases pass; each regression case confirmed failing on `main` first (output in report).
-- [ ] **No silently-skipped row (§3.4a):** every `skippedRows` entry from `buildSaveStatements` is
-      forwarded as a `rowErrors` entry on the posted `saveResult`. Concretely — a save where the
-      builder returns `ok:true` with a non-empty `skippedRows` MUST NOT reach the webview without
-      `rowErrors`, because that path clears the user's edit as if it had been saved.
-- [ ] **Fake correction is explicit:** the report states that the `runSql` fake in
-      `resultsPanelSaveEdits.test.ts` now mirrors the real adapter contract (batched shape for a
-      single `SELECT` without `;`) and that the A3 regression was observed failing against the
-      corrected fake. Without this the regression test is worthless.
-- [ ] No `\.results\[0\]` remains in `src/ui/resultsPanel.ts` — every run-result read goes through
-      `pickResult`.
-- [ ] Save statements execute as one transaction; `ROLLBACK` on the first failure; no `COMMIT`
-      after a failure.
-- [ ] `this.header` is assigned in `render()` and every subsequent post carries it.
-- [ ] `buildSaveStatements` is called with `{ schema: parsed.schema, serverIndexByRowId, ctidByRowId }`.
-- [ ] The host still ignores webview-supplied `tableName` / `pkColumns` (§7) — `serverIndexByRowId`
-      is an index remap only and never widens what the host will address.
-- [ ] `npm run typecheck` clean.
+- [ ] `manualCommit` field exists on ConnectionConfig (defaults to false)
+- [ ] When manualCommit=true, save operations wrapped in BEGIN/COMMIT
+- [ ] Commit button visible only when manualCommit is active and transaction is open
+- [ ] Rollback button visible only when manualCommit is active and transaction is open
+- [ ] Clicking Commit sends `commitTransaction` message; host commits and clears state
+- [ ] Clicking Rollback sends `rollbackTransaction` message; host rolls back
+- [ ] Status bar shows transaction-open indicator when manual-commit is active
+- [ ] Existing save behavior (manualCommit=false) unchanged
+- [ ] All existing tests still pass
+- [ ] `npm run typecheck` clean
 
 ## Dependencies
 
-- TASK-001 (`SaveStatementsOptions.schema` / `.serverIndexByRowId` and `SaveStatementsOk.skippedRows`
-  must exist to compile)
-- TASK-002 (`SaveEditsMessage.serverIndexByRowId` must exist on the message type)
+- TASK-007 (same-file collision on webview/main.ts, webview/styles.css, src/ui/resultsPanel.ts, src/ui/messages.ts -- TASK-009 depends on TASK-007 to avoid same-wave collision)
 
 ## Interfaces
 
-- Consumes:
-
-```ts
-// TASK-001 — src/core/saveStatements.ts
-export interface SaveStatementsOptions {
-  ctidByRowId?: ReadonlyMap<number, string>;      // KEYED BY rowId
-  serverIndexByRowId?: ReadonlyMap<number, number>;
-  schema?: string;
-}
-export interface SaveStatementsOk {
-  ok: true; statements: string[]; warnings: string[];
-  skippedRows?: ReadonlyArray<{ rowId: number; reason: string }>;   // NEW — forward to rowErrors
-}
-export function buildSaveStatements(
-  dialect: Dialect, tableName: string, pkColumns: string[], columns: string[],
-  edits: EditEntry[], serverRows: unknown[][], options?: SaveStatementsOptions,
-): SaveStatementsResult;
-
-// TASK-002 — src/ui/messages.ts
-export interface SaveEditsMessage {
-  type: "saveEdits"; index: number;
-  edits: Array<{ rowId: number; colIndex: number; value: unknown }>;
-  tableName: string | null; pkColumns: string[];
-  serverIndexByRowId?: Record<string, number>;
-}
-
-// existing — src/core/queryRunner.ts:402
-export async function pickResult(runResult: RunResult): Promise<QueryResult>;
-
-// existing, UNCHANGED — src/ui/messages.ts:121 (already consumed by the webview's
-// clearExceptRowIds at webview/main.ts:2304; no webview edit needed for A19-skip)
-rowErrors?: Array<{ rowId: number; error: string }>;
-```
-
-- Produces: `(none)` — no new exported API; behavior only.
+- Consumes: `ConnectionConfig` from `src/config/types.ts` (existing), `transactionKeywords()` from `src/ui/resultsPanel.ts` (existing, private -- may need to export or move), `SaveContext` interface from `src/ui/resultsPanel.ts` (existing)
+- Produces: `CommitTransactionMessage`, `RollbackTransactionMessage`, `TransactionStatusMessage` in messages.ts; Commit/Rollback buttons in webview toolbar; `manualCommit?: boolean` in ConnectionConfig
 
 ---
 
 ## Discussion
 
-### 2026-08-25 · planner · claude-opus-5
-
-**Stale-inventory note:** A1/A2 (the `__vsdb_browse__` ctid subquery wrap) and A18 no longer exist
-at HEAD — cycle S (`8b58f24`) removed them. `parseFromClause` now receives plain
-`SELECT * FROM "s"."t"` and resolves, so "statement #0 has no addressable table" is already gone.
-Do not re-introduce a browse-time ctid wrap; the lazy save-time resolver is the shipped design.
-
-**ctid key change is the subtle part.** `fetchPostgresCtids` currently does `map.set(i, …)` where
-`i` is the index into `serverRows`, and `buildSaveStatements` looks up by `rowId`. Those were
-accidentally equal before A12; they are not equal after it. Translate inside the panel
-(`rowId → serverIndex` forward, `serverIndex → rowId` when populating the map) and assert it —
-getting this backwards produces a *silent wrong-row update*, the worst failure mode in this file.
-
-**Transaction shape:** send `BEGIN`, the statements, and `COMMIT` through the existing
-`runner.runSql` path in a single call so the `max: 1` pool keeps one session. Issuing them as
-separate `runSql` calls does not guarantee the same connection and would make the rollback a lie.
-
----
-
-## Executor Report
-
-### 2026-08-25 · executor · claude-sonnet-5
-
-- EXECUTOR_TOOL: claude-code
-- EXECUTOR_MODEL: claude-sonnet-5
-- EXECUTOR_SUBAGENT: -
-- STATUS: DONE
-
-**SUMMARY:** Fixed A3 (batched-cursor leak in `fetchPostgresCtids`), A4 (post-save refresh
-never posted state on a batched driver), A12-host (ctid map + `serverIndexByRowId` now keyed
-by `rowId`, not server-row-loop-index), A14 (`this.header` was never assigned in `render()`),
-A15 (save statements now run as one atomic `BEGIN…COMMIT` combined `runSql` call, with
-`ROLLBACK` on first failure), and A19-skip (`buildSaveStatements`' `skippedRows` is now
-forwarded as `SaveResultMessage.rowErrors`). Also wired `schema` + `serverIndexByRowId` +
-`ctidByRowId` into every `buildSaveStatements` call, and switched the post-commit refresh /
-ctid-lookup reads to `pickResult()` (mirroring `handleRequery`'s existing pattern) so no
-`.results[0]` remains in `resultsPanel.ts`.
-
-**Fake correction (explicit, per acceptance criteria):** `makeRecordingRunner` in
-`resultsPanelSaveEdits.test.ts` previously returned `{results:[{...}]}` unconditionally for
-every `runSql` call, regardless of SQL shape — this is why A3 (`res.results[0]?.rows` against a
-batched `{results:[], batched}` response) was invisible in the suite. It now mirrors
-`PostgresAdapter.runQuery` / `shouldUseCursor`: a single `SELECT`/`WITH` statement with no `;`
-boundary returns the batched cursor shape (`{results:[], batched:{fetchBatch,close,...}}`);
-anything else (multi-statement text, e.g. the new `BEGIN;...;COMMIT;` transaction envelope, or
-a non-SELECT) returns `{results:[...]}`. A new `makeBatchAwareRunner` helper (built on the same
-`isSingleSelectNoSemicolon` routing rule) drives the new batched-fake tests and tracks
-open/close counts. The A3 regression was observed FAILING against this corrected fake on the
-pre-fix baseline (see RED output below — "ctid resolve via CORRECTED batched fake" test).
-
-**TEST_PLAN_FOLLOWED:** task §"Test Cases (REQUIRED — TDD)" — all 15 rows implemented as
-listed; several rows share one test where the underlying mechanism is identical (documented
-below).
-
-**FILES_CHANGED:**
-- `src/ui/resultsPanel.ts`: `render()` now assigns `this.header`; `handleMessage`'s `saveEdits`
-  case forwards `msg.serverIndexByRowId`; `handleSaveEdits` gained a 5th param
-  (`serverIndexByRowId?`), builds a `Map<number,number>` from it, narrows ctid-resolution to
-  only the rowIds that actually need one (excluding pure `__vsdb_new_row__` inserts), always
-  passes `{ schema, serverIndexByRowId, ctidByRowId }` to `buildSaveStatements`, runs the whole
-  statement batch as one combined `runner.runSql(BEGIN;...;COMMIT;)` call (dialect-aware
-  keywords via new `transactionKeywords()` — plain `BEGIN/COMMIT/ROLLBACK` for
-  postgres/mysql, `BEGIN/COMMIT/ROLLBACK TRANSACTION` for mssql), issues a best-effort separate
-  `ROLLBACK` call on failure, refreshes via `pickResult()` + `runner.adopt()` (mirroring
-  `handleRequery`), and forwards `built.skippedRows` as `rowErrors` on the `ok:true` ack.
-  `fetchPostgresCtids` was redesigned to accept `rowIds: number[]` +
-  `resolveServerIndex(rowId): number` instead of looping every `serverRows` index, uses
-  `pickResult()` to read the (possibly batched) SELECT, and closes `res.batched` in a `finally`
-  best-effort block; the result map is keyed by `rowId`.
-- `src/ui/__tests__/resultsPanelSaveEdits.test.ts`: fixed `makeRecordingRunner`'s fake to
-  correctly route single-SELECT-no-semicolon SQL through the batched shape (`isSingleSelectNoSemicolon`
-  helper); rewrote the old per-statement "partial failure" describe block into
-  "partial failure / atomic batch (A15)" asserting single-combined-call transaction semantics;
-  extended `saveResultAcks()`/added `stateMessages()` helpers; added a `makeBatchAwareRunner`
-  helper and 8 new describe blocks (ctid-resolve-via-batched-fake, resource open/close-count,
-  atomic-batch happy path, A12 remap, absent-`serverIndexByRowId` back-compat, skippedRows→
-  rowErrors, full-success-has-no-phantom-rowErrors, post-save refresh on a batched driver).
-- `src/ui/__tests__/resultsPanel.test.ts`: added a "header (A14)" describe block asserting the
-  `render()` post AND a later `"ready"`-handshake post both carry the real header, not `""`.
-
-**TESTS_ADDED:**
-- `resultsPanelSaveEdits.test.ts`:
-  - "ResultsPanel — partial failure / atomic batch (A15)" — atomic rollback on 2nd-statement failure (Edge failure/rollback; R-A15)
-  - "ResultsPanel — ctid resolve via CORRECTED batched fake (Happy + R-A3)" — batched shape, keyed by rowId, cursor closed
-  - "ResultsPanel — resource cleanup, 3 dirty rows (Edge — resource)" — open/close counts
-  - "ResultsPanel — atomic batch happy path (Happy — atomic batch)" — exactly one BEGIN…COMMIT call, 2 statements, ok:true
-  - "ResultsPanel — A12 remap via serverIndexByRowId (Edge — remap)" — `{"4":3}` resolves serverRows[3] not serverRows[4]
-  - "ResultsPanel — no serverIndexByRowId field (Edge — absent field, back-compat)"
-  - "ResultsPanel — skippedRows → rowErrors (Edge partial success / R A19-skip)"
-  - "ResultsPanel — full success has no phantom rowErrors (Edge — nothing skipped)"
-  - "ResultsPanel — post-save refresh on a batched driver (R-A4)"
-- `resultsPanel.test.ts`:
-  - "ResultsPanel — header (A14)" — render() post + later "ready" post both carry the real header (Happy — header; R-A14)
-- Ambiguity case (`{ok:false, reason:"ambiguous_only"}`) and A3-original-invisible/A3-leak-count
-  were already exercised by the pre-existing "fetchPostgresCtids correctness (important #1)"
-  describe block once the fake was corrected — no separate new test needed; verified still
-  green above.
-
-**RED_OUTPUT (captured against the pre-fix baseline, restored via `git show HEAD:src/ui/resultsPanel.ts`
-then swapped back after capture — no `git stash`/`checkout`/`commit` used):**
-
-```
- ❯ src/ui/__tests__/resultsPanelSaveEdits.test.ts  (22 tests | 7 failed) 16ms
-   ❯ ResultsPanel — partial failure / atomic batch (A15) > first UPDATE ok, second throws → ...
-     → expected true to be false // Object.is equality
-   ❯ ResultsPanel — ctid resolve via CORRECTED batched fake (Happy + R-A3) > ctid SELECT returns the batched shape ...
-     → expected [ …(2) ] to have a length of 1 but got 2
-   ❯ ResultsPanel — resource cleanup, 3 dirty rows (Edge — resource) > 3 dirty rows needing ctid ...
-     → expected 3 to be 4 // Object.is equality
-   ❯ ResultsPanel — atomic batch happy path (Happy — atomic batch) > 2 statements ⇒ exactly ONE BEGIN…COMMIT call ...
-     → expected [] to have a length of 1 but got +0
-   ❯ ResultsPanel — A12 remap via serverIndexByRowId (Edge — remap) > message carries serverIndexByRowId: {"4":3} ...
-     → expected 'SELECT ctid FROM "t" WHERE "name" IS …' to match /'target'/
-   ❯ ResultsPanel — skippedRows → rowErrors (Edge partial success / R A19-skip) > 1 row updates, 1 row (rowId 7) ...
-     → expected undefined not to be undefined
-   ❯ ResultsPanel — post-save refresh on a batched driver (R-A4) > refresh SQL is a single SELECT (batched) ...
-     → expected [ [ 1, 'alice' ] ] to deeply equal [ [ 1, 'alice-2' ] ]
- ❯ src/ui/__tests__/resultsPanel.test.ts  (16 tests | 1 failed) 19ms
-   ❯ ResultsPanel — header (A14) > render(results, "Browse x at T") → ... carry that header, not blank
-     → expected '' to be 'Browse x at T' // Object.is equality
-
- Test Files  2 failed (2)
-      Tests  8 failed | 30 passed (38)
-```
-
-Each failure matches the task's stated regression exactly: A15 (`ok` was `true` — statement 1
-silently committed), A3 (2 ctid-lookup calls instead of the batched fake's 1 — meaning the
-resolver never even reached the "closed" bookkeeping the corrected fake models), resource
-open/close mismatch, atomic-batch call never combined (`[]` — zero `BEGIN` calls recorded), A12
-remap read the wrong row (`'a'` instead of `'target'`), A19-skip `rowErrors` was `undefined`,
-A4 refresh rows stayed stale (`'alice'` not `'alice-2'`), A14 header was `''`.
-
-**VERIFICATION (all 6 commands, run fresh after restoring the fix):**
-
-```
-$ npm run typecheck
-> tsc --noEmit
-(clean, exit 0)
-
-$ npm test -- src/ui/__tests__/resultsPanelSaveEdits.test.ts
- ✓ src/ui/__tests__/resultsPanelSaveEdits.test.ts  (22 tests) 10ms
- Test Files  1 passed (1)
-      Tests  22 passed (22)
-
-$ npm test -- src/ui/__tests__/resultsPanel.test.ts
- ✓ src/ui/__tests__/resultsPanel.test.ts  (16 tests) 15ms
- Test Files  1 passed (1)
-      Tests  16 passed (16)
-
-$ npm test -- src/ui/__tests__/resultsPanelRequery.test.ts
- ✓ src/ui/__tests__/resultsPanelRequery.test.ts  (10 tests) 5ms
- Test Files  1 passed (1)
-      Tests  10 passed (10)
-
-$ npm test -- src/adapters/__tests__/saveStatements.test.ts
- ✓ src/adapters/__tests__/saveStatements.test.ts  (23 tests) 7ms
- Test Files  1 passed (1)
-      Tests  23 passed (23)
-
-$ npm test -- src/ui/__tests__/browseCommands.test.ts
- ✓ src/ui/__tests__/browseCommands.test.ts  (16 tests) 5ms
- Test Files  1 passed (1)
-      Tests  16 passed (16)
-```
-
-**Full-suite regression check (`npm run compile` once, then `npm test`):**
-
-```
- Test Files  84 passed | 1 skipped (85)
-      Tests  1167 passed | 2 skipped (1169)
-```
-
-vs. wave-1 baseline (1158 passed / 2 skipped / 84 files) — net +9 new tests (8 in
-`resultsPanelSaveEdits.test.ts`, 1 in `resultsPanel.test.ts`), zero regressions, zero new
-skips.
-
-**ISSUES:** none. One design decision made without a human to ask (per Handoff-mode autonomy
-rule): dialect-aware transaction keywords — postgres/mysql use plain `BEGIN`/`COMMIT`/`ROLLBACK`;
-mssql uses `BEGIN TRANSACTION`/`COMMIT TRANSACTION`/`ROLLBACK TRANSACTION` because plain `BEGIN`
-in T-SQL is block syntax, not transaction syntax. No test case in the task's required 15
-specifically exercises the mssql keyword branch (none of the 15 rows call for it), so this
-branch is defensive/untested-by-name here — it reuses the same `runner.runSql` combined-call
-path already covered for postgres, and `src/adapters/__tests__/saveStatements.test.ts` (owned
-by TASK-001, unmodified) already covers mssql identifier quoting independently.
-
-**HANDOFF_TO_REVIEWER:** yes — `handoff.reviewer.enabled` per `.ukit/storage/config.json`;
-task status will be set to `pending_review` in `docs/AI_HANDOFF/INDEX.md` by the orchestrator
-per the standard wave pipeline (this executor does not edit `INDEX.md` per task instructions).
-
-**NEXT:** ready for review.
-
----
-
-## Executor Report (fix round — review findings, cycle T)
-
-STATUS: DONE
-EXECUTOR_TOOL: claude-code
-EXECUTOR_MODEL: claude-sonnet-5
-EXECUTOR_SUBAGENT: -
-SUMMARY: Fixed all 6 CRITICAL/IMPORTANT findings from the cycle-T opus review of the
-save/grid cluster (Add Row data loss, no-PK postgres insert-only refusal + orphan cell
-edits, MySQL `DEFAULT VALUES` syntax, phantom placeholder row after post-commit refresh,
-saveResult/state message ordering, and one-bad-row ctid-probe abort) with a RED-confirmed
-regression test per finding.
-
-TEST_PLAN_FOLLOWED: inline — task instructions required a RED-before-fix regression test
-per finding; no pre-existing Test Plan section for this fix round.
-
-FILES_CHANGED:
-  - src/core/saveStatements.ts: (Finding 1) build `cellEditsByRow` map and overlay
-    ordinary cell edits onto a copy of the insert marker's `values` array before
-    building the INSERT's column/value lists, so typed cell values on a newly-added
-    row are no longer silently discarded. (Finding 3) branch `INSERT INTO t DEFAULT
-    VALUES` vs `INSERT INTO t () VALUES ()` by dialect (mysql uses the latter — the
-    former is invalid MySQL syntax).
-  - src/ui/resultsPanel.ts: (Finding 2) `handleSaveEdits`'s `rowIdsNeedingCtid`
-    computation now excludes every edit sharing a rowId with an insert marker (not
-    just the marker entry itself), so an Add Row's ordinary cell edits on a no-PK
-    postgres table no longer push that rowId into the ctid lookup and trigger
-    `all_failed`. `fetchPostgresCtids` now tracks `anyAttempted` and returns
-    `{ok:true}` (not `all_failed`) when no rowId in the batch had a resolvable
-    server row — "nothing to look up" is not a failure. (Finding 5) `saveResult` is
-    now posted BEFORE the refreshed `state` message in the post-commit success path
-    (previously state posted first, so on a row-count-changing batch the webview's
-    `isReset` branch wiped editState/undoStack before `clearExceptRowIds` could act
-    on saveResult's rowErrors). (Finding 6) `fetchPostgresCtids`'s try/catch now
-    wraps only a single row's probe body instead of the entire for-loop, so one
-    row's exception (e.g. a column type with no equality operator) no longer aborts
-    ctid probing for every remaining row in the batch.
-  - webview/main.ts: (Finding 2, second half) `applyUndoAction`'s add-row undo
-    branch now also clears every column's cell edit for the removed row (previously
-    only cleared the insert marker at `MARKER_COL_INSERT`, leaving orphan cell
-    edits keyed to a row that no longer exists). (Finding 4) `renderGrid()` gains a
-    new branch — `rowsGrew && newRowCount > 0 && editState.dirtyCount === 0` — that
-    does a full rowData rebuild (matching the existing isReset-branch pattern:
-    reset editState/undoStack/newRowCount/highestAllocatedId/serverIndexByRowId)
-    instead of an append-delta, when growth is attributable to already-committed
-    local rows (dirtyCount===0 rules out the legitimate "Add Row while a batched
-    query is still streaming in more rows" case, where the added row is still
-    dirty/uncommitted) — this removes the phantom placeholder row left behind by a
-    post-commit refresh and correctly resets newRowCount.
-
-TESTS_ADDED:
-  - src/adapters/__tests__/saveStatements.test.ts: `buildSaveStatements — Add Row
-    cell edits merge into the INSERT (Finding 1, cycle T)` (2 tests: single-cell and
-    two-different-cells merge); `buildSaveStatements — dialect-aware all-DEFAULT
-    insert (Finding 3, cycle T)` (3 tests: mysql `() VALUES ()`, postgres/mssql
-    unaffected `DEFAULT VALUES`).
-  - src/ui/__tests__/resultsPanelSaveEdits.test.ts: `ResultsPanel — Add Row on no-PK
-    postgres never triggers a ctid lookup (Finding 2, cycle T)`; `ResultsPanel —
-    saveResult acks BEFORE the post-commit refresh state (Finding 5, cycle T)`;
-    `ResultsPanel — one throwing ctid probe does not poison the rest of the batch
-    (Finding 6, cycle T)` (1 test each).
-  - src/ui/__tests__/webviewCommitRefresh.test.ts: `Finding 4. Add Row -> commit ->
-    post-commit refresh grows row count ⇒ no phantom placeholder row survives` (bundle-
-    eval harness: addRow → simulateCellEdit → commit → saveResult ok:true → state with
-    grown rows; asserts `getDisplayedRowCount()===4`, not a phantom 5, and correct
-    row contents).
-
-RED confirmed (pasted output, pre-fix):
-```
-$ npx vitest run src/adapters/__tests__/saveStatements.test.ts
- ❯ buildSaveStatements — Add Row cell edits merge into the INSERT (Finding 1, cycle T)
-     × merges a single cell edit into the insert marker's values before building INSERT
-     × merges edits on two different columns into the same insert row
- ❯ buildSaveStatements — dialect-aware all-DEFAULT insert (Finding 3, cycle T)
-     × mysql: all-DEFAULT insert uses INSERT INTO t () VALUES () (DEFAULT VALUES is invalid MySQL)
- Test Files  1 failed (1)
-      Tests  3 failed | 25 passed (28)
-
-$ npx vitest run src/ui/__tests__/resultsPanelSaveEdits.test.ts
- ❯ ResultsPanel — Add Row on no-PK postgres never triggers a ctid lookup (Finding 2, cycle T)
-     × Add Row's cell edits do not push its rowId into a ctid probe / insert still saves
-       → ins is undefined (whole batch refused all_failed before the fix)
- ❯ ResultsPanel — saveResult acks BEFORE the post-commit refresh state (Finding 5, cycle T)
-     × message order: saveResult is posted strictly before the refreshed state message
-       → expected 2 to be less than 1
- ❯ ResultsPanel — one throwing ctid probe does not poison the rest of the batch (Finding 6, cycle T)
-     × row 1 still saves despite row 0's ctid probe throwing
-       → successAck is undefined (whole loop aborted on row 0's throw)
- Test Files  1 failed (1)
-      Tests  3 failed | 22 passed (25)
-
-$ npx vitest run src/ui/__tests__/webviewCommitRefresh.test.ts -t "Finding 4"
- ❯ Finding 4. Add Row -> commit -> post-commit refresh grows row count ⇒ no phantom placeholder row survives
-     × expected 5 to be 4 // Object.is equality
- Test Files  1 failed (1)
-      Tests  1 failed | 12 skipped (13)
-```
-(Finding 4's RED was confirmed "for free" — the regression test was written and run
-against the not-yet-recompiled `dist/webview.js`, which still reflected pre-fix source,
-before `npm run compile` was re-run to bake in the webview/main.ts fix.)
-
-GREEN confirmed (all fixes applied, `npm run compile` re-run once to refresh
-`dist/webview.js`):
-
-VERIFICATION:
-  command: npx vitest run src/adapters/__tests__/saveStatements.test.ts src/adapters/__tests__/saveStatementsInline.test.ts src/adapters/__tests__/saveStatementsQualify.test.ts src/adapters/__tests__/saveStatementsParser.test.ts
-  result: 66 passed / 0 failed
-  command: npx vitest run src/ui/__tests__/resultsPanelSaveEdits.test.ts
-  result: 25 passed / 0 failed
-  command: npx vitest run src/ui/__tests__/webviewCommitRefresh.test.ts src/ui/__tests__/webviewEdit.test.ts
-  result: 28 passed / 0 failed (confirms Finding 4's fix does not regress the R2-B/R3-A
-    legitimate "Add Row during streaming" scenarios — the `dirtyCount === 0` guard is
-    what keeps those on the append-delta path)
-  command: npm test
-  result: 85 files passed, 1 skipped (86) / 1205 passed, 2 skipped (1207) — vs. baseline
-    1196 passed / 2 skipped / 86 files: +9 new tests, zero regressions, zero new skips
-  command: npm run typecheck
-  result: clean, exit 0
-  output_excerpt: |
-     Test Files  85 passed | 1 skipped (86)
-          Tests  1205 passed | 2 skipped (1207)
-     Start at  11:53:43
-     Duration  7.68s
-
-     > vsdb@1.6.3 typecheck
-     > tsc --noEmit
-     (no output — clean)
-
-ISSUES: none. One design decision made without a human to ask (per Handoff-mode autonomy
-rule): Finding 2's "no server row found for any rowId in the batch" case now returns
-`{ok:true, map:empty}` instead of `all_failed` — the rationale is that `buildSaveStatements`
-already has its own per-row "no server row for this UPDATE" skip/warning path, so treating an
-empty-lookup batch as a ctid-probe failure was double-refusing the same condition at a coarser
-grain (whole-batch instead of per-row). This is consistent with the finding's explicit
-"treat 'no server row' as not-a-failure" instruction. Finding 4's fix uses a narrower trigger
-condition (`editState.dirtyCount === 0`) than the finding's literal wording might suggest,
-because a broader `rowsGrew && newRowCount > 0` condition (tried first) regressed two existing
-R2-B/R3-A tests covering the legitimate "Add Row while a batched/streaming query is still
-appending more rows" scenario — `dirtyCount === 0` is the signal that distinguishes "this
-growth is a post-commit echo of already-saved local rows" from "this growth is unrelated
-streamed content arriving while an uncommitted local row still exists."
-
-HANDOFF_TO_REVIEWER: yes — `handoff.reviewer.enabled` per `.ukit/storage/config.json`; task
-status will be set to `pending_review` by the orchestrator per the standard pipeline (this
-executor does not edit `INDEX.md`).
-
-NEXT: ready for review.
+(chua co comment)

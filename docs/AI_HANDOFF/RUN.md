@@ -1,6 +1,6 @@
 Command: handoff-fullstack
-Goal: Unbreak the VSDB core — make table edit/save actually work and make AI chat + omp usable zero-config
+Goal: Cycle U — DataGrip parity: per-table tabs, sort, NULL display, retry, autocomplete, manual-commit, MSSQL params, export fix
 Base: main
-Phase: done
-Cursor: R5 complete — 12/12 tasks done, 2 auto-fix rounds applied and independently re-verified, INDEX/ACTIVE consolidated; typecheck clean, 1259 passed / 2 skipped / 0 failed, compile clean
-Next: none — cycle T closed. Cycle U (DataGrip parity) and cycle V (SQL coloring) are queued in INDEX.md.
+Phase: P3
+Cursor: P2.5 Round 2 Approved — 9 tasks, 5 waves, all Round 1 findings fixed on disk
+Next: P3 — commit the plan, then I1 setup + wave 1 (001,002,003,004,008)
