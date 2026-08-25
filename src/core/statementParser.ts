@@ -280,15 +280,58 @@ type ConstructKind = "BLOCK" | "IF" | "CASE" | "LOOP";
  *   - Ngược lại (vd `SELECT`, `IF`, `DECLARE`...) → block thật, giữ hành vi cũ.
  */
 function isBeginTransactionControl(sql: string, afterIndex: number): boolean {
-  let j = afterIndex;
+  const j = skipWhitespaceAndComments(sql, afterIndex);
   const n = sql.length;
-  while (j < n && isWhitespace(sql[j])) j += 1;
   if (j >= n) return false;
   if (sql[j] === ";") return true;
   let k = j;
   while (k < n && isIdContinue(sql[k])) k += 1;
   const word = sql.substring(j, k).toUpperCase();
   return word === "TRANSACTION" || word === "WORK" || word === "ISOLATION";
+}
+
+/**
+ * Review fix round C, Finding #4 — shared forward-peek helper: skip
+ * whitespace AND comments (`--...\n`, `/*...*\/`) starting at `from`. Used by
+ * `isBeginTransactionControl` (was whitespace-only, so `BEGIN -- go\n;`
+ * still misclassified as a real block) and by `isEndLoopSuffix` (Finding #2).
+ */
+function skipWhitespaceAndComments(sql: string, from: number): number {
+  let j = from;
+  const n = sql.length;
+  for (;;) {
+    while (j < n && isWhitespace(sql[j])) j += 1;
+    if (sql.startsWith("--", j)) {
+      const nl = sql.indexOf("\n", j);
+      j = nl === -1 ? n : nl + 1;
+      continue;
+    }
+    if (sql.startsWith("/*", j)) {
+      const end = sql.indexOf("*/", j + 2);
+      j = end === -1 ? n : end + 2;
+      continue;
+    }
+    break;
+  }
+  return j;
+}
+
+/**
+ * Review fix round C, Finding #2 — forward-peek from right after an `END`
+ * keyword: is the NEXT word (skipping whitespace/comments) `WHILE` / `REPEAT`
+ * / `FOR`? Those loop-header keywords (C2) never push onto `constructStack`
+ * (to avoid the `SELECT ... FOR UPDATE` leak), so `END WHILE` / `END REPEAT`
+ * / `END FOR` must NOT pop the stack either — nothing was ever pushed for
+ * them to close. Only a bare `END` or `END IF` / `END CASE` / `END LOOP`
+ * (constructs that DID push) should pop.
+ */
+function isEndLoopSuffix(sql: string, afterIndex: number): boolean {
+  const j = skipWhitespaceAndComments(sql, afterIndex);
+  const n = sql.length;
+  let k = j;
+  while (k < n && isIdContinue(sql[k])) k += 1;
+  const word = sql.substring(j, k).toUpperCase();
+  return word === "WHILE" || word === "REPEAT" || word === "FOR";
 }
 
 /**
@@ -440,11 +483,26 @@ function splitStatementsInternal(
           } else {
             const isTxnBegin =
               upper === "BEGIN" ? isBeginTransactionControl(sql, i) : false;
+            const isEndLoop =
+              upper === "END" ? isEndLoopSuffix(sql, i) : false;
+            // Finding #8 (review fix round C): MySQL `IF(a,b,c)` function
+            // form — the char immediately after "IF" (no whitespace) is
+            // `(` — is an expression, not the control-flow keyword. Without
+            // this, every `IF(...)` call pushes an "IF" that has no
+            // matching `END IF`, leaking a phantom stack entry that can
+            // wrongly get popped by a later unrelated/unmatched `END` in
+            // the same multi-statement batch. `IF (cond) THEN` / `IF cond
+            // THEN` (space before the condition — used by this file's own
+            // BEGIN/IF/END tests) keep whitespace right after "IF" and are
+            // unaffected by this check.
+            const isIfFunctionCall = upper === "IF" && sql[i] === "(";
             const result = handleKeyword(
               kwBuffer,
               constructStack,
               prevWasEnd,
               isTxnBegin,
+              isEndLoop,
+              isIfFunctionCall,
             );
             // Chỉ cập nhật cờ khi keyword thực sự được nhận (BEGIN/IF/CASE/
             // LOOP/WHILE/FOR/END). Non-keyword identifier (vd "i", "1") giữ
@@ -545,6 +603,8 @@ function handleKeyword(
   stack: ConstructKind[],
   prevWasEnd: boolean,
   isTxnBegin: boolean,
+  isEndLoop: boolean,
+  isIfFunctionCall: boolean = false,
 ): { matched: boolean; wasEnd: boolean } {
   const upper = kw.toUpperCase();
   if (upper === "BEGIN") {
@@ -568,23 +628,40 @@ function handleKeyword(
     if (prevWasEnd) {
       return { matched: true, wasEnd: false };
     }
-    if (upper === "IF") stack.push("IF");
-    else if (upper === "CASE") stack.push("CASE");
+    if (upper === "IF") {
+      // Finding #8: `IF(...)` function-call form — matched as the IF
+      // keyword (so prevWasEnd resets correctly) but does NOT open a
+      // construct, since there is no `END IF` to close it.
+      if (isIfFunctionCall) {
+        return { matched: true, wasEnd: false };
+      }
+      stack.push("IF");
+    } else if (upper === "CASE") stack.push("CASE");
     else stack.push("LOOP");
     return { matched: true, wasEnd: false };
   }
-  if (upper === "WHILE" || upper === "FOR") {
-    // TASK-004 C2: KHÔNG push ở đây — `FOR`/`WHILE` chỉ là ứng viên loop
-    // header. Chỉ push khi keyword `LOOP` THỰC SỰ xuất hiện tiếp theo (nhánh
-    // trên). Nếu không có `LOOP` nào theo sau trong statement này (vd
-    // `SELECT ... FOR UPDATE`) thì không có gì bị đẩy vào stack → không leak.
+  if (upper === "WHILE" || upper === "FOR" || upper === "REPEAT") {
+    // TASK-004 C2 (+ Finding #2 REPEAT): KHÔNG push ở đây — `FOR`/`WHILE`/
+    // `REPEAT` chỉ là ứng viên loop header. Chỉ push khi keyword `LOOP`
+    // THỰC SỰ xuất hiện tiếp theo (nhánh trên). Nếu không có `LOOP` nào theo
+    // sau trong statement này (vd `SELECT ... FOR UPDATE`, hoặc MySQL
+    // `WHILE...DO`/`REPEAT...UNTIL` which never use `LOOP` at all) thì không
+    // có gì bị đẩy vào stack → không leak. The matching `END WHILE`/`END
+    // REPEAT`/`END FOR` is handled by the `isEndLoop` skip in the END branch
+    // above, so this branch stays a true no-op regardless of prevWasEnd.
     return { matched: true, wasEnd: false };
   }
   if (upper === "END") {
     // Pop top construct; CHỈ giảm block depth khi top là BLOCK.
     // Nếu top là IF/CASE/LOOP → construct đó đóng, block depth giữ nguyên.
     // Cả `END` alone, `END IF`, `END CASE`, `END LOOP` đều pop 1 phần tử.
-    if (stack.length > 0) {
+    //
+    // Finding #2 (review fix round C): `END WHILE` / `END REPEAT` / `END
+    // FOR` (MySQL `WHILE...DO...END WHILE`, `REPEAT...UNTIL...END REPEAT`)
+    // close a loop header that NEVER pushed anything (see the WHILE/FOR/
+    // REPEAT branch below, C2) — popping here would wrongly consume the
+    // enclosing BEGIN block's entry. Skip the pop for that suffix only.
+    if (!isEndLoop && stack.length > 0) {
       stack.pop();
     }
     return { matched: true, wasEnd: true };
@@ -647,8 +724,9 @@ function isMeaningful(text: string): boolean {
 export function statementAtCursor(
   sql: string,
   offset: number,
+  dialect?: SqlDialect,
 ): ParsedStatement | null {
-  const stmts = splitStatements(sql);
+  const stmts = splitStatements(sql, dialect);
   if (stmts.length === 0) return null;
 
   const clamped = Math.max(0, Math.min(offset, sql.length));
@@ -681,20 +759,27 @@ function isWhitespace(ch: string): boolean {
  * - Nếu không: lấy statement tại `cursorOffset`. mode = 'cursor'.
  *
  * Lưu ý: vùng selection trả về range theo SQL con — start được remap về 0.
+ *
+ * `dialect` (Finding #3, review fix round C) — optional & additive; threaded
+ * straight into `splitStatements`/`statementAtCursor` so the ACTIVE
+ * connection's driver actually reaches the splitter (previously `sqlToRun`
+ * had no dialect param at all, so `extension.ts`'s "Run" command always
+ * split MSSQL/MySQL SQL as if it were Postgres).
  */
 export function sqlToRun(
   sql: string,
   selection: { start: number; end: number } | undefined,
   cursorOffset: number,
+  dialect?: SqlDialect,
 ): { statements: ParsedStatement[]; mode: "selection" | "cursor" } {
   if (selection !== undefined) {
     const start = Math.max(0, Math.min(selection.start, sql.length));
     const end = Math.max(start, Math.min(selection.end, sql.length));
     const slice = sql.substring(start, end);
-    const statements = splitStatements(slice);
+    const statements = splitStatements(slice, dialect);
     return { statements, mode: "selection" };
   }
-  const found = statementAtCursor(sql, cursorOffset);
+  const found = statementAtCursor(sql, cursorOffset, dialect);
   const statements = found ? [found] : [];
   return { statements, mode: "cursor" };
 }

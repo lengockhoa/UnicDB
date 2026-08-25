@@ -939,6 +939,53 @@ describe("SchemaTreeProvider — TASK-302 row-count badges + filter engine", () 
     expect(adapter.estimateTableRowsBatch).toHaveBeenCalledWith("app", ["users", "orders"]);
   });
 
+  it("regression (Finding #7): row-count batch update fires onDidChangeTreeData PER changed table node, not fire(undefined) whole-tree refresh", async () => {
+    const { mgr } = setupTree({
+      schemas: [{ name: "app" }],
+      tables: [
+        { name: "users", schema: "app" },
+        { name: "orders", schema: "app" },
+      ],
+      estimateTableRowsBatchImpl: async (_schema, tables) => {
+        const m = new Map<string, number | null>();
+        for (const t of tables) {
+          if (t === "users") m.set(t, 176);
+          else if (t === "orders") m.set(t, 42);
+        }
+        return m;
+      },
+    });
+    await mgr.addConnection(makeCfg({ id: "rc7", name: "RC7" }), "p");
+    await mgr.setActive("rc7");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    const cats = await provider.getChildren(schemas[0]);
+    const tables = await provider.getChildren(cats[0]);
+
+    const fired: unknown[] = [];
+    provider.onDidChangeTreeData((e) => fired.push(e));
+
+    const waitImmediate = () => {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      setImmediate(resolve);
+      return promise;
+    };
+    await waitImmediate();
+    await waitImmediate();
+
+    // Must have fired at least once (row counts DID change) — and NEVER
+    // with `undefined` (that means "refresh the whole tree from root",
+    // far more expensive than re-rendering just the 2 table nodes whose
+    // description actually changed).
+    expect(fired.length).toBeGreaterThan(0);
+    expect(fired.every((e) => e !== undefined)).toBe(true);
+    const labels = fired.map((e) => (e as { label?: string }).label);
+    expect(labels).toEqual(expect.arrayContaining(["users", "orders"]));
+    void tables;
+  });
+
   it("setFilter('po_log') tables gồm api_po_log + users → chỉ api_po_log được trả về (happy, ancestors expanded)", async () => {
     const { mgr } = setupTree({
       schemas: [{ name: "app" }],

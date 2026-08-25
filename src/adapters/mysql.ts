@@ -128,7 +128,11 @@ export class MySqlAdapter implements DbAdapter {
       throw new Error("MySqlAdapter: connect() chưa được gọi");
     }
 
-    const statements = splitStatements(sql);
+    // Finding #3 (review fix round C): must pass the real dialect — without
+    // it, MySQL string literals with `\'` backslash-escape are mis-split
+    // mid-string (`splitStatements` defaults to postgres-ish `''`-only
+    // escaping when `dialect` is omitted).
+    const statements = splitStatements(sql, "mysql");
     if (statements.length === 0) return { results: [] };
 
     const singleSelect =

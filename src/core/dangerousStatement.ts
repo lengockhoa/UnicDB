@@ -10,6 +10,8 @@
 //      tự động bị bỏ qua); keyword ĐẦU TIÊN quyết định `kind`.
 //   3. `hasWhere` = có `\bwhere\b` trong text đã mask.
 
+import type { SqlDialect } from "./statementParser";
+
 export type DangerousKind = "delete" | "truncate" | "drop" | "update" | "other";
 
 export interface StatementAnalysis {
@@ -42,8 +44,28 @@ const STATEMENT_STARTERS: Record<string, true> = {
 /**
  * Thay nội dung literal/comment bằng space, giữ nguyên độ dài chuỗi để offset
  * và ranh giới word không đổi.
+ *
+ * Exported (review fix round C, Finding #1) so `postgres.ts:shouldUseCursor`
+ * can reuse the SAME literal/comment/dollar-quote masking to scan for a
+ * top-level `INSERT|UPDATE|DELETE|MERGE` token when deciding whether a
+ * `WITH ...` statement is a data-modifying CTE (must NOT go to `DECLARE
+ * CURSOR` — Postgres rejects that) — instead of duplicating this logic.
+ *
+ * `dialect` (review fix round C, Finding #5) — optional & additive, mirrors
+ * `statementParser.ts`'s `readString`: when `dialect === "mysql"`, `\x`
+ * inside a `'...'` string escapes the next char (including `\'`), matching
+ * `splitStatements(sql, "mysql")`'s tokenizing EXACTLY. Without this, once
+ * callers start passing a real dialect through `splitStatements` (Finding
+ * #3), this masker could disagree with the parser on where a MySQL string
+ * literal ends — a `\'`-containing DELETE/UPDATE string could leak fake
+ * `WHERE` text (or swallow a real one), silently flipping the guard tier.
+ * Omitting `dialect` stays byte-identical to before (`''`-escape only).
  */
-function maskLiteralsAndComments(sql: string): string {
+export function maskLiteralsAndComments(
+  sql: string,
+  dialect?: SqlDialect,
+): string {
+  const useBackslashEscape = dialect === "mysql";
   const out = sql.split("");
   const blank = (from: number, to: number): void => {
     for (let k = from; k < to && k < out.length; k += 1) {
@@ -84,10 +106,15 @@ function maskLiteralsAndComments(sql: string): string {
       continue;
     }
 
-    // String literal `'...'` với escape `''`.
+    // String literal `'...'` với escape `''` (mọi dialect) hoặc `\x`
+    // (MySQL, khi `useBackslashEscape` — Finding #5, khớp readString()).
     if (ch === "'") {
       let j = i + 1;
       while (j < sql.length) {
+        if (useBackslashEscape && sql[j] === "\\" && j + 1 < sql.length) {
+          j += 2;
+          continue;
+        }
         if (sql[j] === "'") {
           if (sql[j + 1] === "'") {
             j += 2;
@@ -141,9 +168,17 @@ function maskLiteralsAndComments(sql: string): string {
   return out.join("");
 }
 
-/** Phân loại statement: kind theo keyword DML depth-0 đầu tiên + có WHERE hay không. */
-export function analyzeStatement(sql: string): StatementAnalysis {
-  const masked = maskLiteralsAndComments(sql);
+/**
+ * Phân loại statement: kind theo keyword DML depth-0 đầu tiên + có WHERE hay
+ * không. `dialect` (Finding #5) — optional & additive, threaded straight
+ * into `maskLiteralsAndComments` so this stays in sync with whatever
+ * dialect `splitStatements` used to produce `sql` in the first place.
+ */
+export function analyzeStatement(
+  sql: string,
+  dialect?: SqlDialect,
+): StatementAnalysis {
+  const masked = maskLiteralsAndComments(sql, dialect);
   const hasWhere = /\bwhere\b/i.test(masked);
 
   let kind: DangerousKind = "other";

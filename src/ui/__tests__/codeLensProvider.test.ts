@@ -137,6 +137,22 @@ describe("VsdbCodeLensProvider — provideCodeLenses", () => {
     expect(Array.isArray(lenses[0].command.arguments)).toBe(true);
   });
 
+  it("regression (Finding #3): optional getDialect resolver threaded to splitStatements — MSSQL `GO` batch separator only splits lenses when the resolver returns 'mssql'", () => {
+    const sql = "SELECT 1\nGO\nSELECT 2\nGO";
+    const doc = fakeDoc("sql", sql.split("\n"));
+
+    // Without a resolver (default/back-compat), GO is NOT dialect-gated on →
+    // everything stays one lens (matches existing zero-arg behavior).
+    const providerNoDialect = new VsdbCodeLensProvider();
+    const lensesNoDialect = providerNoDialect.provideCodeLenses(doc as never) as unknown[];
+    expect(lensesNoDialect.length).toBe(1);
+
+    // With a resolver returning "mssql", GO is a real batch separator → 2 lenses.
+    const providerMssql = new VsdbCodeLensProvider(() => "mssql");
+    const lensesMssql = providerMssql.provideCodeLenses(doc as never) as unknown[];
+    expect(lensesMssql.length).toBe(2);
+  });
+
   it("showRunLens=false → trả về [] (không có lens)", () => {
     state.configShowRunLens = false;
     const provider = new VsdbCodeLensProvider();

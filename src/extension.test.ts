@@ -769,7 +769,7 @@ describe("TASK-606 — destructive confirm guard", () => {
   });
 
   /** ctx với active connection seeded qua globalState (không đi qua SecretStorage). */
-  function makeSeededCtx() {
+  function makeSeededCtx(driver: string = "postgres") {
     const ctx = makeCtx();
     ctx.globalState.get = vi.fn((key: string) => {
       if (key === "vsdb.connections") {
@@ -777,7 +777,7 @@ describe("TASK-606 — destructive confirm guard", () => {
           {
             id: "c1",
             name: "c",
-            driver: "postgres",
+            driver,
             host: "h",
             port: 5432,
             user: "u",
@@ -815,8 +815,8 @@ describe("TASK-606 — destructive confirm guard", () => {
     };
   }
 
-  async function activateFresh606() {
-    const ctx = makeSeededCtx();
+  async function activateFresh606(driver: string = "postgres") {
+    const ctx = makeSeededCtx(driver);
     // Dynamic import cố ý: vi.resetModules() vừa drop cache, cần instance mới
     // của cả extension lẫn queryRunner để spy prototype đúng class đang dùng.
     const runnerMod = await import("./core/queryRunner");
@@ -908,6 +908,46 @@ describe("TASK-606 — destructive confirm guard", () => {
 
     expect(warnSpy()).not.toHaveBeenCalled();
     expect(runSpy).toHaveBeenCalled();
+  });
+
+  it("B16 — regression (Finding #3/#5): mysql dialect threaded to guard tier — WHERE inside a backslash-escaped string must NOT count as a real WHERE", async () => {
+    await activateFresh606("mysql");
+    // MySQL-only escaping: `\'` inside a `'...'` string does NOT close it, so
+    // the "WHERE id=1" text below is INSIDE the string literal, not a real
+    // WHERE clause — this UPDATE is effectively unconditional and must be
+    // guarded (tier "red"). Without `dialect` threaded from the active
+    // connection into `confirmDangerousStatements`'s `analyzeStatement` call,
+    // the default (non-MySQL) string-close rule sees the FIRST `'` (right
+    // after the backslash) as closing the string, so the WHERE becomes
+    // "visible" at depth 0 — `hasWhere` wrongly flips to `true` and the
+    // guard silently classifies this as tier "none" (no confirm), letting an
+    // effectively-unconditional UPDATE run with zero warning.
+    setEditor("UPDATE t SET c = 'x\\' WHERE id=1' ;");
+    warnSpy().mockResolvedValueOnce("Vẫn chạy (nguy hiểm)");
+
+    await state.registeredCommands.get("vsdb.runQuery")!();
+
+    expect(warnSpy()).toHaveBeenCalledTimes(1);
+    expect(warnCalls()[0][0]).toMatch(/NGUY HIỂM/);
+    expect(runSpy).toHaveBeenCalled();
+  });
+
+  it("B17 — regression (Finding #3): mssql dialect threaded to sqlToRun — `GO` batch separator actually splits the run", async () => {
+    await activateFresh606("mssql");
+    // `GO` batch-separator splitting is gated behind `dialect === "mssql"`
+    // in `splitStatements` (statementParser.ts). Without `sqlToRun` in
+    // `runQueryFromEditor` receiving the active connection's real dialect,
+    // this always split as if Postgres — `GO` stayed literal text glued
+    // into ONE statement instead of splitting into two SELECTs.
+    const sql = "SELECT 1\nGO\nSELECT 2\nGO";
+    setEditor(sql, { start: 0, end: sql.length });
+
+    await state.registeredCommands.get("vsdb.runQuery")!();
+
+    expect(runSpy).toHaveBeenCalled();
+    const ranStatements = runSpy.mock.calls[0][0] as Array<{ text: string }>;
+    expect(ranStatements.length).toBe(2);
+    expect(ranStatements.some((s) => /\bGO\b/.test(s.text))).toBe(false);
   });
 
   it("B15 — package.json khai báo vsdb.confirmDestructive default true", () => {

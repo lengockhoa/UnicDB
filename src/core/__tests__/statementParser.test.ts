@@ -583,3 +583,91 @@ describe("statementParser — TASK-004 splitStatements dialect fixes", () => {
     expect(out[0].text).toBe(sql);
   });
 });
+
+describe("statementParser — review fix round C regressions", () => {
+  // Finding #2 — `END WHILE` (MySQL WHILE...DO...END WHILE, no LOOP keyword)
+  // must NOT pop the enclosing BEGIN block. Before the C2 fix this was 2
+  // statements; the WHILE-push removal broke it to 3.
+  it("regression (finding 2): END WHILE inside BEGIN stays part of the same statement", () => {
+    const sql =
+      "CREATE PROCEDURE p() BEGIN WHILE i<3 DO SET i=i+1; END WHILE; END; SELECT 1;";
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(2);
+    expect(out[0].text).toBe(
+      "CREATE PROCEDURE p() BEGIN WHILE i<3 DO SET i=i+1; END WHILE; END",
+    );
+    expect(out[1].text.trim()).toBe("SELECT 1");
+    expect(debugFinalConstructStackSizeForTest(sql)).toBe(0);
+  });
+
+  it("regression (finding 2): END REPEAT inside BEGIN stays part of the same statement", () => {
+    const sql =
+      "BEGIN\n  REPEAT\n    SET i=i+1;\n  UNTIL i>3 END REPEAT;\nEND;\nSELECT 1;";
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(2);
+    expect(out[1].text.trim()).toBe("SELECT 1");
+    expect(debugFinalConstructStackSizeForTest(sql)).toBe(0);
+  });
+
+  // Must NOT reintroduce the FOR UPDATE leak while fixing finding 2.
+  it("regression (finding 2 guard): SELECT ... FOR UPDATE still leaves stack size 0", () => {
+    const sql = "SELECT * FROM t FOR UPDATE; SELECT 1;";
+    expect(debugFinalConstructStackSizeForTest(sql)).toBe(0);
+  });
+
+  // Existing END IF / END LOOP / END CASE pairing must still work (no change
+  // in behavior for constructs that DO push).
+  it("regression (finding 2 guard): END LOOP/END IF/END CASE pairing unaffected", () => {
+    const sql =
+      "BEGIN\n  FOR i IN 1..3 LOOP\n    IF i=1 THEN SELECT 1; END IF;\n  END LOOP;\nEND;";
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(1);
+    expect(debugFinalConstructStackSizeForTest(sql)).toBe(0);
+  });
+
+  // Finding #4 — BEGIN forward-peek must skip comments, not just whitespace.
+  it("regression (finding 4): BEGIN -- comment\\n; is still transaction-control", () => {
+    const sql = "BEGIN -- go\n;\nUPDATE t SET a=1;\nCOMMIT;";
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(3);
+    expect(debugFinalConstructStackSizeForTest(sql)).toBe(0);
+  });
+
+  it("regression (finding 4): BEGIN /* txn */; is still transaction-control", () => {
+    const sql = "BEGIN /* txn */;\nUPDATE t SET a=1;\nCOMMIT;";
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(3);
+    expect(debugFinalConstructStackSizeForTest(sql)).toBe(0);
+  });
+
+  // Finding #8 — MySQL `IF(a,b,c)` function-call form (no space before `(`)
+  // must not be treated as the control-flow IF keyword: it has no matching
+  // `END IF`, so pushing it onto the construct stack leaks a phantom entry.
+  it("regression (finding 8): standalone IF(a,b,c) function call leaves stack size 0", () => {
+    const sql = "SELECT IF(a,b,c);";
+    expect(debugFinalConstructStackSizeForTest(sql)).toBe(0);
+  });
+
+  it("regression (finding 8): IF(a,b,c) inside a BEGIN...END routine body no longer corrupts block detection — previously the leaked IF got popped by the routine's own END instead of the real BLOCK, gluing the entire rest of the script into one undividable statement", () => {
+    const sql =
+      "CREATE PROCEDURE p() BEGIN SELECT IF(a,b,c); END; SELECT 2;";
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(2);
+    expect(out[0].text.trim()).toBe(
+      "CREATE PROCEDURE p() BEGIN SELECT IF(a,b,c); END",
+    );
+    expect(out[1].text.trim()).toBe("SELECT 2");
+    expect(debugFinalConstructStackSizeForTest(sql)).toBe(0);
+  });
+
+  // Must NOT regress the real control-flow `IF` (space before condition,
+  // used pervasively by this file's own BEGIN/IF/END tests above).
+  it("regression (finding 8 guard): real control-flow IF x THEN ... END IF (space before condition) still pushes/pops normally", () => {
+    const sql =
+      "BEGIN\n  IF x THEN SELECT 1; END IF;\n  SELECT 2;\nEND;\nSELECT 3;";
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(2);
+    expect(out[1].text.trim()).toBe("SELECT 3");
+    expect(debugFinalConstructStackSizeForTest(sql)).toBe(0);
+  });
+});

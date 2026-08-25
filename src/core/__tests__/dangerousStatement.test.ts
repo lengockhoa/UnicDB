@@ -108,4 +108,34 @@ describe("TASK-701 — EXPLAIN prelude trong analyzeStatement", () => {
     expect(a).toEqual({ kind: "delete", hasWhere: false });
     expect(guardTier(a)).toBe("red");
   });
+
+  // Review fix round C, Finding #5 — must mask MySQL `\'` backslash-escape
+  // the SAME way statementParser.ts's splitStatements(sql, "mysql") does.
+  // Without dialect-aware masking, a backslash-escaped quote inside a MySQL
+  // string literal is misread as the string's real closing quote, which
+  // leaks the REST of that literal (here containing the word "WHERE") out
+  // as if it were live SQL — turning a DELETE with NO real WHERE (should be
+  // RED) into a false "has WHERE" amber, silently downgrading the warning.
+  it("regression (finding 5): MySQL backslash-escaped quote inside a DELETE's string must not leak a fake WHERE", () => {
+    const sql = "DELETE FROM t SET note = 'a\\' WHERE 1=1'";
+    const a = analyzeStatement(sql, "mysql");
+    expect(a).toEqual({ kind: "delete", hasWhere: false });
+    expect(guardTier(a)).toBe("red");
+  });
+
+  it("regression (finding 5) guard: non-mysql dialect keeps the old ''-escape-only masking behavior", () => {
+    // Same text, but postgres/mssql don't recognize backslash escapes — `'`
+    // right after `\` really does close the string, exactly like today.
+    const sql = "DELETE FROM t SET note = 'a\\' WHERE 1=1'";
+    const a = analyzeStatement(sql, "postgres");
+    expect(a).toEqual({ kind: "delete", hasWhere: true });
+    expect(guardTier(a)).toBe("amber");
+  });
+
+  it("regression (finding 5) guard: omitting dialect stays byte-identical to today (no dialect arg)", () => {
+    const sql = "DELETE FROM t SET note = 'a\\' WHERE 1=1'";
+    const a = analyzeStatement(sql);
+    expect(a).toEqual({ kind: "delete", hasWhere: true });
+    expect(guardTier(a)).toBe("amber");
+  });
 });

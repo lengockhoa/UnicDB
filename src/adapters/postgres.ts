@@ -46,6 +46,7 @@ import {
   INTROSPECT_CONSTRAINTS_SQL,
 } from "../core/ddl/pgIntrospect";
 import { splitStatements } from "../core/statementParser";
+import { maskLiteralsAndComments } from "../core/dangerousStatement";
 
 const DEFAULT_BATCH_SIZE = 500;
 
@@ -67,10 +68,39 @@ const DEFAULT_BATCH_SIZE = 500;
  * accepts `WITH`). No `;` check at all — `text` is always ONE statement by
  * the time it gets here, so any `;` remaining in it is by construction
  * inside a string/comment/dollar-quote, not a second statement boundary.
+ *
+ * Review fix round C, Finding #1 — BLOCKING REGRESSION: a `WITH ...` whose
+ * CTE body is data-modifying (`WITH upd AS (UPDATE t SET a=1 RETURNING *)
+ * SELECT * FROM upd`) was routed here too. `openCursorForStatement` issues
+ * `DECLARE "c" CURSOR FOR <sql>`, which Postgres REJECTS for any WITH clause
+ * containing INSERT/UPDATE/DELETE/MERGE ("DECLARE CURSOR must not contain
+ * data-modifying statements in WITH") — and there is no fallback, so the
+ * statement just errors and the user's UPDATE/INSERT/DELETE never runs. Fix:
+ * when the leading keyword is `WITH`, additionally scan the (literal/
+ * comment/dollar-quote-masked) text for a real INSERT/UPDATE/DELETE/MERGE
+ * token and reject the cursor path if found. Plain SELECT is unaffected (a
+ * bare SELECT can't embed DML without a WITH prefix) and read-only CTEs /
+ * comment-prefixed SELECTs keep using the cursor path — that was the point
+ * of TASK-005.
  */
 export function shouldUseCursor(text: string): boolean {
   const stripped = stripLeadingCommentsAndWhitespace(text);
-  return /^(SELECT|WITH)\b/i.test(stripped);
+  if (!/^(SELECT|WITH)\b/i.test(stripped)) return false;
+  if (/^WITH\b/i.test(stripped) && containsDataModifyingCteBody(text)) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * True if `text` contains a real (not inside a string/identifier/comment/
+ * dollar-quote) `INSERT` / `UPDATE` / `DELETE` / `MERGE` token — i.e. a
+ * data-modifying CTE body. Reuses `dangerousStatement.ts`'s literal/comment
+ * masking (same Postgres quoting rules) instead of duplicating it.
+ */
+function containsDataModifyingCteBody(text: string): boolean {
+  const masked = maskLiteralsAndComments(text);
+  return /\b(INSERT|UPDATE|DELETE|MERGE)\b/i.test(masked);
 }
 
 function stripLeadingCommentsAndWhitespace(text: string): string {
@@ -200,7 +230,12 @@ export class PostgresAdapter implements DbAdapter {
   async runQuery(sql: string): Promise<RunResult> {
     if (!this.pool) throw new Error("PostgresAdapter: connect() chưa được gọi");
 
-    const statements = splitStatements(sql);
+    // Finding #3 (review fix round C): postgres.ts is the "no dialect passed
+    // ⇒ postgres-ish default" reference behavior (splitStatements' own
+    // docstring), so `"postgres"` here is explicit rather than load-bearing
+    // — kept for parity with the other two adapters and to make the dialect
+    // threading auditable at every call site.
+    const statements = splitStatements(sql, "postgres");
 
     const singleSelect =
       statements.length === 1 && shouldUseCursor(statements[0].text);
@@ -210,24 +245,43 @@ export class PostgresAdapter implements DbAdapter {
       return { results: [], batched };
     }
 
-    const results: QueryResult[] = [];
-    for (const stmt of statements) {
-      const text = stmt.text.trim();
-      if (text.length === 0) continue;
-      const t0 = Date.now();
-      const r = await this.pool.query(text);
-      const durationMs = Date.now() - t0;
-      const columns = r.fields.map((f) => f.name);
-      results.push({
-        columns,
-        rows: rowsAsArrays(r.rows, columns),
-        rowCount: r.rowCount ?? null,
-        // Populate commandTag từ pg result (IMPORTANT #5).
-        commandTag: r.command ?? undefined,
-        durationMs,
-      });
+    // Review fix round C, Finding #6: check out ONE client for the WHOLE
+    // multi-statement run instead of calling `this.pool.query()` per
+    // statement. `pool.query()` checks out AND releases a client
+    // internally on EACH call — with `Pool({ max: 1 })` there is exactly
+    // one physical connection, so releasing it between statement N and
+    // N+1 hands the connection to whatever OTHER `pool.query()` call is
+    // next in pg's internal pending queue (schemaTree.fetchRowCountsBatch,
+    // keywordQualify's listTables, the AI `run_sql` tool, ...). TASK-004's
+    // `BEGIN;` de-blocking means `resultsPanel.ts`'s save flow now sends
+    // `BEGIN; <stmts>; COMMIT;` through exactly THIS branch (it used to be
+    // one opaque un-split statement) — without holding a single client, a
+    // concurrent background query could land INSIDE the user's open
+    // transaction and abort it. Held for the entire loop and released in
+    // `finally` so no other caller can grab the connection mid-script.
+    const client = await this.pool.connect();
+    try {
+      const results: QueryResult[] = [];
+      for (const stmt of statements) {
+        const text = stmt.text.trim();
+        if (text.length === 0) continue;
+        const t0 = Date.now();
+        const r = await client.query(text);
+        const durationMs = Date.now() - t0;
+        const columns = r.fields.map((f) => f.name);
+        results.push({
+          columns,
+          rows: rowsAsArrays(r.rows, columns),
+          rowCount: r.rowCount ?? null,
+          // Populate commandTag từ pg result (IMPORTANT #5).
+          commandTag: r.command ?? undefined,
+          durationMs,
+        });
+      }
+      return { results };
+    } finally {
+      client.release();
     }
-    return { results };
   }
 
   // ---- Metadata -------------------------------------------------------------

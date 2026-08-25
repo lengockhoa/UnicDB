@@ -19,7 +19,7 @@ import type { AiConfig } from "../ai/settings";
 import type { ConnectionConfig } from "../config/types";
 import type { DbAdapter } from "../adapters/types";
 import type { ProviderRequest, ProviderResult } from "../ai/provider";
-import { splitStatements } from "../core/statementParser";
+import { splitStatements, type SqlDialect } from "../core/statementParser";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -135,6 +135,13 @@ export function parseInsertStatements(
   text: string,
   schema: string,
   table: string,
+  // (review fix round C, Finding #3) — explicit, not dynamically resolved:
+  // this feature is gated by `guardPostgres()` in tableCommands.ts and the
+  // AI prompt above hardcodes "PostgreSQL sample data", so the target is
+  // ALWAYS Postgres. Passing it explicitly (default "postgres") is for
+  // splitStatements/dialect-audit consistency with the other call sites
+  // fixed by Finding #3 — not a behavior change.
+  dialect: SqlDialect = "postgres",
 ): ParseResult {
   const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const qSchema = `"${schema.replace(/"/g, '""')}"`;
@@ -147,7 +154,7 @@ export function parseInsertStatements(
     `^\\s*INSERT\\s+INTO\\s+(?:${qSchema}\\.${qTable}|${bareTarget})(?=[\\s(;]|$)`,
     "i",
   );
-  const parsed = splitStatements(text);
+  const parsed = splitStatements(text, dialect);
    const out: string[] = [];
   for (const stmt of parsed) {
     const sql = stmt.text.replace(/;\s*$/, "").trim();
@@ -216,7 +223,7 @@ export async function aiGenerateSampleData(
   };
   const result = await complete(req);
 
-  const parsed = parseInsertStatements(result.text, schema, table);
+  const parsed = parseInsertStatements(result.text, schema, table, "postgres");
   if (!parsed.ok) {
     const msg = `AI output rejected: ${parsed.reason}`;
     if (showError) showError(`Generate Sample Data failed: ${msg}`);

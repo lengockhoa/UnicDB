@@ -168,7 +168,10 @@ export class MsSqlAdapter implements DbAdapter {
       throw new Error("MsSqlAdapter: connect() chưa được gọi");
     }
 
-    const statements = splitStatements(sql);
+    // Finding #3 (review fix round C): must pass the real dialect — without
+    // it, MSSQL's `GO` batch separator is never recognized and gets sent to
+    // the server as SQL text ("Could not find stored procedure 'GO'").
+    const statements = splitStatements(sql, "mssql");
     if (statements.length === 0) return { results: [] };
 
     const results: QueryResult[] = [];

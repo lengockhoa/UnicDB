@@ -31,6 +31,8 @@ function cfg(driver: ConnectionConfig["driver"] = "postgres"): ConnectionConfig 
 // (materializing) query() so tests can assert which path was taken.
 let clientQueryCalls: unknown[] = [];
 let poolQueryCalls: unknown[] = [];
+let poolConnectCalls = 0;
+let clientReleaseCalls = 0;
 
 vi.mock("pg", () => {
   const fakeClient = {
@@ -39,18 +41,42 @@ vi.mock("pg", () => {
       clientQueryCalls.push(arg);
       const text = typeof arg === "string" ? arg : (arg as { text: string }).text;
       if (/^SELECT 1$/i.test(text)) {
-        return Promise.resolve({ rows: [{ "?column?": 1 }] });
+        // Finding #6: this now also runs through the multi-statement
+        // `client.query()` branch (not just the connect() probe / cursor
+        // FETCH path), which reads `.fields` unconditionally — include it.
+        return Promise.resolve({
+          rows: [{ "?column?": 1 }],
+          fields: [{ name: "?column?" }],
+          rowCount: 1,
+          command: "SELECT",
+        });
       }
-      if (/^BEGIN$/i.test(text)) return Promise.resolve({});
+      if (/^BEGIN$/i.test(text)) {
+        return Promise.resolve({ rows: [], fields: [], rowCount: null, command: "BEGIN" });
+      }
       if (/^DECLARE/i.test(text)) return Promise.resolve({});
       if (/^FETCH 0/i.test(text)) return Promise.resolve({ fields: [], rows: [] });
       if (/^FETCH/i.test(text)) return Promise.resolve({ rows: [] });
       if (/^CLOSE/i.test(text)) return Promise.resolve({});
-      if (/^COMMIT$/i.test(text)) return Promise.resolve({});
+      if (/^COMMIT$/i.test(text)) {
+        return Promise.resolve({ rows: [], fields: [], rowCount: null, command: "COMMIT" });
+      }
       if (/^ROLLBACK$/i.test(text)) return Promise.resolve({});
-      return Promise.resolve({ rows: [] });
+      if (/^FORCE_ERROR$/i.test(text)) return Promise.reject(new Error("forced test error"));
+      // Finding #6 fallback: generic statement shape (matches fakePool's
+      // fallback below) so multi-statement runQuery — which now runs
+      // through `client.query()` on a single checked-out client instead of
+      // `pool.query()` per statement — can materialize columns/rowCount.
+      return Promise.resolve({
+        rows: [],
+        fields: [],
+        rowCount: 0,
+        command: "SELECT",
+      });
     }),
-    release: vi.fn(),
+    release: vi.fn(() => {
+      clientReleaseCalls += 1;
+    }),
   };
   const fakePool = {
     query: vi.fn((sql: string) => {
@@ -62,7 +88,10 @@ vi.mock("pg", () => {
         command: "SELECT",
       });
     }),
-    connect: vi.fn(() => Promise.resolve(fakeClient)),
+    connect: vi.fn(() => {
+      poolConnectCalls += 1;
+      return Promise.resolve(fakeClient);
+    }),
     end: vi.fn(() => Promise.resolve()),
   };
   const PoolCtor = vi.fn(() => fakePool);
@@ -72,6 +101,8 @@ vi.mock("pg", () => {
 beforeEach(() => {
   clientQueryCalls = [];
   poolQueryCalls = [];
+  poolConnectCalls = 0;
+  clientReleaseCalls = 0;
 });
 
 // ---- D5: shouldUseCursor pure-function coverage ----------------------------
@@ -99,6 +130,65 @@ describe("shouldUseCursor — pure predicate (D5)", () => {
 
   it("non-SELECT statement → false", () => {
     expect(shouldUseCursor("INSERT INTO t VALUES (1)")).toBe(false);
+  });
+
+  // Review fix round C, Finding #1 — BLOCKING REGRESSION: a data-modifying
+  // CTE (`WITH x AS (UPDATE/INSERT/DELETE/MERGE ...) SELECT ...`) must NOT
+  // route to DECLARE CURSOR — Postgres rejects "DECLARE CURSOR must not
+  // contain data-modifying statements in WITH" and the adapter has no
+  // fallback, so the UPDATE/INSERT/DELETE never runs.
+  it("regression (finding 1): WITH ... UPDATE ... RETURNING CTE → false (must not use cursor)", () => {
+    expect(
+      shouldUseCursor(
+        "WITH upd AS (UPDATE t SET a=1 RETURNING *) SELECT * FROM upd",
+      ),
+    ).toBe(false);
+  });
+
+  it("regression (finding 1): WITH ... INSERT ... RETURNING CTE → false", () => {
+    expect(
+      shouldUseCursor(
+        "WITH ins AS (INSERT INTO t(a) VALUES (1) RETURNING *) SELECT * FROM ins",
+      ),
+    ).toBe(false);
+  });
+
+  it("regression (finding 1): WITH ... DELETE ... RETURNING CTE → false", () => {
+    expect(
+      shouldUseCursor(
+        "WITH del AS (DELETE FROM t WHERE id=1 RETURNING *) SELECT * FROM del",
+      ),
+    ).toBe(false);
+  });
+
+  it("regression (finding 1): WITH ... MERGE ... CTE → false", () => {
+    expect(
+      shouldUseCursor(
+        "WITH m AS (MERGE INTO t USING s ON t.id=s.id WHEN MATCHED THEN UPDATE SET a=s.a) SELECT * FROM m",
+      ),
+    ).toBe(false);
+  });
+
+  it("finding 1 guard: a plain read-only CTE is still true (must not regress TASK-005)", () => {
+    expect(shouldUseCursor("WITH x AS (SELECT 1) SELECT * FROM x")).toBe(
+      true,
+    );
+  });
+
+  it("finding 1 guard: a CTE whose column is merely named 'update' is still true", () => {
+    expect(
+      shouldUseCursor(
+        "WITH x AS (SELECT id, last_update FROM t) SELECT * FROM x",
+      ),
+    ).toBe(true);
+  });
+
+  it("finding 1 guard: a DML keyword inside a string literal inside the CTE does not false-positive", () => {
+    expect(
+      shouldUseCursor(
+        "WITH x AS (SELECT 'DELETE this' AS note) SELECT * FROM x",
+      ),
+    ).toBe(true);
   });
 });
 
@@ -151,10 +241,76 @@ describe("PostgresAdapter.runQuery — cursor routing (D5)", () => {
   it("Edge (must NOT batch): two statements → non-cursor path, 2 results", async () => {
     const adapter = new PostgresAdapter(cfg(), "pw");
     await adapter.connect();
+    clientQueryCalls = []; // ignore the connect() probe's own SELECT 1
     const result = await adapter.runQuery("SELECT 1; SELECT 2;");
     expect(result.batched).toBeUndefined();
     expect(result.results.length).toBe(2);
-    expect(poolQueryCalls.length).toBe(2);
+    // Finding #6: multi-statement runs go through ONE checked-out client
+    // (`client.query()`), never `pool.query()` per statement.
+    expect(poolQueryCalls.length).toBe(0);
+    expect(clientQueryCalls.length).toBe(2);
+    await adapter.close();
+  });
+
+  // Review fix round C, Finding #6 — BLOCKING-adjacent race: `pool.query()`
+  // checks out AND releases its client on EACH call, so with `max: 1` a
+  // multi-statement run used to hand the single connection back to the pool
+  // BETWEEN statements — letting any concurrent `pool.query()` caller
+  // (schemaTree background refresh, keywordQualify, AI `run_sql`) land
+  // inside a user's open `BEGIN ... COMMIT` and abort it. Verified via
+  // `pool.connect()` call count: exactly 1 for the whole multi-statement
+  // run (one client held for the duration), not re-acquired per statement.
+  it("regression (finding 6): multi-statement run checks out exactly ONE client for the whole batch", async () => {
+    const adapter = new PostgresAdapter(cfg(), "pw");
+    await adapter.connect();
+    poolConnectCalls = 0; // ignore the connect() probe from adapter.connect()
+    clientQueryCalls = []; // ignore the connect() probe's own SELECT 1
+    const result = await adapter.runQuery(
+      "BEGIN;\nUPDATE t SET a=1;\nCOMMIT;",
+    );
+    expect(result.batched).toBeUndefined();
+    expect(result.results.length).toBe(3);
+    expect(poolConnectCalls).toBe(1);
+    expect(poolQueryCalls.length).toBe(0);
+    expect(clientQueryCalls.length).toBe(3);
+    await adapter.close();
+  });
+
+  it("regression (finding 6): the single client is released even when a mid-batch statement throws", async () => {
+    const adapter = new PostgresAdapter(cfg(), "pw");
+    await adapter.connect();
+    clientReleaseCalls = 0;
+    let threw = false;
+    try {
+      await adapter.runQuery("BEGIN;\nFORCE_ERROR;\nCOMMIT;");
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(true);
+    expect(clientReleaseCalls).toBeGreaterThanOrEqual(1);
+    await adapter.close();
+  });
+
+  // Review fix round C, Finding #1 — end-to-end proof at the runQuery level
+  // (not just the pure predicate): a data-modifying CTE must go through the
+  // non-cursor (auto-commit, actually runs the UPDATE) path, never through
+  // openCursorForStatement's `DECLARE CURSOR` (which Postgres would reject).
+  // Finding #6 changed the non-cursor path from `pool.query()` per statement
+  // to a single checked-out `client.query()` — assert on `clientQueryCalls`
+  // (and that no `pool.query()` happened) accordingly.
+  it("regression (finding 1): WITH ... UPDATE ... RETURNING → non-cursor path, never DECLARE CURSOR", async () => {
+    const adapter = new PostgresAdapter(cfg(), "pw");
+    await adapter.connect();
+    clientQueryCalls = []; // ignore the connect() probe's own SELECT 1
+    const result = await adapter.runQuery(
+      "WITH upd AS (UPDATE t SET a=1 RETURNING *) SELECT * FROM upd",
+    );
+    expect(result.batched).toBeUndefined();
+    expect(poolQueryCalls.length).toBe(0);
+    expect(clientQueryCalls.length).toBe(1);
+    expect(
+      clientQueryCalls.some((c) => /^DECLARE/i.test(String(c))),
+    ).toBe(false);
     await adapter.close();
   });
 });

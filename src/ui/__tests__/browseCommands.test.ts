@@ -506,6 +506,37 @@ it("#11 browse path applies qualifyKeywordTables — already-qualified SQL, no r
   expect(listTablesSpy).not.toHaveBeenCalled();
 });
 
+// Coverage gap (review fix round C): #11 above only proves the negative path
+// (browse SQL is always emitted fully schema-qualified by buildBrowseSelect,
+// so qualifyKeywordTables never has a rewrite-eligible candidate and
+// listTables is never consulted). That leaves the actual adapter-wiring
+// closure used in browseCommands.ts — `(s) => adapter.listTables(s).then
+// (rows => rows.map(r => r.name))` — with zero positive-path coverage: if
+// that row→name mapping ever broke, no test would catch it. buildBrowseSelect
+// always double-quotes AND always emits a 2-part schema.table reference
+// whenever schema is non-empty (and resolveBrowseNode requires schema to be
+// non-empty), so qualifyKeywordTables's own by-design "already-qualified
+// references are never rewritten" rule (see keywordQualify.test.ts #3) means
+// the full `vsdb.browseTableData` command can never itself reach the rewrite
+// branch. This test therefore exercises the identical wiring pattern directly
+// against a genuinely unquoted-reserved-keyword candidate, proving the row
+// mapping + "public" schema argument are correct.
+it("#11b qualifyKeywordTables adapter-wiring (row→name mapping) rewrites an unquoted reserved-keyword candidate", async () => {
+  const { qualifyKeywordTables } = await import("../../core/keywordQualify");
+  const listTablesSpy = vi.fn(
+    async (_schema: string): Promise<Array<{ name: string; schema: string }>> => [
+      { name: "order", schema: "public" },
+    ],
+  );
+  // Mirrors browseCommands.ts's exact wiring closure verbatim.
+  const result = await qualifyKeywordTables("SELECT * FROM order", (s) =>
+    listTablesSpy(s).then((rows) => rows.map((r) => r.name)),
+  );
+  expect(listTablesSpy).toHaveBeenCalledWith("public");
+  expect(result.changed).toBe(true);
+  expect(result.sql).toBe('SELECT * FROM "public"."order"');
+});
+
 // Suppress lint warning about unused vscode import — needed to wire the mock.
 void vscode;
 // =============================================================================

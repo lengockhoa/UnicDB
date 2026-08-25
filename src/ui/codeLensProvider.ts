@@ -5,7 +5,7 @@
 // Filter: languageId === 'sql' AND vsdb.showRunLens === true.
 // onDidChangeConfiguration: invalidates + bắn event để VS Code refresh.
 import * as vscode from "vscode";
-import { splitStatements } from "../core/statementParser";
+import { splitStatements, type SqlDialect } from "../core/statementParser";
 import type { ParsedStatement } from "../config/types";
 
 export class VsdbCodeLensProvider implements vscode.CodeLensProvider {
@@ -16,7 +16,15 @@ export class VsdbCodeLensProvider implements vscode.CodeLensProvider {
 
   private readonly configSub: vscode.Disposable;
 
-  constructor() {
+  /**
+   * `getDialect` (review fix round C, Finding #3) — optional & additive so
+   * every existing zero-arg `new VsdbCodeLensProvider()` call (incl. all
+   * existing tests) stays valid. Without it `splitStatements` always ran as
+   * if the file were Postgres, so MSSQL's `GO` batch separator (gated behind
+   * `dialect === "mssql"`, see statementParser.ts) never split lenses for a
+   * MSSQL connection's `.sql` file.
+   */
+  constructor(private readonly getDialect?: () => SqlDialect | undefined) {
     // Re-emit khi config đổi → VS Code sẽ gọi lại provideCodeLenses.
     this.configSub = vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("vsdb.showRunLens")) {
@@ -62,7 +70,7 @@ export class VsdbCodeLensProvider implements vscode.CodeLensProvider {
     if (!showRunLens) return [];
 
     const sql = document.getText();
-    const statements: ParsedStatement[] = splitStatements(sql);
+    const statements: ParsedStatement[] = splitStatements(sql, this.getDialect?.());
 
     return statements.map((stmt, index) => {
       const startPos = document.positionAt(stmt.start);

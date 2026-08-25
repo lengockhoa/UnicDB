@@ -556,7 +556,6 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
       .then((adapter) => adapter.estimateTableRowsBatch(schema, pendingNames))
       .then((counts) => {
         this.rowCountFetching.delete(inFlightKey);
-        let changed = false;
         for (const tNode of pendingNodes) {
           const tName = tNode.meta?.objectName;
           if (!tName) continue;
@@ -569,9 +568,15 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
             expiresAt: Date.now() + CACHE_TTL_MS,
           });
           tNode.description = formatRows(count);
-          changed = true;
+          // (review fix round C, Finding #7) — fire PER changed node instead
+          // of `fire(undefined)` (whole-tree refresh). `undefined` tells VS
+          // Code to re-query every node in the tree from root, which is far
+          // more work than re-rendering just the table nodes whose row-count
+          // description actually changed; `fire(tNode)` mirrors the existing
+          // narrow pattern already used at the description-update call site
+          // above (line ~479) for the same VsdbNode type.
+          this._onDidChangeTreeData.fire(tNode);
         }
-        if (changed) this._onDidChangeTreeData.fire(undefined);
       })
       .catch(() => {
         this.rowCountFetching.delete(inFlightKey);

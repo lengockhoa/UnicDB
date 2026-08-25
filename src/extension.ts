@@ -15,7 +15,7 @@ import {
 import { registerTableCommands } from "./ui/tableCommands";
 import { VsdbCodeLensProvider } from "./ui/codeLensProvider";
 import { ConnectionForm } from "./ui/connectionForm";
-import { sqlToRun } from "./core/statementParser";
+import { sqlToRun, type SqlDialect } from "./core/statementParser";
 import {
   createKeywordTableCache,
   qualifyKeywordTables,
@@ -108,7 +108,10 @@ export async function activate(
   registerBrowseCommands({ mgr, runner, panel });
 
   // ---- CodeLens ----
-  const codeLens = new VsdbCodeLensProvider();
+  // (review fix round C, Finding #3) — resolver reads the LIVE active
+  // connection at lens-render time (not captured once at construction), so
+  // switching connections re-dialects the next `provideCodeLenses` call.
+  const codeLens = new VsdbCodeLensProvider(() => mgr.getActive()?.driver);
   context.subscriptions.push(
     vscode.languages.registerCodeLensProvider(
       { scheme: "file", language: "sql" },
@@ -473,7 +476,10 @@ async function runQueryFromEditor(
         end: editor.document.offsetAt(selection.end),
       }
     : undefined;
-  const { statements } = sqlToRun(sql, sel, cursorOffset);
+  // (review fix round C, Finding #3) — pass the active connection's real
+  // dialect through so MSSQL `GO` batch separators / MySQL backslash string
+  // escaping actually apply instead of always splitting as if Postgres.
+  const { statements } = sqlToRun(sql, sel, cursorOffset, mgr.getActive()?.driver);
   if (statements.length === 0) {
     void vscode.window.showInformationMessage("VSDB: không có statement để chạy.");
     return;
@@ -533,9 +539,15 @@ async function applyKeywordQualify(
   panel: ResultsPanel,
   statements: ParsedStatement[],
 ): Promise<void> {
+  const active = mgr.getActive();
   // TASK-606 — Confirm guard TRƯỚC mọi side-effect (kể cả busy state): cancel
   // huỷ toàn bộ lô, không statement nào được submit.
-  if (!(await confirmDangerousStatements(statements))) {
+  // (review fix round C, Finding #3/#5) — pass the active dialect through so
+  // `analyzeStatement`'s literal/comment masking matches whatever dialect
+  // `splitStatements` used to produce `statements` in the first place; else
+  // the guard can misclassify a MySQL backslash-escaped string body (see
+  // `dangerousStatement.ts` Finding #5) and silently skip a confirm dialog.
+  if (!(await confirmDangerousStatements(statements, active?.driver))) {
     return;
   }
   // TASK-007 — Rewrite reserved-keyword table names after FROM/INTO/UPDATE/JOIN
@@ -543,7 +555,6 @@ async function applyKeywordQualify(
   // `syntax error at or near "order"`. Only touches identifiers that resolve to
   // actual tables in `public` (see core/keywordQualify).
   const rewritten = await applyKeywordQualify(mgr, statements);
-  const active = mgr.getActive();
   const header = `Run at ${new Date().toISOString()} — ${active ? `${active.driver}@${active.host}/${active.database}` : "no connection"}`;
   panel.setBusy(true);
   try {
@@ -572,6 +583,7 @@ const AMBER_DETAIL_CAP = 500;
  */
 async function confirmDangerousStatements(
   statements: ParsedStatement[],
+  dialect?: SqlDialect,
 ): Promise<boolean> {
   const enabled =
     vscode.workspace
@@ -582,7 +594,7 @@ async function confirmDangerousStatements(
   const red: string[] = [];
   const amber: string[] = [];
   for (const stmt of statements) {
-    const tier = guardTier(analyzeStatement(stmt.text));
+    const tier = guardTier(analyzeStatement(stmt.text, dialect));
     if (tier === "red") red.push(stmt.text.trim());
     else if (tier === "amber") amber.push(stmt.text.trim());
   }
