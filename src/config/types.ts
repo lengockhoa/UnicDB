@@ -40,6 +40,8 @@ export interface ConnectionConfig {
   sslCertPath?: string;
   /** Đường dẫn client private key cho mutual TLS. */
   sslKeyPath?: string;
+  /** Keep saves in an explicit transaction until the user commits or rolls back. */
+  manualCommit?: boolean;
 }
 
 export type SslMode = "disable" | "require" | "verify-ca" | "verify-full";

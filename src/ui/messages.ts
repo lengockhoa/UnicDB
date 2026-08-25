@@ -31,7 +31,18 @@ export interface BusyMessage {
   busy: boolean;
 }
 
-export type HostMessage = InitMessage | StateMessage | BusyMessage | SaveResultMessage;
+export interface TransactionStatusMessage {
+  type: "transactionStatus";
+  /** Whether the active connection currently has a manual transaction open. */
+  open: boolean;
+}
+
+export type HostMessage =
+  | InitMessage
+  | StateMessage
+  | BusyMessage
+  | SaveResultMessage
+  | TransactionStatusMessage;
 
 // ---- Webview → Host --------------------------------------------------------
 
@@ -66,7 +77,17 @@ export type WebviewMessage =
   | SaveEditsMessage
   | RetryFailedRowsMessage
   | RequeryMessage
-  | ReadyMessage;
+  | ReadyMessage
+  | CommitTransactionMessage
+  | RollbackTransactionMessage;
+
+export interface CommitTransactionMessage {
+  type: "commitTransaction";
+}
+
+export interface RollbackTransactionMessage {
+  type: "rollbackTransaction";
+}
 
 export interface RequeryMessage {
   /** TASK-504 — user clicked "Re-Run" with a WHERE/ORDER BY filter. Host

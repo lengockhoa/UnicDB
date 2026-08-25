@@ -90,6 +90,7 @@ export async function activate(
   // adapter is fetched lazily (matches QueryRunner.adapterProvider pattern).
   const saveContext: SaveContext = {
     getDriver: () => mgr.getActive()?.driver ?? null,
+    getManualCommit: () => mgr.getActive()?.manualCommit === true,
     listPkColumns: async (schema: string, table: string): Promise<string[]> => {
       try {
         const adapter = await mgr.getAdapter();

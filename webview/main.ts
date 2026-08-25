@@ -76,6 +76,11 @@ interface BusyMsg {
   type: "busy";
   busy: boolean;
 }
+interface TransactionStatusMsg {
+  type: "transactionStatus";
+  open: boolean;
+}
+
 interface SaveResultMsg {
   type: "saveResult";
   index: number;
@@ -94,7 +99,7 @@ interface SaveResultMsg {
   rowErrors?: Array<{ rowId: number; error: string }>;
 }
 
-type HostMsg = StateMsg | BusyMsg | SaveResultMsg;
+type HostMsg = StateMsg | BusyMsg | SaveResultMsg | TransactionStatusMsg;
 
 
 interface StatementResult {
@@ -368,6 +373,10 @@ interface PersistentDom {
    *  undoBtn — sits next to it in the toolbar; disabled when redo
    *  branch is empty. */
   redoBtn: HTMLButtonElement;
+  /** Hidden until the host reports a manual transaction is open. */
+  transactionControls: HTMLSpanElement;
+  commitTransactionBtn: HTMLButtonElement;
+  rollbackTransactionBtn: HTMLButtonElement;
   csvToggleBtn: HTMLButtonElement;
   exportFormat: HTMLSelectElement;
   exportHeader: HTMLInputElement;
@@ -410,6 +419,8 @@ function setCurrentStatement(r: StatementResult | null): void {
 }
 let currentFooter: HTMLElement | null = null;
 let currentStatement: StatementResult | null = null;
+/** Host-owned transaction state; true only for an active manual window. */
+let transactionOpen = false;
 
 function rowsToObjects(
   rows: unknown[][],
@@ -462,6 +473,16 @@ function render(): void {
 
   // Cancel button state.
   dom.cancelBtn.disabled = !busy;
+  // Keep legacy toolbars byte-for-byte structurally unchanged until manual
+  // mode actually opens a transaction. Several consumers inspect toolbar
+  // children, and hidden controls should not change their default layout.
+  if (transactionOpen && !dom.transactionControls.parentElement) {
+    dom.toolbar.insertBefore(dom.transactionControls, dom.csvToggleBtn);
+  } else if (!transactionOpen && dom.transactionControls.parentElement) {
+    dom.transactionControls.remove();
+  }
+  dom.commitTransactionBtn.disabled = busy;
+  dom.rollbackTransactionBtn.disabled = busy;
 
   // Tabs — rebuild only the buttons (cheap; tabs length changes with results).
   rebuildTabs(dom.tabs);
@@ -535,6 +556,10 @@ const ICON_REDO =
 const ICON_COMMIT =
   // check mark.
   '<path d="M3.5 8.5 L6.5 11.5 L12.5 4.5" />';
+const ICON_ROLLBACK =
+  // counter-clockwise return arrow.
+  '<path d="M12.5 8a4.5 4.5 0 1 1-1.3-3.2" />' +
+  '<path d="M12.5 3.5 V6.5 H9.5" />';
 const ICON_CSV =
   // small table grid.
   '<rect x="3" y="3" width="10" height="10" rx="1" />' +
@@ -638,6 +663,26 @@ function buildPersistentDom(): PersistentDom {
     () => onCommitClick(),
   );
   toolbar.appendChild(commitBtn);
+
+  // TASK-009 — controls are kept in an initially hidden wrapper so older
+  // connections retain the exact toolbar structure until the host reports an
+  // open manual transaction. This prevents commit/rollback actions from ever
+  // being available outside that transaction window.
+  const transactionControls = document.createElement("span");
+  transactionControls.className = "vsdb-transaction-controls";
+  const commitTransactionBtn = makeIconButton(
+    "vsdb-transaction-commit",
+    "Commit transaction",
+    ICON_COMMIT,
+    () => postToHost({ type: "commitTransaction" }),
+  );
+  const rollbackTransactionBtn = makeIconButton(
+    "vsdb-transaction-rollback",
+    "Rollback transaction",
+    ICON_ROLLBACK,
+    () => postToHost({ type: "rollbackTransaction" }),
+  );
+  transactionControls.append(commitTransactionBtn, rollbackTransactionBtn);
 
   const csvToggleBtn = makeIconButton(
     "",
@@ -903,6 +948,9 @@ function buildPersistentDom(): PersistentDom {
     deleteRowBtn,
     undoBtn,
     redoBtn,
+    transactionControls,
+    commitTransactionBtn,
+    rollbackTransactionBtn,
     csvToggleBtn,
     exportFormat,
     exportHeader,
@@ -2669,6 +2717,7 @@ function updateFooter(
   const duration = r.durationMs;
   footer.textContent =
     footerText(loaded, total, hasMore, displayed, filtered) +
+    (transactionOpen ? "  Transaction open" : "") +
     (duration > 0 ? `  ⏱ ${duration}ms` : "");
 }
 
@@ -2854,6 +2903,10 @@ window.addEventListener("message", (ev: MessageEvent) => {
     render();
   } else if (msg.type === "saveResult") {
     handleSaveResult(msg);
+  } else if (msg.type === "transactionStatus") {
+    transactionOpen = msg.open;
+    render();
+    updateFooterNow();
   }
 });
 
@@ -2920,6 +2973,9 @@ function debugSetSpecs(specs: readonly ColumnSpec[]): void {
   },
   get redoBtn(): HTMLButtonElement | undefined {
     return dom?.redoBtn;
+  },
+  get transactionOpen(): boolean {
+    return transactionOpen;
   },
   redo: onRedoClick,
   deleteRow: onDeleteRowClick,

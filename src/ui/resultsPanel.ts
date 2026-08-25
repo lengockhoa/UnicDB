@@ -50,6 +50,8 @@ import { sqlLiteral, composeRequery } from "./resultsGridModel";
 export interface SaveContext {
   /** Active driver ('postgres' | 'mysql' | 'mssql'); null when no connection. */
   getDriver(): ConnectionConfig["driver"] | null;
+  /** Whether the active connection uses the explicit manual-commit save flow. */
+  getManualCommit?(): boolean;
   /** Return PK columns for the (schema, table) pair via DbAdapter.listColumns. */
   listPkColumns(schema: string, table: string): Promise<string[]>;
 }
@@ -82,6 +84,8 @@ export class ResultsPanel {
   private browseLabel: string | null = null;
   private lastResults: StatementResult[] = [];
   private busy: boolean = false;
+  /** True while a manual save transaction remains open on this panel's connection. */
+  private transactionOpen: boolean = false;
   /** Host-derived (schema?, table) per statement index, populated by
    *  render() so handleSaveEdits can derive metadata without trusting the
    *  webview-supplied tableName / pkColumns (Fix R1 critical #1). */
@@ -121,6 +125,9 @@ export class ResultsPanel {
     );
     this.disposables.push(
       this.panel.onDidDispose(() => {
+        // Closing the webview is a connection lifecycle boundary for its
+        // manual transaction. Do not leave an open transaction behind.
+        void this.rollbackOpenTransaction();
         this.panel = null;
         for (const d of this.disposables) d.dispose();
         this.disposables = [];
@@ -178,6 +185,10 @@ export class ResultsPanel {
    * Dispose panel + resources.
    */
   dispose(): void {
+    // A panel may be disposed while a manual transaction is still open.
+    // Fire-and-forget because VS Code's Disposable contract is synchronous;
+    // the adapter call is still attempted before connection teardown.
+    void this.rollbackOpenTransaction();
     if (this.panel) {
       this.panel.dispose();
       this.panel = null;
@@ -237,6 +248,53 @@ export class ResultsPanel {
       // eslint-disable-next-line no-console
       console.error("[vsdb] postMessage sync throw:", m);
       void vscode.window.showErrorMessage(`Results panel postMessage failed: ${m}`);
+    }
+  }
+
+  private isManualCommitEnabled(): boolean {
+    return this.saveContext?.getManualCommit?.() === true;
+  }
+
+  private postTransactionStatus(): void {
+    this.postMessage({ type: "transactionStatus", open: this.transactionOpen });
+  }
+
+  /** Roll back the active manual transaction, including during panel teardown. */
+  private async rollbackOpenTransaction(): Promise<void> {
+    if (!this.transactionOpen) return;
+    const driver = this.saveContext?.getDriver();
+    try {
+      if (driver) {
+        await this.runner.runSql(transactionKeywords(driver as Dialect).rollback);
+      }
+    } catch {
+      // The connection may already have been closed by its owner. Clear the
+      // local state regardless so this panel never advertises a stale window.
+    } finally {
+      this.transactionOpen = false;
+      this.postTransactionStatus();
+    }
+  }
+
+  private async handleCommitTransaction(): Promise<void> {
+    if (!this.transactionOpen) return;
+    const driver = this.saveContext?.getDriver();
+    if (!driver) {
+      await this.rollbackOpenTransaction();
+      return;
+    }
+    this.setBusy(true);
+    try {
+      await this.runner.runSql(transactionKeywords(driver as Dialect).commit);
+      this.transactionOpen = false;
+      this.postTransactionStatus();
+    } catch (err) {
+      // A failed COMMIT must not leave an ambiguous manual window open.
+      await this.rollbackOpenTransaction();
+      const message = err instanceof Error ? err.message : String(err);
+      void vscode.window.showErrorMessage(`Commit failed: ${message}`);
+    } finally {
+      this.setBusy(false);
     }
   }
 
@@ -308,6 +366,12 @@ export class ResultsPanel {
       case "requery":
         await this.handleRequery(msg.index, msg.where, msg.orderBy);
         break;
+      case "commitTransaction":
+        await this.handleCommitTransaction();
+        break;
+      case "rollbackTransaction":
+        await this.rollbackOpenTransaction();
+        break;
       case "ready":
         // Send initial state khi webview ready.
         this.postMessage({
@@ -316,6 +380,7 @@ export class ResultsPanel {
           results: this.lastResults,
           busy: this.busy,
         });
+        this.postTransactionStatus();
         break;
     }
   }
@@ -586,18 +651,33 @@ export class ResultsPanel {
       // committed autocommit-style on their own connection. Bundling
       // into one call guarantees they share a session.
       const kw = transactionKeywords(driver as Dialect);
-      const combined = [kw.begin, ...built.statements, kw.commit].join(";\n") + ";";
+      const manualCommit = this.isManualCommitEnabled();
+      // Manual mode deliberately leaves COMMIT out of the save batch. The
+      // first save starts the session-bound transaction; later saves reuse it
+      // until the user explicitly commits or rolls back from the webview.
+      const saveSql = manualCommit
+        ? (this.transactionOpen
+          ? built.statements.join(";\n") + ";"
+          : [kw.begin, ...built.statements].join(";\n") + ";")
+        : [kw.begin, ...built.statements, kw.commit].join(";\n") + ";";
+      // Mark open before awaiting because a driver can execute BEGIN then
+      // reject a later statement; the catch must issue ROLLBACK in that case.
+      if (manualCommit && !this.transactionOpen) this.transactionOpen = true;
       try {
-        await this.runner.runSql(combined);
+        await this.runner.runSql(saveSql);
       } catch (err) {
         const m = err instanceof Error ? err.message : String(err);
-        // Best-effort rollback — separate call is fine here: the
-        // combined call above already failed/aborted server-side, so
-        // there is no "must share a session" requirement left to honor.
-        try {
-          await this.runner.runSql(kw.rollback);
-        } catch {
-          // ignore — connection may already be back to a clean state
+        if (manualCommit) {
+          // Explicit invariant: rollback completes before the save error is
+          // acknowledged, so a failed manual window is never left dangling.
+          await this.rollbackOpenTransaction();
+        } else {
+          // Best-effort rollback for the pre-existing automatic flow.
+          try {
+            await this.runner.runSql(kw.rollback);
+          } catch {
+            // The combined call may already have returned the connection clean.
+          }
         }
         this.postMessage({
           type: "saveResult",
@@ -607,6 +687,7 @@ export class ResultsPanel {
         });
         return;
       }
+      if (manualCommit) this.postTransactionStatus();
       // Re-run the original SQL to refresh the grid. Mirrors
       // handleRequery: pickResult() handles both batched (Postgres
       // single SELECT → cursor) and non-batched shapes; `.results[0]`
@@ -674,6 +755,21 @@ export class ResultsPanel {
           results: next,
           busy: this.busy,
         });
+      }
+    } catch (err) {
+      // Refreshing after a successful manual save still uses the same open
+      // transaction. Roll it back before allowing that error to surface.
+      if (this.isManualCommitEnabled() && this.transactionOpen) {
+        const message = err instanceof Error ? err.message : String(err);
+        await this.rollbackOpenTransaction();
+        this.postMessage({
+          type: "saveResult",
+          index,
+          ok: false,
+          errors: [message],
+        });
+      } else {
+        throw err;
       }
     } finally {
       this.setBusy(false);

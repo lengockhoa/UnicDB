@@ -75,6 +75,21 @@
   color: var(--vscode-inputValidation-errorForeground, #f48771);
 }
 
+/* TASK-009 — explicit controls appear only during an open manual transaction. */
+.vsdb-transaction-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.vsdb-transaction-commit {
+  background: var(--vscode-testing-iconPassed, #388a34);
+  color: var(--vscode-button-foreground, #fff);
+}
+.vsdb-transaction-rollback {
+  background: var(--vscode-inputValidation-warningBackground, #5a4a1d);
+  color: var(--vscode-inputValidation-warningForeground, #fff2a8);
+}
+
 /* Group divider between query│edit and edit│export. 1px wide vertical
  * rule that respects the current foreground color at low opacity so it
  * reads as a separator in both light and dark themes. */
