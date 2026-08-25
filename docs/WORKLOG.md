@@ -22,6 +22,29 @@ For each significant action, append:
 
 ---
 
+## 2026-08-26 — Cycle W (server-side sort + DISTINCT filter + deterministic paging) + release v1.6.6
+
+- Action: handoff cycle W — 4 tasks / 2 waves từ backlog INDEX: TASK-001 ORDER BY parser
+  (quote-aware comma split, dialect quoting, composite-PK tiebreaker khi mọi PK column được
+  project, emptyIsBlank theo declared type family anchored), TASK-002 buildDistinctValuesQuery
+  (module mới src/ui/distinctValues.ts, pure), TASK-003 webview sort header-click 3 dialect +
+  DISTINCT set-filter + typed values (strict driver-token dialect parse; sort carried trong
+  filter/paging requery; cache invalidation re-request sau render), TASK-004 host wiring
+  (distinct-values round trip + stale statement-index guard + batch drain + truncated giữ
+  nguyên; multi-term ORDER BY qua AS vsdb_sub; SaveContext.listColumnTypes).
+- Plan review 2 rounds (R1: 1 critical + 5 important; R2: 5 blocking — full composite PK,
+  stale guard, AS vsdb_sub, LONGTEXT family, mismatched-quote reject — applied without
+  re-review theo loop cap). Review code: round 1 cả 4 changes_requested → fix round 1 cả 4
+  PASS → 3 approved, TASK-003 còn 1 finding → fix round 2 (refresh mounted filters SAU
+  render) → approved.
+- Flake fix: webviewServerSort test 5+18 flaky ~40% aggregate (debounce race) — drain
+  posts deterministically; 5/5 full-suite runs green 1494 passed / 2 skipped / 0 failed.
+- Files: src/ui/{queryComposer,distinctValues,messages,resultsPanel}.ts, src/extension.ts,
+  webview/main.ts, 5 test file mới + amendments; docs/AI_HANDOFF/*.
+- Git: plan f0bc514 → waves 2e69859 → verdicts → fix rounds → R5 close 089941a, pushed.
+- Release v1.6.6: bump + CHANGELOG + lockfile sync + build.sh → dist/vsdb-1.6.6.vsix
+  1668464 bytes, assertions 0 forbidden, dry-run OK.
+
 ## 2026-08-26 — Cycle V (SQL coloring + server-side filter/paging + MSSQL sort) + release v1.6.5
 
 - Action: handoff cycle V — 6 tasks / 2 waves: TASK-001 SQL TextMate injection grammar
