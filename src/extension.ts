@@ -35,6 +35,10 @@ import type { ConnectionConfig } from "./config/types";
 import { registerBrowseCommands } from "./ui/browseCommands";
 import { SchemaCache } from "./ui/schemaCache";
 import { SqlCompletionProvider } from "./ui/sqlCompletionProvider";
+import {
+  SQL_SEMANTIC_LEGEND,
+  SqlSemanticTokensProvider,
+} from "./ui/sqlSemanticTokens";
 import type { ParsedStatement } from "./config/types";
 let disposables: vscode.Disposable[] = [];
 let state: ExtensionState | null = null;
@@ -138,7 +142,16 @@ export async function activate(
       return null;
     }
   });
-  context.subscriptions.push(mgr.onDidChangeActive(() => schemaCache.invalidate()));
+  const sqlSemanticTokens = new SqlSemanticTokensProvider({
+    cache: schemaCache,
+    hasConnection: () => mgr.getActive() !== null,
+  });
+  context.subscriptions.push(
+    mgr.onDidChangeActive(() => {
+      schemaCache.invalidate();
+      sqlSemanticTokens.refresh();
+    }),
+  );
   const sqlCompletion = new SqlCompletionProvider({
     cache: schemaCache,
     hasConnection: () => mgr.getActive() !== null,
@@ -154,6 +167,23 @@ export async function activate(
       ),
     );
   }
+
+  // TASK-002 — schema-aware semantic tokens (coloring by live identity).
+  // Guard: partial `vscode` test mocks chỉ stub registerCodeLensProvider.
+  // Selector khớp CodeLens/completion selectors ở trên.
+  if (
+    typeof vscode.languages.registerDocumentSemanticTokensProvider === "function"
+  ) {
+    disposables.push(
+      vscode.languages.registerDocumentSemanticTokensProvider(
+        { scheme: "file", language: "sql" },
+        sqlSemanticTokens,
+        SQL_SEMANTIC_LEGEND,
+      ),
+    );
+  }
+  // Emitter được release khi deactivate.
+  disposables.push(sqlSemanticTokens);
 
   state = { mgr, runner, panel, tree, codeLens, statusBar };
 
@@ -235,6 +265,7 @@ export async function activate(
   disposables.push(
     vscode.commands.registerCommand("vsdb.refreshSchema", () => {
       schemaCache.invalidate();
+      sqlSemanticTokens.refresh();
       tree.refresh();
     }),
   );

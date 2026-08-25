@@ -415,7 +415,16 @@
           "description": "Hide system schemas such as pg_catalog and information_schema in the Schema Explorer."
         }
       }
-    }
+    },
+    "grammars": [
+      {
+        "scopeName": "source.sql.vsdb",
+        "path": "./syntaxes/vsdb-sql-injection.tmLanguage.json",
+        "injectTo": [
+          "source.sql"
+        ]
+      }
+    ]
   },
   "scripts": {
     "compile": "node esbuild.js",

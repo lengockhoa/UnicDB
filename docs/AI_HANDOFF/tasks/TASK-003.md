@@ -153,3 +153,79 @@ all at once). The webview does not know which driver is active at render time.
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT (before implementation — `npx vitest run src/ui/__tests__/sqlHighlight.test.ts src/ui/__tests__/webviewSqlHighlight.test.ts`, module target absent + dist absent):
+
+```
+ ❯ src/ui/__tests__/sqlHighlight.test.ts  (0 test)
+ ↓ src/ui/__tests__/webviewSqlHighlight.test.ts  (1 test | 1 skipped)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/ui/__tests__/sqlHighlight.test.ts [ src/ui/__tests__/sqlHighlight.test.ts ]
+Error: Failed to resolve import "../../../webview/sqlHighlight" from "src/ui/__tests__/sqlHighlight.test.ts". Does the file exist?
+ ❯ TransformPluginContext._formatError node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:49258:41
+ ...
+
+ Test Files  1 failed | 1 skipped (2)
+      Tests  1 skipped (1)
+```
+
+Expected RED for a new module (test target not yet implemented); webviewSqlHighlight case 8 skipped per its skip-if-missing guard (dist/webview.js absent at that point). Not a false GREEN.
+
+Verification Output (all §Verification Commands run in the worktree after implementation):
+
+```
+$ npm run typecheck
+> tsc --noEmit          → exit 0 (clean)
+
+$ npx tsc -p tsconfig.webview.json --noEmit   (AFTER snapshot, 5 files / 40 raw errors)
+  14 webview/main.ts
+  10 webview/connectionFormMain.ts
+  10 webview/aiSettingsFormMain.ts
+   5 webview/schemaFormMain.ts
+   1 webview/newTableFormMain.ts
+
+$ diff /tmp/vsdb-webview-tsc-before.txt /tmp/vsdb-webview-tsc-after.txt
+1d0
+<   21 webview/aiSettingsFormMain.ts
+4c3
+<   10 webview/aiChatPanelMain.ts
+---
+>   10 webview/aiSettingsFormMain.ts
+# => diff shows ONLY reductions (61 → 40), zero additions, and
+#    webview/sqlHighlight.ts is absent from the after-snapshot (0 errors).
+
+$ npm run compile
+⚡ Done in 141ms
+esbuild: build complete          # all 7 bundles (extension/webview/connectionForm/newTableForm/aiSettingsForm/aiChatPanel/schemaForm)
+
+$ npx vitest run src/ui/__tests__/sqlHighlight.test.ts src/ui/__tests__/webviewSqlHighlight.test.ts
+ ✓ src/ui/__tests__/sqlHighlight.test.ts  (8 tests) 9ms
+ ✓ src/ui/__tests__/webviewSqlHighlight.test.ts  (1 test) 45ms
+ Test Files  2 passed (2)
+      Tests  9 passed (9)
+
+$ npm test
+ Test Files  97 passed | 1 skipped (98)
+      Tests  1336 passed | 2 skipped (1338)     # baseline 1327 + 9 new, 0 failed
+```
+
+Acceptance gates re-verified: `grep -q innerHTML webview/sqlHighlight.ts` → no match (PASS); new `styles.css` `.vsdb-sql-tok-*` rules reference only `var(--vscode-…)`, no hex; AI-chat ```sql block renders `span.vsdb-sql-tok-keyword` children (manual jsdom check on the bundled aiChatPanel — 3 keyword spans, no `<script>`/`<img>` injection).
+
+Status: PASS
+
+Note:
+1. **Webview tsc snapshot is NOT literally empty — only error reductions.** Adding the required `import { highlightSql }` to `webview/aiChatPanelMain.ts` turns that file into a module, which resolves its 10 global-scope `TS2393/TS2451` redeclarations AND 11 cross-file conflicts they caused in `aiSettingsFormMain.ts`. Total 61 → 40 raw errors. No new errors, no new filenames; `webview/sqlHighlight.ts` contributes zero (absent from after-snapshot). The diff-based gate is a false-negative here (it flags improvements too) — the orchestrator's "assert the diff adds none" holds.
+2. `webview/main.ts` change = import line + the one-line `sql.textContent = r.sql` → `sql.appendChild(highlightSql(r.sql))` swap; nothing else.
+3. `webview/sqlHighlight.ts` is bundled into both `dist/webview.js` and `dist/aiChatPanel.js` by esbuild (dependency-free).
+4. **Required harness fix** (consequence of this task's own edit, otherwise `npm test` regresses): `src/ui/__tests__/aiChatPanelWebview.test.ts` compiled `aiChatPanelMain.ts` standalone via esbuild stdin, which broke once that file gained a relative import (`Could not resolve ./sqlHighlight` → leaked `require`). Changed it to bundle the real file on disk (`--bundle`, no `--outfile` → stdout). 27/27 still pass.
+5. Task file's literal snapshot-diff gate (`diff ... && echo "WEBVIEW TSC BASELINE UNCHANGED"`) will NOT echo the string because of the reductions above; intent (no new errors) is satisfied. Flagged for the reviewer.
+
+NEXT: ready for review.

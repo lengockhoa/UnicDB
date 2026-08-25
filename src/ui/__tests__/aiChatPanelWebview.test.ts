@@ -18,7 +18,6 @@
 // output, so a stale bundle can't pass against a stale source.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 
@@ -30,11 +29,20 @@ import { execFileSync } from "node:child_process";
 // out to the esbuild CLI reading from stdin. This runs in pure Node land.
 
 const sourcePath = resolve(process.cwd(), "webview", "aiChatPanelMain.ts");
-const source = readFileSync(sourcePath, "utf8");
+// TASK-003: aiChatPanelMain.ts now imports ./sqlHighlight. We bundle the
+// real file on disk (instead of piping stdin) so the relative import
+// resolves against webview/ — esbuild resolves .ts extensions by default.
+// With no --outfile/--outdir, esbuild writes the single IIFE bundle to
+// stdout.
 const compiled = execFileSync(
   resolve(process.cwd(), "node_modules", ".bin", "esbuild"),
-  ["--loader=ts", "--target=es2022", "--format=iife", "--banner="],
-  { input: source, encoding: "utf8" },
+  [
+    "--target=es2022",
+    "--format=iife",
+    "--bundle",
+    sourcePath,
+  ],
+  { encoding: "utf8" },
 ).toString();
 
 

@@ -363,6 +363,40 @@
   white-space: pre-wrap;
 }
 
+/* --- SQL tokenizer colors (TASK-003) ---
+   Only var(--vscode-…) theme colors — no hardcoded hex — so the palette
+   tracks the user's light/dark/high-contrast theme. Nested var() fallbacks
+   resolve to the editor foreground when a theme omits the richer symbol
+   color. Applies wherever a .vsdb-sql-tok-* span appears (Results Messages
+   tab and AI-chat ```sql blocks). */
+.vsdb-sql-tok-keyword {
+  color: var(
+    --vscode-symbolIcon-keywordForeground,
+    var(--vscode-textLink-foreground, var(--vscode-editor-foreground))
+  );
+}
+.vsdb-sql-tok-string {
+  color: var(
+    --vscode-symbolIcon-stringForeground,
+    var(--vscode-textPreformat-foreground, var(--vscode-editor-foreground))
+  );
+}
+.vsdb-sql-tok-number {
+  color: var(--vscode-symbolIcon-numberForeground, var(--vscode-editor-foreground));
+}
+.vsdb-sql-tok-comment {
+  color: var(
+    --vscode-symbolIcon-operatorForeground,
+    var(--vscode-descriptionForeground, var(--vscode-editor-foreground))
+  );
+}
+.vsdb-sql-tok-ident {
+  color: var(--vscode-editor-foreground);
+}
+.vsdb-sql-tok-punct {
+  color: var(--vscode-editor-foreground);
+}
+
 /* --- Connection Form (vsdb.connectionForm webview) --- */
 .vsdb-form-body {
   padding: 16px 24px;

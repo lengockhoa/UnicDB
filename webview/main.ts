@@ -59,6 +59,7 @@ import {
   type ExportFormat,
 } from "../src/ui/resultsGridModel";
 import { UndoStack } from "../src/ui/undoStack";
+import { highlightSql } from "./sqlHighlight";
 
 // AG Grid v36 modular API — register all-community so createGrid initializes.
 ModuleRegistry.registerModules([AllCommunityModule]);
@@ -2757,7 +2758,9 @@ function renderMessagesInto(panel: HTMLDivElement): void {
 
     const sql = document.createElement("pre");
     sql.className = "vsdb-msg-sql";
-    sql.textContent = r.sql;
+    // TASK-003: colorize the SQL (dependency-free tokenizer → fragment of
+    // <span>s). highlightSql never uses innerHTML, so hostile SQL stays text.
+    sql.appendChild(highlightSql(r.sql));
     card.appendChild(sql);
 
     const meta = document.createElement("div");

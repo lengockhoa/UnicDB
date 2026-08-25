@@ -10,6 +10,8 @@
 // them verbatim or denies (no optionId field on the wire). The webview
 // yields AT MOST ONE response per visible request.
 
+import { highlightSql } from "./sqlHighlight";
+
 declare const acquireVsCodeApi: undefined | (() => {
   postMessage: (msg: unknown) => void;
 });
@@ -260,6 +262,20 @@ function appendAssistant(text: string, markdown: boolean): void {
   const div = document.createElement("div");
   div.className = "vsdb-chat-bubble vsdb-chat-assistant";
   div.innerHTML = markdown ? renderMarkdown(text) : escapeHtml(text);
+  // TASK-003: colorize SQL fenced blocks AFTER the escaped HTML is in place.
+  // renderMarkdown escapes user text first; reading `textContent` off the
+  // already-escaped <code> node decodes entities back to the raw SQL, and
+  // highlightSql writes a fragment built with createElement + textContent
+  // only — preserving the no-innerHTML-for-user-content contract (hostile
+  // agent output never reaches the page as live nodes).
+  if (markdown) {
+    for (const code of Array.from(
+      div.querySelectorAll<HTMLElement>("code.vsdb-md-code-lang-sql"),
+    )) {
+      const frag = highlightSql(code.textContent ?? "");
+      code.replaceChildren(frag);
+    }
+  }
   thread.appendChild(div);
   thread.scrollTop = thread.scrollHeight;
 }

@@ -197,3 +197,74 @@ it is optional precisely so TASK-005 can ship the plumbing incrementally, and so
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+---
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+
+### RED_OUTPUT (fresh, before implementation)
+
+```
+RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-004
+❯ src/ui/__tests__/queryComposer.test.ts  (0 test)
+FAIL  src/ui/__tests__/queryComposer.test.ts
+Error: Failed to load url ../queryComposer (resolved id: ../queryComposer)
+in .../src/ui/__tests__/queryComposer.test.ts. Does the file exist?
+Test Files  1 failed (1)
+     Tests  no tests
+```
+
+RED confirmed for the expected reason: the module `src/ui/queryComposer.ts` did not exist yet,
+so the test file could not even load. Not a false-GREEN.
+
+### Verification Output (fresh, current turn)
+
+`npm run typecheck`:
+```
+> tsc --noEmit
+(exit 0, no diagnostics)
+```
+
+`npx vitest run src/ui/__tests__/queryComposer.test.ts`:
+```
+✓ src/ui/__tests__/queryComposer.test.ts  (19 tests) 3ms
+Test Files  1 passed (1)
+     Tests  19 passed (19)
+```
+
+`npm test` (full suite, after `npm run compile` for the gitignored `dist/` artifacts):
+```
+Test Files  96 passed | 1 skipped (97)
+     Tests  1346 passed | 2 skipped (1348)
+```
+Baseline 1327 passed / 2 skipped / 0 failed → +19 (this task's cases) = 1346, 0 failed, no regression.
+
+### Status: PASS
+
+### Note
+
+- **`src/adapters/*` import conflict resolved inline.** §Interfaces lists
+  `getTableSortQuery` (src/adapters/postgres.ts) as a "consume", but the Acceptance Criteria
+  require the module to import nothing from `src/adapters/*`, and importing postgres.ts would
+  drag the `pg` driver into the webview bundle (esbuild browser platform). I composed the
+  postgres arm of `composeSortQuery` inline, byte-identical to `getTableSortQuery`
+  (`SELECT * FROM (inner) vsdb_sort[ WHERE …] ORDER BY quoteIdent(col,"postgres") ASC|DESC`).
+  Case 13 compares against the real helper and passes. mssql arm likewise inline (TASK-006 may
+  later replace it with a delegation to its adapter export). No `NotImplementedError` thrown.
+- **Temporal normalization (case 16)** handles both `Date` instances and canonical
+  `toISOString()`-shaped strings via a strict regex (`\d{4}-\d{2}-\d{2}T…Z`); mysql/mssql get
+  `T`→space and trailing `Z` dropped, postgres keeps the ISO verbatim. This is the design's
+  step-3 rule, not display-string type sniffing — `"007"` (case 18) never matches and stays
+  `'007'`.
+- **Case 17** additionally routes a `typed[i]` that is `null`/`undefined` to the `IS NULL`
+  branch even when the display string differs, per the "never inside the IN list" rule.
+- Typed arrays are used only when `typed.length === values.length`; wrong-length `typed` falls
+  back to all-string literals (case 19).
+- `dist/` is gitignored and absent in a fresh worktree; `npm test` first failed 2 smoke tests
+  (ENOENT `dist/webview.css` / missing `dist/schemaForm.js`) until `npm run compile` created the
+  artifacts — an environment build step, not a code regression.
+- No git add / commit / push performed; the two new files are left untracked in the worktree.

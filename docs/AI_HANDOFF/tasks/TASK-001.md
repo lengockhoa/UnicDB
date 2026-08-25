@@ -104,3 +104,71 @@ a `contributes.languages` change and case 6 will fail it. Scope is injection onl
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT (first run of the new test, before any implementation — `npx vitest run src/__tests__/sqlGrammar.test.ts`):
+
+```
+ FAIL  src/__tests__/sqlGrammar.test.ts > vsdb sql injection grammar (TASK-001) > package.json contributes a grammar injected into source.sql
+AssertionError: contributes.grammars must have at least one entry: expected 0 to be greater than or equal to 1
+ ❯ src/__tests__/sqlGrammar.test.ts:54:8
+        |
+   53|     expect(grammars.length, "contributes.grammars must have at least o…
+   54|       .toBeGreaterThanOrEqual(1);
+        |        ^
+   55| 
+   56|     const entry = grammars[0];
+
+ FAIL  src/__tests__/sqlGrammar.test.ts > vsdb sql injection grammar (TASK-001) > grammar file exists at the contributed path and parses as JSON
+TypeError: Cannot read properties of undefined (reading 'path')
+ ❯ src/__tests__/sqlGrammar.test.ts:66:18
+   66|     expect(entry.path).toBeTruthy();
+
+ FAIL  src/__tests__/sqlGrammar.test.ts > vsdb sql injection grammar (TASK-001) > grammar declares at least the VSDB dialect keywords
+Error: ENOENT: no such file or directory, open '.../syntaxes/vsdb-sql-injection.tmLanguage.json'
+ ❯ readJson src/__tests__/sqlGrammar.test.ts:20:18
+
+ FAIL  src/__tests__/sqlGrammar.test.ts > vsdb sql injection grammar (TASK-001) > no pattern matches the empty string
+Error: ENOENT: no such file or directory, open '.../syntaxes/vsdb-sql-injection.tmLanguage.json'
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 2 passed (6)
+```
+
+RED confirmed for the 4 implementation-gated cases. The 2 already-passing cases are the packaging guard
+(case 5, `.vscodeignore` correctly has no `syntaxes` line) and the no-languages guard (case 6,
+`contributes.languages` is undefined) — both pin pre-existing correct state, so they are expected to
+pass before implementation.
+
+Verification Output:
+
+1. `npm run typecheck` → exit 0, clean (`tsc --noEmit`, no errors).
+2. `npx vitest run src/__tests__/sqlGrammar.test.ts`:
+```
+ ✓ src/__tests__/sqlGrammar.test.ts  (6 tests) 3ms
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+```
+3. `npm test` (after `npm run compile` — the fresh worktree had no `dist/`, and two bundle tests
+   read `dist/*.js`; per PLAN §5 compile must run first):
+```
+ Test Files  96 passed | 1 skipped (97)
+      Tests  1333 passed | 2 skipped (1335)
+```
+Baseline 1327 passed / 2 skipped / 0 failed; +6 new tests, 0 regressions.
+
+Status: PASS
+
+Note: `npm run compile` was required as a prerequisite for `npm test` only because this isolated
+worktree had no prebuilt `dist/`; TASK-001 itself adds no TypeScript to any bundle and `compile`
+completed without errors. Grammar regexes are intentionally kept JS/Oniguruma-dual-compatible
+(no `(?i)` inline flags) so the no-empty-match test can construct each pattern with `new RegExp(r)`;
+dialect keywords are therefore matched in their conventional uppercase form. `entity.name.function.vsdb.sql`
+is emitted by a generic identifier-before-paren pattern to honor the Interfaces "Produces" contract
+with TASK-003. `package-lock.json` unchanged by `npm ci`/`npm install` (no dependency drift). No
+`contributes.languages` added. No git add/commit/push performed.

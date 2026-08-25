@@ -172,3 +172,54 @@ resolves to zero tokens (case 4 unchanged), it just gets a second chance once da
 Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
 Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
 -->
+
+## Executor Report
+
+```
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+SUMMARY: Added SqlSemanticTokensProvider (.sql semantic coloring by live
+  schema/table/column via SchemaCache), wired registration + refresh() into
+  extension.ts, and shipped 10 TDD test cases (9 unit + 1 registration guard).
+TEST_PLAN_FOLLOWED: task §Test Cases (#1-#10)
+FILES_CHANGED:
+  - src/ui/sqlSemanticTokens.ts: new — SQL_SEMANTIC_LEGEND + provider
+    (onDidChangeSemanticTokens EventEmitter, provideDocumentSemanticTokens,
+    refresh(), dispose(), cold-cache refresh scheduling).
+  - src/extension.ts: import provider; construct next to SchemaCache; guard
+    registerDocumentSemanticTokensProvider; push provider onto disposables;
+    refresh() from mgr.onDidChangeActive + vsdb.refreshSchema.
+  - src/ui/__tests__/sqlSemanticTokens.test.ts: new — cases #1-#7,#9,#10.
+  - src/extension.test.ts: case #8 (registration guard) added.
+TESTS_ADDED:
+  - src/ui/__tests__/sqlSemanticTokens.test.ts: #1-#7,#9,#10.
+  - src/extension.test.ts: TASK-002 #8 activate() không throw khi API vắng mặt.
+VERIFICATION:
+  command: npx vitest run src/ui/__tests__/sqlSemanticTokens.test.ts src/extension.test.ts && npm run typecheck && npm test
+  result: semantic tests 9/9 pass; extension tests 60/60 pass; typecheck clean; full npm test 1337 passed, 0 failed (2 skipped)
+  output_excerpt: |
+    Test Files  96 passed | 1 skipped (97)
+    Tests  1337 passed | 2 skipped (1339)
+RED_OUTPUT (module missing, pre-implementation):
+    FAIL src/ui/__tests__/sqlSemanticTokens.test.ts
+    Error: Failed to load url ../sqlSemanticTokens ... Does the file exist?
+    Test Files  1 failed (1) / Tests no tests
+ISSUES: none
+HANDOFF_TO_REVIEWER: yes — provider is a new shared-runtime surface
+NEXT: ready for review
+```
+
+**Design decisions (recorded per Handoff mode):**
+- `provideDocumentSemanticTokens` keeps `vscode`'s `(document, token)` arity; the
+  legend is the module constant `SQL_SEMANTIC_LEGEND` (fixed at registration), so no
+  legend parameter is threaded through. Tests pass the legend arg harmlessly (ignored).
+- Cold cache: `Promise.race` with a 50 ms timeout. Timeout wins → empty token set +
+  one auto-`refresh()` when the in-flight lookup settles, guarded by a per-provider
+  `coldRefreshScheduled` boolean (breaks the fire-per-edit loop; never fires
+  synchronously inside provide).
+- Column resolution: only the LAST `FROM` target's columns are fetched (schema-qualified
+  `public.users` handled); unresolvable FROM → schema/table tokens only, no N-query storm.
+- `npm run compile` was run once because `dist/` was absent in this clean worktree
+  (pre-existing test `schemaFormBundlePresent` needs it); after that full suite is green.

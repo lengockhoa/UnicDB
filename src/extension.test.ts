@@ -330,6 +330,14 @@ describe("extension.activate — wiring smoke", () => {
     activate(ctx as never);
     expect(() => deactivate()).not.toThrow();
   });
+
+  // TASK-002 case 8 — registration guard: partial vscode.languages mock
+  // (chỉ stub registerCodeLensProvider, xem :159-164) thiếu
+  // registerDocumentSemanticTokensProvider → activate() KHÔNG throw.
+  it("TASK-002 #8 activate() không throw khi registerDocumentSemanticTokensProvider vắng mặt", () => {
+    const ctx = makeCtx();
+    expect(() => activate(ctx as never)).not.toThrow();
+  });
 });
 
 // =============================================================================

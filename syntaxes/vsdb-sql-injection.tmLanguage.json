@@ -1,0 +1,48 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "VSDB SQL injection",
+  "scopeName": "source.sql.vsdb",
+  "injectionSelector": "L:source.sql",
+  "patterns": [
+    {
+      "comment": "PostgreSQL ILIKE (and NOT ILIKE). Keywords matched in uppercase conventional form; kept JS/Oniguruma-dual-compatible so the no-empty-match regression test can construct each regex with new RegExp().",
+      "name": "keyword.other.vsdb.sql",
+      "match": "\\b(?:NOT\\s+)?ILIKE\\b"
+    },
+    {
+      "comment": "PostgreSQL RETURNING clause keyword.",
+      "name": "keyword.other.vsdb.sql",
+      "match": "\\bRETURNING\\b"
+    },
+    {
+      "comment": "PostgreSQL MATERIALIZED VIEW keyword.",
+      "name": "keyword.other.vsdb.sql",
+      "match": "\\bMATERIALIZED\\b"
+    },
+    {
+      "comment": "T-SQL TOP (SELECT TOP n).",
+      "name": "keyword.other.vsdb.sql",
+      "match": "\\bTOP\\b"
+    },
+    {
+      "comment": "T-SQL / standard OFFSET … FETCH … ROWS ONLY paging clause keywords.",
+      "name": "keyword.other.vsdb.sql",
+      "match": "\\b(?:OFFSET|FETCH|NEXT|ROWS|ONLY)\\b"
+    },
+    {
+      "comment": "T-SQL [bracket]-quoted identifiers the built-in grammar does not scope.",
+      "name": "variable.other.bracket.sql",
+      "match": "\\[[^\\]]*\\]"
+    },
+    {
+      "comment": "MySQL `backtick`-quoted identifiers the built-in grammar does not scope.",
+      "name": "variable.other.backtick.sql",
+      "match": "`[^`]*`"
+    },
+    {
+      "comment": "Generic SQL function call — a bare identifier directly followed by a parenthesis. Emits the entity.name.function.vsdb.sql scope TASK-003's webview tokenizer mirrors for visual consistency.",
+      "name": "entity.name.function.vsdb.sql",
+      "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b(?=\\s*\\()"
+    }
+  ]
+}
