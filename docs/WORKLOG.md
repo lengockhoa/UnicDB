@@ -22,6 +22,31 @@ For each significant action, append:
 
 ---
 
+## 2026-08-26 — Cycle V (SQL coloring + server-side filter/paging + MSSQL sort) + release v1.6.5
+
+- Action: handoff cycle V — 6 tasks / 2 waves: TASK-001 SQL TextMate injection grammar
+  (`syntaxes/vsdb-sql-injection.tmLanguage.json` + package.json contribution, no
+  contributes.languages), TASK-002 schema-aware semantic tokens provider
+  (`src/ui/sqlSemanticTokens.ts` + extension.ts wiring, refresh() at both cache-invalidation
+  sites, reuse schemaCache), TASK-003 webview SQL tokenizer (`webview/sqlHighlight.ts` +
+  themed styles, no-innerHTML contract), TASK-004 dialect query composer
+  (`src/ui/queryComposer.ts`: buildFilterWhere/buildPagedQuery/composeSortQuery, typed
+  values, no String() coercion), TASK-005 server-side filter + OFFSET/LIMIT paging
+  (messages.ts optional fields, resultsPanel.ts handleRequery, webview/main.ts wiring),
+  TASK-006 MSSQL sort (mssql.ts getTableSortQuery T-SQL OFFSET/FETCH + composer delegation).
+- Review: R1-R4 6/6 approved by bao-opus (5 approved + 1 approved_minor), 0 changes_requested,
+  0 fix rounds. Reviewer re-ran each task's targeted tests + typecheck fresh.
+- Boundary: full suite 1400 passed / 2 skipped / 0 failed + the known resultsGridModelNull
+  test-6 flake (passed 8/8 isolated — transient, not a regression). compile + typecheck clean.
+- Files: syntaxes/, webview/{sqlHighlight,main,aiChatPanelMain,styles}.ts/css, src/ui/{
+  queryComposer,sqlSemanticTokens,messages,resultsPanel}.ts, src/adapters/{mssql,postgres}.ts,
+  8 new test files + extension.test.ts/aiChatPanelWebview.test.ts amendments; docs/AI_HANDOFF/*.
+- Git: plan f7ba1e1 → waves 11c36c5, 575d727 → I4 e2e0aee → review efbd5c5 → RUN done 3571ea4,
+  all pushed to main. Worktree/branch cleanup verified clean.
+- Release v1.6.5: bump + CHANGELOG + lockfile sync (npm install --package-lock-only) +
+  build.sh (ci/typecheck/test/compile/package) → dist/vsdb-1.6.5.vsix 1662629 bytes, artifact
+  assertions 0 forbidden, installer dry-run OK.
+
 ## 2026-08-25 — Cycle U (DataGrip parity) complete
 
 - Action: handoff cycle U — 9 tasks / 5 waves: export keepIndices fix, MSSQL parameterized
