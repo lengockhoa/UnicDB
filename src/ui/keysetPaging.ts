@@ -230,7 +230,6 @@ export function assertBrowseShape(rawSql: string): BrowseShape | null {
   if (!parsed || parsed.table.toLowerCase() !== tableName.toLowerCase()) {
     return null;
   }
-  void lower;
   return {
     columns,
     ...(parsed.schema ? { schema: parsed.schema } : {}),
