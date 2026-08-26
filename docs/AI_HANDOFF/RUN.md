@@ -1,6 +1,6 @@
 Command: handoff-fullstack
 Goal: Cycle Y — finish all queued results/query work from Cycle X backlog (8 tasks, 3 waves)
 Base: main
-Phase: I3
-Cursor: wave 2 done — TASK-007 PASS committed abde88b (incl. 2 documented intentional expectation changes + ordinal grammar in queryComposer); worktrees clean
-Next: wave 3 — TASK-006 alone (DISTINCT scoped WHERE via source-state rebuild + truncation/error footer), then I4
+Phase: I4
+Cursor: all 8 tasks PASS; boundary full suite 1642 passed / 2 skipped / 0 failed + typecheck 0 at 7790296
+Next: Phase R — 8 parallel bao-opus code-reviewers (one per task file), then R4.5 auto-fix if needed, then I4 INDEX consolidation → R5
