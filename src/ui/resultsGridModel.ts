@@ -65,6 +65,72 @@ export interface StatementResult {
 const NUMERIC_STRING = /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
 
 /**
+ * TASK-003: map a declared DB type string (name → `ColumnInfo.dataType`, e.g.
+ * "varchar", "int4", "boolean") to the grid's ColumnKind, or null when the
+ * type is unrecognized so sampling stays in charge.
+ *
+ * String family is duplicated verbatim from src/ui/queryComposer.ts
+ * `isStringColumnType` (not exported; colliding names would break its import —
+ * discussion note 2). Keep the two lists in sync. Numeric and boolean families
+ * mirror src/core/ddl/sampleData.ts valueFor()'s typeIs() groups.
+ * Normalization matches queryComposer: trim().toLowerCase(); matching is
+ * family-bounded (`charset`, `enumeration`, `context_id` never match) and an
+ * unknown type MUST return null — the failure mode is "sampling unchanged",
+ * never a forced kind.
+ */
+function classifyDeclaredColumnType(declared: string | undefined): ColumnKind | null {
+  if (!declared) return null;
+  const t = declared.trim().toLowerCase();
+  if (t.length === 0) return null;
+  // String family — queryComposer.isStringColumnType vocabulary: exact base
+  // tokens optionally followed by "(50)"/"('a','b')" style modifiers, TEXT
+  // family incl. tiny/medium/long/ntext, plus citext/cstring.
+  if (/^(character varying|character|char|varchar|nchar|nvarchar|enum|set)(\s*\(|$)/.test(t)) {
+    return "string";
+  }
+  if (/^(tiny|medium|long)?text$/.test(t) || t === "ntext") return "string";
+  if (t === "citext" || t === "cstring") return "string";
+  // Numeric family — sampleData.ts integer / decimal / float groups (+ the
+  // pg_catalog aliases int2/int4/int8/float4/float8 already listed there).
+  if (
+    typeIs(
+      t,
+      [
+        "integer",
+        "int",
+        "int2",
+        "int4",
+        "int8",
+        "serial",
+        "bigserial",
+        "smallserial",
+        "bigint",
+        "smallint",
+        "numeric",
+        "decimal",
+        "money",
+        "float",
+        "float4",
+        "float8",
+        "double precision",
+        "real",
+      ],
+    )
+  ) {
+    return "number";
+  }
+  // Boolean family — sampleData.ts boolean group.
+  if (typeIs(t, ["boolean", "bool"])) return "boolean";
+  // Unknown declaration → sampling decides (Task case 5).
+  return null;
+}
+
+/** Exact-token membership over a lowercase Set (trimmed input only). */
+function typeIs(t: string, names: readonly string[]): boolean {
+  return names.includes(t);
+}
+
+/**
  * Suy luận column kind từ tên cột + sample rows.
  * - Toàn number / bigint-sanitized string (chuỗi số, vd Postgres BigInt qua
  *   sanitizer) → "number", alignRight.
@@ -72,8 +138,21 @@ const NUMERIC_STRING = /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
  * - Còn lại (string, date-as-string, null-only) → "string".
  *
  * Sample tối đa 1000 phần tử đầu (không tốn thêm khi rows ngắn).
+ *
+ * TASK-003: khi `columnTypes` khai báo kiểu DB cho TÊN cột (name →
+ * `ColumnInfo.dataType`, vd {code: "varchar", n: "int4"}), kiểu khai báo
+ * quyết định `kind` và sampling bị BỎ QUA cho cột đó (PLAN §3.3: row-sniffing
+ * phụ thuộc trang dữ liệu — varchar chứa chữ số phải giữ nguyên string,
+ * cột numeric all-NULL vẫn phải là number/alignRight). Tham số OPTIONAL: mọi
+ * caller 2 tham số hiện có giữ nguyên behavior byte-identical. Kiểu không
+ * nhận diện (vd "geometry") → fallback về sampling như chưa có khai báo.
+ * Webview wiring: TASK-007.
  */
-export function inferColumns(columns: string[], rows: unknown[][]): ColumnSpec[] {
+export function inferColumns(
+  columns: string[],
+  rows: unknown[][],
+  columnTypes?: Record<string, string>,
+): ColumnSpec[] {
   const SAMPLE = Math.min(rows.length, 1000);
   // `field` must be unique across the returned specs — AG Grid keys rows by
   // `field`, so two specs sharing one field collapse onto the same data
@@ -83,31 +162,38 @@ export function inferColumns(columns: string[], rows: unknown[][]): ColumnSpec[]
   // collide with itself or with an already-unique original name.
   const usedFields = new Set<string>();
   return columns.map((name, colIdx) => {
-    let allNumber = true;
-    let allBoolean = true;
-    let sawAny = false;
-    // colIdx = loop index (position in `columns`/`rows[i]`) — NEVER
-    // `columns.indexOf(name)`, which resolves duplicate names to the FIRST
-    // match and misreads every subsequent same-named column's sample data.
-    for (let i = 0; i < SAMPLE; i++) {
-      const v = rows[i]?.[colIdx];
-      if (v === null || v === undefined) continue;
-      sawAny = true;
-      let isNum = typeof v === "number";
-      if (!isNum && typeof v === "string" && NUMERIC_STRING.test(v)) isNum = true;
-      if (!isNum) allNumber = false;
-      if (typeof v !== "boolean") allBoolean = false;
-      if (!allNumber && !allBoolean) break;
-    }
-    let kind: ColumnKind;
+    let kind: ColumnKind | null = classifyDeclaredColumnType(columnTypes?.[name]);
     let alignRight: boolean | undefined;
-    if (sawAny && allNumber) {
-      kind = "number";
-      alignRight = true;
-    } else if (sawAny && allBoolean) {
-      kind = "boolean";
+    if (kind !== null) {
+      // Declared types carry their own alignment decision — a declared
+      // numeric column is right-aligned even when every sampled cell is
+      // NULL (sampling would see nothing and fall back to string).
+      if (kind === "number") alignRight = true;
     } else {
-      kind = "string";
+      let allNumber = true;
+      let allBoolean = true;
+      let sawAny = false;
+      // colIdx = loop index (position in `columns`/`rows[i]`) — NEVER
+      // `columns.indexOf(name)`, which resolves duplicate names to the FIRST
+      // match and misreads every subsequent same-named column's sample data.
+      for (let i = 0; i < SAMPLE; i++) {
+        const v = rows[i]?.[colIdx];
+        if (v === null || v === undefined) continue;
+        sawAny = true;
+        let isNum = typeof v === "number";
+        if (!isNum && typeof v === "string" && NUMERIC_STRING.test(v)) isNum = true;
+        if (!isNum) allNumber = false;
+        if (typeof v !== "boolean") allBoolean = false;
+        if (!allNumber && !allBoolean) break;
+      }
+      if (sawAny && allNumber) {
+        kind = "number";
+        alignRight = true;
+      } else if (sawAny && allBoolean) {
+        kind = "boolean";
+      } else {
+        kind = "string";
+      }
     }
     let field = name;
     if (usedFields.has(field)) {

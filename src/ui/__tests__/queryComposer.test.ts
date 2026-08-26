@@ -389,12 +389,20 @@ describe("parseOrderBy (TASK-001)", () => {
     }
   });
 
-  // Case 10 — edge (dialect capability): NULLS rejected on mysql/mssql
-  it("rejects NULLS on mysql and mssql with no emulation", () => {
+  // Case 10 — edge (dialect capability): NULLS accepted on mysql/mssql,
+  // emulated by buildOrderByClause (TASK-005 — intentional expectation change,
+  // mirrors cycle W's case-16 precedent; the old rejection assertion is
+  // rewritten, not deleted).
+  it("parses NULLS on mysql and mssql instead of rejecting", () => {
     for (const dialect of ["mysql", "mssql"] as const) {
       const r = parseOrderBy("a NULLS LAST", dialect);
-      expect(r.ok).toBe(false);
-      if (!r.ok) expect(r.error).toMatch(/NULLS/i);
+      expect(r.ok).toBe(true);
+      if (r.ok) expect(r.terms[0].nulls).toBe("LAST");
+      const clause = buildOrderByClause(
+        [{ column: "a", direction: "ASC", nulls: "LAST" }],
+        dialect,
+      );
+      expect(clause).not.toContain("NULLS");
     }
   });
 
@@ -680,9 +688,9 @@ describe("buildFilterWhere — whitespace blanks (TASK-004)", () => {
   });
 
   // Case 3 — edge (dialect/escaping): string blanks SQL quotes safely per
-  // dialect; the embedded delimiter stays escaped inside TRIM; a normal
-  // selected value remains in the IN list.
-  it("string-column blanks emit IS NULL OR TRIM(col) = '' per dialect", () => {
+  // dialect; the embedded delimiter stays escaped inside the predicate; a
+  // normal selected value remains in the IN list.
+  it("string-column blanks emit IS NULL OR whitespace-complete predicate per dialect", () => {
     const filters = { n: { values: ["(Blanks)", "a"] } };
     expect(
       buildFilterWhere(filters, "postgres", { columnTypes: { n: "varchar" } }),
@@ -695,7 +703,7 @@ describe("buildFilterWhere — whitespace blanks (TASK-004)", () => {
     ).toBe("([n] IS NULL OR [n] NOT LIKE '%[^ \t\r\n\f\v]%' OR [n] IN ('a'))");
   });
 
-  it("embedded delimiter stays escaped inside TRIM()", () => {
+  it("embedded delimiter stays escaped inside the whitespace predicate", () => {
     expect(
       buildFilterWhere(
         { 'a"b': { values: ["(Blanks)"] } },
@@ -716,5 +724,157 @@ describe("shared stripTrailingSemicolon (TASK-004 case 5)", () => {
       /import\s*\{[^}]*stripTrailingSemicolon[^}]*\}\s*from\s*"\.\.\/core\/text"/,
     );
     expect(source).not.toMatch(/function\s+stripTrailingSemicolon\s*\(/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TASK-005 — NULLS FIRST/LAST emulation on mysql/mssql. PostgreSQL stays
+// native and byte-identical; mysql gets a leading null-rank backtick key;
+// mssql gets a CASE null-rank key. One `it` per numbered case from the
+// task's §Test Cases table.
+// ---------------------------------------------------------------------------
+
+describe("parseOrderBy + buildOrderByClause — NULLS emulation (TASK-005)", () => {
+  // Case 1 — happy: MySQL NULLS LAST is emulated with an IS NULL rank key.
+  it("mysql 'a ASC NULLS LAST' parses ok and composes the exact emulated clause", () => {
+    const r = parseOrderBy("a ASC NULLS LAST", "mysql");
+    expect(r).toEqual({
+      ok: true,
+      terms: [{ column: "a", direction: "ASC", nulls: "LAST" }],
+    });
+    if (r.ok) {
+      expect(buildOrderByClause(r.terms, "mysql")).toBe(
+        "`a` IS NULL ASC, `a` ASC",
+      );
+    }
+  });
+
+  // Case 2 — edge (dialect): MSSQL NULLS LAST uses a CASE rank key, never a
+  // boolean literal ORDER BY and never the raw NULLS token.
+  it("mssql 'a ASC NULLS LAST' composes the CASE rank key without any NULLS token", () => {
+    const parsed = parseOrderBy("a ASC NULLS LAST", "mssql");
+    expect(parsed.ok).toBe(true);
+    const clause = buildOrderByClause(
+      [{ column: "a", direction: "ASC", nulls: "LAST" }],
+      "mssql",
+    );
+    expect(clause).toBe("CASE WHEN [a] IS NULL THEN 1 ELSE 0 END ASC, [a] ASC");
+    expect(clause).not.toContain("NULLS");
+  });
+
+  // Case 3 — edge (boundary): NULLS FIRST flips only the RANK direction; the
+  // data term keeps the caller's direction; postgres stays native/byte-exact.
+  it("NULLS FIRST reverses only the rank key direction on mysql/mssql", () => {
+    for (const dialect of ["mysql", "mssql"] as const) {
+      for (const dir of ["ASC", "DESC"] as const) {
+        const r = parseOrderBy(`a ${dir} NULLS FIRST`, dialect);
+        expect(r.ok).toBe(true);
+        if (!r.ok) continue;
+        const clause = buildOrderByClause(r.terms, dialect);
+        if (dialect === "mysql") {
+          expect(clause).toBe("`a` IS NULL DESC, `a` " + dir);
+        } else {
+          expect(clause).toBe(
+            "CASE WHEN [a] IS NULL THEN 1 ELSE 0 END DESC, [a] " + dir,
+          );
+        }
+      }
+    }
+    const pg = parseOrderBy("a ASC NULLS FIRST", "postgres");
+    expect(pg.ok).toBe(true);
+    if (pg.ok) expect(buildOrderByClause(pg.terms, "postgres")).toBe(`"a" ASC NULLS FIRST`);
+  });
+
+  // Case 5 — edge (malformed input): expressions stay rejected under mysql;
+  // parseOrderBy alone must not execute anything anywhere.
+  it("an expression is still rejected under mysql even with emulation in place", () => {
+    const r = parseOrderBy("CASE WHEN a IS NULL THEN 0 END", "mysql");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.length).toBeGreaterThan(0);
+  });
+
+  // Edge coverage — mixed ASC/DESC composite with a nulls term per dialect.
+  it("mixed ASC/DESC composite terms with nulls compose per dialect", () => {
+    const r = parseOrderBy("a DESC NULLS FIRST, b ASC, c DESC NULLS LAST", "mysql");
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(buildOrderByClause(r.terms, "mysql")).toBe(
+        "`a` IS NULL DESC, `a` DESC, `b` ASC, `c` IS NULL ASC, `c` DESC",
+      );
+    }
+    const ms = parseOrderBy("a DESC NULLS FIRST, b ASC, c DESC NULLS LAST", "mssql");
+    expect(ms.ok).toBe(true);
+    if (ms.ok) {
+      expect(buildOrderByClause(ms.terms, "mssql")).toBe(
+        "CASE WHEN [a] IS NULL THEN 1 ELSE 0 END DESC, [a] DESC, [b] ASC, " +
+          "CASE WHEN [c] IS NULL THEN 1 ELSE 0 END ASC, [c] DESC",
+      );
+    }
+  });
+
+  // Round trip: parseOrderBy ok → the same consumers' composition renders the
+  // emulated keys via composeSortQuery/consume path parity for single plain terms.
+  it("round trip: 'a NULLS LAST' under mysql parses ok then renders through the composer path", () => {
+    const r = parseOrderBy("a NULLS LAST", "mysql");
+    expect(r).toEqual({
+      ok: true,
+      terms: [{ column: "a", direction: "ASC", nulls: "LAST" }],
+    });
+    // The consumer rendering (resultsPanel multi-term wrap / buildPagedQueryTerms)
+    // goes through buildOrderByClause — pin the composed ORDER BY body.
+    expect(buildOrderByClause(r.ok ? r.terms : [], "mysql")).toBe(
+      "`a` IS NULL ASC, `a` ASC",
+    );
+  });
+});
+
+describe("buildPagedQueryTerms — NULLS + tiebreaker path (TASK-005)", () => {
+  // Edge coverage — ordering combined with the paged-query tiebreaker path:
+  // the emulated null-rank key leads, PK components still trail in declared order.
+  it("emulated null-rank keys lead and PK tiebreakers trail (mysql paging)", () => {
+    const q = buildPagedQueryTerms(
+      "SELECT * FROM t",
+      "",
+      [{ column: "a", direction: "ASC", nulls: "LAST" }],
+      0,
+      500,
+      "mysql",
+      ["id"],
+    );
+    expect(q).toBe(
+      "SELECT * FROM (SELECT * FROM t) vsdb_page ORDER BY `a` IS NULL ASC, `a` ASC, `id` ASC LIMIT 500 OFFSET 0",
+    );
+  });
+
+  it("emulated null-rank keys lead and PK tiebreakers trail (mssql paging)", () => {
+    const q = buildPagedQueryTerms(
+      "SELECT * FROM t",
+      "",
+      [{ column: "a", direction: "DESC", nulls: "FIRST" }],
+      100,
+      50,
+      "mssql",
+      ["tenant_id"],
+    );
+    expect(q).toBe(
+      "SELECT * FROM (SELECT * FROM t) vsdb_page ORDER BY CASE WHEN [a] IS NULL THEN 1 ELSE 0 END DESC, [a] DESC, [tenant_id] ASC OFFSET 100 ROWS FETCH NEXT 50 ROWS ONLY",
+    );
+  });
+
+  // Case 6 — regression (cleanup): postgres nulls terms in the paging path
+  // stay native and byte-identical.
+  it("postgres NULLS LAST paging output remains byte-identical native syntax", () => {
+    const q = buildPagedQueryTerms(
+      "SELECT * FROM t",
+      "",
+      [{ column: "a", direction: "ASC", nulls: "LAST" }],
+      0,
+      500,
+      "postgres",
+      [],
+    );
+    expect(q).toBe(
+      `SELECT * FROM (SELECT * FROM t) vsdb_page ORDER BY "a" ASC NULLS LAST LIMIT 500 OFFSET 0`,
+    );
   });
 });

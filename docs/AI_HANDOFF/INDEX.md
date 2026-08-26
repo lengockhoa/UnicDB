@@ -17,7 +17,7 @@ buildFilterWhere reuse). 8 tasks, planned 3 waves.
 | TASK-005 | Emulate NULLS FIRST/LAST on MySQL and MSSQL | ready | none | - |
 | TASK-006 | Scope DISTINCT values and surface dropdown limits/errors | ready | TASK-004, TASK-007 | - |
 | TASK-007 | Typed state dialect, declared-type wiring, and webview minors | ready | TASK-003, TASK-004 | - |
-| TASK-008 | Stabilize the webview server-sort bundle lifecycle | ready | none | - |
+| TASK-008 | Stabilize the webview server-sort bundle lifecycle | pending_review | claude-code/bao-sonnet | - |
 
 Graph: TASK-001 ∥ TASK-002 ∥ TASK-003 ∥ TASK-004 ∥ TASK-005 ∥ TASK-008; TASK-003 + TASK-004
 → TASK-007; TASK-004 + TASK-007 → TASK-006.

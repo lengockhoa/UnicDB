@@ -236,10 +236,13 @@ describe("TASK-004 case 8b — active-dialect quoted colId round-trips; mismatch
 });
 
 // =============================================================================
-// Case 8c — NULLS native (postgres) vs rejected (mysql/mssql)
+// Case 8c — NULLS native (postgres) vs emulated (mysql/mssql). TASK-005
+// intentionally rewrites the old rejection assertion (cycle W case-16
+// precedent): a valid NULLS term under mysql/mssql now parses ok and the
+// host runs the emulated ORDER BY instead of posting a synthetic error.
 // =============================================================================
 
-describe("TASK-004 case 8c — NULLS native on postgres, rejected on mysql/mssql", () => {
+describe("TASK-004 case 8c (TASK-005) — NULLS native on postgres, emulated on mysql/mssql", () => {
   it("postgres 'a NULLS LAST' composes ORDER BY \"a\" ASC NULLS LAST", async () => {
     const { runSql, fake } = makePanel({ sql: "SELECT id FROM t" });
     fake.webview.dispatch(requeryMsg({ orderBy: "a NULLS LAST" }));
@@ -248,13 +251,28 @@ describe("TASK-004 case 8c — NULLS native on postgres, rejected on mysql/mssql
     expect(sql).toContain('ORDER BY "a" ASC NULLS LAST');
   });
 
-  it.each(["mysql", "mssql"])("%s: 'a NULLS LAST' runs no SQL and errors /NULLS/i", async (driver) => {
+  it.each(["mysql", "mssql"])("%s: 'a NULLS LAST' runs the emulated ORDER BY once with no error", async (driver) => {
     const { runSql, fake, showErrorMessage } = makePanel({ driver, sql: "SELECT id FROM t" });
     fake.webview.dispatch(requeryMsg({ orderBy: "a NULLS LAST" }));
     await waitForTerminal(fake);
-    expect(runSql).not.toHaveBeenCalled();
-    const msg = showErrorMessage.mock.calls[0]?.[0] ?? "";
-    expect(String(msg)).toMatch(/NULLS/i);
+    // Runs exactly once — never a synthetic rejection path.
+    expect(runSql).toHaveBeenCalledTimes(1);
+    const sql = runSql.mock.calls[0]![0] as string;
+    if (driver === "mysql") {
+      expect(sql).toBe("SELECT * FROM (SELECT id FROM t) AS vsdb_sub ORDER BY `a` IS NULL ASC, `a` ASC");
+    } else {
+      expect(sql).toBe("SELECT * FROM (SELECT id FROM t) AS vsdb_sub ORDER BY CASE WHEN [a] IS NULL THEN 1 ELSE 0 END ASC, [a] ASC");
+    }
+    expect(sql).not.toContain("NULLS");
+    // No synthetic error state was posted and no rejection surfaced.
+    const stateResults = stateMessages(fake).flatMap(
+      (m) => m.results as Array<{ status?: string }> | undefined,
+    ).filter(Boolean) as Array<{ status?: string; error?: string }>;
+    for (const r of stateResults) {
+      expect(r.status).not.toBe("error");
+      if (r.error !== undefined) expect(r.error).not.toMatch(/Invalid ORDER BY/);
+    }
+    expect(showErrorMessage).not.toHaveBeenCalled();
   });
 });
 

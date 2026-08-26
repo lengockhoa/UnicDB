@@ -25,6 +25,8 @@ export interface ConnectionFormSubmit {
   sslCaPath: string;
   sslCertPath: string;
   sslKeyPath: string;
+  /** TASK-001 — luôn boolean cụ thể (false = automatic), không bao giờ omitted. */
+  manualCommit: boolean;
 }
 
 export interface ConnectionFormCancel {
@@ -60,6 +62,8 @@ export interface ConnectionFormTest {
   sslCaPath: string;
   sslCertPath: string;
   sslKeyPath: string;
+  /** TASK-001 — giữ trường qua protocol cho symmetric với submit. */
+  manualCommit: boolean;
 }
 
 // ---- Host → Webview --------------------------------------------------------

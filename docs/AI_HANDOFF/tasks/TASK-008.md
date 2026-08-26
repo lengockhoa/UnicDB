@@ -1,7 +1,7 @@
 # TASK-008 — Stabilize the webview server-sort bundle lifecycle
 
-- Status: `ready`
-- Owner: `-`
+- Status: `pending_review`
+- Owner: claude-code/bao-sonnet
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §2 item 8, §3.8
 
@@ -77,5 +77,77 @@ script. Global constraints: PLAN.md §7.
 3. **TDD order.** First add the single-lifecycle setup and an assertion that demonstrates one
    receiver/listener path; then replace the 250 ms wait with bounded `vi.waitFor` or a verified
    event/observable state wait. The five-seed command is the regression proof.
+4. **Executor decision — isolation strategy.** The Cycle-X TASK-003 pattern (reset via
+   `resetGrid` message pairs) did not transfer directly: this suite's cases intentionally vary
+   column sets and header text per case, and the render lifecycle's `columnsChanged` reset
+   triggers on column COUNT only (`webview/main.ts` ~1717). Two same-count statements in a row
+   therefore keep the previous case's column defs. Chosen fix, still zero production hooks:
+   every case mounts through a `mountStatement()` helper that parks the shared grid on a
+   1-column statement first, so each real mount lands as a full defs rebuild + filter clear
+   through the production branch, then absorbs the resulting api-source debounce post via the
+   observable settle wait. Header/dialect variation needs no reload because `headerText` is
+   re-read from every state message (`webview/main.ts` ~3337).
+5. **Executor decision — quiescence semantics.** A pending debounce timer has no grid-state
+   signature; the only observable completion is the post itself. The replaced fixed sleeps use
+   "stream unchanged for one full debounce window (+50 ms slack)" (`waitForSettledStream`,
+   `vi.waitFor`, timeout = 10× debounce) — a real timeout that fails loudly with the stream
+   tail attached.
+
+---
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: not reproducible — root cause documented. ~25+ shuffled baseline rounds of the
+ORIGINAL file (seeds 1-8, 90-92, 100-108, 200-201, 300-302; serial, concurrent trios, and with
+concurrent heavy-suite load generators) all passed on this host (M-series, 10 cores, background
+load avg 7-8): the old 250 ms fixed sleep leaves a 100 ms margin over the 150 ms debounce, which
+masks the race locally. Root cause remains proven from source: the bundle's anonymous
+`window.addEventListener("message", ...)` (`webview/main.ts` :3334) is unremovable, so every
+per-`it` `loadBundle()` eval installed ANOTHER listener generation whose own debounce closures
+could post behind the current case (the documented aggregate-run case-18 failures). Conversion
+proceeded per task instruction ("if you cannot reproduce locally, say so and proceed").
+Interim RED during conversion (before final form): case 3/15/16/17/18 posted 0 requeries
+(shape-mixed defs on the shared lifecycle), case 5 leaked a second post (premature settle check),
+two ReferenceError typos — all fixed as described below.
+
+Verification Output:
+```
+$ npm run compile          (mandatory — tests evaluate dist/webview.js)
+⚡ dist/webview.js 2.2mb … esbuild: build complete   [exit 0]
+
+$ npx vitest run src/ui/__tests__/webviewServerSort.test.ts
+ ✓ src/ui/__tests__/webviewServerSort.test.ts  (12 tests) 8351ms
+ Test Files  1 passed (1)
+      Tests  12 passed (12)
+
+$ for seed in 1 2 3 4 5; do npx vitest run src/ui/__tests__/webviewServerSort.test.ts \
+    --poolOptions.threads.singleThread --sequence.shuffle.tests --sequence.seed=$seed || exit 1; done
+--- seed 1 --- ✓ src/ui/__tests__/webviewServerSort.test.ts  (12 tests) 8412ms | Tests 12 passed (12)
+--- seed 2 --- ✓ src/ui/__tests__/webviewServerSort.test.ts  (12 tests) 8444ms | Tests 12 passed (12)
+--- seed 3 --- ✓ src/ui/__tests__/webviewServerSort.test.ts  (12 tests) 8530ms | Tests 12 passed (12)
+--- seed 4 --- ✓ src/ui/__tests__/webviewServerSort.test.ts  (12 tests) 8323ms | Tests 12 passed (12)
+--- seed 5 --- ✓ src/ui/__tests__/webviewServerSort.test.ts  (12 tests) 8484ms | Tests 12 passed (12)
+
+Extra stress (beyond required commands):
+- seeds 6-10 shuffled single-thread: 5 × Tests 12 passed (12)
+- seeds 11-12 shuffled single-thread WITH webviewBundle.test.ts running concurrently: pass + pass
+- npm run typecheck → tsc --noEmit [exit 0]
+```
+
+Status: PASS
+Note: Conversion specifics worth reviewer attention. (1) Case-18a/b now share one evaluated
+bundle across sub-cases via fresh `mountStatement()` remounts instead of a second `loadBundle()`;
+assertions byte-identical. (2) The old case 15 kept ONE grid for its three dialect loops relying
+on per-load grids; here each dialect remounts (defs rebuild per driver header), assertions
+unchanged. (3) Fixed `setTimeout(250)`/`setTimeout(50)` drains replaced everywhere by
+`waitForSettledStream()` (quiet-window ≥ debounce+50ms, loud timeout at 1500ms); the ONLY remaining
+`setTimeout(resolve, 0)` is the pre-existing macrotask yield `flushGridEvents()`. (4) `beforeEach`
+also stops surviving editors so no case depends on prior-case DOM remnants. (5) Skipped-bundle
+honesty preserved unchanged (`it.runIf(bundleSrc !== null)` / `describe.runIf`). No production
+file touched — `git status --porcelain` shows only `src/ui/__tests__/webviewServerSort.test.ts`
+(plus this handoff doc update).
 
 ---

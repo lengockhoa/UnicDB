@@ -1806,3 +1806,142 @@ describe("TASK-004 — vsdb.exportAllStructures wiring", () => {
     expect(entry!.when).toMatch(/viewItem == schema/);
   });
 });
+
+// =============================================================================
+// TASK-001 — per-connection manualCommit reaching ConnectionManager.
+// openConnectionForm() builds ConnectionConfig literals for BOTH add and edit
+// paths; these tests drive vsdb.addConnection / vsdb.editConnection through
+// the mocked vscode layer and assert mgr.addConnection/editConnection receive
+// a config whose manualCommit matches the webview submit payload exactly
+// (concrete boolean — never omitted/undefined).
+// Pattern parity: ConnectionManager.prototype spies, exactly like the existing
+// getAdapter prototype spies above.
+// =============================================================================
+describe("TASK-001 — manualCommit forwarded into connection config (add + edit)", () => {
+  let addSpy: ReturnType<typeof vi.fn>;
+  let editSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+    state.registeredTreeDataProviders.clear();
+    state.createdStatusBarItems.length = 0;
+    state.createdWebviewPanels.length = 0;
+    state.createdTreeViews.length = 0;
+    state.createdTerminals.length = 0;
+    addSpy = vi.fn().mockResolvedValue(undefined);
+    editSpy = vi.fn().mockResolvedValue(undefined);
+  });
+
+  async function activateWithSpies(existingConnections?: unknown[]): Promise<void> {
+    const ctx = makeCtx();
+    if (existingConnections !== undefined) {
+      ctx.globalState.get = vi.fn((key: string) => {
+        if (key === "vsdb.connections" && existingConnections !== undefined) {
+          return existingConnections;
+        }
+        return undefined;
+      }) as never;
+    }
+    const connectionMgrMod = await import("./core/connectionManager");
+    vi.spyOn(
+      connectionMgrMod.ConnectionManager.prototype,
+      "getAdapter",
+    ).mockResolvedValue({
+      testConnection: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+    } as unknown as DbAdapter);
+    vi.spyOn(connectionMgrMod.ConnectionManager.prototype, "addConnection").mockImplementation(addSpy as never);
+    vi.spyOn(connectionMgrMod.ConnectionManager.prototype, "editConnection").mockImplementation(editSpy as never);
+
+    const ext = await import("./extension");
+    await ext.activate(ctx as never);
+  }
+
+  /** Simulate the webview submit message through the form's message handler. */
+  function postSubmit(manualCommit: boolean): void {
+    const panel = state.createdWebviewPanels[state.createdWebviewPanels.length - 1] as {
+      webview: { onDidReceiveMessage: Mock };
+    };
+    const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0] as (m: unknown) => void;
+    handler({
+      type: "submit",
+      name: "Local Dev",
+      driver: "postgres",
+      host: "localhost",
+      port: 5432,
+      user: "app",
+      database: "appdb",
+      password: "pw",
+      sslMode: "disable",
+      sslCaPath: "",
+      sslCertPath: "",
+      sslKeyPath: "",
+      manualCommit,
+    });
+  }
+
+  it("#1 checked add-form → addConnection cfg has manualCommit:true", async () => {
+    await activateWithSpies();
+    const fn = state.registeredCommands.get("vsdb.addConnection");
+    expect(fn).toBeDefined();
+    await fn!();
+
+    // The add form created exactly one webview panel.
+    expect(state.createdWebviewPanels.length).toBe(1);
+    postSubmit(true);
+
+    // onSave is awaited inside handleMessage before dispose; flush microtasks.
+    for (let i = 0; i < 100 && addSpy.mock.calls.length === 0; i++) {
+      await Promise.resolve();
+    }
+    expect(addSpy).toHaveBeenCalledTimes(1);
+    const cfg = addSpy.mock.calls[0][0] as Record<string, unknown>;
+    expect(cfg.manualCommit).toBe(true);
+    expect(cfg.name).toBe("Local Dev");
+  });
+
+  it("#2 untouched add-form (manualCommit:false in payload) → cfg has explicit false", async () => {
+    await activateWithSpies();
+    const fn = state.registeredCommands.get("vsdb.addConnection");
+    await fn!();
+
+    postSubmit(false);
+    for (let i = 0; i < 100 && addSpy.mock.calls.length === 0; i++) {
+      await Promise.resolve();
+    }
+    expect(addSpy).toHaveBeenCalledTimes(1);
+    const cfg = addSpy.mock.calls[0][0] as Record<string, unknown>;
+    expect("manualCommit" in cfg).toBe(true);
+    expect(cfg.manualCommit).toBe(false);
+  });
+
+  it("#3 edit-form on an existing connection → editConnection patch has manualCommit:true", async () => {
+    const legacyCfg = {
+      id: "pg-1",
+      name: "Prod PG",
+      driver: "postgres",
+      host: "db.example.com",
+      port: 5432,
+      user: "app",
+      database: "appdb",
+      sslMode: "disable",
+      // legacy record deliberately OMITS optional manualCommit
+    };
+    await activateWithSpies([legacyCfg]);
+    const fn = state.registeredCommands.get("vsdb.editConnection");
+    expect(fn).toBeDefined();
+    // Command accepts arg.id → skips the QuickPick and opens the edit form.
+    await fn!({ id: "pg-1" });
+
+    expect(state.createdWebviewPanels.length).toBe(1);
+    postSubmit(true);
+    for (let i = 0; i < 100 && editSpy.mock.calls.length === 0; i++) {
+      await Promise.resolve();
+    }
+    expect(editSpy).toHaveBeenCalledTimes(1);
+    const [patchedId, patch] = editSpy.mock.calls[0] as [string, Record<string, unknown>];
+    expect(patchedId).toBe("pg-1");
+    expect(patch.manualCommit).toBe(true);
+  });
+});

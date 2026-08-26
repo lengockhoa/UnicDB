@@ -25,6 +25,8 @@ interface FormConfig {
   sslCaPath?: string;
   sslCertPath?: string;
   sslKeyPath?: string;
+  /** TASK-001 — legacy records omit this; omitted renders unchecked. */
+  manualCommit?: boolean;
 }
 
 const root = document.getElementById("vsdb-root") as HTMLDivElement;
@@ -60,7 +62,13 @@ function readForm() {
     sslCaPath: input("sslCaPath").value.trim(),
     sslCertPath: input("sslCertPath").value.trim(),
     sslKeyPath: input("sslKeyPath").value.trim(),
+    manualCommit: manualCommit(),
   };
+}
+
+/** TASK-001 — per-connection manual transaction mode (luôn boolean cụ thể). */
+function manualCommit(): boolean {
+  return (document.getElementById("manualCommit") as HTMLInputElement).checked;
 }
 
 function useSsl(): boolean {
@@ -163,6 +171,10 @@ function render(): void {
     ${fileRow("sslCertPath", "Client certificate:", "/path/to/client-cert.pem")}
     ${fileRow("sslKeyPath", "Client key:", "/path/to/client-key.pem")}
   </div>
+  <label class="vsdb-form-check">
+    <input id="manualCommit" type="checkbox" /> Manual commit (giữ save trong
+    transaction đến khi Commit/Rollback)
+  </label>
   <div id="status" class="vsdb-form-status"></div>
   <div class="vsdb-form-actions">
     <button id="cancelBtn">Cancel</button>
@@ -218,6 +230,9 @@ function applyInit(existing: FormConfig | null): void {
       : "require";
   }
   input("password").placeholder = "•••• (để trống giữ nguyên)";
+  // TASK-001 — legacy records omitting the optional field stay unchecked.
+  (document.getElementById("manualCommit") as HTMLInputElement).checked =
+    existing.manualCommit === true;
   updateSslVisibility();
 }
 

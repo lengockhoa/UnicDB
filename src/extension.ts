@@ -749,6 +749,7 @@ function openConnectionForm(
           sslCaPath: payload.sslCaPath || undefined,
           sslCertPath: payload.sslCertPath || undefined,
           sslKeyPath: payload.sslKeyPath || undefined,
+          manualCommit: payload.manualCommit,
         };
         await mgr.addConnection(cfg, payload.password);
         // Tree hiện connection list ngay (root nodes) — không cần chờ user refresh.
@@ -768,6 +769,7 @@ function openConnectionForm(
             sslCaPath: payload.sslCaPath || undefined,
             sslCertPath: payload.sslCertPath || undefined,
             sslKeyPath: payload.sslKeyPath || undefined,
+            manualCommit: payload.manualCommit,
           },
           payload.password.length > 0 ? payload.password : undefined,
         );

@@ -1,6 +1,6 @@
 # TASK-003 — Let declared server types override sampled grid inference
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §2 item 5, §3.3
@@ -80,3 +80,52 @@ this targeted test. `package.json` has no lint script. Global constraints: PLAN.
    the existing no-map cases as regression proof, rather than replacing them.
 
 ---
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  npx vitest run src/ui/__tests__/resultsGridModel.test.ts (pre-implementation):
+   ❯ src/ui/__tests__/resultsGridModel.test.ts  (40 tests | 3 failed) 12ms
+     ❯ ... > Happy: declared varchar defeats numeric-looking sample
+       → expected [ { field: 'code', …(3) } ] to deeply equal [ { field: 'code', …(2) } ]
+     ❯ ... > Edge (empty): declared integer classifies all-NULL data
+       → expected [ { field: 'count', …(2) } ] to deeply equal [ { field: 'count', …(3) } ]
+     ❯ ... > Edge (boundary): declared boolean wins conflicting string samples
+       → expected [ { field: 'enabled', …(2) } ] to deeply equal [ { field: 'enabled', …(2) } ]
+   Test Files  1 failed (1)
+        Tests  3 failed | 37 passed (40)
+  First failure detail (sampling ignored the declared varchar):
+    Array [
+  +   "alignRight": true,
+      "field": "code",
+      "headerName": "code",
+  -   "kind": "string",
+  +   "kind": "number",
+    ]
+Verification Output: |
+  Command 1 — npx vitest run src/ui/__tests__/resultsGridModel.test.ts:
+   ✓ src/ui/__tests__/resultsGridModel.test.ts  (40 tests) 7ms
+   Test Files  1 passed (1)
+        Tests  40 passed (40)
+     Start at 23:41:01 / Duration 207ms
+   EXIT_VITEST=0
+
+  Command 2 — npm run typecheck:
+   > vsdb@1.6.7 typecheck
+   > tsc --noEmit
+   EXIT_TYPECHECK=0
+
+  Extra (insurance, not a task command): full-suite `npx vitest run` = 1350 pass /
+  2 fail / 180 skipped; both failures are pre-existing environmental issues in this
+  fresh worktree (esbuild binary ENOENT in aiChatPanelWebview.test.ts, missing
+  dist/webview.css in agGridSmoke.test.ts) unrelated to this task's pure-model change.
+Status: PASS
+Note: none — inferColumns(columns, rows, columnTypes?: Record<string, string>) added;
+  declared type decides kind via classifyDeclaredColumnType (string family duplicated
+  verbatim from queryComposer.isStringColumnType with citation, numeric/boolean families
+  from core/ddl/sampleData.ts groups); declared numeric sets alignRight even for null-only
+  data; unknown types and omitted maps fall back to unchanged sampling. No webview/main.ts,
+  messages.ts, or queryComposer.ts edits.

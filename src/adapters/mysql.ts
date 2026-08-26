@@ -210,10 +210,41 @@ export class MySqlAdapter implements DbAdapter {
     }
 
     const results: QueryResult[] = [];
-    for (const statement of statements) {
-      const text = statement.text.trim();
-      if (!text) continue;
-      results.push(await this.executeText(text));
+    // TASK-002 (M2) — atomic multi-statement batches. One checked-out
+    // UTC-session PoolConnection is held for the WHOLE batch, wrapped in an
+    // explicit transaction: `beginTransaction` → every statement on that same
+    // connection → `commit()` on success; any failure runs `rollback()` and
+    // rethrows the original error; `release()` happens exactly once in
+    // `finally`. Without the transaction each statement autocommitted on its
+    // own checkout, so a batch failing at statement N left 1..N-1 committed.
+    // (`multipleStatements: false` rules out joining BEGIN…COMMIT into one
+    // text; see Discussion #1 of TASK-002.) The single-SELECT streaming arm
+    // above returns BEFORE this loop and must never be wrapped in a
+    // transaction — a held cursor would pin the connectionLimit:1 pool.
+    const connection = await this.getConnectionWithUtcSession();
+    try {
+      await connection.beginTransaction();
+      for (const statement of statements) {
+        const text = statement.text.trim();
+        if (!text) continue;
+        // `runQueryOnConnection` wraps each statement back up in its own
+        // RunResult (it re-splits); unwrap so the public `results` array keeps
+        // the flat QueryResult-per-statement order executeText used to give.
+        const statementResult = await this.runQueryOnConnection(connection, text);
+        for (const queryResult of statementResult.results) {
+          results.push(queryResult);
+        }
+      }
+      await connection.commit();
+    } catch (error) {
+      try {
+        await connection.rollback();
+      } catch {
+        // Rollback failure must not mask the original statement error below.
+      }
+      throw error;
+    } finally {
+      connection.release();
     }
     return { results };
   }
@@ -446,24 +477,16 @@ export class MySqlAdapter implements DbAdapter {
     return { results };
   }
 
-  private async executeText(sql: string): Promise<QueryResult> {
-    const result = await this.query(sql);
-    const columns = result.fields?.map((field) => field.name) ?? [];
-    return {
-      columns,
-      rows: this.rowsAsArrays(result.rows, result.fields, columns),
-      rowCount: this.resultRowCount(result.rows),
-      durationMs: result.durationMs,
-    };
-  }
-
   /**
    * TASK-005 (M1) — single choke point for metadata (`information_schema`)
-   * queries and `executeText`'s non-streaming DML. Checks a connection out
-   * through the UTC-initialized helper (never `pool.query()`, which checks
-   * out implicitly and would let a replacement physical connection bypass
-   * the awaited session initialization), runs `connection.query(sql, values)`,
-   * and releases in `finally` on both the success and rejection paths.
+   * queries. TASK-002 removed `executeText`'s last caller: non-streaming
+   * batches now run on one transaction-bound connection via
+   * `runQueryOnConnection`, so `executeText` was deleted with it. Checks a
+   * connection out through the UTC-initialized helper (never `pool.query()`,
+   * which checks out implicitly and would let a replacement physical
+   * connection bypass the awaited session initialization), runs
+   * `connection.query(sql, values)`, and releases in `finally` on both the
+   * success and rejection paths.
    */
   private async query(
     sql: string,

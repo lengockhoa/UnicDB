@@ -249,12 +249,6 @@ function unquoteIdent(token: string, style: "pg" | "backtick" | "bracket"): stri
   const [open, close] =
     style === "pg" ? ['"', '"'] : style === "backtick" ? ["`", "`"] : ["[", "]"];
   if (token.length < 2 || !token.startsWith(open) || !token.endsWith(close)) return null;
-  // Guard: the trailing delimiter must not itself be an escaped one.
-  if (token.length >= 2 * open.length + close.length + 0) {
-    // For pg/mysql the escape is the doubled delimiter: a token like `"a""`
-    // would end with the delimiter but its inner remainder ends with an
-    // escape — treat as unbalanced below via the scan.
-  }
   let inner = "";
   let i = open.length;
   while (i < token.length) {
@@ -298,8 +292,10 @@ function isSafeLogicalIdent(name: string): boolean {
  * rejected. Empty / whitespace-only input is `{ ok: true, terms: [] }` — the
  * normal state of the requery bar, meaning "no ORDER BY clause".
  *
- * `NULLS` under mysql/mssql is rejected (`{ ok: false }` naming the clause):
- * those dialects have no NULLS syntax and this cycle does not emulate it.
+ * `NULLS FIRST|LAST` is accepted on all three dialects (TASK-005): postgres
+ * renders it natively; mysql/mssql get a leading null-rank key from
+ * `buildOrderByClause` (TASK-005), so no raw NULLS token ever reaches their
+ * SQL.
  */
 export function parseOrderBy(orderBy: string, dialect?: Dialect): ParseOrderByResult {
   const trimmed = orderBy.trim();
@@ -323,9 +319,6 @@ export function parseOrderBy(orderBy: string, dialect?: Dialect): ParseOrderByRe
     const logical = resolveColumnToken(column, dialect);
     if (logical === null) {
       return { ok: false, error: `"${column}" is not a plain column name (or a correctly quoted identifier) usable in ORDER BY.` };
-    }
-    if (nulls && dialect && dialect !== "postgres") {
-      return { ok: false, error: `NULLS ${nulls} is not supported by the ${dialect} dialect; only PostgreSQL renders NULLS FIRST/LAST natively.` };
     }
     terms.push({ column: logical, direction, ...(nulls ? { nulls } : {}) });
   }
@@ -437,15 +430,33 @@ function resolveColumnToken(token: string, dialect?: Dialect): string | null {
  * Render parsed terms as a dialect-quoted ORDER BY clause (without the
  * `ORDER BY` keyword). Every identifier goes through `quoteIdent` — quoted
  * input is canonicalized, never passed through. `NULLS FIRST|LAST` renders
- * natively (postgres); parseOrderBy already rejected `nulls` under
- * mysql/mssql, so this branch is postgres-only in practice.
+ * natively on postgres; mysql/mssql (which have no NULLS syntax) get a
+ * leading null-rank sort key whose direction encodes FIRST/LAST, followed by
+ * the regular quoted column term with the caller's direction unchanged:
+ *
+ *   postgres `"a" ASC NULLS LAST` → `` `"a" ASC NULLS LAST` `` (native)
+ *   mysql    `` `a` IS NULL ASC, `a` ASC ``      (ASC rank ⇒ nulls last;
+ *                                              `` `a` IS NULL DESC `` ⇒ first)
+ *   mssql    `CASE WHEN [a] IS NULL THEN 1 ELSE 0 END ASC|DESC, [a] …`
  */
 export function buildOrderByClause(terms: OrderByTerm[], dialect: Dialect): string {
   return terms
     .map((t) => {
       const ident = quoteIdent(t.column, dialect);
-      const nulls = t.nulls ? ` NULLS ${t.nulls}` : "";
-      return `${ident} ${t.direction}${nulls}`;
+      if (!t.nulls || dialect === "postgres") {
+        const nulls = t.nulls ? ` NULLS ${t.nulls}` : "";
+        return `${ident} ${t.direction}${nulls}`;
+      }
+      // Null-rank key: 1 when NULL else 0. Ascending ranks nulls last,
+      // descending ranks them first; the data term below keeps the caller's
+      // own direction.
+      const rankDir = t.nulls === "FIRST" ? "DESC" : "ASC";
+      if (dialect === "mysql") {
+        return `${ident} IS NULL ${rankDir}, ${ident} ${t.direction}`;
+      }
+      // mssql: no boolean literal ORDER BY on all SQL Server versions — a CASE
+      // rank key with the identical semantics.
+      return `CASE WHEN ${ident} IS NULL THEN 1 ELSE 0 END ${rankDir}, ${ident} ${t.direction}`;
     })
     .join(", ");
 }

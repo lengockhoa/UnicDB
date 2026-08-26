@@ -167,6 +167,66 @@ describe("inferColumns — unique field (TASK-003 / A17)", () => {
 });
 
 // =============================================================================
+// 1c. inferColumns — declared server types override sampled inference (TASK-003)
+// =============================================================================
+// P2-4 fix at the pure grid-model boundary: when the host supplies a declared
+// DB type for a column NAME, that type decides `kind` and row sampling is
+// skipped entirely. Rationale (PLAN §3.3): row-sniffing is page-dependent —
+// a varchar holding digit strings misclassifies as "number" today, and an
+// all-NULL numeric window collapses to "string". Webview wiring is owned by
+// TASK-007; these tests exercise the pure model directly.
+describe("inferColumns — declared columnTypes override (TASK-003)", () => {
+  it("Happy: declared varchar defeats numeric-looking sample", () => {
+    // Every sampled value here is NUMERIC_STRING — sampling alone would say
+    // number/alignRight. The declared varchar must win.
+    const cols = inferColumns(["code"], [["123"], ["456"]], { code: "varchar" });
+    expect(cols).toEqual([{ field: "code", headerName: "code", kind: "string" }]);
+    expect(cols[0]?.alignRight).toBeUndefined();
+  });
+
+  it("Edge (empty): declared integer classifies all-NULL data", () => {
+    // No non-null sample values — sampling falls back to "string"; the
+    // declared integer must yield number + right alignment.
+    const cols = inferColumns(["count"], [[null], [undefined]], { count: "integer" });
+    expect(cols).toEqual([
+      { field: "count", headerName: "count", kind: "number", alignRight: true },
+    ]);
+  });
+
+  it("Edge (boundary): declared boolean wins conflicting string samples", () => {
+    // Sampling cannot prove boolean from the strings "true"/"false" — today
+    // they classify as string. Declared boolean overrides.
+    const cols = inferColumns(["enabled"], [["true"], ["false"]], { enabled: "boolean" });
+    expect(cols).toEqual([{ field: "enabled", headerName: "enabled", kind: "boolean" }]);
+  });
+
+  it("Regression: omitted third argument is byte-identical to pre-TASK-003 output (incl. id→id__2 suffixing)", () => {
+    // Numeric kind, string kind AND duplicate-field de-duplication in one
+    // call — with NO third argument the output must match today exactly.
+    const rows: unknown[][] = [
+      [1, "a"],
+      [2, "b"],
+    ];
+    const expected = [
+      { field: "id", headerName: "id", kind: "number", alignRight: true },
+      { field: "id__2", headerName: "id", kind: "string" },
+    ];
+    expect(inferColumns(["id", "id"], rows)).toEqual(expected);
+    // Explicit `undefined` must behave identically to omission.
+    expect(inferColumns(["id", "id"], rows, undefined)).toEqual(expected);
+  });
+
+  it("Edge (unknown declaration): geometry falls back to sampling", () => {
+    // An unrecognized declared type must NOT force string — nonempty numeric
+    // samples still classify as number/alignRight via sampling.
+    const cols = inferColumns(["geo"], [[1.5], [2.5]], { geo: "geometry" });
+    expect(cols).toEqual([
+      { field: "geo", headerName: "geo", kind: "number", alignRight: true },
+    ]);
+  });
+});
+
+// =============================================================================
 // 2. loadMore gate fires exactly once per request→sync cycle (dedup)
 // =============================================================================
 describe("createResultsGridModel — loadMore gate", () => {

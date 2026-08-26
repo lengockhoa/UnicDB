@@ -303,4 +303,115 @@ describe("ConnectionForm", () => {
       path: "/picked/ca.pem",
     });
   });
+
+  // ---- TASK-001 — per-connection manualCommit qua protocol -----------------
+  // Submit/test payload phải mang manualCommit (boolean cụ thể); onSave nhận
+  // nguyên giá trị; edit-mode init prefill existing config kèm trường mới.
+  describe("manualCommit forwarding (TASK-001)", () => {
+    function submitMsg(manualCommit: boolean): Record<string, unknown> {
+      return {
+        type: "submit",
+        name: "Prod",
+        driver: "postgres" as const,
+        host: "h",
+        port: 5432,
+        user: "u",
+        database: "d",
+        password: "pw",
+        sslMode: "disable" as const,
+        sslCaPath: "",
+        sslCertPath: "",
+        sslKeyPath: "",
+        manualCommit,
+      };
+    }
+
+    it("submit manualCommit:true → onSave nhận true + dispose", async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      const form = makeForm(null, onSave);
+      form.show();
+      const panel = state.panels[0];
+      const handler = (panel.webview.onDidReceiveMessage as unknown as {
+        mock: { calls: Array<[Listener<unknown>]> };
+      }).mock.calls[0][0];
+      handler(submitMsg(true));
+      await until(() => onSave.mock.calls.length > 0);
+      await until(() => (panel.dispose as unknown as ReturnType<typeof vi.fn>).mock.calls.length > 0);
+      const payload = onSave.mock.calls[0]![0] as Record<string, unknown>;
+      expect(payload.type).toBeUndefined();
+      expect(payload.manualCommit).toBe(true);
+      expect(panel.dispose).toHaveBeenCalled();
+    });
+
+    it("submit manualCommit:false → onSave nhận false (không bao giờ undefined)", async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      const form = makeForm(null, onSave);
+      form.show();
+      const panel = state.panels[0];
+      const handler = (panel.webview.onDidReceiveMessage as unknown as {
+        mock: { calls: Array<[Listener<unknown>]> };
+      }).mock.calls[0][0];
+      handler(submitMsg(false));
+      await until(() => onSave.mock.calls.length > 0);
+      const payload = onSave.mock.calls[0]![0] as Record<string, unknown>;
+      expect("manualCommit" in payload).toBe(true);
+      expect(payload.manualCommit).toBe(false);
+    });
+
+    it("test message manualCommit:true → host chấp nhận, factory vẫn nhận cfg như cũ", async () => {
+      const factory = vi.fn(() => fakeAdapter(true));
+      const form = new ConnectionForm({
+        extensionUri: extUri,
+        existing: null,
+        factory,
+        getStoredPassword: async () => undefined,
+        onSave: async () => {},
+      });
+      form.show();
+      const panel = state.panels[0];
+      const handler = (panel.webview.onDidReceiveMessage as unknown as {
+        mock: { calls: Array<[Listener<unknown>]> };
+      }).mock.calls[0][0];
+      handler({
+        type: "test",
+        name: "T",
+        driver: "postgres",
+        host: "h",
+        port: 5432,
+        user: "u",
+        database: "d",
+        password: "pw",
+        sslMode: "disable",
+        sslCaPath: "",
+        sslCertPath: "",
+        sslKeyPath: "",
+        manualCommit: true,
+      });
+      await until(() => factory.mock.calls.length > 0);
+      await until(
+        () =>
+          (panel.webview.postMessage as unknown as ReturnType<typeof vi.fn>).mock.calls.some(
+            (c) => (c[0] as { type?: string }).type === "testResult",
+          ),
+      );
+      // Protocol symmetry: the extra field is accepted; existing factory/test
+      // behavior is retained.
+      expect(panel.webview.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "testResult", ok: true }),
+      );
+    });
+
+    it("edit init gửi existing config kèm manualCommit:true cho webview", async () => {
+      const withManual: ConnectionConfig = { ...existingCfg, manualCommit: true };
+      const form = makeForm(withManual, async () => {});
+      form.show();
+      const post = state.panels[0].webview.postMessage;
+      const handler = (state.panels[0].webview.onDidReceiveMessage as unknown as {
+        mock: { calls: Array<[Listener<unknown>]> };
+      }).mock.calls[0][0];
+      handler({ type: "ready" });
+      await until(() => (post as unknown as ReturnType<typeof vi.fn>).mock.calls.length > 0);
+      expect(post).toHaveBeenCalledWith({ type: "init", existing: withManual });
+    });
+  });
 });

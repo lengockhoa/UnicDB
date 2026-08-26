@@ -1,6 +1,6 @@
 # TASK-002 — Make MySQL multi-statement batches atomic
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §2 item 2, §3.2
@@ -85,3 +85,39 @@ This task does not load a `dist/*.js` bundle, so compile is not required for its
    they fail because the loop calls `executeText` instead of the held connection.
 
 ---
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  npx vitest run src/adapters/__tests__/adapterQueryShape.test.ts (before implementation):
+   ❯ src/adapters/__tests__/adapterQueryShape.test.ts  (46 tests | 3 failed) 19ms
+   ❯ … > happy: three-statement DML batch commits once on a single held connection …
+     → expected [ 'getConnection', …(9) ] to deeply equal [ 'getConnection', …(7) ]
+     Received: getConnection, SET time_zone, query:INSERT 1, release, getConnection,
+       query:UPDATE 2, release, getConnection, query:DELETE 3, release
+       (no beginTransaction, no commit — exactly the autocommit-per-statement defect)
+   ❯ … > edge: statement-two failure rolls back prior work …
+     → expected [ 'getConnection', …(2) ] to deeply equal [ 'query:UPDATE t SET a=2', …(2) ]
+     Received tail: [query:UPDATE t SET a=2, release] — rollback absent
+   ❯ … > edge: a two-statement batch resolves through ONLY the checked-out connection …
+     → expected [ 'getConnection', 'getConnection' ] to have a length of 1 but got 2
+   Test Files  1 failed (1)
+        Tests  3 failed | 43 passed (46)
+Verification Output: |
+  Command 1: npx vitest run src/adapters/__tests__/adapterQueryShape.test.ts
+    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-002
+     ✓ src/adapters/__tests__/adapterQueryShape.test.ts  (46 tests) 13ms
+     Test Files  1 passed (1)
+          Tests  46 passed (46)
+     EXIT: 0
+    Targeted sibling regression sweep (factory / mysql.sortQuery / schemas /
+    timezone / queryComposer): 5 files, 82 passed, exit 0.
+  Command 2: npm run typecheck
+    > vsdb@1.6.7 typecheck
+    > tsc --noEmit
+    EXIT: 0
+Status: PASS
+Note: Implementation deviates from plan wording in two safe ways. (1) Statements are executed via runQueryOnConnection per trimmed statement (plan-specified helper); its RunResult is unwrapped to preserve the flat QueryResult-per-statement order executeText previously produced. (2) The now-orphaned private executeText() was deleted rather than left dead (strict codebase, sole caller removed); its doc-comment content merged into query(). Rollback failures are swallowed so the original statement error propagates. Single-SELECT streaming arm untouched. README documents all-or-nothing DML contract + MySQL DDL implicit-commit caveat in "Các cách chạy query khác".

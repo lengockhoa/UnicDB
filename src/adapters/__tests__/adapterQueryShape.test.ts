@@ -830,3 +830,236 @@ describe("MySqlAdapter.openStreamingQuery — stream end handling (TASK-005 M3, 
     expect(connection.releases).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// TASK-002 M2 — MySqlAdapter.runQuery(): atomic multi-statement batches.
+//
+// A non-streaming multi-statement batch MUST run on ONE checked-out
+// UTC-session PoolConnection wrapped in an explicit transaction: beginTransaction
+// → every statement on that same connection → commit on success; rollback +
+// rethrow on any failure; release exactly once in finally. The single-SELECT
+// streaming arm must stay untouched (no beginTransaction/commit around a
+// cursor — it would pin the connectionLimit:1 pool).
+//
+// Call order is asserted against one shared `log` fed by BOTH the pool
+// (getConnection) and the connection (SET time_zone / query:* /
+// beginTransaction / commit / rollback / release).
+// ---------------------------------------------------------------------------
+
+type TxConn = {
+  queries: Array<{ sql: string; values?: unknown[] }>;
+  releases: number;
+  query: (sql: unknown, values?: unknown) => Promise<[unknown[], unknown[]]>;
+  release: () => void;
+  destroy: () => void;
+  ping: () => Promise<void>;
+  beginTransaction: () => Promise<void>;
+  commit: () => Promise<void>;
+  rollback: () => Promise<void>;
+  connection?: unknown;
+};
+
+function mockMysqlTxConnection(
+  log: string[],
+  queryImpl?: (sql: string) => Promise<unknown>,
+): TxConn {
+  const conn: TxConn = {
+    queries: [],
+    releases: 0,
+    query: (sql, values) => {
+      const text = String(sql);
+      conn.queries.push({
+        sql: text,
+        values: Array.isArray(values) ? values : undefined,
+      });
+      if (/^SET time_zone/i.test(text)) {
+        log.push("SET time_zone");
+        return Promise.resolve([[], []]);
+      }
+      log.push(`query:${text.replace(/\s+/g, " ").trim()}`);
+      if (queryImpl) {
+        return queryImpl(text) as Promise<[unknown[], unknown[]]>;
+      }
+      return Promise.resolve([[], []]);
+    },
+    release: () => {
+      conn.releases += 1;
+      log.push("release");
+    },
+    destroy: () => undefined,
+    ping: () => Promise.resolve(),
+    beginTransaction: () => {
+      log.push("beginTransaction");
+      return Promise.resolve();
+    },
+    commit: () => {
+      log.push("commit");
+      return Promise.resolve();
+    },
+    rollback: () => {
+      log.push("rollback");
+      return Promise.resolve();
+    },
+  };
+  return conn;
+}
+
+function mockMysqlTxPool(log: string[], connection: TxConn) {
+  return {
+    getConnection: () => {
+      log.push("getConnection");
+      return Promise.resolve(connection);
+    },
+    query: vi.fn(() => {
+      throw new Error("pool.query must never be reached (TASK-002 M2)");
+    }),
+    end: () => Promise.resolve(),
+  };
+}
+
+function mysqlAdapterWithTxPool(pool: unknown): MySqlAdapter {
+  const adapter = new MySqlAdapter(cfg("mysql"), "pw");
+  (adapter as unknown as { pool: unknown }).pool = pool;
+  return adapter;
+}
+
+describe("MySqlAdapter.runQuery — atomic multi-statement batches (TASK-002 M2)", () => {
+  // Case 1 — happy: three-statement DML batch commits once, in order.
+  it("happy: three-statement DML batch commits once on a single held connection, results in statement order", async () => {
+    const log: string[] = [];
+    const affected: Record<string, number> = { INSERT: 1, UPDATE: 2, DELETE: 3 };
+    const conn = mockMysqlTxConnection(log, (text) => {
+      // mysql2 DML resolves with the ResultSetHeader OK-packet directly,
+      // not a row array — `resultRowCount` reads `affectedRows` off it.
+      const okPacket = { affectedRows: affected[text.split(" ")[0]] };
+      return Promise.resolve([okPacket, []]);
+    });
+    const pool = mockMysqlTxPool(log, conn);
+    const adapter = mysqlAdapterWithTxPool(pool);
+
+    const result = await adapter.runQuery(
+      "INSERT INTO t VALUES (1);\nUPDATE t SET a = 2;\nDELETE FROM t WHERE id = 3;",
+    );
+
+    expect(log).toEqual([
+      "getConnection",
+      "SET time_zone",
+      "beginTransaction",
+      "query:INSERT INTO t VALUES (1)",
+      "query:UPDATE t SET a = 2",
+      "query:DELETE FROM t WHERE id = 3",
+      "commit",
+      "release",
+    ]);
+    expect(result.batched).toBeUndefined();
+    // Statement order preserved: 1 insert → 2 updates → 3 deletes.
+    expect(result.results.map((r) => r.rowCount)).toEqual([1, 2, 3]);
+    expect(conn.releases).toBe(1);
+  });
+
+  // Case 2 — edge (failure): statement two rejects → rollback + release, no commit, same error rethrown.
+  it("edge: statement-two failure rolls back prior work, never commits, rethrows the original error", async () => {
+    const log: string[] = [];
+    const boom = new Error("boom");
+    const conn = mockMysqlTxConnection(log, (text) =>
+      text.startsWith("UPDATE")
+        ? Promise.reject(boom)
+        : Promise.resolve([[], []]),
+    );
+    const pool = mockMysqlTxPool(log, conn);
+    const adapter = mysqlAdapterWithTxPool(pool);
+
+    let caught: unknown;
+    try {
+      await adapter.runQuery(
+        "INSERT INTO t VALUES (1);\nUPDATE t SET a=2;\nDELETE FROM t WHERE id=3;",
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBe(boom);
+    expect(log).toContain("query:INSERT INTO t VALUES (1)");
+    expect(log.slice(-3)).toEqual([
+      "query:UPDATE t SET a=2",
+      "rollback",
+      "release",
+    ]);
+    expect(log).not.toContain("commit");
+    expect(conn.releases).toBe(1);
+  });
+
+  // Case 3 — regression: single SELECT stays on the streaming arm, byte-for-byte semantics.
+  it("regression: single SELECT returns {results:[], batched} and never begins a transaction", async () => {
+    const log: string[] = [];
+    const conn = mockMysqlTxConnection(log);
+    const listeners = new Map<string, Array<(payload?: unknown) => void>>();
+    const fakeStream = {
+      once: (event: string, cb: (payload?: unknown) => void) => {
+        const list = listeners.get(event) ?? [];
+        list.push(cb);
+        listeners.set(event, list);
+      },
+      on: (event: string, cb: (payload?: unknown) => void) => {
+        const list = listeners.get(event) ?? [];
+        list.push(cb);
+        listeners.set(event, list);
+      },
+      destroy: () => undefined,
+      pause: () => undefined,
+      resume: () => undefined,
+    };
+    const wrapper = Object.assign(Object.create(Object.getPrototypeOf(conn)), conn, {
+      connection: { query: () => ({ stream: () => fakeStream }) },
+    });
+    const pool = mockMysqlTxPool(log, wrapper as TxConn);
+    const adapter = mysqlAdapterWithTxPool(pool);
+
+    const promise = adapter.runQuery("SELECT * FROM t");
+    // Stream listeners attach after async checkout crosses a few turns; run
+    // the scripted 'end' on the next macrotask (same pattern as case 11).
+    setTimeout(() => {
+      for (const cb of [...(listeners.get("end") ?? [])]) cb();
+    }, 0);
+    const result = await promise;
+
+    expect(result.results).toEqual([]);
+    expect(result.batched).toBeDefined();
+    expect(log).toContain("getConnection");
+    expect(log).toContain("SET time_zone");
+    expect(log).not.toContain("beginTransaction");
+    expect(log).not.toContain("commit");
+    // No statement other than the UTC session preamble ever ran.
+    expect(log.some((entry) => entry.startsWith("query:SELECT"))).toBe(false);
+  });
+
+  // Case 4 — boundary/pool ownership: the multi-statement arm never touches pool.query.
+  it("edge: a two-statement batch resolves through ONLY the checked-out connection (pool.query unreachable)", async () => {
+    const log: string[] = [];
+    const conn = mockMysqlTxConnection(log);
+    const pool = mockMysqlTxPool(log, conn);
+    const adapter = mysqlAdapterWithTxPool(pool);
+
+    const result = await adapter.runQuery("UPDATE t SET a=1;\nDELETE FROM t;");
+
+    expect(result.results.length).toBe(2);
+    expect(pool.query).not.toHaveBeenCalled();
+    // Exactly ONE checkout for the whole batch — not one per statement.
+    expect(log.filter((entry) => entry === "getConnection")).toHaveLength(1);
+    expect(conn.releases).toBe(1);
+  });
+
+  // Case 5 — boundary/empty: whitespace/semicolon-only input short-circuits.
+  it("edge: whitespace/semicolon-only input returns {results:[]} without checking out a connection", async () => {
+    const log: string[] = [];
+    const conn = mockMysqlTxConnection(log);
+    const pool = mockMysqlTxPool(log, conn);
+    const adapter = mysqlAdapterWithTxPool(pool);
+
+    const result = await adapter.runQuery("   \n ;\n  ");
+
+    expect(result).toEqual({ results: [] });
+    expect(log).toEqual([]);
+    expect(conn.releases).toBe(0);
+  });
+});
