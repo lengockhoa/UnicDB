@@ -26,6 +26,7 @@ import {
 import { buildPagedQuery, buildPagedQueryTerms } from "../queryComposer";
 import { stripTrailingSemicolon } from "../../core/text";
 import { parseFromClause } from "../../core/saveStatements";
+import { sqlLiteral } from "../resultsGridModel";
 
 const PG_PAGE_DEFAULTS = {
   where: "",
@@ -459,5 +460,37 @@ describe("stripTrailingSemicolon integration with the gate", () => {
     expect(stripTrailingSemicolon("SELECT * FROM t;")).toBe("SELECT * FROM t");
     // Two statements are not a single browse — gate refuses.
     expect(assertBrowseShape("SELECT 1; SELECT 2;")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// literalForKey ↔ sqlLiteral drift pin (reviewer minor, TASK-004)
+// ---------------------------------------------------------------------------
+// literalForKey deliberately duplicates sqlLiteral's escaping posture without
+// importing the grid model (pure module). Pin the two against each other so a
+// silent drift (e.g. adding backslash escapes) is caught by this suite.
+describe("literalForKey mirrors sqlLiteral (no drift)", () => {
+  it.each([
+    [42, "42"],
+    [Number.NaN, "NULL"],
+    [true, "TRUE"],
+    [9007199254740993n, "9007199254740993"],
+    ["plain", "'plain'"],
+    ["O'Brien", "'O''Brien'"],
+  ])("value %s renders %s identically", (value, expected) => {
+    expect(sqlLiteral(value)).toBe(expected);
+    const r = composeKeysetQuery(
+      pageDefaults({ lastKey: [{ column: "id", value }] }),
+    );
+    expect(r.sql).toContain(sqlLiteral(value));
+  });
+
+  it("a Date key renders the same ISO literal in both serializers", () => {
+    const d = new Date("2026-01-01T00:00:00.000Z");
+    expect(sqlLiteral(d)).toBe("'2026-01-01T00:00:00.000Z'");
+    const r = composeKeysetQuery(
+      pageDefaults({ lastKey: [{ column: "id", value: d }] }),
+    );
+    expect(r.sql).toContain(sqlLiteral(d));
   });
 });
