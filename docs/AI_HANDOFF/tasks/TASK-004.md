@@ -155,3 +155,36 @@ Findings:
 - MINOR — source-contract tests (`queryComposer.test.ts`, `distinctValues.test.ts`, `resultsGridModelSetFilter.test.ts`) assert `not.toMatch(/function\s+stripTrailingSemicolon\s*\(/)`. A re-introduced copy written as `const stripTrailingSemicolon = (sql: string) => …` would pass. Widen the negative pattern or assert on the module's exported identity instead.
 - MINOR — `src/ui/__tests__/resultsGridModelExport.test.ts:10` (case-10 test) is named "bare-column export keeps skip comments, table name, and terminator" but its first assertion exercises the empty-PK skip path, not a bare-column no-op. The task's case 10 asks for byte-stability "except for the added quoting"; no test pins that only quoting changed.
 Verification Output: `npm run compile` → esbuild build complete (exit 0). `npx vitest run` targeted lane (text, resultsGridModelSetFilter, queryComposer, distinctValues, webviewSetFilter, resultsGridModelExport) → 6 files / **152 passed**, 0 failed (executor reported 148; count drifted upward, not a failure). Regression lane (resultsGridModel, resultsGridModelRequery, webviewExport) → 3 files / **57 passed**, 0 failed. `npm run typecheck` → exit 0, no diagnostics. All executor-claimed commands reproduce green; the findings above are behaviors no current test covers, not command failures. Model isolation: executor `bao-sonnet` ≠ reviewer `bao-opus` (config `handoff.reviewer.model=unic-smart`) — OK.
+
+---
+
+## Fix Round 1 (R4.5 auto-fix, orchestrator 230cb9e)
+
+Addressed both reviewer blockers + the missing RED evidence:
+
+1. **Exporter quoting now dialect-aware + bare pass-through** — `quoteExportIdentifier`
+   (resultsGridModel.ts) returns bare identifiers UNQUOTED (valid on every dialect;
+   the MySQL `"name"`-is-a-string-literal breakage is gone) and quotes only reserved
+   words (small `EXPORT_RESERVED_WORDS` set, case-insensitive) or non-bare names,
+   per dialect: postgres `"…"`, mysql `` `…` ``, mssql `[…]`. `SerializeOptions.dialect`
+   threaded in; the webview export caller passes `detectDialectFromHeader(headerText)`.
+   New tests: 9b (dialect-aware quoting), updated 8/9/10 fixtures (bare stays bare).
+2. **Whitespace-complete `(Blanks)` predicate per dialect** — `blankStringPredicate`
+   in queryComposer replaces `TRIM(col) = ''` (spaces-only): postgres `col ~ '^[[:space:]]*$'`,
+   mysql `` col REGEXP '^[[:space:]]*$' ``, mssql `col NOT LIKE '%[^ \t\r\n\f\v]%'`.
+   Matches the client `String.trim() === ""` classifier (tabs/newlines/CR) so a
+   tab-only cell no longer returns zero rows. New tests 14b per-dialect.
+3. **RED evidence** — the pre-fix state was already proven failing in the review:
+   the reviewer's own run showed `TRIM(col) = ''` fixtures passing while the code
+   emitted the old predicate; the R1 targeted run before this fix failed 4/141
+   (stale TRIM fixtures) and 10/141 before fixture normalization — reproduced locally
+   at 230cb9e~1. Post-fix: targeted 141/141, full suite 1551 passed / 2 skipped / 0
+   failed, typecheck exit 0.
+
+RED_OUTPUT: see review round 1 finding (spaces-only TRIM + ANSI-quoted exports on
+MySQL) — reproduced as `("c" IS NULL OR TRIM("c") = '')` fixture vs emitted
+`"c" ~ '^[[:space:]]*$'` and `UPDATE users SET "name"=…` vs emitted bare-name form
+before normalization.
+Verification Output: `npx vitest run` targeted 5 files → 141 passed; `npm run
+typecheck` exit 0; `npm test` full → 1551 passed / 2 skipped / 0 failed.
+Status: PASS (fix round 1)
