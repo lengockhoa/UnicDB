@@ -16,7 +16,7 @@
   - `saveStatements.ts` — build UPDATE/INSERT từ cell edits.
   - `sslOptions.ts` — SSL config parse.
   - `text.ts` — `truncateAtBoundary(s, cap)`: slice theo code point, không đứt surrogate pair.
-- `src/ui/` — host-side UI: `resultsPanel.ts` (webview panel + postMessage), `resultsGridModel.ts` (pure: set filter model từ v1.5.0), `schemaTree.ts`, `codeLensProvider.ts` (▶ Run, incl. shellscript), `connectionForm.ts` + messages, `statusBar.ts`.
+- `src/ui/` — host-side UI: `resultsPanel.ts` (webview panel + postMessage), `resultsGridModel.ts` (pure: set filter model từ v1.5.0), `keysetPaging.ts` (pure: browse-shape gate `assertBrowseShape` + keyset composer `composeKeysetQuery` — cycle Y), `schemaTree.ts`, `codeLensProvider.ts` (▶ Run, incl. shellscript), `connectionForm.ts` + messages, `statusBar.ts`.
 - `src/adapters/`, `src/config/` — adapter/config helpers.
 - `webview/` — webview UI: `main.ts` (AG Grid Community v36 custom IFilter + edit/requery/export), `styles.css` (incl. `.vsdb-setfilter*`), `connectionFormMain.ts`.
 - `scripts/build.sh` — compile + package vsix; `install-vsdb.sh` — install từ vsix.
@@ -39,6 +39,8 @@
 ## Data Flow
 
 Editor run command → `statementParser` tách statement → `confirmDangerousStatements` (nếu red/amber: modal, cancel = huỷ cả lô) → `queryRunner` (postgres) → `resultBatcher` → `resultsPanel` postMessage → webview `main.ts` render AG Grid (set filter model từ `resultsGridModel`).
+
+Requery/filter/sort → `resultsPanel.composeRequerySql` → `composeKeysetQuery` (`keysetPaging.ts`: keyset predicate + LIMIT khi browse-shape + PK proven; OFFSET fallback nếu không) → runner → webview (hidden PK columns bị strip ở host; `lastKey` chưa gửi từ webview — OFFSET trong production).
 
 ## External Integrations
 
