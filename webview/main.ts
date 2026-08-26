@@ -2989,7 +2989,7 @@ function readExportInput():
       pkColumns: string[];
       tableName: string;
       selectedRows: unknown[][];
-      dialect: "postgres" | "mysql" | "mssql";
+      dialect: "postgres" | "mysql" | "mssql" | "unknown";
     }
   | null {
   if (!dom) return null;
@@ -3063,6 +3063,7 @@ function onExportCopyClick(): void {
         pkColumns: input.pkColumns,
         selectedRows: input.selectedRows,
         hiddenColumns: input.hiddenColumns,
+        dialect: input.dialect,
       },
     );
     postToHost({ type: "copy", text });
@@ -3086,6 +3087,7 @@ function onExportFileClick(): void {
         pkColumns: input.pkColumns,
         selectedRows: input.selectedRows,
         hiddenColumns: input.hiddenColumns,
+        dialect: input.dialect,
       },
     );
     postToHost({ type: "exportFile", format: input.format, text });

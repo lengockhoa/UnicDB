@@ -345,6 +345,55 @@ describeIfBundle("webview/main.ts export toolbar (TASK-502)", () => {
   );
 
   itIfBundle(
+    "6b. header driver token selects dialect for SQL export quoting (mysql → backticks)",
+    () => {
+      const { root, received } = loadBundle();
+      // Header carries the mysql driver token the way the host composes it —
+      // detectDialectFromHeader parses `— <driver>@<host>`.
+      dispatchState({
+        type: "state",
+        header: "test.sql — mysql@localhost",
+        busy: false,
+        results: [
+          {
+            index: 0,
+            sql: "SELECT * FROM t",
+            status: "done",
+            result: {
+              columns: ["id", "order"],
+              rows: [[1, "x"]],
+              rowCount: 1,
+              durationMs: 1,
+            },
+            durationMs: 1,
+          },
+        ],
+      });
+      void received;
+
+      const select = root.querySelector(
+        ".vsdb-export-format",
+      ) as HTMLSelectElement | null;
+      // sql-where with no PK → all columns become the key, so quoting shows
+      // in the WHERE clause (sql-updates would hit the empty-SET skip path).
+      select!.value = "sql-where";
+      select!.dispatchEvent(new Event("change"));
+
+      const exportBtn = root.querySelector(
+        ".vsdb-export-file",
+      ) as HTMLButtonElement | null;
+      exportBtn!.click();
+
+      const exportMsgs = received.filter((m) => m.type === "exportFile");
+      expect(exportMsgs.length).toBe(1);
+      const m = exportMsgs[0] as { text: string };
+      // Reserved word `order` → backtick-quoted under mysql, bare `id` stays.
+      expect(m.text).toBe("WHERE (id=1 AND `order`='x')");
+      void root;
+    },
+  );
+
+  itIfBundle(
     "R1.7 (R2-corrected). sql-updates click with no PK metadata does NOT throw — posts exportFile with skip-comment output",
     () => {
       const { root, received } = loadBundle();
