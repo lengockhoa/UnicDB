@@ -1,187 +1,526 @@
-# Cycle X Plan — Adversarial QA and correctness hardening
+# Cycle Y Plan — Finish the queued work
+
+Base: `main` @ `c890072` (v1.6.7, clean tree). Executor: `bao-sonnet`. Reviewer: `bao-opus`.
+Cycle X plan and task files archived at `docs/AI_HANDOFF/archive/cycle-X-*`.
 
 ## §1 Intent
 
-The user wants the most reliable runnable VSDB release, not another feature-heavy cycle. Cycle X therefore starts with an adversarial review of the shipped `v1.6.3..v1.6.6` changes, fixes the known aggregate-only AG Grid test flake at its test-harness root cause, and closes selected small hardening gaps whose real source paths and interfaces are already known.
+Cycle X shipped a hardened v1.6.7 but deliberately deferred a queue: six findings triaged at
+the reconciliation gate plus the earlier backlog Cycle W left open. Cycle Y's job is to
+**finish that queue** — no new feature surface beyond what those items imply.
+
+Scope complexity: MODERATE (one subsystem — the results/query surface of a single extension).
+No decomposition into later modules is required; all eight queued items are planned here.
 
 Success means:
 
-1. two independent audit reports cover the high-risk host/adapter and webview/grid surfaces, with every finding carrying severity, evidence (`file:line`), reproduction, and disposition;
-2. every confirmed P0/P1 and every small-to-medium P2 audit finding is either represented by a bounded follow-up task or explicitly queued with rationale—never silently ignored;
-3. `resultsGridModelNull.test.ts` no longer installs repeated bundle listeners/grids and remains green under deterministic shuffled single-worker stress;
-4. whitespace-only string values round-trip through `(Blanks)` consistently, all SQL wrappers use one trailing-semicolon normalizer, and MySQL gains the real adapter sort helper;
-5. MySQL sessions and driver parsing are normalized to UTC, while MSSQL's already-default UTC behavior becomes explicit, so UTC-derived filter literals are not interpreted through the extension host machine's local timezone;
-6. compile, typecheck, targeted suites, the full 1494-test baseline, and VSIX packaging all pass.
+1. every queued item is implemented with tests, or explicitly re-queued with a stated reason;
+2. the full suite stays green — baseline **1552 passed / 2 skipped / 0 failed**;
+3. `npm run typecheck` exits 0 and `npm run compile` succeeds;
+4. every SQL-composing change is correct on all three dialects with per-dialect assertions;
+5. every task carries a reviewer verdict of APPROVED or APPROVED-WITH-MINOR.
 
-Scope complexity: MODERATE. The work spans several layers of one SQL-client subsystem, not independent products. Audit is a mandatory gate; keyset paging is deliberately deferred because it is a separate protocol/data-model project.
+**Human product decision recorded verbatim (C1).** `manualCommit` is unreachable from the UI;
+the options were "expose it or delete the path". *The user chose EXPOSE THE UI*: add a UI
+surface that enables manual-commit mode on a connection (a toggle in the connection add/edit
+form), so the existing host path — `beginTransaction()` → pinned `DbTransaction` → the
+Commit/Rollback toolbar controls already built in cycle U — becomes reachable.
+
+Consequence recorded: exposing C1 **unblocks** the queued "pg metadata vs manual-commit window"
+item, which INDEX.md marks *blocked on C1*. §2 records the decision on it.
+
+The eight items:
+
+1. Keyset (cursor) paging for deep offsets **and** safely projecting missing PK columns.
+2. M2 — MySQL multi-statement batch partial commit.
+3. C1 — expose `manualCommit` in the connection form.
+4. P2-3 (DISTINCT truncated/error note) **paired with** scoping DISTINCT values to the active
+   filter/WHERE — same surface, one task.
+5. P2-4 — `inferColumns` must not let sampled values override the server's declared type.
+6. `NULLS FIRST/LAST` emulation on mysql/mssql.
+7. Typed `dialect` field on `StateMessage`, replacing header-string parsing.
+8. Reviewer open minors (nine small items) — distributed into the file-owning tasks.
 
 ## §2 Scope
 
 ### In scope
 
-- **TASK-001:** adversarial audit of adapter, query-runner, save-path, statement-parser, and extension-host changes in `v1.6.3..v1.6.6`; report to `docs/AI_HANDOFF/notes/cycle-x-audit-host-adapters.md`.
-- **TASK-002:** adversarial audit of result-panel, query-composer, messages, grid/webview, completion, and SQL-coloring changes in the same tag range; report to `docs/AI_HANDOFF/notes/cycle-x-audit-grid-ui.md`.
-- **TASK-003:** test-harness root-cause fix for the known `resultsGridModelNull.test.ts` case 6 flake. Evidence already confirmed: `loadBundle()` evaluates `dist/webview.js` once per test, while the bundle installs an anonymous `window.message` listener and creates AG Grid state that the test cannot remove. The sixth test therefore runs with six bundle closures and deferred timers in one jsdom file.
-- **TASK-004:** make whitespace-only strings part of `(Blanks)` across entry grouping, local membership, typed-value resolution, and string-column SQL (`TRIM(quotedColumn) = ''`); at the same time hoist the identical `stripTrailingSemicolon(sql: string): string` implementation from `queryComposer.ts`, `distinctValues.ts`, and `resultsGridModel.ts` into `src/core/text.ts` because the first two named files and `resultsGridModel.ts` must otherwise be edited in colliding tasks.
-- **TASK-005:** add `getTableSortQuery(originalSql, whereFromBar, column, direction)` to `src/adapters/mysql.ts` and delegate the MySQL arm of `composeSortQuery` to it; normalize every MySQL pool session and MySQL date parser to UTC and set tedious `useUTC: true` explicitly.
-- **Post-audit reconciliation:** after TASK-001 and TASK-002, use `TASK-006` and `TASK-007` as the normal follow-up budget for confirmed, independently testable, small-to-medium defects. This two-task budget is not a cap on critical work: if unrelated confirmed P0/P1 findings cannot fit without violating file ownership or task right-sizing, the orchestrator must create `TASK-008` onward as needed. Every added task must use `_TEMPLATE.md`, depend on the relevant audit task(s), obey grounding/test rules, and preserve the same-wave-no-shared-file rule; group findings only when they must own the same file. P0/P1 findings are not deferrable. Additional P2 findings and large architectural findings go to `INDEX.md` “Next cycles” with severity/evidence/rationale. If there are no real findings, create no follow-up task and record “no actionable finding” in both reports.
+| # | Item | Task |
+|---|------|------|
+| 1 | Keyset paging + project missing PK columns | TASK-004 |
+| 2 | M2 MySQL batch transaction policy | TASK-002 |
+| 3 | C1 manual-commit UI surface | TASK-001 |
+| 4 | DISTINCT scoped to active WHERE + truncated/error note | TASK-006 |
+| 5 | P2-4 declared-type override in `inferColumns` | TASK-003 |
+| 6 | NULLS emulation on mysql/mssql | TASK-005 |
+| 7 | Typed `dialect` on `StateMessage` | TASK-007 |
+| 8 | Reviewer open minors | distributed (below) |
 
-### Out of scope
+Minors distribution (item 8) — each minor goes to the task that already owns its file, per the
+INDEX.md precedent "bundle it into the next file-owning task rather than spending a wave on it":
 
-- Keyset/cursor paging for deep offsets: it needs a stable unique cursor transported through messages, first/subsequent-page query variants, NULL ordering semantics, and mutation behavior. It does not fit a release-hardening slice and remains queued.
-- Projecting absent PK columns, scoped DISTINCT values, MySQL/MSSQL `NULLS FIRST/LAST`, and typed `StateMessage.dialect`: retain the existing queue.
-- Broad rewrites, speculative cleanup, dependency upgrades, schema migrations, and user-facing redesign.
-- Treating audit observations as bugs without reproduction or source evidence.
+| Minor | file:line | Owner |
+|-------|-----------|-------|
+| `manualStatementIndex` never reset in `render()` | `resultsPanel.ts:194-229` | TASK-004 |
+| Committed-save refresh rethrow | `resultsPanel.ts:929-945` | TASK-004 |
+| Positional ORDER BY for duplicate column names | `webview/main.ts:2219-2222` | TASK-007 |
+| `hiddenColumns` missing from `readExportInput` return type | `webview/main.ts:2983-2993` | TASK-007 |
+| Dead `void received;` / `void root;` | `webviewExport.test.ts:369,392` | TASK-007 |
+| `webviewServerSort.test.ts` case-18 flake root cause | `:557` | TASK-008 |
+| Stale TRIM test titles | `queryComposer.test.ts:685,698` | TASK-005 |
+| Dead guard in `unquoteIdent` (P3-2) | `queryComposer.ts:252-257` | TASK-005 |
 
-### File and wave constraints
+### Out of scope for this cycle (stays queued in INDEX.md)
 
-Tasks in the same wave must not modify the same file. Audit tasks own only their separate new note files; reading overlapping source is allowed. TASK-003 and TASK-004 have disjoint targets. TASK-005 depends on TASK-004 because both must modify `src/ui/queryComposer.ts`. Dynamic audit-fix tasks must be placed after their audit dependency and after any static task owning the same file; merge same-file findings rather than creating parallel collisions.
+- **pg metadata vs manual-commit window.** DECIDED: stays queued, **not** a Cycle Y task.
+  Rationale in §3.9. TASK-001 unblocks it, so its INDEX.md entry loses the "blocked on C1" note.
+- Any new AI/chat, export, or schema-tree work. Any dependency upgrade. Any release/publish.
+- MSSQL manual transactions: `src/adapters/mssql.ts` has no `beginTransaction` at all (0 grep
+  hits). No finding reported it; not tasked, not queued. Stated so it is not mistaken for
+  coverage.
 
-Initial graph and waves:
+### File-ownership constraint (hard)
 
-- Wave 1: TASK-001, TASK-002 (parallel audits).
-- Reconciliation gate: materialize zero to two normal-budget grounded audit-fix tasks, or explicitly record none; expand with TASK-008 onward when confirmed unrelated P0/P1 findings require independently owned fixes.
-- Wave 2: TASK-003 and TASK-004 depend on TASK-002; add non-colliding audit follow-ups with the relevant audit dependency.
-- Wave 3: TASK-005 depends on TASK-001 and TASK-004; add follow-ups whose file ownership requires TASK-004/TASK-005 ordering. Any expanded P0/P1 tasks join the earliest later wave whose dependencies are satisfied and whose targets do not collide.
+**Tasks in the same wave must not modify the same file.** Where two items want one file, the
+items are merged into one task or serialized by an explicit dependency. The collision map that
+drove the split:
+
+| File | Wanted by items | Resolution |
+|------|-----------------|------------|
+| `src/ui/queryComposer.ts` | 1, 6, 8 | Sole owner **TASK-005**. TASK-004 must NOT touch it — its keyset composition goes into a NEW `src/ui/keysetPaging.ts`. |
+| `src/ui/resultsPanel.ts` | 1, 4, 7, 8 | Wave-1 owner **TASK-004**. TASK-007 (wave 2) and TASK-006 (wave 3) each need it later ⇒ ordered by dependency, never concurrent. |
+| `webview/main.ts` | 4, 5, 7, 8 | Wave-2 owner **TASK-007**. TASK-006 (wave 3) edits it after. TASK-003 does not touch it at all. |
+| `src/ui/messages.ts` | 4, 5, 7 | Wave-2 owner **TASK-007** — the `dialect` field plus the DISTINCT note fields land in one edit. |
+| `src/extension.ts` | 3, 7 | Sole owner **TASK-001**. TASK-007's `dialect` is filled inside `resultsPanel`, not by a new `extension.ts` call (§3.7), so there is no second owner. |
+| `src/adapters/mysql.ts` | 2 | Sole owner **TASK-002**. |
+| `src/ui/resultsGridModel.ts` | 5 | Sole owner **TASK-003**. |
+| `src/ui/__tests__/resultsPanelOrderBy.test.ts` | 1, 6 | Sole owner **TASK-005** (it holds the NULLS rejection assertions). TASK-004 is forbidden from editing it. |
 
 ## §3 Approach
 
-### 3.1 Audit before claiming release quality
+### §3.1 TASK-001 — expose `manualCommit` (item 3)
 
-Both auditors inspect the actual `git diff v1.6.3..v1.6.6`, not only current files. They trace changed public paths into existing tests and classify each observation:
+Grounded facts: `src/config/types.ts:44` already declares `manualCommit?: boolean`;
+`src/extension.ts:97` already reads it (`getManualCommit: () => mgr.getActive()?.manualCommit === true`).
+The host path exists end to end. What is missing is only the form field and the two config
+literals.
 
-- P0: data loss/security/unrecoverable corruption;
-- P1: wrong SQL, wrong saved data, crash/hang, cross-statement state leak;
-- P2: user-visible correctness/reliability defect;
-- P3: maintainability/performance with no demonstrated wrong behavior.
+Change set:
+- `src/ui/connectionFormMessages.ts` — add `manualCommit: boolean` to `ConnectionFormSubmit`
+  and `ConnectionFormTest` (they carry identical field lists today; keeping them symmetric
+  avoids a second shape). `SubmitPayload` is `Omit<ConnectionFormSubmit,"type">`
+  (`connectionForm.ts:18`), so it picks the field up with no edit there.
+- `webview/connectionFormMain.ts` — a checkbox `id="manualCommit"` using the existing
+  `<label class="vsdb-form-check">` pattern that `useSsl` uses (`:151-153`); `readForm()`
+  (`:50-64`) returns `manualCommit: input("manualCommit").checked`; `applyInit()` (`:201-220`)
+  prefills from `existing.manualCommit === true`.
+- `src/extension.ts` — `openConnectionForm`'s add literal (`:740-752`) and edit patch
+  (`:760-771`) both carry `manualCommit: payload.manualCommit`.
 
-A report row is actionable only with severity, `file:line`, concrete trigger, expected versus actual behavior, proposed smallest fix, and test location. Duplicates and false positives are documented as rejected. This prevents “thorough review” from degenerating into speculative task generation.
+Alternative rejected: a VS Code setting or command-palette toggle — `manualCommit` is
+per-connection state living in `ConnectionConfig`, and the connection form is the only surface
+that already round-trips that record.
 
-### 3.2 Flake: one bundle lifecycle, event-driven waits
+Alternative rejected: deleting the manual path — the user explicitly chose expose.
 
-Do not increase arbitrary sleeps and do not add a retry. Refactor the test harness so the bundle is evaluated once for the suite and subsequent cases reset/reuse that single grid lifecycle. Flush AG Grid's public `GridApi.flushAllAnimationFrames()` after column-definition replacement and use bounded `vi.waitFor` on observable editing/overlay state instead of assuming 50 ms is sufficient. Clear viewer/edit state between cases through existing user-visible behavior/API; do not add production test-only reset methods.
+Stated unknown: `src/config/types.ts` is unreadable from this planner session (directory
+permission denied); only the grep hit at `:44` is confirmed. The executor must open it and
+confirm the `ConnectionConfig` shape before writing the literals. Recorded in TASK-001
+§Discussion rather than guessed.
 
-Rejected alternatives: longer `tick(500)`, `retry`, or global Vitest serialization. They hide leaked listeners and make the suite slower without proving isolation.
+The Commit/Rollback toolbar visibility already exists (`webview/main.ts:557-560`, gated on
+`transactionStatus`, handled at `:3382`) and is covered by `manualCommit.test.ts:200-213`.
+TASK-001 therefore adds **no** `webview/main.ts` change — which keeps the wiring-heavy task
+clear of the hottest file.
 
-### 3.3 Blanks and SQL normalization
+### §3.2 TASK-002 — MySQL batch transaction policy (item 2, M2)
 
-Use one shared predicate-level definition: `null`, `undefined`, `""`, and strings whose `trim().length === 0` are blank. Apply it in `buildSetFilterEntries`, `setFilterPass`, and webview typed-value lookup. For a declared string column, `(Blanks)` composes `column IS NULL OR TRIM(column) = ''`; unknown/non-string columns remain NULL-only to avoid applying `TRIM` to numeric/date values. This intentionally accepts the documented index trade-off only when the user selects `(Blanks)`.
+Today `MySqlAdapter.runQuery` (`mysql.ts:212-217`) loops
+`results.push(await this.executeText(text))`. Each `executeText` checks out its own pooled
+connection and MySQL autocommits, so a batch failing at statement 3 leaves 1-2 committed.
 
-Export `stripTrailingSemicolon(sql: string): string` from existing browser-safe `src/core/text.ts`. Import it from all three current wrapper builders. Preserve its verified behavior: strip one trailing terminator/whitespace, preserve interior semicolons, and preserve all-whitespace input as trimmed empty text. A source-contract test prevents local copies from returning.
+Constraint that rules out the obvious fix: `multipleStatements: false` (`mysql.ts:76`) — joining
+`BEGIN; …; COMMIT;` into one `executeText` is invalid.
 
-### 3.4 Adapter symmetry and timezone contract
+Approach: hold ONE `PoolConnection` across the loop. `getConnectionWithUtcSession()`
+(`:504-516`) already yields a session-prepared connection and `runQueryOnConnection(connection, sql)`
+(`:427-447`) already runs statements on a held connection — it is exactly what
+`beginTransaction()` uses at `:246`. So the multi-statement arm becomes: check out one
+connection → `connection.beginTransaction()` → run every statement on it → `commit()` on
+success → `rollback()` + rethrow on any error → `release()` in `finally`.
 
-Implement the MySQL helper beside `MySqlAdapter`, using the real `quoteIdent(column, "mysql")` and the exact Postgres/MSSQL four-argument signature. `composeSortQuery("mysql", ...)` delegates to this helper; Postgres remains inline for now to avoid importing the `pg` driver into a pure composer path beyond current constraints.
+User-facing contract (the "explicit policy" M2 asks for): **a multi-statement batch is
+all-or-nothing on MySQL.** Postgres already behaves this way via `runQueryOnClient`
+(`postgres.ts:384`). Documented in `README.md`.
 
-For temporal correctness, configure mysql2 with `timezone: "Z"` and route all four verified explicit `pool.getConnection()` call sites through one adapter checkout helper. The helper must also own `MySqlAdapter.query(sql, values)` at `src/adapters/mysql.ts:397-406`: it currently calls `this.pool.query(sql, values)` directly for `information_schema` metadata queries and `executeText` non-streaming SQL, which permits an implicit replacement checkout to bypass initialization. Replace that direct pool call with helper checkout, `connection.query(sql, values)`, and `finally` release. On first checkout of each physical core connection (the promise wrapper exposes it as `connection`), await `SET time_zone = '+00:00'` before returning it to user work and remember successful initialization in a `WeakSet`; on failure release the checkout and reject rather than silently running with an unknown timezone. This is deliberately stronger than an async pool `connection` event, which mysql2 emits immediately before `acquire` without awaiting listener promises. Test checkout/queue ordering and physical-connection replacement after loss with a faithful mysql2 mock: both the replacement's `SET time_zone = '+00:00'` and its subsequent metadata/non-streaming query must occur in that order. Set tedious `options.useUTC: true` explicitly and retain UTC-naive MySQL/MSSQL `datetime` literals from `typedLiteral`. This chooses a UTC session contract over offset arithmetic in SQL literals: one invariant applies to display, DISTINCT typed values, and requery filters.
+Edges that must not regress: the single-SELECT streaming arm (`:202-210`) returns before the
+loop and must stay byte-identical — wrapping a streaming cursor in a transaction would pin the
+`connectionLimit: 1` pool. DDL inside a batch is a known MySQL implicit-commit hazard and
+cannot be rolled back, so the documented contract states DDL batches are not atomic; that is a
+documentation obligation, not a code path.
 
-### 3.5 Audit finding materialization
+### §3.3 TASK-003 — declared types beat sampled values (item 5, P2-4)
 
-The executor/orchestrator performs the reconciliation gate immediately after Wave 1. A follow-up task is allowed only after its paths, neighboring test style, real interface, and commands are verified. TASK-006 and TASK-007 are the normal budget for bounded findings, but confirmed unrelated P0/P1 findings expand the task count with TASK-008 onward rather than being deferred or forced into an unreviewable/same-file-colliding task; every expansion follows `_TEMPLATE.md` and the same-wave ownership rule. Huge findings and non-critical overflow are queued, not squeezed into an unreviewable mega-task. The initial task count is five; seven is a planning target, not a hard cap.
+`inferColumns(columns, rows)` (`resultsGridModel.ts:76-127`) decides `kind` purely from up to
+1000 sampled values, so an all-NULL column becomes `"string"` and a `varchar` holding only
+`"123"` becomes `"number"` + `alignRight`.
+
+Approach: widen to `inferColumns(columns, rows, columnTypes?: Record<string, string>)`. When a
+declared type exists for a column NAME it decides `kind` and sampling is skipped for that
+column; otherwise the existing sampling is byte-identical. The type vocabulary reuses whatever
+`queryComposer`'s `isStringColumnType` (`:160`) already understands so the two places agree on
+what "a string column" means; numeric and boolean families map to `number`/`boolean`; anything
+unrecognized falls back to sampling.
+
+The parameter is optional so every existing call site and test keeps compiling and behaving
+identically — that is what lets TASK-003 sit in wave 1 with no dependency.
+
+The webview call site (`webview/main.ts:1618`) is NOT edited here (that file is TASK-007's).
+TASK-007 passes the value through once the protocol carries it. Until then `inferColumns`
+receives `undefined` and behaves as today — a deliberately inert landing.
+
+### §3.4 TASK-005 — NULLS emulation + queryComposer minors (items 6, 8)
+
+`parseOrderBy` rejects `NULLS` unless postgres (`queryComposer.ts:327-329`);
+`buildOrderByClause` (`:443-451`) renders it natively.
+
+Approach: stop rejecting, and emit a leading sort key per dialect:
+- postgres — unchanged native `"col" ASC NULLS LAST`.
+- mysql — `` `col` IS NULL `` is 1 for nulls, so NULLS LAST → `` `col` IS NULL ASC, `col` ASC ``
+  and NULLS FIRST → `` `col` IS NULL DESC, `col` ASC ``.
+- mssql — T-SQL allows no boolean expression in ORDER BY, so the same shape via
+  `CASE WHEN [col] IS NULL THEN 1 ELSE 0 END ASC|DESC, [col] ASC`.
+
+Intentional behavior change: two existing blocks assert today's rejection and must be
+rewritten — `queryComposer.test.ts:372-398` (cases 9/10) and
+`resultsPanelOrderBy.test.ts:239-257` (case 8c). This mirrors cycle W's case-16 precedent: one
+intentional expectation change per cycle, called out in the plan.
+
+Minors folded in: delete the no-op guard at `queryComposer.ts:252-257` (P3-2 — the `if` body is
+a comment only, so removal is provably behavior-free), and retitle the two stale tests at
+`queryComposer.test.ts:685,698` whose names say `TRIM(col) = ''` while the assertions are
+regex / `NOT LIKE` predicates.
+
+### §3.5 TASK-004 — keyset paging + PK projection + resultsPanel minors (items 1, 8)
+
+Two coupled problems in `handleRequery`:
+- `:1227-1232` adds PK tiebreakers only when `pk.every(c => projected.includes(c))`; if one PK
+  column is not projected, paging silently loses its gap-free guarantee.
+- `buildPagedQueryTerms` always emits `OFFSET n`, so `OFFSET 500000` still scans.
+
+Approach, in a NEW module `src/ui/keysetPaging.ts` (deliberately not `queryComposer.ts`, which
+TASK-005 owns this wave — the same tactic cycle W used when it created `distinctValues.ts`):
+
+1. **Project missing PK columns safely.** The rule implemented: a PK column may be projected
+   only when the statement is a plain browse-shaped `SELECT … FROM <table>` — exactly the case
+   `tableByStatement` (`resultsPanel.ts:213-217`) records. For any other shape — DISTINCT,
+   aggregate, explicit projection — no tiebreaker is added and no gap-free promise is made,
+   exactly as today. Appending all projected columns is explicitly rejected (INDEX.md: "not a
+   valid substitute") because it changes DISTINCT semantics and breaks aggregates.
+2. **Keyset paging.** When the composed ORDER BY is total (user terms + full PK) and the caller
+   supplies the previous page's last-row key, emit a keyset `WHERE` predicate plus `LIMIT n`
+   instead of `OFFSET n`. Page 0 has no predicate and composes byte-identically to today. The
+   predicate is an OR-of-ANDs chain rather than a row-value constructor, because MSSQL has no
+   row-value comparison.
+3. `resultsPanel.ts` consumes the module: `handleRequery` passes the last-row key when the
+   webview supplied one, otherwise falls back to OFFSET. **No webview change in this task** —
+   the fallback keeps it self-contained and testable at the host boundary.
+
+Minors folded in (both `resultsPanel.ts`): clear `manualStatementIndex = null` inside `render()`
+next to the other per-statement-set resets (`:213`); and in the save catch (`:929-945`) replace
+the non-manual `throw err` with a `saveResult {ok:true, warnings:[…]}` post, so a save that
+already committed at `:826` can never reject out of the un-awaited `handleMessage` (`:177`).
+
+### §3.6 TASK-006 — DISTINCT scoped to WHERE + truncated/error note (item 4)
+
+Two halves of one dropdown:
+- Host: `handleRequestDistinctValues` calls `buildDistinctValuesQuery(r.sql, column, dialect, "")`
+  (`resultsPanel.ts:1057`). The `where` parameter exists precisely for this
+  (`distinctValues.ts:42-47`). The host retains no per-statement WHERE today (verified: no
+  `lastWhere`/`whereByStatement`). Add `whereByStatement: Map<number, string>`, written where
+  `combinedWhere` is already computed (`composeRequerySql:1132-1134`), cleared in `render()`,
+  read here.
+- Webview: `handleDistinctValues` drops any reply carrying `error` (`webview/main.ts:2283`) and
+  never surfaces `truncated`. Both must render into the existing `.vsdb-setfilter-status`
+  footer (`:1216`, text set at `:1444-1450`).
+
+Both halves touch files other tasks own (`resultsPanel.ts` → TASK-004,
+`webview/main.ts` + `messages.ts` → TASK-007), so TASK-006 depends on both and runs last.
+
+Design decision recorded: scoping a dropdown to the active filter means a value the user just
+filtered out disappears from its own list, stranding them. Mitigation chosen: the retained
+WHERE is the requery-bar WHERE **plus the OTHER columns' filters**, excluding the requested
+column's own filter — so a column's selection never narrows its own value list. This is why
+the map stores a composed WHERE per statement rather than reusing `combinedWhere` verbatim.
+
+### §3.7 TASK-007 — typed `dialect` + webview minors (items 7, 8)
+
+`webview/main.ts:2185-2191` parses the driver out of the header string with
+`/—\s*([A-Za-z0-9_-]+)@/`, falling back to postgres. The header is built in two places
+(`extension.ts:639`, `browseCommands.ts:163-167`) with different prefixes, so a display string
+is load-bearing for SQL quoting.
+
+Approach: add `dialect?: SqlDialect` to `StateMessage` (`messages.ts:20-27`). `ResultsPanel`
+already knows the live dialect — `this.saveContext?.getDriver()` is used at `:1046` and `:1183`
+— so every `state` post fills it from there, with no `extension.ts` or `browseCommands.ts`
+change. There are **11** `type:"state"` post sites in `resultsPanel.ts`
+(`:223,385,436,453,505,923,1205,1283,1356,1384,1392` — the last is the else-branch of the try
+at :1384); the executor routes them through one private
+helper instead of editing each literal.
+PLAN REVISION (plan-review round 1): the original count of ten omitted `:1392`. Executors MUST
+audit live code rather than trust these line numbers — the grep count is authoritative.
+
+File-ownership: those post sites live in `resultsPanel.ts`, TASK-004's wave-1 file. TASK-007
+depends on TASK-004 and becomes the later owner in a different wave — permitted; the rule bans
+same-wave sharing only.
+
+Webview side: `detectDialectFromHeader` stays as the fallback for a `state` without `dialect`
+(older host, and the bundle tests that hand-build headers), but the typed field wins.
+
+Minors folded in: `orderByFromColumnState` (`:2219-2222`) resolves `spec.headerName`, so
+`SELECT id, id` emits `ORDER BY "id", "id"` and the de-duplicated `field` (`id__2`) is
+discarded — fix by emitting the positional ordinal when two specs share a `headerName`. Add
+`hiddenColumns: string[]` to the `readExportInput` return type (`:2983-2993`) — the value is
+already computed at `:3031` and consumed at `:3065`/`:3089`; only the declared type omits it.
+Delete the dead `void received;` / `void root;` at `webviewExport.test.ts:369,392`.
+
+### §3.8 TASK-008 — case-18 flake root cause (item 8)
+
+`webviewServerSort.test.ts` still uses the per-`it` `loadBundle()` pattern that cycle X's
+TASK-003 removed from `resultsGridModelNull.test.ts`: every `it` re-evaluates the bundle
+(`:98`) and installs another `window` message listener, so N stale handlers and timer closures
+race the 150 ms filter debounce. Case 18 at `:557` is where it surfaces (3/3 full-suite runs
+failed there; 2/6 isolated). Fix: apply the same single-evaluation suite lifecycle that
+TASK-003 proved, plus bounded observable waits instead of the fixed `setTimeout(250)` at `:554`.
+
+Test-only file, zero production files ⇒ zero collisions ⇒ wave 1.
+
+### §3.9 Recorded decision — pg metadata vs manual-commit window stays queued
+
+TASK-001 removes the blocker, but the fix itself is: while `this.transaction` is open, every
+`PostgresAdapter.query()` (`postgres.ts:653-660`, `this.pool.query`) can block on the `max: 1`
+pool or read outside the transaction's snapshot. Correcting it means threading the pinned
+client through ~11 metadata call sites
+(`:410,420,434,448,492,529,535,564,596,631,637`). That is a task of its own size, it would
+necessarily depend on TASK-001, and it shares no test surface with anything else this cycle.
+Queued rather than crammed in. INDEX.md keeps the entry with "blocked on C1" replaced by
+"unblocked — C1 shipped in Cycle Y TASK-001".
+
+### §3.10 Ambiguity resolutions (no questions were asked; choices recorded)
+
+- **Item 5 split.** `inferColumns` and its webview call site could have been one task, but that
+  would make TASK-003 an owner of `webview/main.ts` and force it out of wave 1. Chosen: split —
+  the optional parameter lands inert in wave 1, TASK-007 wires it.
+- **Item 1 module boundary.** Keyset composition could extend `queryComposer.ts`. Chosen: a new
+  `src/ui/keysetPaging.ts`, so TASK-004 and TASK-005 are file-disjoint and both run in wave 1.
+- **Item 4 sequencing.** Could have been two tasks (host half / webview half). Chosen: one task
+  in the last wave — splitting would put the webview half behind TASK-007 anyway, and the
+  truncated/error note is meaningless without the scoped query that produces it.
 
 ## §4 Test Plan
 
-| Type | Test Name | Expected |
-|---|---|---|
-| audit happy | Host/adapter changed-path trace | Every changed host/adapter production file in the scoped tag diff is reviewed or explicitly excluded with reason; report contains no un-evidenced claim. |
-| audit edge — malformed/error | SQL/save/cancel failure-path review | Wrong SQL, rejected query, cancellation, retry, transaction, and partial-save paths each have a disposition with source/test evidence. |
-| audit edge — concurrency/state | Grid/webview async state review | Listener, timer, stale reply, tab switch, load-more, sort/filter, and commit-refresh ownership paths each have a disposition. |
-| regression | Single bundle lifecycle in NULL/viewer suite | Bundle evaluation and message-listener installation occur once; all six behavior cases remain isolated and case 6 shows exactly one 500-character overlay. |
-| edge — ordering/load | Shuffled single-worker flake stress | Seeds 1–5 pass without retry; read-only viewer opens after async column-def flush regardless of test order. |
-| edge — cleanup | Viewer/edit state reset | An overlay or active editor from a prior case is absent before the next assertion and Escape/outside-close behavior remains functional. |
-| happy | Whitespace-only set-filter entry | `[null, "", "  ", "x"]` produces one `(Blanks)` entry with count 3 and one `x` entry. |
-| edge — type safety | Non-string/unknown blanks SQL | `(Blanks)` for integer or unknown column type emits only `col IS NULL`, never `TRIM(col)`. |
-| edge — SQL escaping | String-column blanks SQL | MySQL/Postgres/MSSQL quote the identifier by dialect and emit `IS NULL OR TRIM(quoted) = ''`; a mixed normal value remains in the `IN` list. |
-| happy | Shared trailing-semicolon helper | Each wrapper builds the same SQL as before for `SELECT 1;   ` while importing the single shared helper. |
-| edge — lexical | Interior semicolon and whitespace input | `SELECT ';' AS s;` preserves the literal semicolon and strips only the terminator; whitespace-only input returns `""`. |
-| happy | MySQL adapter sort twin | Helper returns `SELECT * FROM (SELECT 1) vsdb_sort ORDER BY `backtick-name` ASC`, and composer output is identical. |
-| edge — injection | MySQL quoted sort identifier | Embedded backtick/payload stays inside one doubled-backtick identifier; direction is constrained to `ASC|DESC`. |
-| edge — empty/boundary | Sort WHERE/original SQL boundaries | Whitespace WHERE is omitted; DESC and empty original SQL match existing adapter contracts. |
-| happy | UTC connection contract | mysql2 pool receives `timezone: "Z"`, each new connection queues `SET time_zone = '+00:00'`, and tedious receives `useUTC: true`. |
-| edge — failure | Session timezone initialization fails | MySQL connect rejects and closes/resets the pool; no user query runs on an uninitialized session. |
-| edge — replacement/state | Direct-query replacement connection | After the initialized physical connection is lost, `MySqlAdapter.query(sql, values)` checks out its replacement, runs `SET time_zone = '+00:00'` once before its metadata or non-streaming SQL, and releases it; no direct `pool.query()` bypass remains. |
-| edge — environment | Non-UTC host process | A canonical UTC Date/filter literal remains the same under a non-UTC `TZ`; no host-local offset is introduced. |
-| regression | Full release suite | After compile, `npm test` remains at least the 1494 passed / 2 skipped / 0 failed baseline (plus new tests), with zero failures. |
+Kind vocabulary: *happy*, *edge-boundary*, *edge-dialect*, *edge-ordering*, *edge-failure*,
+*edge-empty*, *regression*. Each task's own table repeats its rows with fixtures.
 
-Each task file maps the relevant rows to concrete fixtures and expectations. Dynamic audit-fix tasks must add one happy path and at least two genuinely different edge cases; a bugfix also requires a RED-before/GREEN-after regression case.
+| Type | Test Name | Expected |
+|------|-----------|----------|
+| happy | T1 form round-trip | Submitting with the manual-commit box checked calls `onSave` with `manualCommit: true`; the add path builds a `ConnectionConfig` carrying `manualCommit: true`. |
+| edge-empty | T1 unchecked default | Add mode with the box untouched yields `manualCommit: false` — never `undefined`. |
+| regression | T1 edit prefill | `init` with `existing.manualCommit === true` renders the box checked; absent renders unchecked; the existing full-SSL submit assertion still passes. |
+| happy | T2 atomic batch | A 3-statement MySQL batch runs on ONE connection: call log `beginTransaction, q1, q2, q3, commit, release`. |
+| edge-failure | T2 mid-batch failure | Statement 2 throwing yields `beginTransaction, q1, rollback, release`, the error rethrown, `commit` never called. |
+| regression | T2 single SELECT untouched | A single `SELECT` with no `;` still returns `{results: [], batched}` and never calls `beginTransaction`. |
+| edge-boundary | T2 pool never used directly | `pool.query` is never reached in the multi-statement arm (the mock throws if it is). |
+| happy | T3 declared type wins | `inferColumns(["a"], [["123"]], {a:"varchar"})` → `kind:"string"`, no `alignRight`. |
+| edge-empty | T3 all-NULL column | `inferColumns(["a"], [[null],[null]], {a:"integer"})` → `kind:"number"`, `alignRight:true`. |
+| regression | T3 no types = today | Omitting the third argument reproduces existing kind/field/de-dup output exactly, including `name__2` suffixing. |
+| edge-boundary | T3 unknown type falls back | Declared `"geometry"` samples as before. |
+| happy | T4 keyset page 2 | With a total ORDER BY and a supplied last-row key, the composed SQL contains no `OFFSET` and carries the keyset predicate + `LIMIT n`. |
+| edge-dialect | T4 mssql keyset | The same request under mssql emits `OFFSET…FETCH`-free keyset SQL with an OR-of-ANDs predicate (no row-value constructor). |
+| edge-boundary | T4 page 0 unchanged | Offset 0 with no key composes byte-identically to today's `buildPagedQueryTerms` output. |
+| edge-failure | T4 non-browse statement | A DISTINCT/aggregate statement gets no projected PK and no keyset — falls back to today's OFFSET SQL. |
+| regression | T4 manualStatementIndex reset | A `render()` between opening a manual window and Commit leaves `manualStatementIndex === null`; the Commit runs no stray `runSql`. |
+| regression | T4 committed-save refresh failure | A refresh that throws after a successful commit posts `saveResult {ok:true, warnings:[…]}` and does not reject. |
+| happy | T5 NULLS on mysql | `buildOrderByClause([{column:"a",direction:"ASC",nulls:"LAST"}], "mysql")` = `` `a` IS NULL ASC, `a` ASC ``. |
+| edge-dialect | T5 NULLS on mssql | Same term under mssql = `CASE WHEN [a] IS NULL THEN 1 ELSE 0 END ASC, [a] ASC`. |
+| edge-boundary | T5 FIRST inverts the key | `nulls:"FIRST"` flips the sort-key direction to `DESC` on mysql and mssql; postgres still emits native `NULLS FIRST`. |
+| regression | T5 parse no longer rejects | `parseOrderBy("a NULLS LAST","mysql")` returns `{ok:true}`; the two rejection assertions are rewritten, not deleted. |
+| happy | T6 DISTINCT scoped | With a filter active on column `b`, the DISTINCT query for `a` carries a WHERE including `b`'s predicate. |
+| edge-boundary | T6 own filter excluded | The DISTINCT query for `a` never includes `a`'s own filter predicate. |
+| edge-failure | T6 error surfaced | A reply carrying `error` renders the message in `.vsdb-setfilter-status` instead of being dropped. |
+| edge-boundary | T6 truncated note | A reply with `truncated:true` renders a "first 1000" note alongside the count. |
+| happy | T7 typed dialect | Every `state` post carries `dialect` equal to `saveContext.getDriver()`. |
+| edge-empty | T7 no connection | With `getDriver()` returning null, `dialect` is omitted and the webview falls back to header parsing. |
+| edge-boundary | T7 duplicate column names | `SELECT id, id` sorted on the second column posts a positional ORDER BY, not `"id", "id"`. |
+| regression | T7 export input type | `readExportInput()` returns `hiddenColumns` and type-checks; the sql-where export output is unchanged. |
+| happy | T8 case 18 deterministic | `webviewServerSort.test.ts` passes 5 shuffled single-thread seeds. |
+| edge-ordering | T8 no stale listeners | The bundle is evaluated once for the suite; one `window` message listener. |
+| regression | T8 whole file green | Every existing case in the file still passes with its intent unchanged. |
 
 ## §5 Verification
 
-No `lint` script exists in `package.json`; this is explicit, not omitted. The defined static check is `typecheck`.
+Project reality, verified against `package.json`: scripts are `compile` (`node esbuild.js`),
+`test` (`vitest run`), `test:integration`, `typecheck` (`tsc --noEmit`), `package`.
+**There is no lint script in this repo** — `typecheck` is the only static gate and it is
+mandatory in every task. `RULES.md`'s generic `yarn test:release-core` floor does not exist
+here and must not be copied into any task; this repo uses **npm**.
 
-Per-wave/targeted commands are listed in each task. Final cycle verification is exactly:
+Per task:
+
+```bash
+npm run compile                  # REQUIRED before any test that loads dist/*.js
+npx vitest run <the task's test files>
+npm run typecheck
+```
+
+Cycle-close (orchestrator, after the last wave):
 
 ```bash
 npm run compile
+npx vitest run
 npm run typecheck
-npx vitest run src/ui/__tests__/resultsGridModelNull.test.ts src/ui/__tests__/resultsGridModelSetFilter.test.ts src/ui/__tests__/queryComposer.test.ts src/ui/__tests__/distinctValues.test.ts src/ui/__tests__/webviewSetFilter.test.ts src/core/__tests__/text.test.ts src/adapters/__tests__/mysql.sortQuery.test.ts src/adapters/__tests__/timezone.test.ts
-npm test
-npm run package
 ```
 
-Flake stress after compilation:
-
-```bash
-for seed in 1 2 3 4 5; do npx vitest run src/ui/__tests__/resultsGridModelNull.test.ts --poolOptions.threads.singleThread --sequence.shuffle.tests --sequence.seed=$seed || exit 1; done
-```
-
-Audit range and report-presence checks:
-
-```bash
-git diff --check v1.6.3..v1.6.6
-test -s docs/AI_HANDOFF/notes/cycle-x-audit-host-adapters.md
-test -s docs/AI_HANDOFF/notes/cycle-x-audit-grid-ui.md
-```
+Baseline to preserve: **1552 passed / 2 skipped / 0 failed**. Integration tests
+(`*.integration.test.ts`) are excluded by `vitest.config.ts` and are NOT part of any task's
+verification — they need live databases.
 
 ## §6 Acceptance
 
-- [ ] TASK-001 accounts for every scoped host/adapter production file and gives every reported item severity, `file:line`, trigger, expected/actual, fix, test, and disposition.
-- [ ] TASK-002 does the same for the grid/UI scope and explicitly reviews async ownership/stale-state paths.
-- [ ] Reconciliation creates grounded TASK-006/TASK-007 for normal-budget bounded findings; every confirmed P0/P1 is assigned, expanding with TASK-008 onward when independently owned fixes require it, while deferred large/non-critical-overflow findings are queued with rationale.
-- [ ] TASK-003 evaluates the webview bundle once per suite, uses bounded observable synchronization, and passes seeds 1–5 without retries or longer arbitrary sleeps.
-- [ ] TASK-004 classifies whitespace-only strings consistently in UI/local filtering, emits `TRIM(col) = ''` only for declared string columns, and leaves one exported trailing-semicolon implementation.
-- [ ] TASK-005 exposes and tests the real MySQL four-argument sort helper, delegates composer MySQL sorting to it, and enforces the documented UTC connection contract—including `query(sql, values)` replacement-connection initialization and failure handling.
-- [ ] No two same-wave tasks modify the same file; dynamic task dependencies are adjusted when audit findings collide with static owners.
-- [ ] `npm run compile` and `npm run typecheck` exit 0.
-- [ ] Targeted tests and `npm test` exit 0 with no regression below 1494 passed / 2 skipped.
-- [ ] `npm run package` exits 0 and produces an installable VSIX.
-- [ ] No unrelated feature, dependency, schema, or release-version change is introduced.
-
-Traceability: acceptance items 1–2 map to TASK-001/002; item 3 maps to the reconciliation gate and any TASK-006/007; item 4 maps to TASK-003; item 5 maps to TASK-004; item 6 maps to TASK-005; items 7–11 apply to all implementing tasks and final verification.
+- [ ] The connection form has a manual-commit toggle; a connection saved with it enabled makes
+      the existing Commit/Rollback toolbar reachable. (TASK-001)
+- [ ] A failing MySQL multi-statement batch commits nothing; the all-or-nothing contract is
+      documented in `README.md`. (TASK-002)
+- [ ] A declared server type overrides sampled inference in `inferColumns`; omitting types is
+      byte-identical to today. (TASK-003)
+- [ ] Deep pages compose without `OFFSET` when a total order and a page key exist; a
+      non-browse statement still falls back safely and DISTINCT/aggregate queries are not
+      rewritten. (TASK-004)
+- [ ] `manualStatementIndex` cannot survive a `render()`; a post-commit refresh failure never
+      rejects out of `handleMessage`. (TASK-004)
+- [ ] `NULLS FIRST/LAST` renders on all three dialects; the two rejection tests are rewritten
+      to assert emulation. (TASK-005)
+- [ ] The DISTINCT dropdown is scoped to the active WHERE excluding the column's own filter and
+      surfaces both truncation and errors in its footer. (TASK-006)
+- [ ] `StateMessage` carries a typed `dialect`, with header parsing left only as a fallback;
+      duplicate-name sorts emit a positional ORDER BY; `readExportInput` declares
+      `hiddenColumns`. (TASK-007)
+- [ ] `webviewServerSort.test.ts` passes 5 shuffled seeds with a single bundle evaluation.
+      (TASK-008)
+- [ ] `npx vitest run` reports ≥1552 passed and 0 failed; `npm run typecheck` exits 0.
+- [ ] Every task's reviewer verdict is APPROVED or APPROVED-WITH-MINOR.
 
 ## §7 Global Constraints
 
-- Runtime/version floors: preserve Node/TypeScript targets and VS Code engine `^1.75.0`; do not change package version in this cycle.
-- Dependency limits: npm only; add no dependency and do not modify lockfiles except if an existing npm command does so unexpectedly (then revert it).
-- Naming/copy: retain `vsdb_*` SQL aliases, `(Blanks)` display copy, English code/test names, and existing Vietnamese comments where untouched.
-- SQL safety: identifiers use `quoteIdent`; values use `sqlLiteral`/bound parameters; sort direction remains a closed `ASC|DESC` union.
-- Platform: extension host and webview must remain cross-platform; tests may set `TZ` but must restore process state.
-- TDD: each implementation task proves RED for behavior/regression before production edits, then GREEN; no retries or test-only production APIs.
-- Audit: evidence over speculation; P0/P1 cannot be deferred, while huge P2/P3 work is queued rather than rushed.
-- Handoff: every task inherits this section by reference; executor appends its report and reviewer appends its verdict in the task file.
+Every `TASK-xxx.md` inherits this section by reference; it is not repeated per task.
+
+- Package manager is **npm**, never yarn. Tests run as `npx vitest run <files>`.
+- **Never `rm -rf`** (hook-blocked). Use `rm -f` plus `rmdir`.
+- `npm run compile` MUST precede any test that reads `dist/*.js` (`webview*.test.ts`,
+  `*Bundle.test.ts`, and the grid-model tests that eval the bundle). A stale bundle was the
+  root cause of multiple Cycle X flakes.
+- `npm run typecheck` must exit 0 in every task. No lint script exists.
+- Baseline 1552 passed / 2 skipped / 0 failed must not regress.
+- Every SQL-composing change must be correct on **all three dialects** (postgres, mysql, mssql)
+  with a per-dialect assertion.
+- Identifiers reach SQL only through `quoteIdent`; values only through typed literals. No
+  string interpolation of user input.
+- Reserved subquery aliases must not collide: `vsdb_page`, `vsdb_sort`, `vsdb_sub`,
+  `vsdb_distinct`. A new wrapper needs a new `vsdb_*` alias.
+- Postgres pool is `max: 1`; MySQL is `connectionLimit: 1`. Any query issued while a cursor or
+  transaction is open must reuse the pinned handle or close the cursor first.
+- Tasks in the same wave must not modify the same file (§2 collision map is authoritative).
+- Executor is `bao-sonnet`; reviewer is `bao-opus`. They must not be the same instance.
+- TDD: the RED assertion is written and observed failing before the fix.
+
+## Planner Self-Audit
+
+Checklist: 12/12 pass
+
+1. **§6 → task trace.** Every acceptance line names its task; all eight tasks appear.
+2. **Task → §1/§6 trace.** Every task maps to one of the eight queued items; no task exists
+   that §1 does not ask for.
+3. **Delivery of §1's success.** All eight items are tasked; the ninth queued item (pg
+   metadata) is explicitly re-queued with a reason, which §1 permits.
+4. **Unhappy paths.** Covered: mid-batch failure (T2), refresh-after-commit failure (T4),
+   DISTINCT query error (T6), no active connection (T7), non-browse statement shape (T4),
+   all-NULL column (T3).
+5. **Target paths verified.** Every existing path was confirmed by grep/ls in this session.
+   `src/ui/keysetPaging.ts` is the only new file and is marked `(new)` in TASK-004.
+6. **Verification commands real.** `compile`, `test`, `typecheck` confirmed in `package.json`;
+   the absent lint script is stated rather than silently omitted; `yarn test:release-core` is
+   explicitly ruled out.
+7. **Same-wave file sharing.** Wave 1 = TASK-001 (`connectionForm*`, `extension.ts`), TASK-002
+   (`mysql.ts`, `README.md`), TASK-003 (`resultsGridModel.ts`), TASK-004 (`resultsPanel.ts`,
+   new `keysetPaging.ts`), TASK-005 (`queryComposer.ts`), TASK-008 (one test file) — pairwise
+   disjoint. Wave 2 = TASK-007 alone. Wave 3 = TASK-006 alone.
+8. **No dependency on an uncreated symbol.** TASK-007 consumes `inferColumns`' optional third
+   parameter (TASK-003, wave 1) and adds its own `state`-post helper; TASK-006 adds
+   `whereByStatement` itself into a file TASK-004 has already released.
+9. **Edge-kind diversity.** Every task carries ≥2 edge cases of genuinely different kinds
+   (dialect vs boundary vs failure vs ordering vs empty) — checked per task, not per cycle.
+10. **Concrete expectations.** Every row states a value, a call log, or an exact SQL fragment.
+    No "works correctly".
+11. **Regression tests.** TASK-002, TASK-004, TASK-005, TASK-007, TASK-008 each carry a
+    regression case that is RED against today's code.
+12. **Empty-implementation check.** No listed case passes against a no-op: each pins a new
+    output string, a new call order, or an absence that does not hold today.
+
+Fixed during audit:
+- Moved item 5's webview wiring out of TASK-003 into TASK-007 — as first drafted TASK-003 owned
+  `webview/main.ts` and collided with TASK-007 in wave 1.
+- Moved item 1's composition into a new `src/ui/keysetPaging.ts` — as first drafted it extended
+  `queryComposer.ts` and collided with TASK-005 in wave 1.
+- Gave `resultsPanelOrderBy.test.ts` exclusively to TASK-005 after noticing TASK-004 would
+  otherwise edit the same test file.
+- Replaced "wire `dialect` in `extension.ts`" with "fill it in `resultsPanel`'s state posts",
+  removing a second owner of `src/extension.ts`.
+- Archived the Cycle X plan and its eight task files to `docs/AI_HANDOFF/archive/cycle-X-*`
+  before overwriting `PLAN.md`, matching the archive convention for cycles I-V.
+
+Known gaps:
+- `src/config/types.ts` could not be read by this planner (directory permission denied); only
+  the grep hit `manualCommit?: boolean` at `:44` is confirmed. TASK-001's executor must open
+  the file and confirm the surrounding `ConnectionConfig` shape before writing the literals.
+  Recorded in TASK-001 §Discussion as a stated unknown rather than guessed.
+- The keyset predicate's exact SQL text (OR-of-ANDs rendering per dialect) is specified by
+  shape and by test expectation, not by a literal string — the executor writes the RED test
+  first and settles the exact rendering there. TASK-004 is the largest task in this cycle and
+  is the most likely `needs_breakdown` candidate at the Task Gate if the browse-shape rule for
+  PK projection turns out not to hold for a real statement shape.
+- MSSQL has no adapter-level `beginTransaction`, so M2's atomicity contract covers MySQL and
+  Postgres only. Not tasked, not queued — no finding reported it.
 
 ## Planner Report
 PLANNER_MODEL: bao-opus
-PLAN_REVIEW: Approved by bao-opus
-
-## Planner Self-Audit
-Checklist: 12/12 pass
-Fixed during audit: corrected the requested semicolon-duplication premise (`resultsPanel.ts` has no copy; the third real copy is `resultsGridModel.ts`), rejected keyset paging as too broad, merged same-file backlog slices, grounded MySQL UTC setup to awaited checkouts, made initialization failure explicit, gated all fix waves on the relevant audit, added audit-to-follow-up reconciliation, and replaced sleep/retry flake ideas with one lifecycle plus observable waits.
-Known gaps: audit findings are intentionally unknown until Wave 1; TASK-006/007 are the normal budget, while each confirmed unrelated P0/P1 finding expands the task set rather than being deferred. Keyset paging and other architectural queue items remain out of scope. MySQL UTC initialization covers the four explicit checkout sites and `query(sql, values)`'s former direct `pool.query()` path; the faithful mock must prove physical-connection identity, replacement ordering, and release behavior during TDD.
+PLAN_REVIEW: Approved by bao-opus (round 1: Issues Found — 3 findings applied: state-post count 10→11 with corrected list + live-audit note, signature sketch pinned in TASK-004; round 2: fixes verified, Approved)
 
 ## Plan Review Log
 
-### Round 1
-Reviewer: bao-opus
-Status: Issues Found
-Findings:
-- (severity: important) §2 Post-audit reconciliation and §3.5 impose a hard cap of two follow-up tasks while also forbidding deferral of any P0/P1 and allowing unrelated findings to be grouped only when they own the same file. Three independent P0/P1 findings in three files make those rules impossible to satisfy. Allow the cap to expand for P0/P1 findings, or require the gate to halt and revise/re-review the plan before later waves.
-- (severity: important) §3.4 routes the four explicit `getConnection()` sites through an initialized-checkout helper, but `src/adapters/mysql.ts:397-406` executes metadata and non-streaming SQL through `pool.query()`, which performs an implicit checkout outside that helper. After the original physical connection is destroyed and the pool replaces it, user SQL can run before `SET time_zone = '+00:00'`. Require `query()` to acquire/release through the initialized helper (or define another awaited all-connections mechanism), and add a replacement-connection test covering this path.
+(Round 1 verdict was returned by the reviewer agent as `Issues Found` with 3 numbered findings;
+its inline append was not persisted, so its content is summarized in the Planner Report above.
+All 3 findings were applied before round 2.)
 
-NOTES: The six required sections are substantive; the static wave DAG/file ownership is coherent; npm/compile/typecheck/package and Vitest commands are runnable; the sampled paths and APIs exist. TASK-003/004/005 each include a happy path and at least two edge cases of different kinds, and excluding keyset paging is appropriate for this hardening cycle.
-
-### Round 2
-Reviewer: bao-opus
+### Round 2 — 2026-08-26 · bao-opus
 Status: Approved
-Findings:
-- none
+
+COMPLETENESS:
+  - Fix 1 verified: PLAN §3.7 now says **11** state-post sites with the corrected list `(:223,385,436,453,505,923,1205,1283,1356,1384,1392)` and includes the "PLAN REVISION (plan-review round 1)" note instructing executors to audit live code.
+  - Fix 2 verified: TASK-004 Interfaces section pins a two-function public API sketch (`assertBrowseShape` returning browse-shape info or null; `composeKeysetQuery` with byte-identical page-0 guarantee and fallback semantics).
+  - Round 1 findings were applied directly to the document; no prior log entry existed here.
+
+CONSISTENCY:
+  - The TASK-004 interface sketch is consistent with PLAN §3.5 (browse-shape gate, keyset predicate, page-0 identity, fallback), PLAN §4 tests (T4 happy/edge-dialect/edge-boundary/edge-failure map to the two functions), and TASK-004 Discussion §5 resolution.
+  - No new cross-file collision introduced by either fix.
+
+CLARITY:
+  - The revision note in §3.7 is unambiguous: "executors MUST audit live code rather than trust these line numbers — the grep count is authoritative."
+  - The interface sketch specifies exact signatures with return types, eliminating ambiguity for the executor.
+
+SCOPE:
+  - Both fixes are targeted corrections that do not expand scope or introduce new items.
+
+YAGNI:
+  - No unrequested additions.
+
+NOTES: Both Round 1 fixes verified clean. No new blocking issues introduced. Plan is approved for execution.

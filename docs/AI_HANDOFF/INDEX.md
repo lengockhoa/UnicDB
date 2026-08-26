@@ -1,5 +1,43 @@
 # INDEX
 
+Cycle Y -- **FINISH QUEUED RESULTS/QUERY WORK**: C1 connection-form manual commit surface,
+MySQL atomic batch policy, declared type inference primitive, keyset paging with safe missing-PK
+projection (contract A — structural browse-shape gate), mysql/mssql NULLS emulation, scoped
+DISTINCT dropdown with visible truncation/error, typed state dialect wiring, and the server-sort
+bundle lifecycle fix. All 8 tasks `ready` — the three former `needs_breakdown` items were
+resolved by the orchestrator with grounded repo evidence (parseFromClause provenance +
+buildFilterWhere reuse). 8 tasks, planned 3 waves.
+
+| Task | Title | Status | Executor | Reviewer |
+|------|-------|--------|----------|----------|
+| TASK-001 | Expose per-connection manual-commit mode | ready | none | - |
+| TASK-002 | Make MySQL multi-statement batches atomic | ready | none | - |
+| TASK-003 | Let declared server types override sampled grid inference | ready | none | - |
+| TASK-004 | Keyset paging and safe missing-PK projection | ready | none | - |
+| TASK-005 | Emulate NULLS FIRST/LAST on MySQL and MSSQL | ready | none | - |
+| TASK-006 | Scope DISTINCT values and surface dropdown limits/errors | ready | TASK-004, TASK-007 | - |
+| TASK-007 | Typed state dialect, declared-type wiring, and webview minors | ready | TASK-003, TASK-004 | - |
+| TASK-008 | Stabilize the webview server-sort bundle lifecycle | ready | none | - |
+
+Graph: TASK-001 ∥ TASK-002 ∥ TASK-003 ∥ TASK-004 ∥ TASK-005 ∥ TASK-008; TASK-003 + TASK-004
+→ TASK-007; TASK-004 + TASK-007 → TASK-006.
+
+- **Wave 1 (6, parallel):** TASK-001, TASK-002, TASK-003, TASK-004,
+  TASK-005, TASK-008. All six are file-disjoint.
+- **Wave 2 (1):** TASK-007 after TASK-003 + TASK-004.
+- **Wave 3 (1):** TASK-006 after TASK-004 + TASK-007.
+
+Cycle Y ownership decisions:
+- Wave-1 file-disjointness: TASK-001 owns connection-form paths plus `src/extension.ts`;
+  TASK-002 owns `src/adapters/mysql.ts` + README; TASK-003 owns `resultsGridModel.ts`;
+  TASK-004 owns `resultsPanel.ts` + new `keysetPaging.ts`; TASK-005 owns
+  `queryComposer.ts`; TASK-008 owns only `webviewServerSort.test.ts`.
+- Later same-file owners are serialized: TASK-007 follows TASK-004 for `resultsPanel.ts`; then
+  TASK-006 follows TASK-004 + TASK-007 for `resultsPanel.ts`, `messages.ts`, and
+  `webview/main.ts`.
+- `resultsPanelOrderBy.test.ts` belongs only to TASK-005 even though TASK-004 also concerns
+  paging; this prevents a test-file collision.
+
 Cycle X -- **ADVERSARIAL QA + CORRECTNESS HARDENING**: two evidence-gated audits, root-cause
 flake isolation, whitespace-aware `(Blanks)`, shared SQL terminator normalization, MySQL sort
 adapter parity, explicit UTC adapter sessions, plus three audit-fix tasks materialized at the
