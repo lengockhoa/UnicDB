@@ -14,6 +14,7 @@ import type { GridApi, IFilterComp } from "ag-grid-community";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
+import { DISTINCT_VALUES_LIMIT } from "../../ui/distinctValues";
 
 // ---- minimal DOM stubs for AG Grid browser APIs ---------------------------
 type ResizeObserverLike = {
@@ -596,6 +597,20 @@ describeIfBundle(
         expect(
           gui.querySelector(".vsdb-setfilter-selectall"),
         ).toBeTruthy();
+      },
+    );
+
+    itIfBundle(
+      "18b. TASK-006 — truncation note literal stays pinned to the host cap",
+      () => {
+        // The webview cannot import across rootDir (structural mirror), so pin
+        // its hardcoded note against the host DISTINCT_VALUES_LIMIT to catch
+        // silent drift if either side changes.
+        const limit = DISTINCT_VALUES_LIMIT;
+        const note = `first ${limit} shown`;
+        expect(bundleSrc).toBeTruthy();
+        expect(bundleSrc!).toContain(note);
+        expect(bundleSrc).not.toContain(`first ${limit + 1} shown`);
       },
     );
 
