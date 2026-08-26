@@ -133,5 +133,81 @@ selection. `package.json` has no lint script. Global constraints: PLAN.md §7.
    `{sql, hiddenColumns}`; displayed results keep visible columns only, while the paging key
    reads values positionally before stripping. Page 0 with no key must compose byte-identical
    to today (guard test). Fallback paths (DISTINCT/aggregates/wraps) are asserted unchanged.
+6. **Executor lane-split decision (green phase).** The frozen `resultsPanelOrderBy.test.ts`
+   case 13b pins a PARTIAL-PK projection (`tenant_id` visible, `id` missing) to byte-identical
+   legacy OFFSET paging with NO tiebreakers. Widening a partial explicit projection would also
+   be semantically surprising (the user chose that column list), so the cycle-Y widening lane
+   arms ONLY when ZERO PK columns are visible in the result: full PK visible → cycle-W visible
+   tiebreaker lane; zero PK visible + gated browse → widen with hiddenColumns; anything else →
+   legacy, unchanged. Same discriminator applied in both `composeRequerySql` and the
+   `handleRequery` tiebreaker resolution.
+7. **Webview lastKey not sent yet (expected).** The task explicitly defers webview changes, so
+   `msg.lastKey` is never present in production traffic and every deep page stays on the OFFSET
+   composition — byte-identical to cycle W. The keyset predicate path is exercised by the pure
+   module tests plus a host-level test dispatching `lastKey` directly at the message boundary
+   (the interface the webview will adopt later without host changes).
+
+---
+
+## Executor Report
+
+```yaml
+status: PASS
+executor_tool: claude-code
+executor_model: bao-sonnet
+executor_subagent: feature-implementer
+worktree: .claude/worktrees/agent-a2348a4ccd290e90a (branch ff to f6d1cb5 before starting)
+
+summary: >
+  New pure module src/ui/keysetPaging.ts implements assertBrowseShape (string/comment-aware
+  structural gate consistent with parseFromClause provenance) and composeKeysetQuery (portable
+  OR-of-ANDs keyset predicate over dialect-quoted identifiers for postgres/mysql/mssql, LIMIT
+  or MSSQL TOP replacing OFFSET when a usable last-row key exists and the total order is
+  proven, page-0 byte-identical to buildPagedQueryTerms, missing-PK gated-browse widening via
+  widenPkWithHidden returning hiddenColumns). src/ui/resultsPanel.ts consumes it: two-lane
+  paging split in composeRequerySql (legacy = frozen case-12/13/13b semantics untouched;
+  widened = zero-PK-visible gated browse gets hidden PK columns stripped from the DISPLAYED
+  result while their values stay positionally available for the paging key), msg.lastKey
+  passthrough with host OFFSET fallback, manualStatementIndex=null reset inside render(), and
+  the post-commit refresh failure now posts saveResult {ok:true, warnings:[message]} instead of
+  rethrowing out of the un-awaited handleMessage.
+
+red_output: |
+  All four lanes confirmed RED before implementation:
+  1) keysetPaging.test.ts (module did not exist):
+     Error: Failed to load ../src/ui/keysetPaging.ts from ../src/ui/__tests__/keysetPaging.test.ts
+  2) requery keyset test:
+     AssertionError: expected 'SELECT * FROM (SELECT * FROM events) vsdb_page ORDER BY "id" DESC LIMIT 500 OFFSET 100000'
+     to contain '("created_at" < \'2026-01-01T00:00:00Z\') OR (…AND "id" > 42)'
+  3) widening test:
+     expected 'SELECT * FROM (SELECT name FROM users) vsdb_page …' to be 'SELECT * FROM (SELECT name, "id" FROM users) …'
+  4) manualCommit stale-index test:
+     AssertionError: expected [ 'SELECT secret FROM audit_log' ] to have a length of +0 but got 1
+  5) saveEdits refresh-failure test:
+     AssertionError: expected 0 to be greater than 0  (+ Unhandled Rejection "Error: connection reset during refresh")
+
+verification_output: |
+  # Task's exact Verification Commands (fresh run, final):
+  $ npx vitest run src/ui/__tests__/resultsPanelRequery.test.ts src/ui/__tests__/manualCommit.test.ts src/ui/__tests__/resultsPanelSaveEdits.test.ts src/ui/__tests__/keysetPaging.test.ts
+   ✓ src/ui/__tests__/keysetPaging.test.ts        (32 tests)
+   ✓ src/ui/__tests__/manualCommit.test.ts        (12 tests)
+   ✓ src/ui/__tests__/resultsPanelRequery.test.ts (15 tests)
+   ✓ src/ui/__tests__/resultsPanelSaveEdits.test.ts (28 tests)
+   Test Files  4 passed (4)
+        Tests  87 passed (87)
+  # Frozen contract file (never edited; verified separately):
+  $ npx vitest run src/ui/__tests__/resultsPanelOrderBy.test.ts
+   ✓ src/ui/__tests__/resultsPanelOrderBy.test.ts (16 tests)
+   Test Files  1 passed (1) | Tests 16 passed (16)
+  # Combined five-file run during green-phase stabilization: 103 passed (103).
+  $ npm run typecheck      → tsc --noEmit exits clean, no output
+  $ npm run compile        → esbuild: build complete (extension + webview bundles emitted)
+
+notes:
+  - Frozen resultsPanelOrderBy.test.ts was NEVER edited; it passes via the two-lane split.
+  - Case 13b forces the widen lane to require ZERO visible PK columns (not merely partial);
+    decision recorded in Discussion #6.
+  - No git add/commit/push performed; all changes left as working-tree state.
+```
 
 ---

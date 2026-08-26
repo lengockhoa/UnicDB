@@ -2065,3 +2065,67 @@ describe("ResultsPanel — one throwing ctid probe does not poison the rest of t
     expect(successAck).toBeDefined();
   });
 });
+
+// ---- TASK-004 (cycle Y) — committed-save refresh failure --------------------
+// The automatic save committed successfully but the post-commit refresh
+// SELECT (`runSql(r.sql)`) throws. Today the error propagates out of the
+// un-awaited handleMessage() promise chain (unhandled rejection, no ack).
+// Contract: trailing `saveResult` ack stays honest-but-successful —
+// {ok:true, warnings:[<refresh error>]} — and the handler never rethrows.
+describe("ResultsPanel — committed save acknowledges a refresh failure (TASK-004 cycle Y)", () => {
+  it("refresh-only failure after commit → last ack is ok:true with the error as a warning", async () => {
+    const columns = ["id", "name"];
+    let updateRan = false;
+    const fakeRunQuery = vi.fn(async (sql: string): Promise<RunResult> => {
+      if (/^UPDATE/i.test(sql.trim()) || /^BEGIN/i.test(sql.trim())) {
+        updateRan = true;
+        return {
+          results: [{ columns: [], rows: [], rowCount: 0, durationMs: 0 }],
+        };
+      }
+      // Post-commit refresh SELECT — fails.
+      throw new Error("connection reset during refresh");
+    });
+    const runner = {
+      loadMore: vi.fn(async () => [] as StatementResult[]),
+      cancel: vi.fn(async () => undefined),
+      runSql: fakeRunQuery,
+    } as unknown as QueryRunner;
+    const saveCtx: SaveContext = {
+      getDriver: () => "postgres",
+      listPkColumns: async () => ["id"],
+    };
+    const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT id, name FROM t",
+          status: "done",
+          result: { columns, rows: [[1, "alice"]], rowCount: 1, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    const fake = lastPanel.current!;
+    fake.webview.postMessage.mockClear();
+    fake.webview.dispatch({
+      type: "saveEdits",
+      index: 0,
+      tableName: null,
+      pkColumns: [],
+      edits: [{ rowId: 0, colIndex: 1, value: "alice-2" }],
+    });
+    for (let i = 0; i < 300; i++) {
+      if (saveResultAcks(fake).length > 0) break;
+      await Promise.resolve();
+    }
+    const acks = saveResultAcks(fake);
+    expect(acks.length).toBeGreaterThan(0);
+    expect(updateRan).toBe(true); // the COMMIT really succeeded
+    const lastAck = acks[acks.length - 1]!;
+    expect(lastAck.ok).toBe(true);
+    expect(lastAck.warnings).toEqual(["connection reset during refresh"]);
+  });
+});

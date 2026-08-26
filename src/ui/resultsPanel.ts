@@ -26,7 +26,7 @@ import type {
   QueryRunner,
   StatementResult,
 } from "../core/queryRunner";
-import type { DbTransaction } from "../adapters/types";
+import type { DbTransaction, QueryResult } from "../adapters/types";
 import { pickResult } from "../core/queryRunner";
 import type {
   HostMessage,
@@ -53,6 +53,7 @@ import {
   type ColumnFilterModel,
   type OrderByTerm,
 } from "./queryComposer";
+import { composeKeysetQuery, assertBrowseShape } from "./keysetPaging";
 import {
   DISTINCT_VALUES_LIMIT,
   buildDistinctValuesQuery,
@@ -206,6 +207,10 @@ export class ResultsPanel {
     // every in-flight DISTINCT response must be dropped on arrival.
     this.distinctCache.clear();
     this.statementGeneration += 1;
+    // TASK-004 (cycle Y) — a fresh render invalidates the recorded manual
+    // window's statement index: the slot it pointed at now belongs to an
+    // unrelated statement, and a later Commit/Rollback must not requery it.
+    this.manualStatementIndex = null;
     // Derive (schema?, table) per statement FROM the parsed SQL — host-side
     // truth. The webview's tableName/pkColumns message is IGNORED (Fix R1
     // critical #1). Statements whose SQL has no FROM/INSERT/UPDATE have no
@@ -941,7 +946,20 @@ export class ResultsPanel {
           errors: [message],
         });
       } else {
-        throw err;
+        // TASK-004 (cycle Y) — a failure AFTER the combined transaction
+        // committed (in practice: the post-commit refresh SELECT throwing)
+        // must not reject out of the un-awaited handleMessage() promise as
+        // an unhandled rejection with NO ack at all. The COMMIT itself
+        // succeeded, so the honest outcome is ok:true plus the refresh
+        // error surfaced as a warning; the grid keeps its previous rows.
+        const message = err instanceof Error ? err.message : String(err);
+        this.postMessage({
+          type: "saveResult",
+          index,
+          ok: true,
+          warnings: [message],
+          errors: [message],
+        });
       }
     } finally {
       this.setBusy(false);
@@ -1109,22 +1127,30 @@ export class ResultsPanel {
    *  - ≥2 terms (or 1 term with NULLS), filter-less, no offset: multi-term
    *    wrap `SELECT * FROM (<stripped sql>) AS vsdb_sub[ WHERE …] ORDER BY
    *    <buildOrderByClause(terms, dialect)>` — no LIMIT/OFFSET.
-   *  - `filters` or `offset` present: `buildPagedQueryTerms` over the
-   *    combined WHERE (bar AND filter), with host-derived PK tiebreakers.
+   *  - `filters` or `offset` present: the paging lane. Two sub-lanes:
+   *      · legacy — cycle-W `buildPagedQueryTerms(pkTiebreakers)` when the
+   *        full declared PK is already projected OR nothing proves a stable
+   *        key. Byte-identical to before TASK-004 cycle Y.
+   *      · widened — gated missing-PK browse projection (assertBrowseShape)
+   *        gets `widenPkWithHidden`: hiddenColumns ride back on the result
+   *        so handleRequery can strip them from the DISPLAYED columns while
+   *        their values stay positionally available for the paging key.
+   *    A webview-supplied `lastKey` plus proven total order swaps OFFSET for
+   *    the keyset predicate; without one the webview keeps today's OFFSET.
    *
    *  A parse failure (`parseOrderBy`) is surfaced by the caller, not here.
    */
   private composeRequerySql(
     r: StatementResult,
-    msg: RequeryMessage,
+    msg: RequeryMessage & { lastKey?: Array<{ column: string; value: unknown }> },
     dialect: Dialect | null,
     terms: OrderByTerm[],
     pkTiebreakers: string[],
     columnTypes?: Record<string, string>,
-  ): string {
+  ): { sql: string; hiddenColumns?: string[] } {
     const where = msg.where ?? "";
     const orderBy = msg.orderBy ?? "";
-    if (!dialect) return composeRequery(r.sql, where, orderBy);
+    if (!dialect) return { sql: composeRequery(r.sql, where, orderBy) };
 
     const filterWhere = msg.filters
       ? buildFilterWhere(msg.filters, dialect, { columnTypes })
@@ -1136,28 +1162,55 @@ export class ResultsPanel {
     // Filter-less, no-offset requeries: pure-sort lane.
     if (msg.offset === undefined && !msg.filters) {
       if (terms.length === 0) {
-        return composeRequery(r.sql, where, "");
+        return { sql: composeRequery(r.sql, where, "") };
       }
       const first = terms[0]!;
       if (terms.length === 1 && !first.nulls) {
         // Cycle-V single-term path — keeps composeSortQuery's quoting.
-        return composeSortQuery(dialect, r.sql, where, first.column, first.direction);
+        return {
+          sql: composeSortQuery(dialect, r.sql, where, first.column, first.direction),
+        };
       }
       // Multi-term (or NULLS) wrap — pinned alias matches composeRequery's.
       const inner = r.sql.replace(/\s*;\s*$/, "").trim();
       const whereClause = where.trim().length ? ` WHERE ${where.trim()}` : "";
-      return `SELECT * FROM (${inner}) AS vsdb_sub${whereClause} ORDER BY ${buildOrderByClause(terms, dialect)}`;
+      return {
+        sql: `SELECT * FROM (${inner}) AS vsdb_sub${whereClause} ORDER BY ${buildOrderByClause(terms, dialect)}`,
+      };
     }
 
-    return buildPagedQueryTerms(
-      r.sql,
-      combinedWhere,
+    // Paging lane. The legacy lane keeps frozen resultsPanelOrderBy
+    // case-12/13/13b semantics untouched: case 12 (full PK projected) appends
+    // the visible tiebreaker pair; case 13b (PARTIAL PK visible) falls back to
+    // no-tiebreaker OFFSET — so the cycle-Y widening lane may arm ONLY when
+    // ZERO PK columns are visible. A partial projection means the user chose
+    // their column list deliberately; rewriting it would surprise them and a
+    // hidden-only injection under an explicit partial list is ambiguous about
+    // which rows the visible values belong to.
+    const projected = r.result?.columns ?? [];
+    const fullPkProjected =
+      pkTiebreakers.length > 0 &&
+      pkTiebreakers.every((c) => projected.includes(c));
+    const zeroPkVisible =
+      pkTiebreakers.length > 0 &&
+      !pkTiebreakers.some((c) => projected.includes(c));
+    const mayWiden =
+      zeroPkVisible && !fullPkProjected && assertBrowseShape(r.sql) !== null;
+
+    const composed = composeKeysetQuery({
+      baseSql: r.sql,
+      where: combinedWhere,
       terms,
-      msg.offset ?? 0,
-      msg.limit ?? DEFAULT_PAGE_SIZE,
+      tiebreakers: pkTiebreakers,
+      ...(mayWiden ? { widenPkWithHidden: true } : {}),
+      ...(msg.lastKey ? { lastKey: msg.lastKey } : {}),
+      offset: msg.offset ?? 0,
+      limit: msg.limit ?? DEFAULT_PAGE_SIZE,
       dialect,
-      pkTiebreakers,
-    );
+    });
+    // When neither keyset nor widening applies this is byte-identical to the
+    // legacy buildPagedQueryTerms output (guarded by keysetPaging's tests).
+    return composed;
   }
 
   private async handleRequery(msg: RequeryMessage): Promise<void> {
@@ -1215,7 +1268,12 @@ export class ResultsPanel {
     // BEFORE composing so the composer stays sync (the requerySeq guard at
     // the awaits below keeps its ordering). Full projected PK in declared
     // order, or [] (cycle-V byte-identical path).
+    // TASK-004 (cycle Y, contract A ii) — the tiebreaker list now arms for a
+    // MISSING-PK projection too, but ONLY when the statement passes the
+    // structural browse gate: composeKeysetQuery widens that gated
+    // projection with hiddenColumns instead of appending visible tiebreakers.
     let pkTiebreakers: string[] = [];
+    let widenHidden = false;
     const tableMeta = this.tableByStatement.get(index);
     if (msg.offset !== undefined && tableMeta && this.saveContext) {
       try {
@@ -1223,12 +1281,21 @@ export class ResultsPanel {
           tableMeta.schema ?? "",
           tableMeta.table,
         );
-        const projected = r.result?.columns ?? [];
-        if (
-          pk.length > 0 &&
-          pk.every((c) => projected.includes(c))
-        ) {
-          pkTiebreakers = pk;
+        if (pk.length > 0) {
+          const projected = r.result?.columns ?? [];
+          if (pk.every((c) => projected.includes(c))) {
+            pkTiebreakers = pk; // cycle-W lane: full PK already visible.
+          } else if (
+            !pk.some((c) => projected.includes(c)) &&
+            assertBrowseShape(r.sql) !== null
+          ) {
+            // Gated direct browse with ZERO PK columns visible: widen the
+            // projection and hide the appended columns. A PARTIAL projection
+            // stays legacy (frozen case 13b pins it byte-identical).
+            pkTiebreakers = pk;
+            widenHidden = true;
+          }
+          // Any other shape stays ungated: no tiebreakers, safe OFFSET.
         }
       } catch {
         pkTiebreakers = [];
@@ -1257,6 +1324,23 @@ export class ResultsPanel {
       pkTiebreakers,
       columnTypes,
     );
+    // TASK-004 (cycle Y) — hidden columns appended by the widening lane:
+    // keep their values positionally for the paging key but strip them from
+    // the DISPLAYED result so visible columns stay exactly what the user
+    // wrote in the projection.
+    const hiddenColumns = widenHidden ? (composed.hiddenColumns ?? []) : [];
+    const stripHidden = (result: QueryResult): QueryResult => {
+      if (hiddenColumns.length === 0) return result;
+      return {
+        ...result,
+        columns: result.columns.filter((c) => !hiddenColumns.includes(c)),
+        rows: result.rows.map((row) =>
+          row.filter(
+            (_, i) => !hiddenColumns.includes(result.columns[i] ?? ""),
+          ),
+        ),
+      };
+    };
     this.setBusy(true);
     const start = Date.now();
     try {
@@ -1290,16 +1374,22 @@ export class ResultsPanel {
       // Route the requery through the transaction handle so it shares the
       // pinned session (and correctly sees uncommitted manual-window
       // changes). Non-manual requeries keep the plain runner path.
+      const composedSql = composed.sql;
       const runResult = this.transaction
-        ? await this.transaction.runQuery(composed)
-        : await this.runner.runSql(composed);
+        ? await this.transaction.runQuery(composedSql)
+        : await this.runner.runSql(composedSql);
       // FIX R1 critical #2 — `refreshed.results[0]` is always undefined
       // when the adapter returns a batched handle (Postgres single
       // SELECT). pickResult() handles both shapes: batched → initial
       // fetchBatch + columns; non-batched → first populated result.
       // Without this the entry swapped to `{ status:"done", result: undefined }`
       // and the grid blanked.
-      const freshResult = await pickResult(runResult);
+      const picked = await pickResult(runResult);
+      // TASK-004 (cycle Y) — hide the injected PK columns in the displayed
+      // result. The FULL row (hidden values included) stays reachable only
+      // through this closure for the paging key below; everything posted to
+      // the webview goes through stripHidden.
+      const freshResult = stripHidden(picked);
       // A newer requery already started while we were awaiting the run →
       // drop this (stale) result entirely; it must not clobber the newer
       // entry (nor adopt its cursor into the runner).

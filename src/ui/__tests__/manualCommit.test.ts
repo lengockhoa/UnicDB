@@ -350,4 +350,43 @@ describe("ResultsPanel manual-commit button refresh (TASK-006 P1-4)", () => {
     expect(runSql).not.toHaveBeenCalled();
     expect(messages().slice(postsBefore).filter((m) => m.type === "state")).toHaveLength(0);
   });
+
+  // ---- TASK-004 (cycle Y) — stale-index render regression -----------------
+  // After a manual window records manualStatementIndex = 0, a fresh
+  // render() swaps in a NEW statement set. The recorded index then points
+  // at an unrelated statement; the later Commit/Rollback button must NOT
+  // execute that statement's SQL. render() clears the index alongside its
+  // other statement-set state.
+  it("fresh render() invalidates the recorded manual index — Commit executes no unrelated statement", async () => {
+    const { panel, runSqlCalls, transaction, webview } = makeRefreshPanel([[1, "server-truth"]]);
+    save(webview);
+    await flush(() => messages().some((m) => m.type === "transactionStatus" && m.open === true));
+    // Simulate the user running a NEW query while the manual window is open:
+    // statement 0 now belongs to a completely different table.
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT secret FROM audit_log",
+          status: "done",
+          result: { columns: ["secret"], rows: [["x"]], rowCount: 1, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "next run",
+    );
+    const postsBefore = messages().length;
+    webview.dispatch({ type: "commitTransaction" });
+    await flush(
+      () =>
+        messages()
+          .slice(postsBefore)
+          .some((m) => m.type === "transactionStatus" && m.open === false),
+    );
+    expect(transaction.commit).toHaveBeenCalledTimes(1);
+    // No requery of ANY statement ran — in particular nothing executed the
+    // unrelated audit_log statement.
+    expect(runSqlCalls.filter((sql) => sql === "SELECT secret FROM audit_log")).toHaveLength(0);
+    expect(runSqlCalls.filter((sql) => sql === "SELECT * FROM t")).toHaveLength(0);
+  });
 });

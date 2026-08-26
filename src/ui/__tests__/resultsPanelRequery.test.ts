@@ -32,6 +32,7 @@ import {
   type RunResult,
   type BatchedQuery,
   type QueryResult,
+  type StatementResult,
 } from "../../core/queryRunner";
 import type { ParsedStatement } from "../../config/types";
 import type { DbAdapter } from "../../adapters/types";
@@ -113,6 +114,7 @@ vi.mock("vscode", () => {
 });
 
 import { ResultsPanel } from "../resultsPanel";
+import { buildPagedQueryTerms } from "../queryComposer";
 
 // ---- helpers --------------------------------------------------------------
 
@@ -793,4 +795,208 @@ describe("pickResult — rowCount=null for batched (Fix R2 important #2)", () =>
     expect(r.rowCount).toBe(7);
   });
 });
+
+// =============================================================================
+// TASK-004 (cycle Y) — keyset paging + missing-PK projection wiring.
+//
+// The host consumes composeKeysetQuery through composeRequerySql ONLY in the
+// paging lane (filters/offset present). A webview-supplied `lastKey` swaps
+// deep OFFSET for the cursor predicate; a gated explicit projection missing
+// PK columns is widened and the appended columns are stripped from the
+// DISPLAYED result while their values stay positionally available for the
+// next page's key. DISTINCT/aggregates (gate-refused SQL) never widen.
+// =============================================================================
+
+import type { SaveContext } from "../resultsPanel";
+
+describe("ResultsPanel — keyset paging (TASK-004 cycle Y)", () => {
+  interface PanelOpts {
+    driver?: string;
+    sql?: string;
+    columns?: string[];
+    pkColumns?: string[];
+    /** Row served by every requery runSql call. */
+    requeryRows?: unknown[][];
+    requeryColumns?: string[];
+  }
+
+  function makeKeysetPanel(opts: PanelOpts) {
+    const runSql = vi.fn(async (_sql: string): Promise<RunResult> => ({
+      results: [
+        {
+          columns: opts.requeryColumns ?? opts.columns ?? ["id"],
+          rows: opts.requeryRows ?? [[1]],
+          rowCount: (opts.requeryRows ?? [[1]]).length,
+          durationMs: 0,
+        },
+      ],
+    }));
+    const runner = {
+      loadMore: vi.fn(async () => [] as StatementResult[]),
+      cancel: vi.fn(async () => undefined),
+      runSql,
+      adopt: vi.fn(),
+      isCancelled: () => false,
+    } as unknown as QueryRunner;
+    const saveContext: SaveContext = {
+      getDriver: () => (opts.driver ?? "postgres") as never,
+      listPkColumns: async () => opts.pkColumns ?? [],
+    };
+    const panel = new ResultsPanel({ runner, saveContext });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: opts.sql ?? "SELECT * FROM events",
+          status: "done",
+          result: {
+            columns: opts.columns ?? ["id"],
+            rows: [[1]],
+            rowCount: 1,
+            durationMs: 0,
+          },
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    return { runSql, fake: lastPanel.current! };
+  }
+
+  it("lastRow key present → composed SQL carries the keyset predicate with LIMIT, no OFFSET", async () => {
+    // Full PK visible ("id" projected on SELECT *) ⇒ tiebreakers armed.
+    const { runSql, fake } = makeKeysetPanel({
+      sql: "SELECT * FROM events",
+      columns: ["created_at", "id"],
+      pkColumns: ["id"],
+    });
+    lastPanel.current!.webview.postMessage.mockClear();
+    fake.webview.dispatch({
+      type: "requery",
+      index: 0,
+      where: "",
+      orderBy: "id DESC",
+      offset: 100000,
+      limit: 500,
+      append: true,
+      lastKey: [{ column: "id", value: 42 }],
+    });
+    await waitForTerminal(fake);
+    const sql = runSql.mock.calls[0]![0] as string;
+    expect(sql).toContain('("id" < 42)');
+    expect(sql).toContain("LIMIT 500");
+    expect(sql).not.toContain("OFFSET");
+  });
+
+  it("no lastKey supplied (current webview) → byte-identical legacy OFFSET composition", async () => {
+    const sql = "SELECT * FROM events";
+    const { runSql, fake } = makeKeysetPanel({
+      sql,
+      columns: ["id"],
+      pkColumns: ["id"],
+    });
+    fake.webview.postMessage.mockClear();
+    fake.webview.dispatch({
+      type: "requery",
+      index: 0,
+      where: "",
+      orderBy: "id DESC",
+      offset: 100000,
+      limit: 500,
+      append: true,
+    });
+    await waitForTerminal(fake);
+    const composed = runSql.mock.calls[0]![0] as string;
+    expect(composed).toBe(
+      buildPagedQueryTerms(
+        sql,
+        "",
+        [{ column: "id", direction: "DESC" }],
+        100000,
+        500,
+        "postgres",
+        ["id"],
+      ),
+    );
+  });
+
+  it("missing-PK projection on a gated browse widens the SQL and strips hidden columns from the displayed result", async () => {
+    const { runSql, fake } = makeKeysetPanel({
+      sql: "SELECT name FROM users",
+      columns: ["name"],
+      pkColumns: ["id"],
+      requeryColumns: ["name", "id"],
+      requeryRows: [["alice", 7], ["bob", 8]],
+    });
+    fake.webview.postMessage.mockClear();
+    fake.webview.dispatch({
+      type: "requery",
+      index: 0,
+      where: "",
+      orderBy: "",
+      offset: 0,
+      limit: 500,
+    });
+    await waitForTerminal(fake);
+    // Projection was widened server-side… page 0 stays byte-identical to the
+    // cycle-W composition applied to the WIDENED projection (empty user ORDER
+    // BY + PK tiebreaker appended).
+    expect(runSql.mock.calls[0]![0]).toBe(
+      buildPagedQueryTerms(
+        'SELECT name, "id" FROM users',
+        "",
+        [],
+        0,
+        500,
+        "postgres",
+        ["id"],
+      ),
+    );
+    // …but the DISPLAYED result hides the injected column while its value
+    // stays positionally available for the paging key.
+    const state = stateMessages(fake).slice(-1)[0]!;
+    const entry = (state.results as Array<{ result?: QueryResult; status?: string }>)[0]!;
+    expect(entry.status).toBe("done");
+    expect(entry.result!.columns).toEqual(["name"]);
+    expect(entry.result!.rows).toEqual([["alice"], ["bob"]]);
+  });
+
+  it("DISTINCT base SQL keeps safe OFFSET paging and injects no hidden PK columns", async () => {
+    const { runSql, fake } = makeKeysetPanel({
+      sql: "SELECT DISTINCT region FROM sales",
+      columns: ["region"],
+      pkColumns: ["id"],
+      requeryColumns: ["region"],
+      requeryRows: [["EMEA"]],
+    });
+    fake.webview.postMessage.mockClear();
+    fake.webview.dispatch({
+      type: "requery",
+      index: 0,
+      where: "",
+      orderBy: "region ASC",
+      offset: 500,
+      limit: 500,
+      append: true,
+      lastKey: [{ column: "region", value: "EMEA" }],
+    });
+    await waitForTerminal(fake);
+    const composed = runSql.mock.calls[0]![0] as string;
+    // OFFSET fallback preserved verbatim (byte-identical to legacy), no
+    // widening, no keyset predicate even though a lastKey was sent.
+    expect(composed).toBe(
+      buildPagedQueryTerms(
+        "SELECT DISTINCT region FROM sales",
+        "",
+        [{ column: "region", direction: "ASC" }],
+        500,
+        500,
+        "postgres",
+        [],
+      ),
+    );
+    expect(composed).not.toContain("> 'EMEA'");
+  });
+});
+
 
