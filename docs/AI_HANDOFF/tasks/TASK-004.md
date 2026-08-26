@@ -311,3 +311,22 @@ Verification Output: |
   > tsc --noEmit
 
 Status: PASS
+
+
+## Re-Review (R4.5 round 1)
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: bao-opus (handoff.reviewer.model = unic-smart; executor bao-sonnet differs)
+FIX_VERIFICATION:
+  - src/ui/keysetPaging.ts:437 structurally copies every user term into `allOrderedTerms`; :445 derives `orderedColumns` from it. Both fallback (:501) and keyset (:514) render via `buildOrderByClause(allOrderedTerms, dialect)`, preserving `nulls`.
+  - src/ui/keysetPaging.ts:485-494 sets `hasNullOrdering` from user terms and routes only NULLS-ordered key-bearing requests to OFFSET; a no-`lastKey` page remains in the ordinary OFFSET fallback through `!usableKey`.
+  - Widening (:453-457), total-order proof (:467-472), key validation (:492-493), and predicate (:511) all use the one derived `orderedColumns` view.
+  - TASK-004 remediation changes only `src/ui/keysetPaging.ts`, `src/ui/__tests__/keysetPaging.test.ts`, and this task record; `src/ui/__tests__/resultsPanelOrderBy.test.ts` remains unchanged (16/16 pass).
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/keysetPaging.test.ts src/ui/__tests__/resultsPanelRequery.test.ts src/ui/__tests__/resultsPanelOrderBy.test.ts src/ui/__tests__/manualCommit.test.ts src/ui/__tests__/resultsPanelSaveEdits.test.ts && npm run typecheck
+  result: 111 tests pass / 0 fail; tsc --noEmit clean
+MINOR_STATUS:
+  - src/ui/keysetPaging.ts:561-570 — acceptable: `literalForKey` remains duplicated but its reachable plain-value serialization matches `sqlLiteral`; importing the grid model would violate this module's pure dependency boundary.
+  - src/ui/keysetPaging.ts:233 — still-open-minor: dead `void lower;` remains after `lower` was already consumed at :196.
+  - src/ui/resultsPanel.ts:1513-1524, :1615 — still-open-minor: widened initial rows are stripped before `adopt`, while its cursor can yield unstripped load-more rows, leaving internal appended rows ragged (display currently ignores the trailing values).
+FINDINGS: No critical or important findings. The previous NULLS-ordering defect is resolved; the two remaining cleanup items are non-blocking.

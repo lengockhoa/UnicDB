@@ -314,3 +314,23 @@ Status: PASS
 The reviewer finding was fixed without touching `keysetPaging.ts`. Bare numeric terms now carry explicit
 ordinal state, while quoted digit identifiers remain ordinary logical identifiers and are re-quoted by
 the active dialect builder.
+
+## Re-Review (R4.5 round 1)
+
+VERDICT: APPROVED
+REVIEWER_MODEL: bao-opus (configured reviewer role: unic-smart)
+EXECUTOR_MODEL: bao-sonnet (claude-code / feature-implementer)
+MODEL_ISOLATION: PASS — reviewer and executor models differ.
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/queryComposer.test.ts src/ui/__tests__/resultsPanelServerFilter.test.ts src/ui/__tests__/resultsPanelOrderBy.test.ts && npm run typecheck
+  result: PASS — 3 files, 100 tests passed; typecheck passed.
+PROBE: PASS — parse → compose: postgres `"2024" DESC` / mysql `` `2024` DESC `` / mssql `[2024] DESC` remain quoted with `ordinal=false`; bare `2024 DESC` remains bare with `ordinal=true` on all three dialects.
+EVIDENCE:
+  - src/ui/queryComposer.ts:233-237 — `OrderByTerm.ordinal?: true` explicitly preserves ordinal provenance.
+  - src/ui/queryComposer.ts:329-330 — only the bare unsigned-integer branch sets `ordinal: true`; quoted digit identifiers resolve normally without it.
+  - src/ui/queryComposer.ts:462-464 — composition reads the typed flag, with no text regex re-detection.
+  - src/ui/resultsPanel.ts:1334 — single-term composeSortQuery bypass tests `first.ordinal === true`.
+  - src/ui/queryComposer.ts:293-299 — parser docblock now documents accepted bare ordinals and quoted all-digit identifiers.
+  - af6196b TASK-007 paths: only queryComposer.ts, resultsPanel.ts, queryComposer.test.ts, and this task document changed.
+FINDINGS: none.
+

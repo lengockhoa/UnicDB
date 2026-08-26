@@ -230,3 +230,18 @@ Status: FAIL
 Note: The requested aggregate verification is blocked by unrelated pre-existing modifications in prohibited src/ui/keysetPaging.ts (4 targeted test failures and syntax errors at lines 578/607). Focused resultsGridModel tests pass 45/45.
 
 ---
+
+
+## Re-Review (R4.5 round 1)
+
+VERDICT: APPROVED
+REVIEWER_MODEL: bao-opus (configured reviewer alias: unic-smart)
+EXECUTOR_MODEL: bao-sonnet
+MODEL_ISOLATION: PASS — executor and reviewer models differ.
+EVIDENCE:
+- Fix Response R4.5 has real RED output (3 assertion failures) and its FAILED aggregate status was caused by the concurrent TASK-004 `keysetPaging.ts` edit; it does not affect the focused TASK-003 result.
+- `src/ui/resultsGridModel.ts:88-134`: `numeric(10,2)`, `varchar(50)`, `bit(1)`, `double precision`, and `character varying(20)` classify in their intended families. `^... (\s*\(|$)` anchors prevent `numericonly`, `myint`, and `fbit` partial matches; numeric alternatives place the overlapping longer terms before `int`.
+- Bare `bit`/`bit(1)` as boolean is defensible for the supported MySQL/MSSQL boolean-capable metadata convention. Unsupported `geometry`, `json`, `uuid`, and `char-bytea` do not match either changed numeric/boolean family and retain the null-to-sampling path.
+- TASK-003-scoped commit paths are limited to `src/ui/resultsGridModel.ts`, `src/ui/__tests__/resultsGridModel.test.ts`, and this task file; other commit paths belong to concurrent TASK-004/TASK-007 work.
+- Fresh verification: `npx vitest run src/ui/__tests__/resultsGridModel.test.ts src/ui/__tests__/resultsGridModelRequery.test.ts && npm run typecheck` — 2 files / 66 tests passed; `tsc --noEmit` passed.
+FINDINGS: none.
