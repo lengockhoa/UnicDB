@@ -38,6 +38,27 @@ For each significant action, append:
 - Verify: targeted 58/58 + regression 47/47 + typecheck 0 errors; dist/webview.js rebuilt.
 
 
+## 2026-08-26 — Cycle X (adversarial QA + hardening) + release v1.6.7
+
+- Action: handoff cycle X — 8 tasks / 3 waves: wave 1 (TASK-001, TASK-002 adversarial
+  audits, 20 findings) → reconciliation gate materializes TASK-006/007/008; wave 2 (TASK-003
+  webview flake root fix — bundle evaluated once per suite; TASK-004 export quoting +
+  whitespace `(Blanks)`; TASK-006 resultsPanel hardening; TASK-008 save/core hardening);
+  wave 3 (TASK-005 MySQL adapter sort twin + UTC sessions + stream-end settle; TASK-007
+  webview grid hardening).
+- TASK-004 went 2 fix rounds: R1 (bare-identifier export quoting + per-dialect whitespace
+  Blanks predicate, RED→GREEN), R2 (dialect forwarded into both serializeExport call sites +
+  end-to-end test 6b) → APPROVED-WITH-MINOR. All 8 tasks approved (bao-opus review).
+- Files: webview/main.ts, src/ui/{resultsGridModel,queryComposer,resultsPanel,distinctValues}.ts,
+  src/core/{saveStatements,queryRunner}.ts, src/adapters/mysql.ts, src/ui/messages.ts,
+  src/core/text.ts + test amendments; docs/AI_HANDOFF/*.
+- Verify: full suite 1552 passed / 2 skipped / 0 failed; typecheck exit 0.
+- Git: plan a103eed → waves (a103eed→cee00ac) → reviews → R4.5 fix rounds → I4 df7319e →
+  single push to main (fast-forward, 12 commits).
+- Release v1.6.7: bump + CHANGELOG + lockfile sync + build.sh → dist/vsdb-1.6.7.vsix
+  1672093 bytes, assertions 0 forbidden, dry-run OK, gh release v1.6.7 with vsix attached.
+
+
 - Action: handoff cycle W — 4 tasks / 2 waves từ backlog INDEX: TASK-001 ORDER BY parser
   (quote-aware comma split, dialect quoting, composite-PK tiebreaker khi mọi PK column được
   project, emptyIsBlank theo declared type family anchored), TASK-002 buildDistinctValuesQuery
