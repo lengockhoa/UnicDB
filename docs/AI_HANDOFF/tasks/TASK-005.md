@@ -144,3 +144,27 @@ ISSUES: none. M3 note: the `firstFields` listener references `columns` declared 
 HANDOFF_TO_REVIEWER: yes — status set to pending_review; all verification commands re-run fresh in this turn and green.
 NEXT: ready for review (reviewer model must differ from executor bao-sonnet).
 ```
+
+---
+
+## Reviewer Verdict
+REVIEWER_MODEL: bao-opus
+Status: APPROVED-WITH-MINOR
+Findings:
+- none (blocking). Deep checks all passed:
+  - `getTableSortQuery` (src/adapters/mysql.ts:70-83) is a byte-exact twin of the mssql (:69-82) / postgres (:169-182) helpers — same 4-arg signature, same `vsdb_sort` wrap, same outer-WHERE placement, same ASC/DESC whitelist; only quoting differs via `quoteIdent(column,"mysql")` (backtick doubling, src/core/saveStatements.ts:137-139). Injection payload stays one inert identifier.
+  - Dispatch (src/ui/queryComposer.ts:498-500) delegates mysql before the inline postgres fallback; mssql arm intact. Verified NO driver leak into the browser bundle: `grep -c "mysql2|SET time_zone|vsdb_sort" dist/webview.js` = 0, while dist/extension.js = 5. All six webview esbuild entrypoints reach queryComposer only host-side.
+  - Single choke point confirmed: `this.pool.query(` no longer appears in src/adapters/mysql.ts (only prose in the :463 comment); the sole `this.pool.getConnection()` is inside `getConnectionWithUtcSession` (:508). All four explicit checkouts (connect probe :156, testConnection :182, beginTransaction :223, openStreamingQuery :544) plus `query()` (:476) route through it, so all nine information_schema sites and executeText's non-streaming DML are covered.
+  - Ordering/replacement: `ensureUtcSession` (:517-537) keys the WeakSet/WeakMap on the CORE `.connection` identity, not the per-checkout wrapper, so a pool-created replacement physical connection re-runs `SET time_zone = '+00:00'` before its first user SQL. In-flight dedup awaits the shared promise; `.finally` clears the WeakMap. Fails closed — on rejection the checkout is released, the error propagates, and the connection is NEVER added to the ready set. `connect()` additionally tears the pool down (:162-166).
+  - M1 release safety: `query()` (:473-481) releases in `finally` on both success and rejection (case 10 asserts `releases === 1` on the throwing path).
+  - M3: the added `stream.once("end", resolve)` (:582-586) cannot pre-empt the normal path — `fields` is registered first and `Promise` resolve is idempotent, so a settled promise makes the later resolve a no-op (case 12a proves real column names still win; 12b proves error-first still rejects and destroys without releasing). End-without-fields resolves `columns: []`, first `fetchBatch()` returns null, connection released exactly once. Streaming/cancel/backpressure paths (deliver/fail/closeStream, :599-689) are untouched.
+  - Executor's `firstFields`-references-`columns`-declared-later note (mysql.ts:576 vs :592) is SAFE, not a defect: `columns` is a `let` in the same function scope and the closure only dereferences it inside async event callbacks, which fire after `openStreamingQuery` has run past the declaration. The Promise executor body itself registers listeners without touching `columns`, so no TDZ window is ever entered. Confirmed empirically — case 12a returns `["id","name"]` rather than throwing ReferenceError.
+  - MSSQL `useUTC: true` (src/adapters/mssql.ts:495) is additive inside the same options object; SSL/`useColumnNames`/`connectTimeout`/streaming requestTimeout comments unchanged.
+- MINOR (non-blocking) — process/environment, not code: the full-suite figure in the Executor Report ("110 files, 1544 passed") did not reproduce on my first fresh run. `npx vitest run` initially failed 1-3 webview bundle tests (webviewServerSort case 18, webviewFilters TASK-007 quick-search, webviewServerFilter case 9), all reading a STALE `dist/webview.js` via `it.runIf(bundleSrc !== null)`. These are TASK-007/webview-owned bundle tests, not TASK-005 files, and no mysql/UTC/sort test was ever involved. After `npm run compile`, the full suite is green twice consecutively (1549 passed / 2 skipped). Recommendation for the cycle-closing run: treat `npm run compile` as a prerequisite of the wave-boundary full suite, since bundle-loading tests silently assert against whatever `dist/` happens to hold.
+Verification Output: (all re-run fresh by reviewer, not trusting executor output)
+- `npx vitest run src/adapters/__tests__/mysql.sortQuery.test.ts src/adapters/__tests__/timezone.test.ts src/ui/__tests__/queryComposer.test.ts src/adapters/__tests__/adapterQueryShape.test.ts` → 4 files, 109 passed, 0 failed (exit 0). Covers cases 1-12; no `.only`/`.skip` present.
+- `npx vitest run src/adapters/__tests__/schemas.test.ts src/adapters/__tests__/factory.test.ts src/core/__tests__/queryRunner.test.ts` (M1 regression lane) → 3 files, 31 passed, 0 failed (exit 0).
+- `npm run typecheck` → exit 0, no diagnostics.
+- `npm run compile` → exit 0.
+- `npx vitest run` (full suite, post-compile) → 110 files passed / 1 skipped, 1549 passed / 2 skipped, 0 failed — reproduced twice.
+- Model isolation: executor bao-sonnet != reviewer bao-opus (config `handoff.reviewer.model` = unic-smart, bound here as bao-opus); `mustDifferFromExecutor` satisfied. No lint script exists in package.json, so typecheck is the correct static gate.

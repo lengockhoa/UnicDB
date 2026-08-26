@@ -147,3 +147,55 @@ Note:
 
 HANDOFF_TO_REVIEWER: yes
 NEXT: ready for review
+
+---
+## Reviewer Verdict
+REVIEWER_MODEL: bao-opus
+EXECUTOR_MODEL: bao-sonnet (isolation OK — reviewer != executor)
+Status: APPROVED-WITH-MINOR
+Findings:
+- MINOR — `webview/main.ts:2219-2221`: the `colId → headerName` resolution is correct for the dedup
+  case, but for a genuinely duplicated projection (`SELECT id, id`) both specs share
+  `headerName: "id"`, so sorting either column emits `id ASC`, which Postgres rejects as
+  `ORDER BY "id" is ambiguous`. Strictly better than today's unexecutable `id__2 ASC` and exactly
+  what §Target Files mandates, so not blocking — but the duplicate-name case is still not sortable.
+  Worth a follow-up (positional `ORDER BY <n>`) rather than a fix in this task.
+- MINOR — `webview/main.ts:1835-1839`: the requery gate is `e.source`-only, while
+  `FilterChangedEvent.source` is optional (`source?: FilterChangedEventSourceType`). Any AG Grid
+  dispatch that omits `source` would now silently skip the server requery. Verified non-issue on the
+  shipped v36 (`onFilterChanged(beans, source = "api")` defaults, column filters dispatch
+  `"columnFilter"`; instrumented run observed only `["api","api"]`), and §Target Files permits the
+  source-only gate. Adding `|| colFilterActive` would make it fail-safe.
+- MINOR — `webview/main.ts:2617` + `:3278`: the refresh confirm reuses `dom.saveBanner`, so an
+  incoming `saveResult` calls `hideSaveBanner()` and silently removes an armed Discard/Cancel prompt.
+  No data loss (edits are preserved and the banner defaults to Cancel semantics), only a dropped
+  refresh intent.
+Verified clean (no finding):
+- P1-2 dialect: `detectDialectFromHeader` whole-token parse consumes the new Browse driver token;
+  legacy tokenless Browse headers still fall back to postgres quoting (webviewServerSort case 2).
+- P1-3: `warnings?: string[]` declared on BOTH protocol sides (`src/ui/messages.ts:199` +
+  `webview/main.ts:94`), additive-optional only, no `StateMessage.dialect`; matches the payload the
+  host already sends (`src/ui/resultsPanel.ts:907`). Renders on `ok:true`, hidden on absent/empty.
+- P2-5: `window.confirm` has zero references in `webview/main.ts` (grep-confirmed). The in-DOM
+  confirm is CSP-safe — `createElement` + `textContent` + `addEventListener`, no `innerHTML` and no
+  inline handlers. Refresh with `dirtyCount > 0` posts nothing until Discard is clicked explicitly.
+- Browse header keeps the `Browse <qualified> at ` prefix byte-identical; the driver suffix contains
+  no second " at ", so `resultsPanel.ts:202` label extraction is unaffected (47/47 regression lane).
+  Re-polling `mgr.getActive()` at `:162` (rather than reusing the `:144` binding) is correct — it
+  runs after `setActive`, so it reflects the connection actually queried.
+- `src/ui/resultsPanel.ts`, `src/core/**`, `src/adapters/**` unmodified by this task's slice.
+- Tests carry real assertions; RED_OUTPUT is genuine failing output, and the two rewritten A13 cases
+  are the single declared expectation change (justified in §Discussion 3).
+Verification Output: fresh re-run by reviewer, `npm run compile` FIRST (dist/webview.js rebuilt).
+- `npm run compile` → esbuild build complete, exit 0
+- targeted lane (webviewServerSort, webviewSaveEdits, webviewFilters, webviewCommitRefresh,
+  browseCommands) → 5 files / 58 tests passed
+- regression lane (webviewServerFilter, webviewRequery, webviewPerTableTabs, webviewExport,
+  resultsPanel) → 5 files / 47 tests passed, incl. serverFilter case 9 clear-last-filter requery
+- `npm run typecheck` → tsc --noEmit, 0 errors
+- full suite `npx vitest run` → 110 passed | 1 skipped (111 files), 1549 passed | 2 skipped, x2 runs
+NOTE (not a finding): serverSort case 18 failed intermittently in early lane runs, but only while I
+had 6-8 CPU-saturating processes of my own running; under controlled A/B (HEAD vs 41eaa47, matched
+load) and in both clean full-suite runs it passed every time. Attributed to reviewer-machine
+contention against the suite's 150 ms filter debounce, not to this diff. Flagging so a future CI
+failure on that 250 ms timing window is not misread as a new regression.

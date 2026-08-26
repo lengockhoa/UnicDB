@@ -163,3 +163,22 @@ Reconciliation gate notes.
 4. **Non-goals.** M1/M3 (mysql adapter) belong to TASK-005; M2, the pg-metadata-vs-manual-window item, and C1 are queued in `INDEX.md`. Do not widen this task to them.
 
 ---
+
+## Reviewer Verdict
+REVIEWER_MODEL: bao-opus (config `handoff.reviewer.model` = `unic-smart`; bao-opus is the smart-tier binding)
+EXECUTOR_MODEL: bao-sonet (self-reported; differs from reviewer → isolation OK)
+Status: APPROVED-WITH-MINOR
+
+Findings:
+- minor — `src/ui/resultsPanel.ts:864-865,929-945`: on the non-manual post-save refresh the rethrown `pickResult` error now reaches `catch (err)` → `throw err` (:944), so a save that **already committed** at :826 posts no `saveResult` ack at all and rejects out of the un-awaited `handleMessage` (`:177`) as an unhandled rejection. Pre-existing hole (`runner.runSql` at :864 could already throw the same way) and explicitly scoped out by the planner in §Discussion item 2, so it does not block TASK-008 — but the rethrow widens its trigger surface. Correct behaviour: that branch should post `{type:"saveResult", index, ok:true, warnings:[refresh failed: …]}` instead of rethrowing. Recommend queueing as a follow-up in INDEX.md.
+- minor — `src/core/__tests__/queryRunner.test.ts:290-291`: `expect(results[0].result?.rows ?? []).toEqual([])` is vacuous — the next line already asserts `results[0].result` is `undefined`, so the `?? []` makes it assert `[] === []` and it would pass even if rows were wrongly populated. The `toBeUndefined()` line is the real gate; drop the vacuous one.
+- minor — `src/adapters/__tests__/saveStatements.test.ts:1004-1013`: the falsy-PK loop uses `if (r.ok !== true) return;`, which silently ends the whole `it` on the first case rather than failing the remaining ones; `continue`/a non-narrowing assert would be safer. Behaviourally green today.
+- none blocking. Both PK `WHERE` builders are covered (`saveStatements.ts:525-530` DELETE, `:679-684` UPDATE) — `grep serverRow[` confirms exactly two interpolation sites and both are now guarded; guard is strictly `null`/`undefined`, so `0`/`""`/`false` still address rows. `skippedRows`/`warnings` keep keying on webview `rowId` (not `resolveServerIndex`), which is what `handleSaveEdits:898-901` forwards as `rowErrors` and `clearExceptRowIds` consumes — indexing verified correct. Full-skip saves cannot ack success: `resultsPanel.ts:755-768` returns `ok:false, refused:true`. `pickResult` signature and the batched `rowCount: null` contract are unchanged (`queryRunner.ts:425,444`); EOF-`null` still resolves a success. Cursor cleanup on the new throw path is already owned by the adapters (`postgres.ts:754-762` ROLLBACK+`releaseClient(true)`, `mysql.ts:658-668` `destroyConnection()`, `mssql.ts:656-673` `request.cancel()`), so the rethrow leaks nothing. The cancel-path assertion at `queryRunner.test.ts:239` was genuinely tightened (`["cancelled","done"]` → `"cancelled"`), not loosened — the mock resolves EOF-`null`, so `executeAll`'s post-fetch `cancelRequested` check (`:197`) makes it deterministic.
+
+Test Plan Coverage: all-followed — cases 1-8 implemented; 6 edge cases vs `minTestsEdgeCase: 2`. RED_OUTPUT carries real failing output (6 FAIL lines + `expected 1 to be 0` / `AssertionError: promise resolved "{ columns: [ 'n' ], rows: [], rowCount: null }" instead of rejecting`), not a bare claim.
+
+Verification Output (fresh re-run by reviewer, 2026-08-26):
+- `npx vitest run src/adapters/__tests__/saveStatements.test.ts src/core/__tests__/queryRunner.test.ts` → 2 files, **55 passed / 0 failed**.
+- `npx vitest run <6 regression suites>` → 6 files, **90 passed / 0 failed** (88 in the executor report; `resultsPanelSaveEdits` gained 2 tests from later-wave TASK-006/007, not this task).
+- `npm run typecheck` (`tsc --noEmit`) → **exit 0**, no diagnostics.
+- Full suite `npx vitest run` → **1549 passed / 1 skipped / 0 failed** (111 files). A first full-suite run hit `webviewServerSort.test.ts:557` ("18. filter requery while a column is sorted…"); it passed 3/3 in isolation and on a clean full re-run. Pre-existing debounce flake in TASK-003/005 webview territory — touches neither `saveStatements.ts` nor `queryRunner.ts` and is unrelated to this diff.

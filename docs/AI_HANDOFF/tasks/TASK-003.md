@@ -127,3 +127,20 @@ Status: PASS
 Note: none
 
 ---
+
+## Reviewer Verdict
+REVIEWER_MODEL: bao-opus
+EXECUTOR_MODEL: bao-sonnet
+Status: APPROVED-WITH-MINOR
+Findings:
+- ROOT-CAUSE CONFIRMED (not masking) — src/ui/__tests__/resultsGridModelNull.test.ts:96-118,231-237: bundle is evaluated once in `beforeAll`; per-case state is reset via the real host message protocol (`resetGrid`, :131-182). `webview/main.ts:3330` installs an unremovable anonymous `window.addEventListener("message", ...)`, so the old per-`it` `loadBundle()` genuinely stacked 6 live handlers — the stated root cause is real. Zero `setTimeout`/`tick()` remain in the file (grep confirms), no `retry:` was added to vitest config, and every wait is a bounded observable `vi.waitFor` on DOM/GridApi state. Cleanup uses only existing APIs (`stopEditing`, `setGridOption`, `flushAllAnimationFrames`) plus the real Escape path (`webview/main.ts:2422-2426`) — no production test-only hook was introduced.
+- minor — src/ui/__tests__/resultsGridModelNull.test.ts:133,140,236: the `received` array is threaded into `resetGrid` and cleared, but no case asserts on it after the change (all `void received;` reads were deleted). It is now a write-only parameter; either assert host posts or drop the parameter.
+- minor — src/ui/__tests__/resultsGridModelNull.test.ts:188: `waitForGrid` default budget is 250 ms. It held here (full-suite file time 1147-1733 ms for 8 tests, 3/3 runs green), but it is the tightest margin in the harness and is the first thing to raise if a slow CI box ever reports a timeout instead of an assertion failure.
+- out-of-scope, NOT caused by this diff — src/ui/__tests__/webviewServerSort.test.ts:557 (case 18, "filter requery while a column is sorted..."): fails intermittently in the fresh full suite (3/3 full runs failed here; isolated 2/6 runs failed). That file was added in wave 3 (`cee00ac`), still uses the old per-`it` `loadBundle()` pattern this task removed, and is untouched by TASK-003. Route as its own flake task, applying the same single-evaluation fix; it does not block TASK-003.
+
+Verification Output: fresh re-run by reviewer, all commands from Verification Commands.
+- `npm run compile` -> PASS (esbuild complete; dist/webview.js 2.2mb).
+- `npx vitest run src/ui/__tests__/resultsGridModelNull.test.ts` -> PASS, 8/8 (332 ms).
+- 5 shuffled single-thread seeds -> PASS, 8/8 each (seeds 1-5, no retry).
+- `npm run typecheck` -> PASS, exit 0.
+- `npm test` (full, run 3x) -> 1548 passed / 1 failed / 2 skipped each run; the single failure is webviewServerSort.test.ts:557 above. resultsGridModelNull.test.ts passed 8/8 in all 3 full runs.

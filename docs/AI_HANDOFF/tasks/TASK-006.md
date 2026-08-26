@@ -123,3 +123,22 @@ Verification Output: |
   `git diff --check`; exit 0.
 Status: PASS
 Note: Updated four stale requery assertions that expected the old live cursor object on the webview wire; no production files outside the owned host file and no prohibited files were modified.
+
+---
+
+## Reviewer Verdict
+REVIEWER_MODEL: bao-opus
+Status: APPROVED-WITH-MINOR
+Findings:
+- MINOR (correctness, stale index) `src/ui/resultsPanel.ts:194-215` + `:357-360` — `render()` resets `lastResults`, `distinctCache`, `statementGeneration` and `tableByStatement`, but never clears `manualStatementIndex`. If a manual window opens on index 0 and a new query re-`render()`s before Commit/Rollback, `refreshManualStatement()` reads `this.lastResults[0]` of the NEW statement set and re-runs that unrelated statement's `r.sql`. The `!r.result` guard blocks most DML, but a DML that returns a rowCount result would be re-executed. Correct: clear `manualStatementIndex = null` in `render()` alongside the other per-statement-set resets. Not introduced by the four fixes' core ordering contract and not covered by cases 3-5; scoped as follow-up.
+- MINOR (test/spec drift) `src/ui/__tests__/manualCommit.test.ts` (COMMIT refresh case) — task §Test Cases #4 asks for `results[0].batched` "present for the new cursor"; the fixture's `runSql` returns no `batched`, so the test asserts `batched === false`. The assertion is correct for the fixture and still pins the P3-3 boolean contract, but it does not exercise a cursor-bearing refresh. Case 6 covers the `true` side, so coverage is not lost.
+- Confirmed (Discussion #2, no defect): closing the cursor at `:640` before a save that then errors out leaves a closed handle in `lastResults`. Verified non-fatal — `postgres.ts:731-732` returns `null` from `fetchBatch` after close rather than throwing, and `close()` at `:784-786` is a state-guarded no-op, so the triple close (`:640` / `:795` / `:863`) and the later `adopt()` displaced-cursor close cannot double-free or deadlock.
+- No CRITICAL/blocking findings: cursor close precedes both `listPkColumns`/ctid probe and the refresh `runSql`; teardown rollback (`:183`, `:248`) stays query-free while only the message path passes `fromMessage: true`; `sanitizeStatementResult` normalizes `batched` on both branches. Tests contain real assertions, no fake `expect`.
+Verification Output:
+- `npx vitest run src/ui/__tests__/resultsPanelSaveEdits.test.ts src/ui/__tests__/manualCommit.test.ts src/ui/__tests__/resultsPanel.test.ts` → 3 files, 56/56 pass, exit 0.
+- `npx vitest run src/ui/__tests__/resultsPanelRequery.test.ts src/ui/__tests__/resultsPanelRetry.test.ts src/ui/__tests__/resultsPanelDistinctValues.test.ts` → 3 files, 28/28 pass, exit 0.
+- `npm run typecheck` (`tsc --noEmit`) → exit 0.
+- `npm run compile` → exit 0; `npm test` (fresh full suite) → 110 passed | 1 skipped (111 files), 1549 passed | 2 skipped (1551 tests), exit 0.
+- Note: pre-compile, `npm test` failed 1-2 flaky cases in `src/ui/__tests__/webviewServerSort.test.ts`, which loads `dist/webview.js`. That suite does not reference `resultsPanel` and was last touched by TASK-005/007 (`cee00ac`); the stale bundle was the cause and `npm run compile` cleared it. Not attributable to TASK-006.
+- Model isolation: executor `bao-sonnet` != reviewer `bao-opus` — satisfied. `RED_OUTPUT` cites concrete failing assertions with file:line, accepted as genuine TDD evidence.
+- Diff reviewed from `cbcaa38` (the commit that actually carries `src/ui/resultsPanel.ts`); the requested `41eaa47..HEAD` range contains no owned-file changes.
