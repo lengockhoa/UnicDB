@@ -369,6 +369,80 @@ describeIfBundle("webview/main.ts bundle — TASK-003 server-side sort", () => {
   );
 
   itIfBundle(
+    "TASK-007. duplicate column sort posts the real column name",
+    async () => {
+      const { received } = loadBundle();
+      dispatchState(
+        rowsState(driverHeader("postgres"), ["id", "id"], [
+          [1, 10],
+          [2, 20],
+        ]),
+      );
+      await flushGridEvents();
+      const w = window as unknown as {
+        __vsdb?: {
+          debugSetSpecs?: (specs: unknown[]) => void;
+          gridApi?: GridApi;
+        };
+      };
+      expect(typeof w.__vsdb?.debugSetSpecs).toBe("function");
+      w.__vsdb!.debugSetSpecs!([
+        { field: "id", headerName: "id", kind: "number" },
+        { field: "id__2", headerName: "id", kind: "number" },
+      ]);
+      received.length = 0;
+
+      w.__vsdb!.gridApi!.applyColumnState({
+        state: [{ colId: "id__2", sort: "asc", sortIndex: 0 }],
+      });
+      await flushGridEvents();
+
+      expect(requeries(received)).toHaveLength(1);
+      expect(requeries(received)[0]!.orderBy).toBe("id ASC");
+      expect(requeries(received)[0]!.orderBy).not.toContain("id__2");
+    },
+  );
+
+  itIfBundle(
+    "TASK-007. Browse header dialect drives non-bare sort quoting",
+    async () => {
+      const { received } = loadBundle();
+      dispatchState(
+        rowsState(
+          "Browse public.users at 2026-01-01T00:00:00.000Z — mysql@h/db",
+          ["id", "First Name"],
+          [[1, "alpha"]],
+        ),
+      );
+      await flushGridEvents();
+      const w = window as unknown as { __vsdb?: { gridApi?: GridApi } };
+      received.length = 0;
+      w.__vsdb!.gridApi!.applyColumnState({
+        state: [{ colId: "First Name", sort: "asc", sortIndex: 0 }],
+      });
+      await flushGridEvents();
+      expect(requeries(received)[0]!.orderBy).toBe("`First Name` ASC");
+
+      const legacy = loadBundle();
+      dispatchState(
+        rowsState(
+          "Browse public.users at 2026-01-01T00:00:00.000Z",
+          ["id", "First Name"],
+          [[1, "alpha"]],
+        ),
+      );
+      await flushGridEvents();
+      const legacyApi = (window as unknown as { __vsdb?: { gridApi?: GridApi } }).__vsdb!.gridApi!;
+      legacy.received.length = 0;
+      legacyApi.applyColumnState({
+        state: [{ colId: "First Name", sort: "asc", sortIndex: 0 }],
+      });
+      await flushGridEvents();
+      expect(requeries(legacy.received)[0]!.orderBy).toBe('"First Name" ASC');
+    },
+  );
+
+  itIfBundle(
     "16. bare colId stays unquoted; unknown/no-connection header falls back to postgres quoting",
     async () => {
       // Bare colId — byte-identical to what cycle V accepted.

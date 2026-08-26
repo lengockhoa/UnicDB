@@ -365,9 +365,9 @@ describeIfBundle("webview/main.ts bundle (TASK-002)", () => {
 
   // ---- A13 — Edge (permission/confirm): Refresh with dirtyCount > 0 ---------
   itIfBundle(
-    "Edge (permission/confirm) / R(A13). Refresh with dirtyCount > 0: decline ⇒ unchanged + no message; accept ⇒ one requery message",
+    "Edge (permission/confirm) / R(A13). Refresh with dirtyCount > 0: in-DOM Cancel preserves edits; Discard requeries",
     async () => {
-      const { received } = loadBundle();
+      const { received, root } = loadBundle();
       dispatchMsg(threeRowsState());
       await flushGridEvents();
 
@@ -376,46 +376,50 @@ describeIfBundle("webview/main.ts bundle (TASK-002)", () => {
       await flushGridEvents();
       expect(getEditState()!.dirtyCount).toBe(1);
 
-      const confirmSpy = vi
-        .spyOn(window, "confirm")
-        .mockReturnValueOnce(false);
+      // The VS Code webview does not provide window.confirm.
+      delete (window as unknown as { confirm?: unknown }).confirm;
       received.length = 0;
       api.refresh!();
       await flushGridEvents();
 
-      expect(confirmSpy).toHaveBeenCalledTimes(1);
+      expect(getEditState()!.dirtyCount).toBe(1);
+      expect(received).toHaveLength(0);
+      const banner = root.querySelector(".vsdb-save-banner")!;
+      expect(banner.classList.contains("vsdb-hidden")).toBe(false);
+      const cancel = banner.querySelector("[data-vsdb-refresh-cancel]") as HTMLButtonElement;
+      const discard = banner.querySelector("[data-vsdb-refresh-discard]") as HTMLButtonElement;
+      expect(cancel).toBeTruthy();
+      expect(discard).toBeTruthy();
+
+      cancel.click();
+      await flushGridEvents();
       expect(getEditState()!.dirtyCount).toBe(1);
       expect(received).toHaveLength(0);
 
-      confirmSpy.mockReturnValueOnce(true);
       api.refresh!();
       await flushGridEvents();
-
+      discard.click();
+      await flushGridEvents();
       expect(getEditState()!.dirtyCount).toBe(0);
-      const requeryMsgs = received.filter((m) => m.type === "requery");
-      expect(requeryMsgs).toHaveLength(1);
-
-      confirmSpy.mockRestore();
+      expect(received.filter((m) => m.type === "requery")).toHaveLength(1);
     },
   );
 
   // ---- A13 — Refresh with nothing dirty: no confirm, still requeries -------
   itIfBundle(
-    "Refresh with dirtyCount === 0: no confirm dialog, posts requery",
+    "Refresh with dirtyCount === 0: posts requery without confirm banner",
     async () => {
-      const { received } = loadBundle();
+      const { received, root } = loadBundle();
       dispatchMsg(threeRowsState());
       await flushGridEvents();
 
-      const confirmSpy = vi.spyOn(window, "confirm");
       received.length = 0;
       vsdbApi()!.refresh!();
       await flushGridEvents();
 
-      expect(confirmSpy).not.toHaveBeenCalled();
-      const requeryMsgs = received.filter((m) => m.type === "requery");
-      expect(requeryMsgs).toHaveLength(1);
-      confirmSpy.mockRestore();
+      expect(received.filter((m) => m.type === "requery")).toHaveLength(1);
+      expect(root.querySelector("[data-vsdb-refresh-cancel]")).toBeNull();
+      expect(root.querySelector("[data-vsdb-refresh-discard]")).toBeNull();
     },
   );
 

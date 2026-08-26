@@ -91,6 +91,8 @@ interface SaveResultMsg {
   index: number;
   ok: boolean;
   errors?: string[];
+  /** Non-fatal per-row warnings from the host's save operation. */
+  warnings?: string[];
   /** Soft refusal (mysql/mssql no-PK) — `ok` will be true so the dirty
    *  map clears; `reason` is the banner copy. */
   refused?: boolean;
@@ -854,7 +856,9 @@ function buildPersistentDom(): PersistentDom {
         gridApi.refreshClientSideRowModel();
       }
       try {
-        gridApi.onFilterChanged();
+        // Preserve the event source so the server-side filter handler does
+        // not mistake quick-search typing for a column-filter change.
+        gridApi.onFilterChanged("quickFilter");
       } catch {
         /* older API */
       }
@@ -1825,9 +1829,14 @@ function renderGrid(): void {
       onFilterChanged: (e: FilterChangedEvent) => {
         colFilterActive = e.api.isColumnFilterPresent();
         updateFooterNow();
-        // TASK-005 — push the filter down to the database (debounced so
-        // rapid checkbox toggles collapse into one requery).
-        scheduleFilterRequery();
+        // TASK-007 — quick-filter changes are client-side only. A column
+        // filter source still schedules even after clearing the last filter
+        // (the live flag is false by then, but the server must reset).
+        const columnFilterSource =
+          e.source === "api" ||
+          e.source === "columnFilter" ||
+          e.source === "advancedFilter";
+        if (columnFilterSource) scheduleFilterRequery();
       },
       // TASK-003 — header-click sort goes to the DATABASE, not the client.
       // Fires for UI clicks AND programmatic applyColumnState; the
@@ -2207,9 +2216,11 @@ function orderByFromColumnState(api: GridApi): string {
     .getColumnState()
     .filter((c) => c.sort !== null && c.sort !== undefined)
     .sort((a, b) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0))
-    .map(
-      (c) => `${quoteColIdIfNeeded(c.colId, dialect)} ${(c.sort as string).toUpperCase()}`,
-    );
+    .map((c) => {
+      const spec = currentSpecs.find((s) => s.field === c.colId);
+      const name = spec ? spec.headerName : c.colId;
+      return `${quoteColIdIfNeeded(name, dialect)} ${(c.sort as string).toUpperCase()}`;
+    });
   return terms.join(", ");
 }
 
@@ -2585,17 +2596,14 @@ function onGridPaste(ev: ClipboardEvent): void {
  *  is posted to the host. On accept (or when nothing is dirty): local edit
  *  state is cleared and a requery is posted so the host re-runs the
  *  statement and sends back fresh rows. */
-function onRefreshClick(): void {
-  if (editState.dirtyCount > 0) {
-    const confirmFn =
-      typeof window !== "undefined" && typeof window.confirm === "function"
-        ? window.confirm.bind(window)
-        : null;
-    const proceed = confirmFn
-      ? confirmFn("Discard unsaved edits and refresh?")
-      : true;
-    if (!proceed) return;
-  }
+function hideSaveBanner(): void {
+  if (!dom?.saveBanner) return;
+  dom.saveBanner.classList.add("vsdb-hidden");
+  dom.saveBanner.setAttribute("hidden", "");
+  dom.saveBanner.textContent = "";
+}
+
+function postRefreshRequery(): void {
   editState.clear();
   undoStack.clear();
   refreshUndoRedoButtons();
@@ -2603,6 +2611,46 @@ function onRefreshClick(): void {
   const where = dom.requeryWhere.value;
   const orderBy = dom.requeryOrderBy.value;
   postToHost({ type: "requery", index: activeTab, where, orderBy });
+}
+
+function showRefreshConfirm(): void {
+  const banner = dom?.saveBanner;
+  if (!banner) return;
+  banner.textContent = "";
+  const text = document.createElement("span");
+  text.className = "vsdb-save-banner-text";
+  text.textContent = "Discard unsaved edits and refresh?";
+  banner.appendChild(text);
+
+  const discard = document.createElement("button");
+  discard.type = "button";
+  discard.className = "vsdb-save-retry";
+  discard.setAttribute("data-vsdb-refresh-discard", "");
+  discard.textContent = "Discard";
+  discard.addEventListener("click", () => {
+    hideSaveBanner();
+    postRefreshRequery();
+  });
+
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "vsdb-save-retry";
+  cancel.setAttribute("data-vsdb-refresh-cancel", "");
+  cancel.textContent = "Cancel";
+  cancel.addEventListener("click", () => hideSaveBanner());
+
+  banner.appendChild(discard);
+  banner.appendChild(cancel);
+  banner.classList.remove("vsdb-hidden");
+  banner.removeAttribute("hidden");
+}
+
+function onRefreshClick(): void {
+  if (editState.dirtyCount > 0) {
+    showRefreshConfirm();
+    return;
+  }
+  postRefreshRequery();
 }
 /** Add Row: append a real blank row to the grid. The row gets a stable
  *  __rowId past every id we have ever allocated (server OR local) — the
@@ -3227,10 +3275,11 @@ function handleSaveResult(msg: SaveResultMsg): void {
       lastFailedRows = null;
       editState.clear();
       undoStack.clear();
-      if (banner) {
-        banner.classList.add("vsdb-hidden");
-        banner.setAttribute("hidden", "");
-        banner.textContent = "";
+      hideSaveBanner();
+      if (msg.warnings && msg.warnings.length > 0 && banner) {
+        banner.textContent = msg.warnings.join(" · ");
+        banner.classList.remove("vsdb-hidden");
+        banner.removeAttribute("hidden");
       }
       if (msg.refused && msg.reason && banner) {
         banner.classList.remove("vsdb-hidden");

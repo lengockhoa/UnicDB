@@ -586,3 +586,247 @@ describe("MsSqlAdapter.estimateTableRowsBatch (D2)", () => {
     expect(result).toEqual(new Map());
   });
 });
+
+// ---------------------------------------------------------------------------
+// TASK-005 M1/M3 — MySqlAdapter.query() checkout shape + streaming end-settle.
+//
+// These tests use a real MySqlAdapter instance with a mock promise pool
+// injected over the private `pool` field (the same instance-level shadowing
+// pattern used above). The mock records `pool.query` calls (which must NEVER
+// happen post-M1) and per-connection `query`/`release` calls.
+// ---------------------------------------------------------------------------
+
+interface MockMysqlConnection {
+  queries: Array<{ sql: string; values?: unknown[] }>;
+  releases: number;
+  query: (sql: unknown, values?: unknown) => Promise<[unknown[], unknown[]]>;
+  release: () => void;
+  destroy: () => void;
+  ping: () => Promise<void>;
+}
+
+function mockMysqlConnection(
+  queryImpl?: (sql: string) => Promise<[unknown[], unknown[]]>,
+): MockMysqlConnection {
+  const conn: MockMysqlConnection = {
+    queries: [],
+    releases: 0,
+    destroy: () => undefined,
+    query: (sql, values) => {
+      const text = String(sql);
+      conn.queries.push({
+        sql: text,
+        values: Array.isArray(values) ? values : undefined,
+      });
+      if (queryImpl) return queryImpl(text);
+      return Promise.resolve([[{ name: "app" }], []]);
+    },
+    release: () => {
+      conn.releases += 1;
+    },
+    ping: () => Promise.resolve(),
+  };
+  return conn;
+}
+
+interface MockMysqlPool {
+  getConnection: () => Promise<{ connection: MockMysqlConnection } & MockMysqlConnection>;
+  query: ReturnType<typeof vi.fn>;
+  end: () => Promise<void>;
+  swapConnection(conn: MockMysqlConnection): void;
+}
+
+function mockMysqlPool(connection: MockMysqlConnection): MockMysqlPool {
+  let current = connection;
+  const pool: MockMysqlPool = {
+    getConnection: () => Promise.resolve(current),
+    query: vi.fn(() => {
+      throw new Error("pool.query must never be reached (TASK-005 M1)");
+    }),
+    end: () => Promise.resolve(),
+    swapConnection: (conn) => {
+      current = conn;
+    },
+  };
+  return pool;
+}
+
+function mysqlAdapterWithPool(pool: MockMysqlPool): MySqlAdapter {
+  const adapter = new MySqlAdapter(cfg("mysql"), "pw");
+  (adapter as unknown as { pool: unknown }).pool = pool;
+  return adapter;
+}
+
+describe("MySqlAdapter.query() — checkout/release shape (TASK-005 M1, cases 9-10)", () => {
+  // Case 9 — regression (M1): query() checks out and always releases
+  it("case 9: listSchemas() checks out once, runs SQL through connection.query, releases once; pool.query never called", async () => {
+    const connection = mockMysqlConnection();
+    let checkoutCount = 0;
+    const pool = mockMysqlPool(connection);
+    const typedPool = pool as unknown as {
+      getConnection: () => Promise<unknown>;
+    };
+    const original = typedPool.getConnection.bind(typedPool);
+    typedPool.getConnection = () => {
+      checkoutCount += 1;
+      return original();
+    };
+    const adapter = mysqlAdapterWithPool(pool);
+
+    const schemas = await adapter.listSchemas(false);
+
+    expect(checkoutCount).toBe(1);
+    expect(pool.query).not.toHaveBeenCalled();
+    expect(connection.queries.length).toBe(2);
+    expect(connection.queries[0].sql).toBe("SET time_zone = '+00:00'");
+    expect(connection.queries[1].sql).toMatch(/information_schema\.schemata/);
+    expect(connection.releases).toBe(1);
+    expect(schemas.map((s) => s.name)).toEqual(["app"]);
+  });
+
+  // Case 10 — edge (failure/cleanup, M1): rejecting query still releases
+  it("case 10: a rejecting connection.query still releases the checkout exactly once", async () => {
+    const failure = new Error("forced connection query failure");
+    const connection = mockMysqlConnection(() =>
+      Promise.reject(failure),
+    );
+    const pool = mockMysqlPool(connection);
+    const adapter = mysqlAdapterWithPool(pool);
+
+    let caught: unknown;
+    try {
+      await adapter.listSchemas(false);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBe(failure);
+    expect(connection.releases).toBe(1);
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+});
+
+describe("MySqlAdapter.openStreamingQuery — stream end handling (TASK-005 M3, cases 11-12)", () => {
+  function fakeStream(
+    script: Array<{ event: string; payload?: unknown }>,
+  ): {
+    stream: {
+      once: (event: string, cb: (payload?: unknown) => void) => void;
+      on: (event: string, cb: (payload?: unknown) => void) => void;
+      destroy: () => void;
+      pause: () => void;
+      resume: () => void;
+    };
+    run: () => void;
+    destroyed: () => number;
+  } {
+    const listeners = new Map<string, Array<(payload?: unknown) => void>>();
+    let destroyedCount = 0;
+    const stream = {
+      once: (event: string, cb: (payload?: unknown) => void) => {
+        const list = listeners.get(event) ?? [];
+        list.push(cb);
+        listeners.set(event, list);
+      },
+      on: (event: string, cb: (payload?: unknown) => void) => {
+        const list = listeners.get(event) ?? [];
+        list.push(cb);
+        listeners.set(event, list);
+      },
+      destroy: () => {
+        destroyedCount += 1;
+      },
+      pause: () => undefined,
+      resume: () => undefined,
+    };
+    const run = () => {
+      for (const step of script) {
+        for (const cb of [...(listeners.get(step.event) ?? [])]) {
+          cb(step.payload);
+        }
+      }
+    };
+    return { stream, run, destroyed: () => destroyedCount };
+  }
+
+  function runQueryAdapter(
+    connection: MockMysqlConnection,
+    script: Array<{ event: string; payload?: unknown }>,
+  ): { promise: Promise<unknown>; fake: ReturnType<typeof fakeStream> } {
+    const fake = fakeStream(script);
+    // The streaming path reaches the CORE connection (`wrapper.connection`)
+    // and calls query({sql, rowsAsArray, timeout}) whose result .stream() is
+    // the fake. Extend the mock wrapper with a core shape.
+    const coreQueryResult = { stream: () => fake.stream };
+    const core = {
+      query: () => coreQueryResult,
+    };
+    const wrapper = Object.assign(Object.create(Object.getPrototypeOf(connection)), connection, {
+      connection: core,
+    });
+    void wrapper;
+    const pool = mockMysqlPool(connection as unknown as MockMysqlConnection);
+    // Override getConnection to return the wrapper shape with a `.connection`
+    // core whose query() yields the fake-streaming result.
+    const typedPool = pool as unknown as {
+      getConnection: () => Promise<unknown>;
+    };
+    typedPool.getConnection = () =>
+      Promise.resolve(
+        Object.assign({}, connection, {
+          connection: core,
+        }),
+      );
+    const adapter = mysqlAdapterWithPool(pool);
+    const promise = adapter.runQuery("SELECT 1");
+    // `getConnection()` and the stream setup both cross promise turns; run
+    // the scripted events on the next macrotask, after all listeners exist.
+    setTimeout(fake.run, 0);
+    return { promise, fake };
+  }
+
+  // Case 11 — edge (pathological stream, M3): end without fields resolves empty
+  it("case 11: a stream emitting only 'end' resolves with columns [] and a null first fetchBatch, without hanging", async () => {
+    const connection = mockMysqlConnection();
+    const { promise } = runQueryAdapter(connection, [{ event: "end" }]);
+
+    // Must settle WITHOUT any test timeout — if firstFields never resolves,
+    // this await itself would hang and vitest's default timeout would fail
+    // the test (the RED state).
+    const result = (await promise) as {
+      batched: {
+        columns: string[];
+        fetchBatch: () => Promise<unknown[] | null>;
+      };
+    };
+    expect(result.batched.columns).toEqual([]);
+    expect(await result.batched.fetchBatch()).toBeNull();
+    expect(connection.releases).toBe(1);
+  });
+
+  // Case 12 — edge (ordering, M3): fields still wins; error first still rejects
+  it("case 12a: fields-then-rows-then-end yields the real column names, not []", async () => {
+    const connection = mockMysqlConnection();
+    const { promise } = runQueryAdapter(connection, [
+      { event: "fields", payload: [{ name: "id" }, { name: "name" }] },
+      { event: "data", payload: [1, "a"] },
+      { event: "end" },
+    ]);
+    const result = (await promise) as {
+      batched: { columns: string[]; fetchBatch: () => Promise<unknown[][] | null> };
+    };
+    expect(result.batched.columns).toEqual(["id", "name"]);
+    const batch = await result.batched.fetchBatch();
+    expect(batch).toEqual([[1, "a"]]);
+    expect(await result.batched.fetchBatch()).toBeNull();
+  });
+
+  it("case 12b: an error-first stream still rejects and destroys the connection", async () => {
+    const connection = mockMysqlConnection();
+    const failure = new Error("stream failed before fields");
+    const { promise } = runQueryAdapter(connection, [
+      { event: "error", payload: failure },
+    ]);
+    await expect(promise).rejects.toThrow(/stream failed before fields/);
+    expect(connection.releases).toBe(0);
+  });
+});

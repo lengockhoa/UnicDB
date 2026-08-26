@@ -349,6 +349,30 @@ describeIfBundle("webview/main.ts bundle (TASK-402)", () => {
   );
 
   itIfBundle(
+    "TASK-007. quick-search typing applies client filter without server requery",
+    async () => {
+      const { received, root } = loadBundle();
+      dispatchState(threeRowsState());
+      await flushGridEvents();
+      const input = root.querySelector(".vsdb-search-input") as HTMLInputElement;
+      expect(input).toBeTruthy();
+
+      for (const text of ["b", "be", "bet"]) {
+        input.value = text;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 250));
+
+      expect(received.filter((m) => m.type === "requery")).toHaveLength(0);
+      expect(getGridApi()!.getDisplayedRowCount()).toBe(1);
+
+      getGridApi()!.setFilterModel({ name: { values: ["beta"] } });
+      await new Promise<void>((resolve) => setTimeout(resolve, 250));
+      expect(received.filter((m) => m.type === "requery")).toHaveLength(1);
+    },
+  );
+
+  itIfBundle(
     "5. regression (counterpart of 3) — without colFilterActive gate, loadMore would be posted (informational)",
     async () => {
       // This test simply documents the pre-fix state: without gating,

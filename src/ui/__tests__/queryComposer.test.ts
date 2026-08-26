@@ -17,6 +17,7 @@ import {
 } from "../queryComposer";
 import { getTableSortQuery } from "../../adapters/postgres";
 import { getTableSortQuery as mssqlGetTableSortQuery } from "../../adapters/mssql";
+import { getTableSortQuery as mysqlGetTableSortQuery } from "../../adapters/mysql";
 
 describe("buildFilterWhere", () => {
   // Case 1 — unit (happy): emits an IN list
@@ -181,6 +182,70 @@ describe("composeSortQuery", () => {
     // proving the export is wired, not orphaned.
     expect(composeSortQuery("mssql", "SELECT 1", "", "name", "ASC")).toBe(
       "SELECT * FROM (SELECT 1) vsdb_sort ORDER BY [name] ASC",
+    );
+  });
+
+  // ---------------------------------------------------------------------------
+  // TASK-005 — MySQL sort twin delegation. The composer's mysql arm delegates
+  // to `getTableSortQuery` (src/adapters/mysql.ts) exactly as the mssql arm
+  // delegates to its twin; no inline backtick composition remains.
+  // ---------------------------------------------------------------------------
+
+  // Case 1 — happy: helper and composer parity
+  it("mysql helper and composer parity (TASK-005 case 1)", () => {
+    const sql = composeSortQuery("mysql", "SELECT 1", "", "name", "ASC");
+    expect(sql).toBe("SELECT * FROM (SELECT 1) vsdb_sort ORDER BY `name` ASC");
+    expect(sql).toBe(mysqlGetTableSortQuery("SELECT 1", "", "name", "ASC"));
+  });
+
+  // Case 2 — edge (injection): backtick payload stays one identifier via the delegated helper
+  it("mysql injection payload is one backtick-quoted identifier (TASK-005 case 2)", () => {
+    const sql = composeSortQuery("mysql", "SELECT 1", "", "n`; DROP TABLE x--", "ASC");
+    expect(sql).toBe(
+      "SELECT * FROM (SELECT 1) vsdb_sort ORDER BY `n``; DROP TABLE x--` ASC",
+    );
+    // No free DROP token outside the quoted identifier: strip the single
+    // backtick-quoted identifier and the remainder contains no DROP.
+    expect(sql).toContain("ORDER BY `n``; DROP TABLE x--` ASC");
+    expect(sql.match(/DROP/g)).toHaveLength(1); // only inside the one quoted identifier
+    expect(sql).toMatch(/ORDER BY `n``; DROP TABLE x--` ASC$/);
+  });
+
+  // Case 3 — edge (boundaries): whitespace WHERE omitted, non-empty WHERE outer, DESC, empty SQL
+  it("mysql boundaries: whitespace WHERE omitted, non-empty WHERE outer, DESC preserved (TASK-005 case 3)", () => {
+    expect(composeSortQuery("mysql", "SELECT 1", "   ", "n", "ASC")).not.toMatch(
+      /\bWHERE\b/,
+    );
+    expect(
+      composeSortQuery("mysql", "SELECT * FROM t", "age > 18", "name", "DESC"),
+    ).toBe(
+      "SELECT * FROM (SELECT * FROM t) vsdb_sort WHERE age > 18 ORDER BY `name` DESC",
+    );
+    expect(composeSortQuery("mysql", "", "", "n", "ASC")).toBe(
+      "SELECT * FROM () vsdb_sort ORDER BY `n` ASC",
+    );
+  });
+
+  // Dispatch source contract: the mysql arm is a delegation, not an inline duplicate.
+  it("composeSortQuery's mysql arm delegates to the adapter helper, not an inline duplicate (TASK-005)", () => {
+    const source = readFileSync(
+      new URL("../queryComposer.ts", import.meta.url),
+      "utf8",
+    );
+    expect(source).toContain('from "../adapters/mysql"');
+    expect(source).toMatch(/mysqlGetTableSortQuery\(/);
+    expect(source).not.toMatch(/quoteIdent\([^)]*"mysql"\)/);
+    expect(source).not.toContain("replace(/`/g");
+    // The unaliased mssql call and aliased mysql call are each present once.
+    expect(source.match(/getTableSortQuery\(/g)).toHaveLength(1);
+    expect(source.match(/mysqlGetTableSortQuery\(/g)).toHaveLength(1);
+    // Behavioral parity across all four args (non-trivial WHERE + DESC).
+    const originalSql = "SELECT * FROM t WHERE id>5";
+    const whereFromBar = "age > 18";
+    expect(
+      composeSortQuery("mysql", originalSql, whereFromBar, "name", "DESC"),
+    ).toBe(
+      mysqlGetTableSortQuery(originalSql, whereFromBar, "name", "DESC"),
     );
   });
 });

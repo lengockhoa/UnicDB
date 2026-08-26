@@ -492,6 +492,11 @@ export class MsSqlAdapter implements DbAdapter {
             }
           : {}),
         useColumnNames: true,
+        // TASK-005 — make the UTC contract explicit rather than relying on
+        // tedious's default: DATETIME parsing is UTC regardless of the
+        // extension host's timezone, matching mysql2's `timezone: "Z"` and
+        // the UTC-naive literals from `typedLiteral`.
+        useUTC: true,
         connectTimeout: 10_000,
         // Disable requestTimeout for streaming SELECTs — tedious arms the timer
         // at execSql and does not pause/resume it with request.pause(). For

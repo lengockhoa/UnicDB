@@ -270,6 +270,9 @@ describe("registerBrowseCommands", () => {
     expect(panel.render).toHaveBeenCalledTimes(2);
     expect(panel.setBusySequence[0]).toBe(true);
     expect(panel.setBusySequence[panel.setBusySequence.length - 1]).toBe(false);
+    expect(panel.renderCalls[0]!.header).toMatch(
+      /^Browse public\.users at .+ — postgres@127\.0\.0\.1\/vsdb$/,
+    );
     expect(state.errorMessages).toEqual([]);
   });
 

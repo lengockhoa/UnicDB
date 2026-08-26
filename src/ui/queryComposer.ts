@@ -23,6 +23,7 @@ import { sqlLiteral, SET_FILTER_BLANKS_DISPLAY } from "./resultsGridModel";
 import { stripTrailingSemicolon } from "../core/text";
 import { quoteIdent, type Dialect } from "../core/saveStatements";
 import { getTableSortQuery } from "../adapters/mssql";
+import { getTableSortQuery as mysqlGetTableSortQuery } from "../adapters/mysql";
 
 /**
  * AG Grid set-filter model as returned by GridApi.getFilterModel(), plus an
@@ -471,16 +472,19 @@ export function buildPagedQueryTerms(
 /**
  * Dispatch the table-sort composition per dialect.
  *
- * postgres/mysql: composed inline byte-identical to the adapters' helpers —
- * the same subquery wrap, quoted identifier and ASC/DESC whitelist — keeping
- * this module free of the pg/mysql2 drivers so it stays importable from the
- * webview bundle. mssql (TASK-006): delegates to `getTableSortQuery`
- * (src/adapters/mssql.ts) so the T-SQL lives in exactly one place; the
- * adapter's `ORDER BY [col] ASC|DESC` is also what T-SQL `OFFSET/FETCH`
- * paging (see `buildPagedQuery`) can attach to.
+ * postgres: composed inline byte-identical to the adapter helper — keeping
+ * this module free of the pg driver so it stays importable from the webview
+ * bundle. mysql/mssql (TASK-005/TASK-006): delegates to the adapter twins
+ * `getTableSortQuery` (src/adapters/mysql.ts, src/adapters/mssql.ts) so each
+ * dialect's SQL lives in exactly one place; both arms are consumed host-side
+ * only (the webview never imports the mysql2/tedious drivers). The adapters'
+ * `ORDER BY col ASC|DESC` is also what dialect paging (`buildPagedQuery`) can
+ * attach to.
  *
  *   composeSortQuery("postgres", "SELECT 1", "", "name", "ASC")
  *     → `SELECT * FROM (SELECT 1) vsdb_sort ORDER BY "name" ASC`
+ *   composeSortQuery("mysql", "SELECT 1", "", "name", "ASC")
+ *     → `SELECT * FROM (SELECT 1) vsdb_sort ORDER BY `name` ASC`
  *   composeSortQuery("mssql", "SELECT 1", "", "name", "ASC")
  *     → `SELECT * FROM (SELECT 1) vsdb_sort ORDER BY [name] ASC`
  */
@@ -493,6 +497,9 @@ export function composeSortQuery(
 ): string {
   if (dialect === "mssql") {
     return getTableSortQuery(originalSql, whereFromBar, column, direction);
+  }
+  if (dialect === "mysql") {
+    return mysqlGetTableSortQuery(originalSql, whereFromBar, column, direction);
   }
   const inner = originalSql.trim();
   const quotedColumn = quoteIdent(column, dialect);

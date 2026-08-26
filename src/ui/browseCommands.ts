@@ -159,7 +159,12 @@ export function registerBrowseCommands(deps: RegisterBrowseDeps): void {
           : rawSql;
         const stmt: ParsedStatement = { text: sql, start: 0, end: sql.length };
         const qualified = schema ? `${schema}.${table}` : table;
-        const header = `Browse ${qualified} at ${new Date().toISOString()}`;
+        const activeConnection = mgr.getActive();
+        const header = `Browse ${qualified} at ${new Date().toISOString()}${
+          activeConnection
+            ? ` — ${activeConnection.driver}@${activeConnection.host}/${activeConnection.database}`
+            : ""
+        }`;
         panel.setBusy(true);
         const results: StatementResult[] = await runner.run([stmt], (current) => {
           panel.render(current, header);

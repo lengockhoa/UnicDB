@@ -98,4 +98,52 @@ Reconciliation gate decisions and the two judgement calls behind them.
 3. **`window.confirm` removed, not guarded.** Keeping `window.confirm` with a safe `false` fallback would make Refresh a no-op in the real webview while continuing to work in jsdom — the same test/production divergence that hid this bug. The in-DOM banner behaves identically in both environments, which is why the two A13 tests are rewritten rather than patched.
 4. **P2-1 gate choice.** Gate on the re-polled `isColumnFilterPresent()` (already assigned to `colFilterActive` on the line above) rather than on `e.source` alone: the existing "clear the last filter" contract (`webviewServerFilter.test.ts` case 9) arrives with the column filter already absent, so a source-only gate must still admit `api`/`columnFilter` sources. Case 5 plus the regression lane pin both directions.
 
+### 2026-08-26 · executor · bao-sonnet (feature-implementer)
+Two implementation notes for the reviewer.
+
+1. **P2-1 source gate.** The task's gate list `("columnFilter" | "advancedFilter" | "api" — see the AG Grid FilterChangedEventSourceType union)` is implemented exactly as `e.source === "api" | "columnFilter" | "advancedFilter"`. In the AG Grid v36 shipped here, `api.setFilterModel` fires the event with `source === "api"`, so the existing clear-last-filter contract (serverFilter case 9) still posts its one unfiltered requery. To make the gate airtight I ALSO changed the quick-search input handler (`:856`) to call `gridApi.onFilterChanged("quickFilter")` instead of the bare `onFilterChanged()` — AG Grid v36's bare call defaults the source to `"api"`, which would have kept posting a requery for every keystroke batch even with the gate in place. Case 5 plus case 9 pin both directions.
+2. **`src/ui/browseCommands.ts` ownership.** The orchestrator NOTE listed it as not-owned, but the task file's own §Target Files and §Test Files mandate the header token edit and the browseCommands.test.ts header-shape assertion, so I implemented the task-spec edit (driver-token suffix using `mgr.getActive()`, prefix byte-identical). Nothing else in browseCommands.ts was touched. `resultsPanel.ts`, `src/core/**`, `src/adapters/**` are unmodified.
+
 ---
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT:
+```
+ Test Files  4 failed | 1 passed (5)
+      Tests  4 failed | 54 passed (58)
+
+ FAIL  webviewServerSort.test.ts > TASK-007. duplicate column sort posts the real column name
+AssertionError: expected 'id__2 ASC' to be 'id ASC'          // received 'id__2 ASC'
+ FAIL  webviewSaveEdits.test.ts > TASK-007. saveResult ok:true warnings → banner shows warning text
+AssertionError: expected true to be false                    // banner stayed hidden
+ FAIL  webviewFilters.test.ts > TASK-007. quick-search typing applies client filter without server requery
+AssertionError: expected [ Array(1) ] to have a length of +0 but got 1   // requery posted
+ FAIL  webviewCommitRefresh.test.ts > Edge (permission/confirm) / R(A13). Refresh with dirtyCount > 0
+AssertionError: expected +0 to be 1                          // dirtyCount silently discarded
+```
+
+Verification Output:
+```
+$ npm run compile            → esbuild: build complete (dist/webview.js rebuilt)
+$ vitest run webviewServerSort webviewSaveEdits webviewFilters webviewCommitRefresh browseCommands
+  Test Files  5 passed (5)      Tests  58 passed (58)
+$ vitest run webviewServerFilter webviewRequery webviewPerTableTabs webviewExport resultsPanel
+  Test Files  5 passed (5)      Tests  47 passed (47)     // incl. serverFilter case 9 (clear-last-filter requery)
+$ npm run typecheck           → tsc --noEmit 0 errors
+```
+
+Status: PASS
+
+Note:
+- Single intentional test-expectation change: the two webviewCommitRefresh A13 cases (previously stubbing window.confirm and asserting it was called) were rewritten to drive the in-DOM refresh-confirm controls (`[data-vsdb-refresh-discard]` / `[data-vsdb-refresh-cancel]`); the new clean-refresh case asserts no confirm controls render and exactly one requery posts.
+- `window.confirm` no longer referenced in webview/main.ts (grep-confirmed).
+- src/ui/browseCommands.ts got the task-spec driver-token header edit (browseCommands.test.ts asserts `^Browse public\.users at .+ — postgres@127\.0\.0\.1/vsdb$`); browseCommands.ts is listed as a Target File in the task file itself. resultsPanel.ts / src/core/** / src/adapters/** untouched.
+- Quick-search handler now calls `gridApi.onFilterChanged("quickFilter")` so AG Grid's default `"api"` source cannot re-arm the requery on keystrokes.
+- No typed StateMessage.dialect field added; no other message shape changes.
+
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for review

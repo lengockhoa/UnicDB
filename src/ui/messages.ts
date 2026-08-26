@@ -196,6 +196,8 @@ export interface SaveResultMessage {
   ok: boolean;
   /** Per-statement error messages (parallel to host execution order). */
   errors?: string[];
+  /** Non-fatal per-row warnings from the save operation. */
+  warnings?: string[];
   /**
    * Soft refusal (e.g. mysql/mssql without a PK). When `refused` is true the
    * webview MUST clear its dirty state too — there is nothing to retry, and

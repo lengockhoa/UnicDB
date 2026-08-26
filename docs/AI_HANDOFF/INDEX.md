@@ -11,7 +11,7 @@ reconciliation gate. 8 tasks, 3 waves.
 | TASK-002 | Adversarial audit: results grid, webview, query UI | done | claude-code/bao-sonnet | - |
 | TASK-003 | Eliminate NULL/viewer aggregate flake at bundle lifecycle root | ready | - | - |
 | TASK-004 | Whitespace `(Blanks)` and shared SQL terminator normalizer (+P2-6 export quoting) | pending_review | claude-code/bao-sonnet | - |
-| TASK-005 | MySQL sort twin and explicit UTC adapter sessions (+M1 checkout, +M3 stream end) | ready | - | - |
+| TASK-005 | MySQL sort twin and explicit UTC adapter sessions (+M1 checkout, +M3 stream end) | pending_review | claude-code/bao-sonnet | - |
 | TASK-006 | ResultsPanel host hardening: cursor ordering, manual-window refresh, wire-safe `batched` | ready | - | - |
 | TASK-007 | Webview grid hardening: real sort column, warning surfacing, quick-search requery, safe refresh confirm | ready | - | - |
 | TASK-008 | Save/core hardening: NULL-PK rows skipped, batched first-fetch errors surfaced | ready | - | - |

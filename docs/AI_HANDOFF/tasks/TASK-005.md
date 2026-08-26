@@ -1,6 +1,6 @@
 # TASK-005 — MySQL sort twin and explicit UTC adapter sessions
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §2, §3.4
@@ -92,3 +92,55 @@ Two host-audit findings folded in from `docs/AI_HANDOFF/notes/cycle-x-audit-host
 M2 (multi-statement partial commit) is explicitly **not** in this task — it is pre-existing behavior, medium-sized, and queued in `INDEX.md`.
 
 ---
+
+## Executor Report (fix round 1)
+
+```
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: -
+SUMMARY: Resumed the existing handoff/task-005 worktree (prior executor timed out). The wave-2/3 implementation was already complete and green; verified it fresh in this turn with zero code changes needed. MySqlAdapter.query() is now the single choke point via getConnectionWithUtcSession() (M1, no live `this.pool.query(` left), openStreamingQuery settles firstFields on `end` (M3), mysql2 gets `timezone: "Z"` + per-session `SET time_zone = '+00:00'` cached per physical core in a WeakSet with in-flight dedup, tedious gets explicit `useUTC: true`, and composeSortQuery's mysql arm delegates to getTableSortQuery (src/adapters/mysql.ts).
+TEST_PLAN_FOLLOWED: task section — all 12 cases (1-3 sort/parity/injection/boundary, 4 UTC+tedious, 5 fail-closed, 6 per-connection-once, 7 replacement init, 8 host-TZ regression, 9-10 M1 checkout/release+error, 11-12 M3 stream end/orderings) covered and passing.
+FILES_CHANGED:
+  - src/adapters/mysql.ts: export getTableSortQuery (backtick-quoteIdent, ASC/DESC whitelist, outer WHERE); pool `timezone: "Z"`; getConnectionWithUtcSession/ensureUtcSession helpers with WeakSet cache + WeakMap in-flight dedup; query() (M1) uses checkout + connection.query + finally release; openStreamingQuery (M3) settles firstFields on `end`.
+  - src/adapters/mssql.ts: explicit `useUTC: true` in tedious options.
+  - src/ui/queryComposer.ts: mysql arm delegates to mysqlGetTableSortQuery; no inline backtick duplication.
+  - src/adapters/__tests__/mysql.sortQuery.test.ts (new): 7 helper contract/parity/injection/boundary tests.
+  - src/adapters/__tests__/timezone.test.ts (new): 6 tests — cases 4-8 (UTC checkout ordering, tedious useUTC, fail-closed, per-physical-init-once, replacement init, host-TZ literal stability).
+  - src/ui/__tests__/queryComposer.test.ts: TASK-005 mysql delegation/parity + injection + boundary + dispatch-source tests.
+  - src/adapters/__tests__/adapterQueryShape.test.ts: cases 9-12 (M1 checkout/release incl. error path; M3 end-without-fields empty success, fields-first wins, error-first rejects/destroys).
+  - docs/AI_HANDOFF/INDEX.md: TASK-005 status ready -> pending_review.
+  - docs/AI_HANDOFF/tasks/TASK-005.md: status + this report.
+TESTS_ADDED:
+  - src/adapters/__tests__/mysql.sortQuery.test.ts: basic wrap, outer WHERE, DESC, backtick-injection, direction whitelist, empty SQL, whitespace WHERE
+  - src/adapters/__tests__/timezone.test.ts: mysql timezone+SET ordering, tedious useUTC, init fails closed, per-physical init once, replacement init before SQL, host-TZ literal stability
+  - src/ui/__tests__/queryComposer.test.ts: mysql helper/composer parity, injection payload, WHERE/DESC/empty boundaries, dispatch-source (delegation not inline)
+  - src/adapters/__tests__/adapterQueryShape.test.ts: case 9 checkout once+release, case 10 reject still releases, case 11 end-without-fields empty, case 12a fields-first wins, case 12b error-first rejects
+VERIFICATION:
+  command: npx vitest run src/adapters/__tests__/mysql.sortQuery.test.ts src/adapters/__tests__/timezone.test.ts src/ui/__tests__/queryComposer.test.ts src/adapters/__tests__/adapterQueryShape.test.ts
+  result: 4 files, 109 tests, all pass (exit 0)
+  output_excerpt: |
+    ✓ src/adapters/__tests__/mysql.sortQuery.test.ts  (7 tests) 2ms
+    ✓ src/adapters/__tests__/timezone.test.ts  (6 tests) 5ms
+    ✓ src/adapters/__tests__/adapterQueryShape.test.ts  (41 tests) 11ms
+    ✓ src/ui/__tests__/queryComposer.test.ts  (55 tests) 7ms
+    Test Files  4 passed (4)      Tests  109 passed (109)
+  command: npx vitest run src/adapters/__tests__/schemas.test.ts src/adapters/__tests__/factory.test.ts src/core/__tests__/queryRunner.test.ts
+  result: 3 files, 31 tests, all pass (exit 0)
+  output_excerpt: |
+    ✓ src/core/__tests__/queryRunner.test.ts  (18 tests) 111ms
+    ✓ src/adapters/__tests__/factory.test.ts  (4 tests) 1ms
+    ✓ src/adapters/__tests__/schemas.test.ts  (9 tests) 4ms
+    Test Files  3 passed (3)      Tests  31 passed (31)
+  command: npm run typecheck
+  result: exit 0 (tsc --noEmit, no output)
+  command: npx vitest run   (wave-boundary regression net)
+  result: 110 files, 1544 passed, 2 skipped, 0 failed (exit 0)
+  output_excerpt: |
+    Test Files  110 passed | 1 skipped (111)
+    Tests       1544 passed | 2 skipped (1546)
+ISSUES: none. M3 note: the `firstFields` listener references `columns` declared later in the same scope (temporal-dead-zone safe — listeners only run on async events); M1 grep confirms no live `this.pool.query(` remains in src/adapters/mysql.ts.
+HANDOFF_TO_REVIEWER: yes — status set to pending_review; all verification commands re-run fresh in this turn and green.
+NEXT: ready for review (reviewer model must differ from executor bao-sonnet).
+```

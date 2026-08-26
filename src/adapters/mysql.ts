@@ -7,6 +7,7 @@ import type { Connection as CoreConnection, Query } from "mysql2";
 import type { ConnectionConfig } from "../config/types";
 import { resolveSslOptions } from "../core/sslOptions";
 import { splitStatements } from "../core/statementParser";
+import { quoteIdent } from "../core/saveStatements";
 import {
   NotImplementedError,
   type BatchedQuery,
@@ -30,6 +31,9 @@ const SYSTEM_SCHEMAS: Record<string, true> = {
 
 const BATCH_SIZE = 500;
 
+/** TASK-005 — one UTC session statement per fresh physical connection. */
+const UTC_SESSION_SQL = "SET time_zone = '+00:00'";
+
 type MySqlRow = any[];
 
 type MySqlQueryResult = {
@@ -38,6 +42,44 @@ type MySqlQueryResult = {
 };
 
 type StreamState = "open" | "eof" | "closed" | "error";
+
+/**
+ * TASK-005 — server-side column sort as pure SQL composition (MySQL dialect).
+ *
+ * Mirrors `getTableSortQuery` (src/adapters/postgres.ts, src/adapters/mssql.ts)
+ * exactly: same 4-arg signature, same `vsdb_sort` subquery wrap, same
+ * ASC/DESC whitelist — but identifiers are quoted with MySQL backticks
+ * (embedded `` ` `` doubled) via the shared `quoteIdent`. The emitted
+ * `ORDER BY` is exactly what MySQL `LIMIT/OFFSET` paging can attach to
+ * (see `buildPagedQuery`, src/ui/queryComposer.ts).
+ *
+ *   getTableSortQuery("SELECT * FROM t WHERE id>5", "", "name", "ASC")
+ *     → SELECT * FROM (SELECT * FROM t WHERE id>5) vsdb_sort ORDER BY `name` ASC
+ *
+ * Injection safety: `column` is emitted as a single backtick-quoted
+ * identifier, so a payload like ``n`; DROP TABLE x--`` stays one inert
+ * identifier token. `direction` is whitelist-normalized to ASC/DESC.
+ * `whereFromBar` (requery-bar filter) is appended as the OUTER query's WHERE
+ * clause when non-empty — the original SQL stays verbatim inside the
+ * subquery.
+ *
+ * Dispatch: `composeSortQuery("mysql", …)` in src/ui/queryComposer.ts
+ * delegates here (host-side only — the webview never imports mysql2).
+ */
+export function getTableSortQuery(
+  originalSql: string,
+  whereFromBar: string,
+  column: string,
+  direction: "ASC" | "DESC",
+): string {
+  const inner = originalSql.trim();
+  const quotedColumn = quoteIdent(column, "mysql");
+  const dir = direction === "DESC" ? "DESC" : "ASC";
+  const whereClause = whereFromBar.trim().length
+    ? ` WHERE ${whereFromBar.trim()}`
+    : "";
+  return `SELECT * FROM (${inner}) vsdb_sort${whereClause} ORDER BY ${quotedColumn} ${dir}`;
+}
 
 /**
  * MySQL/MariaDB adapter.
@@ -50,6 +92,20 @@ type StreamState = "open" | "eof" | "closed" | "error";
 export class MySqlAdapter implements DbAdapter {
   private pool: PromisePool | null = null;
   private closed = false;
+  /**
+   * TASK-005 — physical core connections whose UTC session (`SET time_zone =
+   * '+00:00'`) has been awaited successfully. Keyed by the CORE connection
+   * (the promise wrapper's `.connection` field — a fresh wrapper object per
+   * checkout), so a pool-created replacement physical connection is never
+   * falsely marked initialized.
+   */
+  private readonly utcReadyConnections = new WeakSet<object>();
+  /**
+   * TASK-005 — in-flight UTC initializations per core connection. Concurrent
+   * checkouts of the same physical identity share one initialization promise
+   * instead of racing a second `SET time_zone` onto the wire.
+   */
+  private readonly utcInitializing = new WeakMap<object, Promise<void>>();
 
   constructor(
     private readonly cfg: ConnectionConfig,
@@ -71,6 +127,12 @@ export class MySqlAdapter implements DbAdapter {
       waitForConnections: true,
       queueLimit: 0,
       connectTimeout: 10_000,
+      // TASK-005 — driver-side parsing of DATETIME/TIMESTAMP strings must be
+      // UTC, not the extension host's local timezone (mysql2 defaults to
+      // `local`). Together with the per-session `SET time_zone = '+00:00'`
+      // (see withUtcSession), display, DISTINCT typed values and requery
+      // filters all agree on one UTC contract.
+      timezone: "Z",
       // The adapter splits scripts itself, so server-side multi-statements are
       // intentionally not enabled.
       multipleStatements: false,
@@ -91,7 +153,7 @@ export class MySqlAdapter implements DbAdapter {
     this.pool = pool;
 
     try {
-      const connection = await pool.getConnection();
+      const connection = await this.getConnectionWithUtcSession();
       try {
         await connection.ping();
       } finally {
@@ -117,7 +179,7 @@ export class MySqlAdapter implements DbAdapter {
       await this.connect();
       return;
     }
-    const connection = await this.pool.getConnection();
+    const connection = await this.getConnectionWithUtcSession();
     try {
       await connection.ping();
     } finally {
@@ -158,7 +220,7 @@ export class MySqlAdapter implements DbAdapter {
 
   async beginTransaction(): Promise<DbTransaction> {
     if (!this.pool) throw new Error("MySqlAdapter: connect() chưa được gọi");
-    const connection = await this.pool.getConnection();
+    const connection = await this.getConnectionWithUtcSession();
     let finished = false;
 
     const finish = async (action: "commit" | "rollback"): Promise<void> => {
@@ -395,6 +457,14 @@ export class MySqlAdapter implements DbAdapter {
     };
   }
 
+  /**
+   * TASK-005 (M1) — single choke point for metadata (`information_schema`)
+   * queries and `executeText`'s non-streaming DML. Checks a connection out
+   * through the UTC-initialized helper (never `pool.query()`, which checks
+   * out implicitly and would let a replacement physical connection bypass
+   * the awaited session initialization), runs `connection.query(sql, values)`,
+   * and releases in `finally` on both the success and rejection paths.
+   */
   private async query(
     sql: string,
     values: any[] = [],
@@ -403,8 +473,67 @@ export class MySqlAdapter implements DbAdapter {
       throw new Error("MySqlAdapter: connect() chưa được gọi");
     }
     const startedAt = Date.now();
-    const [rows, fields] = await this.pool.query(sql, values);
+    const connection = await this.getConnectionWithUtcSession();
+    let rows: any;
+    let fields: FieldPacket[] | undefined;
+    try {
+      [rows, fields] = await connection.query(sql, values);
+    } finally {
+      connection.release();
+    }
     return { rows, fields, durationMs: Date.now() - startedAt };
+  }
+
+  /**
+   * TASK-005 — checkout helper establishing the UTC adapter-session invariant.
+   *
+   * Every explicit `pool.getConnection()` site (connect()'s probe,
+   * testConnection, beginTransaction, openStreamingQuery) and — via M1 —
+   * `query(sql, values)` goes through here. On the FIRST checkout of each
+   * PHYSICAL connection (the promise wrapper's `.connection` core object) it
+   * awaits `SET time_zone = '+00:00'` before the connection is handed to any
+   * user work; success is cached in a WeakSet keyed by that core identity, and
+   * concurrent checkouts share one in-flight initialization promise so the
+   * session statement is never duplicated or raced. On failure the checkout is
+   * released and the error propagated — the connection is NOT marked
+   * initialized, so nothing ever runs on it with an unknown timezone.
+   *
+   * A pool-created replacement physical connection has a fresh core identity,
+   * so it re-initializes before its first user query.
+   */
+  private async getConnectionWithUtcSession(): Promise<PoolConnection> {
+    if (!this.pool) {
+      throw new Error("MySqlAdapter: connect() chưa được gọi");
+    }
+    const connection = await this.pool.getConnection();
+    try {
+      await this.ensureUtcSession(connection);
+      return connection;
+    } catch (error) {
+      connection.release();
+      throw error;
+    }
+  }
+
+  private async ensureUtcSession(connection: PoolConnection): Promise<void> {
+    // Physical identity is the CORE connection the promise wrapper exposes as
+    // `.connection` — the wrapper object itself is new on every checkout.
+    const physical = (connection as unknown as { connection?: object })
+      .connection ?? (connection as unknown as object);
+    if (this.utcReadyConnections.has(physical)) return;
+    const inFlight = this.utcInitializing.get(physical);
+    if (inFlight) {
+      await inFlight;
+      return;
+    }
+    const init = (async () => {
+      await connection.query(UTC_SESSION_SQL);
+      this.utcReadyConnections.add(physical);
+    })().finally(() => {
+      this.utcInitializing.delete(physical);
+    });
+    this.utcInitializing.set(physical, init);
+    await init;
   }
 
   private async openStreamingQuery(sql: string): Promise<BatchedQuery> {
@@ -412,7 +541,7 @@ export class MySqlAdapter implements DbAdapter {
       throw new Error("MySqlAdapter: connect() chưa được gọi");
     }
 
-    const promiseConnection = await this.pool.getConnection();
+    const promiseConnection = await this.getConnectionWithUtcSession();
     let coreQuery: Query;
     try {
       // Query.stream() is part of mysql2's callback/core API, not its promise
@@ -436,12 +565,25 @@ export class MySqlAdapter implements DbAdapter {
     // array contract as pg.
     const stream = coreQuery.stream();
     const buffer: MySqlRow[] = [];
+    // TASK-005 (M3) — the promise MUST settle on every terminal stream path.
+    // Before this, only `fields` (resolve) and `error` (reject) settled it, so
+    // a stream that ended without ever emitting either hung openStreamingQuery
+    // forever while holding the pooled connection (the caller never got the
+    // handle, so fetchBatch/close were unreachable and the pool was
+    // exhausted). `end` without `fields` is an empty-result success:
+    // columns stay [] and the resolve lets the normal streamDone/deliver
+    // machinery finish and release the connection.
     const firstFields = new Promise<void>((resolve, reject) => {
       stream.once("fields", (fields: FieldPacket[]) => {
         columns = fields.map((field) => field.name);
         resolve();
       });
       stream.once("error", reject);
+      stream.once("end", () => {
+        // Case 12: a `fields` event that already arrived wins — the promise
+        // is settled and this resolve is a no-op.
+        resolve();
+      });
     });
     const waiters: Array<{
       resolve: (rows: MySqlRow[] | null) => void;

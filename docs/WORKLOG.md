@@ -22,7 +22,21 @@ For each significant action, append:
 
 ---
 
-## 2026-08-26 — Cycle W (server-side sort + DISTINCT filter + deterministic paging) + release v1.6.6
+## 2026-08-26 — TASK-007 wave-3 (webview grid hardening: real sort column, warnings banner, quick-search no requery, in-DOM refresh confirm)
+
+- Action: 4 webview fixes từ grid/UI audit: (1) `orderByFromColumnState` maps colId qua
+  `currentSpecs` → `headerName` before quoting (dup columns `id__2` post real `id ASC`);
+  (2) `SaveResultMessage.warnings?: string[]` + webview mirror, rendered on ok:true; (3)
+  `onFilterChanged` only schedules server requery for column-filter sources — quick-search
+  typing posts nothing (search handler now calls `onFilterChanged("quickFilter")`);
+  (4) `onRefreshClick` replaces window.confirm with in-DOM saveBanner Discard/Cancel
+  (reused .vsdb-save-retry style); Browse header carries ` — driver@host/db` token.
+- TDD: 4 mandated RED failures (dup sort `id__2 ASC`, warnings banner hidden, search
+  requery posted, dirty discard on refresh) → GREEN; A13 tests rewritten to drive the
+  in-DOM controls (intentional expectation change).
+- Files: webview/main.ts, src/ui/{messages,browseCommands}.ts + 5 test files.
+- Verify: targeted 58/58 + regression 47/47 + typecheck 0 errors; dist/webview.js rebuilt.
+
 
 - Action: handoff cycle W — 4 tasks / 2 waves từ backlog INDEX: TASK-001 ORDER BY parser
   (quote-aware comma split, dialect quoting, composite-PK tiebreaker khi mọi PK column được

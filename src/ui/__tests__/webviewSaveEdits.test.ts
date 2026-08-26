@@ -284,6 +284,41 @@ describeIfBundle("webview/main.ts bundle (TASK-503)", () => {
     }
   });
 
+  itIfBundle("TASK-007. saveResult ok:true warnings → banner shows warning text", async () => {
+    const { root } = loadBundle();
+    dispatchState(threeRowsState());
+    await flushGridEvents();
+
+    dispatchHost({
+      type: "saveResult",
+      index: 0,
+      ok: true,
+      warnings: ["row 1: ctid fallback is not safe under concurrent writes"],
+    });
+    await flushGridEvents();
+
+    const banner = root.querySelector(".vsdb-save-banner");
+    expect(banner).toBeTruthy();
+    expect(banner!.classList.contains("vsdb-hidden")).toBe(false);
+    expect(banner!.getAttribute("hidden")).toBeNull();
+    expect(banner!.textContent).toContain("not safe under concurrent writes");
+  });
+
+  itIfBundle("TASK-007. saveResult ok:true without warnings keeps banner hidden", async () => {
+    const { root } = loadBundle();
+    dispatchState(threeRowsState());
+    await flushGridEvents();
+
+    for (const warnings of [undefined, []]) {
+      dispatchHost({ type: "saveResult", index: 0, ok: true, warnings });
+      await flushGridEvents();
+      const banner = root.querySelector(".vsdb-save-banner")!;
+      expect(banner.classList.contains("vsdb-hidden")).toBe(true);
+      expect(banner.getAttribute("hidden")).not.toBeNull();
+      expect(getEditState()!.dirtyCount).toBe(0);
+    }
+  });
+
   itIfBundle("T4. saveResult ack (ok:false, with errors) → banner shows errors, editState KEPT", async () => {
     const { received } = loadBundle();
     dispatchState(threeRowsState());
