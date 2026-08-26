@@ -1593,6 +1593,13 @@ export class ResultsPanel {
       // ORIGINAL — what the user wrote). `batched` is the NEW cursor
       // (mirrors QueryRunner.executeAll behaviour) so loadMore still
       // works.
+      // NOTE (reviewer minor, TASK-004): after a widening requery the cursor's
+      // rows stay WIDE (hidden PK columns included) while `result.rows` here is
+      // stripped — so a later loadMore APPENDS wide rows onto the narrow ones,
+      // making the buffer ragged. Benign today: the webview materializes every
+      // row through rowsToObjects against the visible `specs`, which reads only
+      // columns [0..specs.length), so the trailing hidden values are dropped on
+      // render. Do not assume row width equality when changing this path.
       const newStmt: StatementResult = {
         index: r.index,
         sql: r.sql,
