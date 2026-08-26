@@ -2,5 +2,5 @@ Command: handoff-fullstack
 Goal: Cycle Y — finish all queued results/query work from Cycle X backlog (8 tasks, 3 waves)
 Base: main
 Phase: R4.5
-Cursor: phase R complete at ade80fb — 8/8 verdicts: 001/002/005/006/008 approved_minor; 003/004/007 changes_requested (1 finding each). R4.5 fix round 1 starting now.
-Next: R4.5 — spawn 2 parallel feature-implementers (TASK-003 numeric-boolean typmod, TASK-007 ordinal flag) in worktrees; then serial TASK-004 nulls fix; re-review changed tasks (round 1 of max 2); then I4 → R5
+Cursor: fix round 1 complete — TASK-003 (typmod type matching), TASK-004 (nulls-through paging + keyset refusal), TASK-007 (ordinal flag as data) all PASS; aggregate 261 tests green + typecheck + compile clean; committed (3 tasks on disk).
+Next: round 1 of re-review — 3 parallel independent bao-opus reviewers re-verify changed files (verdicts land in task files); if clean → I4 consolidate → R5 push + release
