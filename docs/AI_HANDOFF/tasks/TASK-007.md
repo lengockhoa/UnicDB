@@ -239,3 +239,40 @@ Status line: PASS — every task Verification Command exited 0 in this turn.
 
 ---
 
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: bao-opus (config handoff.reviewer.model = unic-smart → opus tier)
+EXECUTOR_MODEL: bao-sonnet (claude-code / feature-implementer) — differs from reviewer, isolation OK
+VERIFICATION_RERUN:
+  command: npm run compile → npx vitest run <4 task files> → npm run typecheck
+  result: compile PASS · 67 pass / 0 fail · typecheck clean (exit 0)
+  spot-run: queryComposer.test.ts + resultsPanelServerFilter.test.ts → 81 pass / 0 fail
+TEST_PLAN_COVERAGE: all-followed (6/6 cases; ≥2 edge cases satisfied; RED_OUTPUT has real assertion diffs)
+FINDINGS:
+  critical:
+    - none
+  important:
+    - src/ui/queryComposer.ts:458 — `buildOrderByClause` decides "is ordinal" from the term's
+      column TEXT (`/^[0-9]+$/`), but by that point `parseOrderBy` has already STRIPPED the
+      quotes of a legitimately quoted all-digit identifier. A real column named `2024`
+      (`ORDER BY "2024" DESC`) parses to `{column:"2024"}` and re-emits BARE `ORDER BY 2024 DESC`
+      on all 3 dialects — silently converting a column sort into a positional-ordinal sort
+      (out-of-range ordinal ⇒ query error, or in-range ⇒ sorts the WRONG column). Verified by
+      probe: pg `"2024" DESC`, mysql `` `2024` DESC ``, mssql `[2024] DESC` all → `2024 DESC`.
+      Pre-change behavior quoted them correctly. Fix: carry ordinal-ness as data, not text —
+      e.g. add `ordinal?: true` to `OrderByTerm`, set it only in the bare-token branch at
+      queryComposer.ts:325, and have buildOrderByClause (and resultsPanel.ts:1334) test that
+      flag instead of re-regexing `column`. Add a case pinning `"2024"`/`` `2024` ``/`[2024]`
+      stays quoted while bare `2024` stays bare.
+  minor:
+    - src/ui/queryComposer.ts:294 — the `parseOrderBy` docblock still says "ordinals … are all
+      rejected"; now stale, contradicts the new grammar. Update alongside the fix.
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Scope as claimed is otherwise sound — header fallback is byte-identical (detectDialectFromHeader
+untouched, still used at main.ts:3138 export lane), positional map is length-guarded + single-result
+gated, no host-trust expansion (identifiers/values still quote-wrapped). Both documented expectation
+changes (#8a/#8b) are justified and safe. Separately: during this review an out-of-band mutation
+("MUTANT") appeared in webviewServerSort.test.ts:296; it was NOT in commit abde88b, my fresh re-run
+caught it as a real FAIL, and I restored the file — no action needed from the executor.

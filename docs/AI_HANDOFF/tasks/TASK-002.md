@@ -121,3 +121,83 @@ Verification Output: |
     EXIT: 0
 Status: PASS
 Note: Implementation deviates from plan wording in two safe ways. (1) Statements are executed via runQueryOnConnection per trimmed statement (plan-specified helper); its RunResult is unwrapped to preserve the flat QueryResult-per-statement order executeText previously produced. (2) The now-orphaned private executeText() was deleted rather than left dead (strict codebase, sole caller removed); its doc-comment content merged into query(). Rollback failures are swallowed so the original statement error propagates. Single-SELECT streaming arm untouched. README documents all-or-nothing DML contract + MySQL DDL implicit-commit caveat in "Các cách chạy query khác".
+
+
+---
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: bao-opus (config `handoff.reviewer.model` = unic-smart)
+EXECUTOR_MODEL: bao-sonnet (claude-code / feature-implementer) — differs, isolation OK
+VERIFICATION_RERUN:
+  command: `npx vitest run src/adapters/__tests__/adapterQueryShape.test.ts`
+  result: 46 pass / 0 fail (exit 0)
+  command: `npm run typecheck`
+  result: exit 0
+  command: `npx vitest run` (full suite — shared adapter path touched)
+  result: 1642 pass / 0 fail / 2 skipped (113 files)
+TEST_PLAN_COVERAGE: all-followed (cases 1-5 implemented at
+  `adapterQueryShape.test.ts:833-1065`; 3 edge cases ≥ minTestsEdgeCase=2). RED_OUTPUT is
+  real failing output (call-order diff showing per-statement `getConnection/release`,
+  missing `rollback`, 2 checkouts) — genuine TDD evidence, not a bare claim.
+
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    1. `README.md:59-62` — doc/behavior drift on the headline user promise. The bullet says
+       multi-statement runs via "Cmd/Ctrl+Enter chọn vùng, hoặc cả file qua nút ▶" are
+       all-or-nothing, but that UI path does NOT reach the new transaction arm.
+       `extension.ts:563` (`sqlToRun`) splits the selection first and `queryRunner.ts:167`
+       calls `adapter.runQuery(statements[i].text)` once per statement — verified empirically:
+       a 3-statement selection produced 3 parsed statements, 2 separate `runQuery` calls
+       (`done,error,cancelled`), i.e. statement 1 commits in its own transaction and is NOT
+       rolled back when statement 2 fails. The atomicity is real but only for callers that
+       pass a multi-statement STRING (`resultsPanel.ts:966` save bundle, `sampleDataAi.ts:240`,
+       `tableCommands.ts:105/477`). Scope the README bullet to those flows, or say the
+       editor Run path is per-statement. Same wording overstates Postgres too
+       (`postgres.ts:320` has the identical one-client-per-call boundary).
+    2. `src/ui/sampleDataAi.ts:233-236` — comment is now stale: it states run-time mid-batch
+       failure "is NOT atomic ... per-statement auto-commit". That call joins statements into
+       one `runQuery` string, so on MySQL it now DOES roll back. The user-visible error text at
+       `:242-245` ("partial rows MAY have committed — DbAdapter exposes no transaction API")
+       is likewise no longer accurate for MySQL/Postgres. Out of this task's declared Target
+       Files; log as follow-up rather than fix here.
+    3. `src/adapters/mysql.ts:233` — `runQueryOnConnection` re-runs `splitStatements` on text
+       already split by the caller. Verified idempotent for the cases that matter (embedded
+       `;` in literals, backslash escapes, leading line/block comments all re-split to exactly
+       1 statement), so this is correctness-neutral duplicated work, not a defect. The
+       unwrap-inner-results loop keeps flat statement order correct.
+
+ADVERSARIAL CHECKS (all pass):
+  - `release()` guaranteed on every path — it is in `finally` at `mysql.ts:246-248`, outside the
+    catch, so it runs after a mid-batch throw, after a rollback that itself throws (rollback is
+    wrapped in its own try/catch at :240-244), and on the `beginTransaction()` failure path.
+    Exactly one release: `getConnectionWithUtcSession` only self-releases when UTC-session init
+    fails, and in that case it throws before `connection` is bound — no double release.
+  - Rollback failure does NOT swallow the original error: the inner catch at :242 is empty and
+    `throw error` at :245 rethrows the ORIGINAL statement error. Test case 2 asserts
+    `expect(caught).toBe(boom)` by identity.
+  - No path commits after a partial error — `commit()` at :238 is the last statement inside the
+    try, unreachable once any `runQueryOnConnection` rejects; test asserts `not.toContain("commit")`.
+  - Streaming arm byte-identical: `git diff d0cd195^ d0cd195 -- src/adapters/mysql.ts` shows zero
+    changed lines in the `singleSelect`/`openStreamingQuery` block; the diff is confined to the
+    post-`singleSelect` loop plus the `executeText` deletion.
+  - Pool pinned only for batch duration; the streaming arm returns BEFORE the checkout at :224,
+    so a cursor is never wrapped in a transaction. connectionLimit:1 deadlock risk is unchanged
+    from the previous code — the old loop also held the single connection per statement via
+    `query()`; the batch now holds it slightly longer but never re-enters the pool while held
+    (`runQueryOnConnection` uses the passed connection, never `pool.query`; test 4 makes
+    `pool.query` throw and asserts exactly 1 checkout). Callers already close cursors before
+    save/transaction work (`resultsPanel.ts:934-936, 1003`).
+  - `executeText` deletion is safe: no remaining references anywhere in `src/`; typecheck clean.
+
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Implementation is correct and well-tested; the transaction, rollback, error-identity and
+release semantics all hold under adversarial reading. The only real issue is minor #1 — the
+README promises atomicity for the editor Run path, which still executes one statement per
+`runQuery` call and therefore is not all-or-nothing. Recommend a doc-scope fix (and follow-up
+task for the stale `sampleDataAi.ts` comment/error text) rather than blocking this handoff.

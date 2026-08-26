@@ -163,3 +163,45 @@ Note: src/ui/queryComposer.ts, src/ui/distinctValues.ts, src/ui/messages.ts byte
 
 ---
 
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: bao-opus (config handoff.reviewer.model = unic-smart)
+EXECUTOR_MODEL: bao-sonnet
+VERIFICATION_RERUN:
+  command: `npm run compile` → exit 0 (bundle refreshed first)
+  command: `npx vitest run src/ui/__tests__/resultsPanelDistinctValues.test.ts src/ui/__tests__/webviewDistinctValues.test.ts src/ui/__tests__/webviewSetFilter.test.ts`
+  result: 42 pass / 0 fail (3 files)
+  command: `npm run typecheck` → exit 0
+  command: `npx vitest run` (full sweep, shared-file diff) → 1642 pass / 0 fail, 2 skipped
+TEST_PLAN_COVERAGE: all-followed — case 1 (bar WHERE + other-column predicate), case 2 (self-filter
+  exclusion, plus own-column-only ⇒ no WHERE), case 3 (error text in footer, bundle DOM), case 4
+  (truncation note + values still listed/selectable), case 5 (no source state ⇒ byte-identical
+  `where=""`). 3 edge cases ≥ minTestsEdgeCase=2. RED_OUTPUT carries real assertion diffs.
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - webview/main.ts:310 — `DISTINCT_TRUNCATED_NOTE = "first 1000 shown"` hardcodes the cap that
+      actually lives at src/ui/distinctValues.ts:18 (`DISTINCT_VALUES_LIMIT`). The reply carries
+      `truncated` but no limit, so changing the host cap silently makes the footer lie. Either send
+      the effective limit on the message or pin the two with a shared test assertion.
+    - src/ui/resultsPanel.ts:1501 — source state is recorded BEFORE `runSql`, so a requery that
+      FAILS (bad bar WHERE) still leaves `barWhere` in the map; the next distinct request re-runs
+      that predicate and fails too. Self-explaining now that the footer shows the host error, and no
+      data risk, but recording after the `seq !== this.requerySeq` success guard (line 1577) would
+      keep the map to WHEREs that actually executed.
+    - src/ui/__tests__/webviewDistinctValues.test.ts:600 — test 19 clears the error note via a
+      statement-identity change, so the same-statement clean-reply clear path
+      (`distinctNotesByColumn.delete(key)`, webview/main.ts:2372) has no direct assertion.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Adversarial checks pass — `whereByStatement` is cleared in render() next to `distinctCache`
+  with the same generation bump; both the stored `{...msg.filters}` and the per-request
+  `{...sourceState.filters}` copies mean `delete filtersWithoutColumn[column]` cannot corrupt stored
+  or subsequent state (webview posts a structured-cloned model each time, `buildFilterWhere` is
+  read-only); `columnTypes` is the exact variable `composeRequerySql` receives, so the typed
+  `(Blanks)` predicate rebuilds identically; the `[barWhere.trim(), rebuilt].filter(Boolean)
+  .join(" AND ")` shape mirrors composeRequerySql:1319 verbatim; no SQL is parsed anywhere. Bar
+  WHERE injected into the DISTINCT wrapper is the same user-authored string already executed by the
+  requery itself — no new trust boundary.
+

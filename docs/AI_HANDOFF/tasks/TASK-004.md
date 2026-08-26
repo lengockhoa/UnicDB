@@ -211,3 +211,62 @@ notes:
 ```
 
 ---
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: bao-opus (handoff.reviewer.model = unic-smart)
+EXECUTOR_MODEL: bao-sonnet (claude-code / feature-implementer) — differs, isolation OK
+VERIFICATION_RERUN:
+  command: npx vitest run resultsPanelRequery + manualCommit + resultsPanelSaveEdits + keysetPaging (+ frozen resultsPanelOrderBy); npm run typecheck
+  result: 103 pass / 0 fail (32+12+15+28+16); tsc --noEmit clean
+TEST_PLAN_COVERAGE: all-followed (cases 1-5 present; RED_OUTPUT carries real assertion diffs, not claims)
+FINDINGS:
+  critical:
+    - none
+  important:
+    - file: src/ui/keysetPaging.ts:437 (and :444-447) — `orderedColumns`/`allOrderedTerms` rebuild
+      each OrderByTerm as `{column, direction}` only, DROPPING the `nulls` field that
+      `parseOrderBy` produces (queryComposer.ts:326,334) and that `buildOrderByClause`
+      (queryComposer.ts:461-474) needs. Because composeRequerySql now routes the ENTIRE paging
+      lane through composeKeysetQuery (resultsPanel.ts:1367), the OFFSET fallback is no longer
+      byte-identical to buildPagedQueryTerms whenever a term carries NULLS. Proven by direct
+      re-run against the live legacy composer:
+        postgres, `a NULLS LAST` + offset 500 →
+          legacy: ... ORDER BY "a" ASC NULLS LAST, "id" ASC LIMIT 500 OFFSET 500
+          now:    ... ORDER BY "a" ASC LIMIT 500 OFFSET 500
+        mssql, `a NULLS LAST` + offset 500 →
+          legacy: ... ORDER BY CASE WHEN [a] IS NULL THEN 1 ELSE 0 END ASC, [a] DESC ...
+          now:    ... ORDER BY [a] ASC OFFSET 500 ROWS FETCH NEXT 500 ROWS ONLY
+      Reachable in production, not just at module level: dispatching
+      `{type:"requery", orderBy:"a NULLS LAST", offset:500}` at the real panel message boundary
+      (makePanel harness of resultsPanelOrderBy.test.ts) emits the null-ranking-free SQL above.
+      This silently changes row ordering for nullable sort columns on every paged/filtered
+      requery — i.e. a cycle-W behaviour regression, and it also breaks the task's own
+      "fallback = today's OFFSET composition verbatim" contract (Discussion #5, Interfaces §).
+      The gap is invisible to the current suite because frozen case 8c
+      (resultsPanelOrderBy.test.ts:245-266) exercises NULLS only WITHOUT `offset`, so it stays
+      on the pure-sort lane and never enters the composeKeysetQuery paging lane.
+      Correct: carry `nulls` through into the terms handed to `buildOrderByClause`, and REFUSE
+      the keyset lane when any ordered term carries `nulls` — the OR-of-ANDs predicate
+      (keysetPaging.ts:529-549) models no null ranking, so a NULLS-ordered keyset page would
+      skip/duplicate rows. Add a test pinning NULLS + offset byte-identity for postgres AND the
+      mssql/mysql emulated CASE/IS NULL rank.
+  minor:
+    - file: src/ui/keysetPaging.ts:555-564 — `literalForKey` duplicates `sqlLiteral`
+      (resultsGridModel.ts:466-478) rather than reusing it. Escaping posture currently matches
+      (single-quote doubling only, no backslash escapes) so there is no injection gap today —
+      values also originate from host result rows, and identifiers go through `quoteIdent` — but
+      the two copies can drift apart silently. Prefer importing sqlLiteral or add a test
+      asserting the two agree.
+    - file: src/ui/keysetPaging.ts:233 — `void lower;` is dead; `lower` is only used by the
+      `/^select\b/` test above and the statement is a leftover.
+    - file: src/ui/resultsPanel.ts:1513-1524 — after a widened requery, `adopt()` stores the
+      STRIPPED result while `batched` is the WIDENED cursor, so a later `loadMore` appends
+      (N+1)-wide rows onto N-wide rows. Benign today (rowsToObjects reads only specs[0..N-1]),
+      but the ragged rows are a latent trap; worth a comment or stripping in the loadMore path.
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Everything else verified clean — page-0 byte identity, DESC/mixed-composite OR-of-ANDs on
+mssql+mysql, gate refusals, hidden-strip ordinal alignment, render() reset, save-catch ack, and
+frozen resultsPanelOrderBy.test.ts + queryComposer.ts untouched by commit 6c03284. The single
+blocking item is the dropped NULLS field; it is a small, well-localised fix.

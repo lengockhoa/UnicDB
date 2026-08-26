@@ -153,3 +153,45 @@ Status: PASS
 Note: Pre-existing flake in webviewServerSort.test.ts case 18 fails only in full-suite runs and also fails on clean HEAD (proven by stash+rerun); unrelated to queryComposer.ts since webview/main.ts never imports it. Worktree lacks node_modules (gitignored); symlinked node_modules/.bin to the parent repo so bundle tests can spawn esbuild — environmental setup, no repo file changed. Reviewer should focus on the intentional expectation rewrite of queryComposer.test.ts case 10 and resultsPanelOrderBy.test.ts case 8c per task §Goal/cycle-W precedent.
 
 ---
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: bao-opus (config handoff.reviewer.model = "unic-smart"; bound as bao-opus)
+EXECUTOR_MODEL: bao-sonnet (tool claude-code, subagent feature-implementer)
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/queryComposer.test.ts src/ui/__tests__/resultsPanelOrderBy.test.ts
+  result: 81 pass / 0 fail (2 files, exit 0)
+  command: npm run typecheck
+  result: exit 0
+TEST_PLAN_COVERAGE: all-followed (cases 1-6 present; 2 dedicated edge cases + composite/round-trip/paging extras; RED_OUTPUT carries 10 real named failures plus an assertion trace and an expected-vs-received SQL diff)
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - src/ui/keysetPaging.ts:443-446 — `allOrderedTerms` rebuilds terms as `{column, direction}`
+      only, dropping `nulls`. So the OFFSET fallback at :492 and the keyset lane at :505 both emit
+      `ORDER BY \`a\` ASC, \`id\` ASC` where `buildPagedQueryTerms` emits the emulated
+      `\`a\` IS NULL ASC, \`a\` ASC, \`id\` ASC`. Pre-existing (introduced by TASK-004 commit
+      6c03284, file not touched by this diff and owned by TASK-004 per §Discussion 3), and
+      unreachable today because resultsPanel.ts:1324 routes NULLS terms to the non-paging
+      multi-term wrap. Becomes a real null-ordering divergence the moment a NULLS term reaches
+      the paging lane (msg.offset set or filters present). Correct fix: carry `...(o.nulls ? {nulls:o.nulls} : {})`
+      into allOrderedTerms, and gate keyset eligibility off when any term has `nulls` (the
+      keysetPredicate at :529 has no null-aware comparison). File a follow-up against TASK-004's owner.
+    - src/ui/queryComposer.ts:458-474 — an ordinal term with NULLS renders bare on mysql/mssql as
+      `2 IS NULL ASC, 2 ASC` / `CASE WHEN 2 IS NULL THEN 1 ELSE 0 END ASC, 2 ASC`. The rank key is a
+      constant-expression rank (literal 2 is never NULL), so it is inert, not injection and not
+      invalid SQL, but it is dead weight in emitted SQL. Verified: ordinals are never quote-wrapped
+      even with a nulls suffix, so TASK-007's contract holds. Optional cleanup: skip the rank key
+      when `/^[0-9]+$/.test(t.column)`.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: MySQL/MSSQL rank-direction semantics verified against real SQL boolean ordering — FALSE(0) < TRUE(1),
+  so rank ASC puts non-nulls first (LAST) and rank DESC puts nulls first (FIRST); the src:468 mapping
+  `FIRST → DESC` is correct on both dialects, postgres output stays byte-identical native, composite
+  terms comma-join correctly, and the deleted unquoteIdent guard was a provably empty if-block
+  (comment-only body) so its removal is behavior-free. Both retitled tests at :672/:699 accurately
+  describe their now-regex/NOT LIKE whitespace assertions (no TRIM remains). Both minors are advisory;
+  neither is caused by this diff.

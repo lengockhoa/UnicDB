@@ -129,3 +129,51 @@ Note: none — inferColumns(columns, rows, columnTypes?: Record<string, string>)
   from core/ddl/sampleData.ts groups); declared numeric sets alignRight even for null-only
   data; unknown types and omitted maps fall back to unchanged sampling. No webview/main.ts,
   messages.ts, or queryComposer.ts edits.
+
+---
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: bao-opus (config handoff.reviewer.model = unic-smart)
+EXECUTOR_MODEL: bao-sonnet (claude-code / feature-implementer) — differs, isolation OK
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/resultsGridModel.test.ts
+  result: 40 pass / 0 fail (exit 0)
+  command: npm run typecheck
+  result: exit 0
+TEST_PLAN_COVERAGE: all-followed (5/5 cases; 3 edge cases ≥ minTestsEdgeCase=2; RED_OUTPUT carries real
+  assertion diffs, not a bare claim)
+FINDINGS:
+  critical:
+    - none
+  important:
+    - file: src/ui/resultsGridModel.ts:95-123 — numeric/boolean families use EXACT token match
+      (`typeIs` = `names.includes(t)`, line 128-131) while the string family at :88 accepts a
+      `(...)` modifier suffix. The live PostgreSQL producer emits typmod'd type strings:
+      src/core/ddl/pgIntrospect.ts:42 `format_type(a.atttypid, a.atttypmod)` → `"numeric(10,2)"`,
+      `"decimal(5,2)"`. Verified by probe: `inferColumns(["c"],[[null]],{c:"numeric(10,2)"})` →
+      `kind:"string"`, no `alignRight`, whereas bare `"numeric"` → `number`+`alignRight`. That
+      breaks Acceptance Criterion 3 ("Null-only declared numeric columns right-align as numbers")
+      for the most common PG decimal/money declaration, and the path is live (TASK-007 wired it in
+      abde88b via extension.ts:109 listColumnTypes → adapter.listColumns). Correct behavior: apply
+      the same family-bounded suffix rule the string branch already uses (accept `name`, `name(...)`)
+      to the numeric and boolean lists, and pin it with a `numeric(10,2)` all-NULL test.
+    - file: src/ui/resultsGridModel.ts:99-123 — vocabulary is incomplete against the dialects that
+      feed it. `double` (MySQL information_schema.data_type, and present in sampleData.ts:84-90's
+      float group the comment cites), `tinyint`/`mediumint` (MySQL, src/adapters/mysql.ts:350), and
+      `tinyint`/`smallmoney` plus boolean `bit` (MSSQL `ty.name`, src/adapters/mssql.ts:341) all
+      return null → silent fallback to sampling. Failure mode is degradation, not corruption, but
+      the declared-type override simply does not fire for those columns.
+  minor:
+    - file: src/ui/resultsGridModel.ts:128-131 — `typeIs` docstring says "membership over a lowercase
+      Set" but the parameter is a `readonly string[]` used with `.includes`; it also reuses the name
+      of sampleData.ts:39 `typeIs` while implementing DIFFERENT (exact-only) semantics, which is the
+      drift trap that produced the finding above. Rename or restate the contract.
+    - file: src/ui/__tests__/resultsGridModel.test.ts:178-227 — no case exercises a type string
+      carrying a precision/typmod suffix, which is why the gap passed green.
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: String family IS a faithful verbatim copy of queryComposer.isStringColumnType (:104-110) with a
+  greppable citation, name-keyed design is documented and correct for this layer, no production
+  webview/protocol file was touched by this task, and the omitted-3rd-arg path is provably unchanged.
+  The single blocking defect is the numeric/boolean matcher's exact-match asymmetry vs. PG typmod output.

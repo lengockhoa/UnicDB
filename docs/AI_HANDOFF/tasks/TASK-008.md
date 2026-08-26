@@ -151,3 +151,41 @@ file touched — `git status --porcelain` shows only `src/ui/__tests__/webviewSe
 (plus this handoff doc update).
 
 ---
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: bao-opus (config handoff.reviewer.model = unic-smart → opus tier; differs from executor)
+EXECUTOR_MODEL: bao-sonnet
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run <file> && seeds 1-5 (--poolOptions.threads.singleThread --sequence.shuffle.tests) && npm run typecheck
+  result: compile exit 0; plain run 14 pass / 0 fail; seeds 1,2,3,4,5 each 14 pass / 0 fail; typecheck exit 0
+TEST_PLAN_COVERAGE: all-followed (5/5 — case 1 :728-763, case 2 :778-799, case 3 beforeEach :270-274 + mountStatement :233-254, case 4 five seeds re-run green, case 5 it.runIf/describe.runIf :258-259 intact)
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - src/ui/__tests__/webviewServerSort.test.ts:233-254 — mountStatement's park hop is correct
+      ONLY because every real mount uses exactly 2 columns while park uses 1; a future 1-column
+      case would silently skip the columnsChanged rebuild (webview/main.ts:1762,1945) and inherit
+      the prior case's defs/filters. Add an `expect(columns.length).toBeGreaterThan(1)` guard
+      inside mountStatement so the invariant fails loudly instead of degrading to a stale mount.
+    - src/ui/__tests__/webviewServerSort.test.ts:49-77,262-264 — no afterAll teardown: the single
+      evaluated bundle's anonymous window "message" listener and the grid survive the suite by
+      design (it is unremovable), but there is also no gridApi.destroy()/document reset. Harmless
+      today at one bundle eval; worth a one-line afterAll if a second describe block is ever added.
+    - src/ui/__tests__/webviewServerSort.test.ts:270-274 — the between-cases beforeEach settle
+      always burns a full SETTLE_QUIET_MS (200ms) even when the stream is already idle, and each
+      mountStatement burns another; that is most of the ~8.4s file runtime. Acceptable cost for
+      determinism, but note it before adding many more cases.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Independently confirmed zero production change (webview/main.ts absent from d0cd195 stat;
+grep for park/remount/testHook/resetForTest across src+webview returns nothing outside __tests__).
+Assertion-intent diff vs cee00ac shows only `expect(api).toBeTruthy()` moved into mountStatement
+and the case-18b legacy `legacy.received` collapsed to the shared collector — no assertion
+weakened; the two later TASK-007 cases (14 vs 12 tests) came from wave-2 commit abde88b, not this
+task. Mutation probe (orderBy "name ASC" → "MUTANT") failed loudly, proving assertions are live,
+and the file was restored byte-identical. Waits are genuinely bounded: vi.waitFor with
+SETTLE_TIMEOUT_MS=1500 and a named throw carrying the stream tail; no while/for/setInterval poll.

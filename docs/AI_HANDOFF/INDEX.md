@@ -10,14 +10,14 @@ buildFilterWhere reuse). 8 tasks, planned 3 waves.
 
 | Task | Title | Status | Executor | Reviewer |
 |------|-------|--------|----------|----------|
-| TASK-001 | Expose per-connection manual-commit mode | ready | none | - |
-| TASK-002 | Make MySQL multi-statement batches atomic | ready | none | - |
-| TASK-003 | Let declared server types override sampled grid inference | ready | none | - |
-| TASK-004 | Keyset paging and safe missing-PK projection | ready | none | - |
-| TASK-005 | Emulate NULLS FIRST/LAST on MySQL and MSSQL | ready | none | - |
-| TASK-006 | Scope DISTINCT values and surface dropdown limits/errors | pending_review | claude-code/bao-sonnet | - |
-| TASK-007 | Typed state dialect, declared-type wiring, and webview minors | ready | TASK-003, TASK-004 | - |
-| TASK-008 | Stabilize the webview server-sort bundle lifecycle | pending_review | claude-code/bao-sonnet | - |
+| TASK-001 | Expose per-connection manual-commit mode | approved_minor | claude-code/bao-sonnet | bao-opus |
+| TASK-002 | Make MySQL multi-statement batches atomic | approved_minor | claude-code/bao-sonnet | bao-opus |
+| TASK-003 | Let declared server types override sampled grid inference | changes_requested | claude-code/bao-sonnet | bao-opus |
+| TASK-004 | Keyset paging and safe missing-PK projection | changes_requested | none | bao-opus |
+| TASK-005 | Emulate NULLS FIRST/LAST on MySQL and MSSQL | approved_minor | none | bao-opus |
+| TASK-006 | Scope DISTINCT values and surface dropdown limits/errors | approved_minor | claude-code/bao-sonnet | bao-opus |
+| TASK-007 | Typed state dialect, declared-type wiring, and webview minors | changes_requested | TASK-003, TASK-004 | bao-opus |
+| TASK-008 | Stabilize the webview server-sort bundle lifecycle | approved_minor | claude-code/bao-sonnet | bao-opus |
 
 Graph: TASK-001 ∥ TASK-002 ∥ TASK-003 ∥ TASK-004 ∥ TASK-005 ∥ TASK-008; TASK-003 + TASK-004
 → TASK-007; TASK-004 + TASK-007 → TASK-006.
