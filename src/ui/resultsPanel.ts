@@ -1491,20 +1491,10 @@ export class ResultsPanel {
       pkTiebreakers,
       columnTypes,
     );
-    // TASK-006 (cycle Y) — record the requery's SOURCE state for later
-    // distinct requests on this statement. Shallow copy of the incoming
-    // filter model (the webview never mutates a posted model, and
-    // buildFilterWhere reads it without writing); `filters` may be undefined
-    // (bar-only requery). Only a LIVE-dialect requery records state — the
-    // no-dialect path inside composeRequerySql is the legacy composer whose
-    // semantics the distinct lane does not model. Cleared with render().
-    if (dialect) {
-      this.whereByStatement.set(index, {
-        barWhere: where,
-        filters: msg.filters ? { ...msg.filters } : {},
-        ...(columnTypes !== undefined ? { columnTypes } : {}),
-      });
-    }
+    // TASK-006 (cycle Y) — source state {barWhere, filters, columnTypes} is
+    // recorded AFTER the run succeeds and the stale-seq guard passes (below),
+    // so a failed or superseded requery never leaves a WHERE the next
+    // distinct request would re-run and fail again.
     // TASK-004 (cycle Y) — hidden columns appended by the widening lane:
     // keep their values positionally for the paging key but strip them from
     // the DISPLAYED result so visible columns stay exactly what the user
@@ -1575,6 +1565,21 @@ export class ResultsPanel {
       // drop this (stale) result entirely; it must not clobber the newer
       // entry (nor adopt its cursor into the runner).
       if (seq !== this.requerySeq) return;
+      // TASK-006 — only now (run succeeded + not superseded) record the
+      // requery's source state for later distinct requests. Shallow copy of
+      // the incoming filter model (the webview never mutates a posted model,
+      // and buildFilterWhere reads it without writing); `filters` may be
+      // undefined (bar-only requery). Only a LIVE-dialect requery records
+      // state — the no-dialect path inside composeRequerySql is the legacy
+      // composer whose semantics the distinct lane does not model. Cleared
+      // with render().
+      if (dialect) {
+        this.whereByStatement.set(index, {
+          barWhere: where,
+          filters: msg.filters ? { ...msg.filters } : {},
+          ...(columnTypes !== undefined ? { columnTypes } : {}),
+        });
+      }
       const next = this.lastResults.slice();
       // TASK-005 — `append:true` concatenates the fresh page onto the
       // existing rows instead of replacing (server-side "Load More"). The
