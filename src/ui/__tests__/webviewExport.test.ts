@@ -334,10 +334,9 @@ describeIfBundle("webview/main.ts export toolbar (TASK-502)", () => {
       expect(m.format).toBe("sql-where");
       expect(m.text).toContain("WHERE");
       // No PK columns on the test table → fallback to all-cols AND.
-      // Selected rows: id=1 alpha, id=3 gamma → "id=1 AND name='alpha'" OR
-      // "id=3 AND name='gamma'".
+      // P2-6: the exporter quotes every interpolated column identifier.
       expect(m.text).toBe(
-        "WHERE (id=1 AND name='alpha') OR (id=3 AND name='gamma')",
+        'WHERE ("id"=1 AND "name"=\'alpha\') OR ("id"=3 AND "name"=\'gamma\')',
       );
       void root;
     },

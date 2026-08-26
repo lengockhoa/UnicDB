@@ -133,11 +133,12 @@ describe("serializeSqlUpdates", () => {
       tableName: "users",
       pkColumns: ["id"],
     });
-    // R1 portable literals: newline is embedded raw.
+    // R1 portable literals: newline is embedded raw. P2-6: every
+    // interpolated column name is now double-quoted (portable SQL posture).
     expect(out).toBe(
-      "UPDATE users SET name='alpha', active=TRUE WHERE id=1;\n" +
-        "UPDATE users SET name='beta, \"q\"', active=FALSE WHERE id=2;\n" +
-        "UPDATE users SET name='line\nbreak', active=NULL WHERE id=3;",
+      'UPDATE users SET "name"=\'alpha\', "active"=TRUE WHERE "id"=1;\n' +
+        'UPDATE users SET "name"=\'beta, "q"\', "active"=FALSE WHERE "id"=2;\n' +
+        'UPDATE users SET "name"=\'line\nbreak\', "active"=NULL WHERE "id"=3;',
     );
   });
 
@@ -182,8 +183,10 @@ describe("serializeWhereClause", () => {
         [3, "line\nbreak", null],
       ],
     });
-    // R1 portable literals: newline embedded raw.
-    expect(out).toBe("WHERE (id=1 AND name='alpha') OR (id=3 AND name='line\nbreak')");
+    // R1 portable literals: newline embedded raw. P2-6: key columns quoted.
+    expect(out).toBe(
+      'WHERE ("id"=1 AND "name"=\'alpha\') OR ("id"=3 AND "name"=\'line\nbreak\')',
+    );
   });
 
   it("8b. no PK columns → fallback to all-columns joined AND (documented)", () => {
@@ -194,7 +197,9 @@ describe("serializeWhereClause", () => {
       pkColumns: [],
       selectedRows: [[1, "alpha", true]],
     });
-    expect(out).toBe("WHERE (id=1 AND name='alpha' AND active=TRUE)");
+    expect(out).toBe(
+      'WHERE ("id"=1 AND "name"=\'alpha\' AND "active"=TRUE)',
+    );
   });
 
   it("8c. no selection → uses all rows", () => {
@@ -205,7 +210,7 @@ describe("serializeWhereClause", () => {
       pkColumns: ["id"],
     });
     // No rows → empty string (caller decides whether to write "WHERE 1=0").
-    expect(out).toBe("WHERE (id=1) OR (id=2) OR (id=3)");
+    expect(out).toBe('WHERE ("id"=1) OR ("id"=2) OR ("id"=3)');
   });
 });
 
@@ -394,8 +399,8 @@ describe("serializeSqlUpdates — empty PK degrades safely (Fix R1, R2)", () => 
       tableName: "users",
       pkColumns: ["id"],
     });
-    expect(out).toContain("WHERE id=1");
-    expect(out).toContain("WHERE id=2");
+    expect(out).toContain('WHERE "id"=1');
+    expect(out).toContain('WHERE "id"=2');
   });
 });
 
@@ -735,9 +740,55 @@ describe("hiddenIndices positional", () => {
     );
     // SQL updates: SET/WHERE read the VISIBLE id (1), never the hidden 9.
     expect(serializeSqlUpdates(cols, rows, opts)).toBe(
-      "UPDATE t SET name='x' WHERE id=1;",
+      'UPDATE t SET "name"=\'x\' WHERE "id"=1;',
     );
     // SQL where: key term uses the visible id value.
-    expect(serializeWhereClause(cols, rows, opts)).toBe("WHERE (id=1)");
+    expect(serializeWhereClause(cols, rows, opts)).toBe('WHERE ("id"=1)');
+  });
+});
+
+describe("serialize SQL identifiers (TASK-004 P2-6)", () => {
+  it("8. reserved-word column names are quoted in UPDATE SET and WHERE", () => {
+    expect(
+      serializeSqlUpdates(["id", "order"], [[1, "x"]], {
+        ...NO_OPT,
+        tableName: "results",
+        pkColumns: ["id"],
+      }),
+    ).toBe('UPDATE results SET "order"=\'x\' WHERE "id"=1;');
+  });
+
+  it("9. spaced and quote-bearing names remain one escaped identifier", () => {
+    const columns = ["id", "First Name", 'a"b'];
+    const rows: unknown[][] = [[1, "Alice", "v"]];
+    expect(
+      serializeSqlUpdates(columns, rows, {
+        ...NO_OPT,
+        tableName: "results",
+        pkColumns: ["id"],
+      }),
+    ).toBe('UPDATE results SET "First Name"=\'Alice\', "a""b"=\'v\' WHERE "id"=1;');
+    expect(
+      serializeWhereClause(columns, rows, {
+        ...NO_OPT,
+        tableName: "results",
+        pkColumns: ["First Name", 'a"b'],
+      }),
+    ).toBe('WHERE ("First Name"=\'Alice\' AND "a""b"=\'v\')');
+  });
+
+  it("10. bare-column export keeps skip comments, table name, and terminator", () => {
+    const out = serializeSqlUpdates(["id", "order"], [[1, "x"]], {
+      ...NO_OPT,
+      tableName: "results",
+      pkColumns: [],
+    });
+    expect(out).toBe("-- row 1 skipped: no non-key columns to update");
+    expect(out.endsWith(";")).toBe(false);
+    expect(serializeSqlUpdates(["id", "name"], [[1, "x"]], {
+      ...NO_OPT,
+      tableName: "results",
+      pkColumns: ["id"],
+    })).toBe('UPDATE results SET "name"=\'x\' WHERE "id"=1;');
   });
 });

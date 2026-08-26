@@ -115,6 +115,14 @@ export class ResultsPanel {
   private busy: boolean = false;
   /** A session-pinned manual transaction owned by this panel. */
   private transaction: DbTransaction | null = null;
+  /** TASK-006 P1-4 — statement index whose save opened the manual window.
+   *  The host tracks no active tab, so this recorded index IS "the active
+   *  statement": the Commit/Rollback BUTTON paths requery exactly this
+   *  statement after the transaction closes (a broadcast refresh of every
+   *  lastResults entry was rejected — N extra queries on a pool.max=1
+   *  connection). Set when beginTransaction() opens the window, cleared
+   *  once consumed. */
+  private manualStatementIndex: number | null = null;
   /** Monotonic requery sequence. Each handleRequery increments it and
    *  captures the current value; a completion whose captured seq is stale
    *  (a newer requery already started) drops its result so an out-of-order
@@ -274,7 +282,9 @@ export class ResultsPanel {
     if (msg.type === "state") {
       payload = {
         ...msg,
-        results: msg.results.map((r) => sanitizeStatementResult(this.withBrowseLabel(r))),
+        results: msg.results.map((r) =>
+          sanitizeStatementResult(this.withBrowseLabel(r)) as unknown as StatementResult,
+        ),
       };
     }
     // Catch rejection (BigInt slip-through, internal errors) — surface to user.
@@ -308,8 +318,14 @@ export class ResultsPanel {
     this.postMessage({ type: "transactionStatus", open: this.transaction !== null });
   }
 
-  /** Roll back the active manual transaction, including during panel teardown. */
-  private async rollbackOpenTransaction(): Promise<void> {
+  /** Roll back the active manual transaction, including during panel teardown.
+   *  TASK-006 P1-4 — `fromMessage: true` (the webview's Rollback BUTTON)
+   *  also requeries the manual window's statement; the two teardown callers
+   *  (`onDidDispose`, `dispose`) must NOT issue further queries — the
+   *  connection may already be tearing down and no UI remains to update. */
+  private async rollbackOpenTransaction(options?: {
+    fromMessage?: boolean;
+  }): Promise<void> {
     const transaction = this.transaction;
     if (!transaction) return;
     // Clear first so every error and teardown path has an honest local state.
@@ -320,6 +336,62 @@ export class ResultsPanel {
       // The connection may already have been closed by its owner.
     } finally {
       this.postTransactionStatus();
+      if (options?.fromMessage) {
+        // P1-4 — after the rollback lands, the grid still shows the
+        // uncommitted values; requery the manual window's statement.
+        await this.refreshManualStatement();
+      }
+    }
+  }
+
+  /** TASK-006 P1-4 — requery the manual window's statement after the
+   *  transaction closed (Commit/Rollback BUTTON paths only — never the
+   *  teardown rollback). The webview has no hook for button clicks (unlike
+   *  saveResult.ok → auto-requery), so without this the grid keeps showing
+   *  rolled-back rows. Mirrors the non-manual save refresh: runSql(r.sql)
+   *  → pickResult → new StatementResult → lastResults swap → adopt → one
+   *  `state` post. Transaction is already closed, so the plain runner path
+   *  is correct (no pinned session to route through). Best-effort: a failed
+   *  refresh is surfaced as a host notification, never rethrows. */
+  private async refreshManualStatement(): Promise<void> {
+    const index = this.manualStatementIndex;
+    this.manualStatementIndex = null;
+    if (index === null) return;
+    const r = this.lastResults[index];
+    if (!r || !r.result) return;
+    const start = Date.now();
+    try {
+      // Close the statement's cursor first (P1-1/P1-5 ordering): the requery
+      // SELECT itself opens a cursor on the same max=1 pool.
+      await this.closeStatementCursor(r);
+      const refreshed = await this.runner.runSql(r.sql);
+      const freshResult = await pickResult(refreshed);
+      if (!freshResult) return;
+      const newStmt: StatementResult = {
+        ...r,
+        result: freshResult,
+        batched: refreshed.batched,
+        durationMs: Date.now() - start,
+      };
+      const next = this.lastResults.slice();
+      next[index] = newStmt;
+      this.lastResults = next;
+      try {
+        this.runner.adopt(r.index, newStmt);
+      } catch {
+        // adopt is best-effort; loadMore path failure is non-fatal here.
+      }
+      this.postMessage({
+        type: "state",
+        header: this.header,
+        results: next,
+        busy: this.busy,
+      });
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      void vscode.window.showErrorMessage(
+        `VSDB: refreshing after transaction close failed: ${m}`,
+      );
     }
   }
 
@@ -331,6 +403,9 @@ export class ResultsPanel {
       await transaction.commit();
       this.transaction = null;
       this.postTransactionStatus();
+      // P1-4 — button-path refresh: the webview has no auto-requery hook
+      // for a manual COMMIT click, so the grid would stay stale.
+      await this.refreshManualStatement();
     } catch (err) {
       // A failed COMMIT must not leave an ambiguous manual window open.
       this.transaction = null;
@@ -422,7 +497,7 @@ export class ResultsPanel {
         await this.handleCommitTransaction();
         break;
       case "rollbackTransaction":
-        await this.rollbackOpenTransaction();
+        await this.rollbackOpenTransaction({ fromMessage: true });
         break;
       case "ready":
         // Send initial state khi webview ready.
@@ -553,6 +628,16 @@ export class ResultsPanel {
       return;
     }
     const tableName = parsed.table;
+    // TASK-006 P1-1 — close the statement's browse cursor BEFORE the first
+    // metadata/ctid await. `saveContext.listPkColumns` (right below),
+    // `fetchPostgresCtids`, and `listColumnTypes` all go through the same
+    // pooled client; on Postgres/MySQL (pool max=1) the live cursor holds
+    // that only client, so an aux SELECT would wait on pool.connect() until
+    // the connection timeout. Idempotent with the later manual-branch close
+    // and the refresh path's displaced-cursor close (P1-5). The audit's
+    // rejected alternative — a `runSql(sql, { noCursor: true })` protocol
+    // option — would change QueryRunner + all three adapters (out of scope).
+    await this.closeStatementCursor(r);
     const pkColumns =
       edits.length === 0
         ? []
@@ -709,6 +794,7 @@ export class ResultsPanel {
         if (!this.transaction) {
           await this.closeStatementCursor(r);
           this.transaction = await this.runner.beginTransaction();
+          this.manualStatementIndex = index;
         }
         try {
           await this.transaction.runQuery(built.statements.join(";\n") + ";");
@@ -767,6 +853,14 @@ export class ResultsPanel {
       // shapes; `.results[0]` is always undefined for the batched case (A4).
       let newStmt: StatementResult | undefined;
       if (!manualCommit) {
+        // TASK-006 P1-5 — close the pre-save cursor before the refresh
+        // SELECT. `r.sql` is the original browse SELECT; routed to a cursor
+        // (postgres single-SELECT), a second pool.connect() on max=1 would
+        // stall behind the still-open `r.batched`. Mirrors the manual branch
+        // (close before beginTransaction) and handleRequery (:1085). Double
+        // close is idempotent (postgres.ts) and `adopt()` below also closes
+        // the displaced cursor best-effort.
+        await this.closeStatementCursor(r);
         const refreshed = await this.runner.runSql(r.sql);
         const freshResult = await pickResult(refreshed);
         if (freshResult) {
@@ -1482,17 +1576,29 @@ export class ResultsPanel {
  *
  * IMPORTANT #5 (fix round 1): without this, webview.postMessage THROWS on
  * BigInt (DataCloneError) and the panel stops updating silently.
+ *
+ * TASK-006 P3-3 — `batched` is normalized to `!!r.batched`. The host-side
+ * `StatementResult.batched` is the live BatchedQuery cursor handle
+ * (fetchBatch/close/cancel functions); the webview-facing wire type declares
+ * `batched?: boolean`. Spreading `...r` shipped the whole handle, which
+ * structured clone cannot carry (functions) — at best the webview received
+ * junk, at worst the post rejected and the panel stopped updating. The
+ * early-return branch (`!r.result`) must normalize too: extension.ts posts
+ * `runner.getResults()` — real handles — through this function.
  */
 export function sanitizeStatementResult(r: StatementResult): StatementResult {
-  if (!r.result) return r;
+  if (!r.result) {
+    return { ...r, batched: !!r.batched } as unknown as StatementResult;
+  }
   const result = r.result;
   return {
     ...r,
+    batched: !!r.batched,
     result: {
       ...result,
       rows: result.rows.map((row) => sanitizeRow(row)),
     },
-  };
+  } as unknown as StatementResult;
 }
 
 function sanitizeRow(row: any[]): any[] {

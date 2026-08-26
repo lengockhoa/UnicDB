@@ -7,6 +7,7 @@
 // list is complete. Pure module: imports only `quoteIdent` / `Dialect` from
 // ../core/saveStatements — no vscode, no pg/mysql2/tedious, no DOM — so it
 // stays importable from any context TASK-004 wires it into.
+import { stripTrailingSemicolon } from "../core/text";
 import { quoteIdent, type Dialect } from "../core/saveStatements";
 
 /** Default cap on how many distinct values the dropdown fetches. Fetching
@@ -15,19 +16,6 @@ import { quoteIdent, type Dialect } from "../core/saveStatements";
  *  cap, so the webview can keep its loaded-rows fallback entries visible
  *  instead of silently pretending the list was exhaustive. */
 export const DISTINCT_VALUES_LIMIT = 1000;
-
-/** Strip a single trailing `;` (and surrounding whitespace) so wrapping the
- *  statement in a subquery never nests a stray terminator.
- *  NOTE: local copy of the unexported `stripTrailingSemicolon` in
- *  src/ui/queryComposer.ts:136 — TASK-001 owns that file this wave, so the
- *  hoist into a shared module is a queued follow-up, not done here. */
-function stripTrailingSemicolon(sql: string): string {
-  const m = /^(.*?)(\s*;?\s*)$/s.exec(sql);
-  if (!m) return sql;
-  const body = m[1] ?? "";
-  if (body.trim().length === 0) return sql.trim();
-  return body.trimEnd();
-}
 
 /**
  * Compose the DISTINCT-values query for a set-filter dropdown.

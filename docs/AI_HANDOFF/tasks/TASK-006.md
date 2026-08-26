@@ -96,4 +96,30 @@ Reconciliation gate decisions applied verbatim.
 4. **P1-4 teardown guard.** `rollbackOpenTransaction()` has three callers — `:175`/`:240` (dispose paths) and `:425` (webview message). Only the message path may refresh; case 5 locks this in.
 5. **Live-DB caveat.** The audit marks the exact deadlock timing for P1-1/P1-5 as *needs live DB verification*. The **ordering** defect is direct code evidence and is fully unit-testable, which is what the test cases assert; no test here requires a live database.
 
+### 2026-08-26 · executor · claude-code/bao-sonnet
+1. **P1-5 test-log adaptation.** The task table's idealized call log `[`batched.close`, `runSql:SELECT * FROM t`]` cannot occur literally in this implementation because the automatic save's required combined `BEGIN…COMMIT` envelope is itself a `runSql` call between cursor close and refresh. The regression test therefore asserts the load-bearing contract: `batched.close` precedes the refresh call, the refresh receives exactly `r.sql`, and the only two calls are the save envelope plus refresh.
+2. **P3-3 regression assertions.** Four existing `resultsPanelRequery.test.ts` assertions expected the internal `BatchedQuery` object in a posted state. They were updated only to assert the new boolean wire contract (`true` for a cursor, `false` when absent), as permitted by the task's §Acceptance Criteria.
+3. **P1-4 implementation.** The recorded manual statement index is cleared when button refresh is consumed; teardown rollback remains query-free, while the webview Rollback message path refreshes after rollback completes.
+
 ---
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  Target RED: `Test Files 3 failed (3); Tests 6 failed | 50 passed (56)`.
+  - `resultsPanel.test.ts:517`: `expected undefined to be true` for result-less `batched` normalization.
+  - `resultsPanelSaveEdits.test.ts:1940`: expected `batched.close` before refresh, but received save-envelope `runSql` then refresh `runSql`.
+  - `resultsPanelSaveEdits.test.ts:1993`: expected cursor close before metadata/ctid probe, but close index was `-1`.
+  - `manualCommit.test.ts`: rollback and commit refresh cases timed out waiting for the expected state post.
+Verification Output: |
+  `npx vitest run src/ui/__tests__/resultsPanelSaveEdits.test.ts src/ui/__tests__/manualCommit.test.ts src/ui/__tests__/resultsPanel.test.ts`
+  Test Files 3 passed (3); Tests 56 passed (56); exit 0.
+  `npx vitest run src/ui/__tests__/resultsPanelRequery.test.ts src/ui/__tests__/resultsPanelRetry.test.ts src/ui/__tests__/resultsPanelDistinctValues.test.ts`
+  Test Files 3 passed (3); Tests 28 passed (28); exit 0.
+  `npm run typecheck`
+  `tsc --noEmit`; exit 0.
+  `git diff --check`; exit 0.
+Status: PASS
+Note: Updated four stale requery assertions that expected the old live cursor object on the webview wire; no production files outside the owned host file and no prohibited files were modified.

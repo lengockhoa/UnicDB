@@ -433,15 +433,16 @@ describe("buildPagedQueryTerms (TASK-001)", () => {
 });
 
 describe("buildFilterWhere — columnTypes (TASK-001)", () => {
-  // Case 14 — edge (type safety): string-typed column gets = '' arm
-  it("a string-typed column gets the empty-string arm", () => {
+  // Case 14 — edge (type safety): string-typed column gets the TRIM arm
+  // (TASK-004: the empty-string arm now also matches whitespace-only cells).
+  it("a string-typed column gets the TRIM empty-string arm", () => {
     expect(
       buildFilterWhere(
         { n: { values: ["(Blanks)", "a"] } },
         "postgres",
         { columnTypes: { n: "varchar" } },
       ),
-    ).toBe(`("n" IS NULL OR "n" = '' OR "n" IN ('a'))`);
+    ).toBe(`("n" IS NULL OR TRIM("n") = '' OR "n" IN ('a'))`);
   });
 
   // Case 15 — regression (back-compat): no options ⇒ today's output
@@ -497,7 +498,7 @@ describe("buildFilterWhere — columnTypes (TASK-001)", () => {
           "postgres",
           { columnTypes: { c: t } },
         ),
-      ).toBe(`("c" IS NULL OR "c" = '')`);
+      ).toBe(`("c" IS NULL OR TRIM("c") = '')`);
     }
     // false-positive probes stay NULL-only
     for (const t of ["context_id", "textbook_code"]) {
@@ -550,7 +551,7 @@ describe("isStringColumnType false positives (fix round 1)", () => {
       ).toBe(`"c" IS NULL`);
     }
   });
-  it("known string families still get the = '' arm", () => {
+  it("known string families still get the TRIM = '' arm", () => {
     for (const t of ["char", "character varying(30)", "varchar(255)", "set('x,y')"]) {
       expect(
         buildFilterWhere(
@@ -558,7 +559,78 @@ describe("isStringColumnType false positives (fix round 1)", () => {
           "postgres",
           { columnTypes: { c: t } },
         ),
-      ).toBe(`("c" IS NULL OR "c" = '')`);
+      ).toBe(`("c" IS NULL OR TRIM("c") = '')`);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TASK-004 — whitespace (Blanks): type safety, per-dialect TRIM SQL, and the
+// single shared stripTrailingSemicolon source contract.
+// ---------------------------------------------------------------------------
+
+describe("buildFilterWhere — whitespace blanks (TASK-004)", () => {
+  // Case 2 — edge (type safety): non-string columns stay NULL-only.
+  it("non-string columns stay NULL-only: no TRIM() is ever emitted", () => {
+    for (const t of ["int4", "numeric", "timestamptz", "bool", "date"]) {
+      expect(
+        buildFilterWhere(
+          { num: { values: ["(Blanks)"] } },
+          "postgres",
+          { columnTypes: { num: t } },
+        ),
+      ).toBe(`"num" IS NULL`);
+    }
+    // unknown type ⇒ NULL-only too
+    expect(
+      buildFilterWhere({ n: { values: ["(Blanks)"] } }, "postgres", {
+        columnTypes: { n: "mystery_type" },
+      }),
+    ).toBe(`"n" IS NULL`);
+    const sql = buildFilterWhere(
+      { n: { values: ["(Blanks)"] } },
+      "postgres",
+      { columnTypes: { n: "int4" } },
+    );
+    expect(sql).not.toContain("TRIM(");
+  });
+
+  // Case 3 — edge (dialect/escaping): string blanks SQL quotes safely per
+  // dialect; the embedded delimiter stays escaped inside TRIM; a normal
+  // selected value remains in the IN list.
+  it("string-column blanks emit IS NULL OR TRIM(col) = '' per dialect", () => {
+    const filters = { n: { values: ["(Blanks)", "a"] } };
+    expect(
+      buildFilterWhere(filters, "postgres", { columnTypes: { n: "varchar" } }),
+    ).toBe(`("n" IS NULL OR TRIM("n") = '' OR "n" IN ('a'))`);
+    expect(
+      buildFilterWhere(filters, "mysql", { columnTypes: { n: "varchar" } }),
+    ).toBe("(`n` IS NULL OR TRIM(`n`) = '' OR `n` IN ('a'))");
+    expect(
+      buildFilterWhere(filters, "mssql", { columnTypes: { n: "varchar" } }),
+    ).toBe("([n] IS NULL OR TRIM([n]) = '' OR [n] IN ('a'))");
+  });
+
+  it("embedded delimiter stays escaped inside TRIM()", () => {
+    expect(
+      buildFilterWhere(
+        { 'a"b': { values: ["(Blanks)"] } },
+        "postgres",
+        { columnTypes: { 'a"b': "varchar" } },
+      ),
+    ).toBe(`("a""b" IS NULL OR TRIM("a""b") = '')`);
+  });
+});
+
+describe("shared stripTrailingSemicolon (TASK-004 case 5)", () => {
+  it("queryComposer imports the shared helper and declares no local copy", () => {
+    const source = readFileSync(
+      new URL("../queryComposer.ts", import.meta.url),
+      "utf8",
+    );
+    expect(source).toMatch(
+      /import\s*\{[^}]*stripTrailingSemicolon[^}]*\}\s*from\s*"\.\.\/core\/text"/,
+    );
+    expect(source).not.toMatch(/function\s+stripTrailingSemicolon\s*\(/);
   });
 });

@@ -82,6 +82,76 @@ Both dependencies are already complete, so this task is schedulable in Wave 2 al
 
 ---
 
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonet
+EXECUTOR_SUBAGENT: feature-implementer
+
+### RED (pre-fix, actual output)
+
+```
+ FAIL  src/adapters/__tests__/saveStatements.test.ts > buildSaveStatements — NULL PK in server row (TASK-008 S1) > NULL PK on UPDATE skips the row and emits nothing
+ FAIL  src/adapters/__tests__/saveStatements.test.ts > buildSaveStatements — NULL PK in server row (TASK-008 S1) > partial batch: only the NULL-PK row is skipped; the good row still emits
+ FAIL  src/adapters/__tests__/saveStatements.test.ts > buildSaveStatements — NULL PK in server row (TASK-008 S1) > composite PK with one NULL component is skipped whole; reason names the NULL component
+ FAIL  src/adapters/__tests__/saveStatements.test.ts > buildSaveStatements — NULL PK in server row (TASK-008 S1) > NULL PK on DELETE is skipped too (both builders, not just UPDATE)
+ FAIL  src/core/__tests__/queryRunner.test.ts > QueryRunner — batched initial-fetch failure surfaces (TASK-008 P2-2) > pickResult() — initial fetchBatch rejection propagates (not swallowed into empty rows)
+ FAIL  src/core/__tests__/queryRunner.test.ts > QueryRunner — batched initial-fetch failure surfaces (TASK-008 P2-2) > run() — a failing first fetch marks the statement error, not done-with-empty-rows
+      Tests  6 failed | 49 passed (55)
+```
+
+Representative failure detail (P2-2 case 6): `AssertionError: promise resolved "{ columns: [ 'n' ], rows: [], rowCount: null }" instead of rejecting`. Representative S1 detail (case 1): `expected 1 to be 0` — one `UPDATE "t" SET "v"='x' WHERE "id"=NULL` was emitted. Cases 5 (falsy-but-present PK) and 8 (EOF-`null` still success) passed pre-fix, as they pin behavior the fix must not disturb.
+
+### Implementation
+
+- `src/core/saveStatements.ts` — S1: both PK `WHERE` builders (UPDATE ~:651, DELETE ~:512) gained the same guard after the col-index lookup: `if (pkVal === null || pkVal === undefined)` → `whereOk = false`, `breakReason = "…skipped: pk column NULL in server row (\"<pk>\")"`, `warnings.push(breakReason)`, `break`; the existing `!whereOk` arms push the `skippedRows` entry and emit nothing. Strictly null/undefined — `0`, `""`, `false` still address rows.
+- `src/core/queryRunner.ts` — P2-2: `pickResult`'s batched branch no longer swallows the initial `fetchBatch` error. The `try/catch { /* ignore */ }` and the mutable `initialRows` are gone; `const first = await runResult.batched.fetchBatch()` rejects straight through to `executeAll`'s catch (`status:"error"` + `error`) and hence `handleRequery`'s error branch. EOF (`null`) still resolves `{ rows: [], rowCount: null }`. Signature and the batched `rowCount: null` contract unchanged.
+
+### Assertion change (per §Acceptance Criteria)
+
+`src/core/__tests__/queryRunner.test.ts` Test #4 (cancel-path, formerly :228-231): the stale comment/assertion `expect(["cancelled","done"]).toContain(result[0].status)` documented the old swallow. The mock resolves `fetchBatch(null)` (EOF, not an error), so with the fix pickResult resolves normally and `executeAll`'s post-fetch `cancelRequested` check decides — deterministically `"cancelled"`. The assertion was tightened to `expect(result[0].status).toBe("cancelled")`, not loosened. No other existing assertion changed.
+
+### Verification Output (tails, all fresh post-fix)
+
+Command 1 — target suites:
+```
+ ✓ src/adapters/__tests__/saveStatements.test.ts  (37 tests) 12ms
+ ✓ src/core/__tests__/queryRunner.test.ts  (18 tests) 120ms
+ Test Files  2 passed (2)
+      Tests  55 passed (55)
+```
+
+Command 2 — regression lane:
+```
+ ✓ src/adapters/__tests__/saveStatementsInline.test.ts  (8 tests)
+ ✓ src/adapters/__tests__/saveStatementsQualify.test.ts  (16 tests)
+ ✓ src/adapters/__tests__/saveStatementsParser.test.ts  (14 tests)
+ ✓ src/ui/__tests__/resultsPanelRequery.test.ts  (11 tests)
+ ✓ src/ui/__tests__/resultsPanelDistinctValues.test.ts  (14 tests)
+ ✓ src/ui/__tests__/resultsPanelSaveEdits.test.ts  (25 tests)
+ Test Files  6 passed (6)
+      Tests  88 passed (88)
+```
+
+Command 3 — `npm run typecheck`:
+```
+> vsdb@1.6.6 typecheck
+> tsc --noEmit
+EXIT=0
+```
+
+### Files changed
+- `src/core/saveStatements.ts` — S1 NULL-PK guard in both WHERE builders
+- `src/core/queryRunner.ts` — P2-2 rethrow of initial batched fetch error
+- `src/adapters/__tests__/saveStatements.test.ts` — cases 1–5 (new describe block)
+- `src/core/__tests__/queryRunner.test.ts` — cases 6–8 + tightened cancel-path assertion
+
+`git status` confirms exactly these four files modified; no `src/ui/*`, `webview/*`, or production adapter file touched. No git add/commit/push run.
+
+Status: PASS
+Note: none
+
+---
+
 ## Discussion
 
 ### 2026-08-26 · planner · bao-opus

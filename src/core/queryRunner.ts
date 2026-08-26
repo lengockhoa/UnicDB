@@ -418,20 +418,21 @@ export class QueryRunner {
  *   trả về QueryResult cuối cùng (hoặc cái đầu tiên có rows).
  *
  * Trả về QueryResult với rowCount = null cho batched (chưa biết tổng).
- * Nếu fetch initial thất bại → result.rows = [] + error được set bởi caller (try/catch).
+ * Nếu fetch initial thất bại → REJECT (TASK-008 P2-2): lỗi cursor phải đến
+ * được error handling của caller (`executeAll` catch → status:"error",
+ * `handleRequery` error branch), KHÔNG phải thành một grid rỗng giả.
  */
 export async function pickResult(runResult: RunResult): Promise<QueryResult> {
   // Batched case (Postgres cursor): adapter returns { results: [], batched }.
-  // Caller (QueryRunner.executeAll) catches errors; here we always assume batched is valid.
+  // TASK-008 P2-2 (cycle-x-audit-grid-ui): the initial fetchBatch is no longer
+  // swallowed. A `catch { /* ignore */ }` here returned `rows: []` — a dead
+  // cursor was indistinguishable from an empty table and the requery rendered
+  // a false empty grid. An EOF (`null`) first batch is NOT an error: it still
+  // resolves to the empty successful result below with rowCount=null.
   if (runResult.batched) {
     const cols = runResult.batched.columns;
-    let initialRows: any[][] = [];
-    try {
-      const first = await runResult.batched.fetchBatch();
-      if (first) initialRows = first;
-    } catch {
-      // ignore — caller will set error status if it bubbles up.
-    }
+    const first = await runResult.batched.fetchBatch();
+    const initialRows: any[][] = first ?? [];
     return {
       columns: cols,
       rows: initialRows,

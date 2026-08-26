@@ -6,6 +6,16 @@
 // on the high surrogate of a pair we cannot finish.
 const ELLIPSIS = "…"; // U+2026, single code unit, never breaks a pair
 
+/** Strip one trailing semicolon and surrounding whitespace from SQL.
+ * Interior semicolons, including those inside string literals, are preserved. */
+export function stripTrailingSemicolon(sql: string): string {
+  const m = /^(.*?)(\s*;?\s*)$/s.exec(sql);
+  if (!m) return sql;
+  const body = m[1] ?? "";
+  if (body.trim().length === 0) return "";
+  return body.trimEnd();
+}
+
 export function truncateAtBoundary(s: string, cap: number): string {
   if (cap <= 0) return s.length === 0 ? "" : ELLIPSIS;
   if (s.length <= cap) return s;

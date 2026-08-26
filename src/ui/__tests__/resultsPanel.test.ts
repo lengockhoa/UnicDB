@@ -457,6 +457,77 @@ describe("ResultsPanel — handleMessage loadMore (TASK-204)", () => {
   });
 });
 
+// ---- TASK-006 (cycle X) — P3-3: sanitizeStatementResult must emit a
+// boolean `batched` on the wire (the webview-facing type declares
+// `batched?: boolean`); the live BatchedQuery handle (functions inside)
+// must never reach postMessage's structured clone.
+describe("ResultsPanel — sanitizeStatementResult batched wire shape (TASK-006 P3-3)", () => {
+  function functionBearingBatched() {
+    return {
+      columns: ["id"],
+      fetchBatch: async () => [[1]],
+      cancel: async () => undefined,
+      close: async () => undefined,
+    };
+  }
+
+  it("state post carries boolean batched, never the live cursor handle", () => {
+    const runner = makeRunnerStub();
+    const panel = new ResultsPanel({ runner });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT * FROM t",
+          status: "done",
+          result: { columns: ["id"], rows: [[1]], rowCount: 1, durationMs: 0 },
+          batched: functionBearingBatched(),
+          durationMs: 0,
+        },
+      ],
+      "Run at T — postgres@h/db",
+    );
+    const fake = lastPanel.current!;
+    const stateMsg = fake.webview.postMessage.mock.calls[0][0] as {
+      results: Array<Record<string, unknown>>;
+    };
+    const posted = stateMsg.results[0];
+    // RED today: the spread ships the whole handle object.
+    expect(posted.batched).toBe(true);
+    expect(typeof posted.batched).toBe("boolean");
+    // No function-valued property survives anywhere on the statement entry.
+    const hasFunction = (value: unknown, depth = 0): boolean => {
+      if (depth > 4 || value === null || typeof value !== "object") return false;
+      return Object.values(value).some(
+        (v) => typeof v === "function" || hasFunction(v, depth + 1),
+      );
+    };
+    expect(hasFunction(posted)).toBe(false);
+  });
+
+  it("result-less statement is still normalized (early-return branch)", () => {
+    const withHandle = sanitizeStatementResult({
+      index: 0,
+      sql: "SELECT 1",
+      status: "done",
+      result: undefined,
+      batched: functionBearingBatched(),
+      durationMs: 0,
+    });
+    expect(withHandle.batched).toBe(true);
+    expect(withHandle.result).toBeUndefined();
+
+    const withoutBatched = sanitizeStatementResult({
+      index: 0,
+      sql: "SELECT 1",
+      status: "done",
+      result: undefined,
+      durationMs: 0,
+    });
+    expect(withoutBatched.batched).toBe(false);
+  });
+});
+
 describe("ResultsPanel — header (A14)", () => {
   it('render(results, "Browse x at T") → the render post AND every later post (e.g. "ready") carry that header, not blank', async () => {
     const runner = makeRunnerStub();

@@ -23,7 +23,7 @@
 import type { GridApi } from "ag-grid-community";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 // ---- minimal DOM stubs for AG Grid browser APIs ---------------------------
 type ResizeObserverLike = {
@@ -73,6 +73,15 @@ beforeAll(() => {
 });
 
 // ---- bundle loading --------------------------------------------------------
+// TASK-003: ONE bundle evaluation per suite (beforeAll), not once per `it`.
+// The anonymous `window.addEventListener("message", ...)` the bundle installs
+// can never be removed by the test; the OLD per-test loadBundle() therefore
+// installed one listener per `it`, and every subsequent dispatch ran ALL of
+// them — the 6th test raced 5 stale handler closures that each called
+// render() → renderGrid() on THEIR OWN grid state, so the value-viewer
+// assertion became order/timing dependent (passed isolated, flaked under the
+// full suite). Evaluating once and REUSING the single grid lifecycle via the
+// existing message protocol removes the stale-handler race at the root.
 
 const distPath = resolve(process.cwd(), "dist", "webview.js");
 const bundleSrc = existsSync(distPath) ? readFileSync(distPath, "utf8") : null;
@@ -84,18 +93,14 @@ interface VsdbApi {
   postMessage: (msg: unknown) => void;
 }
 
-function loadBundle(): {
+/** Evaluate the bundle exactly once per suite into the shared document. The
+ *  returned handles are re-used by every case; per-case state is reset
+ *  through the existing message protocol, not by re-evaluating. */
+function evaluateBundleOnce(): {
   received: Array<Record<string, unknown>>;
   root: HTMLDivElement;
 } {
-  if (!bundleSrc) {
-    throw new Error(
-      "dist/webview.js missing — run `npm run compile` before this test",
-    );
-  }
-
   document.body.innerHTML = '<div id="vsdb-root" class="vsdb-webview"></div>';
-  const root = document.getElementById("vsdb-root") as HTMLDivElement;
 
   const received: Array<Record<string, unknown>> = [];
   const api: VsdbApi = {
@@ -108,11 +113,84 @@ function loadBundle(): {
 
   (0, eval)(bundleSrc);
 
+  const root = document.getElementById("vsdb-root") as HTMLDivElement;
   return { received, root };
 }
 
 function dispatchState(msg: Record<string, unknown>): void {
   window.dispatchEvent(new MessageEvent("message", { data: msg }));
+}
+
+/** Reset the single shared grid lifecycle to a known-empty terminal state
+ *  through the SAME message path the host uses (no production test hook):
+ *  dispatch a running state, then the terminal state for the empty result,
+ *  then flush AG Grid's animation queue. Re-created cells (like the cells
+ *  re-created after a columnDefs swap in the read-only viewer case) may not
+ *  be fully mounted synchronously, so this also yields to the grid's async
+ *  row/gui queue via a bounded wait. */
+async function resetGrid(
+  root: HTMLDivElement,
+  received: Array<Record<string, unknown>>,
+): Promise<void> {
+  // Clear the prior case through existing APIs/interactions before sending a
+  // fresh host state. This stops an editor and exercises the real Escape close
+  // path rather than reaching into production-only state.
+  getGridApi()?.stopEditing(true);
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+  received.length = 0;
+  // Leave the grid tab first. This is the existing UI lifecycle boundary that
+  // removes all old cell GUIs while retaining the persistent grid host.
+  dispatchState(selectState({ results: [] }));
+  const currentApi = getGridApi();
+  currentApi?.stopEditing(true);
+  currentApi?.setGridOption("rowData", []);
+  currentApi?.flushAllAnimationFrames();
+  await waitForGrid(() => {
+    expect(root.querySelector(".vsdb-empty")).toBeTruthy();
+    expect(root.querySelectorAll(".ag-cell")).toHaveLength(0);
+    if (getGridApi()) expect(getGridApi()!.getEditingCells()).toHaveLength(0);
+  });
+
+  const resetResult = {
+    index: 0,
+    sql: "SELECT reset",
+    result: {
+      columns: ["reset"],
+      rows: [[0]],
+      rowCount: 1,
+      durationMs: 0,
+    },
+    durationMs: 0,
+  };
+  // Running → terminal is the existing render lifecycle's statement-reset
+  // transition. It swaps rowData without re-evaluating the bundle and is an
+  // observable boundary for discarding the prior case's cells.
+  dispatchState(
+    selectState({ results: [{ ...resetResult, status: "running" }] }),
+  );
+  dispatchState(selectState({ results: [{ ...resetResult, status: "done" }] }));
+  const api = getGridApi();
+  if (api) api.flushAllAnimationFrames();
+  // The reset column/cell is the observable boundary for the shared grid
+  // lifecycle. It also proves that any previous editor has been stopped.
+  await waitForGrid(() => {
+    expect(root.querySelector(".vsdb-value-viewer")).toBeNull();
+    expect(getGridApi()).toBeTruthy();
+    expect(root.querySelector('.ag-cell[col-id="reset"]')).toBeTruthy();
+    expect(getGridApi()!.getEditingCells()).toHaveLength(0);
+  });
+}
+
+/** Bounded observable wait (no fixed 50 ms sleeps): polls the assertion every
+ *  animation frame until it passes or the budget is exhausted. */
+async function waitForGrid(
+  assert: () => void,
+  timeoutMs = 250,
+): Promise<void> {
+  await vi.waitFor(assert, {
+    timeout: timeoutMs,
+    interval: 16,
+  });
 }
 
 function selectState(args: {
@@ -141,16 +219,24 @@ function doubleClickCell(root: HTMLElement, colId: string): void {
   );
 }
 
-const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
-
 const itIfBundle = it.runIf(bundleSrc !== null);
 const describeIfBundle = describe.runIf(bundleSrc !== null);
 
 // ---- tests ----------------------------------------------------------------
 
 describeIfBundle("TASK-004 — NULL cell display + value viewer", () => {
+  let received: Array<Record<string, unknown>>;
+  let root: HTMLDivElement;
+
+  beforeAll(() => {
+    ({ received, root } = evaluateBundleOnce());
+  });
+
+  beforeEach(async () => {
+    await resetGrid(root, received);
+  });
+
   itIfBundle("1. null value renders \"(NULL)\" in an italic .vsdb-null span", async () => {
-    const { received, root } = loadBundle();
     dispatchState(
       selectState({
         results: [
@@ -172,10 +258,10 @@ describeIfBundle("TASK-004 — NULL cell display + value viewer", () => {
         ],
       }),
     );
-    void received;
-    // Custom cellRenderer GUI attaches on the next animation frame (unlike
-    // the default formatter text path, which is synchronous) — tick once.
-    await tick();
+    getGridApi()?.flushAllAnimationFrames();
+    await waitForGrid(() =>
+      expect(root.querySelectorAll(".vsdb-null").length).toBe(1),
+    );
 
     // Exactly the null cell carries the placeholder span.
     const nullSpans = root.querySelectorAll(".vsdb-null");
@@ -192,7 +278,6 @@ describeIfBundle("TASK-004 — NULL cell display + value viewer", () => {
   });
 
   itIfBundle("2. non-null value renders normally (no .vsdb-null)", async () => {
-    const { received, root } = loadBundle();
     dispatchState(
       selectState({
         results: [
@@ -211,8 +296,10 @@ describeIfBundle("TASK-004 — NULL cell display + value viewer", () => {
         ],
       }),
     );
-    void received;
-    await tick();
+    getGridApi()?.flushAllAnimationFrames();
+    await waitForGrid(() =>
+      expect(root.querySelectorAll(".vsdb-null").length).toBe(0),
+    );
 
     expect(root.querySelectorAll(".vsdb-null").length).toBe(0);
     const nameCell = root.querySelector(
@@ -223,7 +310,6 @@ describeIfBundle("TASK-004 — NULL cell display + value viewer", () => {
   });
 
   itIfBundle("3. undefined value renders \"(NULL)\" same as null", async () => {
-    const { received, root } = loadBundle();
     dispatchState(
       selectState({
         results: [
@@ -242,8 +328,10 @@ describeIfBundle("TASK-004 — NULL cell display + value viewer", () => {
         ],
       }),
     );
-    void received;
-    await tick();
+    getGridApi()?.flushAllAnimationFrames();
+    await waitForGrid(() =>
+      expect(root.querySelectorAll(".vsdb-null").length).toBe(1),
+    );
 
     const nullSpans = root.querySelectorAll(".vsdb-null");
     expect(nullSpans.length).toBe(1);
@@ -251,7 +339,6 @@ describeIfBundle("TASK-004 — NULL cell display + value viewer", () => {
   });
 
   itIfBundle("4. valueFormatter preserves underlying data — getValue() still null", () => {
-    const { received, root } = loadBundle();
     dispatchState(
       selectState({
         results: [
@@ -270,7 +357,6 @@ describeIfBundle("TASK-004 — NULL cell display + value viewer", () => {
         ],
       }),
     );
-    void root;
     const api = getGridApi();
     expect(api).toBeTruthy();
 
@@ -290,7 +376,6 @@ describeIfBundle("TASK-004 — NULL cell display + value viewer", () => {
   });
 
   itIfBundle("5. double-click on null cell enters edit mode (no overlay)", async () => {
-    const { received, root } = loadBundle();
     dispatchState(
       selectState({
         results: [
@@ -309,12 +394,14 @@ describeIfBundle("TASK-004 — NULL cell display + value viewer", () => {
         ],
       }),
     );
-    void received;
     const api = getGridApi();
     expect(api).toBeTruthy();
 
     doubleClickCell(root, "name");
-    await tick();
+    getGridApi()?.flushAllAnimationFrames();
+    await waitForGrid(() =>
+      expect(api!.getEditingCells().length).toBeGreaterThan(0),
+    );
 
     // AG Grid's default double-click-to-edit still activates the editor.
     expect(api!.getEditingCells().length).toBeGreaterThan(0);
@@ -325,7 +412,6 @@ describeIfBundle("TASK-004 — NULL cell display + value viewer", () => {
   });
 
   itIfBundle("6. value viewer overlay shows full content for long strings (read-only cell)", async () => {
-    const { received, root } = loadBundle();
     const longValue = "x".repeat(500);
     dispatchState(
       selectState({
@@ -345,7 +431,6 @@ describeIfBundle("TASK-004 — NULL cell display + value viewer", () => {
         ],
       }),
     );
-    void received;
     const api = getGridApi();
     expect(api).toBeTruthy();
 
@@ -359,10 +444,21 @@ describeIfBundle("TASK-004 — NULL cell display + value viewer", () => {
       "columnDefs",
       defs.map((d) => (d.field === "s" ? { ...d, editable: false } : d)),
     );
-    await tick(50);
+    api!.flushAllAnimationFrames();
+    await waitForGrid(() => {
+      const cell = root.querySelector('.ag-cell[col-id="s"]');
+      expect(cell).toBeTruthy();
+      expect(api!.getEditingCells()).toHaveLength(0);
+      expect((api!.getColumn("s")?.getColDef() as { editable?: boolean }).editable).toBe(
+        false,
+      );
+    });
 
     doubleClickCell(root, "s");
-    await tick(50);
+    api!.flushAllAnimationFrames();
+    await waitForGrid(() =>
+      expect(root.querySelector(".vsdb-value-viewer")).toBeTruthy(),
+    );
 
     const overlay = root.querySelector(
       ".vsdb-value-viewer",
@@ -371,6 +467,14 @@ describeIfBundle("TASK-004 — NULL cell display + value viewer", () => {
     // Full raw content, plain text, nothing truncated.
     expect(overlay!.textContent).toBe(longValue);
     expect(overlay!.textContent!.length).toBe(500);
+
+    // The viewer's real Escape interaction is also the cleanup boundary for
+    // the next case; no overlay is allowed to leak across the shared bundle
+    // lifecycle.
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await waitForGrid(() =>
+      expect(root.querySelector(".vsdb-value-viewer")).toBeNull(),
+    );
   });
 });
 

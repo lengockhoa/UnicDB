@@ -4,6 +4,7 @@
 // (no vi.mock, no DOM), mirroring src/ui/__tests__/queryComposer.test.ts —
 // one `it` per numbered case from the task's §Test Cases table (11 cases).
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   buildDistinctValuesQuery,
   takeDistinctValues,
@@ -185,5 +186,19 @@ describe("takeDistinctValues", () => {
         1000,
       ),
     ).toEqual({ values: ["a"], truncated: false });
+  });
+});
+
+// TASK-004 case 5 — shared terminator helper source contract.
+describe("shared stripTrailingSemicolon (TASK-004)", () => {
+  it("distinctValues imports the shared helper and declares no local copy", () => {
+    const source = readFileSync(
+      new URL("../distinctValues.ts", import.meta.url),
+      "utf8",
+    );
+    expect(source).toMatch(
+      /import\s*\{[^}]*stripTrailingSemicolon[^}]*\}\s*from\s*"\.\.\/core\/text"/,
+    );
+    expect(source).not.toMatch(/function\s+stripTrailingSemicolon\s*\(/);
   });
 });

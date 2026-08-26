@@ -64,4 +64,66 @@ npm run typecheck
 ### 2026-08-26 · planner · bao-opus
 Confirmed source evidence: each current `loadBundle()` executes the whole bundle, whose anonymous `window.addEventListener("message", ...)` cannot be removed by the test. Case 6 is the sixth evaluation. Preserve behavior while fixing this lifecycle leak.
 
+### 2026-08-26 · executor · claude-code/bao-sonnet
+Implemented the single-evaluation/shared-grid approach. The reset uses the existing host message lifecycle plus `stopEditing`, Escape, row cleanup, and `flushAllAnimationFrames`; observable DOM/API boundaries are awaited with bounded `vi.waitFor`. No retry or fixed 50 ms waits remain. The initial RED exposed stale DOM/state after per-test bundle evaluation: test 2 saw one unexpected `.vsdb-null`, and test 3 saw two spans instead of one; this confirmed the lifecycle problem before the reset harness was completed.
+
+---
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  Targeted RED after the first failing-state harness change (single bundle evaluation plus shared reset still incomplete):
+
+  FAIL src/ui/__tests__/resultsGridModelNull.test.ts > TASK-004 — NULL cell display + value viewer > 2. non-null value renders normally (no .vsdb-null)
+  AssertionError: expected 1 to be +0 // Object.is equality
+  ❯ src/ui/__tests__/resultsGridModelNull.test.ts:296:58
+      294|     getGridApi()?.flushAllAnimationFrames();
+      295|     await waitForGrid(() =>
+      296|       expect(root.querySelectorAll(".vsdb-null").length).toBe(0),
+      297|     );
+
+  FAIL src/ui/__tests__/resultsGridModelNull.test.ts > TASK-004 — NULL cell display + value viewer > 3. undefined value renders "(NULL)" same as null
+  AssertionError: expected 2 to be 1 // Object.is equality
+  ❯ src/ui/__tests__/resultsGridModelNull.test.ts:328:30
+      326|     const nullSpans = root.querySelectorAll(".vsdb-null");
+      327|     expect(nullSpans.length).toBe(1);
+
+  This was the deterministic RED from stale shared bundle/grid state; after completing the observable reset boundary, the targeted suite passed.
+
+Verification Output:
+  1. `npm run compile`
+     PASS — esbuild completed; dist/webview.js 2.2mb, dist/webview.css 22.2kb.
+  2. `npx vitest run src/ui/__tests__/resultsGridModelNull.test.ts`
+     PASS — 8 tests passed, 1 file passed.
+     Tail:
+       ✓ src/ui/__tests__/resultsGridModelNull.test.ts  (8 tests) 342ms
+       Test Files  1 passed (1)
+       Tests  8 passed (8)
+       Start at 13:18:11
+       Duration 747ms (transform 20ms, setup 0ms, collect 23ms, tests 342ms, environment 237ms, prepare 27ms)
+  3. `for seed in 1 2 3 4 5; do npx vitest run src/ui/__tests__/resultsGridModelNull.test.ts --poolOptions.threads.singleThread --sequence.shuffle.tests --sequence.seed=$seed || exit 1; done`
+     PASS — all five seeds passed, 8 tests each.
+     Tails:
+       seed 1: Tests 8 passed (8), Duration 643ms
+       seed 2: Tests 8 passed (8), Duration 707ms
+       seed 3: Tests 8 passed (8), Duration 678ms
+       seed 4: Tests 8 passed (8), Duration 685ms
+       seed 5: Tests 8 passed (8), Duration 640ms
+  4. `npm run typecheck`
+     PASS — `tsc --noEmit` exited 0.
+  5. `npm test`
+     PASS — 108 test files passed, 1 skipped; 1494 tests passed, 2 skipped, 0 failed.
+     Tail:
+       ✓ src/ui/__tests__/webviewPerTableTabs.test.ts  (6 tests) 967ms
+       ✓ src/ui/__tests__/webviewServerFilter.test.ts  (5 tests) 2236ms
+       Test Files 108 passed | 1 skipped (109)
+       Tests 1494 passed | 2 skipped (1496)
+       Start at 13:16:47
+       Duration 11.26s (transform 2.92s, setup 4ms, collect 9.02s, tests 51.60s, environment 13.55s, prepare 5.20s)
+
+Status: PASS
+Note: none
+
 ---

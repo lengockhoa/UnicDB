@@ -1,6 +1,6 @@
 # TASK-004 — Whitespace `(Blanks)` and shared SQL terminator normalizer
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §2, §3.3
@@ -98,3 +98,46 @@ Quoting choice: use a minimal exporter-local quoter (double-quote style with `"`
 `webview/main.ts` is owned by this task in Wave 2 and by TASK-007 in Wave 3. Keep this task's edit to the typed-value blank classification only; do not pre-emptively touch `orderByFromColumnState`, `handleSaveResult`, `onFilterChanged`, or `onRefreshClick` — those belong to TASK-007.
 
 ---
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: -
+SUMMARY: Unified whitespace-aware `(Blanks)` classification across entry grouping, local membership, and webview typed resolution (null/undefined/`""`/spaces/tabs → one `(Blanks)` group; `setFilterPass("\t")` is `true`); string-column predicates now emit `col IS NULL OR TRIM(col) = ''` while non-string/unknown stay NULL-only; hoisted the three duplicate `stripTrailingSemicolon` implementations into the single exported helper in `src/core/text.ts`; added a minimal exporter-local double-quote quoter so `serializeSqlUpdates` (SET + WHERE) and `serializeWhereClause` quote every interpolated column identifier (P2-6). TDD RED/GREEN followed; all verification commands pass fresh in this turn.
+TEST_PLAN_FOLLOWED: task §4 (Test Cases 1-10)
+FILES_CHANGED:
+  - src/core/text.ts: added exported `stripTrailingSemicolon` (sole implementation; strips one trailing `;` plus surrounding whitespace, preserves interior literal semicolons)
+  - src/ui/resultsGridModel.ts: import shared helper (local copy removed); added `isBlankFilterValue` and exporter-local `quoteExportIdentifier`; `buildSetFilterEntries` and `setFilterPass` now use `isBlankFilterValue`; `serializeSqlUpdates` SET/WHERE and `serializeWhereClause` quote identifiers
+  - src/ui/queryComposer.ts: import shared helper (local copy removed); declared string columns now compose `TRIM(quotedColumn) = ''`
+  - src/ui/distinctValues.ts: import shared helper (local copy removed)
+  - webview/main.ts: typed-value resolution (DISTINCT cache + loaded rows) classifies whitespace-only values as `(Blanks)`
+  - src/core/__tests__/text.test.ts: helper happy/lexical/whitespace tests (cases 6-7)
+  - src/ui/__tests__/resultsGridModelSetFilter.test.ts: whitespace blanks grouping/membership + source contract (cases 1, 5)
+  - src/ui/__tests__/queryComposer.test.ts: per-dialect TRIM predicate, embedded-quote identifier, non-string type safety + single-helper source contract (cases 2-3, 5)
+  - src/ui/__tests__/distinctValues.test.ts: shared-helper wrapping regression (case 5)
+  - src/ui/__tests__/webviewSetFilter.test.ts: compiled-bundle whitespace `(Blanks)` behavior (case 4)
+  - src/ui/__tests__/resultsGridModelExport.test.ts: reserved-word/spaced/quote-bearing column cases + quoting baseline updates (cases 8-10)
+  - src/ui/__tests__/webviewExport.test.ts: bundle-level sql-where expectation updated to quoted identifiers (case 10 regression lane)
+TESTS_ADDED:
+  - src/core/__tests__/text.test.ts: `SELECT ';' AS s` terminator strip; wrapper interior-literal preservation; whitespace-only → `""`; `SELECT 1` unchanged
+  - src/ui/__tests__/resultsGridModelSetFilter.test.ts: `[null, undefined, "", "  ", "\t", "x"]` → `(Blanks)` pinned last; `setFilterPass("\t", ["(blanks)"])` true; no-local-copy source contract
+  - src/ui/__tests__/queryComposer.test.ts: postgres `TRIM("n") = ''`, mysql `TRIM(\`n\`) = ''`, mssql `TRIM([n]) = ''`; embedded-quote identifier; integer/date/unknown NULL-only with no `TRIM(`; shared-helper source contract
+  - src/ui/__tests__/distinctValues.test.ts: imports shared helper, no local declaration
+  - src/ui/__tests__/webviewSetFilter.test.ts: `(Blanks)` selection displays whitespace-only row and requeries `values:["(Blanks)"]`, `typed:["   "]`
+  - src/ui/__tests__/resultsGridModelExport.test.ts: `UPDATE results SET "order"='x' WHERE "id"=1;`; `"First Name"=…`; `"a""b"` doubling; `serializeWhereClause` quoting; skip-comment/`opts.tableName`/trailing-`;` stability (case 10)
+  - src/ui/__tests__/webviewExport.test.ts: sql-where emits `WHERE ("id"=1 AND "name"='alpha') OR ("id"=3 AND "name"='gamma')`
+VERIFICATION:
+  command: npm run compile && npx vitest run src/core/__tests__/text.test.ts src/ui/__tests__/resultsGridModelSetFilter.test.ts src/ui/__tests__/queryComposer.test.ts src/ui/__tests__/distinctValues.test.ts src/ui/__tests__/webviewSetFilter.test.ts src/ui/__tests__/resultsGridModelExport.test.ts && npx vitest run src/ui/__tests__/resultsGridModel.test.ts src/ui/__tests__/resultsGridModelRequery.test.ts src/ui/__tests__/webviewExport.test.ts && npm run typecheck
+  result: compile PASS; targeted 148/148 PASS; regression 57/57 PASS; typecheck exit 0
+  output_excerpt: |
+    esbuild: build complete
+    Test Files  6 passed (6)
+    Tests       148 passed (148)
+    Test Files  3 passed (3)
+    Tests       57 passed (57)
+    typecheck: no diagnostics (exit 0)
+ISSUES: none. Case-10 note (as required by planner): one existing bundle-level fixture — `webviewExport.test.ts` sql-where — changed from bare (`WHERE (id=1 …)`) to quoted (`WHERE ("id"=1 …)`) identifiers; this is the intentional P2-6 delta.
+HANDOFF_TO_REVIEWER: yes — handoff.reviewer.enabled=true, reviewer.model=unic-smart differs from executor bao-sonnet
+NEXT: ready for review

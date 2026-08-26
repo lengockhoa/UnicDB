@@ -1866,6 +1866,150 @@ describe("ResultsPanel — saveResult acks BEFORE the post-commit refresh state 
   });
 });
 
+// ---- TASK-006 (cycle X) — cursor ordering inside handleSaveEdits:
+// P1-1 (close before the first metadata/ctid round trip) and P1-5 (close
+// before the automatic-mode refresh SELECT). Postgres pool max=1 means any
+// aux query racing the still-open browse cursor waits on pool.connect().
+describe("ResultsPanel — save closes the browse cursor before aux/refresh queries (TASK-006 P1-1/P1-5)", () => {
+  /** Shared call-order log runner: `batched.close` (the statement's LIVE
+   *  browse cursor, whose handle the fixture attached to the rendered
+   *  statement), `listPkColumns`, and every `runSql:<sql>` are pushed onto
+   *  one array so strict ordering is assertable. */
+  function makeOrderingRunner() {
+    const log: string[] = [];
+    const runSql = vi.fn(async (sql: string): Promise<RunResult> => {
+      log.push(`runSql:${sql}`);
+      // Multi-statement (BEGIN…COMMIT) and the ctid probe (multi-statement
+      // `SELECT ctid FROM t WHERE …;` shape is single-SELECT-no-`;` though,
+      // so serve plain results for everything the save flow issues).
+      return {
+        results: [{ columns: ["ctid"], rows: [["(0,1)"]], rowCount: 1, durationMs: 0 }],
+      };
+    });
+    const runner = {
+      loadMore: vi.fn(async () => [] as StatementResult[]),
+      cancel: vi.fn(async () => undefined),
+      runSql,
+    } as unknown as QueryRunner;
+    return { runner, runSql, log };
+  }
+
+  it("P1-5 — auto-mode save closes the browse cursor BEFORE the refresh SELECT", async () => {
+    const { runner, log } = makeOrderingRunner();
+    const saveCtx: SaveContext = {
+      getDriver: () => "postgres",
+      listPkColumns: async () => ["id"],
+    };
+    const fakeBatched = {
+      columns: ["id", "name"],
+      fetchBatch: async () => [[1, "alice"]],
+      cancel: async () => undefined,
+      close: async () => {
+        log.push("batched.close");
+      },
+    };
+    const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT * FROM t",
+          status: "done",
+          result: { columns: ["id", "name"], rows: [[1, "alice"]], rowCount: 1, durationMs: 0 },
+          batched: fakeBatched,
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    const fake = lastPanel.current!;
+    fake.webview.dispatch({
+      type: "saveEdits",
+      index: 0,
+      tableName: null,
+      pkColumns: [],
+      edits: [{ rowId: 0, colIndex: 1, value: "new" }],
+    });
+    for (let i = 0; i < 200; i++) {
+      if (saveResultAcks(fake).length > 0) break;
+      await Promise.resolve();
+    }
+    // RED today: no "batched.close" before the refresh runSql — the log is
+    // [BEGIN…COMMIT combined, runSql:SELECT * FROM t] with the live cursor
+    // still holding the only pooled client. (The task file's idealized
+    // `["batched.close", "runSql:SELECT * FROM t"]` cannot match literally:
+    // the save's BEGIN…COMMIT envelope is itself a runSql call that sits
+    // between the close and the refresh. The ordering + exact-SQL contract
+    // below is the same assertion.)
+    expect(log).toContain("batched.close");
+    const refreshIdx = log.indexOf("runSql:SELECT * FROM t");
+    expect(refreshIdx).toBeGreaterThan(0);
+    expect(log.indexOf("batched.close")).toBeLessThan(refreshIdx);
+    // Exactly two runSql calls: the save envelope + the refresh, and the
+    // refresh receives EXACTLY r.sql.
+    const runSqlEntries = log.filter((entry) => entry.startsWith("runSql:"));
+    expect(runSqlEntries).toHaveLength(2);
+    expect(runSqlEntries[1]).toBe("runSql:SELECT * FROM t");
+  });
+
+  it("P1-1 — no-PK postgres save closes the cursor BEFORE listPkColumns and the ctid probe", async () => {
+    const { runner, log } = makeOrderingRunner();
+    const fakeBatched = {
+      columns: ["name"],
+      fetchBatch: async () => [["alice"]],
+      cancel: async () => undefined,
+      close: async () => {
+        log.push("batched.close");
+      },
+    };
+    const saveCtx: SaveContext = {
+      getDriver: () => "postgres",
+      listPkColumns: async () => {
+        log.push("listPkColumns");
+        return []; // no PK → ctid resolver path
+      },
+    };
+    const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT name FROM t",
+          status: "done",
+          result: { columns: ["name"], rows: [["alice"]], rowCount: 1, durationMs: 0 },
+          batched: fakeBatched,
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    const fake = lastPanel.current!;
+    fake.webview.dispatch({
+      type: "saveEdits",
+      index: 0,
+      tableName: null,
+      pkColumns: [],
+      edits: [{ rowId: 0, colIndex: 0, value: "new" }],
+    });
+    for (let i = 0; i < 200; i++) {
+      if (saveResultAcks(fake).length > 0) break;
+      await Promise.resolve();
+    }
+    // RED today: listPkColumns + the ctid probe run BEFORE any close —
+    // both go through the pool the still-open cursor pins.
+    const closeIdx = log.indexOf("batched.close");
+    const pkIdx = log.indexOf("listPkColumns");
+    const ctidIdx = log.findIndex(
+      (entry) => entry.startsWith("runSql:") && /^SELECT ctid FROM /i.test(entry.slice("runSql:".length)),
+    );
+    expect(closeIdx).toBeGreaterThanOrEqual(0);
+    expect(pkIdx).toBeGreaterThanOrEqual(0);
+    expect(ctidIdx).toBeGreaterThanOrEqual(0);
+    expect(closeIdx).toBeLessThan(pkIdx);
+    expect(closeIdx).toBeLessThan(ctidIdx);
+  });
+});
+
 // ---- Review Fix Round (cycle T) — Finding 6: one bad ctid probe (e.g. a
 // column type with no equality operator) must not abort the whole batch. --
 describe("ResultsPanel — one throwing ctid probe does not poison the rest of the batch (Finding 6, cycle T)", () => {

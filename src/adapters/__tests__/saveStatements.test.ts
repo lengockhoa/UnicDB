@@ -873,3 +873,145 @@ describe("buildSaveStatements — skippedRows (A19-skip, §3.4a)", () => {
     expect(r.skippedRows!.some((s) => s.rowId === 2)).toBe(true);
   });
 });
+
+// ---- TASK-008 S1 (cycle-x-audit-host): NULL PK in a server row must never
+// reach SQL. Pre-fix, both PK WHERE builders interpolated
+// `sqlLiteral(serverRow[i])` unconditionally, so a NULL/undefined PK value
+// produced `WHERE "id"=NULL` — matches zero rows, the statement is
+// acknowledged as a successful save, and the edit is silently lost.
+// Post-fix the row takes the existing skippedRows path and NO statement is
+// emitted for it.
+describe("buildSaveStatements — NULL PK in server row (TASK-008 S1)", () => {
+  it("NULL PK on UPDATE skips the row and emits nothing", () => {
+    const r = buildSaveStatements(
+      "postgres",
+      "t",
+      ["id"],
+      ["id", "v"],
+      [{ rowId: 0, colIndex: 1, value: "x" }],
+      [[null, "old"]],
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok !== true) return;
+    expect(r.statements).toHaveLength(0);
+    expect(r.statements.some((s) => s.includes("=NULL"))).toBe(false);
+    expect(r.skippedRows).toEqual([
+      { rowId: 0, reason: expect.stringMatching(/pk column NULL in server row/) },
+    ]);
+    expect(r.skippedRows![0].reason).toContain("id");
+    expect(
+      r.warnings.some((w) => /pk column NULL in server row/.test(w)),
+    ).toBe(true);
+  });
+
+  it("partial batch: only the NULL-PK row is skipped; the good row still emits", () => {
+    const edits: EditEntry[] = [
+      { rowId: 0, colIndex: 1, value: "a-new" },
+      { rowId: 1, colIndex: 1, value: "b-new" },
+    ];
+    const serverRows: unknown[][] = [
+      [1, "a"], // rowId 0 → id=1, addressable
+      [null, "b"], // rowId 1 → id NULL, not addressable
+    ];
+    const r = buildSaveStatements(
+      "postgres",
+      "t",
+      ["id"],
+      ["id", "v"],
+      edits,
+      serverRows,
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok !== true) return;
+    expect(r.statements).toHaveLength(1);
+    expect(r.statements[0]).toMatch(/WHERE "id"=1/);
+    expect(r.statements.join(" ")).not.toContain("=NULL");
+    expect(r.skippedRows).toHaveLength(1);
+    expect(r.skippedRows![0].rowId).toBe(1);
+  });
+
+  it("composite PK with one NULL component is skipped whole; reason names the NULL component", () => {
+    const edits: EditEntry[] = [
+      { rowId: 0, colIndex: 2, value: "x-new" },
+      { rowId: 1, colIndex: 2, value: "y-new" }, // control row — both PK parts set
+    ];
+    const serverRows: unknown[][] = [
+      [1, null, "x"], // b is NULL → row 0 must be skipped
+      [1, 2, "y"],
+    ];
+    const r = buildSaveStatements(
+      "postgres",
+      "t",
+      ["a", "b"],
+      ["a", "b", "v"],
+      edits,
+      serverRows,
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok !== true) return;
+    expect(r.statements).toHaveLength(1);
+    expect(r.statements[0]).toMatch(/WHERE "a"=1 AND "b"=2/);
+    expect(r.skippedRows).toHaveLength(1);
+    expect(r.skippedRows![0].rowId).toBe(0);
+    expect(r.skippedRows![0].reason).toContain('"b"');
+    expect(r.skippedRows![0].reason).not.toContain('"a"');
+  });
+
+  it("NULL PK on DELETE is skipped too (both builders, not just UPDATE)", () => {
+    const marker: EditEntry = {
+      rowId: 3,
+      colIndex: 0,
+      value: { __vsdb_deleted__: true, __rowId: 3 },
+    };
+    const serverRows: unknown[][] = [
+      [1, "a"],
+      [2, "b"],
+      [3, "c"],
+      [null, "d"], // rowId 3 → PK NULL
+    ];
+    const r = buildSaveStatements(
+      "postgres",
+      "t",
+      ["id"],
+      ["id", "name"],
+      [marker],
+      serverRows,
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok !== true) return;
+    expect(r.statements).toHaveLength(0);
+    expect(r.statements.some((s) => /^DELETE/.test(s))).toBe(false);
+    expect(r.skippedRows).toEqual([
+      { rowId: 3, reason: expect.stringMatching(/pk column NULL in server row/) },
+    ]);
+    expect(r.skippedRows![0].reason).toContain("id");
+    expect(
+      r.warnings.some((w) => /pk column NULL in server row/.test(w)),
+    ).toBe(true);
+  });
+
+  it("falsy-but-present PK values (0, '', false) still address rows — guard is null/undefined only", () => {
+    const cases: Array<{ pkVal: unknown; expected: string }> = [
+      { pkVal: 0, expected: 'WHERE "id"=0' },
+      { pkVal: "", expected: "WHERE \"id\"=''" },
+      { pkVal: false, expected: 'WHERE "id"=FALSE' }, // sqlLiteral(false) → FALSE
+    ];
+    for (const { pkVal, expected } of cases) {
+      const r = buildSaveStatements(
+        "postgres",
+        "t",
+        ["id"],
+        ["id", "v"],
+        [{ rowId: 0, colIndex: 1, value: "x" }],
+        [[pkVal, "old"]],
+      );
+      expect(r.ok).toBe(true);
+      if (r.ok !== true) return;
+      expect(r.statements).toHaveLength(1);
+      expect(r.statements[0]).toContain(expected);
+      expect(
+        r.skippedRows === undefined || r.skippedRows.length === 0,
+      ).toBe(true);
+    }
+  });
+});

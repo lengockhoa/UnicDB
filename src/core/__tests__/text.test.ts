@@ -1,7 +1,25 @@
 // src/core/__tests__/text.test.ts
 // TASK-702 — truncateAtBoundary: code-point-safe slice with `…` suffix.
 import { describe, it, expect } from "vitest";
-import { truncateAtBoundary } from "../text";
+import { stripTrailingSemicolon, truncateAtBoundary } from "../text";
+
+describe("stripTrailingSemicolon (TASK-004)", () => {
+  // Case 6 — edge (lexical): strip one terminator, preserve interior `;`
+  it("6. strips one trailing terminator but preserves interior semicolons", () => {
+    expect(stripTrailingSemicolon("SELECT ';' AS s;  ")).toBe("SELECT ';' AS s");
+    // wrappers retain the literal semicolon
+    expect(stripTrailingSemicolon("SELECT * FROM (SELECT ';' AS s) t;")).toBe(
+      "SELECT * FROM (SELECT ';' AS s) t",
+    );
+  });
+
+  // Case 7 — edge (empty/boundary): whitespace-only input is stable
+  it("7. whitespace-only input becomes empty; a bare statement is unchanged", () => {
+    expect(stripTrailingSemicolon("   \t ")).toBe("");
+    expect(stripTrailingSemicolon("SELECT 1")).toBe("SELECT 1");
+  });
+});
+
 
 describe("TASK-702 — truncateAtBoundary", () => {
   it("1. ASCII dưới cap → nguyên vẹn, không có `…`", () => {

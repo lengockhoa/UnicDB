@@ -56,6 +56,7 @@ import {
   selectedKeysFromModel,
   SET_FILTER_BLANKS_KEY,
   SET_FILTER_BLANKS_DISPLAY,
+  isBlankFilterValue,
   type SetFilterEntry,
   type ColumnSpec,
   type ResultsGridModel,
@@ -2118,7 +2119,7 @@ function buildServerFilterModel(): ServerFilterModel | undefined {
       let raw: unknown = RAW_NOT_FOUND;
       if (distinct) {
         for (const v of distinct) {
-          const blank = v === null || v === undefined || v === "";
+          const blank = isBlankFilterValue(v);
           const rowKey = blank ? SET_FILTER_BLANKS_KEY : String(v).toLowerCase();
           if (rowKey === key) {
             raw = v;
@@ -2129,7 +2130,7 @@ function buildServerFilterModel(): ServerFilterModel | undefined {
       if (raw === RAW_NOT_FOUND && specIndex >= 0) {
         for (const row of rows) {
           const v = row[specIndex];
-          const blank = v === null || v === undefined || v === "";
+          const blank = isBlankFilterValue(v);
           const rowKey = blank ? SET_FILTER_BLANKS_KEY : String(v).toLowerCase();
           if (rowKey === key) {
             raw = v;

@@ -20,6 +20,8 @@
 // IMPORTANT: formatCell copied VERBATIM từ webview/grid.ts — TASK-203 xóa grid.ts.
 // KHÔNG sửa behavior formatCell.
 
+import { stripTrailingSemicolon } from "../core/text";
+
 export type ColumnKind = "number" | "string" | "boolean";
 
 export interface ColumnSpec {
@@ -389,6 +391,21 @@ export function sqlLiteral(v: unknown): string {
   return `'${s.replace(/'/g, "''")}'`;
 }
 
+/** Portable exporter-local identifier quoting. The exporter has no dialect
+ * metadata, so use SQL-standard double quotes and double embedded quotes. */
+function quoteExportIdentifier(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`;
+}
+
+/** True for values that belong to the set-filter (Blanks) group. */
+function isBlankFilterValue(value: unknown): boolean {
+  return value === null || value === undefined ||
+    (typeof value === "string" && value.trim() === "");
+}
+
+/** Exported for the webview's typed resolver, which must share this classifier. */
+export { isBlankFilterValue };
+
 /** CSV escape per RFC4180: if the cell contains `,`, `"`, `\r`, or `\n`,
  * wrap in `"…"` and double every internal `"`. Otherwise return as-is. */
 function csvEscape(v: unknown): string {
@@ -702,7 +719,7 @@ export function serializeSqlUpdates(
       .map((c) => {
         const i = colIdx.get(c);
         if (i === undefined) return null;
-        return `${c}=${sqlLiteral(row[i])}`;
+        return `${quoteExportIdentifier(c)}=${sqlLiteral(row[i])}`;
       })
       .filter((s): s is string => s !== null)
       .join(", ");
@@ -718,7 +735,7 @@ export function serializeSqlUpdates(
       .map((c) => {
         const i = colIdx.get(c);
         if (i === undefined) return null;
-        return `${c}=${sqlLiteral(row[i])}`;
+        return `${quoteExportIdentifier(c)}=${sqlLiteral(row[i])}`;
       })
       .filter((s): s is string => s !== null)
       .join(" AND ");
@@ -774,7 +791,7 @@ export function serializeWhereClause(
       .map((c) => {
         const i = colIdx.get(c);
         if (i === undefined) return null;
-        return `${c}=${sqlLiteral(row[i])}`;
+        return `${quoteExportIdentifier(c)}=${sqlLiteral(row[i])}`;
       })
       .filter((s): s is string => s !== null);
     return `(${parts.join(" AND ")})`;
@@ -1075,18 +1092,6 @@ export function applyPasteToDirty(
 //   SQL client; the user already runs arbitrary SQL via the editor. We do
 //   not escape / quote these fragments. No validation pass; an invalid
 //   fragment surfaces as a database error from the runner.
-function stripTrailingSemicolon(sql: string): string {
-  // Match optional trailing whitespace then optional `;` then optional
-  // trailing whitespace. Only strip if there's something left after.
-  const m = /^(.*?)(\s*;?\s*)$/s.exec(sql);
-  if (!m) return sql;
-  const body = m[1] ?? "";
-  // Body must have at least one non-whitespace character; otherwise we
-  // would have stripped a meaningful input.
-  if (body.trim().length === 0) return sql.trim();
-  return body.trimEnd();
-}
-
 export function composeRequery(
   sql: string,
   where: string,
@@ -1154,7 +1159,7 @@ export function buildSetFilterEntries(values: unknown[]): SetFilterEntry[] {
   const count = new Map<string, number>();
 
   for (const v of values) {
-    const blank = v === null || v === undefined || v === "";
+    const blank = isBlankFilterValue(v);
     const key = blank ? SET_FILTER_BLANKS_KEY : String(v).toLowerCase();
     if (!display.has(key)) {
       order.push(key);
@@ -1186,7 +1191,7 @@ export function setFilterPass(
   selectedKeys: Set<string> | null,
 ): boolean {
   if (selectedKeys === null) return true;
-  const blank = value === null || value === undefined || value === "";
+  const blank = isBlankFilterValue(value);
   const key = blank ? SET_FILTER_BLANKS_KEY : String(value).toLowerCase();
   return selectedKeys.has(key);
 }

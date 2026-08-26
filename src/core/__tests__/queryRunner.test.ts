@@ -225,10 +225,15 @@ describe("QueryRunner — cancel()", () => {
     expect(batched.cancel).toHaveBeenCalledTimes(1);
     // Statement phải có status='cancelled' (cancel before/during fetchBatch initial).
     const result = await runPromise;
-    // pickResult swallows the initial fetch error or returns empty rows;
-    // but executeAll checks cancelRequested BEFORE setting status='done'.
-    // Either status='cancelled' (cancel set before completion) or done with rows=[].
-    expect(["cancelled", "done"]).toContain(result[0].status);
+    // TASK-008 P2-2 re-examination: the OLD comment said pickResult "swallows
+    // the initial fetch error or returns empty rows", leaving status
+    // ambiguous between cancelled/done. The mock resolves fetchBatch(null)
+    // (EOF, not an error), so pickResult now resolves a normal empty result
+    // — and executeAll's post-fetch cancelRequested check (:197) is what
+    // decides. Cancel was requested before that check, so the outcome is
+    // deterministically 'cancelled'; the either/or assertion is tightened,
+    // not loosened.
+    expect(result[0].status).toBe("cancelled");
   });
 
   it("Test #4b — cancel() không gọi statements sau", async () => {
@@ -251,6 +256,53 @@ describe("QueryRunner — cancel()", () => {
     const timeout = new Promise<void>((r) => setTimeout(r, 50));
     await Promise.race([runPromise.then(() => undefined, () => undefined), timeout]);
     expect(callOrder).toEqual(["SELECT 1", "SLOW"]);
+  });
+});
+
+// ---- TASK-008 P2-2 (cycle-x-audit-grid-ui): a failed INITIAL cursor fetch
+// must surface as an error, never as an empty "success". Pre-fix, pickResult
+// wrapped the first fetchBatch in `catch { /* ignore */ }` and returned
+// { rows: [], rowCount: null } — a dead cursor was indistinguishable from an
+// empty table and handleRequery rendered a false empty grid.
+describe("QueryRunner — batched initial-fetch failure surfaces (TASK-008 P2-2)", () => {
+  it("pickResult() — initial fetchBatch rejection propagates (not swallowed into empty rows)", async () => {
+    const batched = makeBatched(["n"], [null]);
+    batched.fetchBatch.mockImplementation(() =>
+      Promise.reject(new Error("cursor exploded")),
+    );
+    await expect(
+      pickResult({ results: [], batched }),
+    ).rejects.toThrow(/cursor exploded/);
+    expect(batched.fetchBatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("run() — a failing first fetch marks the statement error, not done-with-empty-rows", async () => {
+    const batched = makeBatched(["id"], [[1]]);
+    batched.fetchBatch.mockImplementation(() =>
+      Promise.reject(new Error("cursor exploded")),
+    );
+    const adapter = makeAdapter(async () => ({ results: [], batched }));
+    const runner = new QueryRunner(async () => adapter);
+    const results = await runner.run(
+      [stmt("SELECT * FROM t", 0, 16)],
+      () => {},
+    );
+    expect(results[0].status).toBe("error");
+    expect(results[0].error).toContain("cursor exploded");
+    // No rows may be presented as a successful result.
+    expect(results[0].result?.rows ?? []).toEqual([]);
+    expect(results[0].result).toBeUndefined();
+  });
+
+  it("run() — genuinely empty cursor (first fetchBatch resolves null/EOF) is still a success", async () => {
+    const batched = makeBatched(["x"], [null]); // EOF right away
+    const adapter = makeAdapter(async () => ({ results: [], batched }));
+    const runner = new QueryRunner(async () => adapter);
+    const results = await runner.run([stmt("SELECT 1", 0, 8)], () => {});
+    expect(results[0].status).toBe("done");
+    expect(results[0].result?.rows).toEqual([]);
+    expect(results[0].result?.rowCount).toBe(null);
+    expect(batched.fetchBatch).toHaveBeenCalledTimes(1);
   });
 });
 

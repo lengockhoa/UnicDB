@@ -233,3 +233,121 @@ describe("ResultsPanel manual-commit mode (TASK-009)", () => {
     expect(messages()).toContainEqual({ type: "transactionStatus", open: false });
   });
 });
+
+// ---- TASK-006 (cycle X) — P1-4: the manual COMMIT/ROLLBACK *button* paths
+// must requery the manual window's statement (runSql + state post) so the
+// grid shows server truth; the dispose-time teardown rollback must NOT.
+describe("ResultsPanel manual-commit button refresh (TASK-006 P1-4)", () => {
+  function makeRefreshPanel(postRollbackRows: unknown[][]) {
+    const runSqlCalls: string[] = [];
+    const runSql = vi.fn(async (sql: string): Promise<RunResult> => {
+      runSqlCalls.push(sql);
+      return {
+        results: [
+          { columns: ["id", "name"], rows: postRollbackRows, rowCount: postRollbackRows.length, durationMs: 0 },
+        ],
+      };
+    });
+    const txStatements: string[] = [];
+    const transaction: DbTransaction & {
+      commit: ReturnType<typeof vi.fn>;
+      rollback: ReturnType<typeof vi.fn>;
+    } = {
+      runQuery: async (sql: string): Promise<RunResult> => {
+        txStatements.push(sql);
+        return { results: [] };
+      },
+      commit: vi.fn(async () => undefined),
+      rollback: vi.fn(async () => undefined),
+    };
+    const adopt = vi.fn();
+    const runner = {
+      loadMore: vi.fn(async () => [] as StatementResult[]),
+      cancel: vi.fn(async () => undefined),
+      runSql,
+      beginTransaction: vi.fn(async (): Promise<DbTransaction> => transaction),
+      adopt,
+    } as unknown as QueryRunner;
+    const saveContext: SaveContext = {
+      getDriver: () => "mssql",
+      getManualCommit: () => true,
+      listPkColumns: async () => ["id"],
+    };
+    const panel = new ResultsPanel({ runner, saveContext });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT * FROM t",
+          status: "done",
+          result: { columns: ["id", "name"], rows: [[1, "uncommitted"]], rowCount: 1, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "manual commit refresh test",
+    );
+    return { panel, transaction, runSql, runSqlCalls, adopt, webview: lastPanel.current!.webview };
+  }
+
+  it("P1-4 — ROLLBACK requeries the manual window's statement and posts the refreshed state", async () => {
+    const { runSqlCalls, transaction, webview } = makeRefreshPanel([[1, "server-truth"]]);
+    save(webview);
+    await flush(() => messages().some((m) => m.type === "transactionStatus" && m.open === true));
+    const postsBefore = messages().length;
+    webview.dispatch({ type: "rollbackTransaction" });
+    await flush(() => messages().slice(postsBefore).some((m) => m.type === "state"));
+
+    expect(transaction.rollback).toHaveBeenCalledTimes(1);
+    // Exactly one follow-up runSql for the refresh — no second save batch.
+    expect(runSqlCalls.filter((sql) => sql === "SELECT * FROM t")).toHaveLength(1);
+    const lastState = messages()
+      .slice(postsBefore)
+      .filter((m) => m.type === "state")
+      .pop();
+    expect(lastState).toBeDefined();
+    expect((lastState!.results as Array<{ result: { rows: unknown[][] } }>)[0].result.rows).toEqual(
+      [[1, "server-truth"]],
+    );
+  });
+
+  it("P1-4 — COMMIT requeries the same statement; refreshed state carries a boolean batched", async () => {
+    const { runSqlCalls, transaction, adopt, webview } = makeRefreshPanel([[1, "server-truth"]]);
+    save(webview);
+    await flush(() => messages().some((m) => m.type === "transactionStatus" && m.open === true));
+    const postsBefore = messages().length;
+    webview.dispatch({ type: "commitTransaction" });
+    await flush(() => messages().slice(postsBefore).some((m) => m.type === "state"));
+
+    expect(transaction.commit).toHaveBeenCalledTimes(1);
+    expect(runSqlCalls.filter((sql) => sql === "SELECT * FROM t")).toHaveLength(1);
+    const lastState = messages()
+      .slice(postsBefore)
+      .filter((m) => m.type === "state")
+      .pop();
+    expect(lastState).toBeDefined();
+    expect((lastState!.results as Array<{ result: { rows: unknown[][] } }>)[0].result.rows).toEqual(
+      [[1, "server-truth"]],
+    );
+    // `batched` is present on the wire for the new cursor (normalized to a
+    // boolean by sanitizeStatementResult — P3-3).
+    const batched = (lastState!.results as Array<{ batched?: unknown }>)[0].batched;
+    expect(batched).toBe(false);
+    expect(adopt).toHaveBeenCalled();
+  });
+
+  it("teardown — dispose-time rollback does NOT requery and posts no state after dispose", async () => {
+    const { panel, runSql, transaction, webview } = makeRefreshPanel([[1, "server-truth"]]);
+    save(webview);
+    await flush(() => messages().some((m) => m.type === "transactionStatus" && m.open === true));
+    const postsBefore = messages().length;
+    runSql.mockClear();
+    panel.dispose();
+    for (let i = 0; i < 200; i++) await Promise.resolve();
+    // The teardown rollback path must fire the adapter rollback exactly once
+    // but issue ZERO follow-up queries and ZERO state posts.
+    await Promise.resolve();
+    expect(transaction.rollback).toHaveBeenCalledTimes(1);
+    expect(runSql).not.toHaveBeenCalled();
+    expect(messages().slice(postsBefore).filter((m) => m.type === "state")).toHaveLength(0);
+  });
+});

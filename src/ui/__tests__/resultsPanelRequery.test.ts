@@ -327,8 +327,10 @@ describe("ResultsPanel — handleRequery adopts batched cursor (Fix R1 critical 
     expect(entry.result).toBeTruthy();
     expect(entry.result!.columns).toEqual(["id"]);
     expect(entry.result!.rows).toEqual([[10], [20]]);
-    expect(entry.batched).toBeTruthy();
-    expect(entry.batched).toBe(requeryBatched);
+    // TASK-006 P3-3 — host state payloads normalize the live cursor handle
+    // to the webview wire type (`batched?: boolean`).
+    expect(entry.batched).toBe(true);
+    expect(typeof entry.batched).toBe("boolean");
   });
 
   it("Requery with empty WHERE/ORDER BY emits the literal statement (no `;` corruption)", async () => {
@@ -380,7 +382,9 @@ describe("ResultsPanel — handleRequery adopts batched cursor (Fix R1 critical 
     }>;
     expect(results[0]!.result!.columns).toEqual(["id"]);
     expect(results[0]!.result!.rows).toEqual([[1]]);
-    expect(results[0]!.batched).toBe(requeryBatched);
+    // TASK-006 P3-3 — live cursor handles never cross the host/webview wire.
+    expect(results[0]!.batched).toBe(true);
+    expect(typeof results[0]!.batched).toBe("boolean");
   });
 });
 
@@ -448,7 +452,9 @@ describe("ResultsPanel — handleRequery closes previous batched cursor (Fix R1 
     const results = lastState.results as Array<{
       batched?: BatchedQuery;
     }>;
-    expect(results[0]!.batched).toBe(requeryBatched);
+    // TASK-006 P3-3 — live cursor handles never cross the host/webview wire.
+    expect(results[0]!.batched).toBe(true);
+    expect(typeof results[0]!.batched).toBe("boolean");
   });
 });
 
@@ -594,7 +600,9 @@ describe("ResultsPanel — handleRequery plain results path (Fix R1)", () => {
     }>;
     expect(results[0]!.result!.rows).toEqual([["a"], ["b"]]);
     expect(results[0]!.result!.columns).toEqual(["x"]);
-    expect(results[0]!.batched).toBeUndefined();
+    // P3-3 normalizes absent internal handles to the explicit false wire value.
+    expect(results[0]!.batched).toBe(false);
+    expect(typeof results[0]!.batched).toBe("boolean");
   });
 });
 

@@ -517,8 +517,19 @@ export function buildSaveStatements(
         warnings.push(breakReason);
         break;
       }
+      // TASK-008 S1 — same guard as the UPDATE builder above: a NULL PK
+      // value would emit `WHERE "id"=NULL` (a silent no-op DELETE), so the
+      // row is skipped with a warning + skippedRows entry instead. Strictly
+      // null/undefined — 0, "", false still address the row.
+      const pkVal = serverRow[ci];
+      if (pkVal === null || pkVal === undefined) {
+        whereOk = false;
+        breakReason = `delete row ${rowId} skipped: pk column NULL in server row ("${pk}")`;
+        warnings.push(breakReason);
+        break;
+      }
       whereParts.push(
-        `${quoteIdent(pk, dialect)}=${sqlLiteral(serverRow[ci])}`,
+        `${quoteIdent(pk, dialect)}=${sqlLiteral(pkVal)}`,
       );
     }
     if (whereOk) {
@@ -656,8 +667,23 @@ export function buildSaveStatements(
           warnings.push(breakReason);
           break;
         }
+        // TASK-008 S1 (cycle-x-audit-host): a NULL/undefined PK value must
+        // never reach SQL — `sqlLiteral(null)` yields `WHERE "id"=NULL`,
+        // which matches zero rows, is reported as a successful save, and
+        // silently loses the edit (reachable via a JOIN whose PK metadata
+        // resolved to another table, or a view that NULLs the PK column).
+        // Take the existing skip path instead. Falsy-but-present values
+        // (0, "", false) stay addressable — the guard is strictly
+        // null/undefined.
+        const pkVal = serverRow[i];
+        if (pkVal === null || pkVal === undefined) {
+          whereOk = false;
+          breakReason = `row ${rowId} skipped: pk column NULL in server row ("${pk}")`;
+          warnings.push(breakReason);
+          break;
+        }
         whereParts.push(
-          `${quoteIdent(pk, dialect)}=${sqlLiteral(serverRow[i])}`,
+          `${quoteIdent(pk, dialect)}=${sqlLiteral(pkVal)}`,
         );
       }
       if (!whereOk) {

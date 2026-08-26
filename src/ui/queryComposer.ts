@@ -20,6 +20,7 @@
 //     `typed[]` (via `sqlLiteral`); the display string is NEVER type-sniffed
 //     (a `varchar` `'007'` must stay a quoted string).
 import { sqlLiteral, SET_FILTER_BLANKS_DISPLAY } from "./resultsGridModel";
+import { stripTrailingSemicolon } from "../core/text";
 import { quoteIdent, type Dialect } from "../core/saveStatements";
 import { getTableSortQuery } from "../adapters/mssql";
 
@@ -157,25 +158,13 @@ export function buildFilterWhere(
 
     const parts: string[] = [];
     if (hasNull) parts.push(`${quoted} IS NULL`);
-    if (hasNull && stringTyped) parts.push(`${quoted} = ''`);
+    if (hasNull && stringTyped) parts.push(`TRIM(${quoted}) = ''`);
     if (inList.length > 0) parts.push(`${quoted} IN (${inList.join(", ")})`);
     if (parts.length === 0) continue;
 
     predicates.push(parts.length === 1 ? parts[0] : `(${parts.join(" OR ")})`);
   }
   return predicates.join(" AND ");
-}
-
-/** Strip a single trailing `;` (and surrounding whitespace) from a SQL
- *  statement so wrapping it in a subquery never nests a stray terminator.
- *  Mirrors the guard composeRequery uses (resultsGridModel.ts). Interior
- *  `;` inside string literals stays intact. */
-function stripTrailingSemicolon(sql: string): string {
-  const m = /^(.*?)(\s*;?\s*)$/s.exec(sql);
-  if (!m) return sql;
-  const body = m[1] ?? "";
-  if (body.trim().length === 0) return sql.trim();
-  return body.trimEnd();
 }
 
 /**

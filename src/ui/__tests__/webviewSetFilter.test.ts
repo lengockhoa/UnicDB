@@ -160,6 +160,12 @@ async function flushGridEvents(): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 
+/** Wait past the 150ms filter-requery debounce so the collapsed requery
+ *  has been posted. */
+async function flushFilterDebounce(): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, 250));
+}
+
 async function getFilterInstance<T = IFilterComp>(
   api: GridApi,
   colKey: string,
@@ -610,6 +616,46 @@ describeIfBundle("webview/main.ts bundle — TASK-602 set-filter panel", () => {
       await flushGridEvents();
 
       expect(spy).toHaveBeenCalled();
+    },
+  );
+
+  // TASK-004 case 4 — the typed resolver maps whitespace-only cells to the
+  // (Blanks) group: the whitespace row passes the filter AND the server
+  // requery posts a RESOLVED typed blank (the raw "   "), not an unresolved
+  // display-only model.
+  itIfBundle(
+    "11. whitespace (Blanks): whitespace row passes filter and requery posts a typed blank",
+    async () => {
+      const { received } = loadBundle();
+      dispatchState(
+        rowsState(
+          ["id", "name"],
+          [
+            [1, "alpha"],
+            [2, "   "],
+          ],
+        ),
+      );
+      await flushGridEvents();
+      const api = getGridApi();
+      expect(api).toBeTruthy();
+
+      api!.setFilterModel({ name: { values: ["(Blanks)"] } });
+      await flushGridEvents();
+      // The whitespace-only cell is a blank → only row 2 passes.
+      expect(api!.getDisplayedRowCount()).toBe(1);
+
+      // The debounced server requery resolves the raw whitespace cell.
+      await flushFilterDebounce();
+      const rqs = received.filter((m) => m.type === "requery") as Array<
+        Record<string, unknown>
+      >;
+      expect(rqs.length).toBeGreaterThan(0);
+      const filters = (rqs[rqs.length - 1]!.filters ?? {}) as {
+        name?: { values?: string[]; typed?: unknown[] };
+      };
+      expect(filters.name?.values).toContain("(Blanks)");
+      expect(filters.name?.typed).toEqual(["   "]);
     },
   );
 });

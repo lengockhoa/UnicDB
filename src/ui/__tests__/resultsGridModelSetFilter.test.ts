@@ -2,6 +2,7 @@
 // Pure-logic tests for the Excel-style set-filter helpers in resultsGridModel.
 // No DOM, no AG Grid, no vscode — must run in plain vitest node environment.
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   buildSetFilterEntries,
   setFilterPass,
@@ -19,12 +20,21 @@ describe("buildSetFilterEntries — groups + counts + sort", () => {
     ]);
   });
 
-  it("merges null, undefined, and '' into a single (Blanks) entry", () => {
-    const entries = buildSetFilterEntries([null, undefined, "", "x"]);
+  it("merges null, undefined, empty, and whitespace-only strings into one (Blanks) entry", () => {
+    const entries = buildSetFilterEntries([null, undefined, "", "  ", "\t", "x"]);
+    expect(entries).toEqual([
+      { key: "x", display: "x", count: 1 },
+      { key: "(blanks)", display: "(Blanks)", count: 5 },
+    ]);
+  });
+
+  it("whitespace joins one blanks entry pinned last", () => {
+    const entries = buildSetFilterEntries([null, "", "  ", "x"]);
     expect(entries).toEqual([
       { key: "x", display: "x", count: 1 },
       { key: "(blanks)", display: "(Blanks)", count: 3 },
     ]);
+    expect(setFilterPass("\t", new Set(["(blanks)"]))).toBe(true);
   });
 
   it("groups number values by their string form", () => {
@@ -83,5 +93,18 @@ describe("selectedKeysFromModel — display→key round-trip", () => {
 
   it("returns empty Set when every display string is unknown", () => {
     expect(selectedKeysFromModel(entries, ["foo", "bar"])).toEqual(new Set());
+  });
+});
+
+describe("shared stripTrailingSemicolon (TASK-004 case 5)", () => {
+  it("resultsGridModel imports the shared helper and declares no local copy", () => {
+    const source = readFileSync(
+      new URL("../resultsGridModel.ts", import.meta.url),
+      "utf8",
+    );
+    expect(source).toMatch(
+      /import\s*\{[^}]*stripTrailingSemicolon[^}]*\}\s*from\s*"\.\.\/core\/text"/,
+    );
+    expect(source).not.toMatch(/function\s+stripTrailingSemicolon\s*\(/);
   });
 });
