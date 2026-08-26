@@ -32,12 +32,13 @@ npm test
 #    automatically before `vsce package`, so it is listed for clarity.
 npm run compile
 
-# 4. Package — produces the marketplace-ready .vsix in repo root.
-npm run package
+# 4. Package — produces the marketplace-ready .vsix in `dist/` via the
+#    build script (npm ci → typecheck → full test → compile → package).
+bash scripts/build.sh
 ```
 
-The package name follows the pattern `vsdb-<version>.vsix` (e.g.
-`vsdb-1.6.0.vsix`).
+The package name follows the pattern `dist/vsdb-<version>.vsix` (e.g.
+`dist/vsdb-1.6.8.vsix`).
 
 ## Artifact assertions
 
@@ -45,35 +46,41 @@ Inspect the produced artifact. Every line below must hold.
 
 ```bash
 # List contents.
-unzip -l vsdb-<version>.vsix
+unzip -l dist/vsdb-<version>.vsix
 
-# Expected included paths (sample; do not pin exact byte counts):
+# Expected included paths (observed for v1.6.8; do not pin exact byte counts):
 #   extension/dist/extension.js
 #   extension/dist/webview.js
 #   extension/dist/webview.css
 #   extension/dist/aiChatPanel.js
+#   extension/dist/connectionForm.js
+#   extension/dist/schemaForm.js
+#   extension/dist/newTableForm.js
+#   extension/dist/aiSettingsForm.js
+#   extension/media/vsdb.svg
 #   extension/media/icon.png
-#   extension/README.md
-#   extension/LICENSE
-#   extension/CHANGELOG.md
+#   extension/readme.md
+#   extension/LICENSE.txt
+#   extension/changelog.md
 #   extension/package.json
+#   extension/syntaxes/vsdb-sql-injection.tmLanguage.json
 #   extension.vsixmanifest
 
 # Forbidden patterns (must produce NO matches):
-unzip -l vsdb-<version>.vsix | grep -E '(^|/)src/'        # source
-unzip -l vsdb-<version>.vsix | grep -E '(^|/)node_modules/' # deps
-unzip -l vsdb-<version>.vsix | grep -E '(^|/)tests/'       # tests
-unzip -l vsdb-<version>.vsix | grep -E '(^|/)docs/'        # docs
-unzip -l vsdb-<version>.vsix | grep -E '(^|/)webview/'     # raw TS
-unzip -l vsdb-<version>.vsix | grep -E '\.map$'            # source maps
+unzip -l dist/vsdb-<version>.vsix | grep -E '(^|/)src/'        # source
+unzip -l dist/vsdb-<version>.vsix | grep -E '(^|/)node_modules/' # deps
+unzip -l dist/vsdb-<version>.vsix | grep -E '(^|/)tests/'       # tests
+unzip -l dist/vsdb-<version>.vsix | grep -E '(^|/)docs/'        # docs
+unzip -l dist/vsdb-<version>.vsix | grep -E '(^|/)webview/'     # raw TS
+unzip -l dist/vsdb-<version>.vsix | grep -E '\.map$'            # source maps
 
 # Verify embedded package.json metadata.
-unzip -p vsdb-<version>.vsix extension/package.json | grep -E '"version"|"license"|"repository"'
+unzip -p dist/vsdb-<version>.vsix extension/package.json | grep -E '"version"|"license"|"repository"'
 ```
 
 If any forbidden path matches, add the missing rule to `.vscodeignore`,
-delete the artifact (`rm vsdb-<version>.vsix`), and re-run
-`npm run package`.
+delete the artifact (`rm dist/vsdb-<version>.vsix`), and re-run
+`bash scripts/build.sh`.
 
 ## Local install (smoke)
 
@@ -81,7 +88,7 @@ Use the repo's installer in `--dry-run` mode to validate the file without
 actually loading VS Code:
 
 ```bash
-bash scripts/install-vsdb.sh --local vsdb-<version>.vsix --dry-run
+bash scripts/install-vsdb.sh --local dist/vsdb-<version>.vsix --dry-run
 ```
 
 For a real install, drop `--dry-run` — the script will hand the file to
