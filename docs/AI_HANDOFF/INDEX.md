@@ -1,5 +1,26 @@
 # INDEX
 
+Cycle X -- **ADVERSARIAL QA + CORRECTNESS HARDENING**: two evidence-gated audits, root-cause
+flake isolation, whitespace-aware `(Blanks)`, shared SQL terminator normalization, MySQL sort
+adapter parity, and explicit UTC adapter sessions. 5 initial tasks, up to 2 audit follow-ups.
+
+| Task | Title | Status | Executor | Reviewer |
+|------|-------|--------|----------|----------|
+| TASK-001 | Adversarial audit: host, adapters, save path | ready | - | - |
+| TASK-002 | Adversarial audit: results grid, webview, query UI | ready | - | - |
+| TASK-003 | Eliminate NULL/viewer aggregate flake at bundle lifecycle root | ready | - | - |
+| TASK-004 | Whitespace `(Blanks)` and shared SQL terminator normalizer | ready | - | - |
+| TASK-005 | MySQL sort twin and explicit UTC adapter sessions | ready | - | - |
+
+Graph: 001 and 002 are independent audit gates; 002 --> 003 and 002 --> 004;
+001 + 004 --> 005. After 001/002, create zero to two grounded TASK-006/007 audit-fix tasks only for confirmed
+small-to-medium findings; dynamic dependencies must follow file ownership.
+
+- **Wave 1 (2, parallel):** 001, 002
+- **Reconciliation gate:** materialize 0-2 audit fixes or explicitly record none
+- **Wave 2 (2 + non-colliding audit fixes):** 003, 004
+- **Wave 3 (1 + collision-ordered audit fixes):** 005
+
 Cycle W -- **SERVER-SIDE SORT + DISTINCT FILTER VALUES + DETERMINISTIC PAGING**: real ORDER BY
 parser with per-dialect quoting and expression rejection, `(Blanks)` matching empty strings,
 PK tiebreaker for gap-free OFFSET paging, server-side DISTINCT values for the set filter, and
@@ -41,6 +62,9 @@ Cycle T (12 tasks, all done) shipped at `4a35fec`. See `archive/cycle-T-*`.
 
 ## Next cycles (queued)
 
+- **Cycle X audit follow-ups (reserved TASK-006/TASK-007).** After Wave 1, create zero to two
+  task files/rows only for confirmed small-to-medium findings. P0/P1 are mandatory; queue huge
+  architectural findings here with severity, evidence, and rationale instead of rushing them.
 - **Keyset (cursor) paging for deep offsets.** Cycle W makes OFFSET paging deterministic only
   when the full PK is projected, but not fast; `OFFSET 500000` still scans. Needs a stable unique
   sort key carried through the webview round trip and a different composition for page 0.
@@ -49,7 +73,7 @@ Cycle T (12 tasks, all done) shipped at `4a35fec`. See `archive/cycle-T-*`.
   is missing, no tiebreaker is added and no gap-free promise is made. A follow-up must project all
   PK columns through arbitrary wrapped SELECTs without changing visible result columns or
   breaking DISTINCT/aggregate queries; appending all projected columns is not a valid substitute.
-- **Session-timezone-aware timestamp literals for MySQL/MSSQL.** `mysql.createPool` is built
+- **Session-timezone-aware timestamp literals for MySQL/MSSQL — selected for Cycle X TASK-005.** `mysql.createPool` is built
   with no `timezone`/`dateStrings` and tedious's `new Connection` with no `useUTC`, so a
   server session not running in UTC shifts the UTC-naive `datetime` literals that
   `typedLiteral` emits. Needs a per-connection session-timezone probe.
@@ -65,11 +89,11 @@ Cycle T (12 tasks, all done) shipped at `4a35fec`. See `archive/cycle-T-*`.
 - **Typed `dialect` field on `StateMessage`.** The webview currently infers the driver by parsing
   the `state` header string (`extension.ts:623`) in order to quote non-bare `colId`s, falling
   back to postgres quoting. A typed field would remove the string parsing.
-- **Whitespace-only values in `(Blanks)`.** Cycle W folds `''` into `(Blanks)` for string
+- **Whitespace-only values in `(Blanks)` — selected for Cycle X TASK-004.** Cycle W folds `''` into `(Blanks)` for string
   columns but leaves `"  "` as its own entry; `TRIM(col) = ''` would match it at the cost of
   the index on all three dialects.
-- **Shared `stripTrailingSemicolon`.** Duplicated between `src/ui/queryComposer.ts` and the
-  new `src/ui/distinctValues.ts` to avoid a cross-task file collision; hoist both into one
-  module.
-- **MySQL `getTableSortQuery` adapter twin.** Postgres and MSSQL have one; MySQL's arm is
-  composed inline in `composeSortQuery`. Only worth doing if a second call site appears.
+- **Shared `stripTrailingSemicolon` — selected for Cycle X TASK-004.** Grounding found three
+  copies: `src/ui/queryComposer.ts`, `src/ui/distinctValues.ts`, and `src/ui/resultsGridModel.ts`;
+  hoist all into `src/core/text.ts`.
+- **MySQL `getTableSortQuery` adapter twin — selected for Cycle X TASK-005.** Postgres and MSSQL
+  have one; MySQL's arm is currently composed inline in `composeSortQuery`.
