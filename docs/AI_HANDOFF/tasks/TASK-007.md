@@ -276,3 +276,41 @@ gated, no host-trust expansion (identifiers/values still quote-wrapped). Both do
 changes (#8a/#8b) are justified and safe. Separately: during this review an out-of-band mutation
 ("MUTANT") appeared in webviewServerSort.test.ts:296; it was NOT in commit abde88b, my fresh re-run
 caught it as a real FAIL, and I restored the file — no action needed from the executor.
+
+## Fix Response (R4.5 round 1)
+
+RESPONDER_MODEL: bao-sonnet
+FIX_SUMMARY: Added `ordinal?: true` to `OrderByTerm`, set it only for bare unsigned integer
+ORDER BY tokens, and switched both `buildOrderByClause` and the ResultsPanel single-term lane to
+use the typed flag instead of re-detecting ordinal-ness from text. Updated the stale parser docblock
+and added quoted-digit, bare-ordinal, and mixed-clause coverage. Trace conclusion: `resolveColumnToken`
+unquotes a dialect-quoted digit identifier to logical `2024`; `isSafeLogicalIdent("2024")` accepts it
+because it is non-empty and contains no control characters, so quoted digit columns already flow
+through the grammar and must remain distinguished from ordinals by data.
+RED_OUTPUT: |
+  $ npx vitest run src/ui/__tests__/queryComposer.test.ts -t "digit"
+  FAIL src/ui/__tests__/queryComposer.test.ts > buildOrderByClause (TASK-001) > keeps quoted digit identifiers quoted across all dialects
+    AssertionError: expected '2024 DESC' to be '"2024" DESC' // Object.is equality
+  FAIL src/ui/__tests__/queryComposer.test.ts > buildOrderByClause (TASK-001) > mixes a bare ordinal and quoted digit identifier in one postgres clause
+    AssertionError: expected '2 DESC, 2024 ASC' to be '2 DESC, "2024" ASC' // Object.is equality
+  Test Files  1 failed (1)
+       Tests  2 failed | 1 passed | 65 skipped (68)
+Verification Output: |
+  $ npm run compile
+  esbuild: build complete
+
+  $ npx vitest run src/ui/__tests__/queryComposer.test.ts src/ui/__tests__/resultsPanelServerFilter.test.ts src/ui/__tests__/resultsPanelOrderBy.test.ts src/ui/__tests__/webviewServerSort.test.ts src/ui/__tests__/resultsPanel.test.ts src/ui/__tests__/resultsGridModelRequery.test.ts
+   Test Files  6 passed (6)
+        Tests  157 passed (157)
+  webviewServerSort.test.ts completed in the compile-first run; exit 0.
+
+  $ npm run typecheck
+  tsc --noEmit clean, exit 0
+Status: PASS
+
+## Discussion
+
+### 2026-08-27 · executor: bao-sonnet
+The reviewer finding was fixed without touching `keysetPaging.ts`. Bare numeric terms now carry explicit
+ordinal state, while quoted digit identifiers remain ordinary logical identifiers and are re-quoted by
+the active dialect builder.

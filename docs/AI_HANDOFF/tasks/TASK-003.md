@@ -177,3 +177,56 @@ NOTES: String family IS a faithful verbatim copy of queryComposer.isStringColumn
   greppable citation, name-keyed design is documented and correct for this layer, no production
   webview/protocol file was touched by this task, and the omitted-3rd-arg path is provably unchanged.
   The single blocking defect is the numeric/boolean matcher's exact-match asymmetry vs. PG typmod output.
+
+## Fix Response (R4.5 round 1)
+
+RESPONDER_MODEL: bao-sonnet
+FIX_SUMMARY: Extended declared numeric and boolean classification to use a family-bounded optional parenthesized modifier match, added numeric tokens tinyint, mediumint, double, smallmoney and boolean token bit, and added typmod, vocabulary, regression, and lookalike/embedded-junk tests. No call sites or prohibited production files were changed.
+RED_OUTPUT: |
+  npx vitest run src/ui/__tests__/resultsGridModel.test.ts 2>&1
+  ❯ src/ui/__tests__/resultsGridModel.test.ts  (45 tests | 3 failed) 14ms
+   ❯ ... > Happy: declared numeric(10,2) classifies all-NULL data as number + alignRight
+     → expected [ { field: 'price', …(2) } ] to deeply equal [ { field: 'price', …(3) } ]
+   ❯ ... > Extended numeric tokens: tinyint/mediumint/double/smallmoney -> number + alignRight
+     → expected [ { field: 'a', …(2) }, …(3) ] to deeply equal [ { field: 'a', …(3) }, …(3) ]
+   ❯ ... > Extended boolean token: bit and bit(1) -> boolean
+     → expected [ { field: 'f1', …(2) }, …(1) ] to deeply equal [ { field: 'f1', …(2) }, …(1) ]
+  Test Files  1 failed (1)
+       Tests 3 failed | 42 passed (45)
+  First failure detail:
+  - Expected: { alignRight: true, field: "price", headerName: "price", kind: "number" }
+  + Received: { field: "price", headerName: "price", kind: "string" }
+Verification Output: |
+  npx vitest run src/ui/__tests__/resultsGridModel.test.ts
+   ✓ src/ui/__tests__/resultsGridModel.test.ts  (45 tests) 7ms
+    Test Files 1 passed (1)
+         Tests 45 passed (45)
+    EXIT_VITEST=0
+
+  Required aggregate command:
+  npx vitest run src/ui/__tests__/resultsGridModel.test.ts src/ui/__tests__/resultsGridModelRequery.test.ts src/ui/__tests__/keysetPaging.test.ts src/ui/__tests__/webviewServerSort.test.ts && npm run typecheck && npm run compile
+   ✓ resultsGridModel.test.ts (45 tests)
+   ✓ resultsGridModelRequery.test.ts (21 tests)
+   ❯ keysetPaging.test.ts (40 tests | 4 failed)
+   ✓ webviewServerSort.test.ts (14 tests)
+    Test Files 1 failed | 3 passed (4)
+         Tests 4 failed | 116 passed (120)
+    EXIT_VITEST=1; npm run typecheck and npm run compile were not reached by the chain.
+
+  npm run typecheck (run separately):
+   > vsdb@1.6.7 typecheck
+   > tsc --noEmit
+  src/ui/keysetPaging.ts(578,3): error TS1128: Declaration or statement expected.
+  src/ui/keysetPaging.ts(607,1): error TS1128: Declaration or statement expected.
+  EXIT_TYPECHECK=2
+
+  npm run compile (run separately):
+   ✘ [ERROR] Unexpected ")"
+    src/ui/keysetPaging.ts:578:2
+  Error: Build failed with 1 error
+  EXIT_COMPILE=1
+Status: FAIL
+
+Note: The requested aggregate verification is blocked by unrelated pre-existing modifications in prohibited src/ui/keysetPaging.ts (4 targeted test failures and syntax errors at lines 578/607). Focused resultsGridModel tests pass 45/45.
+
+---

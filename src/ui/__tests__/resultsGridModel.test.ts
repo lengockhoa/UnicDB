@@ -227,6 +227,85 @@ describe("inferColumns — declared columnTypes override (TASK-003)", () => {
 });
 
 // =============================================================================
+// 1d. inferColumns — typmod'd declared types + extended vocabulary (R4.5)
+// =============================================================================
+// Reviewer finding (TASK-003 Fix Round 4.5): PostgreSQL introspection ships
+// typmod'd type names (src/core/ddl/pgIntrospect.ts uses
+// format_type(atttypid, atttypmod) → "numeric(10,2)", "bit(1)"), but only the
+// STRING family accepted a "(...)" modifier — a declared numeric(10,2) fell
+// through to sampling and landed as left-aligned string. Also adds the dialect
+// tokens the producers emit: MySQL tinyint/mediumint/double, MSSQL
+// smallmoney, and boolean bit for MSSQL/MySQL. Tests pin: modifier tolerance
+// on the numeric/boolean families, the new tokens, and lookalike guards
+// (family-bounded matching must never leak into unknown/partial types).
+describe("inferColumns — declared types with typmod / extended vocabulary (R4.5)", () => {
+  it("Happy: declared numeric(10,2) classifies all-NULL data as number + alignRight", () => {
+    // The most common PG decimal/money declaration from format_type(); no
+    // non-null sample values, so only the declared type can decide kind.
+    const cols = inferColumns(["price"], [[null], [null]], { price: "numeric(10,2)" });
+    expect(cols).toEqual([
+      { field: "price", headerName: "price", kind: "number", alignRight: true },
+    ]);
+  });
+
+  it("Extended numeric tokens: tinyint/mediumint/double/smallmoney -> number + alignRight", () => {
+    const cols = inferColumns(
+      ["a", "b", "c", "d"],
+      [[null, null, null, null]],
+      { a: "tinyint", b: "mediumint", c: "double", d: "smallmoney" },
+    );
+    expect(cols).toEqual([
+      { field: "a", headerName: "a", kind: "number", alignRight: true },
+      { field: "b", headerName: "b", kind: "number", alignRight: true },
+      { field: "c", headerName: "c", kind: "number", alignRight: true },
+      { field: "d", headerName: "d", kind: "number", alignRight: true },
+    ]);
+  });
+
+  it("Extended boolean token: bit and bit(1) -> boolean", () => {
+    const cols = inferColumns(["f1", "f2"], [[null, null]], { f1: "bit", f2: "bit(1)" });
+    expect(cols).toEqual([
+      { field: "f1", headerName: "f1", kind: "boolean" },
+      { field: "f2", headerName: "f2", kind: "boolean" },
+    ]);
+  });
+
+  it("Regression: varchar(50) still string; bare int4 still number; geometry still sampling", () => {
+    const cols = inferColumns(
+      ["name", "n", "geo"],
+      [["123", null, "polygon"]],
+      { name: "varchar(50)", n: "int4", geo: "geometry" },
+    );
+    expect(cols[0]).toEqual({ field: "name", headerName: "name", kind: "string" });
+    expect(cols[1]).toEqual({
+      field: "n",
+      headerName: "n",
+      kind: "number",
+      alignRight: true,
+    });
+    // geometry is unknown metadata → sampling over the single string sample
+    // decides, exactly as before the fix.
+    expect(cols[2]).toEqual({ field: "geo", headerName: "geo", kind: "string" });
+  });
+
+  it("Guard: lookalikes and embedded junk do NOT match a family token (sampling decides)", () => {
+    // All-NULL + non-numeric probes: sampling yields plain string. A botched
+    // prefix match would force number(+alignRight)/string-families instead.
+    const cols = inferColumns(["x", "y", "z"], [[null, "abc", "abc"]], {
+      x: "numericonly",
+      y: "varcharx",
+      z: "junk numeric",
+    });
+    expect(cols[0]).toEqual({ field: "x", headerName: "x", kind: "string" });
+    expect(cols[0]?.alignRight).toBeUndefined();
+    expect(cols[1]).toEqual({ field: "y", headerName: "y", kind: "string" });
+    expect(cols[1]?.alignRight).toBeUndefined();
+    expect(cols[2]).toEqual({ field: "z", headerName: "z", kind: "string" });
+    expect(cols[2]?.alignRight).toBeUndefined();
+  });
+});
+
+// =============================================================================
 // 2. loadMore gate fires exactly once per request→sync cycle (dedup)
 // =============================================================================
 describe("createResultsGridModel — loadMore gate", () => {

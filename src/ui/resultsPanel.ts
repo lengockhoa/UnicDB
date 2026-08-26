@@ -1331,7 +1331,7 @@ export class ResultsPanel {
       // which would turn ordinal 2 into the inert identifier `"2"`. Ordinals
       // fall through to the buildOrderByClause wrap below, which emits them
       // bare exactly as the webview sent them.
-      const firstIsOrdinal = /^[0-9]+$/.test(first.column);
+      const firstIsOrdinal = first.ordinal === true;
       if (terms.length === 1 && !first.nulls && !firstIsOrdinal) {
         // Cycle-V single-term path — keeps composeSortQuery's quoting.
         return {

@@ -92,42 +92,46 @@ function classifyDeclaredColumnType(declared: string | undefined): ColumnKind | 
   if (t === "citext" || t === "cstring") return "string";
   // Numeric family — sampleData.ts integer / decimal / float groups (+ the
   // pg_catalog aliases int2/int4/int8/float4/float8 already listed there).
+  // The family-bounded suffix permits PostgreSQL typmods such as
+  // `numeric(10,2)` without accepting partial/lookalike type names.
   if (
-    typeIs(
-      t,
-      [
-        "integer",
-        "int",
-        "int2",
-        "int4",
-        "int8",
-        "serial",
-        "bigserial",
-        "smallserial",
-        "bigint",
-        "smallint",
-        "numeric",
-        "decimal",
-        "money",
-        "float",
-        "float4",
-        "float8",
-        "double precision",
-        "real",
-      ],
-    )
+    typeHasOptionalModifier(t, [
+      "double precision",
+      "smallmoney",
+      "mediumint",
+      "tinyint",
+      "bigserial",
+      "smallserial",
+      "integer",
+      "smallint",
+      "bigint",
+      "numeric",
+      "decimal",
+      "money",
+      "float4",
+      "float8",
+      "double",
+      "serial",
+      "int8",
+      "int4",
+      "int2",
+      "float",
+      "real",
+      "int",
+    ])
   ) {
     return "number";
   }
-  // Boolean family — sampleData.ts boolean group.
-  if (typeIs(t, ["boolean", "bool"])) return "boolean";
+  // Boolean family — sampleData.ts boolean group. `bit(1)` is emitted by
+  // dialect metadata as a boolean-capable declared type.
+  if (typeHasOptionalModifier(t, ["boolean", "bool", "bit"])) return "boolean";
   // Unknown declaration → sampling decides (Task case 5).
   return null;
 }
 
-/** Exact-token membership over a lowercase Set (trimmed input only). */
-function typeIs(t: string, names: readonly string[]): boolean {
-  return names.includes(t);
+/** Family-token membership with an optional parenthesized type modifier. */
+function typeHasOptionalModifier(t: string, names: readonly string[]): boolean {
+  return new RegExp(`^(${names.join("|")})(\\s*\\(|$)`).test(t);
 }
 
 /**

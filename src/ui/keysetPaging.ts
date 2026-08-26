@@ -430,20 +430,21 @@ export function composeKeysetQuery(
   const { baseSql, where, terms, tiebreakers, offset, limit, dialect } = opts;
   const whereTrim = where.trim();
 
-  // Ordered column sequence: user terms then declared-PK tiebreakers —
-  // the identical merge rule buildPagedQueryTerms applies.
-  const seen = new Set(terms.map((t) => t.column));
-  const orderedColumns: Array<{ column: string; direction: "ASC" | "DESC" }> =
-    terms.map((t) => ({ column: t.column, direction: t.direction }));
+  // Ordered terms: retain every user-supplied field (including optional
+  // fields added to OrderByTerm in parallel work), then append PK
+  // tiebreakers without null ordering. This is the single source of truth
+  // for both ORDER BY rendering and the keyset column/direction view.
+  const allOrderedTerms: OrderByTerm[] = terms.map((t) => ({ ...t }));
+  const seen = new Set(allOrderedTerms.map((t) => t.column));
   for (const pk of tiebreakers) {
     if (!seen.has(pk)) {
-      orderedColumns.push({ column: pk, direction: "ASC" });
+      allOrderedTerms.push({ column: pk, direction: "ASC" });
       seen.add(pk);
     }
   }
-  const allOrderedTerms: OrderByTerm[] = orderedColumns.map((o) => ({
-    column: o.column,
-    direction: o.direction,
+  const orderedColumns = allOrderedTerms.map(({ column, direction }) => ({
+    column,
+    direction,
   }));
 
   // ---- widening (Contract A ii) — applies on every lane --------------------
@@ -479,9 +480,14 @@ export function composeKeysetQuery(
     !!lastKey &&
     lastKey.length > 0 &&
     lastKey.every((k) => isPlainValue(k.value));
+  // Raw scalar comparisons cannot model the null ranking emitted by
+  // buildOrderByClause, so NULLS-ordered terms must always use OFFSET.
+  const hasNullOrdering = terms.some((t) => t.nulls !== undefined);
 
   if (
+    hasNullOrdering ||
     !usableKey ||
+
     !totalOrderProven ||
     lastKey!.length !== orderedColumns.length ||
     !orderedColumns.every((o, idx) => lastKey![idx]!.column === o.column)

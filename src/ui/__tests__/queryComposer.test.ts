@@ -474,6 +474,37 @@ describe("buildOrderByClause (TASK-001)", () => {
     expect(buildOrderByClause(terms, "mysql")).toBe("`a` ASC, `b` DESC");
     expect(buildOrderByClause(terms, "mssql")).toBe("[a] ASC, [b] DESC");
   });
+
+  it("keeps quoted digit identifiers quoted across all dialects", () => {
+    const cases = [
+      ["postgres", '"2024" DESC', '"2024" DESC'],
+      ["mysql", "`2024` DESC", "`2024` DESC"],
+      ["mssql", "[2024] DESC", "[2024] DESC"],
+    ] as const;
+    for (const [dialect, input, expected] of cases) {
+      const parsed = parseOrderBy(input, dialect);
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok) expect(buildOrderByClause(parsed.terms, dialect)).toBe(expected);
+    }
+  });
+
+  it("keeps bare digit ordinals bare across all dialects", () => {
+    for (const dialect of ["postgres", "mysql", "mssql"] as const) {
+      const parsed = parseOrderBy("2024 DESC", dialect);
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok) expect(buildOrderByClause(parsed.terms, dialect)).toBe("2024 DESC");
+    }
+  });
+
+  it("mixes a bare ordinal and quoted digit identifier in one postgres clause", () => {
+    const parsed = parseOrderBy('2 DESC, "2024" ASC', "postgres");
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(buildOrderByClause(parsed.terms, "postgres")).toBe(
+        '2 DESC, "2024" ASC',
+      );
+    }
+  });
 });
 
 describe("buildPagedQueryTerms (TASK-001)", () => {

@@ -346,6 +346,111 @@ describe("composeKeysetQuery — missing-PK projection widening", () => {
 });
 
 // ---------------------------------------------------------------------------
+// §NULLS carry-through — reviewer R4.5 fix round (live paging lane)
+//
+// parseOrderBy produces OrderByTerm.nulls ("FIRST"|"LAST"); the whole paging
+// lane routes through composeKeysetQuery (resultsPanel requery), so the
+// OFFSET fallback must stay byte-identical to buildPagedQueryTerms INCLUDING
+// the null-rank clause — while a term carrying nulls must never reach the
+// OR-of-ANDs keyset predicate (raw scalar comparisons model no null ranking).
+// ---------------------------------------------------------------------------
+
+describe("composeKeysetQuery — NULLS FIRST/LAST survives the live paging lane", () => {
+  const NULL_TERMS = [
+    { column: "a", direction: "ASC" as const, nulls: "LAST" as const },
+  ];
+
+  it("postgres native: NULLS LAST + deep offset is byte-identical to buildPagedQueryTerms", () => {
+    const r = composeKeysetQuery(pageDefaults({ terms: NULL_TERMS, offset: 500 }));
+    expect(r.sql).toBe(
+      buildPagedQueryTerms("SELECT * FROM t", "", NULL_TERMS, 500, 500, "postgres", ["id"]),
+    );
+    expect(r.sql).toContain('ORDER BY "a" ASC NULLS LAST, "id" ASC LIMIT 500 OFFSET 500');
+  });
+
+  it("mysql emulated: `a` IS NULL rank key preserved alongside the deep offset", () => {
+    const r = composeKeysetQuery(
+      pageDefaults({ terms: NULL_TERMS, offset: 500, dialect: "mysql" }),
+    );
+    expect(r.sql).toBe(
+      buildPagedQueryTerms("SELECT * FROM t", "", NULL_TERMS, 500, 500, "mysql", ["id"]),
+    );
+    expect(r.sql).toContain("ORDER BY `a` IS NULL ASC, `a` ASC, `id` ASC");
+  });
+
+  it("mssql emulated: CASE WHEN null-rank key preserved with OFFSET/FETCH", () => {
+    const r = composeKeysetQuery(
+      pageDefaults({ terms: NULL_TERMS, offset: 500, dialect: "mssql" }),
+    );
+    expect(r.sql).toBe(
+      buildPagedQueryTerms("SELECT * FROM t", "", NULL_TERMS, 500, 500, "mssql", ["id"]),
+    );
+    expect(r.sql).toContain(
+      "ORDER BY CASE WHEN [a] IS NULL THEN 1 ELSE 0 END ASC, [a] ASC, [id] ASC",
+    );
+    expect(r.sql).toMatch(/OFFSET 500 ROWS FETCH NEXT 500 ROWS ONLY$/);
+  });
+
+  it("NULLS FIRST keeps its native/rank form end-to-end too", () => {
+    const first = [
+      { column: "a", direction: "ASC" as const, nulls: "FIRST" as const },
+    ];
+    const r = composeKeysetQuery(pageDefaults({ terms: first, offset: 100 }));
+    expect(r.sql).toBe(
+      buildPagedQueryTerms("SELECT * FROM t", "", first, 100, 500, "postgres", ["id"]),
+    );
+    expect(r.sql).toContain('"a" ASC NULLS FIRST');
+  });
+
+  it.each([
+    ["postgres", "OFFSET"],
+    ["mysql", "OFFSET"],
+    ["mssql", "FETCH NEXT"],
+  ] as const)(
+    "%s: a nulls-carrying term REFUSES the keyset lane even with a usable lastKey",
+    (dialect, pageMarker) => {
+      const r = composeKeysetQuery(
+        pageDefaults({
+          terms: NULL_TERMS,
+          offset: 500,
+          dialect,
+          lastKey: [
+            { column: "a", value: 1 },
+            { column: "id", value: 2 },
+          ],
+        }),
+      );
+      // Falls back to the legacy OFFSET composition verbatim…
+      expect(r.sql).toBe(
+        buildPagedQueryTerms("SELECT * FROM t", "", NULL_TERMS, 500, 500, dialect, ["id"]),
+      );
+      expect(r.sql).toContain(pageMarker);
+      // …and shapes NO strictly-after keyset predicate (the predicate would
+      // make `vsdb_page WHERE (<first comparison>` appear; the fallback with
+      // an empty filter composes `vsdb_page ORDER BY` directly).
+      expect(r.sql).not.toContain("vsdb_page WHERE");
+    },
+  );
+
+  it("guard: a nulls-FREE term with a usable lastKey still takes the true keyset lane (LIMIT only)", () => {
+    const r = composeKeysetQuery(
+      pageDefaults({
+        terms: [{ column: "a", direction: "ASC" }],
+        offset: 500,
+        lastKey: [
+          { column: "a", value: 1 },
+          { column: "id", value: 2 },
+        ],
+      }),
+    );
+    expect(r.sql).toBe(
+      'SELECT * FROM (SELECT * FROM t) vsdb_page WHERE (("a" > 1) OR ("a" = 1 AND "id" > 2)) ORDER BY "a" ASC, "id" ASC LIMIT 500',
+    );
+    expect(r.sql).not.toContain("OFFSET");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Pure-parser boundary details feeding both public functions
 // ---------------------------------------------------------------------------
 

@@ -234,6 +234,7 @@ export interface OrderByTerm {
   column: string;
   direction: "ASC" | "DESC";
   nulls?: "FIRST" | "LAST";
+  ordinal?: true;
 }
 
 export type ParseOrderByResult =
@@ -289,10 +290,13 @@ function isSafeLogicalIdent(name: string): boolean {
  *     passes as a bare token if it matches the bare charset (which delimiters
  *     never do), otherwise it is rejected with the standard error.
  *
- * Grammar per term: `identifier [ASC|DESC] [NULLS FIRST|NULLS LAST]`.
- * Function calls, parentheses, dotted qualifiers, ordinals and `*` are all
- * rejected. Empty / whitespace-only input is `{ ok: true, terms: [] }` — the
- * normal state of the requery bar, meaning "no ORDER BY clause".
+ * Grammar per term: `identifier [ASC|DESC] [NULLS FIRST|NULLS LAST]`, where
+ * a bare unsigned integer is also accepted as a positional ordinal and is
+ * rendered bare. Quoted identifiers, including all-digit names, are always
+ * canonicalized and re-quoted for the active dialect. Function calls,
+ * parentheses, dotted qualifiers and `*` are rejected. Empty / whitespace-only
+ * input is `{ ok: true, terms: [] }` — the normal state of the requery bar,
+ * meaning "no ORDER BY clause".
  *
  * `NULLS FIRST|LAST` is accepted on all three dialects (TASK-005): postgres
  * renders it natively; mysql/mssql get a leading null-rank key from
@@ -323,7 +327,7 @@ export function parseOrderBy(orderBy: string, dialect?: Dialect): ParseOrderByRe
     // as the term's column; `quoteIdentOrdinalsSafe` composes it bare on
     // every dialect (an ordinal is never a quoted identifier).
     if (/^[0-9]+$/.test(column)) {
-      terms.push({ column, direction, ...(nulls ? { nulls } : {}) });
+      terms.push({ column, direction, ordinal: true, ...(nulls ? { nulls } : {}) });
       continue;
     }
     // Resolve the column token: quoted-in-active-style first, then bare.
@@ -455,7 +459,7 @@ export function buildOrderByClause(terms: OrderByTerm[], dialect: Dialect): stri
     .map((t) => {
       // TASK-007 (cycle Y) — positional ordinals are valid on every shipped
       // dialect and must reach SQL BARE (never quote-wrapped).
-      const ident = /^[0-9]+$/.test(t.column)
+      const ident = t.ordinal === true
         ? t.column
         : quoteIdent(t.column, dialect);
       if (!t.nulls || dialect === "postgres") {

@@ -270,3 +270,44 @@ NOTES: Everything else verified clean — page-0 byte identity, DESC/mixed-compo
 mssql+mysql, gate refusals, hidden-strip ordinal alignment, render() reset, save-catch ack, and
 frozen resultsPanelOrderBy.test.ts + queryComposer.ts untouched by commit 6c03284. The single
 blocking item is the dropped NULLS field; it is a small, well-localised fix.
+
+
+## Fix Response (R4.5 round 1)
+
+RESPONDER_MODEL: bao-sonnet
+FIX_SUMMARY: Carried user OrderByTerm fields through composeKeysetQuery with structural spreads, derived keyset views from the full terms, and forced NULLS-ordered terms onto the OFFSET fallback because raw keyset comparisons cannot model null ranking. Added postgres/mysql/mssql byte-identity regression tests, refusal tests, and a nulls-free keyset guard.
+RED_OUTPUT: |
+  $ npx vitest run /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/src/ui/__tests__/keysetPaging.test.ts
+
+   ❯ src/ui/__tests__/keysetPaging.test.ts  (40 tests | 8 failed) 11ms
+     ❯ ... > postgres native: NULLS LAST + deep offset is byte-identical to buildPagedQueryTerms
+       - Expected legacy: ORDER BY "a" ASC NULLS LAST, "id" ASC LIMIT 500 OFFSET 500
+       + Received: ORDER BY "a" ASC, "id" ASC LIMIT 500 OFFSET 500
+     ❯ ... > mysql emulated: null-rank key preserved alongside the deep offset
+       - Expected legacy: ORDER BY `a` IS NULL ASC, `a` ASC, `id` ASC LIMIT 500 OFFSET 500
+       + Received: ORDER BY `a` ASC, `id` ASC LIMIT 500 OFFSET 500
+     ❯ ... > mssql emulated: CASE WHEN null-rank key preserved with OFFSET/FETCH
+       - Expected legacy: ORDER BY CASE WHEN [a] IS NULL THEN 1 ELSE 0 END ASC, [a] ASC, [id] ASC OFFSET 500 ROWS FETCH NEXT 500 ROWS ONLY
+       + Received: ORDER BY [a] ASC, [id] ASC OFFSET 500 ROWS FETCH NEXT 500 ROWS ONLY
+     ❯ ... > postgres/mysql/mssql: a nulls-carrying term REFUSES the keyset lane even with a usable lastKey
+       - Expected OFFSET fallback; received keyset predicate SQL
+
+  Test Files  1 failed (1)
+       Tests  8 failed | 32 passed (40)
+
+Verification Output: |
+  $ npx vitest run /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/src/ui/__tests__/keysetPaging.test.ts /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/src/ui/__tests__/resultsPanelRequery.test.ts /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/src/ui/__tests__/manualCommit.test.ts /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/src/ui/__tests__/resultsPanelSaveEdits.test.ts /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/src/ui/__tests__/resultsPanelOrderBy.test.ts && npm run typecheck
+
+   ✓ src/ui/__tests__/keysetPaging.test.ts  (40 tests) 8ms
+   ✓ src/ui/__tests__/manualCommit.test.ts  (12 tests) 9ms
+   ✓ src/ui/__tests__/resultsPanelRequery.test.ts  (15 tests) 10ms
+   ✓ src/ui/__tests__/resultsPanelOrderBy.test.ts  (16 tests) 10ms
+   ✓ src/ui/__tests__/resultsPanelSaveEdits.test.ts  (28 tests) 16ms
+
+   Test Files  5 passed (5)
+        Tests  111 passed (111)
+
+  > vsdb@1.6.7 typecheck
+  > tsc --noEmit
+
+Status: PASS
