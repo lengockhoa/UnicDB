@@ -15,7 +15,7 @@ buildFilterWhere reuse). 8 tasks, planned 3 waves.
 | TASK-003 | Let declared server types override sampled grid inference | ready | none | - |
 | TASK-004 | Keyset paging and safe missing-PK projection | ready | none | - |
 | TASK-005 | Emulate NULLS FIRST/LAST on MySQL and MSSQL | ready | none | - |
-| TASK-006 | Scope DISTINCT values and surface dropdown limits/errors | ready | TASK-004, TASK-007 | - |
+| TASK-006 | Scope DISTINCT values and surface dropdown limits/errors | pending_review | claude-code/bao-sonnet | - |
 | TASK-007 | Typed state dialect, declared-type wiring, and webview minors | ready | TASK-003, TASK-004 | - |
 | TASK-008 | Stabilize the webview server-sort bundle lifecycle | pending_review | claude-code/bao-sonnet | - |
 

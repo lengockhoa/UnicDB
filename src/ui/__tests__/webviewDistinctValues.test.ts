@@ -525,5 +525,127 @@ describeIfBundle(
         ]);
       },
     );
+
+    itIfBundle(
+      "17. TASK-006 — an error reply renders the message in the set-filter footer; values stay absent",
+      async () => {
+        const { received } = loadBundle();
+        dispatchState(
+          rowsState(["id", "name"], [
+            [1, "a"],
+          ]),
+        );
+        await flushGridEvents();
+        const api = getGridApi();
+        expect(api).toBeTruthy();
+
+        const filter = await openFilter(api!, "name");
+        const gui = filter.getGui() as SetFilterGui;
+        dispatchState({
+          type: "distinctValues",
+          index: 0,
+          column: "name",
+          values: [],
+          truncated: false,
+          error: "permission denied for table t",
+        });
+        await flushGridEvents();
+
+        const status = gui.querySelector(".vsdb-setfilter-status") as HTMLElement;
+        expect(status).toBeTruthy();
+        expect(status.textContent).toContain("permission denied for table t");
+        // Values stay absent: the error fallback (loaded rows) is untouched.
+        expect(entryLabels(gui)).toEqual(["a"]);
+      },
+    );
+
+    itIfBundle(
+      "18. TASK-006 — truncated reply still lists the returned values AND shows the cap note",
+      async () => {
+        const { received } = loadBundle();
+        dispatchState(
+          rowsState(["id", "name"], [
+            [1, "a"],
+          ]),
+        );
+        await flushGridEvents();
+        const api = getGridApi();
+        expect(api).toBeTruthy();
+
+        const filter = await openFilter(api!, "name");
+        const gui = filter.getGui() as SetFilterGui;
+        const values: string[] = [];
+        for (let i = 0; i < 1000; i++) values.push(`v${i}`);
+        dispatchState({
+          type: "distinctValues",
+          index: 0,
+          column: "name",
+          values,
+          truncated: true,
+        });
+        await flushGridEvents();
+
+        // Values remain usable…
+        expect(entryLabels(gui)).toContain("v0");
+        expect(entryLabels(gui)).toContain("v999");
+        // …and the footer states the bounded list.
+        const status = gui.querySelector(".vsdb-setfilter-status") as HTMLElement;
+        expect(status.textContent).toMatch(/first 1000/i);
+        // The truncation note must not have displaced the entries' checkbox
+        // state machinery (Select All still present).
+        expect(
+          gui.querySelector(".vsdb-setfilter-selectall"),
+        ).toBeTruthy();
+      },
+    );
+
+    itIfBundle(
+      "19. TASK-006 — clean reply clears a previously shown error note",
+      async () => {
+        const { received } = loadBundle();
+        dispatchState(
+          rowsState(["id", "name"], [
+            [1, "a"],
+          ]),
+        );
+        await flushGridEvents();
+        const api = getGridApi();
+        expect(api).toBeTruthy();
+
+        const filter = await openFilter(api!, "name");
+        const gui = filter.getGui() as SetFilterGui;
+        dispatchState({
+          type: "distinctValues",
+          index: 0,
+          column: "name",
+          values: [],
+          truncated: false,
+          error: "boom one",
+        });
+        await flushGridEvents();
+        expect(
+          (gui.querySelector(".vsdb-setfilter-status") as HTMLElement).textContent,
+        ).toContain("boom one");
+
+        // Statement replaced → cache cleared, live filter re-requests; the
+        // fresh good reply replaces the stale error text.
+        const state2 = rowsState(["id", "name"], [[2, "b"]]);
+        (state2.results![0] as Record<string, unknown>).sql =
+          "SELECT * FROM t2";
+        dispatchState(state2);
+        await flushGridEvents();
+        dispatchState({
+          type: "distinctValues",
+          index: 0,
+          column: "name",
+          values: ["b"],
+          truncated: false,
+        });
+        await flushGridEvents();
+        const statusAfter =
+          gui.querySelector(".vsdb-setfilter-status") as HTMLElement;
+        expect(statusAfter.textContent).not.toContain("boom one");
+      },
+    );
   },
 );

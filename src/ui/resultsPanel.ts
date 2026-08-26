@@ -152,6 +152,19 @@ export class ResultsPanel {
    *  SaveContext.listColumnTypes. */
   private columnTypesByStatement: Map<number, Record<string, string>> =
     new Map();
+  /** TASK-006 (cycle Y) — SOURCE state a distinct request rebuilds its WHERE
+   *  from, keyed by statement index like distinctCache. Written in
+   *  handleRequery where msg.where (the free-form requery bar) and
+   *  msg.filters (structured set-filter model) are already in hand and the
+   *  typed columnTypes are resolved. NOT the final combined WHERE string —
+   *  that would bake in the requested column's own predicate, which must be
+   *  excludable on a distinct request for that column. Cleared in render()
+   *  alongside distinctCache; when absent, handleRequestDistinctValues keeps
+   *  today's `where=""` byte-identical behaviour. */
+  private whereByStatement: Map<
+    number,
+    { barWhere: string; filters: ColumnFilterModel; columnTypes?: Record<string, string> }
+  > = new Map();
 
   constructor(options: ResultsPanelOptions) {
     this.runner = options.runner;
@@ -234,6 +247,11 @@ export class ResultsPanel {
     // guarded inside refreshColumnTypes, never awaited — render stays
     // synchronous).
     this.columnTypesByStatement.clear();
+    // TASK-006 (cycle Y) — the retained requery source state dies with its
+    // statement set, exactly like distinctCache: a new result set means every
+    // recorded (barWhere, filters) pair describes a query that no longer
+    // exists. The next distinct request falls back to today's where="".
+    this.whereByStatement.clear();
     void this.refreshColumnTypes(results);
     this.show();
     if (this.panel) {
@@ -1189,7 +1207,33 @@ export class ResultsPanel {
     }
     // Capture identity BEFORE awaiting: index/column/generation.
     const generation = this.statementGeneration;
-    const sql = buildDistinctValuesQuery(r.sql, column, dialect, "");
+    // TASK-006 (cycle Y) — scope the dropdown to the statement's active
+    // server-side view: bar WHERE AND every OTHER column's filter predicate,
+    // never the requested column's own (its selected values must not narrow
+    // the very list the user is re-picking from). The predicates are rebuilt
+    // with the pure buildFilterWhere over a shallow copy minus `column` —
+    // no SQL string parsing anywhere. No recorded source state (fresh render,
+    // non-dialect lane) keeps today's byte-identical where="" behaviour.
+    const sourceState = this.whereByStatement.get(index);
+    let scopedWhere = "";
+    if (sourceState) {
+      const filtersWithoutColumn: ColumnFilterModel = { ...sourceState.filters };
+      delete filtersWithoutColumn[column];
+      const rebuilt =
+        Object.keys(filtersWithoutColumn).length > 0
+          ? buildFilterWhere(
+              filtersWithoutColumn,
+              dialect,
+              sourceState.columnTypes !== undefined
+                ? { columnTypes: sourceState.columnTypes }
+                : undefined,
+            )
+          : "";
+      scopedWhere = [sourceState.barWhere.trim(), rebuilt]
+        .filter(Boolean)
+        .join(" AND ");
+    }
+    const sql = buildDistinctValuesQuery(r.sql, column, dialect, scopedWhere);
     // FIX R2 — a batched DISTINCT response (postgres/mysql single SELECT →
     // server cursor) must not leak the cursor: pool.max=1 means a live
     // cursor pins the only pooled client and any later query deadlocks.
@@ -1447,6 +1491,20 @@ export class ResultsPanel {
       pkTiebreakers,
       columnTypes,
     );
+    // TASK-006 (cycle Y) — record the requery's SOURCE state for later
+    // distinct requests on this statement. Shallow copy of the incoming
+    // filter model (the webview never mutates a posted model, and
+    // buildFilterWhere reads it without writing); `filters` may be undefined
+    // (bar-only requery). Only a LIVE-dialect requery records state — the
+    // no-dialect path inside composeRequerySql is the legacy composer whose
+    // semantics the distinct lane does not model. Cleared with render().
+    if (dialect) {
+      this.whereByStatement.set(index, {
+        barWhere: where,
+        filters: msg.filters ? { ...msg.filters } : {},
+        ...(columnTypes !== undefined ? { columnTypes } : {}),
+      });
+    }
     // TASK-004 (cycle Y) — hidden columns appended by the widening lane:
     // keep their values positionally for the paging key but strip them from
     // the DISPLAYED result so visible columns stay exactly what the user

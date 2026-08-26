@@ -540,3 +540,114 @@ describe("fix round 1 — batched DISTINCT response drains all pages and closes 
     expect(close).toHaveBeenCalledTimes(1);
   });
 });
+
+// =============================================================================
+// TASK-006 (cycle Y) — DISTINCT queries scoped to the active server-side view
+// =============================================================================
+
+/** Drain the requery round trip: host composes → runSql → state post. */
+async function drainRequery(): Promise<void> {
+  for (let i = 0; i < 500; i++) await Promise.resolve();
+}
+
+function distinctSqlCalls(runSql: ReturnType<typeof vi.fn>): string[] {
+  return runSql.mock.calls
+    .map((c) => c[0] as string)
+    .filter((s) => s.includes("vsdb_distinct"));
+}
+
+describe("TASK-006 case 1 — DISTINCT for one column retains bar WHERE plus other filters", () => {
+  it("scoped SQL carries archived = false AND the b predicate", async () => {
+    const { runSql, fake } = makePanel({
+      columns: ["id", "archived", "a", "b"],
+      sql: "SELECT id, archived, a, b FROM t",
+    });
+    fake.webview.dispatch({
+      type: "requery",
+      index: 0,
+      where: "archived = false",
+      orderBy: "",
+      filters: { b: { values: ["x"] } },
+    });
+    await drainRequery();
+    runSql.mockClear();
+    fake.webview.dispatch({ type: "requestDistinctValues", index: 0, column: "a" });
+    await waitForDistinct(fake, 1);
+    const calls = distinctSqlCalls(runSql);
+    expect(calls).toHaveLength(1);
+    // Bar WHERE retained VERBATIM, other-column filter predicate AND-ed.
+    expect(calls[0]).toContain(
+      `vsdb_distinct WHERE archived = false AND "b" IN ('x') ORDER BY 1`,
+    );
+  });
+});
+
+describe("TASK-006 case 2 — requested column's own filter never self-narrows", () => {
+  it("predicates for the requested column are omitted, others kept", async () => {
+    const { runSql, fake } = makePanel({
+      columns: ["id", "a", "b"],
+      sql: "SELECT id, a, b FROM t",
+    });
+    fake.webview.dispatch({
+      type: "requery",
+      index: 0,
+      where: "",
+      orderBy: "",
+      filters: {
+        a: { values: ["sel-a"] },
+        b: { values: ["x"] },
+      },
+    });
+    await drainRequery();
+    runSql.mockClear();
+    fake.webview.dispatch({ type: "requestDistinctValues", index: 0, column: "a" });
+    await waitForDistinct(fake, 1);
+    const calls = distinctSqlCalls(runSql);
+    expect(calls).toHaveLength(1);
+    // Other column's predicate survives…
+    expect(calls[0]).toContain(`"b" IN ('x')`);
+    // …the requested column's own predicate NEVER appears.
+    expect(calls[0]).not.toContain('"a" IN');
+    expect(calls[0]).not.toContain("'sel-a'");
+  });
+
+  it("own-column-only filter scopes to nothing extra (no WHERE)", async () => {
+    const { runSql, fake } = makePanel({
+      columns: ["id", "a"],
+      sql: "SELECT id, a FROM t",
+    });
+    fake.webview.dispatch({
+      type: "requery",
+      index: 0,
+      where: "",
+      orderBy: "",
+      filters: { a: { values: ["sel-a"] } },
+    });
+    await drainRequery();
+    runSql.mockClear();
+    fake.webview.dispatch({ type: "requestDistinctValues", index: 0, column: "a" });
+    await waitForDistinct(fake, 1);
+    const calls = distinctSqlCalls(runSql);
+    expect(calls).toHaveLength(1);
+    // Only own predicate existed → excluded list leaves bare base statement,
+    // byte-identical to today's shape.
+    expect(calls[0]).toContain("vsdb_distinct ORDER BY 1 LIMIT 1001");
+    expect(calls[0]).not.toContain("WHERE");
+  });
+});
+
+describe("TASK-006 case 5 (regression) — no recorded source state keeps where=\"\"", () => {
+  it("fresh render, no requery: DISTINCT stays base-statement scoped", async () => {
+    const { runSql, fake } = makePanel({
+      columns: ["id", "name"],
+      sql: "SELECT id, name FROM t",
+    });
+    fake.webview.dispatch({ type: "requestDistinctValues", index: 0, column: "name" });
+    await waitForDistinct(fake, 1);
+    const calls = distinctSqlCalls(runSql);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toBe(
+      'SELECT DISTINCT "name" FROM (SELECT id, name FROM t) vsdb_distinct ORDER BY 1 LIMIT 1001',
+    );
+  });
+});

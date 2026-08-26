@@ -111,4 +111,55 @@ no lint script. Global constraints: PLAN.md §7.
 4. **No duplicate error field.** `DistinctValuesMessage` already has `error?: string`
    (`messages.ts:35`). Reuse it; do not add a parallel generic error property.
 
+### 2026-08-27 · executor · claude-code/bao-sonnet
+
+1. **Worktree pinning.** This agent's worktree was spawned from Cycle-X HEAD (`c890072`), which
+   still carried the OLD Cycle-X TASK-006. Executed `git merge --ff-only main` (no divergence)
+   to pick up `b4bcdbb` with both released dependencies (TASK-004 requery-state +
+   TASK-007 webview/messages ownership) before touching anything. No conflicts, no history
+   rewrite.
+2. **messages.ts untouched.** Verified live: `DistinctValuesMessage` already carries BOTH
+   `error?: string` (messages.ts:128) and required `truncated: boolean` (messages.ts:125) —
+   per Discussion #4 zero protocol edits were needed. `src/ui/queryComposer.ts` and
+   `src/ui/distinctValues.ts` also byte-untouched (pure consumers).
+3. **Source-state copy semantics.** The recorded filter model is a SHALLOW spread
+   `{ ...msg.filters }`; buildFilterWhere only reads it, and the webview serializes a fresh
+   model per post, so no deep clone is warranted. columnTypes rides along because the
+   typed `(Blanks)` predicate must rebuild identically minus the requested column.
+4. **Scope-string shape.** `[barWhere.trim(), rebuilt].filter(Boolean).join(" AND ")` mirrors
+   composeRequerySql's own combination verbatim, so a scoped DISTINCT reads exactly like the
+   filtered browse query minus own-column predicates.
+5. **Footer render site.** Note APPENDS to the count line as `"N of M — <note>"` via
+   textContent only; count semantics stay machine-readable up to the em-dash separator.
+   Notes clear when (a) a clean reply arrives for that key or (b) statement identity changes
+   (same generation boundary as distinctByColumn).
+
 ---
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  Target RED confirmed after writing the 5 new tests, before any production edit.
+  `npx vitest run src/ui/__tests__/resultsPanelDistinctValues.test.ts` → Tests 2 failed | 16 passed (18):
+  - case 1: `expected 'SELECT DISTINCT "a" FROM (SELECT id, …' to contain 'vsdb_distinct WHERE archived = false AND "b" IN (''x'') ORDER BY 1'`
+  - case 2: same composed SQL missing `"b" IN ('x')` (host still passes `where=""`)
+  `npx vitest run src/ui/__tests__/webviewDistinctValues.test.ts` (after npm run compile) → Tests 3 failed | 10 passed (13):
+  - test 17: `expected '1 of 1' to contain 'permission denied for table t'`
+  - test 18: `expected '1000 of 1000' to match /first 1000/i`
+  - test 19: `expected '1 of 1' to contain 'boom one'`
+  Regression pre-state as required: no-filter shape (`where=""`) test and stale-reply guards already green RED-side; webviewSetFilter suite untouched and green throughout.
+Verification Output: |
+  `npm run compile` → esbuild: build complete, exit 0 (webview bundle refreshed BEFORE bundle tests).
+  `npx vitest run src/ui/__tests__/resultsPanelDistinctValues.test.ts src/ui/__tests__/webviewDistinctValues.test.ts src/ui/__tests__/webviewSetFilter.test.ts`
+  Test Files 3 passed (3); Tests 42 passed (42); exit 0.
+  `npm run typecheck` → `tsc --noEmit`, exit 0.
+  Extra regression sweep (not in task list, run for the frozen-file constraint):
+  `npx vitest run src/ui/__tests__/keysetPaging.test.ts src/ui/__tests__/resultsPanelOrderBy.test.ts src/ui/__tests__/resultsPanelServerFilter.test.ts src/ui/__tests__/resultsPanelRequery.test.ts`
+  Test Files 4 passed (4); Tests 90 passed (90); exit 0. `git diff --check` exit 0.
+Status: PASS
+Note: src/ui/queryComposer.ts, src/ui/distinctValues.ts, src/ui/messages.ts byte-untouched — DistinctValuesMessage already carried error + truncated so no protocol change was needed. Changed files limited to resultsPanel.ts, webview/main.ts, the three owned test files (two of which received new cases), and the INDEX status row.
+
+---
+

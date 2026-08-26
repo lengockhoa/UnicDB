@@ -297,6 +297,17 @@ const FILTER_REQUERY_DEBOUNCE_MS = 150;
  *  replaces the statement (a cached list from the previous statement at the
  *  same index is wrong data, not stale-but-harmless). */
 const distinctByColumn = new Map<string, unknown[]>();
+/** TASK-006 — visible footer note per `(statement index, column)` key,
+ *  mirroring distinctByColumn's lifecycle (cleared together on statement
+ *  replacement). Holds the host's error string for a failed DISTINCT query
+ *  or the truncation notice for a capped list; rendered by
+ *  SetFilterComponent.render() appended to the count line. Absent ⇒ plain
+ *  count-only footer (today's behaviour). */
+const distinctNotesByColumn = new Map<string, string>();
+/** Truncation note text for a capped DISTINCT list. Literal here mirrors the
+ *  host's fixed DISTINCT_VALUES_LIMIT=1000 probe (see the structural-mirror
+ *  comment on DistinctValuesMsg — importing across rootDir is not allowed). */
+const DISTINCT_TRUNCATED_NOTE = "first 1000 shown";
 /** TASK-003 — identity token of the statement the cache was filled for.
  *  `distinctValues` replies carrying a token other than the current one are
  *  dropped (stale in-flight reply for a replaced statement). */
@@ -1455,16 +1466,26 @@ class SetFilterComponent {
     // Status: "All" when no filter active (model === null OR values empty),
     // "N of M" when a subset is checked (active filter), "None" when the
     // user has unchecked everything (filter is active but shows 0 rows).
+    // TASK-006 — a note for this column (host error, or "first 1000 shown"
+    // on truncation) is APPENDED after the count so the count semantics stay
+    // readable; textContent only, never innerHTML.
     const total = this.entries.length;
+    let status = "";
     if (total === 0) {
-      this.statusEl.textContent = "All";
+      status = "All";
     } else if (this.checked.size === 0) {
-      this.statusEl.textContent = `${total} of ${total}`;
+      status = `${total} of ${total}`;
     } else if (this.checked.size === total) {
-      this.statusEl.textContent = "All";
+      status = "All";
     } else {
-      this.statusEl.textContent = `${this.checked.size} of ${total}`;
+      status = `${this.checked.size} of ${total}`;
     }
+    const colIdForNote = this.readColumnId();
+    const note =
+      colIdForNote !== null
+        ? distinctNotesByColumn.get(`${activeTab}::${colIdForNote}`)
+        : undefined;
+    this.statusEl.textContent = note ? `${status} — ${note}` : status;
 
     // Select All checkbox state: checked if every VISIBLE entry is
     // checked; indeterminate if some visible are checked; unchecked
@@ -2336,13 +2357,25 @@ function requestDistinctValues(column: string): void {
 
 /** TASK-003 — handle a host distinctValues reply. Stores the values in the
  *  cache (keyed by the reply's index+column, generation-checked) and nudges
- *  any live SetFilterComponent so its list picks them up. Replies carrying
- *  `error` (or a stale generation) leave the loaded-row fallback in place. */
+ *  any live SetFilterComponent so its list picks them up. TASK-006: a reply
+ *  carrying `error` no longer vanishes silently — its message is recorded
+ *  as a footer note (values stay absent / loaded-row fallback kept), and a
+ *  truncated reply records a "first 1000 shown" note while still rendering
+ *  and selecting the returned values. */
 function handleDistinctValues(msg: DistinctValuesMsg): void {
-  if (msg.error) return;
   if (msg.index !== activeTab) return;
   if (distinctStatementToken !== statementGeneration) return;
-  distinctByColumn.set(`${msg.index}::${msg.column}`, msg.values ?? []);
+  const key = `${msg.index}::${msg.column}`;
+  if (msg.error) {
+    distinctNotesByColumn.set(key, msg.error);
+    refreshSetFilterGuis(msg.column);
+    return;
+  }
+  distinctNotesByColumn.delete(key);
+  distinctByColumn.set(key, msg.values ?? []);
+  if (msg.truncated) {
+    distinctNotesByColumn.set(key, DISTINCT_TRUNCATED_NOTE);
+  }
   // Refresh any mounted set-filter GUI for this column so the new values
   // appear without a reopen. AG Grid exposes no per-filter registry; walk
   // the live DOM for our component roots and let each instance recompute.
@@ -3436,6 +3469,9 @@ window.addEventListener("message", (ev: MessageEvent) => {
       statementGeneration++;
       distinctStatementToken = statementGeneration;
       distinctByColumn.clear();
+      // TASK-006 — footer notes describe a specific reply; they die with the
+      // same generation as the value cache they annotate.
+      distinctNotesByColumn.clear();
       statementIdentityChanged = true;
     }
     render();
