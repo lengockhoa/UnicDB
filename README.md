@@ -56,10 +56,11 @@ code --install-extension vsdb-<version>.vsix
 - **CodeLens ▶ Run** ngay phía trên mỗi statement trong file `.sql` (bật/tắt qua setting `vsdb.showRunLens`).
 - **Schema Explorer**: bấm vào table/view → menu chuột phải → **Generate SELECT** để chèn câu `SELECT * FROM ...` vào editor.
 - **Cancel query**: nút ■ trên title bar, hoặc `VSDB: Cancel Query` trong palette.
-- **Multi-statement = all-or-nothing**: chạy nhiều statement cùng lúc (Cmd/Ctrl+Enter chọn vùng, hoặc cả file qua nút ▶):
+- **Atomic multi-statement batch** (khi extension gửi **một chuỗi nhiều câu lệnh** làm một batch — ví dụ lưu nhiều cell, generate sample data, helper bảng):
   - **DML (`INSERT` / `UPDATE` / `DELETE`...)** chạy trong **một transaction** — statement nào lỗi thì toàn bộ lô được rollback, không statement nào được commit dở (PostgreSQL vốn đã vậy; MySQL cũng đảm bảo từ bản này).
   - **Lưu ý MySQL**: các lệnh **DDL** (`CREATE` / `ALTER` / `DROP`...) gây **implicit commit** ngầm bên trong MySQL — phần trước lệnh DDL vẫn được commit và DDL không thể rollback, nên lô chứa DDL **không** được bảo đảm all-or-nothing.
-  - **Một câu `SELECT` đơn** vẫn chạy qua streaming cursor như cũ (không bọc transaction — tránh giữ luôn connection duy nhất của pool).
+- **Editor Run** (Cmd/Ctrl+Enter chọn vùng, hoặc cả file qua nút ▶) chạy **từng statement riêng lẻ**: mỗi câu là một `runQuery` độc lập, không bọc chung một transaction — statement trước vẫn được commit nếu statement sau lỗi.
+- **Một câu `SELECT` đơn** vẫn chạy qua streaming cursor như cũ (không bọc transaction — tránh giữ luôn connection duy nhất của pool).
 
 ### Phím tắt
 
