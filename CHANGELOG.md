@@ -3,6 +3,22 @@
 All notable changes to VSDB are documented in this file. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 
+## [1.6.7] — 2026-08-26
+
+Cycle X: adversarial QA + correctness hardening — audit findings fixed, webview flake eliminated, dialect-safe export quoting, whitespace-complete `(Blanks)`.
+
+### Fixed
+- **Webview result-grid flake eliminated at the lifecycle root**: the NULL/viewer aggregate flake (test-only symptom) was traced to the bundle being re-evaluated per test, stacking unremovable `message` listeners; the bundle is now evaluated once per suite.
+- **Dialect-safe SQL export quoting**: bare identifiers export unquoted (byte-stable on PostgreSQL, MySQL, SQL Server), while reserved words and non-bare names are quoted per dialect (`` `order` `` on MySQL, `[order]` on SQL Server, `"order"` on PostgreSQL). The export toolbar now forwards the detected driver so MySQL/MSSQL exports no longer emit unexecutable ANSI quotes.
+- **`(Blanks)` filter matches all JS-trimmed whitespace** (tabs, newlines, spaces) on every dialect — PostgreSQL `~ '^[[:space:]]*$'`, MySQL `REGEXP`, SQL Server `NOT LIKE '%[^ \t\r\n\f\v]%'` — instead of the old spaces-only `TRIM(col) = ''`.
+- **Results panel hardening**: close-before-refresh in `render()`, ctid-probe cursor closed on every path, manual commit/rollback re-queries, batched result wires `batched` correctly.
+- **Save/core hardening**: rows with NULL primary keys are skipped with a visible comment (no malformed `UPDATE … WHERE pk = NULL`), batched first-fetch errors surface instead of hanging the cursor.
+- **MySQL adapter parity**: dedicated `getTableSortQuery` twin; explicit UTC session; stream-end cursor settle (no hang on empty/finished streams).
+- **Distinct-values round trip**: late responses for replaced statements are dropped; batched DISTINCT responses are fully drained and the cursor closed; truncated replies replay correctly from cache.
+
+### Removed
+- Server-side `TRIM(col) = ''` composition in the `(Blanks)` filter (spaces-only) — replaced by the whitespace-complete predicates above.
+
 ## [1.6.6] — 2026-08-26
 
 Cycle W: server-side sort on header click, DISTINCT filter values, deterministic paging.
