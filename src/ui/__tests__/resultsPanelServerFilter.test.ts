@@ -605,14 +605,20 @@ describe("TASK-004 case 16 — non-simple ORDER BY is parsed or rejected, never 
     expect(showErrorMessage).toHaveBeenCalled();
   });
 
-  it("'1' is rejected: no runSql, error surfaced", async () => {
+  // TASK-007 (cycle Y): bare ordinals are NO LONGER rejected. The webview
+  // sends POSITIONAL ORDER BY terms (`2 ASC`) whenever the user sorts a
+  // column whose projection name appears more than once (`SELECT id, id`),
+  // so the host grammar accepts an unsigned integer token and composes it
+  // BARE (never quote-wrapped into the inert identifier `"1"`). This is the
+  // same intentional expectation change as queryComposer.test.ts case 5.
+  it("'1' parses as a positional ordinal and composes BARE (never quoted)", async () => {
     const { runSql, fake } = makePanel({ sql: "SELECT id FROM t", driver: "postgres" });
     fake.webview.dispatch(requeryMsg({ orderBy: "1" }));
     await waitForTerminal(fake);
-    expect(runSql).not.toHaveBeenCalled();
-    const showErrorMessage = (await import("vscode")).window
-      .showErrorMessage as ReturnType<typeof vi.fn>;
-    expect(showErrorMessage).toHaveBeenCalled();
+    expect(runSql).toHaveBeenCalledTimes(1);
+    const sql = runSql.mock.calls[0]![0] as string;
+    expect(sql).toContain("ORDER BY 1 ASC");
+    expect(sql).not.toContain('"1"');
   });
 });
 

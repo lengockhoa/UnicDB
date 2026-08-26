@@ -226,7 +226,9 @@ export function buildPagedQuery(
  * A single ORDER BY term as parsed by `parseOrderBy`. `column` is the
  * UNQUOTED logical name (delimiters already stripped, escapes un-doubled) —
  * exactly what `quoteIdent` expects, so a raw user identifier never reaches
- * SQL unquoted.
+ * SQL unquoted. TASK-007 (cycle Y): may also be a POSITIONAL ORDINAL — a
+ * plain unsigned integer in string form ("1", "2", …) identifying the SELECT
+ * projection's Nth column; ordinals are rendered bare (never quoted).
  */
 export interface OrderByTerm {
   column: string;
@@ -315,6 +317,15 @@ export function parseOrderBy(orderBy: string, dialect?: Dialect): ParseOrderByRe
       return { ok: false, error: `"${text}" is not a plain column name with optional ASC/DESC/NULLS — expressions are not supported in ORDER BY.` };
     }
     let { column, direction, nulls } = parsed;
+    // TASK-007 (cycle Y) — positional ordinal: a plain unsigned integer
+    // identifies the projection's Nth output column (`ORDER BY 2`), the only
+    // unambiguous way to sort a duplicated projected name. Captured verbatim
+    // as the term's column; `quoteIdentOrdinalsSafe` composes it bare on
+    // every dialect (an ordinal is never a quoted identifier).
+    if (/^[0-9]+$/.test(column)) {
+      terms.push({ column, direction, ...(nulls ? { nulls } : {}) });
+      continue;
+    }
     // Resolve the column token: quoted-in-active-style first, then bare.
     const logical = resolveColumnToken(column, dialect);
     if (logical === null) {
@@ -442,7 +453,11 @@ function resolveColumnToken(token: string, dialect?: Dialect): string | null {
 export function buildOrderByClause(terms: OrderByTerm[], dialect: Dialect): string {
   return terms
     .map((t) => {
-      const ident = quoteIdent(t.column, dialect);
+      // TASK-007 (cycle Y) — positional ordinals are valid on every shipped
+      // dialect and must reach SQL BARE (never quote-wrapped).
+      const ident = /^[0-9]+$/.test(t.column)
+        ? t.column
+        : quoteIdent(t.column, dialect);
       if (!t.nulls || dialect === "postgres") {
         const nulls = t.nulls ? ` NULLS ${t.nulls}` : "";
         return `${ident} ${t.direction}${nulls}`;

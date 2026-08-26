@@ -528,6 +528,182 @@ describe("ResultsPanel — sanitizeStatementResult batched wire shape (TASK-006 
   });
 });
 
+// ---- TASK-007 (cycle Y) — typed StateMessage.dialect + positional columnTypes
+describe("ResultsPanel — typed state dialect + declared columnTypes (TASK-007 cycle Y)", () => {
+  function makePanelWithSaveContext(
+    saveContext?: Record<string, unknown>,
+    header = "Run at 2026-08-26T00:00:00.000Z — mysql@localhost/db",
+  ) {
+    const runner = makeRunnerStub();
+    const panel = new ResultsPanel({
+      runner,
+      ...(saveContext ? { saveContext: saveContext as never } : {}),
+    });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT * FROM users",
+          status: "done",
+          result: { columns: ["id"], rows: [[1]], rowCount: 1, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      header,
+    );
+    return { panel, runner, fake: lastPanel.current! };
+  }
+
+  function stateMsgs(fake: FakeWebview) {
+    return fake.webview.postMessage.mock.calls
+      .map((c) => c[0] as Record<string, unknown>)
+      .filter((m) => m.type === "state");
+  }
+
+  it("T7.1 happy — every state post carries dialect from saveContext.getDriver()", async () => {
+    const { fake } = makePanelWithSaveContext({
+      getDriver: () => "mysql",
+      listPkColumns: async () => [],
+    });
+    const initial = stateMsgs(fake);
+    expect(initial.length).toBeGreaterThan(0);
+    for (const m of initial) {
+      expect(m.dialect).toBe("mysql");
+    }
+
+    // A later state post (loadMore path) carries it too.
+    fake.webview.postMessage.mockClear();
+    fake.webview.dispatch({ type: "loadMore", index: 0 });
+    await waitForPostMessageType(fake, "state");
+    const later = stateMsgs(fake);
+    expect(later.length).toBeGreaterThan(0);
+    for (const m of later) {
+      expect(m.dialect).toBe("mysql");
+    }
+  });
+
+  it("T7.6 edge — no active driver ⇒ dialect key is OMITTED, never invented", async () => {
+    // saveContext present but driver null…
+    {
+      const { fake } = makePanelWithSaveContext({
+        getDriver: () => null,
+        listPkColumns: async () => [],
+      });
+      const msgs = stateMsgs(fake);
+      expect(msgs.length).toBeGreaterThan(0);
+      for (const m of msgs) {
+        expect(m.dialect).toBeUndefined();
+        expect("dialect" in m).toBe(false);
+      }
+    }
+    // …and NO saveContext at all.
+    {
+      const { fake } = makePanelWithSaveContext(undefined);
+      const msgs = stateMsgs(fake);
+      expect(msgs.length).toBeGreaterThan(0);
+      for (const m of msgs) {
+        expect("dialect" in m).toBe(false);
+      }
+    }
+  });
+
+  it("T7.columnTypes happy — gated direct-table statement attaches a POSITIONAL map ordered by result columns", async () => {
+    const runner = makeRunnerStub();
+    const panel = new ResultsPanel({
+      runner,
+      saveContext: {
+        getDriver: () => "postgres",
+        listPkColumns: async () => [],
+        listColumnTypes: async () => ({ id: "int4", name: "varchar" }),
+      } as never,
+    });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: 'SELECT id, name FROM "public"."users"',
+          status: "done",
+          result: {
+            columns: ["name", "id"],
+            rows: [["a", 1]],
+            rowCount: 1,
+            durationMs: 0,
+          },
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    const fake = lastPanel.current!;
+    // listColumnTypes is ASYNC and render() is synchronous, so the typed
+    // map lands on the panel's own upgrade re-post once metadata resolves.
+    // Flush microtasks until it shows up (bounded).
+    let typed: Record<string, string> | undefined;
+    for (let i = 0; i < 200 && !typed; i++) {
+      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 1));
+      const m = stateMsgs(fake).find((s) => s.columnTypes !== undefined);
+      typed = m?.columnTypes as Record<string, string> | undefined;
+    }
+    // Projection order is (name, id), so ordinals are 0→varchar, 1→int4 —
+    // keyed by ordinal to avoid duplicate-name ambiguity.
+    expect(typed).toEqual({ "0": "varchar", "1": "int4" });
+  });
+
+  it("T7.columnTypes edge — ungated SQL or missing metadata ⇒ no columnTypes key", async () => {
+    // Non-browse SQL (aggregate): gate refuses ⇒ map omitted even though
+    // listColumnTypes exists.
+    {
+      const runner = makeRunnerStub();
+      const panel = new ResultsPanel({
+        runner,
+        saveContext: {
+          getDriver: () => "postgres",
+          listPkColumns: async () => [],
+          listColumnTypes: async () => ({ id: "int4" }),
+        } as never,
+      });
+      panel.render(
+        [
+          {
+            index: 0,
+            sql: "SELECT count(*) FROM t",
+            status: "done",
+            result: { columns: ["count"], rows: [[3]], rowCount: 1, durationMs: 0 },
+            durationMs: 0,
+          },
+        ],
+        "hdr",
+      );
+      const fake = lastPanel.current!;
+      for (const m of stateMsgs(fake)) {
+        expect(m.columnTypes).toBeUndefined();
+      }
+    }
+    // Browse-shaped SQL but no table metadata and no listColumnTypes:
+    {
+      const { fake } = makePanelWithSaveContext(undefined, "hdr");
+      for (const m of stateMsgs(fake)) {
+        expect(m.columnTypes).toBeUndefined();
+      }
+    }
+  });
+});
+
+async function waitForPostMessageType(
+  fake: FakeWebview,
+  type: string,
+): Promise<void> {
+  for (let i = 0; i < 200; i++) {
+    const match = fake.webview.postMessage.mock.calls.some(
+      (c) => (c[0] as { type?: string }).type === type,
+    );
+    if (match) return;
+    await Promise.resolve();
+  }
+  throw new Error(`timeout waiting for ${type} postMessage`);
+}
+
 describe("ResultsPanel — header (A14)", () => {
   it('render(results, "Browse x at T") → the render post AND every later post (e.g. "ready") carry that header, not blank', async () => {
     const runner = makeRunnerStub();

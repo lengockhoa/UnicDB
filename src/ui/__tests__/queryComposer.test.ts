@@ -339,13 +339,19 @@ describe("parseOrderBy (TASK-001)", () => {
     if (!r.ok) expect(r.error).toMatch(/plain column/i);
   });
 
-  // Case 5 — edge (malformed input): parenthesised / dotted / ordinal
-  it("rejects parenthesised, dotted, and ordinal terms", () => {
-    for (const input of ["(a)", "t.a", "1"]) {
+  // Case 5 — edge (malformed input): parenthesised and dotted terms are
+  // rejected. (TASK-007 cycle Y: plain ordinals like "1" are now ACCEPTED as
+  // positional ORDER BY terms so a duplicated projected column can be sorted
+  // unambiguously — see the TASK-007 ordinal block in
+  // resultsGridModelRequery.test.ts. This assertion was rewritten, not
+  // deleted, mirroring the cycle-W case-16 precedent.)
+  it("rejects parenthesised and dotted terms; a bare ordinal is accepted", () => {
+    for (const input of ["(a)", "t.a"]) {
       const r = parseOrderBy(input);
       expect(r.ok).toBe(false);
       if (!r.ok) expect(r.error.length).toBeGreaterThan(0);
     }
+    expect(parseOrderBy("1").ok).toBe(true);
   });
 
   // Case 6 — edge (boundary): empty / whitespace-only is NOT an error

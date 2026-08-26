@@ -75,6 +75,14 @@ interface StateMsg {
   header: string;
   results: StatementResult[];
   busy: boolean;
+  /** TASK-007 (cycle Y) — typed dialect from the host's live connection.
+   *  Preferred over header-string parsing; absent ⇒ legacy parse fallback. */
+  dialect?: "postgres" | "mysql" | "mssql";
+  /** TASK-007 (cycle Y) — declared DB types keyed by numeric-string ORDINAL
+   *  into the statement's result columns. Present only when the host proved
+   *  projection == table columns (parse + browse-shape gates); converted to
+   *  a name-keyed map ONCE here before reaching inferColumns. */
+  columnTypes?: Record<string, string>;
 }
 
 interface BusyMsg {
@@ -247,6 +255,14 @@ let headerText = "";
 let results: StatementResult[] = [];
 let busy = false;
 let activeTab = 0;
+/** TASK-007 (cycle Y) — typed dialect from the latest state message. Set
+ *  preferentially; `detectDialectFromHeader` stays the fallback for states
+ *  that omit it (older hosts, hand-built test headers). */
+let typedDialect: "postgres" | "mysql" | "mssql" | undefined = undefined;
+/** TASK-007 (cycle Y) — name-keyed declared types for the ACTIVE statement,
+ *  converted ONCE per state message from the host's positional map. Cleared
+ *  when a state carries no usable map (⇒ sampled inference). */
+let declaredColumnTypes: Record<string, string> | undefined = undefined;
 /** Index of statement last rendered through renderGrid; used to decide
  *  reset vs append vs tab-switch. */
 let lastRenderedIndex = -1;
@@ -1615,7 +1631,15 @@ function renderGrid(): void {
   // column ordering — handlers (onUndoClick/onAddRowClick/onGridPaste)
   // resolve colIndex via currentSpecs, not getColumnDefs (which a
   // column drag-reorder would shift).
-  const specs: ColumnSpec[] = inferColumns(r.result.columns, r.result.rows);
+  // TASK-007 (cycle Y) — declared server types (when the host proved
+  // projection == table) beat sampled values; TASK-003's classifier decides
+  // kind per name and skips sampling for recognized types. Absent map ⇒
+  // undefined ⇒ byte-identical legacy inference.
+  const specs: ColumnSpec[] = inferColumns(
+    r.result.columns,
+    r.result.rows,
+    declaredColumnTypes,
+  );
   currentSpecs = specs;
 
   // TASK-602: per-column Excel-style checkbox set filter (custom AG Grid
@@ -2205,22 +2229,57 @@ function quoteColIdIfNeeded(colId: string, dialect: SqlDialect): string {
   return '"' + colId.replace(/"/g, '""') + '"';
 }
 
-/** TASK-003 — build the orderBy string from the grid's column state:
- *  keep entries with a non-null `sort`, order by `sortIndex ?? 0` (NOT colId
- *  order — getColumnState returns column order, not sort priority), and map
- *  each to `` `${quoteColIdIfNeeded(colId)} ${sort.toUpperCase()}` `` joined
- *  with ", ". Empty string means "no ORDER BY". */
+/** TASK-007 (cycle Y) — active SQL dialect for quoting: the host's TYPED
+ *  state field wins; when absent (older hosts, hand-built legacy headers)
+ *  the header-string parse stays exactly as before, including its
+ *  `"unknown" → postgres` fallback for malformed/no-token headers. */
+function resolveSqlDialect(): SqlDialect {
+  if (
+    typedDialect === "postgres" ||
+    typedDialect === "mysql" ||
+    typedDialect === "mssql"
+  ) {
+    return typedDialect;
+  }
+  return detectDialectFromHeader(headerText);
+}
+
+/** TASK-007 (cycle Y) + PLAN §3.7 duplicate-name ordinal — build the orderBy
+ *  string from the grid's column state: keep entries with a non-null `sort`,
+ *  order by `sortIndex ?? 0` (NOT colId order — getColumnState returns column
+ *  order, not sort priority), and map each to a quoted term joined with ", ".
+ *
+ *  colId is always resolved back to its raw projection name through
+ *  currentSpecs. When TWO OR MORE specs share that name (`SELECT id, id`)
+ *  a quoted name would be ambiguous server-side, so the term uses the
+ *  POSITIONAL ORDINAL of the sorted column instead (`ORDER BY 2` — parseOrderBy
+ *  now accepts ordinals on all three dialects). The AG-grid-only deduped
+ *  field (`id__2`) never reaches the host. Empty string = no ORDER BY. */
 function orderByFromColumnState(api: GridApi): string {
-  const dialect = detectDialectFromHeader(headerText);
-  const terms = api
+  const dialect = resolveSqlDialect();
+  const sorted = api
     .getColumnState()
     .filter((c) => c.sort !== null && c.sort !== undefined)
-    .sort((a, b) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0))
-    .map((c) => {
-      const spec = currentSpecs.find((s) => s.field === c.colId);
-      const name = spec ? spec.headerName : c.colId;
-      return `${quoteColIdIfNeeded(name, dialect)} ${(c.sort as string).toUpperCase()}`;
-    });
+    .sort((a, b) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0));
+  // Count name occurrences ONCE over specs so genuine duplicates can be
+  // recognized per term.
+  const nameCounts = new Map<string, number>();
+  for (const s of currentSpecs) {
+    nameCounts.set(s.headerName, (nameCounts.get(s.headerName) ?? 0) + 1);
+  }
+  const terms = sorted.map((c) => {
+    const specIdx = currentSpecs.findIndex((s) => s.field === c.colId);
+    if (specIdx < 0) {
+      // Unknown field (should not happen) — quote it like a plain name.
+      return `${quoteColIdIfNeeded(c.colId, dialect)} ${(c.sort as string).toUpperCase()}`;
+    }
+    const name = currentSpecs[specIdx]!.headerName;
+    if ((nameCounts.get(name) ?? 0) > 1) {
+      // Duplicate projected name → positional ordinal (1-based SQL ordinal).
+      return `${specIdx + 1} ${(c.sort as string).toUpperCase()}`;
+    }
+    return `${quoteColIdIfNeeded(name, dialect)} ${(c.sort as string).toUpperCase()}`;
+  });
   return terms.join(", ");
 }
 
@@ -2989,6 +3048,9 @@ function readExportInput():
       pkColumns: string[];
       tableName: string;
       selectedRows: unknown[][];
+      /** TASK-007 (cycle Y) — declared in the return type; the value was
+       *  already computed below and consumed by both export click paths. */
+      hiddenColumns: string[];
       dialect: "postgres" | "mysql" | "mssql" | "unknown";
     }
   | null {
@@ -3337,6 +3399,26 @@ window.addEventListener("message", (ev: MessageEvent) => {
     headerText = msg.header;
     results = msg.results || [];
     busy = msg.busy;
+    // TASK-007 (cycle Y) — prefer the typed dialect; keep the header parse
+    // for legacy states without it. `undefined` re-arms the fallback.
+    typedDialect = msg.dialect;
+    // TASK-007 (cycle Y) — convert the host's POSITIONAL declared-type map
+    // to a NAME-keyed record exactly once, using this statement's own result
+    // columns. The host only sends a map where projection == table columns,
+    // so ordinal → name here cannot mislabel computed/renamed output.
+    declaredColumnTypes = undefined;
+    const stmt0 = results[activeTab] ?? results[0];
+    if (msg.columnTypes && stmt0?.result?.columns) {
+      const byName: Record<string, string> = {};
+      let any = false;
+      for (let i = 0; i < stmt0.result.columns.length; i++) {
+        const t = msg.columnTypes[String(i)];
+        if (!t) continue;
+        byName[stmt0.result.columns[i]!] = t;
+        any = true;
+      }
+      if (any) declaredColumnTypes = byName;
+    }
     // Host returned from loadMore → clear in-flight flag.
     loadMoreInFlight = false;
     if (activeTab >= results.length) activeTab = Math.max(0, results.length - 1);

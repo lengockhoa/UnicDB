@@ -1,7 +1,7 @@
 # TASK-007 — Typed state dialect, declared-type wiring, and webview minors
 
-- Status: `ready`
-- Owner: `-`
+- Status: `pending_review`
+- Owner: `claude-code/bao-sonnet`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §2 items 5, 7, 8, §3.7
 
@@ -73,13 +73,13 @@ has no lint script. Global constraints: PLAN.md §7.
       positionally ONLY under TASK-004's browse-shape gate via `listColumnTypes`; header parse
       remains the fallback for legacy/missing values. No name-keyed map is ever sent for
       arbitrary output.
-- [ ] A typed state dialect is preferred for SQL quoting; header parsing is retained only for
+- [x] A typed state dialect is preferred for SQL quoting; header parsing is retained only for
       backwards-compatible messages without it.
-- [ ] Declared types reach `inferColumns` without sampled values overriding them.
-- [ ] Duplicate output column names are sorted by an unambiguous positional expression.
-- [ ] `readExportInput` return type declares its already-returned `hiddenColumns`; dead test
+- [x] Declared types reach `inferColumns` without sampled values overriding them.
+- [x] Duplicate output column names are sorted by an unambiguous positional expression.
+- [x] `readExportInput` return type declares its already-returned `hiddenColumns`; dead test
       no-ops are removed without changing expected export text.
-- [ ] After Discussion resolution, all listed verification commands exit 0.
+- [x] After Discussion resolution, all listed verification commands exit 0.
 
 ## Dependencies
 
@@ -129,5 +129,113 @@ has no lint script. Global constraints: PLAN.md §7.
 5. **Dead expression cleanup.** `void received;` and `void root;` in `webviewExport.test.ts`
    are after their variables were already used. Remove only those two statements; preserve the
    test assertion and fixture lifecycle.
+6. **Executor decision (unattended run):** the handoff TEST PLAN table says `{columnTypes:{code:"varchar"}}`;
+   the implemented wire format is POSITIONAL per BREAKDOWN RESOLVED (option C+), so tests use
+   ordinal keys (`{"0":"varchar"}`) and convert positional→name in the webview exactly once.
+   This is the plan-pinned contract, not a deviation from it.
+7. **Executor decision:** host-side declared-type resolution is async (`listColumnTypes` await)
+   while render is sync. Resolution runs as a generation-guarded background fill keyed by
+   `statementGeneration`; when a fresh positional map lands, ONE extra state re-post upgrades the
+   live grid. Tests poll bounded across posts for the upgrade message. Maps are dropped if the
+   live projection length at post time mismatches (guards TASK-004 widening-lane hidden-PK strip).
+8. **Executor decision — intentional expectation changes (two):** (a) `queryComposer.test.ts`
+   case 5 no longer lists `"1"` among rejected inputs — parseOrderBy now accepts bare ordinals
+   on all three dialects (mirrors cycle-W case-16 precedent). (b) The duplicate-sort bundle case
+   tightened from `"id ASC"` to `"2 ASC"`, and `resultsPanelServerFilter.test.ts` case-16's
+   "'1' is rejected" was rewritten to pin that an ordinal composes BARE (never quote-wrapped):
+   the cycle-V single-term lane routed through `composeSortQuery`/adapter helpers, which would
+   have emitted the inert identifier `"1"` — ordinals now bypass that lane to buildOrderByClause,
+   which emits them unquoted.
 
 ---
+
+## Executor Report
+
+- EXECUTOR_TOOL: claude-code
+- EXECUTOR_MODEL: bao-sonnet
+- EXECUTOR_SUBAGENT: feature-implementer
+- Status: PASS
+
+### RED_OUTPUT
+
+RED phase captured pre-GREEN across 4 files + queryComposer lane:
+
+```
+FAIL webviewServerSort.test.ts > TASK-007 typed state dialect beats header parsing
+  AssertionError: expected '"First Name" ASC' to be '`First Name` ASC'  // header parse, not typed field
+FAIL webviewServerSort.test.ts > duplicate-name sort uses positional ORDER BY
+  AssertionError: expected 'id ASC' to be '2 ASC'                        // ambiguous quoted name, not ordinal
+FAIL resultsPanel.test.ts > T7.1 dialect carried on state posts
+  AssertionError: expected undefined to be 'mysql'                       // `"dialect" in m` === false both paths
+FAIL resultsGridModelRequery.test.ts > positional columnTypes → inferColumns
+  AssertionError: expected false to be true                              // parseOrderBy('2 ASC') ok:false all dialects
+FAIL webviewExport.test.ts > readExportInput return annotation declares hiddenColumns
+  AssertionError: expected -1 (indexOf) >= 0                             // annotation absent
+```
+
+All RED failures stemmed from missing behavior (typed fields never sent / grammar rejected
+ordinals), not fixture or wiring accidents; GREEN converted each without weakening assertions.
+
+### Implementation Notes
+
+- `src/ui/messages.ts`: `StateMessage` gains optional documented `dialect?: "postgres" | "mysql" | "mssql"`
+  and positional `columnTypes?: Record<string, string>` (numeric-string ordinals, 0-based into
+  result columns).
+- `src/ui/resultsPanel.ts`: ALL 11 state posts route through one private `postMessage`, so a
+  single tail call fills them via `decorateStateMessage(payload)` — dialect from
+  `saveContext?.getDriver() ?? undefined`; `columnTypes` attached only when the cached map exists,
+  its key count equals the LIVE projection length, and the statement has exactly one result.
+  Maps are produced by generation-guarded `refreshColumnTypes()` (browse-shape gate
+  `assertBrowseShape` + `tableByStatement` provenance + `listColumnTypes`) with one upgrade
+  re-post on completion; any metadata failure ⇒ no map sent. Ordinal single-term terms bypass
+  the `composeSortQuery` lane so they are never quote-wrapped.
+- `src/ui/queryComposer.ts`: `parseOrderBy` accepts unsigned integer tokens; `buildOrderByClause`
+  emits ordinal terms bare (no quoting) on postgres/mysql/mssql.
+- `webview/main.ts`: StateMsg mirror gains the two optional fields; handler converts
+  positional→name once using this statement's columns and stores `typedDialect`;
+  `resolveSqlDialect()` prefers the typed field with `detectDialectFromHeader(headerText)` kept
+  as byte-identical fallback; `orderByFromColumnState` emits `specIdx+1` positional terms when
+  ≥2 specs share a headerName (deduped AG-grid-only `id__2` never reaches the host);
+  `renderGrid` passes `declaredColumnTypes` into `inferColumns(columns, rows, types)`;
+  `readExportInput(): {...}` return type now declares `hiddenColumns: string[]`.
+- Removed dead `void received;` + trailing `void root;` from `webviewExport.test.ts` case 6b only.
+
+### Files Changed
+
+- src/ui/messages.ts — typed optional state fields
+- src/ui/resultsPanel.ts — decorateStateMessage + refreshColumnTypes + import StateMessage + ordinal sort-lane bypass
+- src/ui/queryComposer.ts — ordinal grammar + bare emission
+- webview/main.ts — typed dialect preference w/ header fallback, positional→name conversion, inferColumns wiring, duplicate-name ordinal sort, hiddenColumns return annotation
+- src/ui/__tests__/resultsPanel.test.ts — protocol output coverage (dialect both null-driver & no-saveContext paths; columnTypes happy/edge incl. aggregate + missing saveContext)
+- src/ui/__tests__/resultsGridModelRequery.test.ts — positional map → inferColumns kinds/alignment, duplicates identical-declaration edge; ordinal parse/compose cases
+- src/ui/__tests__/webviewServerSort.test.ts — duplicate-sort pinned to "2 ASC"; typed-dialect beats malformed header (mysql backticks) + legacy fallback (postgres quotes); declared types override sampling (all-null int right-aligned)
+- src/ui/__tests__/webviewExport.test.ts — dead no-ops removed; source-level hiddenColumns annotation test
+- src/ui/__tests__/queryComposer.test.ts — intentional: case 5 accepts ordinal (see Discussion #8a)
+- src/ui/__tests__/resultsPanelServerFilter.test.ts — intentional: "'1' rejected" → ordinal composes BARE (see Discussion #8b)
+
+### Verification Output
+
+Order honored (compile first). Full fresh outputs from this turn:
+
+```
+$ npm run compile            → esbuild: build complete (extension/webview/aiChatPanel ok)
+$ npx vitest run <task files>:
+ ✓ src/ui/__tests__/resultsPanel.test.ts           (22 tests)
+ ✓ src/ui/__tests__/resultsGridModelRequery.test.ts (21 tests)
+ ✓ src/ui/__tests__/webviewExport.test.ts          (10 tests)
+ ✓ src/ui/__tests__/webviewServerSort.test.ts      (14 tests)
+ Test Files  4 passed (4)
+      Tests  67 passed (67)
+
+$ npm run typecheck          → tsc --noEmit clean, exit 0
+
+Adjacent regression lane (touched shared modules):
+ queryComposer 65 ✓ · resultsPanelOrderBy+Requery+ServerFilter 112 ✓
+ resultsGridModel/Requery batch 63 ✓ · webviewRequery 10 ✓ · PerTableTabs ✓
+ SaveEdits 7 ✓ · CommitRefresh 14 ✓ · Filters 8 ✓
+```
+
+Status line: PASS — every task Verification Command exited 0 in this turn.
+
+---
+

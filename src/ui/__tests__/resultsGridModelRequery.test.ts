@@ -18,7 +18,108 @@
 //
 // No DOM, no vscode — plain vitest node environment.
 import { describe, it, expect } from "vitest";
-import { composeRequery } from "../resultsGridModel";
+import { composeRequery, inferColumns } from "../resultsGridModel";
+import { parseOrderBy, buildOrderByClause } from "../queryComposer";
+import type { Dialect } from "../../core/saveStatements";
+
+// =============================================================================
+// TASK-007 (cycle Y) — declared-type wiring: positional columnTypes map →
+// name-keyed lookup for inferColumns' third parameter. The webview converts
+// the host's numeric-string ordinals ONCE using the result columns (same
+// gate that produced them), then passes the name-keyed record down. These
+// cases pin the conversion contract + the TASK-003 classifier end-state.
+// =============================================================================
+describe("TASK-007 cycle Y — positional columnTypes → inferColumns", () => {
+  /** The webview-side conversion: {ordinalString: type} → {name: type}
+   *  using the result's column order. Mirrors the production helper. */
+  function toNameKeyed(
+    positional: Record<string, string>,
+    columns: string[],
+  ): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (let i = 0; i < columns.length; i++) {
+      const t = positional[String(i)];
+      if (t) out[columns[i]!] = t;
+    }
+    return out;
+  }
+
+  it("T7.3 happy — declared varchar beats numeric-looking sampled values", () => {
+    const types = toNameKeyed({ "0": "varchar" }, ["code"]);
+    const specs = inferColumns(["code"], [["123"]], types);
+    expect(specs[0]!.kind).toBe("string");
+    expect(specs[0]!.alignRight).toBeUndefined();
+  });
+
+  it("T7.3b happy — declared integer on an all-NULL column is right-aligned number", () => {
+    const types = toNameKeyed({ "1": "integer" }, ["name", "score"]);
+    const specs = inferColumns(["name", "score"], [["a", null], ["b", null]], types);
+    expect(specs[1]!.kind).toBe("number");
+    expect(specs[1]!.alignRight).toBe(true);
+  });
+
+  it("edge — duplicate names share one name-keyed entry; identical declarations still land", () => {
+    // SELECT a.id, b.id FROM … projects 'id' twice. TASK-003's classifier
+    // keys by NAME, so duplicates necessarily share one entry — the host
+    // wires POSITIONAL strings precisely so THIS side can decide the merge.
+    // With the same declared type (the realistic self-join case) every id
+    // spec classifies correctly.
+    const positional = { "0": "int4", "1": "int4" };
+    const columns = ["id", "id"];
+    const byName = toNameKeyed(positional, columns);
+    expect(byName["id"]).toBe("int4");
+    const specs = inferColumns(columns, [[null, null]], byName);
+    expect(specs[0]).toMatchObject({ kind: "number", alignRight: true });
+    expect(specs[1]).toMatchObject({ field: "id__2", kind: "number", alignRight: true });
+  });
+
+  it("regression — absent/empty positional map keeps sampled inference byte-identical", () => {
+    const sampled = inferColumns(["n"], [[5]]);
+    const withEmpty = inferColumns(["n"], [[5]], {});
+    expect(withEmpty).toEqual(sampled);
+  });
+});
+
+// =============================================================================
+// TASK-007 (cycle Y) — parseOrderBy accepts positional ORDINAL terms so a
+// duplicated projected column can be sorted unambiguously (`ORDER BY 2`).
+// Ordinals are plain unsigned integers; they flow through as the term's
+// column token and every dialect composes them bare (ordinals are never
+// quoted).
+// =============================================================================
+describe("TASK-007 cycle Y — parseOrderBy positional ordinals", () => {
+  it("happy — '2 ASC' parses to an ordinal term on postgres/mysql/mssql", () => {
+    for (const dialect of ["postgres", "mysql", "mssql"] as const) {
+      const r = parseOrderBy("2 ASC", dialect);
+      expect(r.ok).toBe(true);
+      if (r.ok) {
+        expect(r.terms).toHaveLength(1);
+        expect(r.terms[0].direction).toBe("ASC");
+      }
+    }
+  });
+
+  it("edge — non-ordinal digit-prefixed tokens still rejected ('2a', '-1', '1.5')", () => {
+    for (const input of ["2a", "-1", "1.5"]) {
+      expect(parseOrderBy(input).ok).toBe(false);
+    }
+  });
+
+  it("composition — an all-ordinal clause renders bare (never quoted) on every dialect", () => {
+    const dialects: readonly Dialect[] = ["postgres", "mysql", "mssql"];
+    for (const dialect of dialects) {
+      const parsed = parseOrderBy("2 DESC, 1 ASC", dialect);
+      expect(parsed.ok).toBe(true);
+      if (!parsed.ok) continue;
+      const clause = buildOrderByClause(parsed.terms, dialect);
+      // Ordinals are never quoted — no postgres `"` and no mysql backtick
+      // may wrap the numeric token on any dialect.
+      expect(clause).not.toMatch(/["`[\]]/);
+      expect(clause).toContain("2 DESC");
+      expect(clause).toContain("1 ASC");
+    }
+  });
+});
 
 // =============================================================================
 // 1. composeRequery — happy path (Test #1)

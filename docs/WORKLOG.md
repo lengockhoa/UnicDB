@@ -22,6 +22,25 @@ For each significant action, append:
 
 ---
 
+## 2026-08-26 — Cycle Y TASK-007 (typed state dialect + declared-type wiring + webview minors)
+
+- Action: StateMessage gains optional typed `dialect` + positional `columnTypes` (numeric-string
+  ordinals). All 11 state posts fill them via one `decorateStateMessage` helper; maps produced by
+  generation-guarded `refreshColumnTypes` under browse-shape gate (`assertBrowseShape` +
+  `tableByStatement` provenance), one upgrade re-post when fresh types land. Webview prefers
+  typed dialect (header parse stays fallback), converts positional→name once for
+  `inferColumns(columns, rows, types)`, emits POSITIONAL ORDER BY (`2 ASC`) for duplicate
+  projection names; host parseOrderBy accepts bare ordinals, emitted unquoted on all dialects
+  (single-term lane bypasses composeSortQuery to avoid quote-wrapping). readExportInput return
+  type declares `hiddenColumns: string[]`; dead test no-ops removed.
+- TDD: RED across 4 files + queryComposer lane → GREEN 67/67. Two intentional expectation
+  changes: queryComposer case 5 accepts ordinals; serverFilter case-16 "'1' rejected" pinned
+  to bare ordinal composition.
+- Files: src/ui/{messages,resultsPanel,queryComposer}.ts, webview/main.ts, 6 test files.
+- Verify: compile → task files 4/4 (67 tests) ✓ · typecheck clean · adjacent regressions
+  (queryComposer 65, serverFilter lane 112, resultsGridModel batch 63, webviewRequery/
+  SaveEdits/CommitRefresh/Filters 22+63) all green. Uncommitted per handoff rules.
+
 ## 2026-08-26 — TASK-007 wave-3 (webview grid hardening: real sort column, warnings banner, quick-search no requery, in-DOM refresh confirm)
 
 - Action: 4 webview fixes từ grid/UI audit: (1) `orderByFromColumnState` maps colId qua

@@ -30,6 +30,7 @@ import type { DbTransaction, QueryResult } from "../adapters/types";
 import { pickResult } from "../core/queryRunner";
 import type {
   HostMessage,
+  StateMessage,
   WebviewMessage,
   ExportFileMessage,
   RequeryMessage,
@@ -145,6 +146,12 @@ export class ResultsPanel {
    *  generation no longer matches, and its index may even point at a
    *  different statement. Mirrors the requerySeq stale guard. */
   private statementGeneration = 0;
+  /** TASK-007 (cycle Y) — per-statement POSITIONAL declared-type maps
+   *  (statement index → {numeric-string ordinal → dataType}). Cleared in
+   *  render(); filled only for gate-passing statements via
+   *  SaveContext.listColumnTypes. */
+  private columnTypesByStatement: Map<number, Record<string, string>> =
+    new Map();
 
   constructor(options: ResultsPanelOptions) {
     this.runner = options.runner;
@@ -222,6 +229,12 @@ export class ResultsPanel {
         this.tableByStatement.set(r.index, parsed);
       }
     }
+    // TASK-007 (cycle Y) — a fresh result set invalidates every cached
+    // declared-type map; resolve new ones in the background (generation-
+    // guarded inside refreshColumnTypes, never awaited — render stays
+    // synchronous).
+    this.columnTypesByStatement.clear();
+    void this.refreshColumnTypes(results);
     this.show();
     if (this.panel) {
       this.postMessage({
@@ -291,6 +304,11 @@ export class ResultsPanel {
           sanitizeStatementResult(this.withBrowseLabel(r)) as unknown as StatementResult,
         ),
       };
+      // TASK-007 (cycle Y) — typed dialect + declared columnTypes ride on
+      // EVERY state post here, so all 11 post sites inherit the fields
+      // through this single interception point. Sanitize already produced a
+      // fresh object, so mutating `payload` never aliases a caller's literal.
+      this.decorateStateMessage(payload);
     }
     // Catch rejection (BigInt slip-through, internal errors) — surface to user.
     try {
@@ -317,6 +335,105 @@ export class ResultsPanel {
 
   private isManualCommitEnabled(): boolean {
     return this.saveContext?.getManualCommit?.() === true;
+  }
+
+  /**
+   * TASK-007 (cycle Y) — ONE private helper every `state` post flows through
+   * (all 11 post sites funnel into postMessage). Fills `dialect` from the
+   * live connection; when there is none the key stays ABSENT so the webview
+   * falls back to legacy header-string parsing rather than trusting an
+   * invented value. Declared types travel positionally only under the strict
+   * conditions spelled out on `columnTypes` (see refreshColumnTypes): a
+   * single-statement message whose cached map matches the CURRENT displayed
+   * projection exactly — otherwise the key is omitted entirely.
+   */
+  private decorateStateMessage(msg: StateMessage): void {
+    const dialect = this.saveContext?.getDriver() ?? undefined;
+    if (dialect) {
+      msg.dialect = dialect;
+    }
+    // Only an UNAMBIGUOUS message may carry a positional map: with several
+    // statements in flight, one flat {ordinal → type} record cannot say
+    // WHICH statement it describes, so it stays off (webview keeps sample
+    // inference for multi-statement runs).
+    if (msg.results.length !== 1) return;
+    const stmt = msg.results[0];
+    const byOrdinal =
+      stmt === undefined
+        ? undefined
+        : this.columnTypesByStatement.get(stmt.index);
+    const columns = stmt?.result?.columns;
+    if (!byOrdinal || !columns) return;
+    // Ordinal alignment must hold against the LIVE displayed projection —
+    // e.g. TASK-004's widening lane strips injected hidden PK columns right
+    // after a requery, changing positions relative to the fill-time cache.
+    if (Object.keys(byOrdinal).length !== columns.length) return;
+    msg.columnTypes = byOrdinal;
+  }
+
+  /**
+   * TASK-007 (cycle Y) — resolve declared DB types for gate-passing
+   * statements and remember them POSITIONALLY (ordinal → dataType) so a
+   * duplicated output column name can never mislabel its twin's values.
+   *
+   * Armed ONLY when BOTH provenance gates hold for the statement:
+   *   1. `tableByStatement` parsed a concrete (schema?, table) FROM target,
+   *   2. `assertBrowseShape` accepts the statement as a plain
+   *      single-table projection (no DISTINCT/aggregates/joins/expressions),
+   * so the output columns ARE the table's own columns in the projected
+   * order. Anything else — and any listColumnTypes rejection — simply leaves
+   * the statement uncached (⇒ key omitted on the wire, sampled inference).
+   *
+   * `render()` clears the cache and fires this WITHOUT awaiting (render is
+   * synchronous inside runner.onUpdate); the generation guard mirrors the
+   * DISTINCT lane: a fill landing after a newer render/requery-worth of
+   * state is dropped. When fresh maps land they re-post the current state so
+   * the webview upgrades classification without user action.
+   */
+  private async refreshColumnTypes(results: StatementResult[]): Promise<void> {
+    const listColumnTypes = this.saveContext?.listColumnTypes;
+    if (!listColumnTypes) return;
+    const gen = this.statementGeneration;
+    for (const r of results) {
+      if (gen !== this.statementGeneration) return;
+      const meta = this.tableByStatement.get(r.index);
+      if (!meta || assertBrowseShape(r.sql) === null) continue;
+      try {
+        const byName = await listColumnTypes(meta.schema ?? "", meta.table);
+        if (gen !== this.statementGeneration) return;
+        const columns = r.result?.columns ?? [];
+        if (columns.length === 0) continue;
+        const positional: Record<string, string> = {};
+        let complete = true;
+        for (let i = 0; i < columns.length; i++) {
+          const t = byName[columns[i]!];
+          // A projected column with no known declared type makes ANY
+          // positional claim unreliable ⇒ refuse rather than partially label.
+          if (!t) {
+            complete = false;
+            break;
+          }
+          positional[String(i)] = t;
+        }
+        if (!complete) continue;
+        this.columnTypesByStatement.set(r.index, positional);
+      } catch {
+        // Metadata unavailable ⇒ no map for this statement; not fatal.
+      }
+    }
+    if (
+      gen === this.statementGeneration &&
+      this.columnTypesByStatement.size > 0 &&
+      this.panel
+    ) {
+      // Fresh declared types arrived — re-post so the live grid upgrades.
+      this.postMessage({
+        type: "state",
+        header: this.header,
+        results: this.lastResults,
+        busy: this.busy,
+      });
+    }
   }
 
   private postTransactionStatus(): void {
@@ -1165,7 +1282,13 @@ export class ResultsPanel {
         return { sql: composeRequery(r.sql, where, "") };
       }
       const first = terms[0]!;
-      if (terms.length === 1 && !first.nulls) {
+      // TASK-007 (cycle Y): a POSITIONAL ordinal term (`ORDER BY 2`) must
+      // bypass composeSortQuery — its helpers quote-wrap ANY column token,
+      // which would turn ordinal 2 into the inert identifier `"2"`. Ordinals
+      // fall through to the buildOrderByClause wrap below, which emits them
+      // bare exactly as the webview sent them.
+      const firstIsOrdinal = /^[0-9]+$/.test(first.column);
+      if (terms.length === 1 && !first.nulls && !firstIsOrdinal) {
         // Cycle-V single-term path — keeps composeSortQuery's quoting.
         return {
           sql: composeSortQuery(dialect, r.sql, where, first.column, first.direction),

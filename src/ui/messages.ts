@@ -25,6 +25,22 @@ export interface StateMessage {
   results: StatementResult[];
   /** Đang busy / running → disable buttons. */
   busy: boolean;
+  /**
+   * TASK-007 (cycle Y) — typed SQL dialect of the connection that produced
+   * these results. Preferred by the webview for identifier quoting; the
+   * legacy header-string parse stays as the fallback for messages that omit
+   * it (older hosts / no active connection ⇒ key absent, never invented).
+   */
+  dialect?: "postgres" | "mysql" | "mssql";
+  /**
+   * TASK-007 (cycle Y) — declared DB types keyed by numeric-string ORDINAL
+   * ("0", "1", …) into the statement's result columns. Present ONLY when the
+   * host proved the projection equals the table's columns (parse provenance
+   * + TASK-004's browse-shape gate), so an ordinal position can never
+   * mislabel a renamed/computed output column. The webview converts this to
+   * a name-keyed map ONCE per render before handing it to inferColumns.
+   */
+  columnTypes?: Record<string, string>;
 }
 
 export interface BusyMessage {

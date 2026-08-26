@@ -472,7 +472,7 @@ describeIfBundle("webview/main.ts bundle — TASK-003 server-side sort", () => {
   );
 
   itIfBundle(
-    "TASK-007. duplicate column sort posts the real column name",
+    "TASK-007. duplicate column sort posts a positional ordinal term",
     async () => {
       const api = await mountStatement(
         "TASK-007 duplicate",
@@ -498,8 +498,127 @@ describeIfBundle("webview/main.ts bundle — TASK-003 server-side sort", () => {
       await flushGridEvents();
 
       expect(requeries(received)).toHaveLength(1);
-      expect(requeries(received)[0]!.orderBy).toBe("id ASC");
+      // `SELECT id, id` makes a quoted name ambiguous server-side — the only
+      // executable identifier for the second projection is its POSITION.
+      // Never the AG-grid-only deduped field, never a duplicated quoted name.
+      expect(requeries(received)[0]!.orderBy).toBe("2 ASC");
       expect(requeries(received)[0]!.orderBy).not.toContain("id__2");
+    },
+  );
+
+  itIfBundle(
+    "TASK-007. typed state dialect beats header parsing; legacy headers still fall back",
+    async () => {
+      // (a) Typed dialect with a MALFORMED header (no driver token at all):
+      // the field, not the string parse, decides quoting.
+      {
+        dispatchState({
+          ...rowsState("garbled header — no driver token here", ["id", "First Name"], [
+            [1, "beta"],
+            [2, "alpha"],
+          ]),
+          dialect: "mysql",
+        });
+        const w = window as unknown as {
+          __vsdb?: { debugSetSpecs?: (specs: unknown[]) => void };
+        };
+        w.__vsdb!.debugSetSpecs!([
+          { field: "id", headerName: "id", kind: "number" },
+          { field: "First Name", headerName: "First Name", kind: "string" },
+        ]);
+        await waitForSettledStream("TASK-007 dialect-a mount");
+
+        const api = getGridApi();
+        expect(api).toBeTruthy();
+        // Clearing any surviving sort is itself a transition (and thus fires
+        // sortChanged); land its requery during this second settle wait so
+        // the asc below is guaranteed to be a state CHANGE when it fires.
+        api!.applyColumnState({ state: [], defaultState: { sort: null } });
+        await waitForSettledStream("TASK-007 dialect-a clear-sort");
+        received.length = 0;
+
+        api!.applyColumnState({
+          state: [{ colId: "First Name", sort: "asc", sortIndex: 0 }],
+        });
+        await flushGridEvents();
+
+        const rq = requeries(received);
+        expect(rq).toHaveLength(1);
+        expect(rq[0]!.orderBy).toBe("`First Name` ASC");
+      }
+
+      // (b) Malformed header WITHOUT a dialect field: legacy fallback keeps
+      // postgres double-quoting (byte-identical to today).
+      {
+        dispatchState(rowsState("still garbled", ["id", "First Name"], [[1, "beta"]]));
+        const w = window as unknown as {
+          __vsdb?: { debugSetSpecs?: (specs: unknown[]) => void };
+        };
+        w.__vsdb!.debugSetSpecs!([
+          { field: "id", headerName: "id", kind: "number" },
+          { field: "First Name", headerName: "First Name", kind: "string" },
+        ]);
+        await waitForSettledStream("TASK-007 dialect-b mount");
+
+        const api = getGridApi();
+        expect(api).toBeTruthy();
+        api!.applyColumnState({ state: [], defaultState: { sort: null } });
+        await waitForSettledStream("TASK-007 dialect-b clear-sort");
+        received.length = 0;
+
+        api!.applyColumnState({
+          state: [{ colId: "First Name", sort: "asc", sortIndex: 0 }],
+        });
+        await flushGridEvents();
+
+        const rq = requeries(received);
+        expect(rq).toHaveLength(1);
+        expect(rq[0]!.orderBy).toBe('"First Name" ASC');
+      }
+    },
+  );
+
+  itIfBundle(
+    "TASK-007. declared columnTypes decide column kind over sampled values",
+    async () => {
+      // Rows look NUMERIC ("123") but the declaration says varchar — the
+      // declared kind must win. Second column is all-NULL with a declared
+      // integer — sampling would see nothing and call it string.
+      dispatchState({
+        type: "state",
+        header: "Browse public.users at 2026-01-01T00:00:00.000Z — mysql@h/db",
+        busy: false,
+        dialect: "mysql",
+        // Positional ordinals are 0-BASED into the result columns
+        // (TASK-007 contract: keys are String(i) over stmt.result.columns).
+        columnTypes: { "0": "varchar", "1": "integer" },
+        results: [
+          {
+            index: 0,
+            sql: "SELECT code, score FROM public.users",
+            status: "done",
+            result: {
+              columns: ["code", "score"],
+              rows: [["123", null]],
+              rowCount: 1,
+              durationMs: 1,
+            },
+            durationMs: 1,
+          },
+        ],
+      });
+      await flushGridEvents();
+      await waitForSettledStream("TASK-007 types mount");
+
+      const w = window as unknown as {
+        __vsdb?: { currentSpecs?: readonly unknown[] };
+      };
+      const specs = w.__vsdb?.currentSpecs;
+      expect(specs).toBeTruthy();
+      expect(specs).toHaveLength(2);
+      expect(specs![0]).toMatchObject({ field: "code", kind: "string" });
+      expect(specs![1]).toMatchObject({ field: "score", kind: "number", alignRight: true });
+      received.length = 0;
     },
   );
 

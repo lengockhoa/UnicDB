@@ -340,7 +340,6 @@ describeIfBundle("webview/main.ts export toolbar (TASK-502)", () => {
       expect(m.text).toBe(
         "WHERE (id=1 AND name='alpha') OR (id=3 AND name='gamma')",
       );
-      void root;
     },
   );
 
@@ -369,7 +368,6 @@ describeIfBundle("webview/main.ts export toolbar (TASK-502)", () => {
           },
         ],
       });
-      void received;
 
       const select = root.querySelector(
         ".vsdb-export-format",
@@ -389,7 +387,6 @@ describeIfBundle("webview/main.ts export toolbar (TASK-502)", () => {
       const m = exportMsgs[0] as { text: string };
       // Reserved word `order` → backtick-quoted under mysql, bare `id` stays.
       expect(m.text).toBe("WHERE (id=1 AND `order`='x')");
-      void root;
     },
   );
 
@@ -494,4 +491,16 @@ describeIfBundle("webview/main.ts export toolbar (TASK-502)", () => {
       expect(m.text).toContain("(0,2)");
     },
   );
+
+  // TASK-007 (cycle Y) — readExportInput's return annotation declares the
+  // already-computed and already-consumed `hiddenColumns` field. esbuild
+  // strips type annotations, so pin the SOURCE of webview/main.ts — a
+  // type-level contract tsconfig.json (which excludes webview/) cannot see.
+  it("TASK-007. readExportInput return annotation declares hiddenColumns", () => {
+    const src = readFileSync(resolve(process.cwd(), "webview", "main.ts"), "utf8");
+    const fnStart = src.indexOf("function readExportInput():");
+    expect(fnStart).toBeGreaterThanOrEqual(0);
+    const signature = src.slice(fnStart, fnStart + 700);
+    expect(signature).toMatch(/hiddenColumns:\s*string\[\]/);
+  });
 });
