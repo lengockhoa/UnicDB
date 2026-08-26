@@ -22,6 +22,30 @@ For each significant action, append:
 
 ---
 
+## 2026-08-27 — Cycle Y close + release v1.6.8
+
+- Action: finished every queued results/query item from Cycle X backlog in one unattended
+  handoff cycle (8 tasks / 3 waves): manual-commit UI toggle (C1, product decision = expose
+  UI), atomic MySQL multi-statement batches, declared-type grid inference, keyset paging with
+  safe hidden-PK projection (structural browse gate), mysql/mssql NULLS emulation, scoped
+  DISTINCT dropdown + visible truncation/error footer, typed state dialect + positional sort,
+  deterministic webview server-sort lifecycle.
+- Phase R: 8 parallel bao-opus reviewers — 5 approved_minor, 3 changes_requested. R4.5 fix
+  round 1 (3 parallel sonnet fixers): TASK-003 typmod type matching (numeric(10,2)/bit(1)),
+  TASK-004 carry `nulls` through paging + keyset-lane refusal, TASK-007 ordinal as data flag
+  (quoted `"2024"` stays quoted). Aggregate 261 targeted green → re-review round 1: all 3
+  APPROVED (8/8 tasks green).
+- Boundary verification: full suite 1642 passed / 2 skipped / 0 failed (baseline 1552, +90
+  new tests), typecheck + compile clean.
+- Release: v1.6.8 — CHANGELOG entry, `npm install --package-lock-only`, `bash scripts/build.sh`
+  + artifact assertions, installer dry-run, tag + `gh release create`. Single fast-forward
+  push to origin/main.
+- Files: src/ui/{resultsPanel,keysetPaging(new),resultsGridModel,queryComposer,messages,
+  distinctValues}.ts, src/adapters/mysql.ts, webview/{main,connectionFormMain}.ts,
+  src/extension.ts, README.md, CHANGELOG.md, 14 test files (+2 new suites).
+- Status: PUSHED + released v1.6.8. Docs under docs/AI_HANDOFF/ (PLAN/TASKS/INDEX/RUN)
+  updated to done/approved.
+
 ## 2026-08-26 — Cycle Y TASK-007 (typed state dialect + declared-type wiring + webview minors)
 
 - Action: StateMessage gains optional typed `dialect` + positional `columnTypes` (numeric-string

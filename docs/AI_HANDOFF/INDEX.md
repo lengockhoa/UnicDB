@@ -10,14 +10,20 @@ buildFilterWhere reuse). 8 tasks, planned 3 waves.
 
 | Task | Title | Status | Executor | Reviewer |
 |------|-------|--------|----------|----------|
-| TASK-001 | Expose per-connection manual-commit mode | approved_minor | claude-code/bao-sonnet | bao-opus |
-| TASK-002 | Make MySQL multi-statement batches atomic | approved_minor | claude-code/bao-sonnet | bao-opus |
-| TASK-003 | Let declared server types override sampled grid inference | changes_requested | claude-code/bao-sonnet | bao-opus |
-| TASK-004 | Keyset paging and safe missing-PK projection | changes_requested | none | bao-opus |
-| TASK-005 | Emulate NULLS FIRST/LAST on MySQL and MSSQL | approved_minor | none | bao-opus |
-| TASK-006 | Scope DISTINCT values and surface dropdown limits/errors | approved_minor | claude-code/bao-sonnet | bao-opus |
-| TASK-007 | Typed state dialect, declared-type wiring, and webview minors | changes_requested | TASK-003, TASK-004 | bao-opus |
-| TASK-008 | Stabilize the webview server-sort bundle lifecycle | approved_minor | claude-code/bao-sonnet | bao-opus |
+| TASK-001 | Expose per-connection manual-commit mode | done | claude-code/bao-sonnet | bao-opus |
+| TASK-002 | Make MySQL multi-statement batches atomic | done | claude-code/bao-sonnet | bao-opus |
+| TASK-003 | Let declared server types override sampled grid inference | done | claude-code/bao-sonnet | bao-opus |
+| TASK-004 | Keyset paging and safe missing-PK projection | done | claude-code/bao-sonnet | bao-opus |
+| TASK-005 | Emulate NULLS FIRST/LAST on MySQL and MSSQL | done | claude-code/bao-sonnet | bao-opus |
+| TASK-006 | Scope DISTINCT values and surface dropdown limits/errors | done | claude-code/bao-sonnet | bao-opus |
+| TASK-007 | Typed state dialect, declared-type wiring, and webview minors | done | claude-code/bao-sonnet | bao-opus |
+| TASK-008 | Stabilize the webview server-sort bundle lifecycle | done | claude-code/bao-sonnet | bao-opus |
+
+Cycle Y closed 2026-08-27 → released **v1.6.8**. Phase R: 8/8 bao-opus verdicts (5
+approved_minor, 3 changes_requested) → R4.5 fix round 1 (TASK-003 typmod types, TASK-004
+`nulls`-through paging + keyset refusal, TASK-007 ordinal-as-data flag) → re-review round 1:
+all 3 APPROVED. Boundary full suite **1642 passed / 2 skipped / 0 failed**, typecheck +
+compile clean. Pushed + released.
 
 Graph: TASK-001 ∥ TASK-002 ∥ TASK-003 ∥ TASK-004 ∥ TASK-005 ∥ TASK-008; TASK-003 + TASK-004
 → TASK-007; TASK-004 + TASK-007 → TASK-006.

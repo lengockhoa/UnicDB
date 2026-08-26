@@ -3,6 +3,48 @@
 All notable changes to VSDB are documented in this file. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 
+## [1.6.8] — 2026-08-27
+
+Cycle Y: finished queued results/query work — manual-commit UI, atomic MySQL batches, keyset paging, NULLS emulation, scoped DISTINCT dropdown, typed state dialect, declared-type inference.
+
+### Added
+- **Manual-commit mode toggle in the connection form**: per-connection `manualCommit` is now
+  exposed in Add/Edit Connection UI (previously buried in config); edit pre-fills the current
+  value, and an explicit off genuinely clears a stored on.
+- **Keyset paging with safe hidden-PK projection**: when a query is a proven single-table browse
+  (structural gate, no DISTINCT/aggregate/wraps) and its PK is fully visible, deep pages use a
+  portable OR-of-ANDs cursor predicate with `LIMIT` instead of deep `OFFSET` (page 0
+  byte-identical to before); when no PK column is visible, the projection is widened with hidden
+  PK columns that drive the cursor while the displayed grid stays clean. NULLS-ordered sorts and
+  every other shape keep the legacy OFFSET path exactly.
+- **Declared-type grid inference**: PostgreSQL `format_type` declarations (e.g. `numeric(10,2)`,
+  `varchar(50)`, `bit(1)`) and extended MySQL/MSSQL tokens now classify numeric/boolean/string
+  columns from metadata instead of sampling — all-null numeric columns get right alignment,
+  string columns stay left. Unknown types still fall back to sampling.
+- **Typed state dialect + positional sort**: state messages carry the live driver dialect (header
+  parse remains the byte-identical fallback) and positional declared types under the browse gate;
+  duplicate output column names sort via an unambiguous positional `ORDER BY 2`; a column named
+  `2024` stays quoted, bare ordinals stay bare.
+
+### Fixed
+- **MySQL multi-statement batches are atomic**: one pooled connection, explicit `BEGIN`, each
+  statement on the same connection, `COMMIT` on success / `ROLLBACK` + original error on any
+  failure, `release()` in `finally`. Single-statement streaming runs unchanged.
+- **NULLS FIRST/LAST on MySQL/MSSQL**: emulated via a leading null-rank key (`IS NULL` / `CASE`)
+  that rounds-trips through paging; no raw `NULLS` token reaches those dialects.
+- **DISTINCT dropdown scoped to active filter**: values are queried inside the current bar WHERE
+  plus other-column filters (never the requested column's own values); failures and truncation
+  are visible in the set-filter footer (`first 1000 shown`), and no-state requests keep the
+  legacy `where=""` byte-identical.
+- **Results panel state hygiene**: `render()` resets the stale manual statement index; a committed
+  save whose refresh fails now acks `{ok:true, warnings}` instead of rethrowing out of the
+  message handler.
+- **Webview server-sort lifecycle**: bundle evaluated once per suite; bounded observable waits
+  replace fixed sleeps (flake eliminated at the root).
+
+### Removed
+- Dead `executeText` in the MySQL adapter (sole caller migrated to the connection-pinned batch arm).
+
 ## [1.6.7] — 2026-08-26
 
 Cycle X: adversarial QA + correctness hardening — audit findings fixed, webview flake eliminated, dialect-safe export quoting, whitespace-complete `(Blanks)`.
