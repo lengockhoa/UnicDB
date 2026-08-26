@@ -2989,6 +2989,7 @@ function readExportInput():
       pkColumns: string[];
       tableName: string;
       selectedRows: unknown[][];
+      dialect: "postgres" | "mysql" | "mssql";
     }
   | null {
   if (!dom) return null;
@@ -3039,6 +3040,7 @@ function readExportInput():
     tableName: "results",
     selectedRows: selected,
     hiddenColumns,
+    dialect: detectDialectFromHeader(headerText),
   };
 }
 

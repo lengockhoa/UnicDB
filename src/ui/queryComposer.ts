@@ -110,6 +110,20 @@ function isStringColumnType(declared: string | undefined): boolean {
   return false;
 }
 
+/** Match a string column that is entirely whitespace — the server-side twin
+ *  of the client's `String.trim() === ""` blank classifier (resultsGridModel
+ *  `isBlankFilterValue`). Plain `TRIM(col) = ''` strips spaces only on every
+ *  dialect and would return zero rows for a tab-only cell the client already
+ *  grouped into `(Blanks)`, so emit a whitespace-complete predicate per
+ *  dialect: POSIX `[[:space:]]` regex for postgres/mysql, a negated LIKE char
+ *  class for mssql (which has no built-in regex). Empty string matches all
+ *  three. */
+function blankStringPredicate(quoted: string, dialect: Dialect): string {
+  if (dialect === "mssql") return `${quoted} NOT LIKE '%[^ \t\r\n\f\v]%'`;
+  if (dialect === "mysql") return `${quoted} REGEXP '^[[:space:]]*$'`;
+  return `${quoted} ~ '^[[:space:]]*$'`;
+}
+
 /**
  * Build the WHERE clause for an AG Grid set-filter model.
  *
@@ -159,7 +173,7 @@ export function buildFilterWhere(
 
     const parts: string[] = [];
     if (hasNull) parts.push(`${quoted} IS NULL`);
-    if (hasNull && stringTyped) parts.push(`TRIM(${quoted}) = ''`);
+    if (hasNull && stringTyped) parts.push(blankStringPredicate(quoted, dialect));
     if (inList.length > 0) parts.push(`${quoted} IN (${inList.join(", ")})`);
     if (parts.length === 0) continue;
 

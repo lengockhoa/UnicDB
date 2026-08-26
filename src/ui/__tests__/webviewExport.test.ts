@@ -334,9 +334,11 @@ describeIfBundle("webview/main.ts export toolbar (TASK-502)", () => {
       expect(m.format).toBe("sql-where");
       expect(m.text).toContain("WHERE");
       // No PK columns on the test table → fallback to all-cols AND.
-      // P2-6: the exporter quotes every interpolated column identifier.
+      // TASK-004 P2-6 fix: bare identifiers pass through unquoted (valid on
+      // every dialect), only reserved/spaced names are quoted. Header has no
+      // driver token → dialect unknown → postgres default.
       expect(m.text).toBe(
-        'WHERE ("id"=1 AND "name"=\'alpha\') OR ("id"=3 AND "name"=\'gamma\')',
+        "WHERE (id=1 AND name='alpha') OR (id=3 AND name='gamma')",
       );
       void root;
     },

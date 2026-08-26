@@ -361,7 +361,7 @@ describe("TASK-004 case 14 — (Blanks) uses DECLARED column types, not row valu
     });
     for (let i = 0; i < 500; i++) await Promise.resolve();
     const sql = runSql.mock.calls[0]![0] as string;
-    expect(sql).toContain('("n" IS NULL OR TRIM("n") = \'\')');
+    expect(sql).toContain('("n" IS NULL OR "n" ~ \'^[[:space:]]*$\')');
   });
 
   it("int4 col composes bare IS NULL even when every loaded row is null", async () => {

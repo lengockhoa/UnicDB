@@ -391,11 +391,44 @@ export function sqlLiteral(v: unknown): string {
   return `'${s.replace(/'/g, "''")}'`;
 }
 
-/** Portable exporter-local identifier quoting. The exporter has no dialect
- * metadata, so use SQL-standard double quotes and double embedded quotes. */
-function quoteExportIdentifier(name: string): string {
+/** Exporter-local identifier quoting, dialect-aware. Bare identifiers pass
+ * through UNQUOTED — byte-stable for the common case and valid on every
+ * dialect (this is what keeps `UPDATE results SET name='x'` from breaking
+ * under MySQL's default sql_mode, where ANSI `"name"` is a string literal).
+ * Reserved words and anything non-bare (spaces, quotes, dots…) get
+ * per-dialect quoting — postgres `"…"`, mysql `` `…` ``, mssql `[…]`.
+ * The default (no dialect supplied) is postgres-style. */
+export function quoteExportIdentifier(
+  name: string,
+  dialect: "postgres" | "mysql" | "mssql" | "unknown" = "postgres",
+): string {
+  if (
+    /^[A-Za-z_][A-Za-z0-9_$]*$/.test(name) &&
+    !EXPORT_RESERVED_WORDS.has(name.toLowerCase())
+  ) {
+    return name;
+  }
+  if (dialect === "mysql") return "`" + name.replace(/`/g, "``") + "`";
+  if (dialect === "mssql") return "[" + name.replace(/]/g, "]]") + "]";
   return `"${name.replace(/"/g, '""')}"`;
 }
+
+/** SQL keywords that break a bare (unquoted) identifier. Non-exhaustive on
+ * purpose — the common column-name offenders, not a full grammar. Kept in
+ * lowercase; reserved-word columns usually arrive lowercase but match
+ * case-insensitively to be safe. */
+const EXPORT_RESERVED_WORDS: ReadonlySet<string> = new Set([
+  "all", "and", "any", "as", "asc", "begin", "between", "by", "case", "check",
+  "collate", "column", "constraint", "create", "cross", "current_date",
+  "current_time", "current_timestamp", "default", "delete", "desc", "distinct",
+  "drop", "else", "end", "except", "exists", "false", "for", "foreign",
+  "from", "full", "grant", "group", "having", "in", "index", "inner",
+  "insert", "intersect", "into", "is", "join", "key", "left", "like",
+  "limit", "natural", "not", "null", "offset", "on", "or", "order", "outer",
+  "primary", "references", "right", "select", "set", "table", "then", "true",
+  "union", "unique", "update", "using", "values", "view", "when", "where",
+  "with",
+]);
 
 /** True for values that belong to the set-filter (Blanks) group. */
 function isBlankFilterValue(value: unknown): boolean {
@@ -465,6 +498,10 @@ export interface SerializeOptions {
    * column names (`SELECT a.id, b.id`): hiding one position leaves the other
    * visible. Out-of-range and non-integer indices are skipped. */
   hiddenIndices?: number[];
+  /** SQL dialect for identifier quoting in the sql-updates / sql-where
+   * serializers. Bare identifiers stay unquoted on every dialect; reserved
+   * or spaced names get per-dialect quoting. `unknown`/unset → postgres. */
+  dialect?: "postgres" | "mysql" | "mssql" | "unknown";
 }
 
 /** Build a Set<number> of indices to KEEP from `columns` — every column
@@ -719,7 +756,7 @@ export function serializeSqlUpdates(
       .map((c) => {
         const i = colIdx.get(c);
         if (i === undefined) return null;
-        return `${quoteExportIdentifier(c)}=${sqlLiteral(row[i])}`;
+        return `${quoteExportIdentifier(c, opts.dialect)}=${sqlLiteral(row[i])}`;
       })
       .filter((s): s is string => s !== null)
       .join(", ");
@@ -735,7 +772,7 @@ export function serializeSqlUpdates(
       .map((c) => {
         const i = colIdx.get(c);
         if (i === undefined) return null;
-        return `${quoteExportIdentifier(c)}=${sqlLiteral(row[i])}`;
+        return `${quoteExportIdentifier(c, opts.dialect)}=${sqlLiteral(row[i])}`;
       })
       .filter((s): s is string => s !== null)
       .join(" AND ");
@@ -791,7 +828,7 @@ export function serializeWhereClause(
       .map((c) => {
         const i = colIdx.get(c);
         if (i === undefined) return null;
-        return `${quoteExportIdentifier(c)}=${sqlLiteral(row[i])}`;
+        return `${quoteExportIdentifier(c, opts.dialect)}=${sqlLiteral(row[i])}`;
       })
       .filter((s): s is string => s !== null);
     return `(${parts.join(" AND ")})`;
