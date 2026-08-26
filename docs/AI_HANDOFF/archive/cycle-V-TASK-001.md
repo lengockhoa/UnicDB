@@ -121,7 +121,7 @@ AssertionError: contributes.grammars must have at least one entry: expected 0 to
    53|     expect(grammars.length, "contributes.grammars must have at least o…
    54|       .toBeGreaterThanOrEqual(1);
         |        ^
-   55| 
+   55|
    56|     const entry = grammars[0];
 
  FAIL  src/__tests__/sqlGrammar.test.ts > vsdb sql injection grammar (TASK-001) > grammar file exists at the contributed path and parses as JSON

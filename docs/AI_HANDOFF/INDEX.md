@@ -2,24 +2,42 @@
 
 Cycle X -- **ADVERSARIAL QA + CORRECTNESS HARDENING**: two evidence-gated audits, root-cause
 flake isolation, whitespace-aware `(Blanks)`, shared SQL terminator normalization, MySQL sort
-adapter parity, and explicit UTC adapter sessions. 5 initial tasks, up to 2 audit follow-ups.
+adapter parity, explicit UTC adapter sessions, plus three audit-fix tasks materialized at the
+reconciliation gate. 8 tasks, 3 waves.
 
 | Task | Title | Status | Executor | Reviewer |
 |------|-------|--------|----------|----------|
-| TASK-001 | Adversarial audit: host, adapters, save path | ready | - | - |
-| TASK-002 | Adversarial audit: results grid, webview, query UI | ready | - | - |
+| TASK-001 | Adversarial audit: host, adapters, save path | done | claude-code/bao-sonnet | - |
+| TASK-002 | Adversarial audit: results grid, webview, query UI | done | claude-code/bao-sonnet | - |
 | TASK-003 | Eliminate NULL/viewer aggregate flake at bundle lifecycle root | ready | - | - |
-| TASK-004 | Whitespace `(Blanks)` and shared SQL terminator normalizer | ready | - | - |
-| TASK-005 | MySQL sort twin and explicit UTC adapter sessions | ready | - | - |
+| TASK-004 | Whitespace `(Blanks)` and shared SQL terminator normalizer (+P2-6 export quoting) | ready | - | - |
+| TASK-005 | MySQL sort twin and explicit UTC adapter sessions (+M1 checkout, +M3 stream end) | ready | - | - |
+| TASK-006 | ResultsPanel host hardening: cursor ordering, manual-window refresh, wire-safe `batched` | ready | - | - |
+| TASK-007 | Webview grid hardening: real sort column, warning surfacing, quick-search requery, safe refresh confirm | ready | - | - |
+| TASK-008 | Save/core hardening: NULL-PK rows skipped, batched first-fetch errors surfaced | ready | - | - |
 
-Graph: 001 and 002 are independent audit gates; 002 --> 003 and 002 --> 004;
-001 + 004 --> 005. After 001/002, create zero to two grounded TASK-006/007 audit-fix tasks only for confirmed
-small-to-medium findings; dynamic dependencies must follow file ownership.
+Graph: 001 and 002 are independent audit gates (both done); 002 --> 003, 002 --> 004,
+002 --> 007, 001+002 --> 006 and --> 008; 001 + 004 --> 005; 004 --> 007 (file ownership of
+`webview/main.ts`).
 
-- **Wave 1 (2, parallel):** 001, 002
-- **Reconciliation gate:** materialize 0-2 audit fixes or explicitly record none
-- **Wave 2 (2 + non-colliding audit fixes):** 003, 004
-- **Wave 3 (1 + collision-ordered audit fixes):** 005
+- **Wave 1 (2, parallel):** 001, 002 — done
+- **Reconciliation gate:** done — 3 audit-fix tasks materialized (006, 007, 008); P2-6 folded
+  into 004, M1/M3 folded into 005; 6 findings queued below; P3-1 whitespace chore handled
+  directly by the orchestrator.
+- **Wave 2 (4, parallel):** 003, 004, 006, 008
+- **Wave 3 (2, parallel):** 005, 007
+
+Cycle X file-collision decisions:
+- Wave 2 is file-disjoint: 003 (`src/ui/__tests__` lifecycle harness), 004
+  (`src/core/text.ts`, `src/ui/resultsGridModel.ts`, `src/ui/queryComposer.ts`,
+  `src/ui/distinctValues.ts`, `webview/main.ts`), 006 (`src/ui/resultsPanel.ts`), 008
+  (`src/core/saveStatements.ts`, `src/core/queryRunner.ts`).
+- **Collision resolved:** TASK-007 was provisionally Wave 2, but TASK-004 already owns
+  `webview/main.ts`. TASK-007 depends on TASK-004 and moved to Wave 3, where it is
+  file-disjoint from TASK-005 (`src/adapters/mysql.ts`, `src/adapters/mssql.ts`,
+  `src/ui/queryComposer.ts`).
+- P2-2 (`src/core/queryRunner.ts`) was filed by the UI audit but assigned to TASK-008, the
+  core owner, so it has exactly one owner.
 
 Cycle W -- **SERVER-SIDE SORT + DISTINCT FILTER VALUES + DETERMINISTIC PAGING**: real ORDER BY
 parser with per-dialect quoting and expression rejection, `(Blanks)` matching empty strings,
@@ -62,9 +80,35 @@ Cycle T (12 tasks, all done) shipped at `4a35fec`. See `archive/cycle-T-*`.
 
 ## Next cycles (queued)
 
-- **Cycle X audit follow-ups (reserved TASK-006/TASK-007).** After Wave 1, create zero to two
-  task files/rows only for confirmed small-to-medium findings. P0/P1 are mandatory; queue huge
-  architectural findings here with severity, evidence, and rationale instead of rushing them.
+### Deferred at the Cycle X reconciliation gate
+
+Findings confirmed by the two Wave-1 audits but deliberately **not** tasked this cycle. Evidence
+lives in `docs/AI_HANDOFF/notes/cycle-x-audit-host.md` and
+`docs/AI_HANDOFF/notes/cycle-x-audit-grid-ui.md`.
+
+- **M2 — MySQL multi-statement partial commit.** A multi-statement batch that fails midway leaves
+  earlier statements committed with no rollback boundary (mysql autocommit). Pre-existing since
+  before v1.6.3, medium-sized (needs an explicit batch transaction policy plus a user-facing
+  contract), so it is out of a hardening cycle's budget.
+- **pg metadata vs manual-commit window — blocked on C1.** While a manual transaction is open on
+  the single pooled pg client, metadata/aux queries issued outside that transaction can block or
+  read outside the transaction's snapshot. Cannot be designed until C1 settles whether the manual
+  window is reachable at all.
+- **C1 — `manualCommit` is unreachable from the UI (product decision).** The host implements the
+  full manual COMMIT/ROLLBACK path but no shipped UI surface enables the setting. Either expose it
+  or delete the path; both are product calls, not defect fixes. TASK-006's P1-4 fix keeps the path
+  correct either way.
+- **P2-3 — DISTINCT dropdown gives no truncated/error note.** The set-filter dropdown silently
+  shows a capped or empty list when the DISTINCT query is truncated or fails. Needs a message-shape
+  addition, so it is deferred with the other protocol work. Pair it with the existing
+  "Scope DISTINCT dropdown values to the active filter/WHERE" entry below — same surface, one task.
+- **P2-4 — `inferColumns` declared-type override.** Column kind is inferred from sampled row values
+  and never corrected by the server's declared type, so an all-NULL or all-integer-looking string
+  column is misclassified for alignment and filtering. Needs declared types plumbed to the webview.
+- **P3-2 — dead guard in `unquoteIdent`.** A branch that cannot be reached given the caller's
+  precondition. Cosmetic; bundle it into the next file-owning task rather than spending a wave on it.
+### Earlier backlog
+
 - **Keyset (cursor) paging for deep offsets.** Cycle W makes OFFSET paging deterministic only
   when the full PK is projected, but not fast; `OFFSET 500000` still scans. Needs a stable unique
   sort key carried through the webview round trip and a different composition for page 0.

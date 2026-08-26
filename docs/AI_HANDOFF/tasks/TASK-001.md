@@ -1,7 +1,7 @@
 # TASK-001 — Adversarial audit: host, adapters, save path
 
-- Status: `ready`
-- Owner: `-`
+- Status: `done`
+- Owner: `claude-code/bao-sonnet`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §2, §3.1
 

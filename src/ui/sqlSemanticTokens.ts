@@ -167,4 +167,3 @@ export class SqlSemanticTokensProvider
     return builder.build();
   }
 }
-

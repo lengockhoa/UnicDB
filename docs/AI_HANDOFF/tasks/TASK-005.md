@@ -11,12 +11,13 @@ Add the missing real MySQL adapter sort helper and delegate the composer to it. 
 
 ## Target Files
 
-- `src/adapters/mysql.ts` — export sort helper; set mysql2 `timezone: "Z"`; route the four explicit pool checkouts and `MySqlAdapter.query(sql, values)` through one helper that awaits one UTC session initialization per physical connection and fails closed; replace the latter's direct `pool.query()` with helper checkout, `connection.query()`, and `finally` release.
+- `src/adapters/mysql.ts` — export sort helper; set mysql2 `timezone: "Z"`; route the four explicit pool checkouts and `MySqlAdapter.query(sql, values)` through one helper that awaits one UTC session initialization per physical connection and fails closed; **(M1)** replace `query()`'s direct `this.pool.query(sql, values)` at `:398-408` with helper checkout, `connection.query(sql, values)`, and `finally` release, so it becomes the single choke point through which all nine `information_schema` metadata call sites and `executeText`'s non-streaming DML flow; **(M3)** in `openStreamingQuery`, also settle the `firstFields` promise on the stream's `"end"` event (`:439-445`, awaited at `:591-598`) so a stream that ends without ever emitting `fields` or `error` resolves as an empty success (`columns = []`) instead of hanging forever and leaking the pooled connection.
 - `src/adapters/mssql.ts` — explicitly set tedious `options.useUTC: true`.
 - `src/ui/queryComposer.ts` — delegate the MySQL sort arm to `mysql.getTableSortQuery` while retaining MSSQL delegation and PostgreSQL output.
 - `src/adapters/__tests__/mysql.sortQuery.test.ts` **(new)** — helper contract/parity/security tests.
 - `src/adapters/__tests__/timezone.test.ts` **(new)** — faithful mysql2/tedious configuration, ordering, and failure tests.
 - `src/ui/__tests__/queryComposer.test.ts` — MySQL delegation/parity and non-UTC timestamp-literal regression tests.
+- `src/adapters/__tests__/adapterQueryShape.test.ts` — **(M1)** `query()` checkout/release shape; **(M3)** fake-stream `end`-without-`fields` case. Existing file, already mocks mysql2-shaped adapter internals.
 
 ## Test Cases (REQUIRED — TDD)
 
@@ -30,21 +31,27 @@ Add the missing real MySQL adapter sort helper and delegate the composer to it. 
 | 6 | edge — concurrency | Every physical connection initializes once | Two physical pool connections each initialize exactly once; repeated checkouts of one identity skip only after successful initialization and never overtake an in-flight initialization. | Faithful promise connection identity fixture |
 | 7 | edge — replacement/state | Direct-query replacement initializes before SQL | After a pool connection loss, `MySqlAdapter.query(sql, values)` acquires the replacement through the helper, runs `SET time_zone = '+00:00'` before its metadata/non-streaming query, and releases it; no direct `pool.query()` is called. | Sequential mocked physical connections; invoke `listSchemas()` or `runQuery()` non-streaming path after replacement |
 | 8 | regression — environment | Host TZ cannot shift canonical filter literal | Under a non-UTC `TZ`, `buildFilterWhere` emits the same MySQL/MSSQL UTC-naive literal `2024-03-01 10:30:00.000`; process timezone is restored after the test. | Canonical Date/ISO typed filter |
+| 9 | regression — M1 | `query()` checks out and always releases | With a mock pool, calling `listSchemas()` invokes `pool.getConnection()` exactly once, runs the SQL through `connection.query`, and calls `connection.release()` exactly once; `pool.query` is never called. | Mock promise pool whose `query` would throw if reached |
+| 10 | edge — failure/cleanup (M1) | A rejecting query still releases the connection | When `connection.query` rejects, `listSchemas()` rejects with that error **and** `connection.release()` was still called exactly once — no leaked checkout on the error path. | Mock connection whose `query` rejects |
+| 11 | edge — pathological stream (M3) | Stream `end` without `fields` resolves empty, not hung | A fake stream emitting only `"end"` makes `openStreamingQuery` resolve within the test (no timeout) with `columns` `[]`; the first `fetchBatch()` returns `null` and the pooled connection is released exactly once. RED before fix: the promise never settles and the test times out. | Fake mysql2 stream stub emitting `end` only |
+| 12 | edge — ordering (M3) | `fields` still wins when it arrives | A fake stream emitting `"fields"` then rows then `"end"` yields those column names (not `[]`), proving the new `end` listener does not pre-empt the normal path; a stream emitting `"error"` first still rejects and destroys the connection. | Fake stream stubs for both orderings |
 
 ## Test Files
 
 - `src/adapters/__tests__/mysql.sortQuery.test.ts` **(new)**
 - `src/adapters/__tests__/timezone.test.ts` **(new)**
 - `src/ui/__tests__/queryComposer.test.ts`
+- `src/adapters/__tests__/adapterQueryShape.test.ts` — cases 9–12 (M1, M3)
 
 ## Verification Commands
 
 ```bash
-npx vitest run src/adapters/__tests__/mysql.sortQuery.test.ts src/adapters/__tests__/timezone.test.ts src/ui/__tests__/queryComposer.test.ts
+npx vitest run src/adapters/__tests__/mysql.sortQuery.test.ts src/adapters/__tests__/timezone.test.ts src/ui/__tests__/queryComposer.test.ts src/adapters/__tests__/adapterQueryShape.test.ts
+npx vitest run src/adapters/__tests__/schemas.test.ts src/adapters/__tests__/factory.test.ts src/core/__tests__/queryRunner.test.ts
 npm run typecheck
 ```
 
-`package.json` has no lint script. No bundle-loading test is selected, so compile is not required for this task's targeted lane; final cycle verification compiles first.
+The second command is the regression lane for the M1 checkout change (metadata callers of `query()` plus the runner contract). `package.json` has no lint script. No bundle-loading test is selected, so compile is not required for this task's targeted lane; final cycle verification compiles first.
 
 ## Acceptance Criteria
 
@@ -53,8 +60,10 @@ npm run typecheck
 - [ ] All four explicit `pool.getConnection()` call sites and `MySqlAdapter.query(sql, values)` use one checkout helper; `query()` performs `connection.query()` and releases in `finally`, so parser configuration and every physical server session—including replacements—are UTC before user work, with success cached in a `WeakSet` and in-flight setup deduplicated.
 - [ ] Initialization errors fail closed and release the checkout; they are never marked initialized.
 - [ ] tedious receives explicit `useUTC: true` without changing existing SSL/timeout options.
-- [ ] Tests restore any mocked process/global state and do not require live databases.
-- [ ] Targeted tests and typecheck exit 0.
+- [ ] **(M1)** `this.pool.query(` no longer appears anywhere in `src/adapters/mysql.ts`; `query()` releases its checkout in `finally` on both the success and the rejection path.
+- [ ] **(M3)** `openStreamingQuery` cannot hang when the stream ends without `fields`: that case resolves as an empty success with `columns: []`, releases the connection exactly once, and the normal `fields`-first and `error`-first orderings are unchanged.
+- [ ] Tests restore any mocked process/global state and do not require live databases; the M3 case proves resolution without relying on a test timeout.
+- [ ] Targeted tests, the regression lane, and typecheck exit 0.
 - [ ] Reviewer verdict is APPROVED or APPROVED-WITH-MINOR.
 
 ## Dependencies
@@ -73,5 +82,13 @@ npm run typecheck
 
 ### 2026-08-26 · planner · bao-opus
 Verified defaults and ordering: mysql2 currently falls back to host `local` timezone, and its core pool emits `connection` then `acquire` without awaiting async listeners. Therefore use the adapter checkout helper, not an async event hook. Tedious already defaults to UTC but the task makes it explicit. The helper must establish server session UTC, not merely configure client parsing.
+
+### 2026-08-26 · planner · bao-opus (reconciliation gate)
+Two host-audit findings folded in from `docs/AI_HANDOFF/notes/cycle-x-audit-host.md`; both live in `src/adapters/mysql.ts`, which this task already owns exclusively, so same-file ownership is intact and no new task is warranted.
+
+- **M1 (P1, latent)** — `query()` at `:398-408` is the sole gatekeeper for all nine `information_schema` call sites and `executeText`, and it uses `pool.query()`, which checks out implicitly (verified in `mysql2/lib/base/pool.js:243-273`). With `connectionLimit: 1` there is no observable defect today, but it is exactly the hole through which a replacement physical connection would bypass the UTC session init this task introduces. This was already required by the plan (§3.4, acceptance item 5) and by plan-review Round 1; it is restated here as an explicit test-backed item rather than an implicit one. Cases 9–10 pin checkout and release, including the error path.
+- **M3 (P2)** — `firstFields` (`:439-445`) resolves on `"fields"` and rejects on `"error"` but never settles on `"end"`, so a stream that ends without either hangs `openStreamingQuery` forever while holding the pooled connection; the caller never receives the handle, so `fetchBatch`/`close` are unreachable and the pool is exhausted. The audit marks the triggering server behavior as *needs live DB verification*, but the missing listener is direct code evidence and is fully testable with a fake stream. Case 12 guards against the new listener pre-empting the normal path.
+
+M2 (multi-statement partial commit) is explicitly **not** in this task — it is pre-existing behavior, medium-sized, and queued in `INDEX.md`.
 
 ---

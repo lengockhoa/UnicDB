@@ -1,7 +1,7 @@
 # TASK-002 — Adversarial audit: results grid, webview, query UI
 
-- Status: `ready`
-- Owner: `-`
+- Status: `done`
+- Owner: `claude-code/bao-sonnet`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §2, §3.1
 
