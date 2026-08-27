@@ -1,6 +1,6 @@
 Command: handoff-fullstack
 Goal: Cycle AA — AI Chat panel UX overhaul to modern AI-chat standards + DDL-only privacy regression lock
 Base: main
-Phase: I3
-Cursor: wave 1 done — TASK-001/003/004 PASS copied back (3 wave commits pending; 22 new tests green, 84 existing green, typecheck green)
-Next: wave 2 — TASK-002 (webview UX)
+Phase: I4
+Cursor: wave 2 done — TASK-002 PASS (orchestrator finished last 2 tests); waves 1+2 committed
+Next: I4 consolidate INDEX, then Phase 4 review (4 pending_review tasks), then wave 3 TASK-005
