@@ -85,7 +85,26 @@ interface HistoryMsg {
   truncated: boolean;
   truncatedCount: number;
 }
- type HostMsg =
+/** TASK-005: host answer to `mention_list`. `items` carries the candidate
+ * DB objects + workspace files. Webview filters client-side on each
+ * keystroke; the same full list is reused across the open dropdown. */
+interface MentionObjectsMsg {
+  type: "mention_objects";
+  items: Array<{
+    kind: "table" | "view" | "routine" | "file";
+    label: string;
+    detail: string;
+    token: string;
+  }>;
+}
+/** TASK-005: host reports a token the user mentioned that the host could
+ * not resolve (no matching DB object AND no matching workspace file).
+ * Rendered as an inline notice bubble on the thread. */
+interface MentionMissMsg {
+  type: "mention_miss";
+  token: string;
+}
+type HostMsg =
   | InitMsg
   | StepMsg
   | AssistantMsg
@@ -96,8 +115,9 @@ interface HistoryMsg {
   | PermissionRequestMsg
   | ResumeSessionsMsg
   | HistoryMsg
-  | ThoughtMsg;
-
+  | ThoughtMsg
+  | MentionObjectsMsg
+  | MentionMissMsg;
 // ---- State -----------------------------------------------------------------
 interface State {
   busy: boolean;
@@ -105,11 +125,193 @@ interface State {
 }
 const state: State = { busy: false, hasHistory: false };
 
-const root = document.getElementById("vsdb-root") as HTMLDivElement;
+// ---- TASK-005 — @-mention dropdown state ----------------------------------
+//
+// `mentionOpen` tracks whether the candidate dropdown is currently visible.
+// Critical interop with the wave-2 Enter=send keybind (TASK-002): when the
+// dropdown is open, Enter / Tab SELECTS the active row instead of sending.
+// Send handler checks this flag BEFORE dispatching `{type:"send"}` so a
+// stray selection can never accidentally fire a send in the same keystroke.
+let mentionOpen = false;
+let mentionActiveIndex = 0;
+/** Last full candidate list posted by the host. Filtered client-side on
+ * each keystroke; the host posts the full shortlist once per `@` keyup. */
+let mentionItems: MentionObjectsMsg["items"] = [];
+/** Last filter query. Used both for filtering and for matching against
+ * the trailing `@…` span when inserting a token on selection. */
+let mentionQuery = "";
+/** Last caret position from the textarea — captured on every keyup so
+ * insertion knows where to write the token. */
+let lastCaretPos = 0;
 
-// ---- vscode bridge ---------------------------------------------------------
+/** Pure helper: find the start index of an `@token` ending at `caret`.
+ * Returns -1 if no `@` precedes `caret` within the same line. */
+function findAtTokenStart(text: string, caret: number): number {
+  for (let i = caret - 1; i >= 0; i--) {
+    const ch = text[i];
+    if (ch === "@") return i;
+    if (ch === undefined) break;
+    // Token chars only — anything else (space, newline, punctuation that
+    // isn't part of the token grammar) breaks the span.
+    if (!/[\w.\-/]/.test(ch)) break;
+  }
+  return -1;
+}
+
 function post(msg: unknown): void {
   vscodeApi?.postMessage(msg);
+}
+
+/** Build / replace the dropdown DOM with the filtered items. All labels +
+ * details + kinds are rendered via textContent (no innerHTML for untrusted
+ * host data). Returns the rendered dropdown element. */
+function renderMentionDropdown(
+  items: MentionObjectsMsg["items"],
+): HTMLDivElement | null {
+  const input = document.getElementById("prompt") as HTMLTextAreaElement | null;
+  if (!input) return null;
+  disposeMentionDropdown();
+  if (items.length === 0) {
+    // Empty result → still render a "No matches" row so the user can
+    // dismiss with Enter / Esc instead of being trapped with an invisible
+    // dropdown.
+    const dropdown = document.createElement("div");
+    dropdown.className = "vsdb-chat-mention-dropdown";
+    dropdown.id = "vsdbMentionDropdown";
+    const row = document.createElement("div");
+    row.className = "vsdb-chat-mention-row vsdb-chat-mention-row-empty";
+    row.textContent = "No matches";
+    dropdown.appendChild(row);
+    document.body.appendChild(dropdown);
+    positionDropdown(dropdown, input);
+    return dropdown;
+  }
+  const dropdown = document.createElement("div");
+  dropdown.className = "vsdb-chat-mention-dropdown";
+  dropdown.id = "vsdbMentionDropdown";
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (it === undefined) continue;
+    const row = document.createElement("div");
+    row.className = "vsdb-chat-mention-row";
+    row.setAttribute("data-token", it.token);
+    row.setAttribute("data-index", i.toString());
+    if (i === mentionActiveIndex) {
+      row.classList.add("vsdb-chat-mention-row-active");
+    }
+    const kind = document.createElement("span");
+    kind.className = "vsdb-chat-mention-kind";
+    kind.textContent = it.kind;
+    const label = document.createElement("span");
+    label.className = "vsdb-chat-mention-label";
+    label.textContent = it.label;
+    const detail = document.createElement("span");
+    detail.className = "vsdb-chat-mention-detail";
+    detail.textContent = it.detail;
+    row.appendChild(kind);
+    row.appendChild(label);
+    row.appendChild(detail);
+    row.addEventListener("mousedown", (ev) => {
+      // mousedown (not click) so the textarea blur doesn't fire first
+      // and close the dropdown before the row click resolves.
+      ev.preventDefault();
+      selectMentionToken(it.token);
+    });
+    dropdown.appendChild(row);
+  }
+  document.body.appendChild(dropdown);
+  positionDropdown(dropdown, input);
+  return dropdown;
+}
+
+/** Position the dropdown anchored to the textarea. Uses fixed positioning
+ * so the dropdown floats above scrolling content. */
+function positionDropdown(
+  dropdown: HTMLDivElement,
+  input: HTMLTextAreaElement,
+): void {
+  const rect = input.getBoundingClientRect();
+  dropdown.style.left = `${rect.left}px`;
+  dropdown.style.bottom = `${window.innerHeight - rect.top + 4}px`;
+  dropdown.style.width = `${Math.max(rect.width, 240)}px`;
+}
+
+/** Remove the dropdown DOM node + clear dropdown state. */
+function disposeMentionDropdown(): void {
+  const existing = document.getElementById("vsdbMentionDropdown");
+  if (existing) existing.remove();
+  mentionOpen = false;
+  mentionActiveIndex = 0;
+  mentionQuery = "";
+}
+
+/** Filter the cached `mentionItems` against `query` (case-insensitive
+ * substring match against label + token). Updates the rendered DOM in
+ * place. The host already returned the full shortlist; we narrow
+ * client-side so a fast typing burst doesn't burn round trips. */
+function filterMentionDropdown(query: string): void {
+  mentionQuery = query;
+  const q = query.toLowerCase();
+  const filtered = mentionItems.filter((it) => {
+    return (
+      it.label.toLowerCase().includes(q) ||
+      it.token.toLowerCase().includes(q)
+    );
+  });
+  if (filtered.length === 0 && q.length > 0) {
+    // No matches with a query → still show "No matches" so Enter/Esc work.
+    mentionActiveIndex = 0;
+    renderMentionDropdown([]);
+    mentionOpen = true;
+    return;
+  }
+  mentionActiveIndex = 0;
+  renderMentionDropdown(filtered);
+  mentionOpen = true;
+}
+
+/** Set the active row index and update the DOM class. Wraps around so the
+ * user can hold ArrowDown indefinitely without escaping the list. */
+function moveMentionActive(delta: number): void {
+  const dropdown = document.getElementById("vsdbMentionDropdown");
+  if (!dropdown) return;
+  const rows = dropdown.querySelectorAll<HTMLDivElement>(
+    ".vsdb-chat-mention-row",
+  );
+  if (rows.length === 0) return;
+  let next = mentionActiveIndex + delta;
+  if (next < 0) next = rows.length - 1;
+  if (next >= rows.length) next = 0;
+  mentionActiveIndex = next;
+  rows.forEach((r, i) => {
+    r.classList.toggle("vsdb-chat-mention-row-active", i === next);
+  });
+}
+
+/** Insert the given @-token at the cursor position, replacing any partial
+ * `@…` span that precedes it. Closes the dropdown. */
+function selectMentionToken(token: string): void {
+  const input = document.getElementById("prompt") as HTMLTextAreaElement | null;
+  if (!input) return;
+  const text = input.value;
+  const caret = input.selectionStart ?? lastCaretPos ?? text.length;
+  const start = findAtTokenStart(text, caret);
+  let before: string;
+  let after: string;
+  if (start >= 0) {
+    before = text.slice(0, start);
+    after = text.slice(caret);
+  } else {
+    // No `@` prefix visible — insert at caret verbatim.
+    before = text.slice(0, caret);
+    after = text.slice(caret);
+  }
+  const insertion = `@${token} `;
+  input.value = `${before}${insertion}${after}`;
+  const newCaret = before.length + insertion.length;
+  input.setSelectionRange(newCaret, newCaret);
+  input.focus();
+  disposeMentionDropdown();
 }
 
 function escapeHtml(s: string): string {
@@ -222,7 +424,17 @@ function wireControls(): void {
   // send + clear. Single handler so the bubble and the wire post stay in
   // lockstep — the previous capture-then-bubble split was fragile under
   // jsdom's dispatch order.
+  //
+  // TASK-005: a mention dropdown that's still open means the user
+  // accidentally clicked Send while the @-list was visible — close the
+  // dropdown instead of sending. The actual selection on Enter / Tab is
+  // handled in the keydown listener below; this guard is belt-and-braces
+  // for the click path.
   sendBtn?.addEventListener("click", () => {
+    if (mentionOpen) {
+      disposeMentionDropdown();
+      return;
+    }
     if (!prompt) return;
     const text = prompt.value;
     if (text.trim().length === 0) return;
@@ -230,6 +442,7 @@ function wireControls(): void {
     post({ type: "send", text });
     setBusy(true);
     prompt.value = "";
+    disposeMentionDropdown();
   });
   stopBtn?.addEventListener("click", () => {
     post({ type: "stop" });
@@ -255,22 +468,107 @@ function wireControls(): void {
   // re-enables the input + de-streams any orphaned bubble. The local wipe
   // is best-effort UX — applyInit is the authoritative reset.
   clearBtn?.addEventListener("click", () => {
+    disposeMentionDropdown();
     post({ type: "clear" });
     const thread = document.getElementById("thread");
     if (thread) thread.innerHTML = "";
   });
 
-  // Enter (no shift) sends + clears; Shift+Enter falls through (browser
-  // default inserts newline). Plain Enter NEVER inserts a newline in the
-  // chat composer. Legacy Ctrl/Cmd+Enter was retired (TASK-002 #9) —
-  // holding a modifier + Enter lets the browser do its default thing
-  // (e.g. type a literal newline on macOS via Cmd+Enter shortcuts).
+  // Enter / Tab / Esc / Arrow keys — TASK-005 dropdown semantics layered
+  // ON TOP of the wave-2 Enter=send keybind (TASK-002 #3). The dropdown
+  // MUST absorb these keys when open so the active row selects / moves
+  // without sending. Order of checks:
+  //   1. mentionOpen + Enter/Tab → SELECT active row (insert + close)
+  //   2. mentionOpen + ArrowDown/Up → move active row
+  //   3. mentionOpen + Esc → close
+  //   4. Otherwise (no dropdown) → TASK-002 Enter=send semantics.
   prompt?.addEventListener("keydown", (ev: KeyboardEvent) => {
+    if (mentionOpen) {
+      if (ev.key === "Enter" || ev.key === "Tab") {
+        ev.preventDefault();
+        const dropdown = document.getElementById("vsdbMentionDropdown");
+        const rows = dropdown?.querySelectorAll<HTMLDivElement>(
+          ".vsdb-chat-mention-row",
+        );
+        const row = rows?.[mentionActiveIndex];
+        const token = row?.getAttribute("data-token");
+        if (typeof token === "string" && token.length > 0) {
+          selectMentionToken(token);
+        } else {
+          // Empty dropdown ("No matches") → just close.
+          disposeMentionDropdown();
+        }
+        return;
+      }
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        disposeMentionDropdown();
+        return;
+      }
+      if (ev.key === "ArrowDown") {
+        ev.preventDefault();
+        moveMentionActive(1);
+        return;
+      }
+      if (ev.key === "ArrowUp") {
+        ev.preventDefault();
+        moveMentionActive(-1);
+        return;
+      }
+    }
+    // Fall through to wave-2 Enter=send semantics.
     if (ev.key !== "Enter") return;
     if (ev.shiftKey) return;
     if (ev.ctrlKey || ev.metaKey) return;
     ev.preventDefault();
     sendBtn?.click();
+  });
+
+  // TASK-005: open / refresh the @-mention dropdown on each keystroke that
+  // introduces an `@` at the cursor. We post `mention_list` and the host
+  // answers with the full shortlist; client-side filter on each keystroke
+  // narrows without burning round trips. Backspace through the `@` closes
+  // the dropdown.
+  prompt?.addEventListener("keyup", (ev: KeyboardEvent) => {
+    if (!prompt) return;
+    lastCaretPos = prompt.selectionStart ?? lastCaretPos;
+    if (state.busy) {
+      // Mention dropdown can't open while a turn is streaming (the input
+      // is disabled by setBusy anyway; this is belt-and-braces).
+      if (mentionOpen) disposeMentionDropdown();
+      return;
+    }
+    const caret = prompt.selectionStart ?? prompt.value.length;
+    const text = prompt.value;
+    const atIdx = findAtTokenStart(text, caret);
+    if (atIdx < 0) {
+      // No active `@…` span — close any open dropdown.
+      if (mentionOpen) disposeMentionDropdown();
+      return;
+    }
+    const query = text.slice(atIdx + 1, caret);
+    // Opening (or refreshing the query) — post the request.
+    if (!mentionOpen || query !== mentionQuery) {
+      // Store the query immediately so a quick second keystroke doesn't
+      // re-post before the host reply lands.
+      mentionQuery = query;
+      post({ type: "mention_list", query });
+    }
+  });
+
+  // Click outside the textarea or dropdown closes the dropdown. Listener
+  // attached with capture so it wins against the textarea blur race.
+  document.addEventListener("mousedown", (ev) => {
+    if (!mentionOpen) return;
+    const target = ev.target as Node | null;
+    const dropdown = document.getElementById("vsdbMentionDropdown");
+    if (
+      target !== null &&
+      (target === prompt || (dropdown !== null && dropdown.contains(target)))
+    ) {
+      return;
+    }
+    disposeMentionDropdown();
   });
 }
 
@@ -557,6 +855,7 @@ function appendCopyMessageAction(bubble: HTMLElement, rawSource: string): void {
   bubble.appendChild(action);
 }
 
+const root = document.getElementById("vsdb-root") as HTMLDivElement;
 /** Show / replace the engine banner (omp active, or builtin fallback with hint). */
 function applyEngine(msg: EngineMsg): void {
   const root = document.getElementById("vsdb-root");
@@ -925,8 +1224,30 @@ function renderHistory(msg: HistoryMsg): void {
     case "history":
       renderHistory(msg);
       return;
+    case "mention_objects":
+      // Cache the host shortlist; render the dropdown with the
+      // current filter query.
+      mentionItems = msg.items;
+      filterMentionDropdown(mentionQuery);
+      return;
+    case "mention_miss":
+      renderMentionMiss(msg.token);
+      return;
   }
 });
+
+// ---- TASK-005 — inline miss notice -----------------------------------------
+
+/** Render an inline notice bubble for an unresolved @-mention. Pure DOM
+ * text (no innerHTML) — the host only ships the literal token string. */
+function renderMentionMiss(token: string): void {
+  const thread = document.getElementById("thread");
+  if (!thread) return;
+  const div = document.createElement("div");
+  div.className = "vsdb-chat-mention-miss";
+  div.textContent = `Could not resolve @${token}`;
+  thread.appendChild(div);
+}
 
 // ---- Boot ------------------------------------------------------------------
 renderInitial();

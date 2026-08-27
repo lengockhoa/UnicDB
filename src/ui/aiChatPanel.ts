@@ -34,46 +34,376 @@
 //
 // Mirror pattern (aiSettingsForm / newTableForm): CSP strict, reveal-on-
 // reshow, dispose parity, no apiKey ever sent to webview.
-import * as vscode from "vscode";
-import {
-  runAgent,
-  type AgentDeps,
-  type AgentStep,
-  type AgentCallbacks,
-  type ToolRegistry,
-} from "../ai/agent";
-import type { ChatMessage } from "../ai/provider";
-import type { AdapterFactory } from "../ai/tools/types";
-import { createDbTools } from "../ai/tools/registry";
-import { createSqlTool } from "../ai/tools/sqlTool";
-import { createExportStructureTool } from "../ai/tools/schemaTools";
-import type { AcpProcessHandle } from "../ai/omp/acpProcess";
-import { createMcpBridge, type McpBridge } from "../ai/omp/mcpBridge";
-import {
-  buildDatabaseStructure,
-  type ExportColumn,
-} from "./exportStructure";
-import type { TableInfo, ViewInfo, ColumnInfo, DbAdapter } from "../adapters/types";
-import {
-  type AcpServerRequest,
-  type AcpNotification,
-  type AcpReplayNotification,
-  type AcpReplayBuffer,
-  type AcpSessionListItem,
-} from "../ai/omp/acp";
-import {
-  HISTORY_RENDER_CAP,
-  type AiChatPanelEngine,
-  type AiChatPanelHostMessage,
-  type AiChatPanelWebviewMessage,
-} from "./aiChatPanelMessages";
-import { buildPermissionToolInfo } from "./permissionDetail";
+ import * as vscode from "vscode";
+ import {
+   runAgent,
+   type AgentDeps,
+   type AgentStep,
+   type AgentCallbacks,
+   type ToolRegistry,
+ } from "../ai/agent";
+ import type { ChatMessage } from "../ai/provider";
+ import type { AdapterFactory } from "../ai/tools/types";
+ import { createDbTools } from "../ai/tools/registry";
+ import { createSqlTool } from "../ai/tools/sqlTool";
+ import { createExportStructureTool } from "../ai/tools/schemaTools";
+ import type { AcpProcessHandle } from "../ai/omp/acpProcess";
+ import { createMcpBridge, type McpBridge } from "../ai/omp/mcpBridge";
+ import {
+   buildDatabaseStructure,
+   buildTableStructure,
+   buildViewStructure,
+   type ExportColumn,
+ } from "./exportStructure";
+ import type {
+   TableInfo,
+   ViewInfo,
+   ColumnInfo,
+   RoutineInfo,
+   DbAdapter,
+ } from "../adapters/types";
+ import {
+   type AcpServerRequest,
+   type AcpNotification,
+   type AcpReplayNotification,
+   type AcpReplayBuffer,
+   type AcpSessionListItem,
+ } from "../ai/omp/acp";
+ import {
+   HISTORY_RENDER_CAP,
+   type AiChatPanelEngine,
+   type AiChatPanelHostMessage,
+   type AiChatPanelWebviewMessage,
+ } from "./aiChatPanelMessages";
+ import { buildPermissionToolInfo } from "./permissionDetail";
+ 
+ const PANEL_ID = "vsdb.aiChatPanel";
+ 
+ const SCHEMA_CONTEXT_BUDGET = 12_000; // chars (tăng từ 8000)
+ const SCHEMA_CONTEXT_TABLE_LIMIT = 200; // objects (tăng từ 30)
+ const DEFAULT_PERMISSION_TIMEOUT_MS = 60_000;
 
-const PANEL_ID = "vsdb.aiChatPanel";
+// ============================================================================
+// TASK-005 — @-mention references (DB objects + workspace files)
+// ============================================================================
 
-const SCHEMA_CONTEXT_BUDGET = 12_000; // chars (tăng từ 8000)
-const SCHEMA_CONTEXT_TABLE_LIMIT = 200; // objects (tăng từ 30)
-const DEFAULT_PERMISSION_TIMEOUT_MS = 60_000;
+/** Hard cap for `mention_objects.items` (DB shortlist). Past this the list
+ * is truncated; the webview filters client-side. */
+export const MENTION_OBJECT_CAP = 30;
+/** Hard cap for file candidates in `mention_objects.items`. */
+export const MENTION_FILE_CAP = 20;
+/** Kinds we surface in the mention dropdown. */
+export const MENTION_OBJECT_KINDS = [
+  "table",
+  "view",
+  "routine",
+  "file",
+] as const;
+/** 100 KB cap on file-content blocks (TASK-005 spec). Files above this
+ * are truncated and a `[truncated]` notice line is appended. */
+export const MENTION_RESOLVE_FILE_CAP_BYTES = 100 * 1024;
+/** Regex for @-tokens: optional `schema.` or `path/` prefix + bare
+ * identifier. Word/dot/hyphen/underscore characters only — no spaces, no
+ * punctuation that would extend past the real token boundary.
+ * Emails (`foo@bar`) do NOT match because the `(?<![\w@])` lookbehind
+ * requires no word char AND no `@` directly before the `@` we're
+ * matching. */
+const MENTION_TOKEN_RE = /(?<![\w@])@((?:[\w.-]+\/)?[\w.-]+)/g;
+
+/** Pure @-token extractor. Returns the canonical token text (no leading
+ * `@`), deduplicated, order-stable. Empty / no-mention text → []. */
+export function parseMentionTokens(text: string): string[] {
+  if (text.length === 0) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const m of text.matchAll(MENTION_TOKEN_RE)) {
+    let tok = m[1];
+    if (tok === undefined || tok.length === 0) continue;
+    // Strip trailing `.` / `,` / `;` so a mention like "@users." yields
+    // the same token as "@users". Hyphens/digits stay (they're legal in
+    // identifier names); we only trim punctuation that can never end a
+    // real schema/path/identifier token.
+    tok = tok.replace(/[.,;]+$/u, "");
+    if (tok.length === 0) continue;
+    if (seen.has(tok)) continue;
+    seen.add(tok);
+    out.push(tok);
+  }
+  return out;
+}
+
+/** Resolved mention item returned by `resolveMentionsForTurn`. `block` is
+ * the per-turn context text that gets appended under the `--- Referenced
+ * context ---` header. `kind` mirrors `MentionObjectItem.kind` so the
+ * host can post `mention_miss` per missing token. */
+export interface MentionResolveItem {
+  kind: "table" | "view" | "routine" | "file";
+  token: string;
+  /** The literal string inserted at @-time (e.g. "public.users"). */
+  label: string;
+  /** Displayable per-kind DDL / file body — never apiKey material. */
+  block: string;
+}
+
+/** Item shape on the wire (`AiChatPanelMentionObjects.items`). Re-exported
+ * here so tests can construct fixtures without depending on the message
+ * module's exact type shape (host contract is `MentionObjectItem`). */
+export type MentionObjectItem = MentionResolveItem;
+
+/** Result of `resolveMentionsForTurn`. `resolved` is the per-token DDL /
+ * file blocks in input order (deduped); `misses` is the list of tokens
+ * the host could not resolve to either a DB object or a workspace file —
+ * the caller is expected to post one `mention_miss` per entry to the
+ * webview so the user knows the token was silently dropped. */
+export interface MentionResolveResult {
+  resolved: MentionResolveItem[];
+  misses: string[];
+  /** Concatenated blocks joined by blank lines, wrapped in the
+   * `--- Referenced context ---` header (only when non-empty). */
+  contextBlock: string;
+}
+
+/** Optional deps for file resolution + workspace-root override. Tests
+ * inject `fs` so they can stage files without touching the real disk;
+ * production callers omit and the helper uses `vscode.workspace.fs.readFile`
+ * + the first workspace folder. */
+export interface ResolveMentionsOptions {
+  fs?: typeof vscode.workspace.fs.readFile;
+  workspaceRoot?: string;
+}
+
+/** Resolve a list of @-tokens (output of `parseMentionTokens`) into per-turn
+ * context blocks. Object tokens use the adapter's introspection APIs
+ * (listTables/listViews/listRoutines/listColumns) — the SAME DDL-only path
+ * `buildMessages` uses, NEVER `runQuery`. File tokens are read via
+ * `vscode.workspace.fs.readFile` with a 100KB cap. Unresolved tokens
+ * are returned in `misses`; the caller posts `mention_miss` for each.
+ *
+ * `adapterFactory` may return `null` or throw — both cases yield an empty
+ * resolution and every token becomes a miss. The function NEVER throws. */
+export async function resolveMentionsForTurn(
+  adapterFactory: AdapterFactory,
+  tokens: readonly string[],
+  options: ResolveMentionsOptions = {},
+): Promise<MentionResolveResult> {
+  const out: MentionResolveResult = {
+    resolved: [],
+    misses: [],
+    contextBlock: "",
+  };
+  if (tokens.length === 0) return out;
+
+  // Dedupe input tokens, order-stable. `parseMentionTokens` already dedupes
+  // but a programmatic caller may pass a raw list — duplicate tokens must
+  // collapse here so the user never sees the same DDL block twice in one
+  // turn's context injection.
+  const seen = new Set<string>();
+  const uniqueTokens: string[] = [];
+  for (const t of tokens) {
+    if (seen.has(t)) continue;
+    seen.add(t);
+    uniqueTokens.push(t);
+  }
+
+  const fs = options.fs ?? vscode.workspace.fs.readFile;
+  const workspaceRoot =
+    options.workspaceRoot ??
+    vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ??
+    process.cwd();
+
+  let adapter: DbAdapter | null = null;
+  try {
+    adapter = await adapterFactory();
+  } catch {
+    adapter = null;
+  }
+
+  // Collect DB shortlist once (reused across object tokens). Best-effort —
+  // any introspection failure degrades to an empty shortlist (the token
+  // then becomes a miss or a file match).
+  let dbShortlist: Map<string, { kind: "table" | "view" | "routine"; schema: string; name: string }> = new Map();
+  if (adapter !== null) {
+    try {
+      const schemas = await adapter.listSchemas(false);
+      for (const s of schemas) {
+        let tables: TableInfo[] = [];
+        try {
+          tables = await adapter.listTables(s.name);
+        } catch {
+          tables = [];
+        }
+        for (const t of tables) {
+          dbShortlist.set(`${t.schema}.${t.name}`, {
+            kind: "table",
+            schema: t.schema,
+            name: t.name,
+          });
+          dbShortlist.set(t.name, {
+            kind: "table",
+            schema: t.schema,
+            name: t.name,
+          });
+        }
+        let views: ViewInfo[] = [];
+        try {
+          views = await adapter.listViews(s.name);
+        } catch {
+          views = [];
+        }
+        for (const v of views) {
+          dbShortlist.set(`${v.schema}.${v.name}`, {
+            kind: "view",
+            schema: v.schema,
+            name: v.name,
+          });
+          dbShortlist.set(v.name, {
+            kind: "view",
+            schema: v.schema,
+            name: v.name,
+          });
+        }
+        let routines: RoutineInfo[] = [];
+        try {
+          routines = await adapter.listRoutines(s.name);
+        } catch {
+          routines = [];
+        }
+        for (const r of routines) {
+          dbShortlist.set(`${r.schema}.${r.name}`, {
+            kind: "routine",
+            schema: r.schema,
+            name: r.name,
+          });
+          dbShortlist.set(r.name, {
+            kind: "routine",
+            schema: r.schema,
+            name: r.name,
+          });
+        }
+      }
+    } catch {
+      // Introspection hard-failed — every object token becomes a miss.
+      dbShortlist = new Map();
+    }
+  }
+
+  for (const token of uniqueTokens) {
+    const obj = dbShortlist.get(token);
+    if (obj !== undefined) {
+      const block = await resolveObjectBlock(adapter, obj);
+      if (block !== null) {
+        out.resolved.push({
+          kind: obj.kind,
+          token,
+          label: `${obj.schema}.${obj.name}`,
+          block,
+        });
+        continue;
+      }
+    }
+    // Fall back to file resolution. We attempt the file read for every
+    // unresolved token — the read is best-effort (ENOENT → miss).
+    const fileBlock = await resolveFileBlock(
+      fs,
+      workspaceRoot,
+      token,
+    );
+    if (fileBlock !== null) {
+      out.resolved.push({
+        kind: "file",
+        token,
+        label: token,
+        block: fileBlock,
+      });
+      continue;
+    }
+    out.misses.push(token);
+  }
+
+  if (out.resolved.length > 0) {
+    const body = out.resolved.map((r) => r.block).join("\n\n");
+    out.contextBlock = `--- Referenced context ---\n${body}`;
+  }
+  return out;
+}
+
+/** Resolve a single DB object to its DDL block via `buildTableStructure` /
+ * `buildViewStructure` — same DDL-only path as `buildMessages`. Returns
+ * null if the introspection call throws (degrades silently — caller will
+ * treat the token as a miss). */
+async function resolveObjectBlock(
+  adapter: DbAdapter | null,
+  obj: { kind: "table" | "view" | "routine"; schema: string; name: string },
+): Promise<string | null> {
+  if (adapter === null) return null;
+  if (obj.kind === "table") {
+    let cols: ColumnInfo[] = [];
+    try {
+      cols = await adapter.listColumns(obj.name, obj.schema);
+    } catch {
+      cols = [];
+    }
+    const mapped: ExportColumn[] = cols.map((c) => ({
+      name: c.name,
+      dataType: c.dataType,
+      nullable: c.nullable,
+      isPrimaryKey: c.isPrimaryKey === true,
+    }));
+    return buildTableStructure(obj.schema, obj.name, mapped);
+  }
+  if (obj.kind === "view") {
+    let cols: ColumnInfo[] = [];
+    try {
+      cols = await adapter.listColumns(obj.name, obj.schema);
+    } catch {
+      cols = [];
+    }
+    const mapped: ExportColumn[] = cols.map((c) => ({
+      name: c.name,
+      dataType: c.dataType,
+      nullable: c.nullable,
+      isPrimaryKey: c.isPrimaryKey === true,
+    }));
+    return buildViewStructure(obj.schema, obj.name, mapped);
+  }
+  // routine — no per-column block; render a one-liner that names it. The
+  // routine contract is opaque DDL (CREATE FUNCTION/PROCEDURE …) which we
+  // cannot reproduce from introspection alone — surface the qualified
+  // name + kind instead. The user still gets enough context to ask the
+  // agent to inspect it further.
+  return `-- Routine: ${obj.schema}.${obj.name} (${obj.kind})`;
+}
+
+/** Read a single file and return its content as a context block. Returns
+ * null on ENOENT / permission error / oversized-or-binary failure.
+ * Files > MENTION_RESOLVE_FILE_CAP_BYTES are truncated to the cap with a
+ * `[truncated]` notice appended. */
+async function resolveFileBlock(
+  fs: typeof vscode.workspace.fs.readFile,
+  workspaceRoot: string,
+  token: string,
+): Promise<string | null> {
+  const abs = token.startsWith("/")
+    ? token
+    : `${workspaceRoot.replace(/\/+$/, "")}/${token}`;
+  let bytes: Uint8Array;
+  try {
+    bytes = await fs(vscode.Uri.file(abs));
+  } catch {
+    return null;
+  }
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  } catch {
+    return null;
+  }
+  if (text.length > MENTION_RESOLVE_FILE_CAP_BYTES) {
+    const notice = `\n\n[truncated at ${MENTION_RESOLVE_FILE_CAP_BYTES} bytes]`;
+    text = text.slice(0, MENTION_RESOLVE_FILE_CAP_BYTES) + notice;
+  }
+  return `--- File: ${token} ---\n${text}`;
+}
 
 /** Optional second constructor arg used by tests to control permission timeout. */
 export interface AiChatPanelTuning {
@@ -521,6 +851,9 @@ export class AiChatPanel {
       case "regenerate":
         await this.handleRegenerate();
         return;
+      case "mention_list":
+        await this.handleMentionList(msg.query);
+        return;
     }
   }
 
@@ -540,7 +873,7 @@ export class AiChatPanel {
   private async handleSend(text: string): Promise<void> {
     const trimmed = text.trim();
     // TASK-001 Regenerate: remember the trimmed user text so a Regenerate
-    // pressed after a Stop can re-send it verbatim. Overwritten only by a
+    // pressed after Stop can re-send it verbatim. Overwritten only by a
     // non-empty send so a failed/empty call never erases the last real one.
     if (trimmed.length > 0) this.lastSentText = trimmed;
     if (trimmed.length === 0) return;
@@ -559,14 +892,48 @@ export class AiChatPanel {
 
     const userMsg: ChatMessage = { role: "user", content: trimmed };
 
+    // TASK-005: resolve @-mentions BEFORE the turn runs. Object tokens →
+    // DDL block (per-turn only — base buildMessages is untouched). File
+    // tokens → file content (capped at MENTION_RESOLVE_FILE_CAP_BYTES).
+    // Misses → one mention_miss bubble per missing token so the user
+    // sees a silent drop instead of a silent ignore.
+    const tokens = parseMentionTokens(trimmed);
+    if (tokens.length > 0) {
+      try {
+        const resolved = await resolveMentionsForTurn(
+          this.options.adapterFactory,
+          tokens,
+        );
+        if (resolved.contextBlock.length > 0) {
+          userMsg.content = `${trimmed}\n\n${resolved.contextBlock}`;
+        }
+        for (const miss of resolved.misses) {
+          this.post({ type: "mention_miss", token: miss });
+        }
+      } catch (err) {
+        // Mention resolution is best-effort. A throw never blocks the
+        // turn — the user sees a single mention_miss with the literal
+        // "resolution error" token so the silent-drop surface remains
+        // honest without crashing the panel.
+        const message = err instanceof Error ? err.message : String(err);
+        this.post({
+          type: "error",
+          message: `Mention resolution failed: ${message}`,
+        });
+      }
+    }
     if (this.engine === "builtin") {
       await this.runBuiltinTurn(userMsg);
       return;
     }
 
-    await this.runAcpTurn(trimmed, userMsg);
+    // ACP engine: pass the augmented userMsg content as the prompt text so
+    // the schema context + the @-mention Referenced-context block both
+    // reach the model in one session/prompt write.
+    const acpPrompt =
+      typeof userMsg.content === "string" ? userMsg.content : trimmed;
+    await this.runAcpTurn(acpPrompt, userMsg);
   }
-
   /**
    * Built-in engine turn.
    * Wires the per-turn AbortController signal into runAgent (which routes
@@ -1504,6 +1871,135 @@ export class AiChatPanel {
     // picker. Reserved hook for a future in-flight load tracker.
   }
 
+  /**
+   * TASK-005: webview opened the @-mention dropdown and is asking for
+   * candidate objects. We collect DB shortlist (tables/views/routines,
+   * capped at MENTION_OBJECT_CAP) plus workspace files (capped at
+   * MENTION_FILE_CAP) and post one `mention_objects` reply. The webview
+   * filters client-side, so we always return the FULL shortlist on every
+   * keystroke — server-side filtering would burn a round trip per char.
+   *
+   * Best-effort: any introspection failure → DB list is empty (only files
+   * survive). findFiles failure → file list is empty (only DB objects).
+   * Either or both empty → still post the message so the webview can
+   * render "No matches" + close on Enter.
+   */
+  private async handleMentionList(query: string): Promise<void> {
+    const items: Array<{
+      kind: "table" | "view" | "routine" | "file";
+      label: string;
+      detail: string;
+      token: string;
+    }> = [];
+
+    // DB shortlist — collected once, bounded at MENTION_OBJECT_CAP.
+    let adapter: DbAdapter | null = null;
+    try {
+      adapter = await this.options.adapterFactory();
+    } catch {
+      adapter = null;
+    }
+    if (adapter !== null) {
+      try {
+        const schemas = await adapter.listSchemas(false);
+        for (const s of schemas) {
+          if (items.length >= MENTION_OBJECT_CAP) break;
+          try {
+            for (const t of await adapter.listTables(s.name)) {
+              if (items.length >= MENTION_OBJECT_CAP) break;
+              items.push({
+                kind: "table",
+                label: `${t.schema}.${t.name}`,
+                detail: `${t.schema} · table`,
+                token: `${t.schema}.${t.name}`,
+              });
+              items.push({
+                kind: "table",
+                label: t.name,
+                detail: `${t.schema} · table`,
+                token: t.name,
+              });
+            }
+          } catch {
+            /* per-schema failure → keep going */
+          }
+          if (items.length >= MENTION_OBJECT_CAP) break;
+          try {
+            for (const v of await adapter.listViews(s.name)) {
+              if (items.length >= MENTION_OBJECT_CAP) break;
+              items.push({
+                kind: "view",
+                label: `${v.schema}.${v.name}`,
+                detail: `${v.schema} · view`,
+                token: `${v.schema}.${v.name}`,
+              });
+              items.push({
+                kind: "view",
+                label: v.name,
+                detail: `${v.schema} · view`,
+                token: v.name,
+              });
+            }
+          } catch {
+            /* per-schema failure → keep going */
+          }
+          if (items.length >= MENTION_OBJECT_CAP) break;
+          try {
+            for (const r of await adapter.listRoutines(s.name)) {
+              if (items.length >= MENTION_OBJECT_CAP) break;
+              items.push({
+                kind: "routine",
+                label: `${r.schema}.${r.name}`,
+                detail: `${r.schema} · ${r.kind}`,
+                token: `${r.schema}.${r.name}`,
+              });
+              items.push({
+                kind: "routine",
+                label: r.name,
+                detail: `${r.schema} · ${r.kind}`,
+                token: r.name,
+              });
+            }
+          } catch {
+            /* per-schema failure → keep going */
+          }
+        }
+      } catch {
+        // Introspection hard-failed — DB list stays empty, files still try.
+      }
+    }
+
+    // Workspace files. Default excludes from vscode are applied by
+    // findFiles("**/*", …) when the exclude arg is `undefined`; we pass
+    // the platform-default exclude set explicitly so behaviour is stable
+    // across hosts (and so the .git / node_modules / out tree is skipped).
+    try {
+      const exclude = "{**/node_modules/**,**/.git/**,**/dist/**,**/out/**}";
+      const uris = await vscode.workspace.findFiles(
+        "**/*",
+        exclude,
+        MENTION_FILE_CAP,
+      );
+      for (const u of uris) {
+        if (items.length >= MENTION_OBJECT_CAP + MENTION_FILE_CAP) break;
+        const wsRoot =
+          vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
+        const rel = wsRoot.length > 0 && u.fsPath.startsWith(wsRoot)
+          ? u.fsPath.slice(wsRoot.length).replace(/^\/+/, "")
+          : u.fsPath;
+        items.push({
+          kind: "file",
+          label: rel,
+          detail: "file",
+          token: rel,
+        });
+      }
+    } catch {
+      // findFiles failed (no workspace / permission) — file list stays empty.
+    }
+
+    this.post({ type: "mention_objects", items });
+  }
 
   private post(msg: AiChatPanelHostMessage): void {
     void this.panel?.webview.postMessage(msg);

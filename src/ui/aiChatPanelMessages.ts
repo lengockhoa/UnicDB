@@ -103,7 +103,36 @@ export type AiChatPanelHostMessage =
   | AiChatPanelDone
   | AiChatPanelPermissionRequest
   | AiChatPanelResumeSessions
-  | AiChatPanelHistory;
+  | AiChatPanelHistory
+  | AiChatPanelMentionObjects
+  | AiChatPanelMentionMiss;
+
+/** TASK-005: host answer for `mention_list` (≤30 DB objects + ≤20 files).
+ * Each item carries `kind` discriminator (table|view|routine|file), a
+ * `label` for primary text, `detail` for the secondary line (schema, kind
+ * badge, file size), and the `token` the webview will insert verbatim.
+ * `token` is the exact text inserted into the textarea (e.g. "public.users"
+ * for a table; "src/foo.ts" for a file). Webview filters client-side on
+ * each keystroke; the host posts the full list once per `@` keyup and the
+ * webview narrows. */
+export interface AiChatPanelMentionObjects {
+  type: "mention_objects";
+  items: Array<{
+    kind: "table" | "view" | "routine" | "file";
+    label: string;
+    detail: string;
+    token: string;
+  }>;
+}
+
+/** TASK-005: host reports a token that the user mentioned but the host
+ * could not resolve (no matching DB object AND no matching workspace file).
+ * Webview surfaces this as an inline notice bubble so the user knows the
+ * mention was silently dropped without throwing. */
+export interface AiChatPanelMentionMiss {
+  type: "mention_miss";
+  token: string;
+}
 
 /** Render cap for `history` items posted to the webview (TASK-003 §Interfaces). */
 export const HISTORY_RENDER_CAP = 50;
@@ -190,6 +219,7 @@ export interface AiChatPanelPermissionResponse {
   requestId: string;
   optionId?: string;
 }
+
 export type AiChatPanelWebviewMessage =
   | AiChatPanelReady
   | AiChatPanelSend
@@ -199,7 +229,17 @@ export type AiChatPanelWebviewMessage =
   | AiChatPanelResumeList
   | AiChatPanelResumePick
   | AiChatPanelResumeCancel
-  | AiChatPanelRegenerate;
+  | AiChatPanelRegenerate
+  | AiChatPanelMentionList;
+
+/** TASK-005: webview opened the @-mention dropdown. `query` is the
+ * substring after the leading `@` (e.g. "pu" or ""). The host responds
+ * with `{type:"mention_objects", items:[…]}` (≤30 DB objects + ≤20 files).
+ * Empty query → return the full shortlist. */
+export interface AiChatPanelMentionList {
+  type: "mention_list";
+  query: string;
+}
 
 // ---- Internal host helpers (not webview-bound) ----------------------------
 
