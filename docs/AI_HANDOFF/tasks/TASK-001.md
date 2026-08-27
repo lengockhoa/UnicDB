@@ -61,3 +61,42 @@ npm run typecheck
 The Date argument is deliberately required rather than defaulted: the save host supplies `new Date()` and tests remain deterministic. The protocol has no persistence, ready, copy, or busy messages because those are outside the resolved Console scope.
 
 ---
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-001
+
+   ❯ src/ui/__tests__/consolePanelMessages.test.ts  (0 test)
+
+  ⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+   FAIL  src/ui/__tests__/consolePanelMessages.test.ts [ src/ui/__tests__/consolePanelMessages.test.ts ]
+  Error: Failed to load url ../consolePanelMessages (resolved id: ../consolePanelMessages) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-001/src/ui/__tests__/consolePanelMessages.test.ts. Does the file exist?
+   ❯ loadAndTransform ../../node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17
+
+  ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+   Test Files  1 failed (1)
+        Tests  no tests
+Verification Output: |
+  Command 1: npx vitest run src/ui/__tests__/consolePanelMessages.test.ts
+
+   RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-001
+
+   ✓ src/ui/__tests__/consolePanelMessages.test.ts  (6 tests) 1ms
+
+   Test Files  1 passed (1)
+        Tests  6 passed (6)
+
+  Command 2: npm run typecheck
+
+  > vsdb@1.6.8 typecheck
+  > tsc --noEmit
+
+  (exit code 0, no errors)
+Status: PASS
+Note: One interim test failure was in my own test code, not the implementation — test #4's substring probes (`_01`, `slice(-11, -4)`) were mis-indexed against the full timestamp string; replaced with per-field regex capture groups (\d{2} each), all green after. Implementation never changed for this.
