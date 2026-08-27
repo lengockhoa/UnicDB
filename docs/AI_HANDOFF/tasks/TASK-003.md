@@ -196,3 +196,26 @@ FINDINGS:
     - webview/styles.css:1341 — `.vsdb-chat-jump` uses position:absolute with no positioned ancestor (.vsdb-chat is static), so it anchors to the viewport (initial containing block). Correct outcome today (body is 100vh overflow:hidden); worth a `position:relative` on .vsdb-chat for robustness, not blocking.
 NEXT_STATUS_FOR_INDEX: critical_block
 NOTES: CSS-side fix (height rule + 6 affordance blocks, all --vscode-* themed, .vsdb-form-body untouched) is verified present and correct; only the one-line buildHtml class change is missing. One-line re-fix + one getHtml assertion test, then re-run.
+
+---
+
+## Reviewer Verdict (fix round 1b)
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code (fix 1b orchestrator-applied; last executor self-report)
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/chatLayoutCss.test.ts src/ui/__tests__/aiChatPanel.test.ts src/ui/__tests__/aiChatPanelBundle.test.ts
+  result: 60 pass / 0 fail (chatLayoutCss 16/16 incl. wire-side test)
+  command: npm run typecheck
+  result: exit code 0
+TEST_PLAN_COVERAGE: all-followed — prior critical #1 (buildHtml class) and important #1 (missing getHtml assertion) both addressed.
+FINDINGS:
+  critical:
+    - none — ReRevT3 blocking finding RESOLVED: src/ui/aiChatPanel.ts:2104 now emits `<body class="vsdb-form-body vsdb-chat-body">`; body.vsdb-chat-body { height:100vh } exists at webview/styles.css:1302; wire-side assertion added at src/ui/__tests__/chatLayoutCss.test.ts:337-347 (`expect(panelSrc).toContain('<body class="vsdb-form-body vsdb-chat-body">')`) closes the exact gap that let the false claim slip through last round.
+  important:
+    - none
+  minor:
+    - (carried, non-blocking) webview/styles.css — .vsdb-chat still lacks position:relative, so .vsdb-chat-jump (position:absolute) anchors to the viewport. Harmless today since body.vsdb-chat-body is 100vh/overflow:hidden; robustness-only.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Height chain is now complete end-to-end (body class emitted → body rule matches → .vsdb-chat height:100% applies) and the wire-side test guards the DOM contract that previously regressed silently. Scope check: all five other vsdb-form-body panels (connectionForm, schemaForm, newTableForm, aiSettingsForm, consolePanel) emit the bare class only; the height rule is keyed to body.vsdb-chat-body, and chatLayoutCss.test.ts:131-138 asserts .vsdb-form-body gains no height:100vh.

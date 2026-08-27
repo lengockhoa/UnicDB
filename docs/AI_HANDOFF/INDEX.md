@@ -7,9 +7,9 @@ dependent consumer wave.
 
 | Task | Title | Status | Dependencies | Reviewer |
 |------|-------|--------|--------------|----------|
-| TASK-001 | Message contract: thought + regenerate (host side) | changes_requested | none | unic-smart |
+| TASK-001 | Message contract: thought + regenerate (host side) | approved | none | unic-smart |
 | TASK-002 | Webview chat UX: thinking block, copy, keybind, scroll, message states | approved | TASK-001 | unic-smart |
-| TASK-003 | Chat layout: pinned composer, full-height thread (CSS) | critical_block | none | unic-smart |
+| TASK-003 | Chat layout: pinned composer, full-height thread (CSS) | approved | none | unic-smart |
 | TASK-004 | Privacy regression lock: auto-context is DDL-only (HARD invariant) | approved_minor | none | unic-smart |
 | TASK-005 | @-mention references (DB objects + workspace files) | approved | TASK-001, TASK-002 | unic-smart |
 
