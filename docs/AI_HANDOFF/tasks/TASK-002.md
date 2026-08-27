@@ -99,3 +99,13 @@ existing webview bundle suite. Full `npm test` at wave boundary is the regressio
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator. -->
 <!-- Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
+
+
+## Executor Report
+EXECUTOR_TOOL: omp task agent (claude-code)
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: ExecT2 (+ orchestrator finish)
+RED_OUTPUT: 19/19 initially RED (16 meaningful failures: no .vsdb-chat-thinking, no copy buttons, no #jumpLatest, no #regenerateBtn, no queued marker, Ctrl+Enter still sent). Excerpt: "expected [{type:'send',text:'ctrl-send'}] to have a length of +0 but got 1".
+Verification Output: npx vitest run aiChatPanelWebviewTask002.test.ts aiChatPanelBundle.test.ts aiChatPanel.test.ts aiChatPanelMessages.test.ts aiChatPanelAcp.test.ts -> 103 passed | 11 skipped. npm run typecheck exit 0.
+Status: PASS
+Note: Executor hit budget at 17/19; orchestrator finished final 2 (restored missing `case "done"` block that had been orphaned after the error case's return — done never re-enabled buttons; error path now also resolves queued marker). All 19 green in main tree.

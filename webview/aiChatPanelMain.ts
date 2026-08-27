@@ -69,6 +69,16 @@ interface ResumeSessionsMsg {
 /** Host replay of the picked session — capped at HISTORY_RENDER_CAP. Only
  * `kind:"user"|"assistant"|"tool"` items are rendered; anything else is
  * silently dropped (host already filtered `agent_thought_chunk`). */
+/** TASK-001: live piece of the agent's reasoning chain, forwarded verbatim
+ * from ACP `agent_thought_chunk`. Never carries apiKey. The webview renders
+ * these into a single collapsible "Thinking" block per turn (chunks append
+ * to the same body; resets on the next user send). Replay history
+ * (`HistoryMsg`) still silently drops `agent_thought_chunk` — only the live
+ * `thought` message kind is rendered. */
+interface ThoughtMsg {
+  type: "thought";
+  text: string;
+}
 interface HistoryMsg {
   type: "history";
   items: Array<{ kind: string; text: string }>;
@@ -76,16 +86,17 @@ interface HistoryMsg {
   truncatedCount: number;
 }
  type HostMsg =
-   | InitMsg
-   | StepMsg
-   | AssistantMsg
-   | ErrorMsg
-   | DoneMsg
-   | DeltaMsg
-   | EngineMsg
+  | InitMsg
+  | StepMsg
+  | AssistantMsg
+  | ErrorMsg
+  | DoneMsg
+  | DeltaMsg
+  | EngineMsg
   | PermissionRequestMsg
   | ResumeSessionsMsg
-  | HistoryMsg;
+  | HistoryMsg
+  | ThoughtMsg;
 
 // ---- State -----------------------------------------------------------------
 interface State {
@@ -130,15 +141,24 @@ function escapeHtml(s: string): string {
  * Returns HTML with all user content escaped first, then markdown syntax
  * re-introduced through the controlled replacement set above.
  *
- * NOTE: this is ONLY used for the agent's own assistant bubble — never
  * for permission tool/option labels.
  */
 function renderMarkdown(text: string): string {
   const escaped = escapeHtml(text);
+  // Fenced blocks: capture each (lang, escaped-code) pair into a parallel
+  // array, replace with an opaque placeholder, then re-substitute the
+  // final HTML (with a data-raw attribute holding the un-escaped code so
+  // the Copy button can grab it later without re-parsing). Double-escape
+  // on the attribute is intentional: the browser decodes the HTML entities
+  // once, leaving the original escaped form in the attribute — we then
+  // un-escape at click time to recover the raw code.
+  const fences: Array<{ lang: string; code: string }> = [];
   let html = escaped.replace(
     /```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g,
     (_m, lang: string, code: string) => {
-      return `<pre class="vsdb-md-code"><code class="vsdb-md-code-lang-${escapeHtml(lang)}">${code}</code></pre>`;
+      const idx = fences.length;
+      fences.push({ lang, code: code.replace(/\n$/, "") });
+      return `\u0000FENCE${idx}\u0000`;
     },
   );
   html = html.replace(/^### (.+)$/gm, "<h3>$1</h3>");
@@ -146,68 +166,71 @@ function renderMarkdown(text: string): string {
   html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
   html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   const blocks = html.split(/\n{2,}/);
-  return blocks
+  const joined = blocks
     .map((b) => (b.startsWith("<") ? b : `<p>${b.replace(/\n/g, "<br>")}</p>`))
     .join("\n");
+  return joined.replace(
+    /\u0000FENCE(\d+)\u0000/g,
+    (_m, idxStr: string) => {
+      const idx = Number(idxStr);
+      const f = fences[idx]!;
+      // data-raw carries the ORIGINAL escaped code so the click handler
+      // can grab it via getAttribute and un-escape to recover the raw
+      // string the user wants to copy.
+      return `<pre class="vsdb-md-code" data-raw="${escapeHtml(f.code)}"><code class="vsdb-md-code-lang-${escapeHtml(f.lang)}">${f.code}</code><button type="button" class="vsdb-md-copy">Copy</button></pre>`;
+    },
+  );
 }
-
-// ---- Rendering -------------------------------------------------------------
-
 function setBusy(busy: boolean): void {
   state.busy = busy;
   const sendBtn = document.getElementById("sendBtn") as HTMLButtonElement | null;
   const stopBtn = document.getElementById("stopBtn") as HTMLButtonElement | null;
   const resumeBtn = document.getElementById("resumeBtn") as HTMLButtonElement | null;
+  const regenBtn = document.getElementById("regenerateBtn") as HTMLButtonElement | null;
   if (sendBtn) sendBtn.disabled = busy;
   // stopBtn is always clickable — host ignores stop when no agent is in flight.
   if (stopBtn) stopBtn.disabled = false;
   if (resumeBtn) resumeBtn.disabled = busy;
+  if (regenBtn) regenBtn.disabled = busy;
   const prompt = document.getElementById("prompt") as HTMLTextAreaElement | null;
   if (prompt) prompt.disabled = busy;
 }
-
 function renderInitial(): void {
   root.innerHTML = `
   <div class="vsdb-chat-thread" id="thread" aria-live="polite"></div>
+  <button type="button" id="jumpLatest" class="vsdb-chat-jump" hidden>Jump to latest</button>
   <div class="vsdb-chat-input">
     <textarea id="prompt" rows="3" placeholder="Ask about your database…"></textarea>
     <div class="vsdb-chat-actions">
       <button id="resumeBtn" class="vsdb-chat-secondary">Resume session</button>
       <button id="clearBtn">Clear</button>
+      <button id="regenerateBtn" class="vsdb-chat-secondary" title="Regenerate last response">Regenerate</button>
       <button id="stopBtn" class="vsdb-chat-secondary">Stop</button>
       <button id="sendBtn" class="vsdb-chat-primary">Send</button>
     </div>
   </div>`;
   wireControls();
+  wireJumpLatest();
 }
-
 function wireControls(): void {
   const prompt = document.getElementById("prompt") as HTMLTextAreaElement | null;
   const sendBtn = document.getElementById("sendBtn") as HTMLButtonElement | null;
   const stopBtn = document.getElementById("stopBtn") as HTMLButtonElement | null;
   const clearBtn = document.getElementById("clearBtn") as HTMLButtonElement | null;
 
-  // Echo the user's just-typed prompt as a user bubble before clearing the
-  // field. Capture-phase so it runs BEFORE the sendBtn click handler clears it.
-  sendBtn?.addEventListener(
-    "click",
-    () => {
-      if (!prompt) return;
-      const snap = prompt.value;
-      if (snap.trim().length > 0) appendUser(snap);
-    },
-    true,
-  );
-
+  // Send: echo the user prompt as a bubble (UI responsiveness), then post
+  // send + clear. Single handler so the bubble and the wire post stay in
+  // lockstep — the previous capture-then-bubble split was fragile under
+  // jsdom's dispatch order.
   sendBtn?.addEventListener("click", () => {
     if (!prompt) return;
     const text = prompt.value;
     if (text.trim().length === 0) return;
+    appendUser(text);
     post({ type: "send", text });
     setBusy(true);
     prompt.value = "";
   });
-
   stopBtn?.addEventListener("click", () => {
     post({ type: "stop" });
   });
@@ -216,6 +239,15 @@ function wireControls(): void {
   resumeBtn?.addEventListener("click", () => {
     if (state.busy) return;
     post({ type: "resume_list" });
+  });
+
+  // Regenerate: host pops the trailing history pair and re-runs the last
+  // user prompt (semantics in PLAN §3). Disabled while busy — the button
+  // reflects `state.busy` via setBusy.
+  const regenBtn = document.getElementById("regenerateBtn") as HTMLButtonElement | null;
+  regenBtn?.addEventListener("click", () => {
+    if (state.busy) return;
+    post({ type: "regenerate" });
   });
 
   // Clear: immediately wipe the local thread (UI responsiveness) and tell
@@ -228,12 +260,17 @@ function wireControls(): void {
     if (thread) thread.innerHTML = "";
   });
 
-  // Ctrl/Cmd+Enter sends.
+  // Enter (no shift) sends + clears; Shift+Enter falls through (browser
+  // default inserts newline). Plain Enter NEVER inserts a newline in the
+  // chat composer. Legacy Ctrl/Cmd+Enter was retired (TASK-002 #9) —
+  // holding a modifier + Enter lets the browser do its default thing
+  // (e.g. type a literal newline on macOS via Cmd+Enter shortcuts).
   prompt?.addEventListener("keydown", (ev: KeyboardEvent) => {
-    if ((ev.ctrlKey || ev.metaKey) && ev.key === "Enter") {
-      ev.preventDefault();
-      sendBtn?.click();
-    }
+    if (ev.key !== "Enter") return;
+    if (ev.shiftKey) return;
+    if (ev.ctrlKey || ev.metaKey) return;
+    ev.preventDefault();
+    sendBtn?.click();
   });
 }
 
@@ -241,19 +278,44 @@ function appendUser(text: string): void {
   const thread = document.getElementById("thread");
   if (!thread) return;
   const div = document.createElement("div");
-  div.className = "vsdb-chat-bubble vsdb-chat-user";
+  div.className = "vsdb-chat-bubble vsdb-chat-user vsdb-chat-queued";
   div.textContent = text;
+  // Queued marker — child element with the same class so test #8 can find
+  // it via both classList and a descendant selector. Resolved by
+  // resolveQueuedUserBubble() on first delta/error/done.
+  const queued = document.createElement("span");
+  queued.className = "vsdb-chat-queued";
+  queued.setAttribute("aria-label", "queued");
+  div.appendChild(queued);
   thread.appendChild(div);
-  thread.scrollTop = thread.scrollHeight;
+  autoScroll(div);
+  // New turn: reset the per-turn thinking block so the next `thought`
+  // message re-creates it (default collapsed + empty).
+  resetThinkingBlock();
+}
+
+/** Resolve the queued marker on the latest user bubble (the just-sent
+ * prompt). Called on first delta / error / done so the placeholder is
+ * never left spinning on a settled turn. No-op if there's no queued
+ * bubble (e.g. error before any user bubble). */
+function resolveQueuedUserBubble(): void {
+  const queued = root.querySelector(
+    ".vsdb-chat-bubble.vsdb-chat-user.vsdb-chat-queued",
+  ) as HTMLDivElement | null;
+  if (!queued) return;
+  queued.classList.remove("vsdb-chat-queued");
+  for (const m of Array.from(
+    queued.querySelectorAll(".vsdb-chat-queued"),
+  )) m.remove();
 }
 
 function appendStep(label: string): void {
   const thread = document.getElementById("thread");
   if (!thread) return;
-  const div = document.createElement("div");
-  div.className = "vsdb-chat-step";
-  div.textContent = `→ ${label}`;
-  thread.appendChild(div);
+  const step = document.createElement("div");
+  step.className = "vsdb-chat-step";
+  step.textContent = `→ ${label}`;
+  thread.appendChild(step);
 }
 
 function appendAssistant(text: string, markdown: boolean): void {
@@ -261,13 +323,13 @@ function appendAssistant(text: string, markdown: boolean): void {
   if (!thread) return;
   const div = document.createElement("div");
   div.className = "vsdb-chat-bubble vsdb-chat-assistant";
-  div.innerHTML = markdown ? renderMarkdown(text) : escapeHtml(text);
   // TASK-003: colorize SQL fenced blocks AFTER the escaped HTML is in place.
   // renderMarkdown escapes user text first; reading `textContent` off the
   // already-escaped <code> node decodes entities back to the raw SQL, and
   // highlightSql writes a fragment built with createElement + textContent
   // only — preserving the no-innerHTML-for-user-content contract (hostile
   // agent output never reaches the page as live nodes).
+  div.innerHTML = markdown ? renderMarkdown(text) : escapeHtml(text);
   if (markdown) {
     for (const code of Array.from(
       div.querySelectorAll<HTMLElement>("code.vsdb-md-code-lang-sql"),
@@ -276,18 +338,25 @@ function appendAssistant(text: string, markdown: boolean): void {
       code.replaceChildren(frag);
     }
   }
+  // Wire the per-block Copy buttons + append a copy-message action.
+  wireCopyButtons(div);
+  appendCopyMessageAction(div, text);
   thread.appendChild(div);
-  thread.scrollTop = thread.scrollHeight;
+  autoScroll(div);
 }
 
 function appendError(message: string): void {
+  // Honest error label: drops the queued marker on the just-sent user
+  // bubble (so the placeholder never lingers past the turn's settlement)
+  // and renders the error in its own bubble.
+  resolveQueuedUserBubble();
   const thread = document.getElementById("thread");
   if (!thread) return;
   const div = document.createElement("div");
   div.className = "vsdb-chat-bubble vsdb-chat-error";
   div.textContent = message;
   thread.appendChild(div);
-  thread.scrollTop = thread.scrollHeight;
+  autoScroll(div);
 }
 
 /** Append an incremental text fragment to the current assistant bubble.
@@ -296,6 +365,8 @@ function appendError(message: string): void {
  * then arrives when the turn ends.
  */
 function appendDelta(text: string): void {
+  // First delta of the turn resolves the queued user placeholder.
+  resolveQueuedUserBubble();
   const thread = document.getElementById("thread");
   if (!thread) return;
   let bubble = thread.querySelector<HTMLDivElement>(
@@ -308,9 +379,11 @@ function appendDelta(text: string): void {
     thread.appendChild(bubble);
   }
   // Streaming content is plain text; full markdown render happens on the
-  // terminal assistant message. Append the escaped fragment and scroll.
+  // terminal assistant message. Append the escaped fragment and add the
+  // streaming caret so the user sees the bubble is still receiving text.
   bubble.appendChild(document.createTextNode(text));
-  thread.scrollTop = thread.scrollHeight;
+  ensureStreamingCaret(bubble);
+  autoScroll(bubble);
 }
 
 /** F4 regression helper — strip the streaming class from any open bubble
@@ -327,7 +400,161 @@ function deStreamOpenBubble(): void {
   );
   for (const bubble of Array.from(open)) {
     bubble.classList.remove("vsdb-chat-streaming");
+    const caret = bubble.querySelector(".vsdb-chat-caret");
+    if (caret) caret.remove();
   }
+}
+
+// ---- TASK-002 — scroll discipline, jump-to-latest, thinking block --------
+//
+// Scroll discipline: only auto-scroll when the user is already near the
+// bottom of the thread (within 40px). Otherwise show a floating
+// #jumpLatest button that, when clicked, scrolls to bottom and hides.
+
+/** Threshold in CSS pixels for "near bottom" detection. */
+const SCROLL_BOTTOM_THRESHOLD_PX = 40;
+
+/** Update scroll + jump-to-latest visibility based on the current
+ * scrollTop relative to the thread. Auto-scroll only when within
+ * SCROLL_BOTTOM_THRESHOLD_PX of the bottom; otherwise surface the
+ * #jumpLatest button without scrolling. The `_appendedNode` argument is
+ * informational — we scroll the thread, not the new node — but it lets
+ * callers pass through the just-appended element for symmetry with
+ * future per-node scroll logic. */
+function autoScroll(_appendedNode?: HTMLElement): void {
+  const thread = document.getElementById("thread") as HTMLDivElement | null;
+  if (!thread) return;
+  const jump = document.getElementById("jumpLatest") as HTMLButtonElement | null;
+  const distanceFromBottom =
+    thread.scrollHeight - thread.scrollTop - thread.clientHeight;
+  if (distanceFromBottom <= SCROLL_BOTTOM_THRESHOLD_PX) {
+    thread.scrollTop = thread.scrollHeight - thread.clientHeight;
+    if (jump) jump.hidden = true;
+  } else {
+    if (jump) jump.hidden = false;
+  }
+}
+
+/** Wire the floating #jumpLatest button to scroll to bottom + hide. */
+function wireJumpLatest(): void {
+  const jump = document.getElementById("jumpLatest") as HTMLButtonElement | null;
+  jump.addEventListener("click", () => {
+    const thread = document.getElementById("thread") as HTMLDivElement | null;
+    if (thread) thread.scrollTop = thread.scrollHeight - thread.clientHeight;
+    jump.hidden = true;
+  });
+}
+
+/** Attach the streaming caret (`▍` glyph) to an open streaming bubble.
+ * Idempotent — the bubble only carries one caret at a time. The caret is
+ * removed when the bubble is de-streamed (done/error). */
+function ensureStreamingCaret(bubble: HTMLDivElement): void {
+  if (bubble.querySelector(".vsdb-chat-caret")) return;
+  const caret = document.createElement("span");
+  caret.className = "vsdb-chat-caret";
+  caret.setAttribute("aria-hidden", "true");
+  caret.textContent = "\u258D"; // �
+  bubble.appendChild(caret);
+}
+
+// ---- Thinking block state (TASK-002 #1, #2) ------------------------------
+//
+// One collapsible #thinkingBlock per turn. Default collapsed. Chunks
+// append to its body across `thought` messages; state (open/closed)
+// survives chunk appends; `resetThinkingBlock` on next user send drops
+// it so the new turn starts fresh.
+let thinkingBlock: HTMLDetailsElement | null = null;
+let thinkingBody: HTMLDivElement | null = null;
+
+/** Render a `thought` chunk into the per-turn thinking block. Lazily
+ * creates the <details> + <summary> + body on the first chunk of a turn.
+ * Default collapsed; the open/closed state survives chunk appends. */
+function applyThought(text: string): void {
+  if (text.length === 0) return;
+  if (!thinkingBlock) {
+    const details = document.createElement("details");
+    details.className = "vsdb-chat-thinking";
+    details.id = "thinkingBlock";
+    const summary = document.createElement("summary");
+    summary.textContent = "Thinking";
+    details.appendChild(summary);
+    const body = document.createElement("div");
+    body.className = "vsdb-chat-thinking-body";
+    details.appendChild(body);
+    const thread = document.getElementById("thread");
+    if (thread) thread.appendChild(details);
+    thinkingBlock = details;
+    thinkingBody = body;
+  }
+  if (thinkingBody) {
+    thinkingBody.appendChild(document.createTextNode(text));
+  }
+  // Note: we deliberately do NOT auto-scroll on every thought chunk
+  // (it would yank the user around as reasoning streams). The next
+  // delta / assistant message still applies the scroll discipline.
+}
+
+/** Drop the per-turn thinking block. Called when the user starts a new
+ * turn so the next `thought` message re-creates the block from scratch
+ * (default collapsed + empty). */
+function resetThinkingBlock(): void {
+  if (thinkingBlock && thinkingBlock.parentNode) {
+    thinkingBlock.parentNode.removeChild(thinkingBlock);
+  }
+  thinkingBlock = null;
+  thinkingBody = null;
+}
+
+// ---- Copy affordances (TASK-002 #4, #5, #6) ------------------------------
+//
+// Per-block Copy buttons get their raw code via the data-raw attribute
+// set by renderMarkdown. The button click un-escapes the attribute value
+// to recover the original code, then calls navigator.clipboard.writeText
+// with a silent .catch — clipboard rejection degrades silently.
+
+/** Reverse the HTML escape table from escapeHtml for the data-raw attribute. */
+function unescapeHtml(s: string): string {
+  return s
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&gt;/g, ">")
+    .replace(/&lt;/g, "<")
+    .replace(/&amp;/g, "&");
+}
+
+/** Wire all `.vsdb-md-copy` buttons inside a bubble root so a click
+ * copies the raw code (data-raw attribute, un-escaped) via clipboard. */
+function wireCopyButtons(rootEl: HTMLElement): void {
+  for (const btn of Array.from(
+    rootEl.querySelectorAll<HTMLButtonElement>(".vsdb-md-copy"),
+  )) {
+    btn.addEventListener("click", () => {
+      const pre = btn.closest("pre");
+      if (!pre) return;
+      const raw = pre.getAttribute("data-raw") ?? "";
+      const code = unescapeHtml(raw);
+      void navigator.clipboard?.writeText(code).catch(() => {
+        // Silent degrade — keep the button label so the user can retry.
+      });
+    });
+  }
+}
+
+/** Append a copy-message action button to an assistant bubble. The
+ * button copies the raw markdown source (the un-rendered agent text)
+ * so the user can paste the whole reply into another tool. */
+function appendCopyMessageAction(bubble: HTMLElement, rawSource: string): void {
+  const action = document.createElement("button");
+  action.type = "button";
+  action.className = "vsdb-chat-copy-msg";
+  action.textContent = "Copy";
+  action.title = "Copy message";
+  action.addEventListener("click", () => {
+    void navigator.clipboard?.writeText(rawSource).catch(() => {
+      // Silent degrade.
+    });
+  });
+  bubble.appendChild(action);
 }
 
 /** Show / replace the engine banner (omp active, or builtin fallback with hint). */
@@ -578,8 +805,24 @@ function renderResumePicker(msg: ResumeSessionsMsg): void {
   });
   card.appendChild(cancelBtn);
 
+  // Esc dismisses the picker — single resume_cancel + tear-down. Listener
+  // is bound to the card so it dies with the card (no stale Esc handling
+  // after the picker is closed).
+  card.addEventListener("keydown", (ev: KeyboardEvent) => {
+    if (ev.key !== "Escape") return;
+    ev.preventDefault();
+    if (!pickerOpen) return;
+    post({ type: "resume_cancel" });
+    disposeResumePicker();
+  });
+  // Make the card focusable so it can receive the keydown event when the
+  // user clicks anywhere inside it.
+  card.tabIndex = -1;
+  // Focus the card so an immediate Esc dismisses without requiring a click.
+  // setTimeout defers focus until after the click that opened the picker
+  // releases focus, avoiding a focus fight.
+  setTimeout(() => card.focus(), 0);
   thread.appendChild(card);
-  thread.scrollTop = thread.scrollHeight;
 }
 
 /** Tear down the open picker without emitting any further messages. */
@@ -654,12 +897,24 @@ function renderHistory(msg: HistoryMsg): void {
     case "error":
       appendError(msg.message);
       deStreamOpenBubble();
+      // Error also resolves the queued user placeholder — an endless
+      // "queued" marker after a failure is dishonest state (PLAN §4).
+      resolveQueuedUserBubble();
       return;
     case "done":
       // De-stream so the NEXT turn's delta opens a fresh bubble instead
       // of appending into a left-open streaming bubble (F4 regression).
       deStreamOpenBubble();
+      // First done of the turn resolves the queued user placeholder.
+      resolveQueuedUserBubble();
+      // Re-enable input/actions (Send, Regenerate, Resume, textarea).
       setBusy(false);
+      // The thinking block stays visible after `done` — it summarizes
+      // the just-finished turn's reasoning for the user. The next user
+      // send drops it via appendUser -> resetThinkingBlock.
+      return;
+    case "thought":
+      applyThought(msg.text);
       return;
     case "permission_request":
       renderPermissionRequest(msg);
