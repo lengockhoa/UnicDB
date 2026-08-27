@@ -3,6 +3,37 @@
 All notable changes to VSDB are documented in this file. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 
+## [1.8.0] — 2026-08-28
+
+Cycle AA: AI Chat panel overhaul to modern AI-chat standards — the chat is the core of VSDB, and this cycle rebuilds its daily UX around the patterns users know from ChatGPT/Claude/Cursor.
+
+### Added
+- **@-mentions in the chat composer**: type `@` to reference database objects (tables, views,
+  routines) or workspace files, with a keyboard-navigable dropdown (Arrow keys, Enter/Tab to
+  select, Esc to dismiss; Enter while the dropdown is open selects instead of sending). On send,
+  object tokens resolve to their DDL structure and file tokens to their content (100 KB cap with
+  a truncation notice) for that turn only. Unresolved tokens surface an inline notice.
+- **Thinking block**: the agent's live reasoning (`agent_thought_chunk`) now renders as a
+  collapsible "Thinking" section per turn (default collapsed) instead of being silently discarded.
+- **Copy affordances**: every fenced code block gets a Copy button (raw code, no fences), and
+  assistant messages get a copy action (raw markdown source). Clipboard failures degrade silently.
+- **Regenerate** re-runs the last user message (one click next to Stop); disabled while busy,
+  a no-op after Clear, and safe with @-mention context (re-resolves fresh, never duplicates).
+- **Resume picker, finally usable**: the session picker had zero styling — rows now have padding,
+  pointer cursor, hover highlight, card chrome matching the permission card, and Esc dismisses.
+- **Privacy lock (tests)**: a standing regression suite proves the chat auto-context is schema
+  DDL only — row data can never leak to the model without a failing test.
+
+### Changed
+- **Enter sends, Shift+Enter breaks the line** (chat-standard); the old Ctrl/Cmd+Enter binding
+  is removed. Plain Enter never inserts a newline.
+- **Composer pinned to the panel bottom**: the thread was capped at 60vh, which floated the
+  input mid-panel; the thread now fills the panel and the composer docks at the bottom edge
+  (real height chain via a chat-scoped body class).
+- **Streaming & states**: blinking caret while streaming, queued placeholder on the just-sent
+  user bubble, honest error labels, and auto-scroll only when you're near the bottom — with a
+  "jump to latest" button when you've scrolled up. Stopped turns keep their partial text.
+
 ## [1.7.0] — 2026-08-27
 
 Cycle Z: DataGrip-style SQL Console — an ad-hoc scratchpad panel to type SQL, run it against the active connection, and save the buffer as a .sql file.
@@ -302,6 +333,8 @@ boundary.
 ## [1.5.0] — 2026-08-23
 
 Cycle G: set-filter, toolbar icons, `run-sh` fix.
+
+[1.8.0]: https://github.com/lengockhoa/VSDB/compare/v1.7.0...v1.8.0
 
 [1.6.1]: https://github.com/lengockhoa/VSDB/compare/v1.6.0...v1.6.1
 [1.6.2]: https://github.com/lengockhoa/VSDB/compare/v1.6.1...v1.6.2
