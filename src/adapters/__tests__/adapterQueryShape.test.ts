@@ -322,6 +322,26 @@ describe("PostgresAdapter.runQuery — cursor routing (D5)", () => {
     await adapter.close();
   });
 
+  // Open risk `pg-metadata-vs-transaction-window` (cycle X audit) — a pinned
+  // manual-commit client used to be the ONLY pool slot (`max: 1`), so every
+  // background metadata call queued behind it and died after
+  // connectionTimeoutMillis. Fix: pool opens up to PG_POOL_MAX slots, so while
+  // beginTransaction() holds one client, an independent metadata query must be
+  // served from another slot WITHOUT waiting for the transaction to finish.
+  it("regression (metadata-vs-window): metadata runs on its own slot while a transaction pins another", async () => {
+    const adapter = new PostgresAdapter(cfg(), "pw");
+    await adapter.connect();
+    // Hold one client open (as beginTransaction() would).
+    const pinned = await adapter.beginTransaction();
+    expect(pinned).toBeDefined();
+    // Concurrent metadata traffic must NOT queue behind the pinned client —
+    // with PG_POOL_MAX slots the second checkout resolves immediately and
+    // `pool.query()`-backed this.query() serves listSchemas directly.
+    queueMicrotask(() => void pinned.commit());
+    await adapter.listSchemas(false);
+    await adapter.close();
+  });
+
   // Review fix round C, Finding #1 — end-to-end proof at the runQuery level
   // (not just the pure predicate): a data-modifying CTE must go through the
   // non-cursor (auto-commit, actually runs the UPDATE) path, never through

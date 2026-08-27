@@ -1,5 +1,6 @@
 // src/adapters/postgres.ts
-// PostgresAdapter — pg.Pool (max=1) + manual DECLARE CURSOR cho BatchedQuery.
+// PostgresAdapter — pg.Pool (PG_POOL_MAX slot, mở lazy) + manual DECLARE CURSOR
+// cho BatchedQuery.
 //
 // Lý do không dùng pg-cursor: package đó yêu cầu native binding (pg-native),
 // trong khi ta dùng JS pure pg (node_modules/pg/lib/*.js). pg-cursor gọi
@@ -21,7 +22,7 @@
 //   - Ngược lại (multi, non-SELECT, hoặc SELECT có `;`) → pool.query tuần tự.
 //
 // cancel: BatchedQuery.cancel → SELECT pg_cancel_backend(pid) qua DEDICATED
-//          one-off Client (không qua pool max=1 — tránh queue/wedge), rồi
+//          one-off Client (không qua pool — tránh queue/wedge), rồi
 //          CLOSE/ROLLBACK/release.
 // close: adapter.close() cleanup mọi BatchedQuery còn open rồi pool.end().
 //
@@ -50,6 +51,15 @@ import { splitStatements } from "../core/statementParser";
 import { maskLiteralsAndComments } from "../core/dangerousStatement";
 
 const DEFAULT_BATCH_SIZE = 500;
+
+/**
+ * Pool size for the shared Postgres connection. Metadata traffic (schema
+ * tree, keyword completion, row-count estimates, AI run_sql) runs on its own
+ * pool slot while a manual-commit transaction or a streaming cursor pins
+ * another — see the comment in connect(). Slots open lazily on demand, so
+ * idle VSDB connections cost nothing.
+ */
+const PG_POOL_MAX = 4;
 
 /**
  * D5 fix — cursor-routing decision as a single, pure, exported-for-test
@@ -206,13 +216,27 @@ export class PostgresAdapter implements DbAdapter {
 
   async connect(): Promise<void> {
     if (this.pool) return;
+    // Open risk `pg-metadata-vs-transaction-window` (cycle X audit, fixed):
+    // pool used to be `max: 1`. While a manual-commit transaction (or a
+    // streaming cursor) pinned that single client, EVERY background metadata
+    // call (schemaTree row counts, keywordQualify listTables, completion,
+    // AI run_sql) queued behind it and failed after connectionTimeoutMillis
+    // ("timeout exceeded when trying to connect", pg-pool/index.js:206-225).
+    //
+    // Safe to raise now because the cross-statement race that motivated
+    // `max: 1` no longer exists: runQuery checks out ONE client for the WHOLE
+    // multi-statement run (see its Finding #6 comment), and beginTransaction()
+    // pins its own client — so concurrent metadata queries land on their OWN
+    // session and can never interleave into a user's open transaction or
+    // mid-script statement stream. Each extra pool slot is one additional
+    // TCP + auth handshake (~ms); pg-pool only opens slots on demand.
     this.pool = new Pool({
       host: this.cfg.host,
       port: this.cfg.port,
       user: this.cfg.user,
       password: this.password,
       database: this.cfg.database,
-      max: 1,
+      max: PG_POOL_MAX,
       ssl: pgSslOptions(this.cfg),
       connectionTimeoutMillis: 10_000,
     });
@@ -306,17 +330,18 @@ export class PostgresAdapter implements DbAdapter {
     // Review fix round C, Finding #6: check out ONE client for the WHOLE
     // multi-statement run instead of calling `this.pool.query()` per
     // statement. `pool.query()` checks out AND releases a client
-    // internally on EACH call — with `Pool({ max: 1 })` there is exactly
-    // one physical connection, so releasing it between statement N and
-    // N+1 hands the connection to whatever OTHER `pool.query()` call is
-    // next in pg's internal pending queue (schemaTree.fetchRowCountsBatch,
+    // internally on EACH call, so releasing it between statement N and
+    // N+1 hands the connection to whatever OTHER pool caller is next in
+    // pg's internal pending queue (schemaTree.fetchRowCountsBatch,
     // keywordQualify's listTables, the AI `run_sql` tool, ...). TASK-004's
     // `BEGIN;` de-blocking means `resultsPanel.ts`'s save flow now sends
     // `BEGIN; <stmts>; COMMIT;` through exactly THIS branch (it used to be
     // one opaque un-split statement) — without holding a single client, a
     // concurrent background query could land INSIDE the user's open
     // transaction and abort it. Held for the entire loop and released in
-    // `finally` so no other caller can grab the connection mid-script.
+    // `finally` so no other caller can grab this client mid-script.
+    // (This single-client discipline is also what makes PG_POOL_MAX > 1
+    // safe: concurrent metadata queries get their OWN session.)
     const client = await this.pool.connect();
     try {
       const results: QueryResult[] = [];
@@ -581,7 +606,7 @@ export class PostgresAdapter implements DbAdapter {
 
   /**
    * D2 API — one round trip cho nhiều table thay vì N lần estimateTableRows()
-   * (đặc biệt tốn kém trên pool `max: 1` — mỗi lần gọi tuần tự xếp hàng).
+   * (trước đây rất tốn kém khi pool chỉ có 1 slot — mỗi lần gọi tuần tự xếp hàng).
    * `tables` rỗng → Map rỗng, KHÔNG issue query nào. Table không tồn tại /
    * bị drop giữa list và estimate → đơn giản không xuất hiện trong kết quả
    * `pg_class` → OMIT khỏi Map (không map null, không throw).
@@ -665,8 +690,8 @@ export class PostgresAdapter implements DbAdapter {
    * qua FETCH FORWARD n lần.
    *
    * CRITICAL #1 fix: toàn bộ lifecycle BEGIN → DECLARE → FETCH 0 wrap trong
-   * try/catch; bất kỳ lỗi nào → ROLLBACK + release(true) rồi rethrow. Pool
-   * max=1 phải luôn trở về trạng thái usable.
+   * try/catch; bất kỳ lỗi nào → ROLLBACK + release(true) rồi rethrow. Mọi
+   * pool slot phải luôn trở về trạng thái usable.
    */
   private async openCursorForStatement(sql: string): Promise<BatchedQuery> {
     if (!this.pool) throw new Error("PostgresAdapter: connect() chưa được gọi");
@@ -742,9 +767,9 @@ export class PostgresAdapter implements DbAdapter {
             return null;
           }
           // FETCH trả ít hơn số row yêu cầu → cursor đã cạn. Đóng NGAY
-          // (không đợi lần fetch rỗng kế tiếp) — pool max=1 cần client
-          // trả về cho statement sau, nếu không mọi pool.query kế tiếp
-          // xếp hàng connectionTimeoutMillis rồi fail "timeout exceeded
+          // (không đợi lần fetch rỗng kế tiếp) — pool bị giới hạn slot,
+          // cần client trả về sớm cho statement sau; nếu không các pool.query
+          // kế tiếp xếp hàng connectionTimeoutMillis rồi fail "timeout exceeded
           // when trying to connect" (SELECT < 500 rows là case phổ biến).
           if (rows.length < DEFAULT_BATCH_SIZE) {
             state = "eof";
@@ -768,7 +793,7 @@ export class PostgresAdapter implements DbAdapter {
         state = "closed";
 
         // CRITICAL #2 fix: dùng DEDICATED one-off Client để gọi
-        // pg_cancel_backend — KHÔNG dùng pool max=1 (đang bị cursor giữ
+        // pg_cancel_backend — không qua pool (slot đang bị cursor giữ
         // → request xếp hàng 10s rồi nuốt exception).
         if (backendPid !== null) {
           await this.cancelBackendViaDedicatedClient(backendPid);
@@ -794,7 +819,7 @@ export class PostgresAdapter implements DbAdapter {
       };
     } catch (err) {
       // CRITICAL #1: bất kỳ lỗi nào trong BEGIN/DECLARE/FETCH 0 → cleanup
-      // rồi rethrow. Nếu không release ở đây, pool max=1 bị wedge vĩnh
+      // rồi rethrow. Nếu không release ở đây, pool bị wedge vĩnh
       // viễn và mọi runQuery sau timeout.
       state = "error";
       try {
@@ -809,8 +834,8 @@ export class PostgresAdapter implements DbAdapter {
 
   /**
    * CRITICAL #2 fix: gọi pg_cancel_backend(pid) qua một Client riêng (one-off,
-   * dedicated connection) — KHÔNG qua pool.max=1. Lý do: pool đang có client
-   * duy nhất bị cursor giữ; gọi pool.query sẽ xếp hàng 10s rồi timeout
+   * dedicated connection) — KHÔNG qua pool. Lý do: các slot pool có thể đang
+   * bị cursor/transaction giữ; gọi pool.query sẽ xếp hàng 10s rồi timeout
    * (bị nuốt bởi catch { ignore }). Dedicated Client mở connection mới,
    * gửi cancel, đóng → server pg_cancel_backend chạy được ngay.
    *
