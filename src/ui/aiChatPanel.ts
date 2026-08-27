@@ -366,6 +366,11 @@ export class AiChatPanel {
   private token: ChatAbortToken | null = null;
   /** History snapshot for replay; never holds apiKey (provider scrubbed). */
   private history: ChatMessage[] = [];
+  /** TASK-001 Regenerate: most-recent trimmed user text captured at
+   * handleSend entry. Used only when the trailing history is NOT an intact
+   * `[user, assistant]` pair — i.e. the last UI exchange was stopped
+   * mid-turn and the pair was therefore never appended (PLAN §3). */
+  private lastSentText: string | null = null;
   /** Cached engine resolution — set on first show; reused on every turn. */
   private engine: EngineKind | null = null;
   /** Cached ACP session — created on first acp-mode send. */
@@ -513,6 +518,9 @@ export class AiChatPanel {
       case "resume_cancel":
         this.handleResumeCancel();
         return;
+      case "regenerate":
+        await this.handleRegenerate();
+        return;
     }
   }
 
@@ -531,6 +539,10 @@ export class AiChatPanel {
 
   private async handleSend(text: string): Promise<void> {
     const trimmed = text.trim();
+    // TASK-001 Regenerate: remember the trimmed user text so a Regenerate
+    // pressed after a Stop can re-send it verbatim. Overwritten only by a
+    // non-empty send so a failed/empty call never erases the last real one.
+    if (trimmed.length > 0) this.lastSentText = trimmed;
     if (trimmed.length === 0) return;
 
     // Fresh token for this turn. Also: a replacement send cancels any
@@ -1019,11 +1031,24 @@ export class AiChatPanel {
       this.post({ type: "step", label });
       return;
     }
-    // agent_thought_chunk + every other update kind (including the stale
-    // cycle-L `agent_end`/`turn_complete` names, which real ACP never
-    // emits — see runAcpTurn's response-based settlement, TASK-007 B1):
-    // deliberately ignored. agent_thought_chunk must never render or
-    // surface (TASK-004 §3).
+    if (sessionUpdate === "agent_thought_chunk") {
+      // TASK-001 supersedes TASK-004 §3: forward live `agent_thought_chunk`
+      // to the webview as `{type:"thought", text:chunk}`. The webview owns
+      // collapse/label state (TASK-002). Thought text NEVER touches
+      // `session.buffer` and NEVER enters `this.history` — replay filtering
+      // and the prompt payload are unchanged. Same late-frame / abort
+      // gates as `agent_message_chunk` so a stray post-done thought
+      // cannot open an orphan thinking block (turnSettled = the only true
+      // gate; `token?.aborted` mirrors delta-side semantics).
+      if (this.token?.aborted) return;
+      const chunk = (update as { chunk?: unknown }).chunk;
+      if (typeof chunk !== "string" || chunk.length === 0) return;
+      this.post({ type: "thought", text: chunk });
+      return;
+    }
+    // Every other update kind (including the stale cycle-L `agent_end` /
+    // `turn_complete` names, which real ACP never emits — see runAcpTurn's
+    // response-based settlement, TASK-007 B1) is deliberately ignored.
   }
 
   private handleAcpServerRequest(
@@ -1180,6 +1205,47 @@ export class AiChatPanel {
       for (const r of resolvers) r();
     }
   }
+
+  /**
+   * TASK-001 Regenerate (PLAN §3).
+   *
+   * Semantics:
+   *   - Busy (`this.token !== null`) → no-op — a turn is already in flight.
+   *   - Trailing `[user, assistant]` pair in history → pop both, then
+   *     `await this.handleSend(poppedUser.content)`. The completed rerun
+   *     appends exactly one new pair, so history never duplicates.
+   *   - Otherwise the last UI exchange is a STOPPED one (history push sits
+   *     inside `!token?.aborted`, so the stopped user message was never
+   *     appended): re-send the stopped user text verbatim via
+   *     `this.lastSentText`. History is not pre-mutated — handleSend's
+   *     normal completion path appends the pair.
+   *   - Empty history + nothing ever sent → no-op.
+   */
+  private async handleRegenerate(): Promise<void> {
+    if (this.token !== null) return;
+    if (
+      this.history.length >= 2 &&
+      this.history[this.history.length - 1]?.role === "assistant" &&
+      this.history[this.history.length - 2]?.role === "user"
+    ) {
+      const prev = this.history[this.history.length - 2];
+      const poppedUserText = prev.content;
+      if (typeof poppedUserText !== "string") return;
+      this.history = this.history.slice(0, -2);
+      await this.handleSend(poppedUserText);
+      return;
+    }
+    // Not an intact trailing pair: the last UI exchange was stopped
+    // (history never gained the pair). Re-send the stopped user text.
+    if (
+      typeof this.lastSentText !== "string" ||
+      this.lastSentText.length === 0
+    ) {
+      return;
+    }
+    await this.handleSend(this.lastSentText);
+  }
+
   private disposeAcpSession(): void {
     if (this.acpSession !== null) {
       try {

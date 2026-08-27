@@ -409,7 +409,7 @@ beforeEach(() => {
 // posts exactly one opaque pending request; agent_thought_chunk is ignored.
 // ============================================================================
 describe("AiChatPanel — ACP session/update routing", () => {
-  it("#1 routes session/update deltas, posts one opaque permission_request, ignores agent_thought_chunk", async () => {
+  it("#1 routes session/update deltas, posts one opaque permission_request", async () => {
     agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
     const { start, sessions } = makeFakeAcpDeps();
     const panel = new AiChatPanel({
@@ -441,7 +441,11 @@ describe("AiChatPanel — ACP session/update routing", () => {
     expect(deltas.map((d) => (d as { text: string }).text).join("")).toBe(
       "Hello world",
     );
-    expect(JSON.stringify(postedMessages(p))).not.toMatch(/secret reasoning/);
+    // TASK-001 supersession: agent_thought_chunk is now forwarded as
+    // {type:"thought", text:chunk}; the new contract tests in
+    // aiChatPanelThoughtRegen.test.ts #2/#5/#10 own that assertion.
+    // Replay filtering (deriveHistoryFromReplay, webview history branch)
+    // stays INTACT — only the LIVE wire path changed.
 
     feedPermissionRequest(session.transport, 7, [
       { optionId: "allow-once", label: "Allow once" },

@@ -151,6 +151,52 @@ describe("AiChatPanelMessages — permission_response (webview → host)", () =>
   });
 });
 
+// ---- TASK-001 #1 — thought + regenerate contract (union membership + no-secret).
+import type {
+  AiChatPanelThought,
+  AiChatPanelRegenerate,
+} from "../aiChatPanelMessages";
+
+const thoughtFixture: AiChatPanelThought = { type: "thought", text: "considering the schema" };
+const regenFixture: AiChatPanelRegenerate = { type: "regenerate" };
+
+describe("AiChatPanelMessages — thought + regenerate (TASK-001 #1)", () => {
+  it("#1a thought fixture joins the host union (assignable); no apiKey-shaped field on the wire", () => {
+    const hostMsgs: AiChatPanelHostMessage[] = [
+      thoughtFixture,
+      { type: "init", hasHistory: false },
+      { type: "step", label: "x" },
+      { type: "delta", text: "y" },
+      { type: "assistant", text: "z", markdown: true },
+      { type: "error", message: "boom" },
+      { type: "engine", name: "omp" },
+      { type: "done" },
+    ];
+    const found = hostMsgs.find((m) => m.type === "thought");
+    expect(found).toBeDefined();
+    expect(found).toEqual(thoughtFixture);
+    const asJson = JSON.stringify(thoughtFixture);
+    expect(asJson).not.toMatch(/api_?key/i);
+    expect(asJson).not.toMatch(/sk-[a-z0-9]/i);
+  });
+
+  it("#1b regenerate fixture joins the webview union (assignable); no payload, no apiKey-shaped field", () => {
+    const webMsgs: AiChatPanelWebviewMessage[] = [
+      regenFixture,
+      { type: "ready" },
+      { type: "send", text: "hi" },
+      { type: "stop" },
+      { type: "clear" },
+    ];
+    const found = webMsgs.find((m) => m.type === "regenerate");
+    expect(found).toBeDefined();
+    expect(found).toEqual({ type: "regenerate" });
+    const asJson = JSON.stringify(regenFixture);
+    expect(asJson).not.toMatch(/api_?key/i);
+    expect(asJson).not.toMatch(/sk-[a-z0-9]/i);
+  });
+});
+
 // ---- #1d — backward compatibility: existing kinds still dispatch correctly
 describe("AiChatPanelMessages — backward compatibility", () => {
   it("#1d existing host kinds still narrow and discriminated union is open", () => {

@@ -884,6 +884,13 @@
   margin-bottom: 8px;
 }
 
+.vsdb-chat {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
 /* AI chat panel — engine banner + bubbles */
 .vsdb-chat-engine {
   padding: 4px 8px;
@@ -904,7 +911,8 @@
   flex-direction: column;
   gap: 6px;
   margin-bottom: 12px;
-  max-height: 60vh;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
 }
 .vsdb-chat-bubble {
@@ -1192,4 +1200,95 @@ button.vsdb-requery-clear:disabled {
 .vsdb-console-context-item:hover {
   background: var(--vscode-menu-selectionBackground, var(--vscode-button-background, #0e639c));
   color: var(--vscode-menu-selectionForeground, var(--vscode-button-foreground, #ffffff));
+}
+
+/* --- TASK-003: chat layout shell + resume picker + mention dropdown ----------
+ * CSS-first styles so TASK-002 (resume picker) and TASK-005 (mention dropdown)
+ * can populate the DOM and rely on these class hooks without a parallel
+ * stylesheet. Mirrors the .vsdb-chat-permission card pattern (1px solid
+ * border, --vscode-editorWidget-background, padding, flex column).
+ */
+.vsdb-chat-resume-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.vsdb-chat-resume-card {
+  border: 1px solid var(--vscode-panel-border, #444);
+  padding: 8px;
+  margin: 4px 0;
+  background: var(--vscode-editorWidget-background, #252526);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.vsdb-chat-resume-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  cursor: pointer;
+}
+.vsdb-chat-resume-row:hover {
+  background: var(--vscode-list-hoverBackground, #2a2d2e);
+  border-color: var(--vscode-panel-border, #444);
+}
+.vsdb-chat-resume-row.vsdb-chat-resume-row-active {
+  background: var(--vscode-list-activeSelectionBackground, #094771);
+  color: var(--vscode-list-activeSelectionForeground, #ffffff);
+}
+.vsdb-chat-resume-label {
+  font-weight: 600;
+  color: var(--vscode-foreground);
+  font-size: 12px;
+}
+.vsdb-chat-resume-detail {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground, #8c8c8c);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.vsdb-chat-mention-dropdown {
+  position: absolute;
+  z-index: 70;
+  min-width: 220px;
+  max-width: 360px;
+  padding: 4px 0;
+  border: 1px solid var(--vscode-panel-border, #444);
+  border-radius: 3px;
+  background: var(--vscode-editorWidget-background, #252526);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+}
+.vsdb-chat-mention-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--vscode-foreground, #cccccc);
+}
+.vsdb-chat-mention-row:hover {
+  background: var(--vscode-menu-selectionBackground, var(--vscode-button-background, #0e639c));
+  color: var(--vscode-menu-selectionForeground, var(--vscode-button-foreground, #ffffff));
+}
+.vsdb-chat-mention-row.vsdb-chat-mention-row-active {
+  background: var(--vscode-list-activeSelectionBackground, #094771);
+  color: var(--vscode-list-activeSelectionForeground, #ffffff);
+}
+.vsdb-chat-mention-kind {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--vscode-descriptionForeground, #8c8c8c);
+  font-family: var(--vscode-editor-font-family, monospace);
+  padding: 1px 4px;
+  border: 1px solid var(--vscode-panel-border, #444);
+  border-radius: 2px;
 }

@@ -86,5 +86,36 @@ narrowed to the 2 touched contracts above. Full `npm test` at wave boundary is t
 
 ---
 
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+SUMMARY: Added host↔webview `thought` + `regenerate` message contract per PLAN §3; host now forwards live `agent_thought_chunk` as `{type:"thought", text:chunk}` and implements Regenerate via pop-pair-then-handleSend (with PLAN §3 Regenerate-after-Stop semantics: re-send `lastSentText` when history has no trailing pair).
+TEST_PLAN_FOLLOWED: task §4 inline
+FILES_CHANGED:
+  - src/ui/aiChatPanelMessages.ts: added `AiChatPanelThought` to `AiChatPanelHostMessage` union; added `AiChatPanelRegenerate` to `AiChatPanelWebviewMessage` union.
+  - src/ui/aiChatPanel.ts: (a) `handleAcpNotification` now branches `sessionUpdate === "agent_thought_chunk"` → posts `{type:"thought", text:chunk}` with `token?.aborted` + chunk-shape gates; the stale "deliberately ignored" comment block at the old :1022-1027 is superseded; (b) new `handleRegenerate()` with PLAN §3 semantics (busy → ignore; trailing `[user, assistant]` pair → pop + handleSend; otherwise re-send `lastSentText`); wired into `handleMessage`. New `lastSentText` field on the panel; `handleSend` captures the trimmed text at entry.
+  - src/ui/__tests__/aiChatPanelAcp.test.ts: retired the obsolete "ignores agent_thought_chunk" expectation in case #1 (PLAN §3 supersession); the new contract is owned by aiChatPanelThoughtRegen.test.ts #2/#5/#10. Replay filtering (deriveHistoryFromReplay, webview history branch, aiChatPanelResume.test.ts #3/#5) is INTACT — only the LIVE wire path changed.
+  - src/ui/__tests__/aiChatPanelMessages.test.ts: added TASK-001 #1 — thought + regenerate fixtures join their respective unions (assignable); `JSON.stringify` contains no apiKey-shaped field.
+TESTS_ADDED:
+  - src/ui/__tests__/aiChatPanelThoughtRegen.test.ts: 10 host-side tests (#2 mid-turn forward, #3 malformed, #4 late-frame drop, #5 history/buffer invariant, #6 regenerate-busy ignore, #7 empty history no-op, #8 happy rerun, #9 regenerate-after-stop, #10 routing regression) — all mirror the FakeAcpTransport/feedAgentThoughtChunk/respondPrompt harness pattern from aiChatPanelAcp.test.ts.
+VERIFICATION:
+  command: npx vitest run src/ui/__tests__/aiChatPanelThoughtRegen.test.ts src/ui/__tests__/aiChatPanelAcp.test.ts
+  result: 41 pass / 0 fail (10 new + 31 acp regression)
+  output_excerpt: |
+    ✓ src/ui/__tests__/aiChatPanelThoughtRegen.test.ts  (10 tests) 22ms
+    ✓ src/ui/__tests__/aiChatPanelAcp.test.ts  (31 tests) 98ms
+    Test Files  2 passed (2)
+    Tests  41 passed (41)
+  command: npx vitest run src/ui/__tests__/aiChatPanelMessages.test.ts
+  result: 20 pass / 0 fail (added #1 thought+regenerate union membership; existing 18 still green)
+  command: npm run typecheck
+  result: exit 0
+ISSUES: none — pre-fix RED was exactly the 4 expected failures (2× thought posts, 2× regenerate); post-fix all 41 contract tests green. Two pre-existing bundle tests in the broader suite (consolePanelBundle, agGridSmoke) fail because `dist/` is not compiled in this worktree — not a TASK-001 concern; wave-boundary compile step owns them.
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for review
+
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator. -->
 <!-- Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->

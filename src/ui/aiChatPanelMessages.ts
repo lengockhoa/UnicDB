@@ -54,6 +54,15 @@ export interface AiChatPanelDelta {
   text: string;
 }
 
+/** TASK-001: a live piece of the agent's reasoning chain, forwarded verbatim
+ * from ACP `agent_thought_chunk` notifications. Never carries apiKey; the
+ * webview renders these into a collapsible "Thinking" block (TASK-002).
+ * Thoughts NEVER enter `session.buffer` or `this.history`. */
+export interface AiChatPanelThought {
+  type: "thought";
+  text: string;
+}
+
 /** Engine mode announcement — emitted exactly once when panel first resolves engine. */
 export interface AiChatPanelEngine {
   type: "engine";
@@ -87,6 +96,7 @@ export type AiChatPanelHostMessage =
   | AiChatPanelInit
   | AiChatPanelStep
   | AiChatPanelDelta
+  | AiChatPanelThought
   | AiChatPanelAssistant
   | AiChatPanelError
   | AiChatPanelEngine
@@ -113,6 +123,17 @@ export interface AiChatPanelResumePick {
 /** Webview cancelled the resume picker. Host may discard any in-flight load. */
 export interface AiChatPanelResumeCancel {
   type: "resume_cancel";
+}
+
+/** TASK-001: user pressed Regenerate (UI affordance lives in the webview).
+ * The host pops the trailing `[user, assistant]` history pair and re-runs
+ * the normal send path with the popped user text, so the chat gains exactly
+ * one new pair — no duplicate pair ever. Busy (turn in flight) and empty
+ * history are no-ops. After a Stop, the stopped user message is the last
+ * UI exchange but was never pushed to history; in that case Regenerate
+ * re-sends the stopped text verbatim (PLAN §3 supersession note). */
+export interface AiChatPanelRegenerate {
+  type: "regenerate";
 }
 
 /** Host answer for `resume_list`: ≤20 entries, cwd-filtered, sorted updatedAt desc,
@@ -177,7 +198,8 @@ export type AiChatPanelWebviewMessage =
   | AiChatPanelPermissionResponse
   | AiChatPanelResumeList
   | AiChatPanelResumePick
-  | AiChatPanelResumeCancel;
+  | AiChatPanelResumeCancel
+  | AiChatPanelRegenerate;
 
 // ---- Internal host helpers (not webview-bound) ----------------------------
 

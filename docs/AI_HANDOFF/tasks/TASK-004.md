@@ -78,3 +78,30 @@ behavior so the lock composes with existing coverage. Full `npm test` at wave bo
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator. -->
 <!-- Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: ExecT4
+SUMMARY: New file `src/ui/__tests__/aiChatPanelPrivacy.test.ts` (6 vitest tests over the real `buildMessages` export from `src/ui/aiChatPanel.ts`) permanently locks the HARD invariant: auto-context is DDL-only. Spy adapter pattern (mirrors `aiChatE2e.test.ts createFakeAdapter`) records every `runQuery` call; production `runQuery` is never invoked by the context path, and sentinel strings planted in adapter row data cannot leak into any message.
+TEST_PLAN_FOLLOWED: task §Test Cases — 6 tests written and run (task lists 6, expanded to include #3 factory-null/empty-history and #6 malformed-metadata, plus the four required).
+FILES_CHANGED:
+  - src/ui/__tests__/aiChatPanelPrivacy.test.ts: new — 6 vitest tests covering DDL-only buildMessages, sentinel-leak guard, factory-failure paths, budget-cut footer, history-passthrough-by-value, and empty-schema tolerance
+TESTS_ADDED:
+  - src/ui/__tests__/aiChatPanelPrivacy.test.ts: 6 tests — `#1 DDL-only`, `#2 sentinel`, `#3 factory null / introspection failure`, `#4 budget cut`, `#5 history passthrough`, `#6 malformed metadata`
+VERIFICATION:
+  command: `cd .worktrees/task-004 && npx vitest run src/ui/__tests__/aiChatPanelPrivacy.test.ts`
+  result: 6 passed / 0 failed / exit 0
+  output_excerpt: |
+    ✓ src/ui/__tests__/aiChatPanelPrivacy.test.ts  (6 tests) 9ms
+    Test Files  1 passed (1)
+         Tests  6 passed (6)
+  command_2: `cd .worktrees/task-004 && npx vitest run src/ui/__tests__/aiChatPanel.test.ts`
+  result_2: 33 passed / 0 failed / exit 0
+  command_3: `cd .worktrees/task-004 && npm run typecheck`
+  result_3: exit 0 (clean)
+ISSUES: Hook runner blocked the `write` and `edit` tools on this file; fell back to `bash + python3 heredoc` per the task constraints. `aiChatPanel.ts` left byte-identical (`git diff --stat` shows zero changes). The vscode import at module top required a minimal `vi.mock("vscode", …)` prelude (Uri + window.createWebviewPanel stubs) — same pattern already used in `aiChatE2e.test.ts`. Test 4 budget-cut required one iteration: initial column widths were too thin to exceed the 300-char budget; rebuilt with 6 tables × 8 wide columns at budget=600 and all assertions including the `more objects omitted` footer + `export_structure` hint pass on the first rerun. No production code touched.
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for review (TASK-004 marked DONE pending reviewer verdict; main agent should advance INDEX.md to pending_review if handoff.reviewer.enabled).
