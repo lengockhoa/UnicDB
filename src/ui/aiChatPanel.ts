@@ -108,7 +108,7 @@ export const MENTION_RESOLVE_FILE_CAP_BYTES = 100 * 1024;
  * Emails (`foo@bar`) do NOT match because the `(?<![\w@])` lookbehind
  * requires no word char AND no `@` directly before the `@` we're
  * matching. */
-const MENTION_TOKEN_RE = /(?<![\w@])@((?:[\w.-]+\/)?[\w.-]+)/g;
+const MENTION_TOKEN_RE = /(?<![\w@])@((?:[\w.-]+\/)*[\w.-]+)/g;
 
 /** Pure @-token extractor. Returns the canonical token text (no leading
  * `@`), deduplicated, order-stable. Empty / no-mention text → []. */
@@ -406,9 +406,13 @@ async function resolveFileBlock(
   workspaceRoot: string,
   token: string,
 ): Promise<string | null> {
-  const abs = token.startsWith("/")
-    ? token
-    : `${workspaceRoot.replace(/\/+$/, "")}/${token}`;
+  // Reject workspace escapes at the resolve boundary: absolute paths and
+  // any '..' segment (leading or mid-path) never resolve — the token must
+  // stay inside the workspace root (TASK-005 fix round 1, reviewer #2).
+  if (token.startsWith("/") || token.split("/").includes("..")) {
+    return null;
+  }
+  const abs = `${workspaceRoot.replace(/\/+$/, "")}/${token}`;
   let bytes: Uint8Array;
   try {
     bytes = await fs(vscode.Uri.file(abs));
@@ -421,9 +425,14 @@ async function resolveFileBlock(
   } catch {
     return null;
   }
-  if (text.length > MENTION_RESOLVE_FILE_CAP_BYTES) {
+  if (bytes.length > MENTION_RESOLVE_FILE_CAP_BYTES) {
+    // Byte-accurate cap (UTF-8): slice raw bytes, then decode. The notice
+    // says bytes — so the measurement must be bytes, not UTF-16 units.
     const notice = `\n\n[truncated at ${MENTION_RESOLVE_FILE_CAP_BYTES} bytes]`;
-    text = text.slice(0, MENTION_RESOLVE_FILE_CAP_BYTES) + notice;
+    const capped = new TextDecoder("utf-8", { fatal: false }).decode(
+      bytes.slice(0, MENTION_RESOLVE_FILE_CAP_BYTES),
+    );
+    text = capped + notice;
   }
   return `--- File: ${token} ---\n${text}`;
 }
