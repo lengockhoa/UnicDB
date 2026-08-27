@@ -46,16 +46,19 @@
 
 <!-- Unresolved questions, known fragile areas, or deferred decisions. -->
 <!-- Clear this entry once the risk is resolved. -->
-- [2026-08-27] `pg-metadata-vs-transaction-window`: ~11 metadata call sites use a separate
-  connection while a transaction window may be open on the pinned client — queued threading
-  task in `docs/AI_HANDOFF/INDEX.md`; not yet scheduled.
+- [2026-08-27] RESOLVED `pg-metadata-vs-transaction-window`: was ~11 metadata call sites on a
+  `Pool({ max: 1 })` queueing behind a pinned manual-commit/cursor client and failing after
+  connectionTimeoutMillis. Fixed by raising Postgres pool to `max: 4` (`PG_POOL_MAX`,
+  postgres.ts connect()) — runQuery still holds ONE client per multi-statement script and
+  beginTransaction() pins its own, so metadata lands on independent sessions. Regression test:
+  adapterQueryShape.test.ts "metadata runs on its own slot…". Not yet released to the user's
+  installer (needs a GitHub release per Ship Constraint).
 
 ## Session Handoff
-- Last worked on: 2026-08-27 — cycle Z shipped DataGrip-style SQL Console as v1.7.0
-  (`VSDB: Open Console` → textarea scratchpad; Run qua pipeline sẵn có vào Results panel;
-  Save as SQL file qua context menu/nút Save; không persistence). Full handoff pipeline:
-  plan review 2 vòng, 3 tasks, 1 fix round (context-menu Escape), suite 1693/0, release + vsix.
-- Next step: user reloads VS Code window; next cycle starts fresh from `docs/AI_HANDOFF/`.
+- Last worked on: 2026-08-27 — fixed open risk `pg-metadata-vs-transaction-window` (pool
+  max 1→4 + regression test); risk entry cleared. ⚠️ Watch: a parallel process (omp hooks?)
+  is translating docs/ Vietnamese→English concurrently in this workspace.
+- Next step: release a GitHub version bump for the pool fix when convenient (Ship Constraint).
 
 ## Completed Milestones
 

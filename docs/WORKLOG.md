@@ -95,7 +95,7 @@ For each significant action, append:
 
 ## 2026-08-26 — TASK-007 wave-3 (webview grid hardening: real sort column, warnings banner, quick-search no requery, in-DOM refresh confirm)
 
-- Action: 4 webview fixes từ grid/UI audit: (1) `orderByFromColumnState` maps colId qua
+- Action: 4 webview fixes from grid/UI audit: (1) `orderByFromColumnState` maps colId via
   `currentSpecs` → `headerName` before quoting (dup columns `id__2` post real `id ASC`);
   (2) `SaveResultMessage.warnings?: string[]` + webview mirror, rendered on ok:true; (3)
   `onFilterChanged` only schedules server requery for column-filter sources — quick-search
@@ -130,23 +130,23 @@ For each significant action, append:
   1672093 bytes, assertions 0 forbidden, dry-run OK, gh release v1.6.7 with vsix attached.
 
 
-- Action: handoff cycle W — 4 tasks / 2 waves từ backlog INDEX: TASK-001 ORDER BY parser
-  (quote-aware comma split, dialect quoting, composite-PK tiebreaker khi mọi PK column được
-  project, emptyIsBlank theo declared type family anchored), TASK-002 buildDistinctValuesQuery
-  (module mới src/ui/distinctValues.ts, pure), TASK-003 webview sort header-click 3 dialect +
-  DISTINCT set-filter + typed values (strict driver-token dialect parse; sort carried trong
-  filter/paging requery; cache invalidation re-request sau render), TASK-004 host wiring
-  (distinct-values round trip + stale statement-index guard + batch drain + truncated giữ
-  nguyên; multi-term ORDER BY qua AS vsdb_sub; SaveContext.listColumnTypes).
+- Action: handoff cycle W — 4 tasks / 2 waves from backlog INDEX: TASK-001 ORDER BY parser
+  (quote-aware comma split, dialect quoting, composite-PK tiebreaker when every PK column is
+  projected, emptyIsBlank per declared type family anchored), TASK-002 buildDistinctValuesQuery
+  (new module src/ui/distinctValues.ts, pure), TASK-003 webview sort header-click 3 dialect +
+  DISTINCT set-filter + typed values (strict driver-token dialect parse; sort carried in
+  filter/paging requery; cache invalidation re-request after render), TASK-004 host wiring
+  (distinct-values round trip + stale statement-index guard + batch drain + truncated kept
+  intact; multi-term ORDER BY via AS vsdb_sub; SaveContext.listColumnTypes).
 - Plan review 2 rounds (R1: 1 critical + 5 important; R2: 5 blocking — full composite PK,
   stale guard, AS vsdb_sub, LONGTEXT family, mismatched-quote reject — applied without
-  re-review theo loop cap). Review code: round 1 cả 4 changes_requested → fix round 1 cả 4
-  PASS → 3 approved, TASK-003 còn 1 finding → fix round 2 (refresh mounted filters SAU
+  re-review per loop cap). Review code: round 1 all 4 changes_requested → fix round 1 all 4
+  PASS → 3 approved, TASK-003 still 1 finding → fix round 2 (refresh mounted filters AFTER
   render) → approved.
 - Flake fix: webviewServerSort test 5+18 flaky ~40% aggregate (debounce race) — drain
   posts deterministically; 5/5 full-suite runs green 1494 passed / 2 skipped / 0 failed.
 - Files: src/ui/{queryComposer,distinctValues,messages,resultsPanel}.ts, src/extension.ts,
-  webview/main.ts, 5 test file mới + amendments; docs/AI_HANDOFF/*.
+  webview/main.ts, 5 new test files + amendments; docs/AI_HANDOFF/*.
 - Git: plan f0bc514 → waves 2e69859 → verdicts → fix rounds → R5 close 089941a, pushed.
 - Release v1.6.6: bump + CHANGELOG + lockfile sync + build.sh → dist/vsdb-1.6.6.vsix
   1668464 bytes, assertions 0 forbidden, dry-run OK.
@@ -182,39 +182,39 @@ For each significant action, append:
   queries, PG server-side sort, NULL display + value viewer, A19 retry, post-commit refresh,
   per-table tabs, schema autocomplete, manual-commit mode. R1 review TASK-009 =
   CHANGES-REQUESTED → auto-fix: `DbTransaction` session-pinned handle (adapters PG/MySQL
-  pin PoolClient/PoolConnection), `handleSaveEdits` chạy save qua transaction, requery manual
-  route qua pinned session (tránh deadlock pool.max=1), `closeStatementCursor` trước
-  beginTransaction, R-A4 refresh-state race (compute refresh trước ack). R2 review APPROVED.
+  pin PoolClient/PoolConnection), `handleSaveEdits` runs save via transaction, requery manual
+  route via pinned session (avoids deadlock pool.max=1), `closeStatementCursor` before
+  beginTransaction, R-A4 refresh-state race (compute refresh before ack). R2 review APPROVED.
 - Files: `src/adapters/{types,postgres,mysql}.ts`, `src/core/queryRunner.ts`,
   `src/ui/resultsPanel.ts`, `src/extension.ts`, `src/ui/__tests__/manualCommit.test.ts`,
   docs/AI_HANDOFF/*.
 - Verification: compile clean · typecheck clean · full suite 1327 passed / 2 skipped / 0
-  failed. Commit f5caddd trên main. Worktree sạch. Chưa push (cần xác nhận scope).
+  failed. Commit f5caddd on main. Worktree clean. Not pushed yet (scope confirmation needed).
 - Queued: Cycle V (SQL syntax coloring), server-side filter/paging, MSSQL sort.
 
 ## 2026-08-25 — Cycle S (lazy ctid) + release v1.6.3
 
-- Action: fix `Error: column "ctid" does not exist` khi mở view PG. Handoff cycle S: 3 tasks
-  (TASK-001 xóa eager ctid wrap ở read path; TASK-003 DELETE no-PK qua ctid lúc save;
-  TASK-002 gộp save path về 1 lazy fetchPostgresCtids). Plan review 2 rounds (1 critical:
-  2 file test webview không có owner → giao TASK-001); review 3/3 approved, TASK-001 cần
-  1 fix round (restore test #7b/#8b ngoài scope bị xóa).
+- Action: fix `Error: column "ctid" does not exist` when opening a PG view. Handoff cycle S: 3 tasks
+  (TASK-001 remove eager ctid wrap in read path; TASK-003 DELETE no-PK via ctid at save;
+  TASK-002 merge save path into 1 lazy fetchPostgresCtids). Plan review 2 rounds (1 critical:
+  2 webview test files had no owner → assign TASK-001); review 3/3 approved, TASK-001 needed
+  1 fix round (restore test #7b/#8b out-of-scope deletions).
 - Files: `src/ui/browseCommands.ts`, `src/ui/resultsPanel.ts`, `src/core/saveStatements.ts`,
-  `src/ui/resultsGridModel.ts`, `webview/main.ts` (comments), 6 file test; docs/AI_HANDOFF/*.
-- Post-merge: user vẫn thấy lỗi vì cycle S không release — installer 1 dòng kéo VSIX từ
-  latest GitHub Release (vẫn 1.6.2 lỗi). Release v1.6.3: bump + CHANGELOG + lockfile sync
-  (releaseHygiene bắt drift 1.6.2≠1.6.3 → `npm install --package-lock-only`) + build.sh
-  (1043 pass) + tag + `gh release create` kèm vsdb-1.6.3.vsix + install qua one-liner
-  (1.6.2 → 1.6.3, `__vsdb_browse__` = 0 trong bản đã cài).
-- Docs: MEMORY.md (ship constraint + root cause), RELEASE.md (mục "Shipping to users"),
+  `src/ui/resultsGridModel.ts`, `webview/main.ts` (comments), 6 test files; docs/AI_HANDOFF/*.
+- Post-merge: user still saw the error because cycle S did not release — one-line installer
+  pulls VSIX from latest GitHub Release (still 1.6.2, broken). Release v1.6.3: bump + CHANGELOG + lockfile sync
+  (releaseHygiene catches drift 1.6.2≠1.6.3 → `npm install --package-lock-only`) + build.sh
+  (1043 pass) + tag + `gh release create` with vsdb-1.6.3.vsix + install via one-liner
+  (1.6.2 → 1.6.3, `__vsdb_browse__` = 0 in installed build).
+- Docs: MEMORY.md (ship constraint + root cause), RELEASE.md ("Shipping to users" section),
   CHANGELOG 1.6.3. Pushed 2d0fd94 + tag v1.6.3.
 
 ## 2026-08-23 — Cycle 2026-08-23-H: hardening + release v1.5.1
 
-- Action: carry-over minors từ reviews cycle G → 4 task handoff (701 EXPLAIN guard, 702 codepoint cap, 703 lock hygiene, 704 release).
-- Files: `src/core/dangerousStatement.ts` (skip-past-`explain` prelude, `sawExplain` flag), `src/core/text.ts` (new `truncateAtBoundary`), `src/extension.ts` (capDetail dùng helper — 2 dòng), `package-lock.json` (root 1.3.0→1.5.1), `src/__tests__/releaseHygiene.test.ts` (new), package.json 1.5.1.
-- Waves: W1 = 701∥702∥703 (disjoint files, executors unic-code trong worktrees) → 9ac114e; W2 = 704 → 9e3f7b1; reviews 0bf6bc8; close 0438762.
-- Review: 4/4 approved (701/702/704 approved_minor). 702 cần 1 vòng auto-fix — blocker chỉ là thiếu RED_OUTPUT paste; Fix702 temp-revert helper → capture real lone-surrogate failure → restore byte-identical.
+- Action: carry-over minors from cycle G reviews → 4 task handoff (701 EXPLAIN guard, 702 codepoint cap, 703 lock hygiene, 704 release).
+- Files: `src/core/dangerousStatement.ts` (skip-past-`explain` prelude, `sawExplain` flag), `src/core/text.ts` (new `truncateAtBoundary`), `src/extension.ts` (capDetail uses helper — 2 lines), `package-lock.json` (root 1.3.0→1.5.1), `src/__tests__/releaseHygiene.test.ts` (new), package.json 1.5.1.
+- Waves: W1 = 701∥702∥703 (disjoint files, executors unic-code in worktrees) → 9ac114e; W2 = 704 → 9e3f7b1; reviews 0bf6bc8; close 0438762.
+- Review: 4/4 approved (701/702/704 approved_minor). 702 needed 1 auto-fix round — blocker was only missing RED_OUTPUT paste; Fix702 temp-revert helper → capture real lone-surrogate failure → restore byte-identical.
 - Verification: full suite 40 files / 453 tests PASS; `tsc --noEmit` 0; `scripts/build.sh` → dist/vsdb-1.5.1.vsix 1576198 bytes.
 - Release: push main (356973d..0438762), tag v1.5.1, gh release + asset verified (`gh release view`).
 
@@ -225,27 +225,27 @@ For each significant action, append:
 - Protocol evidence: live `omp acp` 18.0.1 probe established `initialize`, `initialized`, canonical `session/new`, session ID, and child `cwd`; unsafe guessed `session/create` was rejected and never shipped.
 - Review: 4/4 approved (TASK-004 approved_minor after fix round for real child-exit → default-deny lifecycle). Known minor: `hostTools.ts`/`detect.ts` are now orphaned; deferred rather than deleting fallback-related code outside this cycle.
 - Verification: full suite 751 passed / 2 opt-in availability smoke skipped; `npm run compile` and `npm run typecheck` clean.
-- Lesson lặp lại: copy-back bằng `git diff --name-only` + `ls-files` bỏ sót file gitignored (`.cache/release-notes-v1.5.1.md` ở cycle G) → cycle H copy tay notes ngay đầu và báo path trong report — không mất lần nữa.
+- Repeated lesson: copy-back via `git diff --name-only` + `ls-files` missed gitignored files (`.cache/release-notes-v1.5.1.md` in cycle G) → cycle H manually copied notes up front and reported the path — never lost again.
 
 ## 2026-08-24 — Cycle N: builtin engine streaming
 
-- Action: streaming cho builtin AI engine (đóng UX gap chờ full response); unfreeze có chủ đích `provider.ts`/`agent.ts` (frozen từ cycle J chỉ là scope).
-- Files: `src/ai/provider.ts` (streamComplete SSE, parser tự viết 0 dep, CRLF-safe, AbortError trần), `src/ai/agent.ts` (opt-in streamComplete deps + onStreamFallback 1 lần + catch order pin: abort→rethrow / ProviderError@0→fallback / else→rethrow), `src/ui/aiChatPanel.ts` + `webview/aiChatPanelMain.ts` (delta render có sẵn từ ACP, banner "— streaming", deStreamOpenBubble trên done/error), `src/extension.ts` (5-arg closure).
-- Fix rounds: T001 (CRLF parse + abort wrap), T003 (Stop hiện error bubble — phân loại abort-vs-error; test tự gate theo signal).
-- Flaky-type fix: `webviewExport.test.ts` drain AG Grid debounce-0 timer sau teardown (unhandled 'window is not defined' → exit 1 dù 777 pass).
+- Action: streaming for builtin AI engine (closes UX gap of waiting for the full response); unfreeze `provider.ts`/`agent.ts` deliberately (frozen from cycle J only as scope).
+- Files: `src/ai/provider.ts` (streamComplete SSE, hand-written parser 0 deps, CRLF-safe, raw AbortError), `src/ai/agent.ts` (opt-in streamComplete deps + onStreamFallback once + catch order pin: abort→rethrow / ProviderError@0→fallback / else→rethrow), `src/ui/aiChatPanel.ts` + `webview/aiChatPanelMain.ts` (delta render reused from ACP, "— streaming" banner, deStreamOpenBubble on done/error), `src/extension.ts` (5-arg closure).
+- Fix rounds: T001 (CRLF parse + abort wrap), T003 (Stop shows error bubble — classify abort-vs-error; test self-gates on signal).
+- Flaky-type fix: `webviewExport.test.ts` drain AG Grid debounce-0 timer after teardown (unhandled 'window is not defined' → exit 1 even though 777 pass).
 - Verification: full suite 778 passed / 2 opt-in skipped, exit 0; compile + typecheck clean. Pushed 2056828.
 
 ## 2026-08-24 — Cycle O: ACP session history & resume
 
-- Action: AI Chat thêm Resume session — list/load/replay/resume omp sessions qua ACP; fix latent bug session/new thiếu mcpServers:[] (live -32603).
-- Probe-first: live omp acp NDJSON probes chứng minh session/list, session/load (replay 157 notifications), resume prompt end_turn; ghi queue/ACP-SESSION-research.md trước khi plan (không đoán envelope).
-- Files: src/ai/omp/acp.ts (sessionList/sessionLoad + AcpReplayBuffer — cửa sổ replay đóng theo outgoing write, multi-flush safe), src/ai/omp/acpProcess.ts (wiring + mcpServers fix), src/ui/aiChatPanel.ts + aiChatPanelMessages.ts (picker, replay drop-guard, cap 50 + truncated notice, streaming guard), webview/aiChatPanelMain.ts (picker UI + history render textContent-safe).
-- Fix round T003: missing RED output, streaming guard, 2 test không giết mutation (sort monotonic fixture, drop-guard bị transport absorb che).
+- Action: AI Chat adds Resume session — list/load/replay/resume omp sessions via ACP; fix latent bug in session/new missing mcpServers:[] (live -32603).
+- Probe-first: live omp acp NDJSON probes confirmed session/list, session/load (replay 157 notifications), resume prompt end_turn; write queue/ACP-SESSION-research.md before planning (do NOT guess envelope).
+- Files: src/ai/omp/acp.ts (sessionList/sessionLoad + AcpReplayBuffer — replay window closes on outgoing write, multi-flush safe), src/ai/omp/acpProcess.ts (wiring + mcpServers fix), src/ui/aiChatPanel.ts + aiChatPanelMessages.ts (picker, replay drop-guard, cap 50 + truncated notice, streaming guard), webview/aiChatPanelMain.ts (picker UI + history render textContent-safe).
+- Fix round T003: missing RED output, streaming guard, 2 tests did not kill mutations (sort monotonic fixture, drop-guard hidden by transport absorption).
 - Verification: full suite 819 passed / 2 opt-in skipped exit 0; compile + typecheck clean. Pushed a3ba36b.
 
 ## 2026-08-24 — Cycle P: permission detail + tool-call UI + VSIX release
 
-- Action: dọn sạch backlog cuối — permission dialog hiện tool args/SQL preview, builtin engine hiện tool-call live, release pass VSIX 1.6.0.
-- Files: src/ui/permissionDetail.ts (sanitizer pure: redact secret keys, SQL preview, JSON pretty, cap 2000), aiChatPanel.ts + webview (collapsible textContent detail), agent.ts (AgentCallbacks.onToolCall additive — fire trước executeToolCall, không abort-check trong loop), CHANGELOG.md (I–P), docs/RELEASE.md, .vscodeignore (thêm vitest.integration-all.config.ts bị leak).
-- Lỗi bắt được: releaseHygiene test phát hiện package-lock root version 1.5.1 ≠ package.json 1.6.0 → npm install --package-lock-only sync lại.
-- Verification: full suite 838 passed / 2 opt-in skipped exit 0; compile + typecheck clean; vsdb-1.6.0.vsix (15 files, 1.55 MB, không src/node_modules). Pushed 6df9083.
+- Action: clean up the final backlog — permission dialog shows tool args/SQL preview, builtin engine shows tool-call live, release pass VSIX 1.6.0.
+- Files: src/ui/permissionDetail.ts (pure sanitizer: redact secret keys, SQL preview, JSON pretty, cap 2000), aiChatPanel.ts + webview (collapsible textContent detail), agent.ts (AgentCallbacks.onToolCall additive — fires before executeToolCall, no abort-check inside the loop), CHANGELOG.md (I–P), docs/RELEASE.md, .vscodeignore (add vitest.integration-all.config.ts that was leaking).
+- Bug caught: releaseHygiene test detected package-lock root version 1.5.1 ≠ package.json 1.6.0 → npm install --package-lock-only to resync.
+- Verification: full suite 838 passed / 2 opt-in skipped exit 0; compile + typecheck clean; vsdb-1.6.0.vsix (15 files, 1.55 MB, no src/node_modules). Pushed 6df9083.
