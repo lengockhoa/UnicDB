@@ -5,8 +5,8 @@ Cycle Z — **SQL CONSOLE SCRATCHPAD**: disposable Console webview with existing
 | Task | Title | Status | Dependencies | Reviewer |
 |------|-------|--------|--------------|----------|
 | TASK-001 | Define Console webview protocol and save filename helper | done | none | bao-opus |
-| TASK-002 | Build Console webview bundle and interactions | pending_review | TASK-001 | - |
-| TASK-003 | Wire Console host panel, execution, and save-as | pending_review | TASK-001, TASK-002 | - |
+| TASK-002 | Build Console webview bundle and interactions | done | TASK-001 | bao-opus |
+| TASK-003 | Wire Console host panel, execution, and save-as | done | TASK-001, TASK-002 | bao-opus |
 
 Graph: TASK-001 → TASK-002 → TASK-003.
 
