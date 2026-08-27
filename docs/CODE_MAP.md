@@ -16,9 +16,9 @@
   - `saveStatements.ts` — build UPDATE/INSERT từ cell edits.
   - `sslOptions.ts` — SSL config parse.
   - `text.ts` — `truncateAtBoundary(s, cap)`: slice theo code point, không đứt surrogate pair.
-- `src/ui/` — host-side UI: `resultsPanel.ts` (webview panel + postMessage), `resultsGridModel.ts` (pure: set filter model từ v1.5.0), `keysetPaging.ts` (pure: browse-shape gate `assertBrowseShape` + keyset composer `composeKeysetQuery` — cycle Y), `schemaTree.ts`, `codeLensProvider.ts` (▶ Run, incl. shellscript), `connectionForm.ts` + messages, `statusBar.ts`.
+- `src/ui/` — host-side UI: `resultsPanel.ts` (webview panel + postMessage), `resultsGridModel.ts` (pure: set filter model từ v1.5.0), `keysetPaging.ts` (pure: browse-shape gate `assertBrowseShape` + keyset composer `composeKeysetQuery` — cycle Y), `consolePanel.ts` (SQL Console host panel, cycle Z) + `consolePanelMessages.ts` (pure: message contract + suggestSaveFileName), `schemaTree.ts`, `codeLensProvider.ts` (▶ Run, incl. shellscript), `connectionForm.ts` + messages, `statusBar.ts`.
 - `src/adapters/`, `src/config/` — adapter/config helpers.
-- `webview/` — webview UI: `main.ts` (AG Grid Community v36 custom IFilter + edit/requery/export), `styles.css` (incl. `.vsdb-setfilter*`), `connectionFormMain.ts`.
+- `webview/` — webview UI: `main.ts` (AG Grid Community v36 custom IFilter + edit/requery/export), `styles.css` (incl. `.vsdb-setfilter*`, `.vsdb-console*` — cycle Z), `connectionFormMain.ts`, `consolePanelMain.ts` (Console scratchpad: textarea, Run/Save, Cmd/Ctrl+Enter, context menu; message shapes mirror `consolePanelMessages.ts` — rootDir cấm import chéo).
 - `scripts/build.sh` — compile + package vsix; `install-vsdb.sh` — install từ vsix.
 ## DDL Stack (PostgreSQL Table Designer — cycles I/II)
 
