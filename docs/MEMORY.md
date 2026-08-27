@@ -46,10 +46,24 @@
 
 <!-- Unresolved questions, known fragile areas, or deferred decisions. -->
 <!-- Clear this entry once the risk is resolved. -->
+- [2026-08-27] `pg-metadata-vs-transaction-window`: ~11 metadata call sites use a separate
+  connection while a transaction window may be open on the pinned client — queued threading
+  task in `docs/AI_HANDOFF/INDEX.md`; not yet scheduled.
 
 ## Session Handoff
-- Last worked on: 2026-08-25 — cycle S lazy-ctid fix shipped as v1.6.3 (GitHub release + one-liner install verified).
+- Last worked on: 2026-08-27 — cycle Z shipped DataGrip-style SQL Console as v1.7.0
+  (`VSDB: Open Console` → textarea scratchpad; Run qua pipeline sẵn có vào Results panel;
+  Save as SQL file qua context menu/nút Save; không persistence). Full handoff pipeline:
+  plan review 2 vòng, 3 tasks, 1 fix round (context-menu Escape), suite 1693/0, release + vsix.
 - Next step: user reloads VS Code window; next cycle starts fresh from `docs/AI_HANDOFF/`.
+
+## Completed Milestones
+
+<!-- Significant shipped work. For historical context. One line per milestone. -->
+<!-- Format: [YYYY-MM-DD] Milestone: X. Verified by: Y. -->
+- [2026-08-27] v1.7.0 SQL Console — cycle Z full pipeline, suite 1693/0. Verified by: 3 bao-opus reviews + aggregate vitest + vsix artifact assertions.
+- [2026-08-27] v1.6.8 results/query hardening — cycle Y, keyset paging + manual-commit UI + atomic MySQL batches. Verified by: 8 bao-opus reviews, suite 1658/0.
+- [2026-08-25] v1.6.3 lazy-ctid fix — first cycle to close the "merged ≠ shipped" gap via releaseHygiene gate. Verified by: one-liner install.
 
 ## Completed Milestones
 
