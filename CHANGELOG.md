@@ -3,6 +3,22 @@
 All notable changes to VSDB are documented in this file. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 
+## [1.7.0] — 2026-08-27
+
+Cycle Z: DataGrip-style SQL Console — an ad-hoc scratchpad panel to type SQL, run it against the active connection, and save the buffer as a .sql file.
+
+### Added
+- **SQL Console** (`VSDB: Open Console` command, `$(window)` icon): a standalone scratchpad
+  panel with a multi-line SQL editor. Run executes the whole buffer through the existing
+  pipeline (danger-confirm modal → keyword qualify → Results panel), via the toolbar button,
+  Cmd/Ctrl+Enter (mac/win-linux), or a custom right-click menu. Console itself renders no
+  results — the existing Results panel shows them.
+- **Save as SQL file**: right-click → "Save as SQL file" or the Save button opens an OS save
+  dialog pre-filled with a timestamped `console_YYYYMMDD_HHMMSS.sql` name; cancelled dialogs
+  are no-ops. The context menu closes on Escape, click-away, and keyboard run.
+- One empty console per open (scratchpad semantics — nothing persists across open/close);
+  webview bundle `dist/consolePanel.js` with strict CSP identical to other panels.
+
 ## [1.6.8] — 2026-08-27
 
 Cycle Y: finished queued results/query work — manual-commit UI, atomic MySQL batches, keyset paging, NULLS emulation, scoped DISTINCT dropdown, typed state dialect, declared-type inference.
