@@ -1,216 +1,101 @@
-# TASK-002 — Build Console webview bundle and interactions
+# TASK-002 — Webview chat UX: thinking block, copy, keybind, scroll, message states
 
 - Status: `ready`
 - Owner: `-`
 - Reviewer: `-`
-- Parent plan: `docs/AI_HANDOFF/PLAN.md` §3.2
+- Parent plan: `docs/AI_HANDOFF/PLAN.md` §2.2, §3, §4, §7
 
 ## Goal
 
-Implement the Console panel's browser UI: empty SQL textarea, Run and Save toolbar controls, Cmd/Ctrl+Enter execution, and an in-webview right-click menu. Register its browser entry with the existing esbuild configuration so compilation emits `dist/consolePanel.js`.
+Bring `webview/aiChatPanelMain.ts` to modern AI-chat behavior: render `thought` messages as one collapsible
+"Thinking" block (default collapsed); add copy buttons to every code block + a copy action on assistant
+messages; replace Ctrl/Cmd+Enter with Enter=send / Shift+Enter=newline; enforce auto-scroll only when near
+bottom + a jump-to-latest affordance; show a queued placeholder on the just-sent user bubble, a streaming
+caret on the open assistant bubble, and resolve queued/honest-error states cleanly. Regenerate button
+posting `{type:"regenerate"}` (button itself styled in TASK-003; wire via the actions row added in
+renderInitial so TASK-003 only styles it).
 
 ## Target Files
 
-- `webview/consolePanelMain.ts` (new) — render and wire the Console textarea, toolbar, shortcut, and custom context menu using `ConsoleToHostMessage` payloads.
-- `webview/styles.css` — add Console-specific toolbar, editor, and context-menu styling consistent with the existing webview stylesheet. It remains emitted as `dist/webview.css` by the existing `webview/main.ts` import; TASK-003 owns linking that asset into Console HTML.
-- `esbuild.js` — add the `webview/consolePanelMain.ts` → `dist/consolePanel.js` browser build config to both watch and normal build arrays.
-- `src/ui/__tests__/consolePanelBundle.test.ts` (new) — jsdom bundle test that loads `dist/consolePanel.js` after compile.
+- `webview/aiChatPanelMain.ts` — all rendering + wiring changes. Include:
+  (a) `applyThought(text)` → single `#thinkingBlock` (details/summary or div+toggle): label "Thinking",
+  default collapsed, chunks append to its body; state (open/closed) survives chunk appends.
+  (b) `renderMarkdown` fenced-block branch emits a copy button per block (data-raw on a sibling text node
+  or closure — no inline `on*=`); navigator.clipboard.writeText with .catch(() => {}) degrade.
+  Copy-message action on assistant bubbles (raw markdown source).
+  (c) keydown: `ev.key === "Enter" && !ev.shiftKey` → preventDefault + send; Shift+Enter falls through
+  (default newline); plain Enter NEVER inserts a newline.
+  (d) scroll discipline: on append/delta, if `scrollTop + clientHeight >= scrollHeight - 40` scroll to
+  bottom else show `#jumpLatest` (click → scroll to bottom + hide).
+  (e) queued placeholder: on send, user bubble carries a "queued" state element; first delta/error/done
+  resolves it; error keeps the honest error bubble (existing `.vsdb-chat-error`).
+  (f) streaming caret on the open streaming bubble; removed on done/stop (stopped turns keep partial text —
+  existing de-stream path).
+  (g) Reset per-turn: new user send collapses thinking block + starts fresh; `done` finalizes it.
+  (h) Regenerate button in actions row → `post({ type: "regenerate" })`, disabled while `state.busy`.
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Type | Test Name | Expected | Pre-state / Fixture |
-|---|------|-----------|----------|---------------------|
-| 1 | happy | Run button posts editor SQL | Clicking Run with textarea value `SELECT 1` posts exactly `{ type: "runConsole", sql: "SELECT 1" }`. | Bundle loaded in jsdom with mocked `acquireVsCodeApi`. |
-| 2 | happy | Save button posts editor SQL | Clicking Save with textarea value `SELECT 2` posts exactly `{ type: "saveConsoleAsSql", sql: "SELECT 2" }`. | Loaded bundle and mocked API. |
-| 3 | edge-empty | empty execution is ignored | Clicking Run with an empty textarea posts no run message. | Empty textarea. |
-| 4 | edge-shortcut | only Cmd/Ctrl+Enter executes | Cmd+Enter or Ctrl+Enter posts the run message and calls `preventDefault`; plain Enter posts nothing. | Textarea value `SELECT 3`. |
-| 5 | edge-interaction | custom context menu saves SQL | `contextmenu` prevents the browser menu, exposes a `Save as SQL file` item, and choosing it posts `{ type: "saveConsoleAsSql", sql: "SELECT 4" }`. | Right-click textarea with SQL text. |
+| # | Type | Test name | Expected | Pre-state / Fixture |
+|---|------|----------|----------|---------------------|
+| 1 | unit (bundle, jsdom) | thinking block renders collapsed + appends chunks | After 2 thought msgs: exactly one `.vsdb-chat-thinking` node, no `open` attr / collapsed class, body text === "t1t2"; after `done` block stays visible | bundle of real aiChatPanelMain.ts; dispatch InitMsg → thought×2 → done |
+| 2 | edge (state) | thinking state survives append; resets next turn | Toggle open → append chunk → still open; new send → block reset collapsed+empty | same harness, second turn |
+| 3 | happy | Enter sends, Shift+Enter newlines | keydown Enter on #prompt → `{type:"send"}` posted + textarea cleared; keydown Shift+Enter → no post, `\n` inserted by default behavior (preventDefault NOT called); plain Enter never inserts newline | bundle; synthetic KeyboardEvent |
+| 4 | happy | code-block copy button copies raw code | Assistant msg with one fenced block → exactly one copy button inside rendered markdown; click → clipboard.writeText called with raw code sans fences | clipboard stubbed via navigator.clipboard mock |
+| 5 | edge (environment) | clipboard rejection degrades silently | writeText rejects → no unhandled rejection, button label unchanged after revert | clipboard mock rejects |
+| 6 | happy | message-level copy on assistant bubble | Copy action present; click → clipboard.writeText with the un-rendered markdown source | assistant msg markdown:true |
+| 7 | edge (boundary) | auto-scroll threshold | Thread with scrollHeight > clientHeight: appended delta with scrollTop within 40px of bottom → scrollTo bottom; scrollTop moved 200px up → no scroll, `#jumpLatest` visible; click it → scrolled to bottom, hidden | jsdom scroll metrics stubbed |
+| 8 | edge (state) | queued placeholder lifecycle | send → user bubble shows queued marker; then delta → marker gone; separate turn: send → error msg → marker gone + honest error bubble rendered | bundle harness |
+| 9 | edge (invariant) | legacy keybind removed | Ctrl/Cmd+Enter no longer posts send | synthetic keydown with ctrlKey/metaKey |
+| 10 | regression | agent_thought_chunk kind still never renders via history | HistoryMsg item `{kind:"agent_thought_chunk", ...}` is still dropped by the history branch (no thinking-block reuse from replay) | existing webview #3 pattern |
 
 ## Test Files
 
-- `src/ui/__tests__/consolePanelBundle.test.ts` (new) — jsdom tests for the emitted browser bundle and all listed user interactions.
+- `src/ui/__tests__/aiChatPanelWebview.test.ts` — extend (it already bundles the real source via esbuild +
+  jsdom; reuse its harness for dispatching HostMsg and clicking elements).
 
 ## Verification Commands
 
 ```bash
-npm run compile
-npx vitest run src/ui/__tests__/consolePanelBundle.test.ts
+npx vitest run src/ui/__tests__/aiChatPanelWebview.test.ts
 npm run typecheck
 ```
 
-`package.json` defines no lint script; `npm run typecheck` is this task's required static gate. `npm run compile` must precede the bundle test because it reads `dist/consolePanel.js`.
+`package.json` defines no lint script; `npm run typecheck` is this task's required static gate. No
+`npm run compile` prerequisite: this suite bundles `webview/aiChatPanelMain.ts` itself.
+(Test selection: target file under `webview/` — no tests-map entry; path convention resolves to the
+existing webview bundle suite. Full `npm test` at wave boundary is the regression net.)
 
 ## Acceptance Criteria
 
-- [ ] Compile emits `dist/consolePanel.js` from the new Console entry in normal and watch modes.
-- [ ] The UI exposes an initially empty textarea plus visible Run and Save controls.
-- [ ] Run emits the validated run message via its button or Cmd/Ctrl+Enter, while plain Enter does not execute.
-- [ ] Right-click displays `Save as SQL file` and sends the validated save message; the visible Save control sends the same message.
-- [ ] The targeted bundle test and `npm run typecheck` pass.
-- [ ] Reviewer verdict is APPROVED or APPROVED-WITH-MINOR.
+- [ ] Every test in §Test Cases passes; RED first for #3/#9 (current code sends on Ctrl/Cmd+Enter only).
+- [ ] `npm run typecheck` exits 0.
+- [ ] No inline `on*=` handlers introduced (CSP-safe); no new dependencies.
+- [ ] Enter never inserts a newline; Shift+Enter never sends (both asserted).
+- [ ] Stopped turns keep partial assistant text (regression-safe de-stream path untouched).
+- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
 
 ## Dependencies
 
-- TASK-001
+- TASK-001 (consumes `thought` and `regenerate` message shapes on the wire)
 
 ## Interfaces
 
-- Consumes: `ConsoleToHostMessage`, including `{ type: "runConsole"; sql: string }` and `{ type: "saveConsoleAsSql"; sql: string }`, from `src/ui/consolePanelMessages.ts` (TASK-001).
-- Produces: browser bundle `dist/consolePanel.js` from `webview/consolePanelMain.ts`; it posts only `ConsoleToHostMessage` values through VS Code's `postMessage` API. Its Console CSS rules are emitted in the existing `dist/webview.css` output because `webview/main.ts` imports `webview/styles.css`; TASK-003 must link that existing asset rather than add a second CSS pipeline.
+- Consumes: `AiChatPanelThought { type: "thought"; text: string }` and
+  `AiChatPanelRegenerate { type: "regenerate" }` from TASK-001 (exact names/types); existing
+  HostMsg union at `webview/aiChatPanelMain.ts:78-88`.
+- Produces: DOM ids/classes TASK-003 styles: `#thinkingBlock` (class `vsdb-chat-thinking`, body
+  `vsdb-chat-thinking-body`), `#jumpLatest` (class `vsdb-chat-jump`), per-code-block copy button class
+  `vsdb-md-copy`, queued marker class `vsdb-chat-queued`, caret class `vsdb-chat-caret`, Regenerate
+  button id `regenerateBtn`.
 
 ---
 
 ## Discussion
 
-### 2026-08-27 · planner · bao-opus
-`esbuild.js` is the verified bundler path: it separately declares each browser entry and lists every config in both its watch and normal-build Promise arrays. The UI intentionally uses the existing shared `webview/styles.css`, not a new stylesheet or optional SQL highlighting. `webview/main.ts` imports that stylesheet, producing `dist/webview.css`; TASK-003's HTML contract links it with `asWebviewUri`, avoiding an additional CSS bundle.
+(no comments yet)
 
 ---
 
-## Executor Report
-
-EXECUTOR_TOOL: claude-code
-EXECUTOR_MODEL: bao-sonnet
-EXECUTOR_SUBAGENT: feature-implementer
-
-RED_OUTPUT:
-
-```
-npx vitest run src/ui/__tests__/consolePanelBundle.test.ts   (before any implementation)
-
-Error: dist/consolePanel.js missing — run `npm run compile` before this test
- ❯ loadBundle src/ui/__tests__/consolePanelBundle.test.ts:24:11
- ❯ src/ui/__tests__/consolePanelBundle.test.ts:119:22
- ...
- FAIL  ... > #7 edge-interaction: contextmenu prevented, exposes 'Save as SQL file', choosing it posts the save message
-Error: dist/consolePanel.js missing — run `npm run compile` before this test
-
- Test Files  1 failed (1)
-      Tests  7 failed (7)
-```
-
-(Re-confirmed after adding menu-visibility assertions — still 7 failed / 7.)
-
-Verification Output:
-
-Command 1 — `npm run compile` (worktree root):
-```
-  dist/consolePanel.js      3.0kb
-  dist/consolePanel.js.map  7.8kb
-⚡ Done in 8ms
-  dist/webview.js        2.2mb ⚠️
-  dist/webview.css      23.9kb
-  ...
-esbuild: build complete
-```
-`dist/consolePanel.js` emitted; Console CSS rules (8 `vsdb-console*` matches) confirmed inside `dist/webview.css`. Bundler path edited: `esbuild.js` (repo root) — added `consolePanelConfig` to both the watch context/Promise array and the normal-build Promise array.
-
-Command 2 — `npx vitest run src/ui/__tests__/consolePanelBundle.test.ts`:
-```
- ✓ src/ui/__tests__/consolePanelBundle.test.ts  (7 tests) 22ms
- Test Files  1 passed (1)
-      Tests  7 passed (7)
-```
-
-Command 3 — `npm run typecheck`:
-```
-> vsdb@1.6.8 typecheck
-> tsc --noEmit
-typecheck exit: 0
-```
-
-Extra gate check — per-file webview tsc (`tsc --noEmit -p tsconfig.webview.json`): pre-existing baseline has 25 TS2451/TS2393 errors from script-style entries (aiSettingsFormMain x10, connectionFormMain x10, schemaFormMain x5, newTableFormMain x1). My first draft (script-style) added +4; final version is module-style via trailing `export {}` and contributes ZERO new errors (grouped counts match the true measured baseline exactly). Isolated per-file check of consolePanelMain.ts passes clean.
-
-Aggregate — `npm test` (not required by task, run for confidence):
-```
- Test Files  114 passed | 1 skipped (115)
-      Tests  1679 passed | 2 skipped (1681)
-```
-
-Status: PASS
-Note:
-- Consumes TASK-001's contract behaviorally: webview entries cannot import across the tsconfig.webview rootDir (TS6059 house rule documented in main.ts), so consolePanelMain.ts mirrors the two `ConsoleToHostMessage` shapes structurally exactly like every other entry; the wire payloads are pinned by tests #3/#4/#7 to be exactly `{ type: "runConsole", sql }` / `{ type: "saveConsoleAsSql", sql }`.
-- Whitespace-only editor content is treated as empty (no post) in Run/Save/context-menu paths.
-- `git stash list` shows a pre-existing unrelated stash (`task-007-fix-wip`) that was already there before this task; untouched.
-
----
-
-## Executor Report (fix round 1)
-
-Blocking finding addressed: right-click context menu ignored Escape and stayed open after Cmd/Ctrl+Enter execution (webview/consolePanelMain.ts ~:147).
-
-EXECUTOR_TOOL: claude-code
-EXECUTOR_MODEL: bao-sonnet
-EXECUTOR_SUBAGENT: feature-implementer
-
-Scope kept tight — one implementation file + one test file:
-- `webview/consolePanelMain.ts`: added a document-level capture-phase `keydown` closer (`Escape` → hide, mirroring main.ts's overlay pattern; stopPropagation so the webview host doesn't also process it). Wired `hideContextMenu()` into the Cmd/Ctrl+Enter handler **before** `postRun()`. Click-away close already existed (kept as-is); menu is a singleton via `ensureContextMenu`, now explicitly commented/verified as never stacking.
-- `src/ui/__tests__/consolePanelBundle.test.ts`: added tests #8 (Escape closes open menu; reopen works with exactly one `.vsdb-console-contextmenu` node) and #9 (Ctrl/Cmd+Enter closes menu at execution while still posting runConsole exactly once per keystroke; document-body click closes an open menu without posting; triple right-click yields exactly 1 menu node + 1 context item).
-
-RED_OUTPUT:
-
-```
-npx vitest run src/ui/__tests__/consolePanelBundle.test.ts   (before the fix)
-
- FAIL ... > #8 edge-dismissal: Escape closes the open context menu
-AssertionError: expected false to be true // Object.is equality
- ❯ src/ui/__tests__/consolePanelBundle.test.ts:201
- FAIL ... > #9 edge-dismissal: Cmd/Ctrl+Enter closes the menu at execution; click-away closes it; reopen never stacks duplicates
-AssertionError: expected false to be true // Object.is equality
- ❯ src/ui/__tests__/consolePanelBundle.test.ts:225:25
- Test Files  1 failed (1)
-      Tests  2 failed | 7 passed (9)
-```
-
-Both failures are the exact finding (#8 Escape left menu open; #9 shortcut-run left menu open); all 7 pre-existing tests still passed in RED state.
-
-Verification Output (worktree /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-002-fix):
-
-Command 1 — `npm run compile`:
-```
-  dist/consolePanel.js      3.3kb
-  dist/consolePanel.js.map  8.6kb
-esbuild: build complete
-```
-
-Command 2 — `npx vitest run src/ui/__tests__/consolePanelBundle.test.ts`:
-```
- ✓ src/ui/__tests__/consolePanelBundle.test.ts  (9 tests)
- Test Files  1 passed (1)
-      Tests  9 passed (9)
-```
-All three console suites together (`consolePanelBundle` + `consolePanel` + `consolePanelMessages`): 3 files, 22 tests, all pass.
-
-Command 3 — `npm run typecheck`:
-```
-> vsdb@1.6.8 typecheck
-> tsc --noEmit
-(exit 0, no output = clean)
-```
-
-Command 4 — aggregate `npm test`:
-```
- Test Files  115 passed | 1 skipped (116)
-      Tests  1693 passed | 2 skipped (1695)
-```
-
-Extra gate — per-file webview tsc (`tsc --noEmit -p tsconfig.webview.json`): `consolePanelMain.ts` contributes ZERO errors after the edit (grep across all 38 reported errors matches 0 of that file; remaining errors are the documented pre-existing script-style baselines in untouched entries).
-
-Status: PASS
-
-Note:
-- Env: fresh worktree had no node_modules (same trap TASK-003's executor hit); symlinked parent repo's node_modules in — code untouched by this.
-- Click-away needed no code (already present); it is now pinned by test #9 against regressions.
-- No git add/commit/push performed, per instructions.
-
-
-## Reviewer Verdict (round 2)
-VERDICT: approved
-REVIEWER_MODEL: bao-opus
-EXECUTOR_MODEL: bao-sonnet
-VERIFICATION_RERUN: PASS
-FINDINGS:
-  critical: none
-  important: none
-  minor: none
-NEXT_STATUS_FOR_INDEX: done
+<!-- Phase 3 executor appends `## Executor Report` BELOW this separator. -->
+<!-- Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->

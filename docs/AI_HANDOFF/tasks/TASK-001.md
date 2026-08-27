@@ -1,114 +1,90 @@
-# TASK-001 — Define Console webview protocol and save filename helper
+# TASK-001 — Message contract: thought + regenerate (host side)
 
 - Status: `ready`
 - Owner: `-`
 - Reviewer: `-`
-- Parent plan: `docs/AI_HANDOFF/PLAN.md` §3.1
+- Parent plan: `docs/AI_HANDOFF/PLAN.md` §2.1, §3, §4, §7
 
 ## Goal
 
-Create the pure Console host/webview message contract and deterministic SQL save-name helper. This gives the webview and host a small, validated interface without importing VS Code APIs.
+Extend the host↔webview message protocol with `thought` (host→webview, live agent reasoning) and
+`regenerate` (webview→host). Make the host forward `agent_thought_chunk`s live (replacing the deliberate
+drop at src/ui/aiChatPanel.ts:1022-1027) and implement Regenerate by popping the trailing
+`[user, assistant]` history pair and re-running the normal send path.
 
 ## Target Files
 
-- `src/ui/consolePanelMessages.ts` (new) — define Console-to-host message types, a runtime message guard, and `suggestSaveFileName(date: Date): string`.
-- `src/ui/__tests__/consolePanelMessages.test.ts` (new) — TDD unit coverage for the protocol guard and filename helper.
+- `src/ui/aiChatPanelMessages.ts` — add `AiChatPanelThought { type: "thought"; text: string }` to
+  `AiChatPanelHostMessage`; add `AiChatPanelRegenerate { type: "regenerate" }` to
+  `AiChatPanelWebviewMessage`.
+- `src/ui/aiChatPanel.ts` — (a) in `handleAcpNotification`: branch `sessionUpdate === "agent_thought_chunk"`
+  → read `update.chunk` (string, non-empty) and `this.post({ type: "thought", text: chunk })`; thoughts
+  NEVER touch `session.buffer` or `this.history`; same `token?.aborted` + `turnSettled` gates as deltas.
+  (b) new `handleRegenerate()`: ignore when `this.token !== null` (turn in flight); ignore when
+  `history.length < 2`; pop trailing pair only when `history[last].role === "assistant"` and
+  `history[last-1].role === "user"`; then `await this.handleSend(lastUser.content)` (string cast via
+  typeof guard). Wire `case "regenerate"` into `handleMessage`.
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Type | Test Name | Expected | Pre-state / Fixture |
-|---|------|-----------|----------|---------------------|
-| 1 | happy | validates run message | `isConsoleToHostMessage({ type: "runConsole", sql: "SELECT 1" })` is `true` and narrows to the declared run-message shape. | Valid run payload. |
-| 2 | happy | formats deterministic SQL filename | `suggestSaveFileName(new Date(2026, 0, 2, 3, 4, 5))` returns `console_20260102_030405.sql`. | Fixed local Date. |
-| 3 | edge-malformed | rejects untrusted webview payloads | `null`, `{ type: "runConsole" }`, `{ type: "runConsole", sql: 1 }`, and `{ type: "unknown", sql: "SELECT 1" }` all return `false`. | Invalid postMessage values. |
-| 4 | edge-boundary | zero-pads month/day/time fields | A single-digit month, day, hour, minute, and second produce two-digit fields in `console_20260102_030405.sql`. | Fixed Date at 2026-01-02 03:04:05. |
+| # | Type | Test name | Expected | Pre-state / Fixture |
+|---|------|----------|----------|---------------------|
+| 1 | unit | thought shape joins host union, regenerate joins webview union | Both fixtures assignable to their unions; `JSON.stringify` contains no apiKey-shaped field | `AiChatPanelThought`/`AiChatPanelRegenerate` fixtures |
+| 2 | unit | host forwards live thought chunk | Feed `feedAgentThoughtChunk(transport, "thinking hard")` mid-turn → exactly one posted message `{type:"thought", text:"thinking hard"}`; `session.buffer` unchanged | ACP panel mid-turn (pattern: aiChatPanelAcp.test.ts #1) |
+| 3 | edge (malformed) | thought chunk missing/empty `chunk` field | `{sessionUpdate:"agent_thought_chunk"}` and `{..., chunk: ""}` → no post, no throw | crafted update objects |
+| 4 | edge (late frame) | thought after turn settled | Post `done` first, then thought chunk → message dropped silently (no post) | turnSettled panel |
+| 5 | edge (invariant) | thought never enters history/buffer | After a turn with 3 thought chunks + final assistant text, `panel.history` contains only user+assistant; buffer === final text | mid-turn thought feed |
+| 6 | edge (concurrency) | regenerate while turn in flight | send → (mid-turn) regenerate → no second `session/prompt`; webview receives no duplicate turn | in-flight token |
+| 7 | edge (empty) | regenerate with empty history | `history = []` → handleRegenerate no-op, no crash, no posts | fresh panel |
+| 8 | happy | regenerate reruns last user message | Completed turn ("q1"→"a1"), then regenerate → `session/prompt` re-sent with "q1"; history ends exactly `[...prev, user(q1), assistant(...)]` — no duplicate pair | completed ACP turn |
+| 9 | edge (state) | regenerate skipped when trailing entry is not a pair | history `[user]` only (stopped turn) → no-op | crafted history |
+| 10 | regression | thought forwarding does not break delta/permission routing | Re-run of acp #1 assertions: agent_message_chunk still → delta; permission still → 1 request; unknown kinds still ignored | existing acp suite |
 
 ## Test Files
 
-- `src/ui/__tests__/consolePanelMessages.test.ts` (new) — contains all protocol and filename-helper cases above.
+- `src/ui/__tests__/aiChatPanelMessages.test.ts` — extend: #1 union membership + no-secret assertions.
+- `src/ui/__tests__/aiChatPanelAcp.test.ts` — extend: #2-#5, #8-#10 (FakeAcpTransport harness exists;
+  reuse `feedAgentThoughtChunk`, panel assertion pattern from existing #1 test).
 
 ## Verification Commands
 
 ```bash
-npx vitest run src/ui/__tests__/consolePanelMessages.test.ts
+npx vitest run src/ui/__tests__/aiChatPanelMessages.test.ts src/ui/__tests__/aiChatPanelAcp.test.ts
 npm run typecheck
 ```
 
 `package.json` defines no lint script; `npm run typecheck` is this task's required static gate.
+(Test selection: `.cache/index/tests-map.json` `sourceFile: src/ui/aiChatPanel.ts` → the 6 chat suites;
+narrowed to the 2 touched contracts above. Full `npm test` at wave boundary is the regression net.)
 
 ## Acceptance Criteria
 
-- [ ] `ConsoleToHostMessage` permits only `{ type: "runConsole"; sql: string }` and `{ type: "saveConsoleAsSql"; sql: string }`.
-- [ ] The runtime guard rejects malformed or unknown postMessage data before host routing.
-- [ ] `suggestSaveFileName` returns a zero-padded `.sql` filename for a supplied Date.
-- [ ] The targeted Vitest test and `npm run typecheck` pass.
-- [ ] Reviewer verdict is APPROVED or APPROVED-WITH-MINOR.
+- [ ] Every test in §Test Cases passes; RED first for #2 (thought currently dropped) before implementing.
+- [ ] `npm run typecheck` exits 0.
+- [ ] No thought text reachable from `this.history`, `session.buffer`, or `deriveHistoryFromReplay` output.
+- [ ] Regenerate never fires concurrently with an in-flight turn and never duplicates a history pair.
+- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
 
 ## Dependencies
 
-- none
+- (none)
 
 ## Interfaces
 
-- Consumes: (none)
-- Produces: `export type ConsoleToHostMessage = { type: "runConsole"; sql: string } | { type: "saveConsoleAsSql"; sql: string }`; `export function isConsoleToHostMessage(value: unknown): value is ConsoleToHostMessage`; `export function suggestSaveFileName(date: Date): string`.
+- Consumes: (none) — extends existing union types in place.
+- Produces: `AiChatPanelThought { type: "thought"; text: string }` on
+  `AiChatPanelHostMessage`; `AiChatPanelRegenerate { type: "regenerate" }` on
+  `AiChatPanelWebviewMessage`; host behavior: `thought` posts during a live turn only, `regenerate`
+  accepted any time (host decides validity). TASK-002 consumes both shapes; TASK-004 depends on
+  `handleSend`/`buildMessages` being the ONLY turn entry points (regenerate reuses them).
 
 ---
 
 ## Discussion
 
-### 2026-08-27 · planner · bao-opus
-The Date argument is deliberately required rather than defaulted: the save host supplies `new Date()` and tests remain deterministic. The protocol has no persistence, ready, copy, or busy messages because those are outside the resolved Console scope.
+(no comments yet)
 
 ---
 
-## Executor Report
-
-EXECUTOR_TOOL: claude-code
-EXECUTOR_MODEL: bao-sonnet
-EXECUTOR_SUBAGENT: feature-implementer
-RED_OUTPUT: |
-  RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-001
-
-   ❯ src/ui/__tests__/consolePanelMessages.test.ts  (0 test)
-
-  ⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
-
-   FAIL  src/ui/__tests__/consolePanelMessages.test.ts [ src/ui/__tests__/consolePanelMessages.test.ts ]
-  Error: Failed to load url ../consolePanelMessages (resolved id: ../consolePanelMessages) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-001/src/ui/__tests__/consolePanelMessages.test.ts. Does the file exist?
-   ❯ loadAndTransform ../../node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17
-
-  ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
-
-   Test Files  1 failed (1)
-        Tests  no tests
-Verification Output: |
-  Command 1: npx vitest run src/ui/__tests__/consolePanelMessages.test.ts
-
-   RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-001
-
-   ✓ src/ui/__tests__/consolePanelMessages.test.ts  (6 tests) 1ms
-
-   Test Files  1 passed (1)
-        Tests  6 passed (6)
-
-  Command 2: npm run typecheck
-
-  > vsdb@1.6.8 typecheck
-  > tsc --noEmit
-
-  (exit code 0, no errors)
-Status: PASS
-Note: One interim test failure was in my own test code, not the implementation — test #4's substring probes (`_01`, `slice(-11, -4)`) were mis-indexed against the full timestamp string; replaced with per-field regex capture groups (\d{2} each), all green after. Implementation never changed for this.
-
-
-## Reviewer Verdict
-VERDICT: approved_minor
-REVIEWER_MODEL: bao-opus
-EXECUTOR_MODEL: bao-sonnet
-VERIFICATION_RERUN: PASS
-FINDINGS:
-  critical: none
-  important: none
-  minor: src/ui/__tests__/consolePanelMessages.test.ts:1 — the 13-line file preamble and repeated assertion narration duplicate the task/plan rather than documenting non-obvious behavior; remove task-history prose and keep only concise test names or comments needed to explain behavior.
-NEXT_STATUS_FOR_INDEX: done
+<!-- Phase 3 executor appends `## Executor Report` BELOW this separator. -->
+<!-- Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
