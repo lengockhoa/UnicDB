@@ -489,7 +489,7 @@ describe("AiChatPanelWebview — de-stream on done/error (regression F4)", () =>
     );
     expect(allAfter2).toHaveLength(2);
     expect(allAfter2[0]?.textContent).toBe("x");
-    expect(allAfter2[1]?.textContent).toBe("y");
+    expect(allAfter2[1]?.textContent).toBe("y\u258D"); // caret glyph while streaming (TASK-002)
   });
 
   it('#7b error de-streams: error path also removes the streaming class', () => {
