@@ -108,7 +108,7 @@ EXECUTOR_SUBAGENT: -
 
 ```
 ❯ src/ui/__tests__/schemaTree.test.ts  (61 tests | 7 failed) 32ms
-  ❯ SchemaTreeProvider — DataGrip-style root behavior > connection node collapsible=Collapsed (TASK-010/D3 — không mở socket ở activation)
+  ❯ SchemaTreeProvider — DataGrip-style root behavior > connection node collapsible=Collapsed (TASK-010/D3 — does not open a socket on activation)
     → expected 2 to be 1 // Object.is equality
   ❯ SchemaTreeProvider — TASK-010 D2 batch row-count + D3 collapsed connections > expand a 3-table schema → estimateTableRowsBatch called ONCE with (schema, tables); descriptions updated (happy)
     → expected "spy" to be called 1 times, but got 0 times

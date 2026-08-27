@@ -1,4 +1,4 @@
-# TASK-005 — Cmd+Enter cursor-mode: lock hành vi + gap-rule fix
+# TASK-005 — Cmd+Enter cursor-mode: lock the behaviour + fix the gap rule
 
 - Status: `ready`
 - Owner: `-`
@@ -7,36 +7,36 @@
 
 ## Goal
 
-User report: Cmd+Enter trong file SQL phải chạy CẢ statement/block chứa con trỏ (đến hết statement đó), không chạy statement lạ. Orchestrator probe `src/core/statementParser.ts` 17 case — không reproduce; deviation candidate theo code-read: gap-fallback của `statementAtCursor` trả statement CUỐI khi cursor nằm giữa 2 statement. Task: lock cursor-mode bằng regression tests, audit handler + CodeLens path, fix deviation.
+User report: Cmd+Enter inside an SQL file must run the WHOLE statement/block containing the cursor (up to the end of that statement), never a different statement. The orchestrator's probe of `src/core/statementParser.ts` across 17 cases did NOT reproduce the issue; per code-read the deviation candidate is that `statementAtCursor`'s gap-fallback returns the LAST statement when the cursor sits between two statements. Task: lock cursor-mode via regression tests, audit the handler + CodeLens path, fix the deviation.
 
 ## Target Files
 
 - `src/core/__tests__/statementParser.test.ts` — append describe "cursor-mode regression lock (cycle R)".
-- `src/core/statementParser.ts` — fix `statementAtCursor` gap-fallback (CHỈ khi test #2 RED xác nhận deviation).
+- `src/core/statementParser.ts` — fix the `statementAtCursor` gap-fallback (ONLY if test #2 RED confirms the deviation).
 - `src/extension.test.ts` — append describe "runQueryFromEditor cursor mode" (#9).
-- `src/ui/__tests__/codeLensProvider.test.ts` — append 1 test khóa lens range (#8).
+- `src/ui/__tests__/codeLensProvider.test.ts` — append 1 test locking the lens range (#8).
 
-## Spec — audit checklist (executor đi từng mục, ghi kết quả vào Executor Report)
+## Spec — audit checklist (executor walks each item, records the result in the Executor Report)
 
-Parser invariants cần lock (`sqlToRun(sql, undefined, offset)`):
-1. Cursor giữa statement → CHÍNH statement đó (full text từ đầu statement đến `;`, KHÔNG cắt từ offset).
-2. Gap giữa stmt1/stmt2 (offset trong whitespace) → **gap rule mới**: statement gần nhất TRƯỚC cursor. Code hiện tại (statementParser.ts:482-500): vòng for không match gap offset → fallback `stmts[stmts.length-1]` = stmt cuối file — sai user intent.
-3. EOF không `;` → statement cuối, full.
-4. BEGIN…END block → cả block.
-5. Offset trước stmt đầu (leading comment/whitespace) → stmt ĐẦU (rule mới; cũ = stmt cuối).
-6. Comment-only gap (`-- note` giữa 2 stmt) → statement trước.
-7. Double `;;` → statement trước `;;` (empty stmt bị bỏ).
-8. CRLF: offset sau `\r\n` giữa 2 stmt → statement trước; ranges không lệch.
+Parser invariants to lock (`sqlToRun(sql, undefined, offset)`):
+1. Cursor mid-statement → EXACTLY that statement (full text from the start of the statement to `;`, NOT truncated from the offset).
+2. Gap between stmt1/stmt2 (offset inside whitespace) → **new gap rule**: the nearest statement BEFORE the cursor. Current code (statementParser.ts:482-500): the for loop does not match a gap offset → falls back to `stmts[stmts.length-1]` = the last statement in the file — wrong vs user intent.
+3. EOF without `;` → the last statement, kept whole.
+4. BEGIN…END block → the whole block.
+5. Offset before the first stmt (leading comment/whitespace) → the FIRST stmt (new rule; the old behaviour returned the last stmt).
+6. Comment-only gap (`-- note` between 2 stmts) → the statement BEFORE the cursor.
+7. Double `;;` → the statement BEFORE the `;;` (empty stmts discarded).
+8. CRLF: offset after `\r\n` between 2 stmts → statement BEFORE cursor; ranges do not drift.
 
 Handler audit (src/extension.ts:405-441 `runQueryFromEditor`):
-- `selection.isEmpty` → `sel = undefined` → cursor mode (xác nhận đúng).
-- `document.offsetAt(selection.active)` — offset tuyệt đối multi-line OK.
-- `runStatements` chỉ chạy statements từ sqlToRun (đọc body confirm không accidentally cả file).
+- `selection.isEmpty` → `sel = undefined` → cursor mode (confirmed correct).
+- `document.offsetAt(selection.active)` — absolute multi-line offset is correct.
+- `runStatements` only runs the statements returned by sqlToRun (read the body to confirm it does not accidentally run the whole file).
 
-CodeLens path: `vsdb.runStatement` (extension.ts:129-134) nhận stmt từ lens argument — confirm không path nào cắt theo cursor.
+CodeLens path: `vsdb.runStatement` (extension.ts:129-134) receives the stmt from the lens argument — confirm that no path truncates by cursor.
 
 ```ts
-// src/core/statementParser.ts — fix (chỉ khi #2 RED):
+// src/core/statementParser.ts — fix (only if #2 is RED):
 export function statementAtCursor(sql: string, offset: number): ParsedStatement | null {
   const stmts = splitStatements(sql);
   if (stmts.length === 0) return null;
@@ -44,9 +44,9 @@ export function statementAtCursor(sql: string, offset: number): ParsedStatement 
   for (const s of stmts) {
     if (clamped >= s.start && clamped < s.end) return s;
   }
-  // Gap: statement gần nhất TRƯỚC cursor (user intent "chạy statement
-  // chứa con trỏ"); trước stmt đầu → stmt đầu. Rule cũ trả stmt cuối —
-  // sai khi cursor giữa 2 statement.
+  // Gap: nearest statement BEFORE the cursor (user intent "run the statement
+  // containing the cursor"); before the first stmt → the first stmt. Old rule returned the last stmt —
+  // wrong when the cursor sits between two statements.
   let best: ParsedStatement | null = null;
   for (const s of stmts) {
     if (s.end <= clamped) best = s;
@@ -58,17 +58,17 @@ export function statementAtCursor(sql: string, offset: number): ParsedStatement 
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
-| 1 | regression-lock | cursor giữa stmt multi-line → nguyên stmt | statements.length===1; text chứa từ `SELECT` đến `;` của stmt 1 (không bắt đầu ở offset) | sql 2 stmts, cursor giữa dòng 2 của stmt 1 |
-| 2 | regression | gap giữa 2 stmt → stmt TRƯỚC (deviation candidate) | RED trên code hiện tại (trả stmt cuối); GREEN: statements[0].text === stmt1 full text | `SELECT 1;\n\nSELECT 2;`, offset trong `\n\n` |
-| 3 | regression-lock | EOF không `;` → stmt cuối full | statements[0].text khớp stmt cuối, không cắt | `SELECT 1;\nSELECT 2`, cursor cuối |
-| 4 | regression-lock | BEGIN…END cursor giữa → cả block | statements[0].text chứa `BEGIN`…`END;` | block + stmt sau |
-| 5 | edge | offset < stmt đầu (leading comment) | stmt ĐẦU (behavior change có chủ đích — ghi rõ trong test name) | `-- header\nSELECT 1;`, cursor trên comment |
-| 6 | regression | selection mode KHÔNG đổi | các test selection hiện có vẫn pass (append guard test: `sqlToRun(sql,{start,end},0)` trả statements trong vùng) | chọn vùng stmt 2 |
-| 7 | edge | CRLF document | cursor sau `\r\n` gap → stmt trước; range khớp text | sql với `\r\n` |
-| 8 | regression-lock | CodeLens range = statement bounds | mỗi lens range start/end === positionAt(stmt.start/end) | codeLensProvider pattern hiện có |
-| 9 | regression | handler chạy đúng statement cursor | `vsdb.runQuery` với fake activeTextEditor cursor giữa stmt 1 của 2 → runner.runQuery gọi 1 lần với SQL stmt 1 | vi.mock pattern src/extension.test.ts |
+| 1 | regression-lock | cursor mid multi-line stmt → whole stmt | statements.length===1; text contains from `SELECT` to `;` of stmt 1 (does NOT start at the offset) | sql with 2 stmts, cursor on line 2 of stmt 1 |
+| 2 | regression | gap between 2 stmts → stmt BEFORE cursor (deviation candidate) | RED on current code (returns the last stmt); GREEN: statements[0].text === stmt1 full text | `SELECT 1;\n\nSELECT 2;`, offset inside the `\n\n` |
+| 3 | regression-lock | EOF without `;` → last stmt whole | statements[0].text matches the last stmt, not truncated | `SELECT 1;\nSELECT 2`, cursor at end |
+| 4 | regression-lock | BEGIN…END cursor mid-block → whole block | statements[0].text contains `BEGIN`…`END;` | block + stmt after |
+| 5 | edge | offset < first stmt (leading comment) | returns the FIRST stmt (intentional behaviour change — make that explicit in the test name) | `-- header\nSELECT 1;`, cursor on the comment |
+| 6 | regression | selection mode is UNCHANGED | existing selection tests still pass (append a guard test: `sqlToRun(sql,{start,end},0)` returns statements inside the range) | select stmt 2 range |
+| 7 | edge | CRLF document | cursor after the `\r\n` gap → stmt BEFORE cursor; range matches the text | sql with `\r\n` |
+| 8 | regression-lock | CodeLens range = statement bounds | every lens range start/end === positionAt(stmt.start/end) | existing codeLensProvider pattern |
+| 9 | regression | handler runs the correct cursor statement | `vsdb.runQuery` with a fake activeTextEditor cursor between stmt 1 of 2 → runner.runQuery called once with stmt 1's SQL | vi.mock pattern from src/extension.test.ts |
 
 ## Test Files
 
@@ -85,11 +85,11 @@ npx tsc --noEmit
 
 ## Acceptance Criteria
 
-- [ ] Mọi test §Test Cases PASS; #2 RED trên code hiện tại → GREEN sau fix (hoặc Executor Report chứng minh deviation không tái hiện với evidence từng mục audit).
-- [ ] Audit checklist từng mục có kết luận trong Executor Report.
-- [ ] Hành vi cursor-mode khóa: gap→stmt trước, EOF→stmt cuối, block→cả block, trước stmt đầu→stmt đầu.
-- [ ] Selection mode + toàn bộ test cũ statementParser không vỡ.
-- [ ] Reviewer verdict APPROVED hoặc APPROVED-WITH-MINOR.
+- [ ] All tests in §Test Cases PASS; #2 RED on the current code → GREEN after the fix (or the Executor Report proves the deviation cannot be reproduced, with evidence per audit item).
+- [ ] Every item in the audit checklist has a conclusion recorded in the Executor Report.
+- [ ] Cursor-mode behaviour locked: gap→stmt BEFORE cursor, EOF→last stmt, block→whole block, before first stmt→first stmt.
+- [ ] Selection mode + every existing statementParser test stays green.
+- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
 
 ## Dependencies
 
@@ -97,67 +97,67 @@ npx tsc --noEmit
 
 ## Interfaces
 
-- Consumes: `sqlToRun(sql: string, selection: {start:number;end:number}|undefined, cursorOffset: number): { statements: ParsedStatement[]; mode: "selection"|"cursor" }`; `statementAtCursor(sql: string, offset: number): ParsedStatement | null`; `splitStatements(sql: string): ParsedStatement[]` — signatures KHÔNG đổi.
-- Produces: gap-rule contract mới của `statementAtCursor` (statement gần nhất TRƯỚC cursor trong gap; stmt đầu khi trước stmt đầu) — locked bởi #2/#5/#7. Caller duy nhất (extension.ts:435) hưởng behavior đúng, không signature change.
+- Consumes: `sqlToRun(sql: string, selection: {start:number;end:number}|undefined, cursorOffset: number): { statements: ParsedStatement[]; mode: "selection"|"cursor" }`; `statementAtCursor(sql: string, offset: number): ParsedStatement | null`; `splitStatements(sql: string): ParsedStatement[]` — signatures are UNCHANGED.
+- Produces: new gap-rule contract of `statementAtCursor` (nearest statement BEFORE the cursor when in a gap; the first stmt when before the first stmt) — locked by #2/#5/#7. The sole caller (extension.ts:435) gets the correct behaviour with no signature change.
 
 ---
 
 ## Discussion
 
 ### 2026-08-24 · planner · unic/unic-smart
-→ @executor: nếu mọi source đúng sau audit (không RED), kết luận "deviation không reproduce ở HEAD; khả năng build 1.6.1 cũ" trong Executor Report + vẫn giữ các lock tests. #5 là behavior change có chủ đích — nếu reviewer thấy break use case thật, đổi expected + ghi lý do ở đây.
+→ @executor: if the audit finds every source correct (no RED), conclude "deviation does NOT reproduce at HEAD; possibly an older 1.6.1 build" in the Executor Report and still keep the lock tests. #5 is an intentional behaviour change — if a reviewer finds it breaks a real use case, update the expectation + record the reason here.
 
 ---
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report. -->
+Phase 3 executor append `## Executor Report` BELOW this separator.
+Phase 4 reviewer append `## Reviewer Verdict` BELOW Executor Report. -->
 ## Executor Report
 
 STATUS: DONE
 EXECUTOR_TOOL: claude-code
 EXECUTOR_MODEL: unic/unic-code
 EXECUTOR_SUBAGENT: Exec-T5
-SUMMARY: Locked cursor-mode invariants qua 7 tests mới (statementParser #1-#7), 1 test CodeLens lock (#8), 1 test handler cursor-mode (#9). TDD RED→GREEN: deviation #2 (gap fallback trả stmt cuối) confirmed RED trên code cũ — sau đó thay gap-fallback của `statementAtCursor` bằng rule "stmt gần nhất TRƯỚC cursor, fallback stmts[0] khi trước stmt đầu" → all 104 tests pass.
+SUMMARY: Locked cursor-mode invariants via 7 new tests (statementParser #1-#7), 1 CodeLens lock test (#8), 1 handler cursor-mode test (#9). TDD RED→GREEN: deviation #2 (gap fallback returning the last stmt) was confirmed RED on the old code — then the gap-fallback of `statementAtCursor` was replaced with the rule "nearest stmt BEFORE cursor, fall back to stmts[0] when before the first stmt" → all 104 tests pass.
 
 ### Audit checklist (theo spec)
 
 Parser invariants (sqlToRun cursor-mode):
-1. Cursor giữa stmt → stmt chứa nó. PASS: `for` loop match `clamped >= s.start && clamped < s.end` trả về stmt nguyên (test #1: `SELECT 1,\n       2;` cursor 12 → stmt đầy đủ từ offset 0 đến `;`).
-2. Gap giữa 2 stmt → stmt TRƯỚC. **DEVIATION CONFIRMED RED → FIXED** (test #2). Code cũ `stmts[stmts.length-1]` sai khi cursor giữa 2 stmt. Code mới loop `s.end <= clamped` → last stmt trước cursor; fallback `stmts[0]` khi trước stmt đầu.
-3. EOF không `;` → stmt cuối full. PASS (test #3: `SELECT 2` đầy đủ).
-4. BEGIN…END cursor giữa → cả block. PASS (test #4: block `[0,33)` cursor 10 trả về nguyên block).
-5. Offset trước stmt đầu → stmt ĐẦU. **DEVIATION-CONFIRMED RED → FIXED** (test #5: `"\n  SELECT 1;\nSELECT 2;"` offset 0 → stmt đầu). Code cũ fallback `stmts[last]` = "SELECT 2". Code mới `stmts[0]`.
-6. Comment-only gap. PASS (impl: nhảy qua gap bằng cùng loop "stmt trước cursor"; test #6 đảm bảo selection mode vẫn hoạt động độc lập).
-7. Double `;;` → stmt trước. PASS: `splitStatements` filter empty stmt (line 354 `candidateEnd > candidateStart`), double `;;` rỗng bị bỏ; gap ở `;;` được xử lý qua Trường hợp 2.
-8. CRLF. PASS (test #7: `"SELECT 1;\r\n\r\nSELECT 2;"` offset 10 trong gap `\r\n\r\n` → `SELECT 1`; range không lệch).
+1. Cursor mid-stmt → the stmt containing it. PASS: the `for` loop matches `clamped >= s.start && clamped < s.end` returning the stmt whole (test #1: `SELECT 1,\n       2;` cursor at 12 → the stmt complete from offset 0 to `;`).
+2. Gap between 2 stmts → stmt BEFORE cursor. **DEVIATION CONFIRMED RED → FIXED** (test #2). Old code `stmts[stmts.length-1]` was wrong when the cursor sat between 2 stmts. New code loops with `s.end <= clamped` → the last stmt before the cursor; falls back to `stmts[0]` when before the first stmt.
+3. EOF without `;` → last stmt whole. PASS (test #3: `SELECT 2` kept whole).
+4. BEGIN…END cursor mid-block → the whole block. PASS (test #4: block `[0,33)` cursor at 10 returns the block whole).
+5. Offset before first stmt → FIRST stmt. **DEVIATION CONFIRMED RED → FIXED** (test #5: `"\n  SELECT 1;\nSELECT 2;"` offset 0 → the first stmt). Old code's `stmts[last]` fallback returned "SELECT 2". New code returns `stmts[0]`.
+6. Comment-only gap. PASS (impl: the same "stmt before cursor" loop skips the gap; test #6 confirms selection mode still works independently).
+7. Double `;;` → stmt before the `;;`. PASS: `splitStatements` filters empty stmts (line 354 `candidateEnd > candidateStart`); the empty double `;;` is dropped; the gap at `;;` is handled via Case 2.
+8. CRLF. PASS (test #7: `"SELECT 1;\r\n\r\nSELECT 2;"` offset 10 inside the `\r\n\r\n` gap → `SELECT 1`; range does not drift).
 
 Handler audit (`src/extension.ts` `runQueryFromEditor` lines 405-441):
 - `selection.isEmpty` true → `sel = undefined` → cursor mode (line 429-434). CONFIRMED.
-- `document.offsetAt(selection.active)` cho multi-line offset tuyệt đối (line 428). CONFIRMED.
-- `runStatements` chỉ chạy statements từ sqlToRun (line 440). CONFIRMED — `runner.run(rewritten, ...)` lấy chính xác `statements` từ `sqlToRun(sql, sel, cursorOffset)`.
+- `document.offsetAt(selection.active)` yields an absolute multi-line offset (line 428). CONFIRMED.
+- `runStatements` only runs the statements returned by sqlToRun (line 440). CONFIRMED — `runner.run(rewritten, ...)` takes exactly the `statements` from `sqlToRun(sql, sel, cursorOffset)`.
 
 CodeLens path (`vsdb.runStatement`, `extension.ts:129-134`):
-- Nhận `stmt: ParsedStatement` từ lens argument (closure gọi `runStatement(mgr, runner, panel, stmt)`).
-- CodeLensProvider (`codeLensProvider.ts:67-77`) build range = `document.positionAt(stmt.start/end)` → không cắt theo cursor; test #8 của cycle R lock invariant range.start/end === positionAt(stmt.start/end).
-- `runStatement` (line 444-455) gọi `runStatements(..., [stmt])` — chỉ 1 stmt, không chạy cả file.
+- Receives `stmt: ParsedStatement` from the lens argument (the closure calls `runStatement(mgr, runner, panel, stmt)`).
+- CodeLensProvider (`codeLensProvider.ts:67-77`) builds range = `document.positionAt(stmt.start/end)` → does NOT truncate by cursor; cycle-R test #8 locks the invariant range.start/end === positionAt(stmt.start/end).
+- `runStatement` (line 444-455) calls `runStatements(..., [stmt])` — exactly 1 stmt, does not run the whole file.
 
 ### Test Plan Followed
 
-task §4 (Test Plan table #1-#9) — từng mục implemented theo fixture spec. RED confirmed cho #2/#5/#7 (gap deviation trên cả LF và CRLF) trước fix; GREEN sau fix `statementAtCursor`. #1/#3/#4/#6 pass trên code cũ (chỉ lock invariant). #8/#9 pass sau impl.
+task §4 (Test Plan table #1-#9) — every item implemented per the fixture spec. RED confirmed for #2/#5/#7 (the gap deviation on both LF and CRLF) before the fix; GREEN after the `statementAtCursor` fix. #1/#3/#4/#6 already passed on the old code (only locking the invariant). #8/#9 passed after the implementation.
 
 ### Files Changed
 
-- `src/core/statementParser.ts`: thay đoạn `statementAtCursor` (lines 477-509 sau sửa) — thêm Trường hợp 2 (gap fallback) thay cho `return stmts[stmts.length - 1]`; docblock cập nhật mô tả rule mới + nguồn TASK-005.
-- `src/core/__tests__/statementParser.test.ts`: append describe `"statementParser — cursor-mode regression lock (cycle R)"` với 7 test (test #1-#7).
+- `src/core/statementParser.ts`: replaced the body of `statementAtCursor` (lines 477-509 after the edit) — added Case 2 (gap fallback) replacing `return stmts[stmts.length - 1]`; docblock updated to describe the new rule + cite TASK-005.
+- `src/core/__tests__/statementParser.test.ts`: appended the describe `"statementParser — cursor-mode regression lock (cycle R)"` with 7 tests (test #1-#7).
 - `src/ui/__tests__/codeLensProvider.test.ts`: append test #8 lock invariant `range === positionAt(stmt.start/end)`.
-- `src/extension.test.ts`: append describe `"TASK-005 — runQueryFromEditor cursor mode"` với test #9 — fake active editor với 2 stmt + cursor offset 3 (giữa stmt 1) → verify `runner.run` được gọi với đúng `statements = [SELECT 1]`.
+- `src/extension.test.ts`: appended the describe `"TASK-005 — runQueryFromEditor cursor mode"` containing test #9 — fake active editor with 2 stmts + cursor offset 3 (mid stmt 1) → verify `runner.run` is called with exactly `statements = [SELECT 1]`.
 
 ### Tests Added
 
-- `src/core/__tests__/statementParser.test.ts` describe "cursor-mode regression lock (cycle R)": `#1 cursor giữa multi-line stmt`; `#2 gap giữa 2 stmt → stmt TRƯỚC`; `#3 EOF không ; → stmt cuối full`; `#4 cursor giữa BEGIN...END → cả block`; `#5 offset trước stmt đầu → stmt ĐẦU`; `#6 selection mode KHÔNG đổi`; `#7 CRLF gap → stmt trước`.
-- `src/ui/__tests__/codeLensProvider.test.ts`: `#8 lens range = positionAt(stmt.start/end); không lệch ký tự`.
-- `src/extension.test.ts`: describe `TASK-005 — runQueryFromEditor cursor mode`: `#9 cursor giữa stmt 1 của 2 statement → runner.runQuery chạy đúng 1 stmt đầu`.
+- `src/core/__tests__/statementParser.test.ts` describe "cursor-mode regression lock (cycle R)": `#1 cursor mid multi-line stmt`; `#2 gap between 2 stmts → stmt BEFORE cursor`; `#3 EOF without ; → last stmt whole`; `#4 cursor mid BEGIN...END → whole block`; `#5 offset before first stmt → FIRST stmt`; `#6 selection mode UNCHANGED`; `#7 CRLF gap → stmt before cursor`.
+- `src/ui/__tests__/codeLensProvider.test.ts`: `#8 lens range = positionAt(stmt.start/end); does not drift by a single character`.
+- `src/extension.test.ts`: describe `TASK-005 — runQueryFromEditor cursor mode`: `#9 cursor mid stmt 1 of 2 statements → runner.runQuery runs exactly the first stmt`.
 
 ### Verification
 
@@ -176,13 +176,13 @@ task §4 (Test Plan table #1-#9) — từng mục implemented theo fixture spec.
 
 ### Issues
 
-1. Test #2 RED confirmation trên code cũ (`expected 'SELECT 2' to be 'SELECT 1'`) — deviation gốc của task description confirmed. Sau fix (gap-fallback rule mới) GREEN.
-2. Test #5 cùng nguyên nhân với #2 nhưng scenario khác (offset 0 trước stmt đầu trong leading whitespace) — RED → confirmed rule mới "stmt ĐẦU khi trước stmt đầu".
-3. Worktree không có sẵn `dist/schemaForm.js` (build artifact); test "npm run compile emits dist/schemaForm.js" trong `extension.test.ts > TASK-003 — vsdb.createSchema extension wiring` ban đầu fail trong worktree mới. Build lại bằng `npm run compile` → pass. Đây là setup môi trường, không liên quan TASK-005.
+1. Test #2 RED confirmation on the old code (`expected 'SELECT 2' to be 'SELECT 1'`) — the deviation described in the task is confirmed. After the fix (new gap-fallback rule) it is GREEN.
+2. Test #5 has the same root cause as #2 but a different scenario (offset 0 before the first stmt in leading whitespace) — RED → confirmed the new rule "FIRST stmt when before the first stmt".
+3. The worktree did NOT have `dist/schemaForm.js` available (it is a build artefact); the "npm run compile emits dist/schemaForm.js" test inside `extension.test.ts > TASK-003 — vsdb.createSchema extension wiring` initially failed inside the fresh worktree. Rebuilding via `npm run compile` made it pass. This is environment setup, unrelated to TASK-005.
 
 ### Handoff to Reviewer
 
-yes — Tất cả tests xanh, tsc clean, deviation confirmed + fixed, audit checklist đầy đủ. Reviewer verify ngược: chạy lại `npx vitest run <3 files>` + `npx tsc --noEmit` trong worktree (sau khi build dist nếu cần bundle test).
+yes — all tests green, tsc clean, deviation confirmed + fixed, audit checklist complete. Reviewer independent verification: re-run `npx vitest run <3 files>` + `npx tsc --noEmit` inside the worktree (after building dist if the bundle test is needed).
 
 ### Next
 

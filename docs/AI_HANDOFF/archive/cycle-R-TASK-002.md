@@ -1,4 +1,4 @@
-# TASK-002 — Full-DB context injection vào buildMessages
+# TASK-002 — Full-DB context injection into buildMessages
 
 - Status: `ready`
 - Owner: `-`
@@ -7,78 +7,78 @@
 
 ## Goal
 
-`buildMessages` (src/ui/aiChatPanel.ts:112-142) thay schema-context 30-bảng-public bằng full-DB DDL context: mọi user schema + tables + views, render bằng `buildDatabaseStructure`, budget 12_000 chars cut-at-block-boundary, footer hướng model gọi tool `export_structure`.
+`buildMessages` (src/ui/aiChatPanel.ts:112-142) replaces the 30-public-table schema context with the full-DB DDL context: every user schema + tables + views, rendered via `buildDatabaseStructure`, budget 12_000 chars cut at block boundary, footer points the model at the `export_structure` tool.
 
 ## Target Files
 
-- `src/ui/aiChatPanel.ts` — CHỈ region imports (lines ~37-64) + `buildMessages` (lines ~111-142) + constants `SCHEMA_CONTEXT_BUDGET`/`SCHEMA_CONTEXT_TABLE_LIMIT` (lines 68-69) + 1 dòng register tool trong `runBuiltinTurn` (line ~333). KHÔNG đụng gì khác trong file (TASK-003 owns handleClear/handleSend/handleReady, chạy sau task này).
+- `src/ui/aiChatPanel.ts` — ONLY the imports region (lines ~37-64) + `buildMessages` (lines ~111-142) + constants `SCHEMA_CONTEXT_BUDGET`/`SCHEMA_CONTEXT_TABLE_LIMIT` (lines 68-69) + 1 line registering the tool inside `runBuiltinTurn` (line ~333). Do NOT touch anything else in the file (TASK-003 owns handleClear/handleSend/handleReady, runs after this task).
 - `src/ui/__tests__/aiChatPanel.test.ts` — append describe "buildMessages — full-DB context" (#1, #3, #4, #5).
 - `src/ui/__tests__/aiChatE2e.test.ts` — append describe "E2E full-DB context" (#2, #6).
 
 ## Spec
 
 ```ts
-// src/ui/aiChatPanel.ts — SỬA:
-const SCHEMA_CONTEXT_BUDGET = 12_000; // chars (tăng từ 8000)
-const SCHEMA_CONTEXT_TABLE_LIMIT = 200; // objects (tăng từ 30)
+// src/ui/aiChatPanel.ts — MODIFY:
+const SCHEMA_CONTEXT_BUDGET = 12_000; // chars (up from 8000)
+const SCHEMA_CONTEXT_TABLE_LIMIT = 200; // objects (up from 30)
 
-// buildMessages giữ NGUYÊN signature (caller không đổi):
+// buildMessages keeps the SAME signature (caller is not changed):
 async function buildMessages(
   factory: AdapterFactory,
   history: ChatMessage[],
   userMsg: ChatMessage,
   opts?: { contextBudgetChars?: number; contextTableLimit?: number }, // injectable cho tests (review #2)
 
-// Thân hàm MỚI:
-// 1. adapter = await factory(); null → context = "" (giữ hành vi cũ)
-// 2. Thu thập full-DB (try/catch toàn bộ — introspection fail → context=""):
-//      schemas = await adapter.listSchemas(false)   // bỏ system schemas
-//      tables/views flatten = for mỗi schema: listTables(s.name), listViews(s.name)
-//        — lỗi 1 schema: skip schema đó (try/catch per-schema), tiếp tục
-//      cap tổng objects (tables+views) = SCHEMA_CONTEXT_TABLE_LIMIT: giữ thứ tự
-//        schema→object, dư bị drop + đếm dropped
+// NEW function body:
+// 1. adapter = await factory(); null → context = "" (keep the existing behaviour)
+// 2. Collect full-DB (wrap everything in try/catch — introspection failure → context=""):
+//      schemas = await adapter.listSchemas(false)   // exclude system schemas
+//      tables/views flat list = for each schema: listTables(s.name), listViews(s.name)
+//        — one schema errored: skip that schema (try/catch per schema), continue
+//      cap total objects (tables+views) at SCHEMA_CONTEXT_TABLE_LIMIT: keep order
+//        schema→object, any over cap dropped + counted as dropped
 //      columns: listColumns(name, schema) per object, try/catch per-object
 //        → missing = [] (map sang ExportColumn {name,dataType,nullable,isPrimaryKey})
-//      (listTableDetail KHÔNG dùng nữa; NotImplementedError từ driver ≠ PG
-//       (listSchemas/listColumns mysql-mssql-compatible nhưng DB này dùng
-//       listSchemas-based flow) — mọi throw mức adapter → context="")
+//      (listTableDetail is no longer used; NotImplementedError from a non-PG driver
+//       (listSchemas/listColumns are mysql/mssql-compatible but this DB uses the
+//       listSchemas-based flow) — any adapter-level throw → context="" )
 // 3. ddl = buildDatabaseStructure({schemas, tables, views, columns})
 // 4. Budget: effectiveBudget = opts?.contextBudgetChars ?? SCHEMA_CONTEXT_BUDGET
-//    (MỘT nguồn duy nhất — const production 12_000; tests inject giá trị nhỏ).
-//    ddl.length > effectiveBudget → cắt theo BLOCK boundary
-//    (block = text giữa 2 blank lines — mỗi object là 1 block; tables VÀ views
-//     CHUNG một budget pool theo thứ tự render), giữ blocks đầu cho tới khi
-//    thêm block kế vượt budget; KHÔNG cắt giữa 1 object.
-//    Block ĐẦU vượt budget một mình (table khổng lồ) → vẫn giữ block đầu
-//    (context không rỗng khi DB có object), các block sau drop vào omitted.
-//    Footer (chỉ khi dropped > 0 và footer vừa budget, else bỏ footer):
+//    (ONE single source of truth — production const 12_000; tests inject a small value).
+//    ddl.length > effectiveBudget → cut at the BLOCK boundary
+//    (block = text between 2 blank lines — each object is one block; tables AND views
+//     SHARE one budget pool in render order), keep leading blocks until
+//    adding the next block exceeds the budget; do NOT cut in the middle of an object.
+//    The FIRST block alone exceeding the budget (a giant table) → still keep the first block
+//    (context is never empty when the DB has objects), later blocks dropped and counted as omitted.
+//    Footer (only when dropped > 0 AND the footer itself fits the budget, else omit it):
 //    `\n\n-- (+N more objects omitted — call export_structure for full context)`
-// 5. runBuiltinTurn: sau dòng `registry.register(createSqlTool(...))` THÊM:
+// 5. runBuiltinTurn: after the line `registry.register(createSqlTool(...))` ADD:
 //    registry.register(createExportStructureTool(this.options.adapterFactory));
-//    (import từ "../ai/tools/schemaTools")
+//    (import from "../ai/tools/schemaTools")
 // 6. System prompt: context !== "" →
 //    `You are VSDB's AI assistant. Help the user explore and query their database.\n\nDatabase structure (DDL):\n${context}\n\nYou can call the export_structure tool for the complete structure when truncated.`
-//    context === "" → giữ nguyên prompt cũ (line ~139 hiện tại).
+//    context === "" → keep the existing prompt (current line ~139).
 ```
 
-Import mới: `createExportStructureTool` từ `../ai/tools/schemaTools`; import `formatSchemaContext` XÓA khỏi file này (module src/ai/tools/schemaContext.ts vẫn giữ nguyên — KHÔNG xóa module, các test của nó vẫn pass).
+New import: `createExportStructureTool` from `../ai/tools/schemaTools`; REMOVE the `formatSchemaContext` import from this file (the module `src/ai/tools/schemaContext.ts` is kept intact — do NOT delete the module, its tests still pass).
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
-| 1 | unit | multi-schema PG: context chứa tables mọi schema + views | system message chứa `Database structure (DDL):`, `CREATE TABLE public.users`, `CREATE TABLE sales.deals`, `-- View structure: public.v_users` | fake adapter: listSchemas→[public,sales], listTables/listViews/listColumns mock; assert qua deps.complete spy bắt ProviderRequest.messages[0] |
-| 2 | happy | E2E: system prompt có DDL → model answer cuối | fake fetch call 1 trả text answer; request body messages[0] chứa `CREATE TABLE public.users`; assistant bubble posted + done | pattern aiChatE2e.test.ts makeDepsWithFetch + fake adapter có data |
-| 3 | edge | budget cut at block boundary (injected, review #2) | inject `{contextBudgetChars: 2000}` qua opts; DB nhiều tables → context ≤ 2000 + footer `-- (+N more objects omitted — call export_structure for full context)`; mỗi block `CREATE TABLE` nguyên vẹn kết thúc `);` — KHÔNG đụng hằng số production 12_000 | fake adapter nhiều table, buildMessages(..., {contextBudgetChars:2000}) |
-| 4 | edge | no active connection → prompt cũ | factory resolves null → system prompt === `"You are VSDB's AI assistant. Help the user explore and query their database."` (không "Database structure"), messages vẫn [system,...history,user] | factory null |
-| 5 | edge | 1 schema introspection throw → skip schema | listTables("sales") rejects Error, "public" OK → context có public tables, KHÔNG có sales tables, không throw | per-schema reject mock |
-| 6 | regression | E2E tool-loop cũ không vỡ + export_structure đã đăng ký | test hiện có "E2E happy 2-step" vẫn pass; thêm assert: request tools array chứa def `{name:"export_structure"}` | fake fetch 2-step như hiện có |
-| 7 | edge | single table DDL > budget (oversize block, review #4) | inject `{contextBudgetChars: 300}` + table DDL ~800 chars → block đầu vẫn giữ nguyên (vượt budget), omitted-count đúng, context KHÔNG rỗng, KHÔNG block CREATE TABLE cắt dở | fake adapter: 1 table lớn + 1 table nhỏ |
+| 1 | unit | multi-schema PG: context contains tables from every schema + views | system message contains `Database structure (DDL):`, `CREATE TABLE public.users`, `CREATE TABLE sales.deals`, `-- View structure: public.v_users` | fake adapter: listSchemas→[public,sales], listTables/listViews/listColumns mock; assert via deps.complete spy catching ProviderRequest.messages[0] |
+| 2 | happy | E2E: system prompt has DDL → final model answer | fake fetch call 1 returns a text answer; request body messages[0] contains `CREATE TABLE public.users`; assistant bubble posted + done | pattern aiChatE2e.test.ts makeDepsWithFetch + fake adapter with data |
+| 3 | edge | budget cut at block boundary (injected, review #2) | inject `{contextBudgetChars: 2000}` via opts; DB with many tables → context ≤ 2000 + footer `-- (+N more objects omitted — call export_structure for full context)`; every `CREATE TABLE` block ends intact at `);` — does NOT touch the production constant 12_000 | fake adapter with many tables, buildMessages(..., {contextBudgetChars:2000}) |
+| 4 | edge | no active connection → old prompt | factory resolves null → system prompt === `"You are VSDB's AI assistant. Help the user explore and query their database."` (no "Database structure"), messages still [system,...history,user] | factory null |
+| 5 | edge | 1 schema introspection throws → skip that schema | listTables("sales") rejects with Error, "public" OK → context has public tables, does NOT have sales tables, does not throw | per-schema reject mock |
+| 6 | regression | existing E2E tool-loop is NOT broken + export_structure is registered | existing "E2E happy 2-step" test still passes; add an assertion: the request tools array contains the def `{name:"export_structure"}` | existing 2-step fake fetch |
+| 7 | edge | single table DDL > budget (oversize block, review #4) | inject `{contextBudgetChars: 300}` + table DDL ~800 chars → first block kept whole (exceeds budget), omitted-count correct, context NOT empty, NO half-cut CREATE TABLE block | fake adapter: 1 large table + 1 small table |
 
 ## Test Files
 
 - `src/ui/__tests__/aiChatPanel.test.ts` — #1, #3, #4, #5, #7 (pattern panel harness + fake adapter + spy deps.complete).
-- `src/ui/__tests__/aiChatE2e.test.ts` — #2, #6 (pattern createFakeAdapter/makeDepsWithFetch có sẵn lines 151-262).
+- `src/ui/__tests__/aiChatE2e.test.ts` — #2, #6 (createFakeAdapter/makeDepsWithFetch pattern is already available in lines 151-262).
 
 ## Verification Commands
 
@@ -89,33 +89,33 @@ npx tsc --noEmit
 
 ## Acceptance Criteria
 
-- [ ] Mọi test ở §Test Cases PASS (RED trước trên code cũ với budget/marker mới).
-- [ ] System prompt chứa DDL mọi user schema (không chỉ public), gồm views.
-- [ ] Context không vượt 12_000 chars; cắt nguyên block; footer chỉ khi có drop.
-- [ ] Factory null / introspection fail → prompt cũ, không crash.
-- [ ] Reviewer verdict APPROVED hoặc APPROVED-WITH-MINOR.
+- [ ] All tests in §Test Cases PASS (RED first on the existing code with the new budget/marker).
+- [ ] System prompt contains DDL for every user schema (not only public), including views.
+- [ ] Context does not exceed 12_000 chars; cuts at whole blocks; footer only when something was dropped.
+- [ ] Factory null / introspection failure → old prompt, no crash.
+- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
 
 ## Dependencies
 
-- TASK-001 (tiêu thụ `buildDatabaseStructure` + `createExportStructureTool`).
+- TASK-001 (consumes `buildDatabaseStructure` + `createExportStructureTool`).
 
 ## Interfaces
 
-- Consumes: `buildDatabaseStructure(db: DatabaseStructureInput): string`, `DatabaseStructureInput { schemas; tables; views; columns: Record<string, ExportColumn[]> }`, `createExportStructureTool(f: AdapterFactory): AgentTool` (TASK-001 produces). Hiện có: `AdapterFactory`, `ChatMessage`, `createDbTools`, `createSqlTool`.
-- Produces: buildMessages behavior mới (signature giữ nguyên); system prompt marker `Database structure (DDL):` + `export_structure` tool trong builtin registry. TASK-003 các test về clear/recovery KHÔNG phụ thuộc marker này (chỉ dep same-file ordering).
+- Consumes: `buildDatabaseStructure(db: DatabaseStructureInput): string`, `DatabaseStructureInput { schemas; tables; views; columns: Record<string, ExportColumn[]> }`, `createExportStructureTool(f: AdapterFactory): AgentTool` (TASK-001 produces). Already present: `AdapterFactory`, `ChatMessage`, `createDbTools`, `createSqlTool`.
+- Produces: new buildMessages behaviour (signature unchanged); system prompt marker `Database structure (DDL):` + `export_structure` tool inside the builtin registry. TASK-003's clear/recovery tests do NOT depend on this marker (only same-file ordering).
 
 ---
 
 ## Discussion
 
 ### 2026-08-24 · planner · unic/unic-smart
-TASK-003 đụng cùng file nhưng khác region (handleClear/handleSend/handleReady + webview files). T3 dep T2 → serial, không simultaneous edit. Dòng import T2 thêm (createExportStructureTool) không giao dòng nào T3 thêm.
+TASK-003 touches the same file but in a different region (handleClear/handleSend/handleReady + webview files). T3 deps T2 → serial, no simultaneous editing. The imports T2 adds (createExportStructureTool) do not touch any line T3 adds.
 
 ---
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor append `## Executor Report` BELOW this separator.
+Phase 4 reviewer append `## Reviewer Verdict` BELOW Executor Report.
 -->
 ## Executor Report
 

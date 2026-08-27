@@ -1,79 +1,79 @@
 # VSDB — VS Code Database Extension: Design Document
 
-**Ngày:** 2026-08-21
-**Trạng thái:** Đã duyệt qua brainstorming
-**Người quyết định:** Owner (người dùng), Claude (thiết kế)
+**Date:** 2026-08-21
+**Status:** Approved through brainstorming
+**Decision makers:** Owner (user), Claude (design)
 
 ---
 
-## 1. Tổng quan & Mục tiêu
+## 1. Overview & Goals
 
-VSDB là VS Code extension cho phép chạy SQL trực tiếp từ editor với trải nghiệm gần nhất với DataGrip.
+VSDB is a VS Code extension that lets you run SQL directly from the editor with an experience as close as possible to DataGrip.
 
-**Vấn đề đang có:** Kết nối DB từ VS Code khó khăn; phải dùng tool ngoài (DataGrip) song song với VS Code.
+**Current problem:** Connecting to a DB from VS Code is difficult; you have to use an external tool (DataGrip) alongside VS Code.
 
-**Mục tiêu:**
-- Mở file `.sql` → bôi đen SQL → **Cmd+Enter** → chạy lên DB, xem kết quả ngay trong VS Code
-- Trải nghiệm quen thuộc với người dùng DataGrip (statement tại con trỏ, grid kết quả, schema explorer)
-- Hỗ trợ **PostgreSQL, MySQL/MariaDB, SQL Server** (mở rộng adapter sau này)
-- Cài 1 lần dùng cho mọi project (extension cài global theo user)
-- Phân phối nội bộ qua script tự update (giai đoạn đầu), publish Marketplace sau này
+**Goals:**
+- Open a `.sql` file → select SQL → **Cmd+Enter** → run against the DB, see results right inside VS Code
+- A familiar experience for DataGrip users (statement at the cursor, result grid, schema explorer)
+- Support **PostgreSQL, MySQL/MariaDB, SQL Server** (more adapters later)
+- Install once, use for every project (extension installed globally per user)
+- Internal distribution via a self-updating script (initial phase), publish to the Marketplace later
 
-**Không làm (YAGNI):**
-- Không pagination server-side phức tạp — Load More là đủ
-- Không export CSV/Excel (để sau)
-- Không edit data trực tiếp trong grid (để sau)
-- Không ER diagram (để sau)
-- Không sync connection giữa các máy (mỗi máy tự quản lý)
+**Out of scope (YAGNI):**
+- No complex server-side pagination — Load More is enough
+- No CSV/Excel export (later)
+- No direct data editing in the grid (later)
+- No ER diagram (later)
+- No connection sync between machines (each machine manages its own)
 
 ---
 
-## 2. Kiến trúc & Công nghệ
+## 2. Architecture & Technology
 
-**Ngôn ngữ:** TypeScript. Bundle bằng esbuild (chuẩn hiện nay cho VS Code extension).
+**Language:** TypeScript. Bundled with esbuild (the current standard for VS Code extensions).
 
-**Cấu trúc project:**
+**Project structure:**
 
 ```
 vsdb/
 ├── src/
-│   ├── extension.ts              # Entry point: đăng ký commands, keybinding, activity bar
+│   ├── extension.ts              # Entry point: registers commands, keybinding, activity bar
 │   ├── config/
 │   │   └── types.ts              # Types: ConnectionConfig, DriverType
 │   ├── adapters/
-│   │   ├── types.ts              # Interface chung DbAdapter
+│   │   ├── types.ts              # Shared DbAdapter interface
 │   │   ├── postgres.ts           # Driver: pg (server-side cursor)
 │   │   ├── mysql.ts              # Driver: mysql2 (streaming)
 │   │   ├── mssql.ts              # Driver: tedious (streaming)
-│   │   └── factory.ts            # Tạo adapter theo driver type
+│   │   └── factory.ts            # Creates an adapter per driver type
 │   ├── core/
 │   │   ├── connectionManager.ts  # Connection active, lazy connect, idle disconnect
-│   │   ├── queryRunner.ts        # Thực thi, batch fetch 500 rows, cancel
-│   │   └── statementParser.ts    # Split statements; statement tại con trỏ
+│   │   ├── queryRunner.ts        # Execution, batch fetch 500 rows, cancel
+│   │   └── statementParser.ts    # Split statements; statement at the cursor
 │   └── ui/
-│       ├── resultsPanel.ts       # Webview panel kết quả
-│       ├── statusBar.ts          # Nút connection active
-│       └── schemaTree.ts         # TreeDataProvider cho Schema Explorer
-├── webview/                      # Grid UI: HTML/CSS/JS thuần, virtual scroll
+│       ├── resultsPanel.ts       # Result webview panel
+│       ├── statusBar.ts          # Active connection button
+│       └── schemaTree.ts         # TreeDataProvider for the Schema Explorer
+├── webview/                      # Grid UI: plain HTML/CSS/JS, virtual scroll
 │   ├── main.ts
 │   ├── grid.ts                   # Virtual-scroll table
 │   └── styles.css
 ├── media/
 │   └── icon.png                  # 128×128 extension icon
 ├── scripts/
-│   ├── build.sh                  # vsce package → .vsix (cho maintainer)
-│   └── install-vsdb.sh           # download vsix + install/update (cho team)
+│   ├── build.sh                  # vsce package → .vsix (for the maintainer)
+│   └── install-vsdb.sh           # download vsix + install/update (for the team)
 ├── package.json                  # Manifest: commands, keybinding, views
 └── esbuild.js
 ```
 
-**Adapter pattern (điểm mấu chốt):**
+**Adapter pattern (the crux):**
 
 ```typescript
 interface DbAdapter {
   connect(): Promise<void>;
   close(): Promise<void>;
-  runQuery(sql: string): AsyncIterable<QueryResult>;   // nhiều result set
+  runQuery(sql: string): AsyncIterable<QueryResult>;   // multiple result sets
   listTables(schema?: string): Promise<TableInfo[]>;
   listViews(schema?: string): Promise<ViewInfo[]>;
   listRoutines(schema?: string): Promise<RoutineInfo[]>;
@@ -81,42 +81,42 @@ interface DbAdapter {
 }
 ```
 
-3 driver đều pure JS (`pg`, `mysql2`, `tedious`) — không native compile, bundle sạch với esbuild. Thêm DB mới sau này = thêm 1 adapter + 1 case trong factory, không đụng core.
+All 3 drivers are pure JS (`pg`, `mysql2`, `tedious`) — no native compilation, they bundle cleanly with esbuild. Adding a new DB later = add 1 adapter + 1 case in the factory, without touching core.
 
 ---
 
-## 3. Quản lý Connection (local theo máy)
+## 3. Connection Management (local, per machine)
 
-**Không có file config nào trong repo.** Mọi dữ liệu connection lưu nội bộ theo máy:
+**No config file lives in the repo.** All connection data is stored locally per machine:
 
-| Dữ liệu | Nơi lưu | Bảo vệ |
+| Data | Storage location | Protection |
 |---|---|---|
-| Danh sách connection (name, driver, host, port, user, database) | VS Code Workspace State | Theo máy + theo workspace, không nằm trong repo |
-| Password | **VS Code SecretStorage** | Mã hóa bằng macOS Keychain — không plaintext trên đĩa |
+| Connection list (name, driver, host, port, user, database) | VS Code Workspace State | Per machine + per workspace, never in the repo |
+| Password | **VS Code SecretStorage** | Encrypted via the macOS Keychain — no plaintext on disk |
 
-**Lưu ý quan trọng về Workspace State:** connection lưu theo workspace. Mỗi project (workspace) có danh sách connection riêng — đúng yêu cầu "mỗi cá nhân tự quản, không share". Mở workspace khác = connection riêng. (VS Code secrets API theo workspace, khớp nhu cầu.)
+**Important note about Workspace State:** connections are stored per workspace. Each project (workspace) has its own connection list — exactly the "everyone manages their own, nothing shared" requirement. Opening a different workspace = separate connections. (The VS Code secrets API is per workspace, which matches the need.)
 
-**Flow thêm connection** — command `VSDB: Add Connection`:
-1. QuickPick chọn driver: PostgreSQL / MySQL / SQL Server
-2. InputBox lần lượt: name → host → port (default theo driver: 5432/3306/1433) → user → password → database
-3. **Test connect trước khi lưu** — fail thì báo lỗi ngay, không lưu connection hỏng
-4. Lưu: password → SecretStorage, phần còn lại → workspace state
-5. Status bar + schema tree cập nhật
+**Add-connection flow** — command `VSDB: Add Connection`:
+1. QuickPick to choose the driver: PostgreSQL / MySQL / SQL Server
+2. InputBox in order: name → host → port (default per driver: 5432/3306/1433) → user → password → database
+3. **Test the connection before saving** — on failure report the error immediately and do not save a broken connection
+4. Save: password → SecretStorage, everything else → workspace state
+5. Status bar + schema tree update
 
-**Quản lý:** `VSDB: Add / Edit / Delete Connection` qua Command Palette. Edit cho phép sửa mọi trường, password mới ghi đè SecretStorage. Xóa connection cũng xóa secret + đóng socket nếu đang mở.
+**Management:** `VSDB: Add / Edit / Delete Connection` via the Command Palette. Edit allows changing every field; a new password overwrites SecretStorage. Deleting a connection also deletes the secret and closes the socket if it is open.
 
-**Connection active:** nhớ theo workspace (workspace state). Mở lại project → tự chọn lại DB cũ. Status bar `$(database) work_db [postgres]` — click → QuickPick đổi. Chỉ 1 connection active tại một thời điểm (nhưng nhiều connection có thể tồn tại trong danh sách; đổi active là đóng connection cũ).
+**Active connection:** remembered per workspace (workspace state). Reopening the project → the previous DB is reselected automatically. Status bar `$(database) work_db [postgres]` — click → QuickPick to switch. Only 1 connection is active at a time (though many connections can exist in the list; switching the active one closes the old connection).
 
 **Connection lifecycle:**
-- Lazy connect — chỉ mở socket khi query đầu tiên (hoặc refresh schema tree)
-- Idle timeout 10 phút → tự đóng
-- Lỗi connect → hiện lỗi rõ ràng trong notification kèm hướng dẫn
+- Lazy connect — the socket only opens on the first query (or a schema-tree refresh)
+- Idle timeout of 10 minutes → closes automatically
+- Connection error → show a clear error in a notification with guidance
 
 ---
 
-## 4. Chạy Query: Cmd+Enter + Statement Parser
+## 4. Running Queries: Cmd+Enter + Statement Parser
 
-**Keybinding** trong `package.json`:
+**Keybinding** in `package.json`:
 
 ```json
 {
@@ -126,39 +126,39 @@ interface DbAdapter {
 }
 ```
 
-Chỉ active khi focus editor `.sql` — không cướp phím extension khác. Conflict với Copilot Chat nếu có → user remap trong Keyboard Shortcuts, hoặc dùng Command Palette / nút ▶.
+Only active when a `.sql` editor has focus — it does not steal the shortcut from other extensions. If it conflicts with Copilot Chat → the user remaps it in Keyboard Shortcuts, or uses the Command Palette / the ▶ button.
 
-**Logic chọn SQL để chạy** (`statementParser.ts`) — ưu tiên:
+**Logic for choosing which SQL to run** (`statementParser.ts`) — in priority order:
 
-1. **Có selection** → chạy nguyên vùng bôi đen, không cắt không tách
-2. **Không selection** → tìm statement chứa con trỏ:
-   - Quét file tìm ranh giới `;` — bỏ qua `;` trong string literal (`'...'`), dollar-quoted (`$$...$$` Postgres), comment (`--`, `/* */`)
-   - Khối `BEGIN...END` (PL/pgSQL, T-SQL) = 1 statement nguyên khối
-   - Từ ranh giới trên/dưới gần nhất → statement chứa vị trí con trỏ
-3. Statement đầu tiên nếu con trỏ đứng trước mọi thứ; file rỗng → thông báo
+1. **There is a selection** → run the selected region as-is, no cutting and no splitting
+2. **No selection** → find the statement containing the cursor:
+   - Scan the file for `;` boundaries — ignore `;` inside string literals (`'...'`), dollar-quoted blocks (`$$...$$` Postgres), and comments (`--`, `/* */`)
+   - A `BEGIN...END` block (PL/pgSQL, T-SQL) counts as 1 whole statement
+   - From the nearest boundary above/below → the statement containing the cursor position
+3. The first statement if the cursor sits before everything; empty file → show a message
 
-**Tách statement khi chạy:** selection chứa nhiều statement → chạy tuần tự, mỗi statement 1 result tab. Statement lỗi → dừng tại đó, các tab trước giữ kết quả, hiện rõ statement thứ mấy lỗi.
+**Splitting statements when running:** a selection containing multiple statements → run them sequentially, one result tab per statement. A failing statement → stop there, earlier tabs keep their results, and clearly show which statement number failed.
 
-**3 đường vào, 1 logic** — đều gọi `vsdb.runQuery`:
+**3 entry points, 1 logic path** — all call `vsdb.runQuery`:
 - **Cmd+Enter** (keyboard)
-- **Nút ▶ trên title bar editor** (`menu.editor/title`, hiện khi `.sql`)
-- **CodeLens "▶ Run"** trên mỗi statement (setting `vsdb.showRunLens`, mặc định bật)
+- **The ▶ button on the editor title bar** (`menu.editor/title`, shown for `.sql`)
+- **The "▶ Run" CodeLens** on each statement (setting `vsdb.showRunLens`, enabled by default)
 
-**Cancel:** đang chạy lâu → nút Cancel trong grid header + Progress notification. Adapter hỗ trợ cancel qua driver API (pg_cancel_backend, query.kill cho MySQL/MSSQL).
+**Cancel:** long-running query → a Cancel button in the grid header + a Progress notification. The adapter supports cancellation through the driver API (pg_cancel_backend, query.kill for MySQL/MSSQL).
 
 ---
 
-## 5. Grid Kết quả (Webview Panel)
+## 5. Result Grid (Webview Panel)
 
-**Panel webview** mở bên dưới editor (giống DataGrip Services panel), tái sử dụng qua các lần chạy — query mới thay thế kết quả cũ.
+**A webview panel** opens below the editor (like the DataGrip Services panel) and is reused across runs — a new query replaces the previous results.
 
-**Bố cục:**
+**Layout:**
 
 ```
 ┌──────────────────────────────────────────────────┐
 │ work_db [postgres]  ✅ 2 statements · 134ms  [✕] │  header: connection + timing + cancel
 ├──────────────────────────────────────────────────┤
-│ [Result 1] [Result 2] [Messages]                 │  tabs: 1 tab/statement
+│ [Result 1] [Result 2] [Messages]                 │  tabs: 1 tab per statement
 ├──────────────────────────────────────────────────┤
 │ id │ name  │ email          │ created_at         │
 │ 1  │ An    │ an@mail.com    │ 2026-01-15         │  grid: virtual scroll, sticky header
@@ -168,30 +168,30 @@ Chỉ active khi focus editor `.sql` — không cướp phím extension khác. C
 └──────────────────────────────────────────────────┘
 ```
 
-**Virtual scroll:** chỉ render ~30 rows đang thấy — 100k+ rows vẫn cuộn mượt.
+**Virtual scroll:** only renders the ~30 visible rows — 100k+ rows still scroll smoothly.
 
-**Load More (xử lý query >1tr rows):**
-- Fetch batch đầu 500 rows từ driver cursor → grid hiện ngay
-- **Load 500 more** → driver cursor lấy tiếp 500, append vào grid
-- Server-side cursor (Postgres) / streaming (MySQL, MSSQL) — không load 1tr rows vào RAM
-- **Load all** có cảnh báo khi >100k rows
-- Đang fetch → nút "Loading..."
+**Load More (handling queries with >1M rows):**
+- Fetch the first batch of 500 rows from the driver cursor → the grid renders immediately
+- **Load 500 more** → the driver cursor fetches another 500 and appends them to the grid
+- Server-side cursor (Postgres) / streaming (MySQL, MSSQL) — never load 1M rows into RAM
+- **Load all** warns when there are >100k rows
+- While fetching → a "Loading..." button
 
-**Tabs:** mỗi statement 1 tab kết quả. Tab **Messages** gộp: timing từng statement, `INSERT 0 5`, `UPDATE 3`, warnings. Tab lỗi → đỏ, chạy dừng ở đó.
+**Tabs:** one result tab per statement. The **Messages** tab aggregates: per-statement timing, `INSERT 0 5`, `UPDATE 3`, warnings. A failing tab → red, and the run stops there.
 
-**Copy:** chọn cells/rows → Cmd+C copy (tab-separated, dán Excel được). Nút copy-all.
+**Copy:** select cells/rows → Cmd+C to copy (tab-separated, pasteable into Excel). Plus a copy-all button.
 
-**Format:** NULL xám, số căn phải, timestamp ISO. Theo VS Code theme (dark/light tự động qua CSS variables).
+**Formatting:** NULL in grey, numbers right-aligned, timestamps in ISO. Follows the VS Code theme (dark/light automatically via CSS variables).
 
 ---
 
 ## 6. Schema Explorer (Sidebar)
 
-**Activity Bar** icon VSDB (trụ database + mũi tên xanh) → panel tree:
+**Activity Bar** VSDB icon (database cylinder + green arrow) → tree panel:
 
 ```
 🗄️ VSDB
-├── ● work_db [postgres]          ← active, chấm xanh
+├── ● work_db [postgres]          ← active, green dot
 │   ├── 📁 Tables
 │   │   ├── 📄 users
 │   │   │   ├── 🔑 id · int4
@@ -207,71 +207,71 @@ Chỉ active khi focus editor `.sql` — không cướp phím extension khác. C
 └── ＋ Add Connection
 ```
 
-**Lazy load:** node fetch metadata khi expand. Metadata cache 60s; nút 🔄 refresh từng nhánh.
+**Lazy load:** a node fetches metadata when expanded. Metadata is cached for 60s; a 🔄 button refreshes each branch.
 
-**Query metadata:**
-- Postgres: `information_schema.tables/columns`, `pg_proc` cho routines
+**Metadata queries:**
+- Postgres: `information_schema.tables/columns`, `pg_proc` for routines
 - MySQL: `information_schema.*`
 - SQL Server: `sys.tables`, `sys.columns`, `sys.objects` + `sys.sql_modules`
 
-**Context menu trên table/view:**
-- **Generate SELECT** → chèn `SELECT * FROM users LIMIT 100;` tại con trỏ
+**Context menu on a table/view:**
+- **Generate SELECT** → insert `SELECT * FROM users LIMIT 100;` at the cursor
 - **Copy qualified name** → `workdb.public.users`
 - **Refresh**
 
-Click connection → đổi active. Connection chưa kết nối hiện node con "Connect" — click connect.
+Click a connection → switch the active one. A not-yet-connected connection shows a "Connect" child node — click it to connect.
 
 ---
 
-## 7. Phân phối & Update
+## 7. Distribution & Updates
 
-**Giai đoạn 1 (ngay):** build `.vsix`, share qua script.
+**Phase 1 (now):** build the `.vsix` and share it via a script.
 
-- Maintainer: `scripts/build.sh` → `vsce package` → `vsdb-<version>.vsix` → push lên GitHub Releases / shared drive
-- Team: 1 lệnh duy nhất:
+- Maintainer: `scripts/build.sh` → `vsce package` → `vsdb-<version>.vsix` → push to GitHub Releases / a shared drive
+- Team: a single command:
 
 ```
 curl -fsSL https://.../install-vsdb.sh | bash
 ```
 
-Script: đọc version mới nhất → download vsix → `code --install-extension vsdb-<version>.vsix` (cài đè = update). Tự detect đã cài version cũ → thông báo update.
+The script: read the latest version → download the vsix → `code --install-extension vsdb-<version>.vsix` (installing over the top = update). It detects an older installed version automatically → reports the update.
 
-**Giai đoạn 2 (khi ổn định):** publish VS Code Marketplace → auto-update ngầm, zero-effort. Code không đổi, chỉ thêm bước release.
+**Phase 2 (once stable):** publish to the VS Code Marketplace → silent auto-update, zero effort. The code does not change, only a release step is added.
 
-**Icon extension:** trụ database + mũi tên chạy xanh lá, SVG → PNG 128×128 (generate khi setup).
+**Extension icon:** database cylinder + green run arrow, SVG → PNG 128×128 (generated during setup).
 
 ---
 
 ## 8. Error Handling
 
-| Tình huống | Xử lý |
+| Situation | Handling |
 |---|---|
-| Không có connection nào | Cmd+Enter → QuickPick gợi ý "Add Connection" |
-| Sai password / không reach host | Notification lỗi rõ + mở form edit connection |
-| Query timeout / chạy lâu | Nút Cancel (kill query phía server) |
-| Statement lỗi giữa batch | Dừng tại đó, tab lỗi đỏ, giữ kết quả các statement trước |
-| File `.sql` không focus | Nút ▶ ẩn, Cmd+Enter không trigger (when clause) |
-| SecretStorage lỗi | Fallback: hỏi password mỗi lần connect (không lưu) |
-| Workspace không mở (single file) | Connection lưu vào global state thay vì workspace state |
+| No connections at all | Cmd+Enter → QuickPick suggesting "Add Connection" |
+| Wrong password / host unreachable | Clear error notification + open the edit-connection form |
+| Query timeout / long-running | Cancel button (kills the query server-side) |
+| Statement fails mid-batch | Stop there, red error tab, keep the results of earlier statements |
+| `.sql` file not focused | The ▶ button is hidden, Cmd+Enter does not trigger (when clause) |
+| SecretStorage failure | Fallback: ask for the password on every connect (do not store it) |
+| No workspace open (single file) | Connections are saved to global state instead of workspace state |
 
 ---
 
 ## 9. Testing
 
-- **Unit tests** (mocha/vitest): `statementParser` (cases: string chứa `;`, dollar-quote, BEGIN...END, con trỏ đầu/cuối file, selection nhiều statement), config types
-- **Integration tests** với Docker DB thật (docker compose: postgres + mysql + mssql): add connection → connect → chạy query → nhận kết quả → Load More → cancel
-- **Manual test checklist** trong `docs/testing-checklist.md`: 3 DB × các luồng chính (Cmd+Enter, nút ▶, CodeLens, schema tree, load more >100k rows)
+- **Unit tests** (mocha/vitest): `statementParser` (cases: strings containing `;`, dollar-quote, BEGIN...END, cursor at start/end of file, selection with multiple statements), config types
+- **Integration tests** against real Docker DBs (docker compose: postgres + mysql + mssql): add connection → connect → run query → receive results → Load More → cancel
+- **Manual test checklist** in `docs/testing-checklist.md`: 3 DBs × the main flows (Cmd+Enter, ▶ button, CodeLens, schema tree, load more >100k rows)
 
 ---
 
-## 10. Checklist chốt design (đã duyệt)
+## 10. Design sign-off checklist (approved)
 
-- [x] DB: PostgreSQL, MySQL/MariaDB, SQL Server (adapter pattern, mở rộng sau)
-- [x] Connection: local theo máy, không commit repo — password qua SecretStorage
-- [x] Active connection nhớ theo workspace, status bar + schema tree đổi nhanh
-- [x] Cmd+Enter: selection > statement tại con trỏ; parser xử lý `;`, string, dollar-quote, BEGIN...END
-- [x] Nút ▶ title bar + CodeLens ▶ Run — 3 đường vào 1 logic
-- [x] Grid webview: virtual scroll, tabs/statement, Load More 500, cancel
-- [x] Schema Explorer: Activity Bar tree, lazy load, context menu Generate SELECT
-- [x] Phân phối: vsix + install script giai đoạn 1, Marketplace sau
-- [x] Ưu tiên xuyên suốt: trực quan nhất, gần DataGrip nhất
+- [x] DBs: PostgreSQL, MySQL/MariaDB, SQL Server (adapter pattern, more later)
+- [x] Connections: local per machine, never committed to the repo — passwords via SecretStorage
+- [x] Active connection remembered per workspace, quick switching from the status bar + schema tree
+- [x] Cmd+Enter: selection > statement at the cursor; the parser handles `;`, strings, dollar-quote, BEGIN...END
+- [x] ▶ title-bar button + ▶ Run CodeLens — 3 entry points, 1 logic path
+- [x] Grid webview: virtual scroll, one tab per statement, Load More 500, cancel
+- [x] Schema Explorer: Activity Bar tree, lazy load, Generate SELECT context menu
+- [x] Distribution: vsix + install script in phase 1, Marketplace later
+- [x] Overriding priority: the most intuitive experience, as close to DataGrip as possible

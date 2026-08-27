@@ -27,7 +27,7 @@ panel posts a live `step` line per call. Do NOT restructure the agent loop.
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | unit | onToolCall fires once per call, before execution, in order | 2 tool calls → callback order `[a,b]`, each observed before its tool result message is appended | fake registry, provider returns both calls in one step |
 | 2 | edge (absence) | no tool calls → callback never fires | call count 0 | provider returns plain text |

@@ -1,13 +1,13 @@
 # TASK-004 — Chat panel omp engine switch + install/update UX + README
 
 ## Goal
-Panel chọn engine: detectOmp ok ⇒ omp RPC mode (spawn process, set_host_tools, stream events, host-tool executor); không ok ⇒ builtin như cũ + notification 1 lần với install/update hint. README document story.
+Panel picks an engine: detectOmp ok ⇒ omp RPC mode (spawn process, set_host_tools, stream events, host-tool executor); not ok ⇒ builtin as before + a one-time notification with the install/update hint. README documents the story.
 
 ## Target Files
-- `src/ui/aiChatPanel.ts` (sửa — thêm engine mode, KHÔNG đổi builtin behavior), `src/ui/aiChatPanelMessages.ts` (thêm streaming/step messages nếu cần)
-- `src/extension.ts` (sửa — truyền deps omp: detectOmp + OmpProcess factory injectable)
+- `src/ui/aiChatPanel.ts` (edit — add engine mode, do NOT change builtin behavior), `src/ui/aiChatPanelMessages.ts` (add streaming/step messages if needed)
+- `src/extension.ts` (edit — pass the omp deps: detectOmp + OmpProcess factory, injectable)
 - `README.md` (section "AI engine: oh-my-pi (optional)")
-- Tests: `src/ui/__tests__/aiChatOmp.test.ts` (mới), `src/ui/__tests__/aiChatPanel.test.ts` (chỉ thêm regression — builtin path nguyên)
+- Tests: `src/ui/__tests__/aiChatOmp.test.ts` (new), `src/ui/__tests__/aiChatPanel.test.ts` (regression additions only — builtin path preserved)
 
 ## Spec (frozen)
 ```ts
@@ -19,24 +19,24 @@ export interface AiChatPanelOptions { /* existing fields */ omp?: {
   toolExecutor: (name: string, args: unknown) => Promise<string>;
 } }
 ```
-- Engine resolution khi panel show lần đầu (cache trong panel): detect ok ⇒ omp mode; else builtin + post `{type:"engine", name:"builtin", hint: install/update hint}` một lần.
-- omp send flow: rpc.request({ type: "set_host_tools", tools: toolDefs() }) một lần khi start → mỗi user msg rpc.request({ type: "prompt", message: text }) + onEvent streaming (message_update assistantMessageEvent text_delta → post `{type:"delta", text}`). **Turn completion KHÔNG dựa vào response success** — response chỉ xác nhận nhận lệnh; gate trên event `agent_end` (isTerminal !== false) → post assistant final + done. Host tool call wire vào rpc.handleHostToolCall với mapping toolName→executor.
-- Stop trong omp mode: rpc.request({ type: "abort" }) + token gating như cũ; isTerminal:false agent_end KHÔNG kết thúc turn (test edge).
-- Process exit giữa chừng: onExit → post error bubble "omp session ended (code N)" + `{type:"engine", name:"builtin"}` fallback cho turn hiện tại KHÔNG TỰ Ý respawn (nút retry của user sẽ re-detect).
-- Builtin path: mọi test cycle K phải còn xanh nguyên (regression net).
-- `src/extension.ts`: build omp spawn closure từ OmpProcess + hostToolDefsFromRegistry/createHostToolExecutor với adapterFactory POSTGRES-only như cycle K; inject như options.omp — test qua fake (không spawn thật).
-- README: yêu cầu omp >= 17.0.0 (optional), install 1 lệnh `curl -fsSL https://omp.sh/install | sh`, update `omp update`; VSDB extension tự nâng cấp qua lệnh install-vsdb.sh có sẵn (không đổi); security note: omp mode cho agent quyền tool workspace (read/edit/bash scoped cwd) — DB access vẫn read-only qua host tools.
+- Engine resolution on the first panel show (cached in the panel): detect ok ⇒ omp mode; else builtin + post `{type:"engine", name:"builtin", hint: install/update hint}` once.
+- omp send flow: rpc.request({ type: "set_host_tools", tools: toolDefs() }) once at start → each user msg rpc.request({ type: "prompt", message: text }) + onEvent streaming (message_update assistantMessageEvent text_delta → post `{type:"delta", text}`). **Turn completion does NOT rely on response success** — the response only confirms the command was accepted; gate on the event `agent_end` (isTerminal !== false) → post assistant final + done. Host tool call wires into rpc.handleHostToolCall with toolName→executor mapping.
+- Stop in omp mode: rpc.request({ type: "abort" }) + token gating as before; agent_end with isTerminal:false does NOT end the turn (edge test).
+- Process exit mid-turn: onExit → post error bubble "omp session ended (code N)" + `{type:"engine", name:"builtin"}` fallback for the current turn; does NOT auto-respawn (user retry button re-detects).
+- Builtin path: every cycle K test must stay green (regression net).
+- `src/extension.ts`: build an omp spawn closure from OmpProcess + hostToolDefsFromRegistry/createHostToolExecutor with the POSTGRES-only adapterFactory from cycle K; inject as options.omp — tests via fake (no real spawn).
+- README: omp >= 17.0.0 required (optional), install one-liner `curl -fsSL https://omp.sh/install | sh`, update `omp update`; the VSDB extension self-upgrades via the existing install-vsdb.sh (no change); security note: omp mode grants the agent workspace tool rights (read/edit/bash scoped to cwd) — DB access stays read-only via host tools.
 
 ## Test Cases
-| # | Loại | Tên | Expected |
+| # | Type | Name | Expected |
 |---|------|-----|----------|
-| 1 | happy | detect ok + fake spawn + fake rpc | set_host_tools gửi 1 lần với defs; prompt gửi text; delta events post; assistant final + done |
-| 2 | happy | host_tool_call qua fake rpc | toolExecutor gọi với name/args; result frame viết lại transport |
-| 3 | edge (not installed) | detect → not-installed | builtin engine chạy như cũ (runAgent path); engine message với install hint 1 lần |
+| 1 | happy | detect ok + fake spawn + fake rpc | set_host_tools sent once with defs; prompt sent with text; delta events posted; assistant final + done |
+| 2 | happy | host_tool_call via fake rpc | toolExecutor called with name/args; result frame written back to transport |
+| 3 | edge (not installed) | detect → not-installed | builtin engine runs as before (runAgent path); engine message with install hint once |
 | 4 | edge (old version) | detect → version-too-old | builtin + hint update |
-| 5 | edge (crash) | fake onExit(1) giữa turn | error bubble + fallback builtin cho turn hiện tại; không respawn tự động |
-| 6 | edge (abort/terminal) | send rồi stop: `{type:"abort"}` gửi, delta sau bị gate, done posted. VÀ agent_end với isTerminal=false không kết thúc turn |
-| 7 | regression | builtin suite cycle K nguyên vẹn | mọi test cycle K của aiChatPanel (11 host hiện có sau fix round K) + toàn suite xanh |
+| 5 | edge (crash) | fake onExit(1) mid-turn | error bubble + builtin fallback for the current turn; no auto-respawn |
+| 6 | edge (abort/terminal) | send then stop: `{type:"abort"}` sent, subsequent deltas gated, done posted. AND agent_end with isTerminal=false does NOT end the turn |
+| 7 | regression | builtin suite cycle K intact | every cycle K aiChatPanel test (11 host tests after the K fix round) + full suite green |
 
 ## Test Files
 `src/ui/__tests__/aiChatOmp.test.ts`, `src/ui/__tests__/aiChatPanel.test.ts` (regression additions only)
@@ -47,11 +47,11 @@ npm run compile && npx vitest run src/ui/__tests__/aiChatOmp.test.ts src/ui/__te
 ```
 
 ## Acceptance
-- [ ] 7 test PASS RED→GREEN (output thật)
-- [ ] Không spawn thật omp trong tests (mọi thứ fake/inject)
+- [ ] 7 tests PASS RED→GREEN (real output)
+- [ ] No real omp spawn in tests (everything fake/inject)
 - [ ] Builtin behavior unchanged (regression #7)
-- [ ] README section có install + update + security note
-- [ ] `npx tsc --noEmit` + compile sạch
+- [ ] README section has install + update + security note
+- [ ] `npx tsc --noEmit` + compile clean
 
 ## Interfaces
 - Consumes: T1 `OmpRpcClient`/`OmpProcess`, T2 defs/executor, T3 `detectOmp`/hints, cycle K panel/registry/adapterFactory.

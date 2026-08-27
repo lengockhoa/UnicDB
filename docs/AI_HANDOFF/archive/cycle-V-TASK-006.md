@@ -31,7 +31,7 @@ point TASK-004's `composeSortQuery` mssql arm at the real adapter export.
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | unit (happy) | `basic sort wraps in a subquery with bracket quoting` | `getTableSortQuery("SELECT 1","","name","ASC")` → `SELECT * FROM (SELECT 1) vsdb_sort ORDER BY [name] ASC` | none |
 | 2 | unit (happy) | `WHERE from the requery bar is applied to the OUTER query` | `("SELECT * FROM t","age > 18","name","ASC")` → `… ) vsdb_sort WHERE age > 18 ORDER BY [name] ASC`; the inner SQL is verbatim | mirrors postgres semantics at `postgres.ts:176-179` |
@@ -152,8 +152,8 @@ between a column-name payload and executable T-SQL.
 ---
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor append `## Executor Report` BELOW this separator.
+Phase 4 reviewer append `## Reviewer Verdict` BELOW the Executor Report.
 -->
 
 ## Executor Report

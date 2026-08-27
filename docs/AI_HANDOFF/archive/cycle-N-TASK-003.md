@@ -7,48 +7,41 @@
 
 ## Goal
 
-`runBuiltinTurn` phát `{type:"delta"}` real-time (gate abort token), AbortController +
-signal cho stop giữa stream, stream-fallback step label, extension.ts inject
-`streamComplete`; webview banner builtin ghi "— streaming". Đây là task đóng cycle —
-chạy full-suite regression net ở cuối.
+`runBuiltinTurn` emits `{type:"delta"}` in real time (gated by the abort token), AbortController + signal for stop mid-stream, a stream-fallback step label, and `extension.ts` injects `streamComplete`; the webview's builtin banner reads "— streaming". This is the cycle-closing task — runs the full-suite regression net at the end.
 
 ## Target Files
 
-- `src/ui/aiChatPanel.ts` — `runBuiltinTurn` + `handleSend`: AbortController per turn,
-  `onText` callback → `post({type:"delta"})`, catch phân loại (abort vs error), error
-  message nêu rõ stream origin. `AiChatPanelOptions.deps` giữ type `AgentDeps` (đã mở rộng
-  optional ở TASK-002 — không đổi type ở đây).
-- `src/extension.ts` — `aiChatDeps` (line ~270) thêm `streamComplete` closure cùng pattern
-  `complete` (createProviderClient per call).
+- `src/ui/aiChatPanel.ts` — `runBuiltinTurn` + `handleSend`: per-turn AbortController, `onText` callback → `post({type:"delta"})`, catch classifies abort vs error, error message states the stream origin explicitly. `AiChatPanelOptions.deps` keeps the type `AgentDeps` (already extended optionally in TASK-002 — no type change here).
+- `src/extension.ts` — `aiChatDeps` (around line ~270) adds a `streamComplete` closure using the same pattern as `complete` (createProviderClient per call).
 - `webview/aiChatPanelMain.ts` — banner label builtin: `Engine: builtin${hint} — streaming`.
-- `src/ui/aiChatPanelMessages.ts` — KHÔNG đổi protocol (delta đã tồn tại line 47). Chỉ đụng
-  nếu cần doc-comment; owner file để tránh wave-collision, expected no-diff.
+- `src/ui/aiChatPanelMessages.ts` — do NOT change the protocol (delta already exists at line 47). Touch only if a doc comment is needed; owned file to avoid wave collision, expected no-diff.
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
-|---|------|----------|----------|---------------------|
-| 1 | unit (happy) | send builtin → delta đúng thứ tự + assistant + done | posted messages chứa `delta("a")`, `delta("b")`, `assistant("ab" hoặc finalText)`, `done` theo thứ tự index tăng dần; history push userMsg + assistantMsg | runAgentMock invoke `callbacks.onText("a")`, `onText("b")`, resolve finalText "ab" — mirror pattern test #2 hiện có (vi.mock ../../ai/agent) |
-| 2 | edge (abort) | stop giữa stream: delta sau stop KHÔNG post; assistant KHÔNG post; done VẪN tới | posted deltas = chỉ các delta trước stop; `some(isAssistant) === false`; `some(isDone) === true`; token.aborted === true | runAgentMock: onText("x") → gate (test fire stop qua handler) → onText("y") → resolve; pattern test #4 |
-| 3 | edge (fallback) | stream fail pre-emit + complete fallback → step label `"stream fallback"` posted | posted chứa `{type:"step", label:"stream fallback"}` (panel tự viết label trong handler `onStreamFallback` → `this.post({type:"step", label:"stream fallback"})`; KHÔNG import const từ agent.ts); assistant cuối cùng vẫn post; done tới; onStep tool-labels vẫn hoạt động như cũ | runAgentMock invoke `callbacks.onStreamFallback()` rồi resolve finalText (contract xem Interfaces TASK-002) |
-| 4 | edge (error) | stream + fallback đều fail → error bubble, panel alive | error message chứa "stream" (case-insensitive); `p.disposed === false`; done tới | runAgentMock reject Error("provider stream failed") |
-| 5 | jsdom (happy) | engine banner builtin: "Engine: builtin — streaming" | `#engineBanner.textContent === "Engine: builtin — streaming"` (không hint) và match `— streaming$` khi có hint | dispatch `{type:"engine", name:"builtin"}` qua harness `makeHarness()` (aiChatPanelWebview.test.ts) |
-| 6 | unit (wiring) | extension activate: `aiChatDeps.streamComplete` là function, nhận đủ 5 tham số (cfg, role, req, onText, signal), không crash khi gọi với fake; cmd vsdb.aiChat vẫn registered | captured `deps.streamComplete` là function; gọi `deps.streamComplete(fakeCfg, "chat", fakeReq, spy, controller.signal)` → resolve ProviderResult từ fake fetch (vi.mock `./ai/provider` như provider.test.ts pattern, hoặc assert call tới `createProviderClient().streamComplete`); `state.registeredCommands.has("vsdb.aiChat")` vẫn true | vi.mock vscode như extension.test.ts hiện có; **capture deps qua `AiChatPanel` constructor**: vi.mock `./ui/aiChatPanel` class, gọi activate() rồi trigger command → mock constructor nhận options; đọc `options.deps` từ `mock.calls`. Nếu vi.mock class không capture được options thì capture qua `commandOpenAiChat` — KHÔNG dùng type-level assert (đã bỏ fallback "chấp asserted type-level" ở round 2) |
-| 7 | jsdom (regression, F4) | stop giữa stream → bubble streaming bị de-stream ở `done`; turn sau delta vào bubble MỚI, không merge text cũ | sau khi nhận `delta("x")` rồi `done` (không assistant): `querySelector(".vsdb-chat-streaming")` === null (bubble cũ đã de-stream — class streaming bị remove, text "x" giữ nguyên visible); dispatch `delta("y")` → bubble chứa "y" là bubble MỚI (không chứa "x"), trong thread có 2 bubble assistant riêng biệt | jsdom harness hiện có; gửi sequence `delta("x")` → `done` → `delta("y")` qua `window.postMessage`, assert DOM |
+| # | Type | Test name | Expected | Pre-state / Fixture |
+|---|------|-----------|----------|---------------------|
+| 1 | unit (happy) | send builtin → deltas in order + assistant + done | posted messages contain `delta("a")`, `delta("b")`, `assistant("ab" or finalText)`, `done` in ascending index order; history pushes userMsg + assistantMsg | runAgentMock invokes `callbacks.onText("a")`, `onText("b")`, resolves finalText "ab" — mirrors the existing test #2 pattern (vi.mock ../../ai/agent) |
+| 2 | edge (abort) | stop mid-stream: deltas after stop are NOT posted; assistant is NOT posted; done STILL arrives | posted deltas = only deltas before stop; `some(isAssistant) === false`; `some(isDone) === true`; token.aborted === true | runAgentMock: onText("x") → gate (test fires stop via handler) → onText("y") → resolve; pattern test #4 |
+| 3 | edge (fallback) | stream fail pre-emit + complete fallback → step label `"stream fallback"` posted | posted contains `{type:"step", label:"stream fallback"}` (panel writes the label in its `onStreamFallback` handler → `this.post({type:"step", label:"stream fallback"})`; do NOT import a const from agent.ts); final assistant still posted; done arrives; onStep tool-labels still work as before | runAgentMock invokes `callbacks.onStreamFallback()` then resolves finalText (contract in TASK-002 Interfaces) |
+| 4 | edge (error) | stream + fallback both fail → error bubble, panel alive | error message contains "stream" (case-insensitive); `p.disposed === false`; done arrives | runAgentMock rejects with Error("provider stream failed") |
+| 5 | jsdom (happy) | engine banner builtin: "Engine: builtin — streaming" | `#engineBanner.textContent === "Engine: builtin — streaming"` (no hint) and matches `— streaming$` when hint is present | dispatch `{type:"engine", name:"builtin"}` via the `makeHarness()` helper (aiChatPanelWebview.test.ts) |
+| 6 | unit (wiring) | extension activate: `aiChatDeps.streamComplete` is a function, accepts all 5 parameters (cfg, role, req, onText, signal), does not crash when called with fake values; cmd `vsdb.aiChat` stays registered | captured `deps.streamComplete` is a function; calling `deps.streamComplete(fakeCfg, "chat", fakeReq, spy, controller.signal)` resolves a ProviderResult from a fake fetch (vi.mock `./ai/provider` like the provider.test.ts pattern, or assert that `createProviderClient().streamComplete` was called); `state.registeredCommands.has("vsdb.aiChat")` stays true | vi.mock vscode like the existing extension.test.ts; **capture deps via the `AiChatPanel` constructor**: vi.mock `./ui/aiChatPanel` class, call activate() then trigger the command → mock constructor receives options; read `options.deps` from `mock.calls`. If … |
+| 7 | jsdom (regression, F4) | stop mid-stream → streaming bubble is de-streamed on `done`; the next turn's delta lands in a NEW bubble, no merge with old text | after receiving `delta("x")` then `done` (no assistant): `querySelector(".vsdb-chat-streaming")` === null (old bubble de-streamed — streaming class removed, text "x" stays visible); dispatch `delta("y")` → the bubble containing "y" is a NEW bubble (does not contain "x"), with two separate assistant bubbles in the thread | jsdom harness as-is; send the sequence `delta("x")` → `done` → `delta("y")` via `window.postMessage`, assert DOM |
 
-Case 7 spec (F4 — orphaned streaming bubble): `done`/`error` handler trong
-webview/aiChatPanelMain.ts gọi helper mới `deStreamOpenBubble()`: tìm
-`.vsdb-chat-streaming` đang mở, `classList.remove("vsdb-chat-streaming")` — KHÔNG remove
-bubble (giữ partial text hiển thị cho user, đúng tinh thần T3.2 giữ delta trước stop).
-Việc này đảm bảo delta của turn sau luôn mở bubble mới. `assistant` handler giữ nguyên
-(đã remove streaming bubble sẵn). Target: `webview/aiChatPanelMain.ts` case `"done"` và
-`"error"` trong message listener.
+Case 7 spec (F4 — orphaned streaming bubble): the `done`/`error` handler in
+`webview/aiChatPanelMain.ts` calls a new helper `deStreamOpenBubble()`: find
+an open `.vsdb-chat-streaming`, `classList.remove("vsdb-chat-streaming")` — do NOT remove
+the bubble (keep the partial text visible to the user, per T3.2's intent of preserving
+deltas before stop). This ensures the next turn's delta always opens a new bubble. The
+`assistant` handler is unchanged (it already removes the streaming bubble). Target: the
+`case "done"` and `case "error"` branches in the message listener inside
+`webview/aiChatPanelMain.ts`.
 
 ## Test Files
 
 - `src/ui/__tests__/aiChatPanel.test.ts` — append describe "AiChatPanel — builtin streaming" (cases 1–4).
 - `src/ui/__tests__/aiChatPanelWebview.test.ts` — append case 5 + case 7 (de-stream regression).
-- `src/extension.test.ts` — append case 6 vào describe TASK-004 wiring.
+- `src/extension.test.ts` — append case 6 to the TASK-004 wiring describe.
 
 ## Verification Commands
 
@@ -56,59 +49,53 @@ Việc này đảm bảo delta của turn sau luôn mở bubble mới. `assistan
 # Per-task narrowed (RULES test-selection):
 npm run typecheck && npx vitest run src/ui/__tests__/aiChatPanel.test.ts src/ui/__tests__/aiChatPanelWebview.test.ts src/ui/__tests__/aiChatPanelMessages.test.ts src/extension.test.ts
 
-# Wave/cycle boundary — regression net (BẮT BUỘC trước khi claim done):
+# Wave/cycle boundary — regression net (MANDATORY before claiming done):
 npm run compile && npm run typecheck && npx vitest run
 ```
 
 ## Acceptance Criteria
 
-- [ ] Mọi test ở §Test Cases PASS (RED trước, GREEN sau).
-- [ ] Full suite `npx vitest run` pass (751 baseline + các test mới, 0 fail mới).
-- [ ] `npm run compile` (esbuild) pass — no CJS incompat.
-- [ ] Không dependency mới (`git diff package.json` trống).
-- [ ] apiKey không xuất hiện trong bất kỳ posted message (case 4 assert thêm `not.toMatch(/sk-/i)` như test #5 hiện có).
-- [ ] Reviewer verdict APPROVED hoặc APPROVED-WITH-MINOR.
+- [ ] Every test in §Test Cases PASSES (RED before, GREEN after).
+- [ ] Full suite `npx vitest run` passes (751 baseline + new tests, 0 new failures).
+- [ ] `npm run compile` (esbuild) passes — no CJS incompatibilities.
+- [ ] No new dependency (`git diff package.json` is empty).
+- [ ] apiKey never appears in any posted message (case 4 adds `not.toMatch(/sk-/i)` like the existing test #5).
+- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
 
 ## Dependencies
 
-- TASK-002 — tiêu thụ `AgentCallbacks.onText` + `AgentDeps.streamComplete` signature.
+- TASK-002 — consumes `AgentCallbacks.onText` + `AgentDeps.streamComplete` signature.
 
 ## Interfaces
 
-- Consumes: từ TASK-002 — `AgentCallbacks.onText?(text: string): void`; `AgentCallbacks.onStreamFallback?(): void` (channel fallback DUY NHẤT, xem TASK-002 Interfaces); `AgentDeps.streamComplete?(cfg, role, req, onText, signal?)` — 5 tham số, `signal` chuyền thẳng từ `runAgent` tham số 4; `runAgent(input, deps, callbacks?, signal?)`. Từ TASK-001 (gián tiếp qua deps closure ở extension.ts): `createProviderClient(opts).streamComplete(req, { onText, signal })`.
-- Produces: (none — task cuối cycle)
-- Contract fallback event (cho case 3): TASK-002 phát `callbacks.onStreamFallback?.()` đúng 1 lần trước khi gọi `deps.complete` fallback. Panel handler: `onStreamFallback: () => this.post({type:"step", label:"stream fallback"})` — label là literal của panel (KHÔNG import const từ agent.ts; `STREAM_FALLBACK_STEP_LABEL` đã bị bỏ ở round 2 vì kênh notification giờ là callback riêng).
-- Webview (cho case 7): thêm helper `deStreamOpenBubble()` gọi trong `case "done"` và `case "error"` — remove class `vsdb-chat-streaming` khỏi bubble đang mở, KHÔNG remove bubble. Spec chi tiết ở "Case 7 spec" trên.
+- Consumes: from TASK-002 — `AgentCallbacks.onText?(text: string): void`; `AgentCallbacks.onStreamFallback?(): void` (the SOLE fallback channel, see TASK-002 Interfaces); `AgentDeps.streamComplete?(cfg, role, req, onText, signal?)` — 5 parameters, `signal` passed straight from the 4th parameter of `runAgent`; `runAgent(input, deps, callbacks?, signal?)`. From TASK-001 (indirectly via the deps closure in extension.ts): `createProviderClient(opts).streamComplete(req, { onText, signal })`.
+- Produces: (none — last task of the cycle)
+- Fallback event contract (for case 3): TASK-002 fires `callbacks.onStreamFallback?.()` exactly once before calling `deps.complete` fallback. Panel handler: `onStreamFallback: () => this.post({type:"step", label:"stream fallback"})` — the label is a literal owned by the panel (do NOT import a const from agent.ts; `STREAM_FALLBACK_STEP_LABEL` was removed in round 2 because the notification channel is now a dedicated callback).
+- Webview (for case 7): add helper `deStreamOpenBubble()` called in `case "done"` and `case "error"` — removes the `vsdb-chat-streaming` class from the open bubble, does NOT remove the bubble. Detailed spec in "Case 7 spec" above.
 
 ---
 
 ## Discussion
 
 ### 2026-08-24 · planner · unic/unic-smart (round 2 — F2/F4)
-Abort transport pin (F2): `AbortController` tạo trong `handleSend` cùng chỗ token
-(line ~271), lưu `this.currentAbort`; `handleStop` flip token + `this.currentAbort?.abort()`
-(builtin turn chỉ; ACP path không đụng). Signal đi qua MỘT kênh: tham số 4 của
-`runAgent(input, deps, callbacks, signal)` → agent pass xuống tham số 5 của
-`deps.streamComplete(cfg, role, req, onText, signal)` → extension closure
-`streamComplete: (cfg, _role, req, onText, signal) => createProviderClient({...}).streamComplete(req, { onText, signal })` (extension.ts line 270–279 pattern). KHÔNG nhét signal vào callbacks hay input.
+Abort transport pin (F2): the `AbortController` is created in `handleSend` next to the token (around line ~271), stored in `this.currentAbort`; `handleStop` flips the token + calls `this.currentAbort?.abort()` (builtin turn only; the ACP path stays untouched). The signal goes through ONE channel: 4th parameter of `runAgent(input, deps, callbacks, signal)` → agent passes it as the 5th parameter of `deps.streamComplete(cfg, role, req, onText, signal)` → extension closure `streamComplete: (cfg, _role, req, onText, signal) => createProviderClient({...}).streamComplete(req, { onText, signal })` (the pattern from extension.ts lines 270–279). Do NOT stuff the signal into callbacks or input.
 
 ### 2026-08-24 · planner · unic/unic-smart
-AbortController per turn tạo trong `handleSend` (cùng chỗ token được tạo) và truyền qua
-`runAgent` tham số 4 (pin ở trên). Stop hiện chỉ flip token (handleStop line 608) — thêm
-`this.currentAbort?.abort()` field riêng cho builtin turn; ACP path không đụng.
-Δ `aiChatPanelMessages.ts` expected no-diff (delta type đã có) — nếu reviewer thấy diff
+A per-turn AbortController is created in `handleSend` (right where the token is created) and threaded via the 4th parameter of `runAgent` (pinned above). Stop currently only flips the token (handleStop line 608) — add `this.currentAbort?.abort()` as a separate field for the builtin turn; the ACP path stays untouched.
+A `aiChatPanelMessages.ts` diff is expected to be no-diff (the delta type already exists) — if a reviewer sees a diff on that file, accept comment-only changes.
+
 
 ## Executor Report
 
 ### Summary
-Implemented 7-case regression for builtin streaming wiring. (1-4) panel posts `{type:"delta"}` from `AgentCallbacks.onText`, gates on abort token, fires stream-fallback step; (5+7) webview banner shows "— streaming" and the `done`/`error` paths strip the streaming class so the next delta opens a new bubble (F4). (6) `extension.ts` wires a 5-arg `streamComplete` closure through `createProviderClient().streamComplete(req, { onText, signal })`. `AbortController` is created in `handleSend` and aborted in `handleStop` only for the builtin engine — ACP path untouched.
+Implemented the 7-case regression for builtin streaming wiring. (1-4) the panel posts `{type:"delta"}` from `AgentCallbacks.onText`, gates on the abort token, fires the stream-fallback step; (5+7) the webview banner shows "— streaming" and the `done`/`error` paths strip the streaming class so the next delta opens a new bubble (F4). (6) `extension.ts` wires a 5-arg `streamComplete` closure through `createProviderClient().streamComplete(req, { onText, signal })`. The `AbortController` is created in `handleSend` and aborted in `handleStop` only for the builtin engine — the ACP path is untouched.
 
 ### Files Changed
-- src/ui/aiChatPanel.ts — per-turn `AbortController`, `onText` posts `{type:"delta"}` (gated on token.aborted), `onStreamFallback` posts `{type:"step", label:"stream fallback"}`, `handleStop` aborts controller for builtin only.
+- src/ui/aiChatPanel.ts — per-turn `AbortController`, `onText` posts `{type:"delta"}` (gated on token.aborted), `onStreamFallback` posts `{type:"step", label:"stream fallback"}`, `handleStop` aborts the controller for builtin only.
 - src/extension.ts — added `streamComplete` closure wiring `createProviderClient({...}).streamComplete(req, { onText, signal })` alongside `complete`.
-- webview/aiChatPanelMain.ts — banner label includes `— streaming` for builtin+optional hint; `deStreamOpenBubble()` helper called from `done` and `error` to strip `vsdb-chat-streaming` class (F4 regression, no bubble removal).
+- webview/aiChatPanelMain.ts — banner label includes `— streaming` for builtin + optional hint; `deStreamOpenBubble()` helper called from `done` and `error` to strip the `vsdb-chat-streaming` class (F4 regression, no bubble removal).
 - src/ui/__tests__/aiChatPanel.test.ts — append cases 1-4 (delta order, abort, fallback, error).
-- src/ui/__tests__/aiChatPanelWebview.test.ts — append cases 5 + 7 (banner, de-stream). Harness now captures latest `window.addEventListener("message", ...)` so per-test re-eval of the IIFE doesn't accumulate handlers (which would N-bubble the same delta).
+- src/ui/__tests__/aiChatPanelWebview.test.ts — append cases 5 + 7 (banner, de-stream). The harness now captures the latest `window.addEventListener("message", ...)` so per-test re-eval of the IIFE does not accumulate handlers (which would N-bubble the same delta).
 - src/extension.test.ts — append case 6 via hoisted `vi.mock("./ui/aiChatPanel", …)` + `vi.resetModules()` per-test; pre-existing `aiChat` describe preserved.
 
 ### Test Plan
@@ -118,18 +105,18 @@ All 7 cases per task spec; harness captured via constructor mock (case 6) and DO
 - `npm run typecheck` — pass (exit 0, no output).
 - `npm run compile` — pass (esbuild bundled `dist/webview.js` and `dist/aiChatPanel.js`).
 - `npx vitest run src/ui/__tests__/aiChatPanel.test.ts src/ui/__tests__/aiChatPanelWebview.test.ts src/ui/__tests__/aiChatPanelMessages.test.ts src/extension.test.ts` — 4 files / 73 tests pass.
-- `npx vitest run` — 68 files / 777 tests pass, 2 skipped (pre-existing baseline skips). 0 new failures, full suite regression net green.
+- `npx vitest run` — 68 files / 777 tests pass, 2 skipped (pre-existing baseline skips). 0 new failures, full-suite regression net green.
 - `git diff package.json` — empty (no new deps).
 
 ### RED→GREEN Evidence
-Each test was authored before implementation; observed RED for cases 1-3 (panel) + 5/7/7b (webview) + 6 (extension) under the OLD wiring. GREEN after the patch above; cases 4 (error contains "stream" via upstream provider wording) and 5c/omp-banner remained green throughout (existing banner text was already streaming-tagged).
+Each test was authored before implementation; observed RED for cases 1-3 (panel) + 5/7/7b (webview) + 6 (extension) under the OLD wiring. GREEN after the patch above; cases 4 (error contains "stream" via upstream provider wording) and 5c/omp-banner remained green throughout (the existing banner text was already streaming-tagged).
 
 ### Notes
 - `aiChatPanelMessages.ts` no-diff (delta type already exists, expected).
-- Case 2 abort gates at TWO levels: `onText` callback (token.aborted) prevents further `delta` posts, and `currentAbort` flips the signal so the provider stream rejects with AbortError. agent.runStep catches and rethrows without falling back (per TASK-002 spec).
+- Case 2 abort gates at TWO levels: the `onText` callback (token.aborted) prevents further `delta` posts, and `currentAbort` flips the signal so the provider stream rejects with AbortError. agent.runStep catches and rethrows without falling back (per TASK-002 spec).
 - Case 6 b verifies the 5-arg arity of the closure but does NOT invoke it (the closure would dispatch a fetch that fails in jsdom; the contract surface is the function shape, fully verified via `streamComplete.length >= 5`).
 - API key never appears on the wire (asserted in cases 3, 4 + retained R5 regression in the panel test).
-ở file này thì chấp nhận comment-only.
+
 
 ---
 
@@ -145,7 +132,7 @@ TEST_PLAN_COVERAGE: all-followed (7/7 cases present; case 6 invocation-level onl
 FINDINGS:
   critical: none
   important:
-    - src/ui/aiChatPanel.ts:357-363 — catch posts `{type:"error"}` unconditionally; no abort-vs-error classification. Reproduced with a real AbortError rejection (actual provider path per agent.ts:177-182 rule 1): user Stop mid-stream posts error bubble "The operation was aborted". Task Target Files spec: "catch phân loại (abort vs error)". The executor's own handleStop comment (aiChatPanel.ts:651-656, "runBuiltinTurn catch is skipped") is factually wrong. Fix: in catch, if `token?.aborted || (err instanceof Error && err.name === "AbortError")` → post no error (done still posts in finally). Add a RED test: runAgent rejects AbortError after stop → `some(isError) === false`, `some(isDone) === true`, deltas limited to pre-stop.
+    - src/ui/aiChatPanel.ts:357-363 — catch posts `{type:"error"}` unconditionally; no abort-vs-error classification. Reproduced with a real AbortError rejection (actual provider path per agent.ts:177-182 rule 1): user Stop mid-stream posts error bubble "The operation was aborted". Task Target Files spec: "catch classifies abort vs error". The executor's own handleStop comment (aiChatPanel.ts:651-656, "runBuiltinTurn catch is skipped") is factually wrong. Fix: in catch, if `token?.aborted || (err instanceof Error && err.name === "AbortError")` → post no error (done still posts in finally). Add a RED test: runAgent rejects AbortError after stop → `some(isError) === false`, `some(isDone) === true`, deltas limited to pre-stop.
     - src/ui/__tests__/aiChatPanel.test.ts:685-764 (case #2) — the mock self-gates (`if (!signal?.aborted) onText("y")`), so the panel's `token.aborted` gate at aiChatPanel.ts:316-323 is never exercised: the mock never calls onText after stop regardless of panel behavior. Real path (real AbortError, per finding 1) is untested. Strengthen: fire `onText("y")` unconditionally from the mock and assert panel still doesn't post it.
   minor:
     - src/ui/aiChatPanel.ts:176-177 — duplicated doc comment "Resolvers for in-flight ACP turns" (old one left above the new currentAbort comment); lines 367-368 stray blank lines; extension.test.ts:1057-1071 duplicated TASK-003 banner comment block.

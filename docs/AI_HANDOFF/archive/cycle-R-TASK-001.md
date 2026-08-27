@@ -7,26 +7,26 @@
 
 ## Goal
 
-Pure builder `buildDatabaseStructure` render DDL toàn DB (đa schema: tables + views) từ introspection results, và agent tool `export_structure` cho model tự lấy full-DB context (bù khi system prompt bị budget-cut).
+Pure builder `buildDatabaseStructure` renders the whole-DB DDL (multi-schema: tables + views) from introspection results, and the agent tool `export_structure` lets the model fetch the full-DB context on demand (when the system prompt is cut by the budget).
 
 ## Target Files
 
-- `src/ui/exportStructure.ts` — thêm `buildDatabaseStructure(db: DatabaseStructureInput): string` (cùng file pure builder, KHÔNG vscode import).
-- `src/ai/tools/schemaTools.ts` — thêm `createExportStructureTool(f: AdapterFactory): AgentTool` (name `export_structure`, no-args).
+- `src/ui/exportStructure.ts` — add `buildDatabaseStructure(db: DatabaseStructureInput): string` (same pure-builder file, NO vscode import).
+- `src/ai/tools/schemaTools.ts` — add `createExportStructureTool(f: AdapterFactory): AgentTool` (name `export_structure`, no-args).
 - `src/ui/__tests__/exportStructure.test.ts` — test builder (append describe block).
 - `src/ai/tools/__tests__/schemaTools.test.ts` — test tool (append describe block).
 
-## Spec (chuẩn xác để executor không tự chế shape)
+## Spec (exact, to prevent the executor from inventing its own shape)
 
 ```ts
-// src/ui/exportStructure.ts — THÊM (giữ nguyên các export hiện có):
+// src/ui/exportStructure.ts — ADD (keep existing exports intact):
 import type {
   SchemaInfo, TableInfo, ViewInfo, TableDetail,
 } from "../adapters/types";
 
 export interface DatabaseStructureInput {
   schemas: Array<{ name: string }>;            // SchemaInfo-shape
-  tables: Array<{ schema: string; name: string }>;   // TableInfo-shape, đã flatten mọi schema
+  tables: Array<{ schema: string; name: string }>;   // TableInfo-shape, every schema already flattened
   views:  Array<{ schema: string; name: string }>;   // ViewInfo-shape
   /** Key "schema.table" → column list cho table/view. */
   columns: Record<string, ExportColumn[]>;
@@ -36,15 +36,15 @@ export interface DatabaseStructureInput {
 export function buildDatabaseStructure(db: DatabaseStructureInput): string;
 ```
 
-Render contract (test khóa từng dòng):
+Render contract (each line locked by tests):
 1. Header: `-- Database structure (${schemas.length} schemas, ${tables.length} tables, ${views.length} views)`.
-2. Per schema (theo thứ tự `schemas`): line `-- Schema: <name>` (identifier KHÔNG quote trong comment).
-3. Per table (thứ tự `tables` lọc theo schema): gọi lại `buildTableStructure(schema, name, columns[key] ?? [])` — key lookup `"${schema}.${name}"`, missing → empty columns.
-4. Per view: gọi lại `buildViewStructure(schema, name, columns[key] ?? [])`.
-5. Blocks cách nhau bằng blank line. Empty DB → chỉ header (không schema lines).
+2. Per schema (in `schemas` order): the line `-- Schema: <name>` (the identifier is NOT quoted inside the comment).
+3. Per table (in `tables` order filtered by schema): call `buildTableStructure(schema, name, columns[key] ?? [])` again — key lookup `"${schema}.${name}"`, missing → empty columns.
+4. Per view: call `buildViewStructure(schema, name, columns[key] ?? [])` again.
+5. Blocks separated by blank lines. Empty DB → just the header (no schema lines).
 
 ```ts
-// src/ai/tools/schemaTools.ts — THÊM:
+// src/ai/tools/schemaTools.ts — ADD:
 export function createExportStructureTool(f: AdapterFactory): AgentTool;
 // name: "export_structure"
 // description: "Export the FULL database structure (all schemas, tables, views) as CREATE TABLE DDL text. Use when the schema summary above is truncated or when you need complete context to advise the user."
@@ -52,29 +52,29 @@ export function createExportStructureTool(f: AdapterFactory): AgentTool;
 // execute():
 //   adapter = await f(); null → NO_CONNECTION_MSG ("No active connection. Connect to a database first, then retry.")
 //   PG-only introspection: schemas = await adapter.listSchemas(false)
-//     mỗi schema: tables = await adapter.listTables(s.name); views = await adapter.listViews(s.name)
-//     mỗi table/view: cols = await adapter.listColumns(name, schema) → map sang ExportColumn
+//     per schema: tables = await adapter.listTables(s.name); views = await adapter.listViews(s.name)
+//     per table/view: cols = await adapter.listColumns(name, schema) → map to ExportColumn
 //       {name, dataType, nullable, isPrimaryKey}
-//   NotImplementedError → trả string PG_ONLY_EXPORT_MSG
+//   NotImplementedError → return the PG_ONLY_EXPORT_MSG string
 //     ("export_structure is only supported for PostgreSQL connections.")
-//   Tham vết errors per-object (listColumns throw) → skip object, đếm skipped.
+//   Track errors per-object (listColumns throw) → skip object, count it as skipped.
 //   Return: JSON.stringify({ ddl, schemas: N, tables: N, views: N, skipped: N })
-//   Throw khác → `Tool failed: <msg>` (giữ pattern execute hiện có).
+//   Other throws → `Tool failed: <msg>` (keep the existing execute pattern).
 ```
 
-Note introspection: `listColumns(table, schema)` — signature theo DbAdapter (types.ts:97). `listSchemas(false)` loại system schemas (PG adapter lọc bằng SYSTEM_SCHEMAS).
+Note on introspection: `listColumns(table, schema)` — signature follows DbAdapter (types.ts:97). `listSchemas(false)` filters out system schemas (PG adapter filters via SYSTEM_SCHEMAS).
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
-| 1 | unit | builder: 2 schemas, tables + views → header + DDL blocks | `-- Database structure (2 schemas, 3 tables, 1 views)` + `-- Schema: public` + `CREATE TABLE public.users (` ... + view block chứa `-- View structure` | input 2 schemas, 3 tables (public.users, public.orders, sales.deals), 1 view, columns map đủ |
-| 2 | unit | tool: execute trả JSON có ddl + counts | parse JSON → `ddl` chứa header line, `schemas===2`, `tables===3`, `views===1`, `skipped===0` | fake adapter (pattern schemaTools.test.ts): listSchemas→[{public},{sales}], listTables/listViews/listColumns mock |
-| 3 | edge | builder: empty DB (0 schemas/tables/views) | return đúng 1 line header `(0 schemas, 0 tables, 0 views)`, không schema/table blocks | input rỗng |
-| 4 | edge | tool: mysql adapter throw NotImplementedError | return string `"export_structure is only supported for PostgreSQL connections."` (KHÔNG phải JSON, KHÔNG throw) | fake adapter listSchemas rejects NotImplementedError |
-| 5 | edge | tool: 1 table listColumns throw → skipped=1, còn lại render | JSON có `skipped===1`, ddl vẫn chứa table còn lại | fake adapter: listColumns throw cho "orders" only |
+| 1 | unit | builder: 2 schemas, tables + views → header + DDL blocks | `-- Database structure (2 schemas, 3 tables, 1 views)` + `-- Schema: public` + `CREATE TABLE public.users (` ... + view block containing `-- View structure` | input 2 schemas, 3 tables (public.users, public.orders, sales.deals), 1 view, columns map fully populated |
+| 2 | unit | tool: execute returns JSON with ddl + counts | parse JSON → `ddl` contains the header line, `schemas===2`, `tables===3`, `views===1`, `skipped===0` | fake adapter (schemaTools.test.ts pattern): listSchemas→[{public},{sales}], listTables/listViews/listColumns mock |
+| 3 | edge | builder: empty DB (0 schemas/tables/views) | returns exactly 1 line header `(0 schemas, 0 tables, 0 views)`, no schema/table blocks | empty input |
+| 4 | edge | tool: mysql adapter throws NotImplementedError | returns the string `"export_structure is only supported for PostgreSQL connections."` (NOT as JSON, does NOT throw) | fake adapter listSchemas rejects with NotImplementedError |
+| 5 | edge | tool: 1 table listColumns throws → skipped=1, remaining still rendered | JSON has `skipped===1`, ddl still contains the remaining table | fake adapter: listColumns throws only for "orders" |
 | 6 | edge | tool: factory null → no-connection msg | return `"No active connection. Connect to a database first, then retry."` | factory resolves null |
-| 7 | regression | tool + registry wiring không đổi hành vi list_tables/describe_table | các test cũ trong file vẫn pass (không sửa tool hiện có) | full file run |
+| 7 | regression | tool + registry wiring does not change list_tables/describe_table behaviour | existing tests in the file still pass (existing tools are NOT modified) | full file run |
 
 ## Test Files
 
@@ -90,10 +90,10 @@ npx tsc --noEmit
 
 ## Acceptance Criteria
 
-- [ ] Mọi test ở §Test Cases PASS (RED trước, GREEN sau).
-- [ ] `src/ui/exportStructure.ts` vẫn KHÔNG import vscode.
-- [ ] Tool description nhắc rõ dùng khi context bị truncate.
-- [ ] Reviewer verdict APPROVED hoặc APPROVED-WITH-MINOR.
+- [ ] All tests in §Test Cases PASS (RED first, then GREEN).
+- [ ] `src/ui/exportStructure.ts` still does NOT import vscode.
+- [ ] The tool description clearly notes when to use it (i.e. when the context gets truncated).
+- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
 
 ## Dependencies
 
@@ -101,14 +101,14 @@ npx tsc --noEmit
 
 ## Interfaces
 
-- Consumes: `buildTableStructure(schema: string, table: string, columns: ExportColumn[]): string`; `buildViewStructure(schema: string, view: string, columns: ExportColumn[]): string`; `ExportColumn { name; dataType; nullable; isPrimaryKey? }` (src/ui/exportStructure.ts, hiện có); `AdapterFactory` (src/ai/tools/types.ts); `AgentTool` (src/ai/agent.ts); `NotImplementedError` (src/adapters/types.ts); DbAdapter methods `listSchemas(false)`, `listTables(schema)`, `listViews(schema)`, `listColumns(table, schema)`.
-- Produces: `buildDatabaseStructure(db: DatabaseStructureInput): string`; `DatabaseStructureInput { schemas; tables; views; columns: Record<string, ExportColumn[]> }` (TASK-002 + TASK-004 tiêu thụ); `createExportStructureTool(f: AdapterFactory): AgentTool` — TASK-002 đăng ký vào registry.
+- Consumes: `buildTableStructure(schema: string, table: string, columns: ExportColumn[]): string`; `buildViewStructure(schema: string, view: string, columns: ExportColumn[]): string`; `ExportColumn { name; dataType; nullable; isPrimaryKey? }` (src/ui/exportStructure.ts, already present); `AdapterFactory` (src/ai/tools/types.ts); `AgentTool` (src/ai/agent.ts); `NotImplementedError` (src/adapters/types.ts); DbAdapter methods `listSchemas(false)`, `listTables(schema)`, `listViews(schema)`, `listColumns(table, schema)`.
+- Produces: `buildDatabaseStructure(db: DatabaseStructureInput): string`; `DatabaseStructureInput { schemas; tables; views; columns: Record<string, ExportColumn[]> }` (consumed by TASK-002 + TASK-004); `createExportStructureTool(f: AdapterFactory): AgentTool` — TASK-002 registers it into the registry.
 
 ---
 
 ## Discussion
 
-(chưa có comment)
+(no comment yet)
 
 ---
 
@@ -161,8 +161,8 @@ Tests  6 failed | 12 passed (18)
 ```
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor append `## Executor Report` BELOW this separator.
+Phase 4 reviewer append `## Reviewer Verdict` BELOW Executor Report.
 -->
 
 ## Reviewer Verdict

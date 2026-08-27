@@ -22,7 +22,7 @@ Add `vsdb.aiChat` to the schema-tree view/title navigation menu directly after
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | happy (behavior change) | toolbar order | view/title order: refreshSchema, addConnection, filterSchemaTree, openAiSettings, **aiChat**, clearSchemaTreeFilter — RED before the menu insert (index 4 is clearFilter today) | read package.json in scaffold.test.ts |
 | 2 | regression | all entries navigation group | every view/title entry still `group === "navigation"` (existing assertion stays green) | existing check |
@@ -77,8 +77,8 @@ against the un-edited manifest, then insert the menu entry.
 ---
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor append `## Executor Report` BELOW this separator.
+Phase 4 reviewer append `## Reviewer Verdict` BELOW Executor Report.
 -->
 
 ## Executor Report
@@ -102,7 +102,7 @@ FILES_CHANGED:
     index 5 now clearSchemaTreeFilter; comment updated to mention TASK-009)
 
 TESTS_ADDED:
-  - src/scaffold.test.ts: existing `package.json manifest hợp lệ` test extended with new
+  - src/scaffold.test.ts: existing `package.json manifest valid` test extended with new
     `expect(viewTitle[4].command).toBe("vsdb.aiChat");` and shifted `viewTitle[5]` assertion.
 
 VERIFICATION:
@@ -113,11 +113,11 @@ VERIFICATION:
     > tsc --noEmit
     (clean)
 
-    FAIL  src/scaffold.test.ts > scaffold > package.json manifest hợp lệ — đủ commands (≥ 10), keybindings, views, configuration
+    FAIL  src/scaffold.test.ts > scaffold > package.json manifest valid — enough commands (>= 10), keybindings, views, configuration
     TypeError: .toMatch() expects to receive a string, but got undefined
       ❯ src/scaffold.test.ts:126:63
         125|     for (const cmd of pkg.contributes.commands) {
-        126|       expect(cmd.icon, `command ${cmd.command} phải có icon`).toMatch(/^\$\(/);
+        126|       expect(cmd.icon, `command ${cmd.command} must have an icon`).toMatch(/^\$\(/);
 
   RED captured (pre-menu-insert state, via standalone order-extract script):
     [0] vsdb.refreshSchema

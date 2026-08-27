@@ -24,7 +24,7 @@ the user-facing all-or-nothing contract and the MySQL DDL limitation.
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | happy | Three-statement DML batch commits once | Call log is exactly `getConnection, SET time_zone, beginTransaction, query:INSERT 1, query:UPDATE 2, query:DELETE 3, commit, release`; returned results preserve statement order. | `mysqlAdapterWithPool` existing test helper; fake pool whose direct `query` throws. |
 | 2 | edge — failure | Statement two failure rolls back all prior work | Statement 2 rejects `Error("boom")`; `runQuery` rejects the same error; call log ends `query:INSERT 1, query:UPDATE 2, rollback, release`; `commit` is absent. | Held mock connection with query implementation throwing only on UPDATE. |
@@ -120,7 +120,7 @@ Verification Output: |
     > tsc --noEmit
     EXIT: 0
 Status: PASS
-Note: Implementation deviates from plan wording in two safe ways. (1) Statements are executed via runQueryOnConnection per trimmed statement (plan-specified helper); its RunResult is unwrapped to preserve the flat QueryResult-per-statement order executeText previously produced. (2) The now-orphaned private executeText() was deleted rather than left dead (strict codebase, sole caller removed); its doc-comment content merged into query(). Rollback failures are swallowed so the original statement error propagates. Single-SELECT streaming arm untouched. README documents all-or-nothing DML contract + MySQL DDL implicit-commit caveat in "Các cách chạy query khác".
+Note: Implementation deviates from plan wording in two safe ways. (1) Statements are executed via runQueryOnConnection per trimmed statement (plan-specified helper); its RunResult is unwrapped to preserve the flat QueryResult-per-statement order executeText previously produced. (2) The now-orphaned private executeText() was deleted rather than left dead (strict codebase, sole caller removed); its doc-comment content merged into query(). Rollback failures are swallowed so the original statement error propagates. Single-SELECT streaming arm untouched. README documents all-or-nothing DML contract + MySQL DDL implicit-commit caveat in "Other ways to run a query".
 
 
 ---
@@ -149,7 +149,7 @@ FINDINGS:
     - none
   minor:
     1. `README.md:59-62` — doc/behavior drift on the headline user promise. The bullet says
-       multi-statement runs via "Cmd/Ctrl+Enter chọn vùng, hoặc cả file qua nút ▶" are
+       multi-statement runs via "Cmd/Ctrl+Enter on a selected region, or the whole file via the ▶ button" are
        all-or-nothing, but that UI path does NOT reach the new transaction arm.
        `extension.ts:563` (`sqlToRun`) splits the selection first and `queryRunner.ts:167`
        calls `adapter.runQuery(statements[i].text)` once per statement — verified empirically:

@@ -10,7 +10,7 @@ VSDB lacks a DataGrip-style **Console**: a disposable scratchpad where a user ty
 
 1. Run results display: reuse the EXISTING ResultsPanel — Console forwards SQL into the already-built run flow (`runStatements(mgr, runner, resultsPanel, statements)` in src/extension.ts:617); Console itself does NOT embed an AG Grid.
 2. Save-as-SQL: implemented INSIDE the Console webview panel — a custom right-click (contextmenu DOM event) menu with "Save as SQL file" item, PLUS a visible Save button on the panel's in-webview toolbar. (VS Code cannot add native tab-context items to webview panels.)
-3. Persistence: NONE. Closing the Console discards its content; reopening starts empty ("gõ xong tắt đi").
+3. Persistence: NONE. Closing the Console discards its content; reopening starts empty ("type it, then close it").
 
 Scope complexity: MODERATE
 Detected systems: Console protocol/helpers, Console webview bundle, extension-host panel/command wiring

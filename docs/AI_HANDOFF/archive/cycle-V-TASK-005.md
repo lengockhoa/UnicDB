@@ -36,7 +36,7 @@ compose the SQL with TASK-004's builders, and dispatch from the grid's filter ev
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | unit (happy) | `requery with filters composes a server-side WHERE` | the SQL handed to `runner.runSql` contains `IN (` and the filtered column's quoted name | fake runner captures the SQL; `filters:{name:{values:["a"]}}` |
 | 2 | unit (happy) | `requery with offset+limit pages` | composed SQL contains `LIMIT 500 OFFSET 500` for a postgres driver | `offset:500, limit:500` |
@@ -242,8 +242,8 @@ higher one — not merely that both promises settled.
 ---
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor append `## Executor Report` BELOW this separator.
+Phase 4 reviewer append `## Reviewer Verdict` BELOW the Executor Report.
 -->
 
 ---

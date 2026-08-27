@@ -40,7 +40,7 @@ private helper; when null/omitted, webview falls back to the legacy header parse
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | happy | Typed dialect controls quoting | A state message `{dialect:"mysql"}` with a non-bare column id posts a requery ORDER BY containing backticks even when `header` is malformed/non-driver text. | Compiled webview bundle; existing server-sort fixture. |
 | 2 | edge — empty | Legacy state falls back safely | A state lacking `dialect` continues to infer postgres/mysql/mssql from existing valid headers; a malformed header falls back to current postgres behavior. | Existing `driverHeader` fixture plus malformed header. |

@@ -38,7 +38,7 @@ Rendering:
 - `specErrors`: "Table name is required" · "Column name is required" · "Duplicate column name: <n>" · "Column type is required: <name>" · "Key references unknown column: <col>" · "FK must reference at least one column" · "Check expression is required".
 
 ## Test Cases (REQUIRED — TDD)
-| # | Loại | Tên test | Expected |
+| # | Type | Test name | Expected |
 |---|------|----------|----------|
 | 1 | unit | mandatory defaults exact SQL | `generateCreateTable({name:"users",schema:"public",columns:defaultColumnSpecs("users"),keys:[]})` === `CREATE TABLE "public"."users" (\n    "id_users" varchar DEFAULT uuid_in(overlay(overlay(md5(random()::text \|\| ':' \|\| random()::text) placing '4' from 13) placing to_hex(floor(random() * (11 - 8 + 1) + 8)::int)::text from 17)::cstring),\n    "created_at" varchar DEFAULT TO_CHAR(date_trunc('second', now() AT TIME ZONE 'Asia/Ho_Chi_Minh'), 'YYYY-MM-DD HH24:MI:SS')::character varying\n);\n` |
 | 2 | unit | id tracks table name | `defaultColumnSpecs("orders")[0].name === "id_orders"` |
@@ -77,8 +77,8 @@ npx vitest run src/core/__tests__/ddlCreateTable.test.ts && npx tsc --noEmit
 Keys render INSIDE the parens (table constraints) → one CREATE statement = one runQuery call. Keep it.
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor appends `## Executor Report` BELOW this separator.
+Phase 4 reviewer appends `## Reviewer Verdict` BELOW Executor Report.
 -->
 
 ## Executor Report

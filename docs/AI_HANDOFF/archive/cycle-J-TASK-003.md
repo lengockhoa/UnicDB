@@ -92,7 +92,7 @@ Loop semantics (normative):
 5. No config/registry/model caching between runs — deps is the single source of truth.
 
 ## Test Cases (REQUIRED — TDD)
-| # | Loại | Tên test | Expected |
+| # | Type | Test name | Expected |
 |---|------|----------|----------|
 | 1 | unit | single-turn direct answer | complete → no toolCalls: 1 step, `finalText` = text, `stoppedOnBudget:false`, history = `[...input, assistant]`, complete called with `req.modelId` = cfg.models.work.modelId |
 | 2 | unit | tool loop happy | 1st complete returns toolCall `get_time({})`, 2nd returns text: 2 steps; step2 req.messages deep-equal `[system, user, assistant(toolCalls), tool("…")]`; tool result content = execute()'s return |
@@ -133,11 +133,11 @@ npx vitest run src/ai/__tests__/agent.test.ts && npx tsc --noEmit
 
 ## Discussion
 ### 2026-08-23 · planner · unic/unic-smart
-"Agent gọi liên tục tới cả 2 models" is satisfied at cycle J by the per-call `complete(cfg, role, req)` seam: one role per run, fresh config per run; mid-run role switching lands with DB tools (cycle K+) without an interface change. @executor: no fake timers needed — deps.complete is an async mock you control; make loadConfig a plain `vi.fn()` so test #4 can assert call count.
+"Agent calls both models continuously" is satisfied at cycle J by the per-call `complete(cfg, role, req)` seam: one role per run, fresh config per run; mid-run role switching lands with DB tools (cycle K+) without an interface change. @executor: no fake timers needed — deps.complete is an async mock you control; make loadConfig a plain `vi.fn()` so test #4 can assert call count.
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor appends `## Executor Report` BELOW this separator.
+Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
 
 ## Executor Report

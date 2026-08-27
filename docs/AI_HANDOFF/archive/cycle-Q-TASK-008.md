@@ -40,7 +40,7 @@ three kinds), built from DB introspection, always syntactically valid JS.
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | unit happy | table payload | exact literal: `{\n  schema: "public",\n  table: "users",\n  id: this.workingObj.id,\n  name: this.workingObj.name,\n}` (2-space indent, trailing comma) | 2 columns |
 | 2 | happy | view payload | same shape; columns from `listColumns` mock (views introspect via information_schema); key stays `table` | view node, mock returns cols |
@@ -112,8 +112,8 @@ schema. Payload always uses key `table` (user requirement) regardless of node ki
 ---
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor append `## Executor Report` BELOW this separator.
+Phase 4 reviewer append `## Reviewer Verdict` BELOW Executor Report.
 
 ## Executor Report
 

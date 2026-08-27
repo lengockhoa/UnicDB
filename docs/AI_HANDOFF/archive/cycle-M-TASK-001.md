@@ -15,7 +15,7 @@ Add an injected ACP JSON-RPC/NDJSON client that routes server requests and write
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | unit | client request writes JSON-RPC and resolves matching response | fake transport sees numbered request and matching result resolves it | FakeAcpTransport |
 | 2 | edge | malformed/unknown JSON-RPC frame is ignored | no client request or server handler settles | invalid line + unrelated frame |

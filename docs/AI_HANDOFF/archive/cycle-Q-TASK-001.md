@@ -18,7 +18,7 @@ connection, and drives the existing QueryRunner → ResultsPanel pipeline (busy 
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | unit happy | postgres quoting with schema | `buildBrowseSelect("postgres","public","users")` returns exactly `SELECT * FROM "public"."users"` (no trailing `;`) | plain identifiers |
 | 2 | unit happy | mysql + mssql quoting | mysql → ``SELECT * FROM `mydb`.`users` ``; mssql → `SELECT * FROM [mydb].[users]` | plain identifiers |
@@ -74,8 +74,8 @@ Design notes for executor: (1) statement must be `{ text, start: 0, end: text.le
 ---
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor append `## Executor Report` BELOW this separator.
+Phase 4 reviewer append `## Reviewer Verdict` BELOW Executor Report.
 -->
 
 ## Executor Report

@@ -24,7 +24,7 @@ DataGrip-style designer dialog: webview (left COLUMNS (n)/KEYS (n) lists with +,
 
 ## Test Cases (REQUIRED — TDD)
 Host tests (`newTableForm.test.ts` — mock vscode, capture panel + onDidReceiveMessage; pattern connectionForm.test.ts):
-| # | Loại | Tên test | Expected |
+| # | Type | Test name | Expected |
 |---|------|----------|----------|
 | 1 | unit | create init + preview exact | `ready` → init `{mode:"create",schema:"public",spec:{name:"table_name",…columns [id_table_name, created_at]}}`; `specChanged` name `users` → preview.sql === TASK-001 #1 exact string, errors [] |
 | 2 | unit | modify loadSpec + diff preview | loadSpec resolves fixture; specChanged with renamed col → preview.sql === diffTable stmts joined `\n` |
@@ -68,8 +68,8 @@ npm run compile && npx vitest run src/ui/__tests__/newTableForm.test.ts src/ui/_
 `lastPreviewSql` is the single source passed to runDdl — OK executes EXACTLY what preview showed.
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor appends `## Executor Report` BELOW this separator.
+Phase 4 reviewer appends `## Reviewer Verdict` BELOW Executor Report.
 -->
 
 ## Executor Report

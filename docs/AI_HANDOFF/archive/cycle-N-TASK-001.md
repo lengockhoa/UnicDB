@@ -7,33 +7,30 @@
 
 ## Goal
 
-Thêm `streamComplete(req, opts)` vào `createProviderClient` return — OpenAI-compatible
-`/chat/completions` với `stream:true`, parse SSE thủ công (không dependency mới), inject
-fetch như `complete()` hiện tại để unit test không chạm network.
+Add `streamComplete(req, opts)` to the `createProviderClient` return — OpenAI-compatible `/chat/completions` with `stream:true`, hand-written SSE parser (no new dependencies), fetch injected the same way as the existing `complete()` so unit tests never touch the network.
 
 ## Target Files
 
-- `src/ai/provider.ts` — thêm types `StreamTextEvent`, `StreamRequestOptions`, method
-  `streamComplete` trên object return của `createProviderClient` (giữ `complete` nguyên vẹn).
+- `src/ai/provider.ts` — add the `StreamTextEvent`, `StreamRequestOptions` types, the `streamComplete` method on the object returned by `createProviderClient` (keep `complete` untouched).
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
-|---|------|----------|----------|---------------------|
-| 1 | unit (happy) | streamComplete SSE happy: 3 data chunk + `data: [DONE]` | `onText` lần lượt nhận `"Hel"`, `"lo"`, `"!"`; result `{text:"Hello!", toolCalls:[], finishReason:"stop", usage:{inputTokens:7, outputTokens:5}}` | fetch fake trả `new Response(sseBody, {status:200, headers:{"Content-Type":"text/event-stream"}})` với body = chuỗi SSE nhiều event |
-| 2 | edge (malformed) | 1 data line JSON.parse fail + 1 event thiếu `choices` | event xấu bị skip, event tốt vẫn `onText`; KHÔNG throw; text = chỉ phần event tốt | SSE body: `data: {bad json\n\ndata: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]` + 1 event `data: {}` |
-| 3 | edge (boundary) | chunk boundary cắt giữa UTF-8 char + cắt giữa line + event có 2 dòng `data:` | đủ fragment đúng thứ tự, không lặp/không mất; multi-line data concat bằng `\n` trước parse | fetch fake trả ReadableStream pump thủ công: chunk `"data: {\"choices\":[{\"delta\":{\"content\":\"hél\"}}]}"` cắt giữa bytes của `é`, sau đó `\n\ndata: [DONE]\n\n` ở chunk sau |
-| 4 | edge (error) | HTTP 401 stream | throw `ProviderError` với `status:401`, `bodySnippet` đã scrub apiKey (`***`), message không chứa apiKey | fetch fake trả 401 body chứa key `sk-secret-123` |
-| 5 | edge (non-SSE) | HTTP 200 nhưng body là JSON thường (non-stream response) | throw `ProviderError` (invalid SSE/stream shape) — KHÔNG onText, không crash | fetch fake `jsonResponse({choices:[...]})` |
-| 6 | edge (abort) | `opts.signal` aborted giữa stream → reject AbortError, KHÔNG bọc ProviderError | reject với error `name === "AbortError"`, `err instanceof ProviderError === false`; không onText sau abort | fetch fake nhận `opts.signal`; stream pump: enqueue 1 chunk tốt, `signal.addEventListener("abort", () => c.error(abortErr()))` với `abortErr = Object.assign(new Error("stream aborted"), {name:"AbortError"})`; test abort() sau tick |
-| 7 | regression | `complete()` non-stream không đổi | 3 test hiện có (#1 request shape, #8 timeout, #10 scrub) vẫn pass nguyên — không edit test cũ | existing suite |
+| # | Type | Test name | Expected | Pre-state / Fixture |
+|---|------|-----------|----------|---------------------|
+| 1 | unit (happy) | streamComplete SSE happy: 3 data chunks + `data: [DONE]` | `onText` receives `"Hel"`, `"lo"`, `"!"` in order; result `{text:"Hello!", toolCalls:[], finishReason:"stop", usage:{inputTokens:7, outputTokens:5}}` | fake fetch returns `new Response(sseBody, {status:200, headers:{"Content-Type":"text/event-stream"}})` with body = a multi-event SSE string |
+| 2 | edge (malformed) | 1 data line fails JSON.parse + 1 event missing `choices` | bad event is skipped, good events still trigger `onText`; does NOT throw; text = only the good event part | SSE body: `data: {bad json\n\ndata: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]` + 1 event `data: {}` |
+| 3 | edge (boundary) | chunk boundary cut mid UTF-8 char + cut mid line + event with 2 `data:` lines | all fragments received in order, no duplication/loss; multi-line data concat with `\n` before parse | fake fetch returns a manually-pumped ReadableStream: chunk `"data: {\"choices\":[\"delta\":{\"content\":\"plain ASCII text\"}}]}"` cut mid-byte of an accented Latin char (multi-byte UTF-8), then `\n\ndata: [DONE]\n\n` in the next chunk |
+| 4 | edge (error) | HTTP 401 stream | throw `ProviderError` with `status:401`, `bodySnippet` apiKey scrubbed (`***`), message does not contain apiKey | fake fetch returns 401 body containing key `sk-secret-123` |
+| 5 | edge (non-SSE) | HTTP 200 but body is regular JSON (non-stream response) | throw `ProviderError` (invalid SSE/stream shape) — no onText, no crash | fake fetch `jsonResponse({choices:[...]})` |
+| 6 | edge (abort) | `opts.signal` aborted mid-stream → reject AbortError, NOT wrapped in ProviderError | rejects with error `name === "AbortError"`, `err instanceof ProviderError === false`; no onText after abort | fake fetch receives `opts.signal`; stream pump: enqueue 1 good chunk, `signal.addEventListener("abort", () => c.error(abortErr()))` with `abortErr = Object.assign(new Error("stream aborted"), {name:"AbortError"})`; test abort() after a tick |
+| 7 | regression | `complete()` non-stream behavior unchanged | the 3 existing tests (#1 request shape, #8 timeout, #10 scrub) still pass untouched — no edits to existing tests | existing suite |
 
-Cách viết fake ReadableStream: `new ReadableStream({start(c){c.enqueue(new TextEncoder().encode(chunk)); ... c.close();}})` — Node 18 undici hỗ trợ; tham khảo pattern `makeFetch`/`jsonResponse` ở đầu `src/ai/__tests__/provider.test.ts` (đã verify tồn tại).
+How to write a fake ReadableStream: `new ReadableStream({start(c){c.enqueue(new TextEncoder().encode(chunk)); ... c.close();}})` — Node 18 undici supports it; see the `makeFetch`/`jsonResponse` pattern at the top of `src/ai/__tests__/provider.test.ts` (existence verified).
 
 ## Test Files
 
-- `src/ai/__tests__/provider.test.ts` — append describe block mới `provider — streamComplete` (7 cases trên; case 7 = chạy lại selection có sẵn).
-- `src/ai/__tests__/agent.test.ts` — KHÔNG sửa logic; chỉ thêm type import nếu cần khi `AgentDeps` mở rộng (TASK-002 mới mở rộng — task này không đụng agent.test.ts).
+- `src/ai/__tests__/provider.test.ts` — append a new describe block `provider — streamComplete` (the 7 cases above; case 7 = re-run the existing selection).
+- `src/ai/__tests__/agent.test.ts` — do NOT edit logic; only add a type import if needed once `AgentDeps` expands (TASK-002 expands it — this task does not touch agent.test.ts).
 
 ## Verification Commands
 
@@ -43,11 +40,11 @@ npm run typecheck && npx vitest run src/ai/__tests__/provider.test.ts src/ai/__t
 
 ## Acceptance Criteria
 
-- [ ] Mọi test ở §Test Cases PASS (RED trước khi implement, GREEN sau).
-- [ ] Không regression ở `provider.test.ts` cũ (case 6).
-- [ ] Không dependency mới (`package.json` không diff).
-- [ ] `complete()` behavior + public types cũ không đổi.
-- [ ] Reviewer verdict APPROVED hoặc APPROVED-WITH-MINOR.
+- [ ] Every test in §Test Cases PASSES (RED before implementation, GREEN after).
+- [ ] No regression in the existing `provider.test.ts` (case 6).
+- [ ] No new dependency (`package.json` has no diff).
+- [ ] `complete()` behavior + existing public types unchanged.
+- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
 
 ## Dependencies
 
@@ -55,28 +52,28 @@ npm run typecheck && npx vitest run src/ai/__tests__/provider.test.ts src/ai/__t
 
 ## Interfaces
 
-- Consumes: (none — provider.ts hiện tại, đặc biệt `FetchLike`, `ProviderRequest`, `ProviderResult`, `ProviderError`, `buildChatCompletionsBody`, `parseChatCompletionsResponse`, `createProviderClient` đều đã tồn tại, verified)
-- Produces (TASK-002 tiêu thụ — chữ ký CHÍNH XÁC):
+- Consumes: (none — current provider.ts, especially `FetchLike`, `ProviderRequest`, `ProviderResult`, `ProviderError`, `buildChatCompletionsBody`, `parseChatCompletionsResponse`, `createProviderClient` all already exist, verified).
+- Produces (consumed by TASK-002 — EXACT signature):
   ```ts
   export interface StreamTextEvent { text: string; }
   export interface StreamRequestOptions {
-    onText(ev: StreamTextEvent): void;   // mỗi delta content chunk một lần
-    signal?: AbortSignal;                // aborted giữa stream → reject Error name "AbortError" (fetch abort tự ném sẵn; KHÔNG bọc ProviderError)
+    onText(ev: StreamTextEvent): void;   // once per delta content chunk
+    signal?: AbortSignal;                // aborted mid-stream → reject Error name "AbortError" (fetch abort throws on its own; NOT wrapped in ProviderError)
   }
-  // Quyết định include_usage: KHÔNG gửi `stream_options:{include_usage:true}` — không
-  // universally supported bởi các server OpenAI-compatible (một số reject request).
-  // usage lấy từ `usage` field của chunk cuối NẾU server tự gửi, else {inputTokens:0, outputTokens:0}.
-  // trên object return của createProviderClient:
+  // include_usage decision: do NOT send `stream_options:{include_usage:true}` — not
+  // universally supported by OpenAI-compatible servers (some reject the request).
+  // usage comes from the `usage` field of the final chunk IF the server sends it, else {inputTokens:0, outputTokens:0}.
+  // on the object returned by createProviderClient:
   streamComplete(req: ProviderRequest, opts: StreamRequestOptions): Promise<ProviderResult>;
   ```
-  `streamComplete` với method `responses` → throw `new Error("streaming not supported for method responses")` (caller quyết định không gọi).
+  `streamComplete` with method `responses` → throw `new Error("streaming not supported for method responses")` (the caller decides not to call it).
 
 ---
 
 ## Discussion
 
 ### 2026-08-24 · planner · unic/unic-smart
-Lưu ý implementation: `tsconfig` chưa verify có `dom` lib cho `ReadableStreamDefaultReader` — nếu typecheck complain, khai báo structural type local (`interface BodyReader { read(): Promise<{done:boolean; value?:Uint8Array}>; releaseLock():void }`) thay vì import lib.dom. KHÔNG thêm lib vào tsconfig vì có thể ảnh hưởng typecheck toàn repo. Fallback `resp.body === null` → đọc `resp.text()` rồi cắt event từ chuỗi (không path network mới).
+Implementation note: `tsconfig` has not been verified for the `dom` lib for `ReadableStreamDefaultReader` — if typecheck complains, declare a local structural type (`interface BodyReader { read(): Promise<{done:boolean; value?:Uint8Array}>; releaseLock():void }`) instead of importing lib.dom. Do NOT add a lib to tsconfig because it may affect typechecking of the whole repo. Fallback when `resp.body === null` → read `resp.text()` and slice events from the string (no new network path).
 
 
 ## Executor Report
@@ -96,7 +93,7 @@ TypeError: client.streamComplete is not a function
 [3/6] #3 chunk boundaries  → TypeError: client.streamComplete is not a function
 [4/6] #4 HTTP 401         → AssertionError: expected TypeError to be an instance of ProviderError
 [5/6] #5 non-SSE 200      → AssertionError: expected TypeError to be an instance of ProviderError
-[6/6] #6 abort            → AssertionError: expected 'TypeError' to be 'AbortError'
+[6/6] #6 abort            → AssertionError: expected TypeError to be AbortError
 Test Files  1 failed (1)
 Tests  6 failed | 15 skipped (21)
 ```
@@ -144,12 +141,11 @@ FINDINGS:
     - none
   important:
     - file: src/ai/provider.ts:541 — CRLF-only SSE bodies never split: boundary search is literal `buffer.indexOf("\n\n")`, and `\r\n\r\n` contains no `\n\n` substring, so a server using CRLF line endings (legal per SSE spec) yields ZERO events → throws "invalid SSE/stream shape: no events parsed" (reproduced: scratch test with `\r\n\r\n` separators → ProviderError). The comment at :545 ("Some servers use \r\n\r\n") only handles `\r` inside events, not the boundary. Fix: in the main loop AND the trailing-flush path, find the earliest of `indexOf("\r\n\r\n")` and `indexOf("\n\n")` and slice by the matched delimiter length; add a CRLF-only-body test.
-    - file: src/ai/provider.ts:470-479 — caller `opts.signal` abort during the fetch phase (before headers arrive) is caught and rethrown as `ProviderError("request timed out after 60000ms")`, violating the frozen contract "abort → reject Error name 'AbortError', KHÔNG bọc ProviderError" (reproduced: observed rejection name "ProviderError", not "AbortError"; also mislabels a user abort as a timeout). Fix: in the fetch catch, when `err.name === "AbortError"`, rethrow bare if `streamOpts.signal?.aborted`, else throw the timeout ProviderError.
+    - file: src/ai/provider.ts:470-479 — caller `opts.signal` abort during the fetch phase (before headers arrive) is caught and rethrown as `ProviderError("request timed out after 60000ms")`, violating the frozen contract "abort → reject Error name AbortError, NOT wrapped in ProviderError" (reproduced: observed rejection name "ProviderError", not "AbortError"; also mislabels a user abort as a timeout). Fix: in the fetch catch, when `err.name === "AbortError"`, rethrow bare if `streamOpts.signal?.aborted`, else throw the timeout ProviderError.
   minor:
     - file: src/ai/provider.ts:530-534 — converse of the above: an internal-timeout abort surfacing mid-read is rethrown bare as AbortError (indistinguishable from user abort). The same `streamOpts.signal?.aborted` disambiguation in the read-phase catch fixes it (timeout → ProviderError timeout:true).
 NEXT_STATUS_FOR_INDEX: changes_requested
-NOTES: Happy path, malformed-event skip, UTF-8/mid-line splits, 401 scrub, non-SSE 200, and mid-stream abort all conform and pass fresh. No scope creep (git stat: provider.ts +255/-0, test +216/-1 where -1 is only an EOF-newline fix); no new deps; no vscode import. The two important findings are narrow fixes in streamComplete's error/boundary handling.
-
+NOTES: Happy path, malformed-event skip, UTF-8/mid-line splits, 401 scrub, non-SSE 200, and mid-stream abort all conform and pass fresh. No scope creep (git stat: provider.ts +255/-0, test +216/-1 where -1 is only an EOF-newline fix); no new deps; no vscode import. The two important findings are narrow fixes in streamComplete error/boundary handling.
 ---
 
 ## Executor Report (fix round 1)
@@ -170,8 +166,8 @@ FAIL  src/ai/__tests__/provider.test.ts > provider — streamComplete (CRLF body
 ProviderError: invalid SSE/stream shape: no events parsed
  ❯ Object.streamComplete src/ai/provider.ts:649:15
 
-FAIL  src/ai/__tests__/provider.test.ts > provider — streamComplete (caller abort during fetch phase) > rejects with bare AbortError (name 'AbortError', not ProviderError) when caller signal aborts before response headers arrive
-AssertionError: expected 'ProviderError' to be 'AbortError' // Object.is equality
+FAIL  src/ai/__tests__/provider.test.ts > provider — streamComplete (caller abort during fetch phase) > rejects with bare AbortError (name AbortError, not ProviderError) when caller signal aborts before response headers arrive
+AssertionError: expected ProviderError to be AbortError // Object.is equality
 - Expected
 + Received
 - AbortError
@@ -191,15 +187,15 @@ output_excerpt:
 > tsc --noEmit
  ✓ src/ai/__tests__/agent.test.ts  (12 tests) 5ms
  ✓ src/ai/__tests__/provider.test.ts  (23 tests) 8ms
-Test Files  2 passed (2)
+ Test Files  2 passed (2)
      Tests  35 passed (35)
 ```
 
 ### Files Changed
 
 - `src/ai/provider.ts`:
-  - SSE main loop now finds earliest of `buffer.indexOf("\r\n\r\n")` and `buffer.indexOf("\n\n")` and slices by matched delimiter length (4 vs 2). `rawEvent.split(/\r?\n/)` already handles CRLF line endings inside the event. Trailing-flush already handles CRLF line endings via `/\r?\n/` so no change needed there.
-  - Fetch-phase catch (`:467-490`): when `err.name === "AbortError"`, check `streamOpts.signal?.aborted` — if true, rethrow original `e` bare (or wrap minimally if not an Error) so name stays "AbortError" and it is not a ProviderError; otherwise throw timeout ProviderError.
+  - SSE main loop now finds the earliest of `buffer.indexOf("\r\n\r\n")` and `buffer.indexOf("\n\n")` and slices by the matched delimiter length (4 vs 2). `rawEvent.split(/\r?\n/)` already handles CRLF line endings inside the event. Trailing-flush already handles CRLF line endings via `/\r?\n/` so no change needed there.
+  - Fetch-phase catch (`:467-490`): when `err.name === "AbortError"`, check `streamOpts.signal?.aborted` — if true, rethrow original `e` bare (or wrap minimally if not an Error) so the name stays "AbortError" and it is not a ProviderError; otherwise throw timeout ProviderError.
   - Read-phase catch (`:534-553`): same disambiguation — caller abort surfaces bare AbortError; internal timeout → ProviderError timeout:true.
 - `src/ai/__tests__/provider.test.ts`:
   - Appended describe `provider — streamComplete (CRLF body regression)` (CRLF-only happy path).
@@ -207,7 +203,7 @@ Test Files  2 passed (2)
 
 ### Tests Added
 
-- `src/ai/__tests__/provider.test.ts`: `parses events when server uses \r\n\r\n separators (legal SSE per spec)`, `rejects with bare AbortError (name 'AbortError', not ProviderError) when caller signal aborts before response headers arrive`.
+- `src/ai/__tests__/provider.test.ts`: `parses events when server uses \r\n\r\n separators (legal SSE per spec)`, `rejects with bare AbortError (name AbortError, not ProviderError) when caller signal aborts before response headers arrive`.
 
 ### Issues
 
@@ -233,4 +229,4 @@ FINDINGS:
   minor:
     - none
 NEXT_STATUS_FOR_INDEX: approved
-NOTES: No contract drift — stream_options still omitted, usage defaults {0,0}, no vscode import (file has zero import statements), no new deps (package.json/package-lock.json clean in git status). Diff is additive-only (+282/−0 in provider.ts); complete() untouched. AbortError wrapping at :373 is pre-existing complete() code, explicitly out of scope per contract "complete() behavior không đổi".
+NOTES: No contract drift — stream_options still omitted, usage defaults {0,0}, no vscode import (file has zero import statements), no new deps (package.json/package-lock.json clean in git status). Diff is additive-only (+282/−0 in provider.ts); complete() untouched. AbortError wrapping at :373 is pre-existing complete() code, explicitly out of scope per contract "complete() behavior unchanged".

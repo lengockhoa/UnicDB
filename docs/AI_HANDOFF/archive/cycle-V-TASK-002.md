@@ -29,7 +29,7 @@ only match regexes, it cannot know `users` is a real table.
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | unit (happy) | `known table is tokenized as class` | exactly one token whose range covers `users` and whose type index is `legend.tokenTypes.indexOf("class")` | cache stubbed with `listTables → [{name:"users",schema:"public"}]`; doc `SELECT * FROM users` |
 | 2 | unit (happy) | `known column is tokenized as property` | token for `email` typed `property` | `listColumns → [{name:"email",...}]`; doc `SELECT email FROM users` |
@@ -169,8 +169,8 @@ resolves to zero tokens (case 4 unchanged), it just gets a second chance once da
 ---
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor append `## Executor Report` BELOW this separator.
+Phase 4 reviewer append `## Reviewer Verdict` BELOW the Executor Report.
 -->
 
 ## Executor Report
@@ -195,7 +195,7 @@ FILES_CHANGED:
   - src/extension.test.ts: case #8 (registration guard) added.
 TESTS_ADDED:
   - src/ui/__tests__/sqlSemanticTokens.test.ts: #1-#7,#9,#10.
-  - src/extension.test.ts: TASK-002 #8 activate() không throw khi API vắng mặt.
+  - src/extension.test.ts: TASK-002 #8 activate() does not throw when the API is absent.
 VERIFICATION:
   command: npx vitest run src/ui/__tests__/sqlSemanticTokens.test.ts src/extension.test.ts && npm run typecheck && npm test
   result: semantic tests 9/9 pass; extension tests 60/60 pass; typecheck clean; full npm test 1337 passed, 0 failed (2 skipped)

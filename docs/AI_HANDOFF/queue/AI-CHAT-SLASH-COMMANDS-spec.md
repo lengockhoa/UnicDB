@@ -2,26 +2,26 @@
 
 Source: user request 2026-08-24, verbatim:
 
-> Tôi nghĩ nên bắt chước trong omp có mấy cái lệnh của omp xài cũng sướng lắm mà. có thể
-> resume lại session nữa cũng được
+> I think we should mimic omp — a few of omp's commands are really nice to use. We should
+> also be able to resume a session
 
-Gộp với spec AI-CHAT-INPUT-UX-spec.md cùng repo (Enter/Shift+Enter/attach/paste).
+Merged with spec AI-CHAT-INPUT-UX-spec.md in the same repo (Enter/Shift+Enter/attach/paste).
 
 ## Requirements
 
-1. **Slash commands** trong ô input AI Chat — mô phỏng UX lệnh của omp:
-   - Gõ `/` → dropdown autocomplete danh sách lệnh.
-   - Ứng viên: `/clear` (new chat), `/resume` (mở picker session cũ — đã có Resume-session
-     picker từ cycle O, tái dùng), `/engine` (đổi omp/builtin), `/context` (xem DB context
-     đang gắn), `/export` (xuất transcript), `/model` (đổi work/smart).
-   - Lệnh chạy local không gửi lên model; Enter trên lệnh → execute, không send message.
-2. **Resume session**: alias của Resume-session picker hiện có (cycle O) + `/resume`; list
-   prior omp sessions, replay vào chat, tiếp tục prompt trên session đã load.
-3. Nút Clear phải luôn quay về trạng thái chat-được (bug này fix ở cycle R, không queue).
+1. **Slash commands** in the AI Chat input box — mimic the UX of omp commands:
+   - Type `/` → dropdown autocomplete listing commands.
+   - Candidates: `/clear` (new chat), `/resume` (open picker of prior sessions — Resume-session
+     picker from cycle O already exists, reuse it), `/engine` (switch omp/builtin), `/context`
+     (view attached DB context), `/export` (export transcript), `/model` (switch work/smart).
+   - Commands run locally and MUST NOT be uploaded to the model; Enter on a command → execute, NOT send message.
+2. **Resume session**: alias of the existing Resume-session picker (cycle O) + `/resume`; list
+   prior omp sessions, replay into chat, continue prompting on the loaded session.
+3. The Clear button MUST always return to a chat-ready state (this bug is fixed in cycle R, NOT queued).
 
 ## Notes for planner
 
-- File chính: `webview/aiChatPanelMain.ts` (input handling + dropdown UI), host command
-  router ở `src/ui/*` hoặc `src/ai/*` tương ứng từng lệnh.
-- `/resume` tái dùng picker cycle O — tìm "Resume-session picker" trong src/ai hoặc src/ui.
-- Slash-command parser nên là pure function test được (input → {command, args} | null).
+- Main file: `webview/aiChatPanelMain.ts` (input handling + dropdown UI), host command
+  router in `src/ui/*` or `src/ai/*` per command.
+- `/resume` reuses the cycle O picker — find "Resume-session picker" in src/ai or src/ui.
+- Slash-command parser MUST be a pure, testable function (input → {command, args} | null).

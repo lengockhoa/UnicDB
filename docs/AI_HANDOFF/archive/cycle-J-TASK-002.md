@@ -94,7 +94,7 @@ Wire behavior (normative):
   `invalid JSON in response`. `bodySnippet` scrubs the apiKey BEFORE storage on the error.
 
 ## Test Cases (REQUIRED — TDD)
-| # | Loại | Tên test | Expected |
+| # | Type | Test name | Expected |
 |---|------|----------|----------|
 | 1 | unit | chat request shape | fake fetch; complete(validReq) → URL `https://x/v1/chat/completions`, headers Bearer `sk-1`, body JSON: model, messages[0].role/content, `max_tokens`, `temperature` keys present; usage parsed |
 | 2 | unit | responses request shape | method `responses` → URL `.../responses`; body has `instructions` (system text), `input` items in responses shape (user text part → `input_text`), `max_output_tokens` |
@@ -102,7 +102,7 @@ Wire behavior (normative):
 | 4 | unit | chat parse: tool calls | `finish_reason:"tool_calls"`, `tool_calls[0] {id:"c1", function:{name:"get_schema", arguments:"{\"q\":1}"}}` → toolCalls deep-equal, finishReason `"tool_calls"` |
 | 5 | unit | responses parse: output_text | `{output_text:"Hi", status:"completed", usage:{input_tokens:3, output_tokens:2}}` → text "Hi", toolCalls [], finishReason "stop", usage {3,2} |
 | 6 | unit | responses parse: function_call item | output `[{"type":"function_call","call_id":"c9","name":"run_sql","arguments":"{}"}]`, status "completed" → toolCalls `[{id:"c9",name:"run_sql",argumentsJson:"{}"}]`, finishReason "tool_calls", text "" |
-| 7 | unit | vision parts both methods | user message `[{type:"text",text:"gì đây"},{type:"image_url",imageUrl:"data:image/png;base64,AAA"}]` → chat body `image_url:{url:"data:image/png;base64,AAA"}`; responses body `input_image` with same URL |
+| 7 | unit | vision parts both methods | user message `[{type:"text",text:"what is this"},{type:"image_url",imageUrl:"data:image/png;base64,AAA"}]` → chat body `image_url:{url:"data:image/png;base64,AAA"}`; responses body `input_image` with same URL |
 | 8 | edge (timing) | timeout aborts | fetch rejects `{name:"AbortError"}` → ProviderError `timeout === true`, message contains `timed out after 100ms`, endpoint = attempted URL |
 | 9 | edge (malformed) | 200 non-JSON | resolves `Response` with body `"not json{"` → ProviderError message `invalid JSON in response`, `status` undefined |
 | 10 | edge (security) | apiKey scrubbed from error snippet | 401 body `"Unauthorized for key sk-secret-123"` (echoes key), apiKey `sk-secret-123` → thrown ProviderError `bodySnippet === "Unauthorized for key ***"` (every occurrence) |
@@ -139,8 +139,8 @@ npx vitest run src/ai/__tests__/provider.test.ts && npx tsc --noEmit
 No `src/ai/*` imports keeps wave 1 parallel-safe (TASK-001 touches settings/config only). @executor: for #8 the fake fetch should reject immediately with an AbortError-shaped object — no real timers needed; keep the AbortController wiring real so the signal is actually passed to fetch (assert `init.signal` is an AbortSignal in #1).
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor appends `## Executor Report` BELOW this separator.
+Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
 
 ## Executor Report
@@ -172,7 +172,7 @@ ISSUES: none
 HANDOFF_TO_REVIEWER: yes — wave-1 deliverable ready for review.
 NEXT: Reviewer picks up from docs/AI_HANDOFF/INDEX.md pending_review row.
 ```
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
 
 ## Reviewer Verdict

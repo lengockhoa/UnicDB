@@ -1,177 +1,184 @@
 # VSDB — Run SQL from VS Code
 
-Một extension VS Code nhỏ gọn để chạy truy vấn SQL trực tiếp từ editor, không cần
-nhảy sang client ngoài. Hỗ trợ **PostgreSQL**, **MySQL / MariaDB** và **SQL Server**.
+A compact VS Code extension to run SQL queries directly from the editor, without
+jumping to an external client. Supports **PostgreSQL**, **MySQL / MariaDB**, and
+**SQL Server**.
 
 ![screenshot](media/icon.png)
 
-> Mở file `.sql` → chọn connection → bôi đen câu lệnh → **Cmd+Enter** (macOS)
-> hoặc **Ctrl+Enter** (Windows / Linux) → xem kết quả ngay trong panel.
+> Open a `.sql` file → select a connection → highlight a statement →
+> **Cmd+Enter** (macOS) or **Ctrl+Enter** (Windows / Linux) → see the result
+> right in the panel.
 
 ---
 
-## Cài đặt
+## Installation
 
-**1 lệnh duy nhất** (cài mới lẫn update — chỉ cần VS Code đã mở qua ít nhất 1 lần):
+**One single command** (fresh install and update alike — VS Code only needs to
+have been opened at least once):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/lengockhoa/VSDB/main/scripts/install-vsdb.sh | bash
 ```
 
-Script sẽ tự:
+The script will automatically:
 
-1. Tìm `code` CLI trên `PATH` (fallback: `/Applications/Visual Studio Code.app/.../bin/code` trên macOS).
-2. Tải `.vsix` mới nhất từ GitHub Releases của repo `lengockhoa/VSDB`.
-3. Gọi `code --install-extension <vsix> --force`.
-4. In version đã cài. **Idempotent** — chạy lại = update.
+1. Find the `code` CLI on `PATH` (fallback: `/Applications/Visual Studio Code.app/.../bin/code` on macOS).
+2. Download the latest `.vsix` from the GitHub Releases of the `lengockhoa/VSDB` repo.
+3. Call `code --install-extension <vsix> --force`.
+4. Print the installed version. **Idempotent** — running again = update.
 
-Khi có version mới, team chỉ cần chạy lại đúng lệnh trên là tự lên bản mới.
+When a new version comes out, the team just runs the same command above and it
+self-updates.
 
-### Cài thủ công bằng file `.vsix` (không cần mạng / không qua GitHub)
+### Manual install via `.vsix` file (offline / no GitHub access)
 
-Tải `vsdb-<version>.vsix` từ [Releases](https://github.com/lengockhoa/VSDB/releases)
-(hoặc lấy file do maintainer build bằng `scripts/build.sh`), rồi:
+Download `vsdb-<version>.vsix` from [Releases](https://github.com/lengockhoa/VSDB/releases)
+(or grab the file the maintainer built with `scripts/build.sh`), then:
 
 ```bash
-bash scripts/install-vsdb.sh --local /đường/dẫn/tới/vsdb-<version>.vsix
-# hoặc cài thẳng bằng VS Code CLI:
+bash scripts/install-vsdb.sh --local /path/to/vsdb-<version>.vsix
+# or install directly via VS Code CLI:
 code --install-extension vsdb-<version>.vsix
 ```
 
 ---
 
-## Bắt đầu nhanh
+## Quick start
 
-| Bước | Thao tác |
+| Step | Action |
 | ---- | -------- |
-| 1    | Mở VS Code, mở panel **VSDB** ở activity bar (icon bên trái). |
-| 2    | Click biểu tượng `+` góc trên panel → **VSDB: Add Connection** → điền host/port/user/password → chọn driver (postgres / mysql / mssql) → lưu. |
-| 3    | Mở file `.sql`, chọn connection muốn dùng (click tên connection ở status bar hoặc gõ `VSDB: Select Active Connection` trong Command Palette). |
-| 4    | Đặt con trỏ / bôi đen một câu lệnh SQL → bấm **Cmd+Enter** (macOS) / **Ctrl+Enter** (Win/Linux). |
-| 5    | Kết quả hiện trong panel **VSDB Results** ngay dưới editor. |
+| 1    | Open VS Code, open the **VSDB** panel in the activity bar (icon on the left). |
+| 2    | Click the `+` icon at the top corner of the panel → **VSDB: Add Connection** → fill in host/port/user/password → pick the driver (postgres / mysql / mssql) → save. |
+| 3    | Open a `.sql` file, select the connection to use (click the connection name in the status bar or run `VSDB: Select Active Connection` in the Command Palette). |
+| 4    | Place the cursor / highlight a SQL statement → press **Cmd+Enter** (macOS) / **Ctrl+Enter** (Win/Linux). |
+| 5    | Results appear in the **VSDB Results** panel just below the editor. |
 
-### Các cách chạy query khác
+### Other ways to run a query
 
-- **Nút ▶ trên editor** (title bar): chạy query đang được focus.
-- **CodeLens ▶ Run** ngay phía trên mỗi statement trong file `.sql` (bật/tắt qua setting `vsdb.showRunLens`).
-- **Schema Explorer**: bấm vào table/view → menu chuột phải → **Generate SELECT** để chèn câu `SELECT * FROM ...` vào editor.
-- **Cancel query**: nút ■ trên title bar, hoặc `VSDB: Cancel Query` trong palette.
-- **Atomic multi-statement batch** (khi extension gửi **một chuỗi nhiều câu lệnh** làm một batch — ví dụ lưu nhiều cell, generate sample data, helper bảng):
-  - **DML (`INSERT` / `UPDATE` / `DELETE`...)** chạy trong **một transaction** — statement nào lỗi thì toàn bộ lô được rollback, không statement nào được commit dở (PostgreSQL vốn đã vậy; MySQL cũng đảm bảo từ bản này).
-  - **Lưu ý MySQL**: các lệnh **DDL** (`CREATE` / `ALTER` / `DROP`...) gây **implicit commit** ngầm bên trong MySQL — phần trước lệnh DDL vẫn được commit và DDL không thể rollback, nên lô chứa DDL **không** được bảo đảm all-or-nothing.
-- **Editor Run** (Cmd/Ctrl+Enter chọn vùng, hoặc cả file qua nút ▶) chạy **từng statement riêng lẻ**: mỗi câu là một `runQuery` độc lập, không bọc chung một transaction — statement trước vẫn được commit nếu statement sau lỗi.
-- **Một câu `SELECT` đơn** vẫn chạy qua streaming cursor như cũ (không bọc transaction — tránh giữ luôn connection duy nhất của pool).
+- **▶ button on the editor** (title bar): runs the query currently focused.
+- **CodeLens ▶ Run** right above each statement in a `.sql` file (toggle via setting `vsdb.showRunLens`).
+- **Schema Explorer**: click a table/view → right-click menu → **Generate SELECT** to insert a `SELECT * FROM ...` statement into the editor.
+- **Cancel query**: ■ button on the title bar, or `VSDB: Cancel Query` in the palette.
+- **Atomic multi-statement batch** (when the extension sends **one multi-statement string as a batch** — e.g. saving many cells, generating sample data, helper tables):
+  - **DML (`INSERT` / `UPDATE` / `DELETE`...)** runs inside **a single transaction** — if any statement fails, the entire batch is rolled back and nothing is half-committed (PostgreSQL already behaves this way; MySQL is now guaranteed as well from this release).
+  - **MySQL note**: **DDL** statements (`CREATE` / `ALTER` / `DROP`...) trigger an **implicit commit** inside MySQL — the portion before the DDL still commits and the DDL itself cannot be rolled back, so batches containing DDL are **NOT** guaranteed all-or-nothing.
+- **Editor Run** (Cmd/Ctrl+Enter on a selection, or the whole file via the ▶ button) runs **each statement individually**: every statement is its own independent `runQuery`, not wrapped in a shared transaction — earlier statements remain committed if a later one fails.
+- **A single `SELECT` statement** still runs through a streaming cursor as before (no transaction wrapping — avoids holding the pool's only connection).
 
-### Phím tắt
+### Keyboard shortcuts
 
-| Phím | Lệnh |
+| Key | Command |
 | ---- | ---- |
-| `Cmd+Enter` (macOS) / `Ctrl+Enter` (Win/Linux) | Chạy câu lệnh đang chọn |
-| Khi `editorTextFocus && resourceLangId == sql` | (chỉ kích hoạt trong file `.sql`) |
+| `Cmd+Enter` (macOS) / `Ctrl+Enter` (Win/Linux) | Run the selected statement |
+| When `editorTextFocus && resourceLangId == sql` | (only triggers inside `.sql` files) |
 
 ---
 
-## Tính năng chính
+## Key features
 
-- **3 driver**: PostgreSQL (pg), MySQL/MariaDB (mysql2), SQL Server (tedious).
-- **Schema Explorer** cây: connection → schema → Tables / Views / Routines (có số lượng) → table / view / column / routine.
-  - Hiển thị **mọi schema** bạn truy cập được, không chỉ schema mặc định (`public` / `dbo` / database đang connect).
-  - Setting `vsdb.hideSystemSchemas` (default `true`): ẩn schema hệ thống (`pg_catalog`, `information_schema`, `mysql`, `sys`...); tắt nếu muốn xem hết.
-  - Click phải table/view → `Generate SELECT`, `Copy Qualified Name` (dùng đúng `schema.table`, kể cả schema khác mặc định).
-  - **Row count badge**: mỗi table hiện ước tính số dòng (từ planner statistics — nhanh, không scan bảng lớn; bảng chưa analyze hiển thị schema name).
-  - **Tree filter**: nút filter trên title bar panel **VSDB** → gõ text lọc schemas/tables/views/routines/columns theo tên (không phân biệt hoa thường); nút ✕ hiện khi filter đang bật để xóa.
-- **Refresh metadata**: nút refresh trên title bar của panel **VSDB** (chạy `VSDB: Refresh Schema`) reload lại schema cache từ server — dùng sau khi bạn tạo/xoá table ở bên ngoài VS Code mà không muốn tạo connection mới.
+- **3 drivers**: PostgreSQL (pg), MySQL/MariaDB (mysql2), SQL Server (tedious).
+- **Schema Explorer tree**: connection → schema → Tables / Views / Routines (with counts) → table / view / column / routine.
+  - Shows **every schema** you can access, not only the default schema (`public` / `dbo` / the connected database).
+  - Setting `vsdb.hideSystemSchemas` (default `true`): hide system schemas (`pg_catalog`, `information_schema`, `mysql`, `sys`...); turn it off if you want to see them.
+  - Right-click a table/view → `Generate SELECT`, `Copy Qualified Name` (uses the correct `schema.table`, even for non-default schemas).
+  - **Row count badge**: each table shows an estimated row count (from planner statistics — fast, no scan of large tables; unanalyzed tables show the schema name instead).
+  - **Tree filter**: filter button on the **VSDB** panel title bar → type to filter schemas/tables/views/routines/columns by name (case-insensitive); ✕ button appears while filtering to clear it.
+- **Refresh metadata**: the refresh button on the **VSDB** panel title bar (runs `VSDB: Refresh Schema`) reloads the schema cache from the server — use after you create/delete a table outside VS Code and don't want to make a new connection.
 
-- **Results grid (AG Grid Community)**: xem kết quả trong panel **VSDB Results** — theme tự theo VS Code (dark/light); sort; **Excel-style set filter per column** (mở menu filter của 1 cột → danh sách checkbox giá trị distinct, ô tìm nhanh phía trên, hàm `(Select All)` / `(Blanks)`; dữ liệu lớn render qua AG Grid Set Filter native) + quick search; multi-row selection + copy (Ctrl+C); row count ở footer.
-- **Grid edit mode (1.4.0)**: sửa cell trực tiếp trên grid, **paste từ Excel (TSV)** vào vùng chọn (tự cắt ô thừa), Add/Delete Row, Undo, toggle CSV raw view; **Cmd/Ctrl+Enter commit một lần** (batch) — UPDATE theo PK (PostgreSQL không PK dùng `ctid` kèm warning; MySQL/MSSQL không PK từ chối + banner), lỗi SQL hiện banner và giữ edit để retry.
-- **Export toolbar (1.4.0)**: TSV / CSV / XML / JSON / SQL Inserts / SQL Insert Multirow / SQL Updates / Where Clause — SQL mode theo dialect; **Header checkbox** (TSV/CSV/XML/JSON); **To Clipboard** hoặc **Export to file**.
-- **WHERE/ORDER BY bar (1.4.0)**: gán điều kiện WHERE / ORDER BY rồi **Re-Run** — wrap query gốc thành subquery, grid reset và load-more chạy trên cursor mới.
-- **Run .sh (1.4.0)**: mở file `.sh` → nút **Run** trên editor title gửi toàn bộ nội dung file vào Integrated Terminal (như paste cả file vào shell).
-- **Toolbar icons (1.5.0)**: title bar của panel **VSDB** (refresh / filter) và **VSDB Results** (copy / quick search / export / re-run) gọn trên một hàng icon-only — đỡ chiếm chiều ngang webview, label ẩn khi đủ rộng.
-- **Destructive statement guard (1.5.0)**: trước khi submit, VSDB quét statement — `DELETE có WHERE` → modal confirm thường; `DELETE không WHERE` / `TRUNCATE` / `DROP` / `UPDATE không WHERE` → modal đỏ "CỰC KỲ NGUY HIỂM" hiện FULL statement, user phải bấm **Vẫn chạy (nguy hiểm)**; Cancel huỷ cả lô. Setting `vsdb.confirmDestructive` (default `true`) tắt guard khi cần.
-- **Run .sh CodeLens (1.5.0)**: file `.sh` mở trong editor có CodeLens `▶ Run` ngay dòng đầu — chạy toàn bộ nội dung file vào Integrated Terminal (giống SQL CodeLens); setting `vsdb.showRunLensSh` (default `true`); fix kèm: extension giờ kích hoạt đúng khi mở file `.sh` và palette gọi `Run Script` không còn bắn `\n` vào terminal trống.
-- **Table Designer (PostgreSQL)**: panel Schema Explorer → click phải table (hoặc command palette `VSDB: New Table…` / `VSDB: Modify Table…`) mở form tạo/sửa:
-  - **New Table…**: form thêm cột (name/type/default/NOT NULL), PK / UNIQUE / FK / CHECK, preview SQL live, một nút Apply chạy `CREATE TABLE` qua connection đang chọn.
-  - **Modify Table…**: introspect schema hiện tại → sửa → diff engine phát sinh `ALTER TABLE` (rename/add/drop column, SET/DROP NOT NULL, SET/DROP DEFAULT, ADD/DROP constraint) chạy một loạt qua `runQuery`.
-  - **Copy Create Query**: introspect table rồi re-emit `CREATE TABLE` (cùng generator với form) — copy vào clipboard.
-  - **Generate Sample Data…**: chèn N dòng `INSERT … VALUES` theo kiểu cột (int/varchar/date/uuid/json) — mở trong tab SQL untitled để user xem/sửa trước khi chạy.
-  - **Analyze / Vacuum**: phát lệnh `ANALYZE` / `VACUUM` (PostgreSQL-only) để cập nhật planner stats / thu dọn dead tuples; nút này không hiện với MySQL/MSSQL.
-- **SQL Console (1.7.0)**: chạy `VSDB: Open Console` từ Command Palette — panel scratchpad kiểu DataGrip để gõ SQL ad-hoc rồi tắt đi. Run (nút, Cmd/Ctrl+Enter, hoặc chuột phải) chạy toàn bộ buffer qua đúng pipeline editor (danger-confirm → keyword qualify) và kết quả hiện trong panel **VSDB Results** sẵn có; chuột phải → **Save as SQL file** (hoặc nút Save) lưu buffer ra file `.sql` với tên gợi ý `console_YYYYMMDD_HHMMSS.sql`. Đóng/mở lại console luôn trống — nội dung muốn giữ phải Save/Copy.
-- **AI Settings (1.5.x)**: chạy `VSDB: Open AI Settings…` từ Command Palette mở form cấu hình backend OpenAI-compatible (baseUrl, method `responses`/`chat/completions`, timeout, maxSteps, model id cho 2 role `work` (vision) + `smart`, apiKey). Nút **Test** smoke-fires một completion nhỏ để xác nhận endpoint thực sự sống trước khi agent dùng nó.
-- **AI Chat & DB tools (1.5.x)**: chat panel `VSDB: AI Chat` từ Command Palette — multi-turn với agent loop. Agent có 3 tool: `list_tables`, `describe_table` (PostgreSQL only), và `run_sql`. **Read-only promise**: tool `run_sql` chỉ chấp nhận `SELECT` / `SHOW` / `EXPLAIN` / `WITH … SELECT` (CTE sạch). Mọi `INSERT` / `UPDATE` / `DELETE` / `DROP` / `TRUNCATE` / `MERGE` / `INTO` / writable CTE bị tool reject ngay lập tức với lý do cụ thể — `adapter.runQuery` không bao giờ nhận DML/DDL. Multi-statement cũng bị reject. Khi chưa `VSDB: Open AI Settings…` thì command `VSDB: AI Chat` hiện info "Configure AI settings first" và tự mở form settings.
+- **Results grid (AG Grid Community)**: view results in the **VSDB Results** panel — theme follows VS Code (dark/light); sort; **Excel-style set filter per column** (open a column's filter menu → distinct-value checkbox list with quick search above, `(Select All)` / `(Blanks)` helpers; large datasets render through AG Grid Set Filter native) + quick search; multi-row selection + copy (Ctrl+C); row count in the footer.
+- **Grid edit mode (1.4.0)**: edit cells directly in the grid, **paste from Excel (TSV)** into the selection (auto-trim excess cells), Add/Delete Row, Undo, toggle CSV raw view; **Cmd/Ctrl+Enter commits once** (batch) — UPDATE by PK (PostgreSQL falls back to `ctid` with a warning when no PK; MySQL/MSSQL refuse without PK + banner), SQL errors surface as a banner and keep the edit for retry.
+- **Export toolbar (1.4.0)**: TSV / CSV / XML / JSON / SQL Inserts / SQL Insert Multirow / SQL Updates / Where Clause — SQL mode follows the dialect; **Header checkbox** (TSV/CSV/XML/JSON); **To Clipboard** or **Export to file**.
+- **WHERE/ORDER BY bar (1.4.0)**: set a WHERE / ORDER BY clause then **Re-Run** — wraps the original query as a subquery, resets the grid and runs load-more on the new cursor.
+- **Run .sh (1.4.0)**: open a `.sh` file → the **Run** button on the editor title sends the full file content into the Integrated Terminal (like pasting the whole file into a shell).
+- **Toolbar icons (1.5.0)**: the **VSDB** panel title bar (refresh / filter) and the **VSDB Results** panel title bar (copy / quick search / export / re-run) fit in a single icon-only row — saves horizontal space in the webview, labels hidden when wide enough.
+- **Destructive statement guard (1.5.0)**: before submitting, VSDB scans the statement — `DELETE with WHERE` → standard confirmation modal; `DELETE without WHERE` / `TRUNCATE` / `DROP` / `UPDATE without WHERE` → a red "EXTREMELY DANGEROUS" modal shows the FULL statement and the user MUST click **Run anyway (dangerous)**; Cancel aborts the whole batch. Setting `vsdb.confirmDestructive` (default `true`) disables the guard when needed.
+- **Run .sh CodeLens (1.5.0)**: a `.sh` file open in the editor shows a `▶ Run` CodeLens on the first line — runs the entire file content into the Integrated Terminal (same as the SQL CodeLens); setting `vsdb.showRunLensSh` (default `true`); included fix: the extension now activates correctly when a `.sh` file is opened and `Run Script` from the palette no longer shoots `\n` into an empty terminal.
+- **Table Designer (PostgreSQL)**: Schema Explorer panel → right-click a table (or use palette commands `VSDB: New Table…` / `VSDB: Modify Table…`) to open a create/edit form:
+  - **New Table…**: form to add columns (name/type/default/NOT NULL), PK / UNIQUE / FK / CHECK, live SQL preview, a single Apply button runs `CREATE TABLE` through the selected connection.
+  - **Modify Table…**: introspect the current schema → edit → a diff engine produces `ALTER TABLE` (rename/add/drop column, SET/DROP NOT NULL, SET/DROP DEFAULT, ADD/DROP constraint) and runs them in one go via `runQuery`.
+  - **Copy Create Query**: introspect a table then re-emit `CREATE TABLE` (same generator as the form) — copy to clipboard.
+  - **Generate Sample Data…**: insert N rows of `INSERT … VALUES` per column type (int/varchar/date/uuid/json) — opens in an untitled SQL tab so you can review/edit before running.
+  - **Analyze / Vacuum**: send `ANALYZE` / `VACUUM` (PostgreSQL-only) to refresh planner stats / clean up dead tuples; the button is hidden for MySQL/MSSQL.
+- **SQL Console (1.7.0)**: run `VSDB: Open Console` from the Command Palette — a DataGrip-style scratchpad panel for ad-hoc SQL that can be closed when done. Run (button, Cmd/Ctrl+Enter, or right-click) sends the entire buffer through the exact same editor pipeline (danger-confirm → keyword qualify) and results show in the existing **VSDB Results** panel; right-click → **Save as SQL file** (or Save button) writes the buffer to a `.sql` file with a suggested name like `console_YYYYMMDD_HHMMSS.sql`. Closing/reopening the console always starts empty — keep content with Save/Copy.
+- **AI Settings (1.5.x)**: run `VSDB: Open AI Settings…` from the Command Palette to open a form configuring an OpenAI-compatible backend (baseUrl, method `responses`/`chat/completions`, timeout, maxSteps, model id for 2 roles `work` (vision) + `smart`, apiKey). The **Test** button smoke-fires a small completion to verify the endpoint is actually alive before the agent uses it.
+- **AI Chat & DB tools (1.5.x)**: chat panel `VSDB: AI Chat` from the Command Palette — multi-turn with an agent loop. The agent has 3 tools: `list_tables`, `describe_table` (PostgreSQL only), and `run_sql`. **Read-only promise**: the `run_sql` tool only accepts `SELECT` / `SHOW` / `EXPLAIN` / `WITH … SELECT` (clean CTEs). Any `INSERT` / `UPDATE` / `DELETE` / `DROP` / `TRUNCATE` / `MERGE` / `INTO` / writable CTE is rejected by the tool on the spot with a specific reason — `adapter.runQuery` never sees DML/DDL. Multi-statement input is also rejected. When `VSDB: Open AI Settings…` hasn't been run yet, the `VSDB: AI Chat` command shows an info "Configure AI settings first" and opens the settings form for you.
 
 ---
+
 ## AI
 
 ### Privacy / Egress
 
-- **Storage**: settings (baseUrl, method, timeout, maxSteps, model ids) lưu trong **VS Code global state** của extension (`vsdb.ai.settings`); **apiKey** lưu trong **VS Code SecretStorage** (`vsdb.ai.apiKey`) — mã hoá qua OS keystore (macOS Keychain / Linux libsecret / Windows Credential Vault), không nằm trong settings JSON, không xuất hiện trong logs, errors, telemetry, hay clipboard.
-- **Egress contract**: **mọi** AI request chỉ đi tới `baseUrl` user cấu hình — không có third-party endpoint, không telemetry, không analytics, không fallback endpoint nào khác. Nếu `baseUrl` rỗng hoặc invalid thì provider fail ngay tại đầu vào — không tự ý gọi đi đâu khác.
-- **Key hygiene**: apiKey được đọc từ SecretStorage theo từng request (no cache). Nó được gắn vào header `Authorization: Bearer …` của HTTPS request tới `baseUrl` và KHÔNG được include trong bất kỳ error message, response body snippet, hay log nào — provider `scrubApiKey` trước khi throw `ProviderError`.
-- **Form webview**: form nhận `hasApiKey: boolean` chứ KHÔNG nhận apiKey; chỉ khi user bấm Save/Test thì giá trị ô mới được đẩy lên host (write-only). Nếu ô apiKey trống và đã có key lưu → form giữ nguyên key cũ.
+- **Storage**: settings (baseUrl, method, timeout, maxSteps, model ids) live in the extension's **VS Code global state** (`vsdb.ai.settings`); **apiKey** lives in **VS Code SecretStorage** (`vsdb.ai.apiKey`) — encrypted via the OS keystore (macOS Keychain / Linux libsecret / Windows Credential Vault), never in settings JSON, never appearing in logs, errors, telemetry, or clipboard.
+- **Egress contract**: **every** AI request only goes to the `baseUrl` you configured — no third-party endpoint, **no telemetry**, no analytics, no fallback endpoint. If `baseUrl` is empty or invalid the provider fails right at the entry point — it never silently calls somewhere else.
+- **Key hygiene**: apiKey is read from SecretStorage per request (no cache). It is attached as the `Authorization: Bearer …` header of the HTTPS request to `baseUrl` and is NEVER included in any error message, response body snippet, or log — the provider `scrubApiKey` before throwing `ProviderError`.
+- **Form webview**: the form receives `hasApiKey: boolean`, NOT the apiKey itself; only when the user clicks Save/Test is the field's value pushed up to the host (write-only). If the apiKey field is empty and a key was already saved → the form keeps the existing key.
 
-### Mở form
+### Opening the form
 
-Mở Command Palette → gõ `VSDB: Open AI Settings…` → điền các trường → bấm **Test** để smoke-fires provider → **Save** để lưu vào store.
+Open the Command Palette → type `VSDB: Open AI Settings…` → fill in the fields → click **Test** to smoke-fire the provider → **Save** to write into the store.
 
 ### AI Chat & DB tools
 
-Mở Command Palette → `VSDB: AI Chat` → panel chat mở với multi-turn agent. Agent có 3 tool:
+Open the Command Palette → `VSDB: AI Chat` → the chat panel opens with the multi-turn agent. The agent has 3 tools:
 
-- `list_tables` — liệt kê `(schema, table)` cho adapter active.
-- `describe_table` — columns + constraints; chỉ hỗ trợ khi connection active là **PostgreSQL**.
-- `run_sql` — chạy **một** statement read-only (SELECT/SHOW/EXPLAIN/WITH…SELECT sạch) qua `adapter.runQuery`; trả về ≤ 50 rows JSON.
+- `list_tables` — lists `(schema, table)` for the active adapter.
+- `describe_table` — columns + constraints; only supported when the active connection is **PostgreSQL**.
+- `run_sql` — runs **one** read-only statement (SELECT/SHOW/EXPLAIN/clean WITH…SELECT) via `adapter.runQuery`; returns ≤ 50 rows as JSON.
 
 **Guardrails (defense-in-depth)**:
 
-- **Read-only guard** trong `run_sql`: bất kỳ `INSERT/UPDATE/DELETE/DROP/TRUNCATE/MERGE/ALTER`, multi-statement, hoặc CTE có nhánh DML đều bị reject ngay tại tool — `adapter.runQuery` không bao giờ thấy DML. Ngay cả khi model "cố tình" gọi `run_sql` với `DROP TABLE …`, tool trả về reject reason, agent loop tiếp tục, và DB thật ngoài đời không bị ảnh hưởng.
-- **Adapter scope**: `run_sql` chỉ resolve qua connection active hiện tại (driver `postgres`); nếu chưa chọn connection hoặc driver không phải `postgres` → tool trả `"No active database connection."`, không throw.
-- **Egress**: mọi AI completion chỉ đi tới `baseUrl` bạn đã cấu hình — không third-party endpoint, không telemetry, không fallback.
-- **apiKey hygiene**: `apiKey` chỉ nằm trong **SecretStorage** (`vsdb.ai.apiKey`); được đọc theo từng request và gắn vào header `Authorization: Bearer …`. Provider `scrubApiKey` trước khi throw `ProviderError` — không bao giờ xuất hiện trong error message, response snippet, log, hay UI.
-- **Unconfigured fallback**: nếu chưa lưu AI Settings thì command hiện `VSDB: Configure AI settings first.` rồi tự mở `VSDB: Open AI Settings…` — không crash, không tạo panel với config rỗng.
+- **Read-only guard** inside `run_sql`: any `INSERT/UPDATE/DELETE/DROP/TRUNCATE/MERGE/ALTER`, multi-statement, or CTE with a DML branch is rejected on the spot by the tool — `adapter.runQuery` never sees DML. Even if the model "intentionally" calls `run_sql` with `DROP TABLE …`, the tool returns a reject reason, the agent loop continues, and the real DB in production stays untouched.
+- **Adapter scope**: `run_sql` only resolves through the current active connection (driver `postgres`); if no connection is selected or the driver isn't `postgres` → the tool returns `"No active database connection."` instead of throwing.
+- **Egress**: every AI completion only goes to the `baseUrl` you configured — no third-party endpoint, no telemetry, no fallback.
+- **apiKey hygiene**: `apiKey` only lives in **SecretStorage** (`vsdb.ai.apiKey`); read per request and attached as the `Authorization: Bearer …` header. The provider `scrubApiKey` before throwing `ProviderError` — never appears in error messages, response snippets, logs, or the UI.
+- **Unconfigured fallback**: if AI Settings have not been saved yet, the command shows `VSDB: Configure AI settings first.` then opens `VSDB: Open AI Settings…` for you — no crash, no panel with empty config.
 
 
 ### AI engine: oh-my-pi (optional)
 
-Ngoài engine built-in (`runAgent` qua OpenAI-compatible backend), VSDB chat có thể dùng **oh-my-pi** (`omp`) làm engine agent thật — spawn process, RPC JSONL, stream events, host-tool bridge.
+Beyond the built-in engine (`runAgent` via an OpenAI-compatible backend), VSDB chat can use **oh-my-pi** (`omp`) as the real agent engine — spawn process, RPC JSONL, stream events, host-tool bridge.
 
-- **Yêu cầu**: `omp >= 17.0.0`. Detect tự động ở lần đầu mở panel; nếu binary cũ / thiếu / không parse được version, panel announce `{engine:"builtin", hint: "omp install hint"}` một lần và dùng built-in như cũ.
-- **Install**: `curl -fsSL https://omp.sh/install | sh` (1 lần).
-- **Update**: `omp update` (để bump version khi task bump min-version).
-- **VSDB tự nâng cấp**: chạy lại `install-vsdb.sh` có sẵn (`curl -fsSL https://raw.githubusercontent.com/…/install-vsdb.sh | sh`) — extension update flow không cần đụng đến omp.
-- **Security note**: omp mode cho agent quyền workspace tools (read/edit/bash scoped cwd của active workspace) qua `set_host_tools` RPC. **DB access vẫn read-only** — VSDB chỉ host các tool `list_tables` / `describe_table` / `run_sql` (read-only guard trong `run_sql` giữ nguyên), omp không có tool bypass được read-only chokepoint. Agent có thể modify file SQL local ngoài workspace tool, nhưng database thật vẫn bất khả xâm phạm bởi DML/DDL.
-- **Crash fallback**: nếu process omp exit giữa turn, panel post error bubble + fallback builtin cho turn tiếp theo; không tự respawn — user retry re-detect.
+- **Requirement**: `omp >= 17.0.0`. Auto-detected the first time you open the panel; if the binary is old / missing / has an unparseable version, the panel announces `{engine:"builtin", hint: "omp install hint"}` once and falls back to built-in as before.
+- **Install**: `curl -fsSL https://omp.sh/install | sh` (one-time).
+- **Update**: `omp update` (to bump version when a task raises the min-version).
+- **VSDB auto-upgrade**: re-run the existing `install-vsdb.sh` (`curl -fsSL https://raw.githubusercontent.com/…/install-vsdb.sh | sh`) — the extension update flow doesn't need to touch omp.
+- **Security note**: omp mode grants the agent workspace tools (read/edit/bash scoped to the active workspace's cwd) via the `set_host_tools` RPC. **DB access remains read-only** — VSDB only hosts the `list_tables` / `describe_table` / `run_sql` tools (the read-only guard inside `run_sql` stays in place), so omp has no tool that can bypass the read-only chokepoint. The agent can modify local SQL files outside of workspace tools, but the real database remains impervious to DML/DDL.
+- **Crash fallback**: if the omp process exits mid-turn, the panel posts an error bubble + falls back to builtin for the next turn; it does NOT auto-respawn — the user retries to re-detect.
 
 ---
 
 
-### `code` CLI không tìm thấy khi cài
+### `code` CLI not found during install
 
-Script in hướng dẫn, nhưng tóm tắt:
+The script prints instructions, but the summary is:
 
-- macOS: mở VS Code → `Cmd+Shift+P` → **Shell Command: Install 'code' command in PATH** → chạy lại installer.
-- Linux: cài extension từ Marketplace bằng tay, hoặc thêm VS Code bin vào `PATH`.
-- Windows (git-bash): đảm bảo `~/AppData/Local/Programs/Microsoft VS Code/bin` có trong `PATH`.
+- macOS: open VS Code → `Cmd+Shift+P` → **Shell Command: Install 'code' command in PATH** → re-run the installer.
+- Linux: install the extension from the Marketplace manually, or add the VS Code bin to `PATH`.
+- Windows (git-bash): make sure `~/AppData/Local/Programs/Microsoft VS Code/bin` is on `PATH`.
 
-Bạn cũng có thể set `VSDB_CODE_PATH=/đường/dẫn/tới/code` rồi chạy lại script.
+You can also set `VSDB_CODE_PATH=/path/to/code` and re-run the script.
 
-### Conflict với Copilot / extension khác
+### Conflict with Copilot / other extensions
 
-Một số extension (vd. Copilot, Codeium) cũng đăng ký `Cmd+Enter` / `Ctrl+Enter`.
-Vào **File → Preferences → Keyboard Shortcuts**, tìm `vsdb.runQuery` và đổi
-sang tổ hợp khác (vd. `Cmd+Shift+Enter`), hoặc unbind phím của extension kia.
+Some extensions (e.g. Copilot, Codeium) also register `Cmd+Enter` / `Ctrl+Enter`.
+Open **File → Preferences → Keyboard Shortcuts**, find `vsdb.runQuery` and
+change it to a different combo (e.g. `Cmd+Shift+Enter`), or unbind the key
+on the other extension.
 
-### Password / connection lưu ở đâu?
+### Where are passwords / connections saved?
 
-`SecretStorage` của VS Code — mã hóa qua:
+VS Code's `SecretStorage` — encrypted via:
 
 - macOS: Keychain
 - Linux: libsecret / kwallet
 - Windows: Windows Credential Vault
 
-Xóa: `Code → Settings → Clear Secret Storage** (hoặc gỡ extension sẽ xóa luôn).
+To wipe: **Code → Settings → Clear Secret Storage** (or uninstalling the
+extension removes them too).
 
-### Gỡ cài đặt
+### Uninstall
 
 ```bash
 code --uninstall-extension lengockhoa.vsdb
@@ -179,43 +186,43 @@ code --uninstall-extension lengockhoa.vsdb
 
 ---
 
-## Cho maintainer
+## For maintainers
 
-Build và đóng gói:
+Build and package:
 
 ```bash
 bash scripts/build.sh
-# → sinh ra dist/vsdb-<version>.vsix
+# → produces dist/vsdb-<version>.vsix
 ```
 
-Release (orchestrator tự làm sau khi review xong):
+Release (the orchestrator handles this after review):
 
-1. Tạo Git tag `v<version>`.
-2. Push tag lên `origin/main`.
-3. GitHub Actions / orchestrator publish GitHub Release với file `.vsix` đính kèm.
-4. Team chạy lại one-liner cài đặt → tự động lấy bản mới nhất.
+1. Create Git tag `v<version>`.
+2. Push the tag to `origin/main`.
+3. GitHub Actions / orchestrator publishes a GitHub Release with the `.vsix` file attached.
+4. The team re-runs the install one-liner → automatically picks up the latest version.
 
 ---
 
-## Phát triển
+## Development
 
 ```bash
 git clone https://github.com/lengockhoa/VSDB
 cd VSDB
 npm ci
-npm run watch                # build incremental trong src/ + webview/
-# Trong VS Code: F5 → Extension Development Host
+npm run watch                # incremental build inside src/ + webview/
+# In VS Code: F5 → Extension Development Host
 ```
 
 ### Tests
 
 ```bash
 npm test                     # unit (vitest)
-npm run test:integration     # cần Docker (Postgres / MySQL / MSSQL)
+npm run test:integration     # requires Docker (Postgres / MySQL / MSSQL)
 ```
 
 ---
 
-## Giấy phép
+## License
 
-MIT — xem [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).

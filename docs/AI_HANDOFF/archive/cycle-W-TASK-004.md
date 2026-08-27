@@ -59,7 +59,7 @@ detection.
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | integration (happy) | `requestDistinctValues` runs the DISTINCT SQL | `runSql` called once with a string containing `SELECT DISTINCT "name"` and `vsdb_distinct` | postgres panel, statement 0 |
 | 2 | integration (happy) | the reply reaches the webview | a posted message `{type:"distinctValues", index:0, column:"name", values:["a","b"], truncated:false}` | runner returns rows `[["a"],["b"]]` |

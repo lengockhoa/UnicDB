@@ -25,7 +25,7 @@ Types from `./createTable` (TASK-001).
 - **rowsToSpec**: colRows order → columns `{name, type: format_type, nullable: is_nullable==="YES", default: column_default ?? undefined, originalName: name}` (every column carries originalName — modify mode depends on it). `"p"` → `{kind:"primaryKey",columns:<conkey order>,name:conname}` AND member columns `isPrimaryKey:true`. `"u"` → unique(conname, conkey order). `"f"` → `{kind:"foreignKey",name,columns,references:{table:<confrelidname minus schema — split last '.', keep object part>,columns:confkeycols}}`. `"c"` → `{kind:"check",name,expr:<consrc minus leading "CHECK " and ONE outer paren layer only if it wraps the whole expr>}`. Unknown contype → skip silently.
 
 ## Test Cases (REQUIRED — TDD)
-| # | Loại | Tên test | Expected |
+| # | Type | Test name | Expected |
 |---|------|----------|----------|
 | 1 | unit | full round-trip 4 key kinds | fixture users (id bigint NOT NULL default `nextval('users_id_seq'::regclass)`, name varchar, age int) + p/u/f/c → columns exact (name/type/nullable/default, originalName===name); keys: primaryKey `users_pkey`["id"], unique `uq_users_name`["name"], foreignKey `fk_users_dept`["dept_id"]→{table:"departments",columns:["id"]}, check `users_age_check` `age > 0`; id isPrimaryKey true |
 | 2 | unit | check normalization | `CHECK ((length(name) > 0))` → `length(name) > 0`; `CHECK ((a > 0) AND (b < 9))` → `(a > 0) AND (b < 9)` (no strip — inner parens) |
@@ -63,8 +63,8 @@ npx vitest run src/core/__tests__/pgIntrospect.test.ts && npx tsc --noEmit
 Default-expression equality downstream is NORMALIZED (TASK-003 `normalizeDefaultExpr`): strip outer parens + collapse whitespace — pg rewrites `'now'::text` forms; exotic defaults may show a spurious SET DEFAULT in preview (acceptable — preview shows literal truth).
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor appends `## Executor Report` BELOW this separator.
+Phase 4 reviewer appends `## Reviewer Verdict` BELOW Executor Report.
 -->
 ## Executor Report
 - Round: 1

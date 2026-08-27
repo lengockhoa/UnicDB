@@ -3,16 +3,16 @@
 ## §1 Intent
 
 VSDB needs one place to configure an OpenAI-compatible AI backend and a core that uses it —
-the LÕI (kernel) every later AI-assist capability builds on. User requirements (verbatim
+the kernel every later AI-assist capability builds on. User requirements (verbatim
 intent, from `queue/AI-CORE-spec.md`):
 
-1. **AI config storage** — một chỗ config AI; data KHÔNG được public ra ngoài.
+1. **AI config storage** — one place to configure AI; data MUST NOT be exposed publicly.
    `baseUrl`, `apiKey`, `method`: `responses` | `chat/completions`; 2 model roles:
-   `work` (vision-capable, đọc được hình) + `smart` (deep reasoning).
-2. **Reconfigurable** — user đổi toàn bộ config bất cứ lúc nào; agent luôn đọc config mới
-   nhất lúc chạy, không cache stale.
+   `work` (vision-capable, can read images) + `smart` (deep reasoning).
+2. **Reconfigurable** — user can change the entire config at any time; agent always reads the latest
+   config when running, never serves a stale cached copy.
 3. **AI Agent foundation** — multi-turn tool-calling loop, config-driven model routing
-   (role→model id), step budget. DB tools là cycle K+.
+   (role→model id), step budget. DB tools are cycle K+.
 
 Success for this cycle = (a) user can store/edit AI settings + apiKey from one **AI Settings**
 webview form (key in SecretStorage, never logged/serialized), (b) a pure provider client that
@@ -52,7 +52,7 @@ seam, (d) all unit-tested with fake fetch/secret storage — no network, no PG c
 | DB/container | No PG dependency this cycle (independent subsystem) |
 
 **Backlog (queued cycles):** DB-aware tools + "Add to AI Prompt" (cycle K+), streaming +
-chat panel (sau khi core ổn), Anthropic protocol (not requested).
+chat panel (after the core is stable), Anthropic protocol (not requested).
 
 **File-wave constraint:** same-wave tasks share NO target file (§7 table authoritative).
 
@@ -63,7 +63,7 @@ chat panel (sau khi core ổn), Anthropic protocol (not requested).
 - **Storage split (mirrors `src/core/connectionManager.ts`):** non-secret settings JSON →
   globalState key `vsdb.ai.settings`; apiKey → SecretStorage key `vsdb.ai.apiKey` (never in
   globalState, logs, errors, telemetry, or test snapshots beyond the store itself). AI config
-  is machine-global, not per-workspace — one chỗ cho toàn extension. `save()` validates via
+  is machine-global, not per-workspace — one place for the entire extension. `save()` validates via
   `aiSettingsErrors` FIRST, stores the secret, then the settings (secret failure ⇒ nothing
   persisted, throw). `loadConfig()` always reads both stores — no caching anywhere, which is
   how "reconfigurable, never stale" is guaranteed structurally.
@@ -99,7 +99,7 @@ chat panel (sau khi core ổn), Anthropic protocol (not requested).
   existing stored key reuses the stored one. Test button builds a throwaway provider from
   the entered values and fires a minimal completion (work model, "Reply with: ok",
   maxOutputTokens 8), reporting ok/latency/error.
-- **Privacy ("data KHÔNG được public"):** all AI traffic goes exclusively to the
+- **Privacy ("data MUST NOT be exposed publicly"):** all AI traffic goes exclusively to the
   user-configured baseUrl; no third-party endpoints, no telemetry; apiKey SecretStorage
   only. Documented in README (AI section) as the egress contract.
 
@@ -218,7 +218,7 @@ PLANNER_MODEL: unic/unic-smart
 ## Planner Self-Audit
 Checklist: 12/12 pass
 Fixed during audit: split TASK-001 into pure `src/ai/settings.ts` (validations, webview-importable — no vscode import) + vscode-bound `src/ai/config.ts`, which lets wave-1 TASK-002 stay fully standalone (provider.ts declares its own inline `method` union, zero `src/ai/*` imports) so the scaffolded wave-1 parallelism is genuinely collision-free; mandated store-secret-before-settings ordering + apiKey-scrubbed `bodySnippet` after walking the discover-security checklist; added explicit hasApiKey/empty-key-retention form semantics so the key never round-trips to the webview.
-Known gaps: (1) no live-endpoint test — both method mappings are asserted against canned JSON fixtures; real-server drift (nonstandard OpenAI-compatible forks) is user-verified via the Test button, which is the designed smoke path; (2) `responses` mapping covers the subset this extension emits (system→instructions, text/image parts, function_call/function_call_output) — built-in server tools (web_search etc.) are not parsed, out of scope; (3) webview visual layout is verified via jsdom DOM assertions (house pattern), not screenshots; (4) run-level model role (per-call routing seam ready) is the recorded interpretation of "agent gọi liên tục tới cả 2 models" — mid-run role switching arrives with DB tools in cycle K+.
+Known gaps: (1) no live-endpoint test — both method mappings are asserted against canned JSON fixtures; real-server drift (nonstandard OpenAI-compatible forks) is user-verified via the Test button, which is the designed smoke path; (2) `responses` mapping covers the subset this extension emits (system→instructions, text/image parts, function_call/function_call_output) — built-in server tools (web_search etc.) are not parsed, out of scope; (3) webview visual layout is verified via jsdom DOM assertions (house pattern), not screenshots; (4) run-level model role (per-call routing seam ready) is the recorded interpretation of "agent calls both models continuously" — mid-run role switching arrives with DB tools in cycle K+.
 
 ## Plan Review Log
 
@@ -254,6 +254,6 @@ FINDINGS:
     - PLAN.md §5 / all tasks — `npx tsc --noEmit` checks the whole `src/**` tree (tsconfig include), so wave-1 T1/T2 executors running in parallel may hit phantom type errors from each other's in-flight files; re-running at task end / wave-boundary gate absorbs it.
     - TASK-002.md (wire behavior, URL rule) — trailing-slash trimming must be re-implemented inline (cannot import `normalizeBaseUrl` from settings.ts due to the standalone-wave-1 rule); accepted trade-off, keep both behaviors in sync.
     - TASK-004.md (#9/#10/#11b) — bundle tests skip when `dist/aiSettingsForm.js` is absent, so they cannot be RED pre-implementation; host tests #1–#8 + #12 carry the RED evidence (house pattern, already acknowledged in the task).
-    - PLAN.md (Planner Self-Audit, known gap 4) — "agent gọi liên tục tới cả 2 models" recorded as run-level role with per-call seam; acceptable interpretation, explicitly documented, interface supports mid-run switching later without change.
+    - PLAN.md (Planner Self-Audit, known gap 4) — "agent calls both models continuously" recorded as run-level role with per-call seam; acceptable interpretation, explicitly documented, interface supports mid-run switching later without change.
 
 NOTES: Frozen interfaces are coherent end-to-end and every verification command is runnable against package.json as it exists. All findings are minor polish — none blocks Phase 2 task creation or executor pickup.

@@ -29,7 +29,7 @@ NO publishing — no `vsce publish`.
 
 ## Test Cases (REQUIRED — TDD; artifact assertions, no vitest file — see Test Files)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | artifact (happy) | package builds | `npm run package` exit 0; `vsdb-1.6.0.vsix` exists in repo root | clean `npm run compile` via vscode:prepublish |
 | 2 | edge (exclusion) | no source/test/dev bloat | `unzip -l` output contains NO lines matching `src/`, `node_modules/`, `tests/`, `docs/`, `webview/`, `.map` | artifact from #1 |

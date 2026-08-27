@@ -1,39 +1,39 @@
 # TASK-001 — DB tool registry + introspection tools
 
 ## Goal
-ToolRegistry thật cho agent: class `DbToolRegistry` + 2 introspection tools (`list_tables`, `describe_table`) ăn adapter qua injected async factory.
+A real ToolRegistry for the agent: a `DbToolRegistry` class + 2 introspection tools (`list_tables`, `describe_table`) that consume the adapter via an injected async factory.
 
 ## Target Files
-- `src/ai/tools/registry.ts` (mới)
-- `src/ai/tools/schemaTools.ts` (mới)
-- `src/ai/tools/__tests__/registry.test.ts`, `src/ai/tools/__tests__/schemaTools.test.ts` (mới)
+- `src/ai/tools/registry.ts` (new)
+- `src/ai/tools/schemaTools.ts` (new)
+- `src/ai/tools/__tests__/registry.test.ts`, `src/ai/tools/__tests__/schemaTools.test.ts` (new)
 
 ## Spec (frozen)
 ```ts
 import type { ToolRegistry, AgentTool } from "../agent";
 import type { DbAdapter } from "../../adapters/types";
-import type { AdapterFactory } from "./types"; // async () => Promise<DbAdapter | null> — đã có sẵn src/ai/tools/types.ts, KHÔNG tạo lại
+import type { AdapterFactory } from "./types"; // async () => Promise<DbAdapter | null> — already exists at src/ai/tools/types.ts, do NOT recreate
 export class DbToolRegistry implements ToolRegistry { register(tool: AgentTool): void; list(): AgentTool[]; get(name: string): AgentTool | undefined }
-export function createDbTools(adapterFactory: AdapterFactory): DbToolRegistry // register list_tables + describe_table (run_sql do TASK-002 add vào bằng register() riêng ở caller — T1 không tạo run_sql)
+export function createDbTools(adapterFactory: AdapterFactory): DbToolRegistry // register list_tables + describe_table (run_sql is added by TASK-002 via a separate register() at the caller — T1 does NOT create run_sql)
 // schemaTools.ts
 export function createListTablesTool(f: AdapterFactory): AgentTool   // name "list_tables", args {schema?: string}
 export function createDescribeTableTool(f: AdapterFactory): AgentTool // name "describe_table", args {schema: string, table: string}
 ```
 - `list_tables` → `const adapter = await f();` null → no-connection msg; else `adapter.listTables(schema)` → JSON `[{"schema","name"}]` compact.
-- `describe_table` → guard driver: dùng `adapter.listTableDetail(schema, table)` (PG-only; NotImplementedError từ mysql/mssql adapter phải bắt → error string "describe_table is only supported for PostgreSQL connections"); parse rows → JSON columns+constraints gọn.
-- Adapter throw → `"Tool failed: <message>"` (không rethrow — agent loop tiếp tục).
-- Tool `parameters`: JSON schema thật (object với properties + required).
+- `describe_table` → guard the driver: use `adapter.listTableDetail(schema, table)` (PG-only; NotImplementedError from the mysql/mssql adapters must be caught → error string "describe_table is only supported for PostgreSQL connections"); parse rows → compact columns+constraints JSON.
+- Adapter throw → `"Tool failed: <message>"` (no rethrow — agent loop continues).
+- Tool `parameters`: real JSON Schema (object with properties + required).
 
 ## Test Cases
-| # | Loại | Tên | Expected |
+| # | Type | Name | Expected |
 |---|------|-----|----------|
-| 1 | happy | list_tables trả bảng từ fake adapter | JSON string parse ra đúng mảng từ listTables() |
-| 2 | happy | describe_table PG trả columns+constraints | JSON có columns array từ listTableDetail fake |
-| 3 | edge (null) | factory resolve null → message no active connection | Chuỗi chứa "No active connection", không throw |
-| 4 | edge (driver) | describe_table throw NotImplementedError | Chuỗi chứa "only supported for PostgreSQL" |
+| 1 | happy | list_tables returns tables from fake adapter | JSON string parses to the exact array returned by listTables() |
+| 2 | happy | describe_table PG returns columns+constraints | JSON has columns array from the fake listTableDetail |
+| 3 | edge (null) | factory resolves null → no active connection message | String contains "No active connection", no throw |
+| 4 | edge (driver) | describe_table throws NotImplementedError | String contains "only supported for PostgreSQL" |
 | 5 | edge (throw) | adapter throw Error("boom") | "Tool failed: boom" |
-| 6 | unit | DbToolRegistry register/list/get | list() đúng thứ tự register; get unknown → undefined |
-| 7 | regression | createDbTools + runAgent 2-bước tool loop | runAgent với fake provider (tool_call rồi answer) chạy qua registry thật, finalText đúng |
+| 6 | unit | DbToolRegistry register/list/get | list() preserves register order; get unknown → undefined |
+| 7 | regression | createDbTools + runAgent 2-step tool loop | runAgent with a fake provider (tool_call then answer) drives the real registry; finalText correct |
 
 ## Test Files
 `src/ai/tools/__tests__/registry.test.ts`, `src/ai/tools/__tests__/schemaTools.test.ts`
@@ -44,13 +44,13 @@ npx vitest run src/ai/tools/__tests__/registry.test.ts src/ai/tools/__tests__/sc
 ```
 
 ## Acceptance
-- [ ] 7 test PASS RED→GREEN (paste output thật)
-- [ ] Không import vscode trong src/ai/tools/*
-- [ ] Không sửa file cycle J (agent.ts/provider.ts/settings.ts/config.ts) và KHÔNG sửa src/ai/tools/types.ts (đã freeze sẵn)
-- [ ] `npx tsc --noEmit` sạch
+- [ ] 7 tests PASS RED→GREEN (real output pasted)
+- [ ] No vscode import inside src/ai/tools/*
+- [ ] No edits to cycle J files (agent.ts/provider.ts/settings.ts/config.ts) and NO edits to src/ai/tools/types.ts (already frozen)
+- [ ] `npx tsc --noEmit` clean
 
 ## Interfaces
-- Consumes: `ToolRegistry`/`AgentTool` (src/ai/agent.ts — frozen), `AdapterFactory` (src/ai/tools/types.ts — frozen sẵn), `DbAdapter.listTables/listTableDetail` (src/adapters/types.ts).
+- Consumes: `ToolRegistry`/`AgentTool` (src/ai/agent.ts — frozen), `AdapterFactory` (src/ai/tools/types.ts — already frozen), `DbAdapter.listTables/listTableDetail` (src/adapters/types.ts).
 
 ## Executor Report
 

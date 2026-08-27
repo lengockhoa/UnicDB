@@ -7,32 +7,27 @@
 
 ## Goal
 
-Sửa envelope `session/new` của `AcpProcess.start()` thành `{ cwd, mcpServers: [] }` (fix
-latent bug `-32603` theo evidence fact 1) và chứng minh client do handle exposes sẵn
-`sessionList()`/`sessionLoad()` chạy qua process thật (fake child) — không seam mới.
+Fix the `session/new` envelope of `AcpProcess.start()` to `{ cwd, mcpServers: [] }` (fixes the latent `-32603` bug per evidence fact 1) and prove that the client exposed by the handle already has `sessionList()` / `sessionLoad()` running through the real process (fake child) — no new seam.
 
 ## Target Files
 
-- `src/ai/omp/acpProcess.ts` — dòng `session/new` params: thêm `mcpServers: []`. Không đổi
-  gì khác (spawn, handshake, version, dispose, watchdog giữ nguyên).
+- `src/ai/omp/acpProcess.ts` — the `session/new` params line: add `mcpServers: []`. Do NOT change anything else (spawn, handshake, version, dispose, watchdog stay the same).
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
-|---|------|----------|----------|---------------------|
-| 1 | unit (happy-regression) | `session/new` frame gửi đúng `{cwd, mcpServers: []}` | frame thứ 2 child nhận được parse ra `params` deep-equal `{cwd:"/w",mcpServers:[]}` | FakeChildProcess hiện có; drive handshake; đọc stdin buffer |
-| 2 | unit (edge-flag) | `supportCwdFlag:false` vẫn spawn cwd đúng + envelope vẫn có `mcpServers: []` | spawn options `cwd === "/w"`; KHÔNG có `--cwd` arg; `session/new` params vẫn đủ `{cwd, mcpServers: []}` | opts `supportCwdFlag:false` |
-| 3 | unit (edge-sessionLoad) | `sessionLoad` qua handle của process: result settle + replay buffer được trả (cửa sổ còn mở) | `handle.acp.sessionLoad("s1","/w")` resolve với `replay.notifications` chứa đúng 2 notifications theo thứ tự, `replay.closed === false` (cửa sổ chỉ đóng khi request kế — xem TASK-001 §Interfaces); frame gửi đi có `params:{sessionId:"s1",cwd:"/w",mcpServers:[]}` | sau handshake, fake child respond `{result:{configOptions:[],modes:{}}}` + feed 2 `session/update` notifications (đều mang `params.sessionId:"s1"`) |
-| 4 | unit (edge-list) | `sessionList` qua handle của process: lỗi server propagate nguyên vẹn | `handle.acp.sessionList()` reject, message chứa nội dung lỗi, `code` giữ `-32603` nếu server trả code đó | fake child respond `{error:{code:-32603,message:"boom"}}` |
-| 5 | unit (regression-lifecycle) | toàn bộ lifecycle hiện có không đổi | mọi test hiện có trong `acpProcess.test.ts` pass nguyên (initialize → session/new → sessionId/version/dispose/notifications/server-request wiring); fake child chỉ đổi chỗ assert envelope | existing suite |
+| # | Type | Test name | Expected | Pre-state / Fixture |
+|---|------|-----------|----------|---------------------|
+| 1 | unit (happy-regression) | `session/new` frame sends the correct `{cwd, mcpServers: []}` | the 2nd frame the child receives parses to `params` deep-equal `{cwd:"/w",mcpServers:[]}` | existing FakeChildProcess; drive handshake; read stdin buffer |
+| 2 | unit (edge-flag) | `supportCwdFlag:false` still spawns cwd correctly + envelope still has `mcpServers: []` | spawn options `cwd === "/w"`; NO `--cwd` arg; `session/new` params still has the full `{cwd, mcpServers: []}` | opts `supportCwdFlag:false` |
+| 3 | unit (edge-sessionLoad) | `sessionLoad` through the process handle: result settles + replay buffer is returned (window still open) | `handle.acp.sessionLoad("s1","/w")` resolves with `replay.notifications` containing the 2 notifications in order, `replay.closed === false` (window only closes on the next request — see TASK-001 §Interfaces); the frame sent has `params:{sessionId:"s1",cwd:"/w",mcpServers:[]}` | after handshake, fake child responds `{result:{configOptions:[],modes:{}}}` + feeds 2 `session/update` notifications (both carrying `params.sessionId:"s1"`) |
+| 4 | unit (edge-list) | `sessionList` through the process handle: server error propagates intact | `handle.acp.sessionList()` rejects, message contains the error content, `code` keeps `-32603` if the server returned that code | fake child responds `{error:{code:-32603,message:"boom"}}` |
+| 5 | unit (regression-lifecycle) | the entire existing lifecycle is unchanged | every existing test in `acpProcess.test.ts` passes untouched (initialize → session/new → sessionId/version/dispose/notifications/server-request wiring); fake child only changes where the envelope is asserted | existing suite |
 
-Lưu ý fixture: case 1 là **regression RED** — code hiện tại (dòng ~165) gửi `{cwd}` không
-kèm `mcpServers`; test phải fail trước fix. Case 3 cần các `await Promise.resolve()` giữa
-các frame như pattern `driveHandshake` hiện có (stdin/stdout cùng tick).
+Fixture note: case 1 is a **regression RED** — the current code (line ~165) sends `{cwd}` without `mcpServers`; the test MUST fail before the fix. Case 3 needs several `await Promise.resolve()` calls between frames, like the existing `driveHandshake` pattern (stdin/stdout in the same tick).
 
 ## Test Files
 
-- `src/ai/omp/__tests__/acpProcess.test.ts` — append cases 1–4 (case 5 = suite cũ chạy lại).
+- `src/ai/omp/__tests__/acpProcess.test.ts` — append cases 1–4 (case 5 = the existing suite re-run).
 
 ## Verification Commands
 
@@ -40,45 +35,36 @@ các frame như pattern `driveHandshake` hiện có (stdin/stdout cùng tick).
 npm run typecheck && npx vitest run src/ai/omp/__tests__/acpProcess.test.ts src/ai/omp/__tests__/acp.test.ts
 ```
 
-(Không có lint script trong `package.json` — N/A.)
+(No lint script in `package.json` — N/A.)
 
 ## Acceptance Criteria
 
-- [ ] Case 1 RED trước fix (paste output), GREEN sau.
-- [ ] Suite `acpProcess.test.ts` cũ pass nguyên vẹn — lifecycle/permission/watchdog không đổi.
-- [ ] Không file nào ngoài `acpProcess.ts` + test bị sửa.
-- [ ] Reviewer verdict APPROVED hoặc APPROVED-WITH-MINOR.
+- [ ] Case 1 RED before fix (paste output), GREEN after.
+- [ ] The existing `acpProcess.test.ts` suite passes untouched — lifecycle/permission/watchdog unchanged.
+- [ ] No file outside `acpProcess.ts` + the test is edited.
+- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
 
 ## Dependencies
 
-- TASK-001 — tiêu thụ `AcpClient.sessionList()/sessionLoad()` (chữ ký ở TASK-001
-  §Interfaces) trên client mà `AcpProcess.start()` trả về.
+- TASK-001 — consumes `AcpClient.sessionList()` / `sessionLoad()` (signature in TASK-001 §Interfaces) on the client returned by `AcpProcess.start()`.
 
 ## Interfaces
 
-- Consumes: từ TASK-001 — `sessionList(): Promise<AcpSessionListItem[]>`,
-  `sessionLoad(sessionId: string, cwd: string): Promise<AcpSessionLoadResult>` trên
-  `handle.acp`, với `AcpSessionLoadResult { configOptions, modes, replay:
-  AcpReplayBuffer }` (`replay.notifications`, `replay.closed` — semantics cửa sổ ở
-  TASK-001 §Interfaces: đóng khi request kế, không drain-tick).
-- Produces: (none mới) — `AcpProcessHandle` giữ nguyên shape
-  `{ acp: AcpClient; sessionId: string; version: string; dispose(): void }`; giờ `acp`
-  mang thêm 2 method của TASK-001. TASK-003 dùng trực tiếp.
+- Consumes: from TASK-001 — `sessionList(): Promise<AcpSessionListItem[]>`, `sessionLoad(sessionId: string, cwd: string): Promise<AcpSessionLoadResult>` on `handle.acp`, with `AcpSessionLoadResult { configOptions, modes, replay: AcpReplayBuffer }` (`replay.notifications`, `replay.closed` — window semantics in TASK-001 §Interfaces: closes on the next request, no drain-tick).
+- Produces: (no new ones) — `AcpProcessHandle` keeps its shape `{ acp: AcpClient; sessionId: string; version: string; dispose(): void }`; now `acp` carries the 2 methods added in TASK-001. TASK-003 uses them directly.
 
 ---
 
 ## Discussion
 
 ### 2026-08-24 · planner · unic/unic-smart
-Ghi chú cho @executor: evidence fact 1 nói `{cwd}` đơn lẻ → `-32603` trên omp 18.0.1. Đây là
-bug tiềm ẩn của chính Cycle M (unit test cũ không bắt vì fake child trả lời bất kể params;
-live smoke gửi đúng envelope thủ công). Chỉ sửa đúng 1 dòng params — không refactor kèm.
+Note for @executor: evidence fact 1 says `{cwd}` alone → `-32603` on omp 18.0.1. This is a latent bug from Cycle M itself (the old unit test did not catch it because the fake child responds regardless of params; the live smoke sent the right envelope manually). Change exactly the one params line — do not refactor alongside it.
 
 ---
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor append `## Executor Report` BELOW this separator.
+Phase 4 reviewer append `## Reviewer Verdict` BELOW the Executor Report.
 -->
 
 ## Executor Report
@@ -145,7 +131,7 @@ FINDINGS:
   important: none
   minor:
     - acpProcess.test.ts:680 — case #5 has no test body; comment documents the implicit
-      regression contract. Acceptable anchor per task file's "case 5 = suite cũ chạy lại".
+      regression contract. Acceptable anchor per task file's "case 5 = existing suite re-run".
 NEXT_STATUS_FOR_INDEX: approved
 NOTES: Diff is minimal and exact: acpProcess.ts:165 single-property envelope fix, tests pure-insertion. Envelope pinned via stdin frame assert (WRITE side). sessionLoad params {sessionId, cwd, mcpServers:[]} and sessionList {} verified against acp.ts:166,213-216. Spawn args untouched (["acp"] + conditional --cwd only; no yolo/approval-mode/auto-approve). RED output verbatim with real assertion diffs. extension.ts not touched (TASK-003 scope). Lint script N/A (absent in package.json) — typecheck included instead.
 ```

@@ -21,7 +21,7 @@ Wire the designer into the extension: package.json contributes (6 commands + men
 
 ## Test Cases (REQUIRED — TDD)
 `sampleData.test.ts` (pure):
-| # | Loại | Tên test | Expected |
+| # | Type | Test name | Expected |
 |---|------|----------|----------|
 | 1 | unit | multi-row INSERT | cols (id integer, name varchar) n=3 → `INSERT INTO "public"."t" ("id","name") VALUES\n (1, 'row-1 c1'),\n (2, 'row-2 c1'),\n (3, 'row-3 c1');\n` |
 | 2 | unit | type variety | (flag boolean, amt numeric, d date, u uuid) n=2 → row1 `(true, 1.5, '2026-01-01', '00000000-0000-0000-4000-0000000000001')`, row2 `(false, 2.5, '2026-01-02', '…002')` |
@@ -67,8 +67,8 @@ npm run compile && npx vitest run src/extension.test.ts src/ui/__tests__/tableCo
 If testing via full `activate()` gets heavy, export `registerTableCommands(deps)` from extension.ts; activate() calls it; tableCommands.test.ts drives it with fakes. activate() wiring stays covered by the existing smoke describe.
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor appends `## Executor Report` BELOW this separator.
+Phase 4 reviewer appends `## Reviewer Verdict` BELOW Executor Report.
 -->
 
 ---

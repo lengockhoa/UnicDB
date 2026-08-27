@@ -19,7 +19,7 @@ observable grid/debounce output rather than using the fixed 250 ms sleep.
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | happy | Case 18 filter requery posts once | After selecting `beta` in the set filter, exactly one requery is posted; it has `orderBy:"name ASC"` and defined `filters`. | Single evaluated bundle and state fixture from existing case 18. |
 | 2 | edge — ordering | Sort inside debounce cancels stale post | Applying `name ASC` before the 150 ms filter debounce expires produces exactly one requery carrying both active sort and filter model. | Existing case-18(b) synchronous AG Grid dispatch sequence. |

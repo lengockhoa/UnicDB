@@ -2,7 +2,7 @@
 - Status: `ready` · Owner: `-` · Reviewer: `-` · Parent: `docs/AI_HANDOFF/PLAN.md` §2,§3,§7
 
 ## Goal
-One chỗ config AI (user requirement #1): AI Settings webview form (ConnectionForm pattern)
+One place to configure AI (user requirement #1): AI Settings webview form (ConnectionForm pattern)
 to view/edit baseUrl, method, timeout, maxSteps, both model roles (id + vision), and apiKey;
 Test button smoke-fires the provider; `vsdb.openAiSettings` command wiring; README documents
 the privacy/egress contract. The apiKey NEVER round-trips to the webview (host sends
@@ -49,7 +49,7 @@ export type AiSettingsFormHostMessage = AiSettingsFormTestResult | AiSettingsFor
 export interface AiSettingsFormOptions {
   extensionUri: vscode.Uri;
   store: Pick<AiConfigStore, "loadSettings" | "loadApiKey" | "save">;   // injected → fake-able
-  /** Injected để Test button không cần store API key. */
+  /** Injected so the Test button does not need the stored API key. */
   complete: (cfg: AiConfig, role: "work", req: ProviderRequest) => Promise<ProviderResult>;
 }
 export class AiSettingsForm {
@@ -80,7 +80,7 @@ configured baseUrl — no third-party endpoints, no telemetry; the key is never 
 included in error messages; how to open the form (`VSDB: Open AI Settings`).
 
 ## Test Cases (REQUIRED — TDD)
-| # | Loại | Tên test | Expected |
+| # | Type | Test name | Expected |
 |---|------|----------|----------|
 | 1 | unit | init round-trip | loadSettings→fixture, loadApiKey→"sk-1": ready handler posts init with the settings deep-equal + `hasApiKey:true`; posted message has NO `apiKey` key |
 | 2 | unit | unconfigured init | both stores empty → init settings deep-equal `defaultAiSettings()`, hasApiKey false |
@@ -125,8 +125,8 @@ npm run compile && npx vitest run src/ui/__tests__/aiSettingsForm.test.ts src/ui
 hasApiKey-instead-of-key is the privacy decision for this form: the webview can never leak what it never receives; empty-key-keeps-stored matches ConnectionForm's password UX. @executor: host tests reuse the fake-webview-panel pattern from `src/ui/__tests__/connectionForm.test.ts` / `newTableForm.test.ts`; bundle test stubs `acquireVsCodeApi` + ResizeObserver/matchMedia exactly like `newTableFormBundle.test.ts` and MUST skip-with-message if `dist/aiSettingsForm.js` is missing. No chat panel, no streaming, no DB tools here — scope guards in PLAN §2.
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor appends `## Executor Report` BELOW this separator.
+Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
 
 ## Executor Report
@@ -185,7 +185,7 @@ VERIFICATION_RERUN:
 TEST_PLAN_COVERAGE: partial — Test Case #13 (README contract, REQUIRED per §Test Cases) has NO test anywhere: no test file reads README.md for the AI/SecretStorage/egress/no-telemetry statements (releaseHygiene.test.ts only checks the vsix install pattern; extension.test.ts only greps package.json). Cases #1-#12 are covered by the 17 new tests. Executor's TEST_PLAN_FOLLOWED claim "all 13 covered" is therefore inaccurate.
 FINDINGS:
   important:
-    - docs/AI_HANDOFF/tasks/TASK-004.md §Test Cases #13 — required "README contains the AI section naming SecretStorage, single-endpoint egress, no-telemetry/no-log" test was never written. The README content itself IS present and accurate (README.md:96-109 names SecretStorage, "mọi AI request chỉ đi tới baseUrl", "không telemetry", scrubApiKey); only the enforcing test is missing. Fix: add a small test reading README.md asserting /SecretStorage/ + /baseUrl/ + /không telemetry/ (or English equivalents).
+    - docs/AI_HANDOFF/tasks/TASK-004.md §Test Cases #13 — required "README contains the AI section naming SecretStorage, single-endpoint egress, no-telemetry/no-log" test was never written. The README content itself IS present and accurate (README.md:96-109 names SecretStorage, "all AI requests only go to the configured baseUrl", "no telemetry", scrubApiKey); only the enforcing test is missing. Fix: add a small test reading README.md asserting /SecretStorage/ + /baseUrl/ + /no telemetry/ (or English equivalents).
   minor:
     - webview/aiSettingsFormMain.ts:108-147 — validation is a hand-copied mirror of src/ai/settings.ts aiSettingsErrors. settings.ts is deliberately vscode-free ("webview-importable" per its header), so importing it in the webview entry was possible; the duplication is a drift risk if the host validator changes. Acceptable for this cycle (host re-validates authoritatively at aiSettingsForm.ts:158-167,231-238), but note it for cycle K.
     - src/extension.ts:26-33 — the edit deleted the doc comment "Cached \"VSDB Script\" terminal instance (TASK-505). Reused while alive." above runScriptTerminal (now a bare let). Cosmetic only; restore the comment.
@@ -215,7 +215,7 @@ FINDINGS:
   important: none
   minor:
     - src/ui/__tests__/aiSettingsForm.test.ts:429 — test reads `README.md` CWD-relative; house pattern (src/__tests__/releaseHygiene.test.ts:14) resolves `path.resolve(__dirname, "..", "..")`. Vitest root is repo root so it resolves correctly today; robust to `vitest run` from repo root only, not from a nested cwd. Cosmetic.
-MUTATION_CHECK: PASS — temporarily weakening README.md (SecretStorage→RedactedStorage, `không telemetry`→removed) made exactly the new contract test fail (1 failed | 10 passed); README restored, worktree clean for README.md.
+MUTATION_CHECK: PASS — temporarily weakening README.md (SecretStorage→RedactedStorage, `no telemetry`→removed) made exactly the new contract test fail (1 failed | 10 passed); README restored, worktree clean for README.md.
 DETERMINISM: PASS — file read is synchronous-once, no timers/network; single assertion chain; deterministic.
 NEXT_STATUS_FOR_INDEX: approved
 NOTES: Round-1 blocker resolved exactly as requested — one test, no production code touched. All round-1 minor findings (webview validator duplication, extension.ts comment/promise-hop, testResult protocol reuse) remain as previously noted for cycle K; none blocking.

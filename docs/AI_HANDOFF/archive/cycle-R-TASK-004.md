@@ -1,4 +1,4 @@
-# TASK-004 — vsdb.exportAllStructures: copy toàn-DB DDL ra clipboard
+# TASK-004 — vsdb.exportAllStructures: copy the whole-DB DDL to the clipboard
 
 - Status: `ready`
 - Owner: `-`
@@ -7,36 +7,36 @@
 
 ## Goal
 
-Command `vsdb.exportAllStructures` (context menu connection/schema node + command palette): introspect toàn DB (user schemas, tables, views) → `buildDatabaseStructure` → clipboard. Đây là mặt UI của "Export Structure để tham khảo toàn bộ context" — user copy DDL toàn DB đưa cho bất kỳ AI/workflow ngoài nào.
+Command `vsdb.exportAllStructures` (context menu on connection/schema node + command palette): introspect the whole DB (user schemas, tables, views) → `buildDatabaseStructure` → clipboard. This is the UI surface of "Export Structure to reference the whole context" — the user copies the whole-DB DDL to share with any external AI / workflow.
 
 ## Target Files
 
-- `src/ui/tableCommands.ts` — thêm command registration `vsdb.exportAllStructures` (cùng pattern `vsdb.exportStructure` lines 540-581 + guardPostgres).
+- `src/ui/tableCommands.ts` — add the `vsdb.exportAllStructures` command registration (same pattern as `vsdb.exportStructure` lines 540-581 + guardPostgres).
 - `package.json` — contributed command + menus (schema tree view/context, palette).
-- `src/extension.test.ts` — assert command đăng ký (smoke pattern hiện có).
+- `src/extension.test.ts` — assert the command is registered (using the existing smoke-test pattern).
 - `src/ui/__tests__/tableCommands.test.ts` — append describe "vsdb.exportAllStructures" (#1, #2, #3).
 
 ## Spec
 
 ```ts
-// src/ui/tableCommands.ts — THÊM (sau block vsdb.exportStructure, trước `}` đóng registerTableCommands):
+// src/ui/tableCommands.ts — ADD (after the vsdb.exportStructure block, before the closing `}` of registerTableCommands):
 context.subscriptions.push(
   vscode.commands.registerCommand(
     "vsdb.exportAllStructures",
     async (arg?: unknown) => {
-      // Node: connection hoặc schema node (resolveConnectionNode pattern có
-      // sẵn trong file cho vsdb.analyzeTable/copyQualifiedName — dùng cùng
-      // resolver; palette invoke không arg → dùng mgr.getActive()).
-      // guardPostgres tương đương exportStructure (PG-only DDL).
+      // Node: a connection or a schema node (resolveConnectionNode pattern is
+      // already in this file for vsdb.analyzeTable/copyQualifiedName — reuse it;
+      // palette invocation with no arg → fall back to mgr.getActive().
+      // guardPostgres mirrors exportStructure (PG-only DDL).
       const guarded = /* connection | schema node resolve */;
       if (!guarded) return;
       try {
         const adapter = await /* adapter cho connection */;
         const schemas = await adapter.listSchemas(false);
-        // Nếu node là schema → chỉ schema đó; connection → mọi user schema.
+        // If the node is a schema → just that schema; if it's a connection → every user schema.
         const tables = [], views = [], columns = {};
-        // (per-schema listTables/listViews/listColumns — cùng thu thập logic
-        //  TASK-002 buildMessages; per-object throw → skip + đếm skipped)
+        // (per-schema listTables/listViews/listColumns — same collection logic as
+        //  TASK-002's buildMessages; per-object throw → skip + count as skipped)
         const text = buildDatabaseStructure({ schemas, tables, views, columns });
         await vscode.env.clipboard.writeText(text);
         void vscode.window.setStatusBarMessage(
@@ -55,27 +55,27 @@ context.subscriptions.push(
 
 // package.json contributes.commands + menus:
 //   { "command": "vsdb.exportAllStructures", "title": "VSDB: Export All Structures (Copy DDL)", "category": "VSDB" }
-//   menus.view/item: schema tree — when node connection/schema (match điều kiện
-//   node các command exportStructure/analyzeTable đang dùng).
-//   KHÔNG thêm keybinding (palette + context menu đủ).
+//   menus.view/item: schema tree — when the node is connection/schema (matches the
+//   same condition the exportStructure/analyzeTable commands already use).
+//   Do NOT add a keybinding (palette + context menu are enough).
 ```
 
-Lưu ý: thu thập introspection trong command là bản song song của TASK-002 buildMessages collection. Executor viết helper nội bộ nhỏ trong tableCommands.ts (không export, không import từ aiChatPanel.ts — tránh coupling UI file). Nếu thấy trùng lặp đáng kể, ghi nhận trong Discussion cho cycle sau cân nhắc extract — KHÔNG tự extract shared module trong task này (scope giữ nhỏ).
+Note: the introspection collection inside this command is a parallel implementation of TASK-002's buildMessages collection. The executor writes a small internal helper inside tableCommands.ts (do NOT export it, do NOT import from aiChatPanel.ts — to avoid coupling the UI file). If duplication looks significant, record it in the Discussion for the next cycle to consider extracting — do NOT extract a shared module inside this task (keep scope small).
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
-| 1 | happy | connection node PG → clipboard chứa full DDL | clipboard text bắt đầu `-- Database structure (1 schemas, 2 tables, 0 views)`, chứa `CREATE TABLE public.users`; statusbar message `database structure copied (2 objects)` | mock vscode env + adapter pattern tableCommands.test.ts hiện có (guardPostgres pass, listSchemas/listTables/listViews/listColumns mock) |
-| 2 | edge | non-PG (mysql) connection node | guardPostgres chặn: error message shown (pattern guard msg hiện có), clipboard KHÔNG được write | node driver mysql |
-| 3 | edge | DB rỗng (0 user schemas → 0 objects) | clipboard = header `(0 schemas, 0 tables, 0 views)` một dòng; status `copied (0 objects)`; không throw | listSchemas → [] |
-| 4 | regression | command đăng ký trong activate | extension.test.ts assert `vsdb.exportAllStructures` nằm trong registeredCommands | pattern smoke hiện có |
-| 5 | edge | 1 object listColumns throw → skipped, còn lại copy | clipboard chứa table còn lại; KHÔNG error message (skip im lặng như exportStructure per-object path — hoặc statusbar đếm đúng objects thực) | listColumns reject 1 table |
-| 6 | edge | no active connection (mgr.getActive() null / adapter factory throw) (review #5) | showErrorMessage `Export All Structures failed: ...` (hoặc info hướng dẫn kết nối — theo path code thật), KHÔNG crash/unhandled rejection, clipboard KHÔNG write | active=null hoặc factory rejects |
+| 1 | happy | PG connection node → clipboard contains full DDL | clipboard text starts with `-- Database structure (1 schemas, 2 tables, 0 views)`, contains `CREATE TABLE public.users`; statusbar message `database structure copied (2 objects)` | mock vscode env + existing adapter pattern in tableCommands.test.ts (guardPostgres passes; listSchemas/listTables/listViews/listColumns mocked) |
+| 2 | edge | non-PG (mysql) connection node | guardPostgres blocks: an error message is shown (matches the existing guard-message pattern), clipboard is NOT written | node driver mysql |
+| 3 | edge | empty DB (0 user schemas → 0 objects) | clipboard = the one-line header `(0 schemas, 0 tables, 0 views)`; status `copied (0 objects)`; no throw | listSchemas → [] |
+| 4 | regression | command is registered in activate | extension.test.ts asserts that `vsdb.exportAllStructures` is in registeredCommands | existing smoke-test pattern |
+| 5 | edge | 1 object listColumns throws → skipped, remaining copied | clipboard contains the remaining table; NO error message (silent skip, mirroring the exportStructure per-object path — or the statusbar correctly counts the actual objects) | listColumns rejects one table |
+| 6 | edge | no active connection (mgr.getActive() null / adapter factory throws) (review #5) | showErrorMessage `Export All Structures failed: ...` (or an info message instructing the user to connect — whichever path the actual code takes), NO crash / unhandled rejection, clipboard NOT written | active=null or factory rejects |
 
 ## Test Files
 - `src/ui/__tests__/tableCommands.test.ts` — #1, #2, #3, #5, #6.
-- `src/extension.test.ts` — #4 (append vào block assert commands hiện có).
+- `src/extension.test.ts` — #4 (append to the existing commands-assertion block).
 
 ## Verification Commands
 
@@ -86,31 +86,31 @@ npx tsc --noEmit
 
 ## Acceptance Criteria
 
-- [ ] Mọi test ở §Test Cases PASS.
-- [ ] Command hiện ở palette + context menu connection/schema node (package.json contributes đúng schema).
-- [ ] Clipboard chứa DDL toàn DB (đa schema) — cùng builder TASK-001.
-- [ ] Reviewer verdict APPROVED hoặc APPROVED-WITH-MINOR.
+- [ ] All tests in §Test Cases PASS.
+- [ ] The command is available in the palette + context menu on connection/schema nodes (package.json contributes the correct schema).
+- [ ] Clipboard contains the whole-DB DDL (multi-schema) — same builder as TASK-001.
+- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
 
 ## Dependencies
 
-- TASK-001 (tiêu thụ `buildDatabaseStructure`).
+- TASK-001 (consumes `buildDatabaseStructure`).
 
 ## Interfaces
 
-- Consumes: `buildDatabaseStructure(db: DatabaseStructureInput): string`, `DatabaseStructureInput` (TASK-001 produces); `guardPostgres`, node resolver + `RegisterDeps`/`mgr` pattern trong tableCommands.ts hiện có; DbAdapter `listSchemas(false)/listTables(schema)/listViews(schema)/listColumns(table,schema)`.
-- Produces: VS Code command `vsdb.exportAllStructures(arg?: connection-or-schema node)` — registered id phải khớp package.json contributes (extension.test.ts khóa).
+- Consumes: `buildDatabaseStructure(db: DatabaseStructureInput): string`, `DatabaseStructureInput` (TASK-001 produces); `guardPostgres`, the node resolver + `RegisterDeps`/`mgr` pattern already in tableCommands.ts; DbAdapter `listSchemas(false)/listTables(schema)/listViews(schema)/listColumns(table,schema)`.
+- Produces: VS Code command `vsdb.exportAllStructures(arg?: connection-or-schema node)` — the registered id MUST match package.json contributes (locked by extension.test.ts).
 
 ---
 
 ## Discussion
 
-(chưa có comment)
+(no comment yet)
 
 ---
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor append `## Executor Report` BELOW this separator.
+Phase 4 reviewer append `## Reviewer Verdict` BELOW Executor Report.
 -->
 ---
 

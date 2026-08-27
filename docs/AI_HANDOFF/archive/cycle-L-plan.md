@@ -2,17 +2,17 @@
 
 ## §1 Intent
 
-Gắn oh-my-pi (omp) agent vào VSDB extension để nâng chất lượng AI assist: agent có tool surface đầy đủ (read/grep/edit/LSP…) + model routing của omp, trong khi DB tools (read-only) vẫn do VSDB kiểm soát qua host-tool bridge. Nâng cấp bằng 1 lệnh: extension kiểm tra `omp --version` khi chạy; thiếu/lỗi版本 → fallback về AI path hiện có (cycle J/K) + thông báo 1 lần với lệnh install `curl -fsSL https://omp.sh/install | sh` / update `omp update`. User chọn (P0): research + triển khai luôn trong một run.
+Hook the oh-my-pi (omp) agent into the VSDB extension to raise the quality of AI assist: the agent has the full tool surface (read/grep/edit/LSP…) plus omp's model routing, while DB tools (read-only) remain controlled by VSDB via a host-tool bridge. Upgrade with one command: the extension checks `omp --version` at runtime; missing/wrong version → fallback to the existing AI path (cycle J/K) + a one-time notification with the install command `curl -fsSL https://omp.sh/install | sh` / update `omp update`. User chooses (P0): research + implement in one run.
 
 ## §2 Scope
 
-In: `src/ai/omp/` (rpc.ts JSONL client, process.ts spawn/health/restart, hostTools.ts set_host_tools bridge, detect.ts version check + fallback decision), chat panel thêm engine switch (omp | builtin), README section (yêu cầu omp, install/update 1 lệnh, security note: omp mode cho agent workspace access), tests unit với fake child_process/stdio. Fallback path KHÔNG bị sửa hành vi (regression).
+In: `src/ai/omp/` (rpc.ts JSONL client, process.ts spawn/health/restart, hostTools.ts set_host_tools bridge, detect.ts version check + fallback decision), chat panel adds an engine switch (omp | builtin), README section (omp requirement, install/update one-liner, security note: omp mode grants the agent workspace access), unit tests with fake child_process/stdio. Fallback path behavior MUST NOT change (regression).
 
-Out: ACP/approval UI (ghi follow-up), bundling omp vào .vsix, Bun runtime, sửa omp本身, session-history browsing UI, streaming text_delta vào builtin path (builtin vẫn final-text như cũ).
+Out: ACP/approval UI (deferred to follow-up), bundling omp into .vsix, Bun runtime, modifying omp itself, session-history browsing UI, streaming text_delta into the builtin path (builtin keeps final-text as today).
 
 ## §3 Approach — interface freeze
 
-Từ research (docs/AI_HANDOFF/queue/OMP-INTEGRATION-research.md) + code hiện có:
+From research (docs/AI_HANDOFF/queue/OMP-INTEGRATION-research.md) + existing code:
 
 ```ts
 // src/ai/omp/rpc.ts (T1) — pure JSONL framing over injected stdio pair
@@ -42,11 +42,11 @@ export async function detectOmp(execFn?: (cmd: string) => Promise<string>): Prom
 // src/ui/aiChatPanel.ts (T4) — engine switch; builtin path untouched behaviorally
 ```
 
-Kiến trúc: panel hỏi `detectOmp()` → ok ⇒ `OmpProcess.start()` → rpc client + `set_host_tools` (defs từ DbToolRegistry + createSqlTool — read-only guard vẫn chạy trong VSDB) → `prompt` RpcCommand → stream AgentSessionEvent (message_update/text_delta) vào webview bubbles → host_tool_call → executor (guard + adapter) → host_tool_result. omp thiếu/cũ/crash ⇒ banner + builtin engine (hiện trạng).
+Architecture: panel calls `detectOmp()` → ok ⇒ `OmpProcess.start()` → rpc client + `set_host_tools` (defs from DbToolRegistry + createSqlTool — read-only guard still runs inside VSDB) → `prompt` RpcCommand → stream AgentSessionEvent (message_update/text_delta) into webview bubbles → host_tool_call → executor (guard + adapter) → host_tool_result. omp missing/old/crashed ⇒ banner + builtin engine (current behavior).
 
 ## §4 Test Plan (TDD)
 
-Mỗi task bảng test riêng. Tổng quan: happy (RPC roundtrip qua fake transport; host tool call→result; detect ok); edge khác loại (malformed JSONL line bỏ qua; RpcResponse error → reject; version cũ → ok=false; process exit → onExit + restart; host tool unknown/throw → error result string; registry trống); regression (builtin engine path vẫn chạy nguyên — test chat panel builtin hiện có không đổi; read-only guard vẫn chặn DROP TABLE khi gọi QUA host-tool bridge).
+Each task has its own test table. Overview: happy (RPC roundtrip via fake transport; host tool call→result; detect ok); distinct-class edges (malformed JSONL line skipped; RpcResponse error → reject; outdated version → ok=false; process exit → onExit + restart; host tool unknown/throw → error result string; empty registry); regression (builtin engine path still works as-is — existing chat panel builtin tests unchanged; read-only guard still blocks DROP TABLE when called THROUGH the host-tool bridge).
 
 ## §5 Verification Commands
 
@@ -57,15 +57,15 @@ Mỗi task bảng test riêng. Tổng quan: happy (RPC roundtrip qua fake transp
 
 ## §6 Acceptance
 
-- omp có mặt (máy này 18.0.1): panel chạy engine omp, tool DB gọi qua bridge với read-only guard còn nguyên (DROP TABLE qua host tool vẫn bị chặn — test chứng minh).
-- omp vắng mặt/cũ: detect → fallback builtin, có notification 1 lần với lệnh install/update đúng từ research; builtin behavior không đổi (tests cũ xanh).
-- Process crash giữa chừng: onExit → panel báo + nút restart (spawn lại với --continue nếu có session).
-- README: section yêu cầu omp + install/update 1 lệnh + security note.
-- Full suite + compile + tsc sạch; không telemetry; apiKey không xuất hiện trong omp path (omp tự đọc config riêng).
+- omp present (this machine has 18.0.1): panel runs the omp engine, DB tools called via bridge with the read-only guard still intact (DROP TABLE through the host tool is still blocked — test proves it).
+- omp missing/outdated: detect → fallback builtin, one-time notification with the correct install/update commands from research; builtin behavior unchanged (existing tests stay green).
+- Process crash mid-turn: onExit → panel warns + offers a restart button (respawn with --continue if a session exists).
+- README: section for the omp requirement + install/update one-liner + security note.
+- Full suite + compile + tsc clean; no telemetry; apiKey never appears in the omp path (omp reads its own config).
 
 ## §7 Task split
 
-Theo INDEX: T1 rpc+process (wave 1) · T2 hostTools bridge (wave 1) · T3 detect+fallback (wave 2) · T4 panel engine switch + UX + README (wave 3).
+Per INDEX: T1 rpc+process (wave 1) · T2 hostTools bridge (wave 1) · T3 detect+fallback (wave 2) · T4 panel engine switch + UX + README (wave 3).
 
 ## Planner Report
 PLANNER_MODEL: unic-smart (orchestrator session; planner subagent died mid-run earlier this cycle — plan authored directly, P2.5 independent review is the gate)
@@ -93,7 +93,7 @@ FINDINGS (numbered, severity in brackets):
   3. [IMPORTANT] Host-tool callback/result frames: real outbound `{type:"host_tool_call", id, toolCallId, toolName, arguments}` — field is `toolName`, not `name`; real completion frame `{type:"host_tool_result", id, result: {content:[{type:"text",text:"…"}]}, isError?: true}`. T1/T4 spec `{id, result|error}` omits the `type` field, the content-block wrapper, and the `isError` error channel; T2's plain-string executor return must be wrapped by the bridge. Map `toolName`→`name` when invoking T2's executor.
   4. [IMPORTANT] Turn-completion semantics: T4 treats any `agent_end` as done and prompt-response success as sufficient. Real spec: `prompt` success ≠ completion (`data.agentInvoked`); non-terminal `agent_end` with `isTerminal: false` exists — completion is `agent_end` with `isTerminal !== false` (or `prompt_result`/`agentInvoked:false` for local-only prompts). Fold into T4 §Spec + add an edge test (agent_end isTerminal:false must not post done).
   5. [MINOR] TASK-002 test #6 expected column "reject reason string" is ambiguous: `run_sql` guard RESOLVES with the reason string (never rejects; guard runs before `factory()`, so adapter.runQuery is indeed never called). Rephrase: "resolves to read-only rejection reason string; fake adapter.runQuery not called" so the executor doesn't write `expects.rejects`.
-  6. [MINOR] TASK-004 test #7 cites "19/19 cũ" — `src/ui/__tests__/aiChatPanel.test.ts` currently has 11 tests; stale count. Drop the number (keep "toàn bộ tests cycle K xanh").
+  6. [MINOR] TASK-004 test #7 cites a stale count — `src/ui/__tests__/aiChatPanel.test.ts` currently has 11 tests; stale count. Drop the number (keep "every cycle K test green").
   7. [MINOR] `--yolo` is an undocumented hidden flag in omp 18.0.1 (help lists `--approval-mode=yolo` / `--auto-approve`; bare `--yolo` still parses, verified exit 0). Pin the documented `--approval-mode=yolo` in T1 argv + test #8 to survive future flag removal.
 
 VERIFIED-GOOD (no action): event names message_update / text_delta (nested in `assistantMessageEvent`) / agent_end are real; `omp --version` → `omp/18.0.1` (T1/T3 parse assumption correct); `--mode rpc --cwd --continue --no-session --no-lsp` all exist; interface freeze matches real code (AgentTool/ToolRegistry src/ai/agent.ts:9-21, AdapterFactory async src/ai/tools/types.ts, createDbTools+createSqlTool shapes, AiChatPanelOptions options-object src/ui/aiChatPanel.ts:48-60, extension wiring src/extension.ts:361); T2 defs `{name, description, parameters}` match RpcHostToolDefinition; verification commands all runnable (`npx vitest run`, `npx tsc --noEmit`, `npm run compile` scripts exist; no lint script); read-only guard via bridge is genuinely unbypassable (guard inside tool.execute before factory()).
@@ -101,10 +101,10 @@ VERIFIED-GOOD (no action): event names message_update / text_delta (nested in `a
 REQUIRED REWORK: fold findings 1–4 into TASK-001/TASK-004 frozen specs (shapes now verified — cite them verbatim), optionally add a T4 acceptance smoke against real omp gated on availability (skipped when absent) so envelope drift can never again pass green.
 
 ### Round 2 — findings applied (planner, 2026-08-23, live-probe verified)
-- F1 [C] FIXED: TASK-004 giờ dùng real frames `{type:"prompt",message}` / `{type:"set_host_tools",tools}` / `{type:"abort"}` — live-probed trên omp 18.0.1 (transcript của run này: ready frame, response envelope `{type:"response",command,success,...}`, agent_start/message_update/agent_end thật).
-- F2 [C] FIXED: TASK-004 §REAL protocol facts normative — response envelope KHÔNG có id; correlation qua command + 1-in-flight serialization (bắt buộc, có test #4).
-- F3 [I] FIXED: host_tool_call dùng `toolName`; TASK-001 spec viết đúng host_tool_result shape `{content:[{type:"text",text}],isError}`.
-- F4 [I] FIXED: TASK-004 gate turn-completion trên `agent_end` (isTerminal !== false), không dựa response success; edge test thêm.
-- F5 [M] FIXED: TASK-002 test #6 ghi rõ guard resolve reason string (không throw).
-- F6 [M] FIXED: TASK-004 regression #7 bỏ "19/19" stale — dùng "mọi test cycle K".
-- F7 [M] FIXED: TASK-001 argv dùng `--approval-mode yolo` documented thay `--yolo` hidden.
+- F1 [C] FIXED: TASK-004 now uses the real frames `{type:"prompt",message}` / `{type:"set_host_tools",tools}` / `{type:"abort"}` — live-probed on omp 18.0.1 (transcript from this run: ready frame, response envelope `{type:"response",command,success,...}`, real agent_start/message_update/agent_end).
+- F2 [C] FIXED: TASK-004 §REAL protocol facts normative — the response envelope has NO id; correlation via command + 1-in-flight serialization (mandatory, with test #4).
+- F3 [I] FIXED: host_tool_call uses `toolName`; TASK-001 spec writes the correct host_tool_result shape `{content:[{type:"text",text}],isError}`.
+- F4 [I] FIXED: TASK-004 gates turn-completion on `agent_end` (isTerminal !== false), not on response success; edge test added.
+- F5 [M] FIXED: TASK-002 test #6 spells out that the guard resolves the reason string (does not throw).
+- F6 [M] FIXED: TASK-004 regression #7 drops the stale "19/19" — uses "every cycle K test".
+- F7 [M] FIXED: TASK-001 argv uses the documented `--approval-mode yolo` instead of the hidden `--yolo`.

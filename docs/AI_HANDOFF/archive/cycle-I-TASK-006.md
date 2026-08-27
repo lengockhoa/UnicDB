@@ -20,7 +20,7 @@ Tests (one `it` each):
 **Docs** — CODE_MAP.md: one-line entries (match existing style — read it first) for the 7 new files: `src/core/ddl/{createTable,alterTable,pgIntrospect,sampleData}.ts`, `src/ui/{newTableForm,newTableFormMessages}.ts`, `webview/newTableFormMain.ts`. README.md: "Table Designer (PostgreSQL)" subsection under features — New Table…, Modify Table…, Copy CREATE DDL, Generate Sample Data…, Analyze/Vacuum + PostgreSQL-only note. English; minimal, consistent tone.
 
 ## Test Cases (REQUIRED — TDD)
-| # | Loại | Tên test | Expected | Pre-state |
+| # | Type | Test name | Expected | Pre-state |
 |---|------|----------|----------|-----------|
 | 1 | integration | create + introspect round-trip | defaults fragments verbatim, nullability, 4 key kinds (Spec 1) | fresh tables |
 | 2 | integration | alter round-trip | rename/add/drop-key/NOT NULL verified by re-introspection | table from (1) |
@@ -59,8 +59,8 @@ npm run compile && VSDB_IT=1 VSDB_PG_HOST=127.0.0.1 VSDB_PG_PORT=5433 npx vitest
 Executor: never start/stop docker; connect failure = critical_block with the raw error.
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor appends `## Executor Report` BELOW this separator.
+Phase 4 reviewer appends `## Reviewer Verdict` BELOW Executor Report.
 -->
 ## Executor Report
 
@@ -72,7 +72,7 @@ SUMMARY: Added `src/adapters/__tests__/ddl.integration.test.ts` (6 PG integratio
 TEST_PLAN_FOLLOWED: task §4 (6 tests) — all six required cases covered.
 FILES_CHANGED:
   +- src/adapters/__tests__/ddl.integration.test.ts: new — 6 tests gated by VSDB_IT=1.
-  +- README.md: added **Table Designer (PostgreSQL)** subsection under `## Tính năng chính` (New Table…, Modify Table…, Copy CREATE DDL, Generate Sample Data…, Analyze/Vacuum).
+  +- README.md: added **Table Designer (PostgreSQL)** subsection under `## Key Features` (New Table…, Modify Table…, Copy CREATE DDL, Generate Sample Data…, Analyze/Vacuum).
   +- docs/CODE_MAP.md: added `## DDL Stack (PostgreSQL Table Designer)` section with 7 file rows (createTable, alterTable, pgIntrospect, sampleData, newTableForm, newTableFormMessages, webview/newTableFormMain).
 TESTS_ADDED:
   +- src/adapters/__tests__/ddl.integration.test.ts: create+introspect round-trip preserves defaults/nullability/keys; alter round-trip (rename/add/drop-unique/SET NOT NULL); multi-statement single runQuery; regenerated CREATE executes on fresh table; generateSampleInserts(spec, 5) → count(*) === 5; duplicate CREATE rejects with "already exists".
@@ -126,7 +126,7 @@ FINDINGS:
   critical:
     - src/ui/tableCommands.ts:145 — product introspection calls runQuery(INTROSPECT_*_SQL) with NO bind values while the SQL emits $1/$2 → live PG rejects "there is no parameter $1" (reproduced with bundled SQL constants). Modify Table / Copy CREATE DDL / Generate Sample Data all fail at runtime. The suite bypasses this via pool.query(sql, [schema, table]) at ddl.integration.test.ts:96-104, so it cannot catch the regression it exists to catch.
     - src/core/ddl/createTable.ts:103,108 — an introspected spec renders the PK twice (inline `PRIMARY KEY` + `CONSTRAINT … PRIMARY KEY`) → PG "multiple primary keys". Product Copy CREATE DDL (tableCommands.ts:286-288 = rowsToSpec → generateCreateTable verbatim) emits non-executable SQL for any table with a PK. Test #4 (ddl.integration.test.ts:446-484) strips isPrimaryKey and renames keys — bypassing the exact path its title ("Copy CREATE DDL guard") claims to guard; ISSUES #1/#3 misclassify these product defects as test-side.
-    - README.md:91 — Copy CREATE DDL "kèm tên đích tùy chọn — copy vào clipboard hoặc apply sang schema khác": no destination option or apply-to-schema exists anywhere (tableCommands.ts:274-297 is clipboard-only). README.md:92 — Sample Data "chạy thẳng qua connection": actual code opens an untitled SQL doc (tableCommands.ts:342-349) and never executes. Docs advertise nonexistent behavior.
+    - README.md:91 — Copy CREATE DDL "with optional destination name — copy to clipboard or apply to a different schema": no destination option or apply-to-schema exists anywhere (tableCommands.ts:274-297 is clipboard-only). README.md:92 — Sample Data "runs straight through the connection": actual code opens an untitled SQL doc (tableCommands.ts:342-349) and never executes. Docs advertise nonexistent behavior.
   important:
     - src/core/ddl/pgIntrospect.ts:28,174 — node-pg returns text[] confkeycols as the literal string "{id}" (verified against live container); createTable.ts:134 calls .map() on it → TypeError once the bind-values fix lands. Parse the array literal inside rowsToSpec (as the test does at ddl.integration.test.ts:~300), not at call sites.
   minor:
@@ -140,11 +140,11 @@ STATUS: DONE
 EXECUTOR_TOOL: claude-code
 EXECUTOR_MODEL: unic/unic-code
 EXECUTOR_SUBAGENT: Exec-Fix1A
-SUMMARY: Wave A DDL-stack fixes verified via TASK-006 6/6 integration PASS against live PG @127.0.0.1:5433. test #4 ("regenerated CREATE executes") un-masked to use the real product path (rowsToSpec → generateCreateTable verbatim) — the previous hand-strip of `isPrimaryKey` is no longer needed because the createTable renderer now dedupes PK rendering (R1 fix). pool.query(sql, [schema, table]) bypass retained for introspection SQL correctness; the bind-params product fix is wave B (TASK-005) per the explicit dependency note — will land in fix round 1 for TASK-005 and wire up `runQuery(sql, [schema, table])` at the adapter level. README copy corrected (drop false destination-schema + "chạy thẳng" claims; describe actual clipboard / untitled-doc behavior).
+SUMMARY: Wave A DDL-stack fixes verified via TASK-006 6/6 integration PASS against live PG @127.0.0.1:5433. test #4 ("regenerated CREATE executes") un-masked to use the real product path (rowsToSpec → generateCreateTable verbatim) — the previous hand-strip of `isPrimaryKey` is no longer needed because the createTable renderer now dedupes PK rendering (R1 fix). pool.query(sql, [schema, table]) bypass retained for introspection SQL correctness; the bind-params product fix is wave B (TASK-005) per the explicit dependency note — will land in fix round 1 for TASK-005 and wire up `runQuery(sql, [schema, table])` at the adapter level. README copy corrected (drop false destination-schema + "runs straight through" claims; describe actual clipboard / untitled-doc behavior).
 TEST_PLAN_FOLLOWED: task §Test Cases (all 6, unchanged in count)
 FILES_CHANGED:
   - .worktrees/fix1-ddl/src/adapters/__tests__/ddl.integration.test.ts: test #4 removed redundant `cleanedCols` (isPrimaryKey hand-strip) + updated comment
-  - .worktrees/fix1-ddl/README.md: removed false claims at line 91-92 (Copy CREATE DDL has no destination/apply-to-schema path; Sample Data opens untitled SQL doc, doesn't auto-run). Now reads "(cùng generator với form) — copy vào clipboard" and "mở trong tab SQL untitled để user xem/sửa trước khi chạy".
+  - .worktrees/fix1-ddl/README.md: removed false claims at line 91-92 (Copy CREATE DDL has no destination/apply-to-schema path; Sample Data opens untitled SQL doc, doesn't auto-run). Now reads "(same generator as the form) — copy to clipboard" and "open in an untitled SQL tab for user to review/edit before running".
 TESTS_ADDED: none — test count unchanged at 6
 VERIFICATION:
   command: VSDB_IT=1 VSDB_PG_HOST=127.0.0.1 VSDB_PG_PORT=5433 npx vitest run -c vitest.integration.config.ts src/adapters/__tests__/ddl.integration.test.ts && npx vitest run src/__tests__/releaseHygiene.test.ts && npx tsc --noEmit
@@ -170,7 +170,7 @@ R1_FINDINGS_RESOLUTION:
   - critical#2 double-PK: RESOLVED — createTable.ts:146-150 suppresses inline PRIMARY KEY when a primaryKey KeySpec exists; test #4 (ddl.integration.test.ts:446-478) now feeds rowsToSpec output verbatim into generateCreateTable (isPrimaryKey still set by pgIntrospect.ts:249, not stripped) → real product path guarded, passes vs live PG.
   - critical#1 bind params: RESOLVED (wave B, same review range) — introspectTable (tableCommands.ts:139-141) routes via adapter.listTableDetail; PostgresAdapter.listTableDetail (postgres.ts:344-361) binds [schema, table]; regression test at tableCommands.test.ts:487-513.
   - important confkeycols text[] literal: RESOLVED — pgIntrospect.ts parseTextArray inside rowsToSpec (pgIntrospect.ts:202); test FK assertion no longer parses literal at call site (ddl.integration.test.ts:~300).
-  - critical#3 README false claims: RESOLVED — README.md:91 now "copy vào clipboard" (matches tableCommands.ts:287 clipboard-only); :92 "mở trong tab SQL untitled" (matches tableCommands.ts:343-347 openTextDocument, no auto-run).
+  - critical#3 README false claims: RESOLVED — README.md:91 now "copy to clipboard" (matches tableCommands.ts:287 clipboard-only); :92 "open in untitled SQL tab" (matches tableCommands.ts:343-347 openTextDocument, no auto-run).
 TEST_PLAN_COVERAGE: all-followed — 6/6 unchanged in count; no test weakening (only the isPrimaryKey strip + stale comment removed).
 FINDINGS:
   critical: none

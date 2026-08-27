@@ -1,7 +1,7 @@
 # Bugfix SOP (Index-First)
 
 ## Objective
-Giảm thời gian fix bug bằng cách ưu tiên bằng chứng + index codebase trước khi đọc sâu docs/source.
+Reduce bug-fix time by prioritizing evidence + codebase index before deep docs/source reading.
 
 ## Required Commands
 - `node .claude/ukit/index/build-index.mjs`
@@ -9,12 +9,12 @@ Giảm thời gian fix bug bằng cách ưu tiên bằng chứng + index codebas
 - `node .claude/ukit/index/triage.mjs "<error signature>"`
 
 ## Decision Tree
-1. Có repro command rõ ràng -> chạy triage index.
-2. Lane fast: mở tối đa 1-3 suspect files, patch nhỏ, verify test mục tiêu.
-3. Fail 2 vòng 15 phút liên tiếp -> chuyển lane deep.
-4. Lane deep: instrumentation + root-cause tracing trước khi sửa.
+1. Have a clear repro command -> run triage index.
+2. Fast lane: open at most 1-3 suspect files, small patch, verify the target test.
+3. Fail 2 consecutive 15-minute rounds -> switch to deep lane.
+4. Deep lane: instrumentation + root-cause tracing before fixing.
 
 ## Hard Rules
-- Không sửa khi chưa có evidence (failing test / stack trace / logs).
-- Không refactor lớn trong bug ticket.
-- Verify tối thiểu: test fail ban đầu + test liên quan.
+- Do NOT fix without evidence (failing test / stack trace / logs).
+- Do NOT do large refactors in a bug ticket.
+- Minimum verification: initial failing test + related tests.

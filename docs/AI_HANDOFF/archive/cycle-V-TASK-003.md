@@ -35,7 +35,7 @@ provider can reach: the Results panel's Messages tab (`r.sql` rendered flat at
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | unit (happy) | `tokenizes keywords, identifiers, numbers` | `tokenizeSql("SELECT 1 FROM t")` → kinds `["keyword","number","keyword","ident"]` (whitespace skipped or emitted as `ws`, asserted explicitly either way) | none |
 | 2 | unit (happy) | `string literal and line comment are single tokens` | `SELECT 'a b' -- c` → one `string` token with text `'a b'`, one `comment` token with text `-- c` | none |
@@ -150,8 +150,8 @@ all at once). The webview does not know which driver is active at render time.
 ---
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor append `## Executor Report` BELOW this separator.
+Phase 4 reviewer append `## Reviewer Verdict` BELOW the Executor Report.
 -->
 
 ## Executor Report

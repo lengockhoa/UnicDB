@@ -21,7 +21,7 @@ and webview call-site wiring are deliberately owned by dependent TASK-007.
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | happy | Declared varchar defeats numeric-looking sample | `inferColumns(["code"], [["123"],["456"]], {code:"varchar"})` yields `{field:"code", headerName:"code", kind:"string"}` with no `alignRight`. | Pure function; every sampled row would classify as numeric today. |
 | 2 | edge — empty | Declared integer classifies all-NULL data | `inferColumns(["count"], [[null],[undefined]], {count:"integer"})` yields `kind:"number", alignRight:true`. | No non-null sample values. |

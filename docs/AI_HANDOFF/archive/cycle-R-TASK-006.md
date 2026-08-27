@@ -7,38 +7,38 @@
 
 ## Goal
 
-PG no-PK table (mới tạo qua New Table form) → edit cell → commit save thành công. Thay value-matching `fetchPostgresCtids()` (fragile: Date/numeric/boolean literal round-trip lệch → 0 match → banner "Cannot save: postgres no-PK + ctid lookup failed for every dirty row") bằng hidden `ctid` column có sẵn trong result set — địa chỉ row chính xác, không value-match. Value-match giữ làm fallback khi query không có ctid column.
+PG no-PK table (newly created via the New Table form) → edit a cell → commit and the save succeeds. Replace the value-matching `fetchPostgresCtids()` (fragile: Date/numeric/boolean literal round-trip drifts → 0 matches → "Cannot save: postgres no-PK + ctid lookup failed for every dirty row" banner) with a hidden `ctid` column already present in the result set — exact row addressing, no value-match. Keep value-match as a fallback for queries that do not have a ctid column.
 
 ## Target Files
 
-- `src/ui/resultsPanel.ts` — save flow: đọc ctid từ row data (hidden column) trước, fallback `fetchPostgresCtids` (giữ nguyên hàm); query path thêm ctid column khi PG no-PK table browse.
-- `src/ui/resultsGridModel.ts` — nếu cần helper đánh dấu hidden column (columnDefs `hide: true` cho ctid) — thêm helper thuần.
+- `src/ui/resultsPanel.ts` — save flow: read ctid from row data (hidden column) first, fall back to `fetchPostgresCtids` (keep the function intact); the query path adds the ctid column when browsing a PG no-PK table.
+- `src/ui/resultsGridModel.ts` — if a helper is needed to mark a column as hidden (columnDefs `hide: true` for ctid) — add a pure helper.
 - `src/ui/__tests__/resultsPanelSaveEdits.test.ts` — append describe "no-PK hidden ctid column" (#1, #2, #3, #4).
-- `src/ui/__tests__/resultsGridModel.test.ts` — append (#5) nếu thêm helper hidden column.
+- `src/ui/__tests__/resultsGridModel.test.ts` — append (#5) if a hidden-column helper is added.
 
 ## Spec
 
-Root cause (orchestrator notes): `fetchPostgresCtids()` (resultsPanel.ts:699-748) build `SELECT ctid FROM t WHERE col IS NOT DISTINCT FROM <literal>` cho MỌI column — literal sai kiểu (timestamp `2024-01-01T00:00:00.000Z` vs DB format, numeric, boolean) → 0 rows → all_failed. Bảng mới tạo (NULL-heavy, không PK) dễ trúng nhất.
+Root cause (orchestrator notes): `fetchPostgresCtids()` (resultsPanel.ts:699-748) builds `SELECT ctid FROM t WHERE col IS NOT DISTINCT FROM <literal>` for EVERY column — the literal drifts in type (timestamp `2024-01-01T00:00:00.000Z` vs DB format, numeric, boolean) → 0 rows → all_failed. Newly created tables (NULL-heavy, no PK) are most likely to trigger this.
 
-Fix theo spec khuyến nghị:
-1. **Query path**: khi panel chạy browse-table query (PG driver, table không PK — dùng `listColumns` isPrimaryKey hoặc pkColumns đã có trong save flow), host append `, ctid` vào SELECT trước khi chạy (hoặc chạy wrapper `SELECT t.*, ctid FROM (<original>) t` khi query đơn giản không phải browse — executor chọn cách ít invasive, ghi rõ trong report). Result rows mang ctid ở index cuối.
-2. **Column defs**: cột ctid `hide: true` (AG Grid) — user không thấy; export/serialize bỏ cột ctid (kiểm tra serializeTsv/Csv hiện có bỏ hidden columns chưa — nếu serialize theo columns list thì cần skip hidden).
-3. **Save flow** (resultsPanel.ts saveEdits handler, vùng ~397-440): trước khi gọi `fetchPostgresCtids`, đọc ctid từ row data theo index cột ctid (nếu result set có) → build `ctidByRowId` trực tiếp; chỉ khi thiếu cột ctid mới fallback `fetchPostgresCtids` (value-match cũ, giữ nguyên).
-4. ctid missing trên 1 row (query không trả) → row đó skip + warning per-row (hành vi warning hiện có giữ).
-5. UPDATE WHERE: `buildSaveStatements` đã nhận `ctidByRowId` (saveStatements.ts SaveStatementsOptions) — KHÔNG đổi module này.
+Fix per the recommended spec:
+1. **Query path**: when the panel runs a browse-table query (PG driver, table has no PK — use `listColumns` isPrimaryKey or the pkColumns already present in the save flow), the host appends `, ctid` to the SELECT before running it (or wraps it as `SELECT t.*, ctid FROM (<original>) t` when the original query is a single simple table but not a browse — the executor picks the least-invasive option and records the choice in the report). Result rows carry ctid as the last column.
+2. **Column defs**: the ctid column gets `hide: true` (AG Grid) — the user does NOT see it; export/serialization skips the ctid column (verify whether the existing serializeTsv/serializeCsv already drops hidden columns — if it serializes per the columns list, then hidden columns must be skipped explicitly).
+3. **Save flow** (resultsPanel.ts saveEdits handler, region ~397-440): before calling `fetchPostgresCtids`, read ctid from the row data by the ctid column index (if the result set has it) → build `ctidByRowId` directly; only fall back to `fetchPostgresCtids` when the ctid column is missing (the old value-match behaviour, kept intact).
+4. ctid missing on one row (the query did not return it) → skip that row + per-row warning (existing warning behaviour is preserved).
+5. UPDATE WHERE: `buildSaveStatements` already accepts `ctidByRowId` (saveStatements.ts SaveStatementsOptions) — do NOT modify this module.
 
-Lưu ý grid rows → serverRows mapping: rowId hiện là index row; ctid index = columns.indexOf("ctid") nếu có. NewRowMarker rows không có ctid (INSERT, không cần).
+Note on grid rows → serverRows mapping: rowId is currently the row index; ctid index = columns.indexOf("ctid") when present. NewRowMarker rows do not have a ctid (INSERT, not needed).
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
-| 1 | happy | result set có ctid column → ctidByRowId built từ data, KHÔNG gọi fetchPostgresCtids | save flow build map từ rows; fetchPostgresCtids không được invoke (spy); UPDATE statements dùng `WHERE ctid = '(0,1)'` | fake adapter: query trả rows có ctid cột cuối; edit 1 cell; commit |
-| 2 | regression | no-PK edit→commit save thành công (user-blocking bug) | KHÔNG banner "Cannot save... all_failed"; statements thực thi (adapter.runQuery gọi với UPDATE); banner success/hidden — RED trên code hiện tại với data kiểu Date/numeric (value-match path fail) | rows chứa timestamp + numeric values, không PK, ctid column có |
-| 3 | edge | query KHÔNG có ctid column → fallback value-match cũ | fetchPostgresCtids được gọi; hành vi cũ (all_failed banner khi 0 match) giữ nguyên | rows không ctid; fetchPostgresCtids mock 0 match |
-| 4 | edge | 1 row thiếu ctid → per-row warning, rows còn lại save | statements cho rows có ctid; warning liệt kê row thiếu | 2 rows edit, 1 row ctid null |
-| 5 | edge | ctid column hidden trong grid + không xuất hiện trong export TSV/CSV | columnDefs có `{field/colId ctid, hide:true}`; serializeTsv/serializeCsv output không chứa ctid column | resultsGridModel sync với result có ctid |
-| 6 | regression | bảng CÓ PK → lưu đường PK như cũ, không thêm ctid vào query | query không append ctid; save dùng pkColumns | PG table có PK |
+| 1 | happy | result set has a ctid column → ctidByRowId built from data, does NOT call fetchPostgresCtids | save flow builds the map from the rows; fetchPostgresCtids is NOT invoked (spy); UPDATE statements use `WHERE ctid = '(0,1)'` | fake adapter: query returns rows with ctid as the last column; edit 1 cell; commit |
+| 2 | regression | no-PK edit→commit save succeeds (user-blocking bug) | NO "Cannot save... all_failed" banner; statements execute (adapter.runQuery called with UPDATE); banner success/hidden — RED on current code with Date/numeric data (value-match path fails) | rows contain timestamp + numeric values, no PK, ctid column present |
+| 3 | edge | query has NO ctid column → fallback to old value-match | fetchPostgresCtids is invoked; existing behaviour (all_failed banner when 0 matches) is preserved | rows have no ctid; fetchPostgresCtids mocked to return 0 matches |
+| 4 | edge | 1 row missing ctid → per-row warning, remaining rows save | statements target rows that have a ctid; the warning names the row missing it | 2 rows edited, 1 row's ctid is null |
+| 5 | edge | ctid column hidden in the grid + does not appear in TSV/CSV export | columnDefs has `{field/colId: ctid, hide:true}`; serializeTsv/serializeCsv output does NOT contain the ctid column | resultsGridModel syncs against a result with ctid |
+| 6 | regression | table WITH a PK → saves via PK as before, does NOT add ctid to the query | query does NOT append ctid; save uses pkColumns | PG table that has a PK |
 
 ## Test Files
 
@@ -54,11 +54,11 @@ npx tsc --noEmit
 
 ## Acceptance Criteria
 
-- [ ] Mọi test §Test Cases PASS; #2 RED trên code hiện tại → GREEN (user-unblocking).
-- [ ] Bảng no-PK mới tạo: edit → Cmd+Enter/check icon → save thành công qua ctid addressing.
-- [ ] Fallback value-match giữ nguyên cho query không ctid; ambiguous vẫn refuse với message rõ.
-- [ ] Cột ctid ẩn khỏi grid + export.
-- [ ] Reviewer verdict APPROVED hoặc APPROVED-WITH-MINOR.
+- [ ] All tests in §Test Cases PASS; #2 RED on the current code → GREEN (user-unblocking).
+- [ ] Newly created no-PK table: edit → Cmd+Enter / commit icon → save succeeds via ctid addressing.
+- [ ] Fallback value-match preserved for queries without ctid; ambiguous cases still refuse with a clear message.
+- [ ] The ctid column is hidden from the grid + export.
+- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
 
 ## Dependencies
 
@@ -66,21 +66,21 @@ npx tsc --noEmit
 
 ## Interfaces
 
-- Consumes: `buildSaveStatements(dialect, tableName, pkColumns, columns, edits, serverRows, options?: SaveStatementsOptions)` với `SaveStatementsOptions.ctidByRowId?: ReadonlyMap<number, string>` (src/core/saveStatements.ts — KHÔNG đổi); `EditState` snapshot; ResultsPanel saveEdits message flow; `quoteIdent(name, dialect)`.
-- Produces: ResultsPanel behavior — result set chứa cột `ctid` (được thêm vào query PG no-PK browse) ⇒ ctidByRowId đọc trực tiếp từ rows, fetchPostgresCtids chỉ fallback; grid column `ctid` luôn hidden + excluded khỏi export. TASK-007 (commit flow rework) tiêu thụ contract này — giữ nguyên message shape saveEdits/saveResult.
+- Consumes: `buildSaveStatements(dialect, tableName, pkColumns, columns, edits, serverRows, options?: SaveStatementsOptions)` where `SaveStatementsOptions.ctidByRowId?: ReadonlyMap<number, string>` (src/core/saveStatements.ts — UNCHANGED); `EditState` snapshot; ResultsPanel saveEdits message flow; `quoteIdent(name, dialect)`.
+- Produces: ResultsPanel behaviour — the result set contains the `ctid` column (added to the PG no-PK browse query) ⇒ ctidByRowId is read directly from the rows, and fetchPostgresCtids is only a fallback; the grid column `ctid` is always hidden + excluded from export. TASK-007 (commit flow rework) consumes this contract — the saveEdits/saveResult message shape is preserved.
 
 ---
 
 ## Discussion
 
 ### 2026-08-24 · planner · unic/unic-smart
-→ @executor: điểm cần quyết — cách thêm ctid vào query. Ưu tiên ít invasive: chỉ intercept ở browse-table path (panel biết table name + pk state qua save flow metadata); hand-written query không ctid → fallback cũ (đã đúng behavior #3). Nếu panel không có table metadata tại query time, dùng wrapper `SELECT t.*, ctid FROM (...) t` CHỈ khi parseFromClause xác định single simple table (saveStatements.ts:234 đã có parser) — ghi quyết định vào Executor Report.
+→ @executor: open decision — how to add ctid to the query. Prioritise the least-invasive option: only intercept the browse-table path (the panel knows the table name + PK state via the save-flow metadata); for hand-written queries without ctid, fall back to the old behaviour (which already satisfies #3). If the panel does not have table metadata at query time, use the wrapper `SELECT t.*, ctid FROM (...) t` ONLY when parseFromClause identifies a single simple table (saveStatements.ts:234 already has the parser) — record the chosen approach in the Executor Report.
 
 ---
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor append `## Executor Report` BELOW this separator.
+Phase 4 reviewer append `## Reviewer Verdict` BELOW Executor Report.
 -->
 
 ## Executor Report
@@ -115,8 +115,8 @@ VERIFICATION:
   command: npx vitest run src/ui/__tests__/resultsGridModelExport.test.ts src/adapters/__tests__/saveStatements.test.ts src/adapters/__tests__/saveStatementsInline.test.ts
   result: 59 pass / 0 fail
 ISSUES:
-  - Decision: chọn cách ít invasive cho query path (theo planner @ 2026-08-24). Host KHÔNG chủ động wrap `SELECT t.*, ctid FROM (...) t` cho hand-written queries — chỉ consume ctid khi đã có trong result set (fixture, browse-table path do command khác, hoặc extension tự thêm). Save flow fallback `fetchPostgresCtids` đã cover trường hợp không có ctid column. Browse-table command integration là work riêng (cần touch `browseCommands.ts` + PG adapter) — out of scope cho fix bug user-blocking này.
-  - Pre-existing failures (3 files, 2 tests) trong extension.test.ts, agGridSmoke.test.ts, aiChatPanelWebview.test.ts do dist/* artifacts chưa build — verified trước/sau khi apply changes (git stash) vẫn fail như nhau, không liên quan TASK-006.
+  - Decision: pick the least-invasive approach for the query path (per planner @ 2026-08-24). The host does NOT proactively wrap `SELECT t.*, ctid FROM (...) t` for hand-written queries — it only consumes ctid when it is already present in the result set (fixture, browse-table path driven by another command, or added by the extension itself). The save-flow fallback `fetchPostgresCtids` already covers the case without a ctid column. Browse-table command integration is separate work (it would touch `browseCommands.ts` + the PG adapter) — out of scope for this user-blocking bug fix.
+  - Pre-existing failures (3 files, 2 tests) in extension.test.ts, agGridSmoke.test.ts, aiChatPanelWebview.test.ts caused by unbuilt `dist/*` artefacts — verified before/after applying changes (via `git stash`) they still fail identically; unrelated to TASK-006.
 HANDOFF_TO_REVIEWER: yes — code review needed
 NEXT: ready for review
 

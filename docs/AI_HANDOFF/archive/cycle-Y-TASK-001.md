@@ -24,7 +24,7 @@ and existing webview Commit/Rollback controls become reachable. Do not alter
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | happy | Checked add-form submission persists manual mode | Clicking Save with `#manualCommit.checked === true` posts `{type:"submit", manualCommit:true, …}`; `onSave` receives `manualCommit:true`; the add config passed to `mgr.addConnection` has `manualCommit:true`. | Real compiled form bundle for post shape; existing `ConnectionForm`/extension mocks for host forwarding. |
 | 2 | edge — empty/default | Untouched add form is explicitly automatic | With the new checkbox never selected, the post and add config contain exactly `manualCommit:false`, not omitted/`undefined`. | Valid required connection form inputs; checkbox left unchecked. |
@@ -122,7 +122,7 @@ RED_OUTPUT (npx vitest run … connectionForm.test.ts connectionFormManualCommit
  FAIL  src/extension.test.ts > TASK-001 — manualCommit forwarded into connection config (add + edit) > #1 checked add-form → addConnection cfg has manualCommit:true
  FAIL  src/extension.test.ts > TASK-001 — manualCommit forwarded into connection config (add + edit) > #2 untouched add-form (manualCommit:false in payload) → cfg has explicit false
  FAIL  src/extension.test.ts > TASK-001 — manualCommit forwarded into connection config (add + edit) > #3 edit-form on an existing connection → editConnection patch has manualCommit:true
- FAIL  src/ui/__tests__/connectionForm.test.ts > ConnectionForm > manualCommit forwarding (TASK-001) > test message manualCommit:true → host chấp nhận, factory vẫn nhận cfg như cũ
+ FAIL  src/ui/__tests__/connectionForm.test.ts > ConnectionForm > manualCommit forwarding (TASK-001) > test message manualCommit:true → host accepts it, the factory still receives cfg as before
  FAIL  src/ui/__tests__/connectionFormManualCommitBundle.test.ts > webview/connectionFormMain.ts bundle — manualCommit (TASK-001) > #1 checked add-form Save posts {type:'submit', manualCommit:true}
  FAIL  src/ui/__tests__/connectionFormManualCommitBundle.test.ts > webview/connectionFormMain.ts bundle — manualCommit (TASK-001) > #2 untouched add-form Save posts exactly manualCommit:false (boolean, never omitted)
  FAIL  src/ui/__tests__/connectionFormManualCommitBundle.test.ts > webview/connectionFormMain.ts bundle — manualCommit (TASK-001) > #3a edit init with existing.manualCommit=true prechecks and Save retains true

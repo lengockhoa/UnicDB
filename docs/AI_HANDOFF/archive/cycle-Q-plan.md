@@ -10,7 +10,7 @@ immediately run the equivalent of `SELECT * FROM <schema>.<table>` and show the 
 the results grid, where data is editable and savable (Commit back to the DB).
 
 **(B) Create New Schema**: right-click a DB/connection node → "Create New Schema" menu item
-opens a form popup "giống như new column/new table": Name field up top, generated
+opens a form popup "like new column/new table": Name field up top, generated
 `CREATE SCHEMA <name>;` preview below, OK runs it, then tree refresh + reveal the new schema node.
 
 **(C) Column Type dropdown + default auto-fill** (user-refined): the designer's column Type
@@ -128,7 +128,7 @@ active first. Copy stays on the context menu (replacement, not coexistence).
 ### B — Create Schema form: webview form, not InputBox
 
 **Decision: webview form** (host `src/ui/schemaForm.ts` + entry `webview/schemaFormMain.ts` +
-esbuild entry). The user anchored the UX to "giống như new column/new table" — styled field +
+esbuild entry). The user anchored the UX to "like new column/new table" — styled field +
 live SQL preview + OK/Cancel + Escape; an InputBox cannot render the preview. Cost verified:
 NewTableForm is 246 host + 517 webview lines for a full designer; this is a strict single-field
 subset (~120 / ~90). Webview bundles are self-contained (`newTableFormMain.ts` redeclares its

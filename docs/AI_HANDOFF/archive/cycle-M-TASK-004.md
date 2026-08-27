@@ -15,7 +15,7 @@ Wire the panel lifecycle so a prompt creates one ACP session, streams assistant 
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | unit | `session/update` assistant text posts delta only; permission request posts exactly one opaque pending request | host posts plain-text `permission_request` with opaque ID, tool, and options; `agent_thought_chunk` is ignored | fake panel + fake ACP |
 | 2 | unit | Allow posts one ACP result for its matching opaque ID using only a listed option | only the matching pending request settles and host writes the selected option outcome | fake panel + fake ACP |

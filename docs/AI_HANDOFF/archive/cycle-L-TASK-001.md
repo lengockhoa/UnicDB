@@ -1,13 +1,13 @@
 # TASK-001 — omp RPC client + process lifecycle (pure)
 
 ## Goal
-JSONL RPC client theo giao thức THẬT của omp 18.x (đã probe live 2026-08-23, xem dưới) và OmpProcess wrapper — pure/injectable, test không cần omp thật.
+JSONL RPC client following the REAL protocol of omp 18.x (probed live on 2026-08-23, see below) and an OmpProcess wrapper — pure/injectable, tests need no real omp.
 
-## REAL protocol facts (live-probed, normative — không suy diễn)
-- Server gửi trước: `{"type":"ready","protocolVersion":1,"supportedProtocolVersions":[1,2],...}`.
-- Response envelope: `{"type":"response","command":"<cmd>","success":true|false,"error"?:string,"code"?:number,"data"?:...}` — **không có correlation id**; command name + FIFO order (one in-flight command tại một thời điểm) là cơ chế correlate. Client PHẢI serialize requests (queue 1-in-flight).
+## REAL protocol facts (live-probed, normative — do not infer)
+- Server sends first: `{"type":"ready","protocolVersion":1,"supportedProtocolVersions":[1,2],...}`.
+- Response envelope: `{"type":"response","command":"<cmd>","success":true|false,"error"?:string,"code"?:number,"data"?:...}` — **no correlation id**; command name + FIFO order (one in-flight command at a time) is the correlation mechanism. Client MUST serialize requests (1-in-flight queue).
 - Commands: `{"type":"prompt","message":"..."}`, `{"type":"abort"}`, `{"type":"set_host_tools","tools":[...]}`, `{"type":"steer",...}`.
-- Events (frames không phải type=ready/response): `agent_start`, `message_start`, `message_update` (assistantMessageEvent.type: thinking_start/text_start… với partial), `message_end`, `agent_end` (messages: full history), `host_tool_call` (field `toolName`, KHÔNG phải name).
+- Events (frames that are not type=ready/response): `agent_start`, `message_start`, `message_update` (assistantMessageEvent.type: thinking_start/text_start… with partial), `message_end`, `agent_end` (messages: full history), `host_tool_call` (field is `toolName`, NOT name).
 
 ## Target Files
 - `src/ai/omp/rpc.ts`, `src/ai/omp/process.ts`, `src/ai/omp/__tests__/rpc.test.ts`, `src/ai/omp/__tests__/process.test.ts`
@@ -19,12 +19,12 @@ export interface RpcTransport { write(line: string): void; onLine(cb: (line: str
 export class OmpRpcClient {
   constructor(transport: RpcTransport)
   request(cmd: { type: string } & Record<string, unknown>): Promise<Record<string, unknown>>
-  // serialize 1-in-flight; resolve với response.data (hoặc {}) khi type=response && command===cmd.type && success; reject Error(error) khi success=false
+  // serialize 1-in-flight; resolve with response.data (or {}) when type=response && command===cmd.type && success; reject Error(error) when success=false
   waitReady(timeoutMs?: number): Promise<Record<string, unknown>>  // resolve khi frame type=ready
-  onEvent(cb: (ev: Record<string, unknown>) => void): void        // mọi frame không phải ready/response
+  onEvent(cb: (ev: Record<string, unknown>) => void): void        // every frame that is not ready/response
   handleHostToolCall(handler: (call: { id: string; toolName: string; arguments: unknown }) => Promise<unknown>): void
   // frame type=host_tool_call → await handler → write {"type":"host_tool_result","id":<id>,"result":{"content":[{"type":"text","text":String(result)}]},"isError":false}
-  // handler throw → isError:true với text = "Tool failed: <msg>"
+  // handler throws → isError:true with text = "Tool failed: <msg>"
   dispose(): void  // pending reject "disposed"; transport.close()
 }
 // process.ts
@@ -36,17 +36,17 @@ export class OmpProcess {
   kill(): void
 }
 ```
-- Malformed line → bỏ qua. Response l到来 khi không có pending → ignore. Không import vscode; không spawn thật trong tests.
+- Malformed line → ignored. Response arriving with no pending request → ignore. No vscode import; no real spawn in tests.
 
 ## Test Cases
-| # | Loại | Tên | Expected |
+| # | Type | Name | Expected |
 |---|------|-----|----------|
-| 1 | happy | waitReady nhận ready frame | resolve với protocolVersion |
-| 2 | happy | request prompt roundtrip: write frame đúng `{"type":"prompt","message":...}`; reply `{"type":"response","command":"prompt","success":true,"data":{}}` | resolve |
+| 1 | happy | waitReady receives ready frame | resolves with protocolVersion |
+| 2 | happy | request prompt roundtrip: writes the exact frame `{"type":"prompt","message":...}`; reply `{"type":"response","command":"prompt","success":true,"data":{}}` | resolves |
 | 3 | edge (error) | response success=false error="boom" | reject Error("boom") |
-| 4 | edge (serialize) | 2 request chồng nhau | frame thứ 2 chỉ write SAU response thứ 1 (1-in-flight) |
-| 5 | edge (malformed) | dòng "garbage{" | ignore, request vẫn pending |
-| 6 | edge (host tool) | host_tool_call {id, toolName, arguments} | handler nhận đúng shape; result frame `{"type":"host_tool_result","id":...,"result":{"content":[{"type":"text","text":...}]},"isError":false}` |
+| 4 | edge (serialize) | 2 overlapping requests | 2nd frame is only written AFTER the 1st response (1-in-flight) |
+| 5 | edge (malformed) | line "garbage{" | ignored, request stays pending |
+| 6 | edge (host tool) | host_tool_call {id, toolName, arguments} | handler receives the exact shape; result frame `{"type":"host_tool_result","id":...,"result":{"content":[{"type":"text","text":...}]},"isError":false}` |
 | 7 | edge (host tool throw) | handler reject | isError:true, text "Tool failed: ..." |
 | 8 | unit | OmpProcess.start fake spawn | argv `--mode rpc --approval-mode yolo --no-session --cwd <cwd>`; version parse |
 | 9 | edge (process) | child exit | onExit fired, rpc disposed |
@@ -60,10 +60,10 @@ npx vitest run src/ai/omp/__tests__/rpc.test.ts src/ai/omp/__tests__/process.tes
 ```
 
 ## Acceptance
-- [ ] 9 test PASS RED→GREEN (output thật)
-- [ ] Frame shapes khớp §REAL protocol facts từng ký tự
-- [ ] 1-in-flight serialization có test (#4)
-- [ ] Không import vscode; `npx tsc --noEmit` sạch
+- [ ] 9 tests PASS RED→GREEN (real output)
+- [ ] Frame shapes match §REAL protocol facts character-for-character
+- [ ] 1-in-flight serialization has a test (#4)
+- [ ] No vscode import; `npx tsc --noEmit` clean
 
 ## Interfaces
 - Consumes: `(none)`.

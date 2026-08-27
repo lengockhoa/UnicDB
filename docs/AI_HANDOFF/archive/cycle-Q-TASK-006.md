@@ -28,7 +28,7 @@ INSERT-only-for-this-table validation (all-or-nothing), execution via one
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | unit happy | prompt build | prompt names the table, lists insertable columns with types/nullability, asks for exactly N INSERT statements, forbids markdown/extra text | `buildSampleDataPrompt("public","users",cols,10)` |
 | 2 | happy e2e | full flow uses work model | provider `complete` called with `modelId === cfg.models.work.modelId`; `adapter.runQuery` called ONCE with the joined inserts; info message `VSDB: inserted 3 sample rows into public.users` | mocked provider returns 3 valid INSERTs |
@@ -99,8 +99,8 @@ table, reject everything else including fences/explanatory text.
 ---
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor append `## Executor Report` BELOW this separator.
+Phase 4 reviewer append `## Reviewer Verdict` BELOW Executor Report.
 -->
 
 ## Executor Report

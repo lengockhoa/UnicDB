@@ -27,7 +27,7 @@ REAL type on the wire when the user has not touched the dropdown.
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | unit happy | dropdown has exactly 3 options, varchar default | `#colType.tagName === "SELECT"`; options text exactly `["varchar","numeric","boolean"]`; after add-column, selected value `varchar` | render edit pane on a newly added column |
 | 2 | unit happy | default auto-fill + refresh on type change | add column → Default input `''`; switch dropdown to `numeric` → Default `0`; `boolean` → `FALSE`; emitted specChanged carries matching `default` | auto-filled column |
@@ -95,8 +95,8 @@ branch anyway for safety.
 ---
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor append `## Executor Report` BELOW this separator.
+Phase 4 reviewer append `## Reviewer Verdict` BELOW Executor Report.
 
 ## Executor Report
 

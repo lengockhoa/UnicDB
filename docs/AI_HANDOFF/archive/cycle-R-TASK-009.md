@@ -7,17 +7,17 @@
 
 ## Goal
 
-2 fix visual: (D) WHERE/ORDER BY bar — label + input + nút nằm CHUNG 1 baseline thẳng hàng, đều nhau, đẹp; (E) set-filter popup — "Select All" + từng item align trái cùng indent, không lệch loạn xạ.
+Two visual fixes: (D) WHERE/ORDER BY bar — label + input + button share a single straight baseline, evenly spaced and tidy; (E) set-filter popup — "Select All" + each item are left-aligned with the same indent, no mis-alignment.
 
 ## Target Files
 
-- `webview/styles.css` — thêm rules `.vsdb-requery-bar` (flex, align-items:center, gap đều), `.vsdb-requery-label`/`.vsdb-requery-input`/`.vsdb-requery-run`/`.vsdb-requery-clear` (đồng height 26px); set-filter alignment rules.
-- `webview/main.ts` — CHỈ nếu cần: set-filter alignment qua themeQuartz params (thêm param vào `themeQuartz.withParams` tại main.ts:1371) hoặc bỏ qua nếu CSS override đủ. Markup requery bar (main.ts:715-748) KHÔNG đổi trừ khi cần thêm wrapper class.
+- `webview/styles.css` — add rules `.vsdb-requery-bar` (flex, align-items:center, even gap), `.vsdb-requery-label` / `.vsdb-requery-input` / `.vsdb-requery-run` / `.vsdb-requery-clear` (uniform height 26px); set-filter alignment rules.
+- `webview/main.ts` — ONLY if needed: set-filter alignment via themeQuartz params (add a param to `themeQuartz.withParams` at main.ts:1371) or skip if CSS override is enough. The requery-bar markup (main.ts:715-748) is NOT changed unless a wrapper class needs to be added.
 - `tests/webviewRequeryAlignment.test.ts` (NEW) — jsdom + styles.css parse asserts.
 
 ## Spec
 
-Hiện trạng (grep evidence): `webview/styles.css` KHÔNG có rule `vsdb-requery` nào (0 match) — bar render chỉ nhờ default styles ⇒ label/input/button không cùng baseline (user: "không có thẳng hàng... phải đều đẹp và nằm chung 1 hàng").
+Current state (grep evidence): `webview/styles.css` has NO `vsdb-requery` rule (0 matches) — the bar renders with only default styles ⇒ label/input/button are not on the same baseline (user: "it isn't aligned... must be even, tidy, and on a single row").
 
 **D — CSS additions (styles.css):**
 ```css
@@ -32,13 +32,13 @@ Hiện trạng (grep evidence): `webview/styles.css` KHÔNG có rule `vsdb-reque
   text-transform: uppercase;
   letter-spacing: .04em;
   white-space: nowrap;
-  line-height: 26px;          /* cùng baseline với input/button */
+  line-height: 26px;          /* share the baseline with input/button */
 }
 .vsdb-requery-input {
   height: 26px;
   line-height: 24px;
   box-sizing: border-box;
-  min-width: 0;               /* flex-shrink trong hàng */
+  min-width: 0;               /* allow flex-shrink inside the row */
 }
 .vsdb-requery-input.vsdb-requery-where { flex: 1 1 40%; }
 .vsdb-requery-input.vsdb-requery-order { flex: 0 1 28%; }
@@ -47,20 +47,20 @@ button.vsdb-requery-run, button.vsdb-requery-clear {
   flex: 0 0 auto;
 }
 ```
-(Tinh chỉnh theo biến theme VS Code hiện dùng trong file — giữ nhất quán `--vscode-*` vars pattern của `.vsdb-btn`.)
+(Fine-tune using the existing VS Code theme variables in this file — stay consistent with the `--vscode-*` vars pattern used by `.vsdb-btn`.)
 
-**E — Set-filter popup:** AG Grid v36 JS Theming — popup render trong shadow DOM? Kiểm tra: AG Grid community v36 dùng theming API, popup item class `.ag-set-filter-item`. CSS override từ ngoài shadow DOM không xuyên được → ưu tiên **theme params** (`themeQuartz.withParams({ setFilterListItem... })` — tham số có thể không tồn tại; investigator: đọc node_modules/ag-grid-community types `ThemeParamValues`/quartz params list, tìm param liên quan alignment/padding). Fallback nếu không có param: `options.getRootNode().appendChild(styleEl)` nội bộ (main.ts inject `<style>` vào grid container) — chấp nhận được vì chính webview kiểm soát DOM. Quyết định + evidence ghi Executor Report.
+**E — Set-filter popup:** AG Grid v36 JS Theming — does the popup render inside a shadow DOM? Check: AG Grid community v36 uses the theming API, popup item class is `.ag-set-filter-item`. CSS overrides from outside the shadow DOM cannot penetrate → prefer **theme params** (`themeQuartz.withParams({ setFilterListItem... })` — the parameter may not exist; investigator: read `node_modules/ag-grid-community` types for `ThemeParamValues` / the quartz-params list, find any param related to alignment / padding). Fallback if no such param exists: inject a `<style>` element into the grid host container from inside main.ts (`options.getRootNode().appendChild(styleEl)`) — acceptable because the webview itself controls that DOM. Record the decision + evidence in the Executor Report.
 
-Acceptance cuối cùng là HUMAN visual check (jsdom không render thật) — executor screenshot qua webview harness nếu khả thi, không thì ghi "cần human check" trong Executor Report (đã được chấp nhận trong PLAN Known gaps #4).
+The final acceptance is a HUMAN visual check (jsdom does not render for real) — the executor should screenshot through the webview harness if feasible, otherwise note "needs human check" in the Executor Report (this was already accepted per PLAN's Known Gaps #4).
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
-| 1 | happy | requery bar CSS: 1 baseline | parse styles.css: `.vsdb-requery-bar` có `align-items: center` + `display: flex`; `.vsdb-requery-label`,`.vsdb-requery-input`,`.vsdb-requery-run`,`.vsdb-requery-clear` đều khai báo height/line-height 26px (regex assert từng rule) | read webview/styles.css |
-| 2 | edge | jsdom: bar element class tồn tại + computed align | render main.ts (esbuild transform) → element `.vsdb-requery-bar` tồn tại, getComputedStyle (jsdom limited: assert stylesheet rule applied qua matchMedia/inline — tối thiểu: class đúng + CSS rule match selector) | jsdom harness |
-| 3 | edge | set-filter alignment rule/param tồn tại | styles.css có rule `.ag-set-filter-item` (hoặc main.ts có theme param setFilterListItem*/wrapper style injection — 1 trong 2 đường, assert file content) | read styles.css / main.ts |
-| 4 | regression | theme params hiện có không vỡ | themeQuartz.withParams call vẫn chứa các param cũ (assert source chứa các param names cũ — không bị thay vô tình) | read main.ts:1371 region |
+| 1 | happy | requery bar CSS: single baseline | parse styles.css: `.vsdb-requery-bar` has `align-items: center` + `display: flex`; `.vsdb-requery-label`,`.vsdb-requery-input`,`.vsdb-requery-run`,`.vsdb-requery-clear` each declare `height`/`line-height` of 26px (regex asserts each rule) | read webview/styles.css |
+| 2 | edge | jsdom: bar element class exists + computed alignment | render main.ts (esbuild transform) → an element with class `.vsdb-requery-bar` exists; `getComputedStyle` (jsdom is limited: assert that the stylesheet rule applies via matchMedia/inline — at minimum: class is correct + CSS rule matches the selector) | jsdom harness |
+| 3 | edge | set-filter alignment rule/param exists | styles.css has a rule for `.ag-set-filter-item` (OR main.ts uses a theme param like `setFilterListItem*` / wrapper-style injection — 1 of 2 paths, assert the file content) | read styles.css / main.ts |
+| 4 | regression | existing theme params are NOT broken | the `themeQuartz.withParams` call still contains the old params (assert the source still contains the old param names — they have NOT been inadvertently replaced) | read main.ts:1371 region |
 
 ## Test Files
 
@@ -75,27 +75,27 @@ npx tsc --noEmit
 
 ## Acceptance Criteria
 
-- [ ] Mọi test §Test Cases PASS.
-- [ ] Requery bar: 1 hàng thẳng, label/input/button cùng baseline + gap đều (human check hoặc screenshot note).
-- [ ] Set-filter popup: Select All + items trái cùng cột (human check note).
-- [ ] Không thay đổi hành vi requery (requery message flow nguyên vẹn — resultsGridModelRequery tests pass).
-- [ ] Reviewer verdict APPROVED hoặc APPROVED-WITH-MINOR.
+- [ ] All tests in §Test Cases PASS.
+- [ ] Requery bar: a single tidy row with label / input / button on the same baseline + even gap (human check or screenshot note).
+- [ ] Set-filter popup: Select All + items left-aligned in the same column (human check note).
+- [ ] Do NOT change the requery behaviour (requery message flow intact — resultsGridModelRequery tests still pass).
+- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
 
 ## Dependencies
 
-- TASK-007 (cùng đụng webview/main.ts + webview/styles.css region thêm mới; chạy sau để tránh conflict)
+- TASK-007 (also touches webview/main.ts + new webview/styles.css region; runs after this one to avoid conflicts)
 
 ## Interfaces
 
 - Consumes: requery bar markup + class names (webview/main.ts:715-748: `vsdb-requery-bar/-label/-input vsdb-requery-where/-input vsdb-requery-order/-run/-clear`); themeQuartz.withParams call site (main.ts:1371); TASK-007 styles.css conventions (var fallback).
-- Produces: CSS rules `.vsdb-requery-*` (webview/styles.css) + set-filter alignment mechanism (theme param hoặc injected style). Không consumer trong cycle này.
+- Produces: CSS rules `.vsdb-requery-*` (webview/styles.css) + the set-filter alignment mechanism (theme param OR injected style). No downstream consumer in this cycle.
 
 ---
 
 ## Discussion
 
 ### 2026-08-24 · planner · unic/unic-smart
-→ @executor: quyết định E (set-filter) phải dựa trên evidence thật: đọc `node_modules/ag-grid-community` types để xem quartz theme có param alignment cho set-filter items không. Nếu KHÔNG có param → dùng style injection vào grid host container (webview controls DOM). Đừng đoán param name — grep types trước. Ghi kết luận + đường đã chọn vào Executor Report.
+→ @executor: decision E (set-filter) MUST be based on real evidence: read the `node_modules/ag-grid-community` types to see whether the quartz theme exposes any set-filter-item alignment param. If NONE → fall back to injecting a style into the grid host container (the webview controls that DOM). Do NOT guess the param name — grep the types first. Record the conclusion + the chosen path in the Executor Report.
 
 ---
 ## Executor Report (Exec-T9)

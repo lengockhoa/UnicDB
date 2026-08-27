@@ -40,7 +40,7 @@ paging key). Any other shape keeps today's behavior unchanged.
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | happy | Page two uses a stable cursor rather than deep OFFSET | Given a proven total ORDER BY plus last visible row key, second-page SQL contains the dialect-quoted lexicographic predicate and `LIMIT`/equivalent, and contains no `OFFSET 500000`. | Direct browse statement whose result exposes all PK values; exact cursor interface awaits design decision. |
 | 2 | edge — dialect | MSSQL emits no row-value constructor | Equivalent composite key uses a parenthesized OR-of-ANDs predicate; postgres/mysql may use the same portable shape; all identifiers are dialect quoted. | Two-column PK and DESC/ASC mixed ordering fixture. |

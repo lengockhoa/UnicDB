@@ -7,38 +7,30 @@
 
 ## Goal
 
-Webview `aiChatPanelMain.ts`: nút "Resume session" → post `resume_list` → render list rows
-text-only → click row echo `resume_pick` với sessionId host đưa (verbatim) → render batch
-`history` (user/assistant/tool + truncation notice) — theo đúng security rules hiện có
-(textContent only, markdown chỉ cho assistant qua renderer an toàn sẵn có).
+Webview `aiChatPanelMain.ts`: a "Resume session" button → posts `resume_list` → renders list rows as text only → click on a row echoes `resume_pick` with the sessionId from the host (verbatim) → renders the `history` batch (user/assistant/tool + truncation notice) — respecting the existing security rules (textContent only, markdown only for assistant through the existing safe renderer).
 
 ## Target Files
 
-- `webview/aiChatPanelMain.ts` — nút Resume trong actions row; render list + history;
-  busy-disable; `resume_cancel` khi dismiss.
+- `webview/aiChatPanelMain.ts` — Resume button in the actions row; renders list + history; busy-disable; `resume_cancel` on dismiss.
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
-|---|------|----------|----------|---------------------|
-| 1 | unit (happy) | click Resume → post `resume_list`; nhận `resume_sessions` render đủ rows | mỗi row hiện `label` + `detail` là text node (textContent, không innerHTML cho data host); click row → đúng MỘT `resume_pick` với sessionId verbatim | message `resume_sessions` 3 rows |
-| 2 | unit (happy) | `history` batch render đúng thứ tự + kind | user bubble plain text, assistant bubble qua markdown renderer hiện có, tool item one-line collapsed; thứ tự DOM đúng thứ tự items | items: user, assistant (`**bold**`), tool |
-| 3 | unit (edge-neverrender) | thought/skip không bao giờ tới webview từ host; nếu items chứa text dị | chỉ render đúng items nhận được; KHÔNG tạo element nào từ `agent_thought_chunk` (host đã lọc — webview không có branch nào render thought) | replay-derived items chỉ user/assistant/tool |
-| 4 | unit (edge-truncation) | `history` với `truncated:true, truncatedCount:23` | đúng MỘT dòng notice `<n> earlier items not shown` (dùng truncatedCount) nằm TRÊN các item render | items 50 + truncated flags |
-| 5 | unit (edge-hostile) | label/detail chứa HTML (`<img onerror>`, `<script>`) | render literal text, KHÔNG node sống; không script nào execute | row với label `<img src=x onerror=alert(1)>` |
-| 6 | unit (edge-busy) | đang streaming (`send` → chưa `done`) nút Resume disabled | click không post `resume_list`; sau `done` re-enable và click post bình thường | send → click resume → done → click resume |
-| 7 | unit (regression) | hành vi cũ không đổi | mọi test hiện có của `aiChatPanelWebview.test.ts` + `aiChatPanelBundle.test.ts` pass nguyên (send/stop/clear/permission/security/no-apiKey) | existing suites, không sửa |
+| # | Type | Test name | Expected | Pre-state / Fixture |
+|---|------|-----------|----------|---------------------|
+| 1 | unit (happy) | click Resume → posts `resume_list`; receiving `resume_sessions` renders all rows | each row shows `label` + `detail` as text nodes (textContent, no innerHTML for host data); click on a row → exactly ONE `resume_pick` with sessionId verbatim | message `resume_sessions` with 3 rows |
+| 2 | unit (happy) | `history` batch renders in order + kind | user bubble is plain text, assistant bubble goes through the existing markdown renderer, tool item is one line collapsed; DOM order matches item order | items: user, assistant (`**bold**`), tool |
+| 3 | unit (edge-neverrender) | thought/skip never reach the webview from the host; if items contain unusual text | renders only the items received; does NOT create any element from `agent_thought_chunk` (host already filters — webview has no branch that renders thought) | replay-derived items contain only user/assistant/tool |
+| 4 | unit (edge-truncation) | `history` with `truncated:true, truncatedCount:23` | exactly ONE notice line `<n> earlier items not shown` (using truncatedCount) positioned ABOVE the rendered items | items 50 + truncation flags |
+| 5 | unit (edge-hostile) | label/detail contains HTML (`<img onerror>`, `<script>`) | renders literal text, NO live nodes; no script executes | row with label `<img src=x onerror=alert(1)>` |
+| 6 | unit (edge-busy) | while streaming (`send` → not yet `done`) the Resume button is disabled | click does NOT post `resume_list`; after `done` it re-enables and click posts normally | send → click resume → done → click resume |
+| 7 | unit (regression) | old behavior unchanged | every existing test in `aiChatPanelWebview.test.ts` + `aiChatPanelBundle.test.ts` passes untouched (send/stop/clear/permission/security/no-apiKey) | existing suites, not edited |
 
-Lưu ý fixture: webview tests transpile `webview/aiChatPanelMain.ts` qua esbuild CLI vào
-jsdom (pattern hiện có của `aiChatPanelWebview.test.ts`) — không phụ thuộc dist. Bundle
-test chạy SAU `npm run compile` (loads `dist/aiChatPanel.js`). Dismiss picker → post
-`resume_cancel` đúng 1 lần.
+Fixture note: webview tests transpile `webview/aiChatPanelMain.ts` via the esbuild CLI into jsdom (the existing `aiChatPanelWebview.test.ts` pattern) — does not depend on dist. The bundle test runs AFTER `npm run compile` (loads `dist/aiChatPanel.js`). Dismiss picker → post `resume_cancel` exactly once.
 
 ## Test Files
 
 - `src/ui/__tests__/aiChatPanelWebview.test.ts` — append cases 1–6.
-- `src/ui/__tests__/aiChatPanelBundle.test.ts` — append: nút Resume tồn tại trong bundle,
-  click post `resume_list`, không apiKey trong bất kỳ postMessage nào.
+- `src/ui/__tests__/aiChatPanelBundle.test.ts` — append: Resume button exists in the bundle, click posts `resume_list`, no apiKey in any postMessage.
 
 ## Verification Commands
 
@@ -46,42 +38,39 @@ test chạy SAU `npm run compile` (loads `dist/aiChatPanel.js`). Dismiss picker 
 npm run compile && npm run typecheck && npx vitest run src/ui/__tests__/aiChatPanelWebview.test.ts src/ui/__tests__/aiChatPanelBundle.test.ts
 ```
 
-(`compile` TRƯỚC — bundle test đọc `dist/aiChatPanel.js`. Không có lint script — N/A.)
+(`compile` FIRST — the bundle test reads `dist/aiChatPanel.js`. No lint script — N/A.)
 
 ## Acceptance Criteria
 
-- [ ] Mọi test ở §Test Cases PASS (RED trước).
-- [ ] Mọi text host-driven render qua text node / renderer an toàn hiện có — không innerHTML mới với dữ liệu host.
-- [ ] sessionId echo verbatim — webview không tự sinh/sửa id.
-- [ ] Nút Resume disable khi busy, re-enable sau `done`.
-- [ ] Reviewer verdict APPROVED hoặc APPROVED-WITH-MINOR.
+- [ ] Every test in §Test Cases PASSES (RED before).
+- [ ] All host-driven text renders via text node / existing safe renderer — no new innerHTML with host data.
+- [ ] sessionId echoed verbatim — webview does not generate/modify ids.
+- [ ] Resume button disabled while busy, re-enabled after `done`.
+- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
 
 ## Dependencies
 
-- TASK-003 — tiêu thụ message shapes `resume_sessions` / `history` + gửi
-  `resume_list`/`resume_pick`/`resume_cancel` (chữ ký ở TASK-003 §Interfaces).
+- TASK-003 — consumes the message shapes `resume_sessions` / `history` and sends `resume_list` / `resume_pick` / `resume_cancel` (signatures in TASK-003 §Interfaces).
 
 ## Interfaces
 
-- Consumes: từ TASK-003 — `{type:"resume_sessions", sessions:[{sessionId,label,detail}]}`,
-  `{type:"history", items:[{kind,text}], truncated, truncatedCount}`.
-- Produces: (none — webview là leaf; không task sau tiêu thụ).
+- Consumes: from TASK-003 — `{type:"resume_sessions", sessions:[{sessionId,label,detail}]}`, `{type:"history", items:[{kind,text}], truncated, truncatedCount}`.
+- Produces: (none — webview is a leaf; no downstream task consumes).
 
 ---
 
 ## Discussion
 
-(chưa có comment)
+(no comments yet)
 
 ---
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor append `## Executor Report` BELOW this separator.
+Phase 4 reviewer append `## Reviewer Verdict` BELOW the Executor Report.
 -->
 
 ## Executor Report
-
 STATUS: DONE
 EXECUTOR_TOOL: claude-code
 EXECUTOR_MODEL: unic-code

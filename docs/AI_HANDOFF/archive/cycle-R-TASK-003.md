@@ -7,45 +7,45 @@
 
 ## Goal
 
-Fix 2 defect "chat không ra kết quả": (1) sau khi bấm Clear, panel không chat lại được (user report "Sau khi bấm clear tôi không thể bắt đầu chat được"); (2) khi AI config rỗng giữa session, error phải hiện rõ trong thread thay vì state treo.
+Fix 2 "chat produces no result" defects: (1) after pressing Clear, the panel cannot chat again (user report "[After pressing Clear I cannot start a new chat]"); (2) when the AI config is empty mid-session, the error must surface clearly inside the thread instead of the UI hanging.
 
 ## Target Files
 
-- `src/ui/aiChatPanel.ts` — CHỈ region `handleSend`/`runBuiltinTurn` error path (`AI is not configured` message) + `handleClear` (line ~738-741) + `handleReady`. KHÔNG đụng buildMessages/imports (TASK-002 region, đã land trước task này).
+- `src/ui/aiChatPanel.ts` — ONLY the `handleSend`/`runBuiltinTurn` error path region (`AI is not configured` message) + `handleClear` (line ~738-741) + `handleReady`. Do NOT touch buildMessages/imports (the TASK-002 region, which landed before this task).
 - `webview/aiChatPanelMain.ts` — `applyInit` (line ~337-339) force `setBusy(false)` + `deStreamOpenBubble()`; comment update clearBtn handler.
-- `src/ui/aiChatPanelMessages.ts` — comment/doc cho `AiChatPanelInit` (no shape change cần thiết nếu dùng init; nếu executor thêm field `type:"cleared"` thì PHẢI ghi rõ trong Interfaces).
+- `src/ui/aiChatPanelMessages.ts` — comment/doc for `AiChatPanelInit` (no shape change required if init is reused; if the executor adds a `type:"cleared"` field it MUST be documented under Interfaces).
 - `src/ui/__tests__/aiChatPanel.test.ts` — append describe "Clear recovery" (#1, #2, #3).
 - `src/ui/__tests__/aiChatPanelWebview.test.ts` — append describe "init re-enable" (#4, #5).
-- `src/ui/__tests__/aiChatPanelMessages.test.ts` — append (#6 nếu đổi protocol; else skip).
+- `src/ui/__tests__/aiChatPanelMessages.test.ts` — append (#6 only if the protocol changes; otherwise skip).
 
 ## Spec
 
 ```ts
-// src/ui/aiChatPanel.ts — handleClear MỚI (thay 738-741):
+// src/ui/aiChatPanel.ts — NEW handleClear (replace lines 738-741):
 private handleClear(): void {
-  // Full turn reset: Clear giữa turn đang stream phải hủy turn + trả UI
-  // về idle. Không reset token/currentAbort → webview busy mãi (D2).
+  // Full turn reset: Clear during an active streaming turn must abort the turn + return the UI
+  // to idle. Not resetting token/currentAbort would leave the webview busy forever (D2).
   this.token = null;
-  this.currentAbort?.abort();      // hủy SSE đang đọc (builtin)
+  this.currentAbort?.abort();      // abort the in-flight SSE read (builtin)
   this.currentAbort = null;
   this.turnDonePosted = false;
-  this.cancelAllPending();          // ACP pending → cancelled (giữ pattern stop)
+  this.cancelAllPending();          // pending ACP requests → cancelled (keeps the existing stop pattern)
   this.history = [];
   this.post({ type: "init", hasHistory: false });
-  this.post({ type: "done" });      // belt: webview busy flag về false
+  this.post({ type: "done" });      // belt-and-braces: webview busy flag back to false
 }
 
-// runBuiltinTurn catch (giữ nguyên abort branch) — surface message chuẩn:
+// runBuiltinTurn catch (keep the abort branch intact) — surface the standard message:
 // err.message === "AI is not configured" → post error bubble:
 //   "AI is not configured — open VSDB: Open AI Settings to configure baseUrl/model/API key"
-// (message gốc vẫn là prefix; không đổi runAgent throw — chỉ enrich ở panel.)
+// (original message stays as the prefix; do NOT change the runAgent throw — only enrich it at the panel.)
 
-// webview/aiChatPanelMain.ts — applyInit MỚI:
+// webview/aiChatPanelMain.ts — NEW applyInit:
 function applyInit(msg: InitMsg): void {
   state.hasHistory = msg.hasHistory;
-  // init{hasHistory:false} đến sau khi panel từng busy (Clear path) →
-  // chắc chắn re-enable input + đóng streaming bubble. Host cũng post
-  // done, nhưng done một mình không de-stream nếu panel replay init.
+  // init{hasHistory:false} arriving after the panel was previously busy (Clear path) →
+  // guarantee the input is re-enabled and the streaming bubble is closed. The host also posts
+  // done, but `done` alone does not de-stream if the panel replays the init.
   if (!msg.hasHistory) {
     deStreamOpenBubble();
     setBusy(false);
@@ -53,18 +53,18 @@ function applyInit(msg: InitMsg): void {
 }
 ```
 
-Lý do 2 lớp (host `done` + webview init-guard): host side `post({type:"done"})` đã là un-busy chuẩn; webview init-guard là defense-in-depth cho trường hợp message order đổi (init đến sau done) và cho jsdom test path. Cả hai idempotent.
+Why two layers (host `done` + webview init-guard): the host-side `post({type:"done"})` is already the canonical un-busy signal; the webview init-guard is defense-in-depth for the case when message order changes (init arrives after done) and for the jsdom test path. Both are idempotent.
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
-| 1 | regression | Clear giữa turn streaming → chat lại được ngay (user report) | seq: send msg (deps.complete pending promise) → clear → send msg 2 (deps.complete resolve text) → posted messages chứa init{hasHistory:false}, done, và assistant bubble của turn 2; KHÔNG còn pending abort block (RED trên code hiện tại: turn 2 không chạy vì token/webview state) | harness pattern aiChatPanel.test.ts: controllable deps.complete deferred |
-| 2 | edge | Clear khi idle | history=[] ; init{hasHistory:false} + done posted đúng 1 lần mỗi loại; turn sau vẫn chạy bình thường (assistant posted) | send→resolve→clear→send→resolve |
-| 3 | edge | not-configured mid-session | loadConfig resolves null → error bubble chứa "AI is not configured" VÀ "Open AI Settings"; done posted; KHÔNG unhandled rejection; send kế (config quay lại) vẫn chạy | deps.loadConfig null lần 1, cfg lần 2 |
-| 4 | unit(webview) | init{hasHistory:false} re-enable input | sau setBusy(true), receive init{hasHistory:false} → prompt.disabled===false, sendBtn.disabled===false | jsdom render aiChatPanelMain (pattern aiChatPanelWebview.test.ts hiện có) |
-| 5 | unit(webview) | init khi idle không double-fire lỗi | init hai lần liên tiếp không throw, banner/thread DOM ổn | jsdom double init |
-| 6 | regression | Clear không phá ACP pending (nếu có session) | cancelAllPending được gọi cho từng pending requestId (spy respond cancelled) — chỉ khi acpSession tồn tại; builtin mode: no-op không throw | panel builtin (không acp) + panel acp fake |
+| 1 | regression | Clear during a streaming turn → can chat again immediately (user report) | seq: send msg (deps.complete pending promise) → clear → send msg 2 (deps.complete resolves text) → posted messages contain init{hasHistory:false}, done, and the assistant bubble of turn 2; NO pending abort block remains (RED on current code: turn 2 does not run due to token/webview state) | harness pattern aiChatPanel.test.ts: controllable deps.complete deferred |
+| 2 | edge | Clear while idle | history=[] ; init{hasHistory:false} + done posted exactly once each; subsequent turn runs normally (assistant posted) | send→resolve→clear→send→resolve |
+| 3 | edge | not-configured mid-session | loadConfig resolves null → error bubble contains "AI is not configured" AND "Open AI Settings"; done posted; NO unhandled rejection; subsequent send (config restored) still runs | deps.loadConfig null first call, cfg second call |
+| 4 | unit(webview) | init{hasHistory:false} re-enables input | after setBusy(true), receiving init{hasHistory:false} → prompt.disabled===false, sendBtn.disabled===false | jsdom render aiChatPanelMain (existing aiChatPanelWebview.test.ts pattern) |
+| 5 | unit(webview) | init while idle does not double-fire errors | two consecutive init calls do not throw, banner/thread DOM stays healthy | jsdom double init |
+| 6 | regression | Clear does not break ACP pending requests (if session exists) | cancelAllPending is invoked for each pending requestId (spy reports cancelled) — only when an acpSession exists; builtin mode: no-op does not throw | panel builtin (no acp) + panel acp fake |
 
 ## Test Files
 
@@ -80,26 +80,26 @@ npx tsc --noEmit
 
 ## Acceptance Criteria
 
-- [ ] Mọi test ở §Test Cases PASS; #1 RED trên code hiện tại (reproduce user report) → GREEN sau fix.
-- [ ] Clear giữa turn: input enabled lại, turn cũ aborted, turn mới chat được.
-- [ ] Not-configured: error bubble có hướng dẫn settings; panel không treo.
-- [ ] Reviewer verdict APPROVED hoặc APPROVED-WITH-MINOR.
+- [ ] All tests in §Test Cases PASS; #1 RED on the current code (reproduces user report) → GREEN after the fix.
+- [ ] Clear during a turn: input is re-enabled, the prior turn is aborted, the new turn can chat.
+- [ ] Not-configured: the error bubble carries a settings hint; the panel does NOT hang.
+- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
 
 ## Dependencies
 
-- TASK-002 (cùng file src/ui/aiChatPanel.ts, region khác — serial để tránh edit conflict).
+- TASK-002 (same file src/ui/aiChatPanel.ts, different region — serial to avoid edit conflicts).
 
 ## Interfaces
 
-- Consumes: `AiChatPanelInit { type:"init"; hasHistory: boolean }`, `setBusy(busy: boolean): void`, `deStreamOpenBubble(): void` (webview hiện có); panel privates `token/currentAbort/turnDonePosted/history` + `cancelAllPending()`/`post()`.
-- Produces: contract mới — "mọi `init{hasHistory:false}` từ host ⇒ webview idle + de-streamed" (webview+host lockstep, jsdom test khóa); error msg chuẩn `"AI is not configured — open VSDB: Open AI Settings to configure baseUrl/model/API key"`. Không đổi wire protocol shape (init/done giữ nguyên) — TASK-002/004 không phụ thuộc.
+- Consumes: `AiChatPanelInit { type:"init"; hasHistory: boolean }`, `setBusy(busy: boolean): void`, `deStreamOpenBubble(): void` (already present in the webview); panel private fields `token/currentAbort/turnDonePosted/history` + `cancelAllPending()`/`post()`.
+- Produces: new contract — "every `init{hasHistory:false}` from the host ⇒ webview goes idle + de-streams" (webview+host lockstep, locked by jsdom test); standard error message `"AI is not configured — open VSDB: Open AI Settings to configure baseUrl/model/API key"`. The wire protocol shape is unchanged (init/done stay the same) — TASK-002/004 do not depend on it.
 
 ---
 
 ## Discussion
 
 ### 2026-08-24 · planner · unic/unic-smart
-User report verbatim: "Sau khi bấm clear toi không thể bắt đầu chat được". Root-cause hypothesis (code-read): handleClear không reset token/currentAbort → nếu Clear rơi giữa turn, abort/done flow không hoàn tất; webview setBusy(false) chỉ đến từ done — không có done nào sau init của clear. Executor: nếu RED reproduce ra nguyên nhân khác (vd. engine=null path), ghi vào Executor Report + fix đúng nguyên nhân thật, giữ test contract (chat lại được sau Clear).
+User report verbatim: "[After pressing Clear I cannot start a new chat]". Root-cause hypothesis (code-read): handleClear does not reset token/currentAbort → if Clear lands mid-turn, the abort/done flow never completes; webview setBusy(false) only arrives via done — and there is no done after a Clear's init. Executor: if the RED test reproduces a different root cause (e.g. the engine=null path), record it in the Executor Report + fix the actual cause while keeping the test contract (chat works again after Clear).
 
 ---
 
@@ -165,7 +165,7 @@ webview `applyInit` now also `setBusy(false)` + `deStreamOpenBubble()` on `hasHi
 - `src/ui/__tests__/aiChatPanel.test.ts`:
   - `#1 clear mid-stream: chat works again; init{hasHistory:false} + done + assistant(msg2) posted in order`
   - `#2 clear when idle: history reset; init{hasHistory:false} + done posted; subsequent send still runs`
-  - `#3 loadConfig null mid-session: error bubble has 'AI is not configured' + 'Open AI Settings'; done posted; send kế vẫn chạy`
+  - `#3 loadConfig null mid-session: error bubble has 'AI is not configured' + 'Open AI Settings'; done posted; subsequent send still runs`
   - `#6 builtin mode + no acp: clear is a safe no-op on pending (no throw); engine stays builtin`
 - `src/ui/__tests__/aiChatPanelWebview.test.ts`:
   - `#4 init{hasHistory:false} after setBusy(true) re-enables sendBtn + prompt + de-streams`
@@ -222,8 +222,8 @@ the applyInit dual-purpose contract.
 ready for reviewer (Rev-T003).
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor append `## Executor Report` BELOW this separator.
+Phase 4 reviewer append `## Reviewer Verdict` BELOW Executor Report.
 -->
 
 ## Reviewer Verdict

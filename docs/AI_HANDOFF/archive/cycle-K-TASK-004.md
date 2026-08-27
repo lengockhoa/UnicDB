@@ -1,42 +1,42 @@
 # TASK-004 — Agent↔panel integration + guardrails + README
 
 ## Goal
-Nối `vsdb.aiChat` vào extension.ts với deps thật (AiConfigStore + createProviderClient + connection-manager adapterFactory), test end-to-end bằng fake fetch, document guardrails.
+Wire `vsdb.aiChat` into extension.ts with real deps (AiConfigStore + createProviderClient + connection-manager adapterFactory), end-to-end test with fake fetch, document the guardrails.
 
 ## Target Files
-- `src/extension.ts` (sửa: register command tạo AiChatPanel với deps thật), `src/extension.test.ts` (thêm test wiring)
-- `README.md` (section AI DB-assist + guardrails)
-- Tests: `src/ui/__tests__/aiChatE2e.test.ts` (mới — fake fetch 2-step tool loop)
+- `src/extension.ts` (edit: register the command that creates AiChatPanel with real deps), `src/extension.test.ts` (add wiring tests)
+- `README.md` (AI DB-assist + guardrails section)
+- Tests: `src/ui/__tests__/aiChatE2e.test.ts` (new — fake fetch 2-step tool loop)
 
-## Spec (frozen — F3: dùng API thật)
+## Spec (frozen — F3: use the real API)
 ```ts
-// extension.ts wiring (nguyên tắc):
+// extension.ts wiring (principle):
 const store = new AiConfigStore(ctx);            // src/ai/config.ts (cycle J)
 const deps: AgentDeps = {
-  loadConfig: () => store.loadConfig(),          // → AiConfig | null — FLAT shape: cfg.baseUrl, cfg.apiKey, cfg.method, cfg.timeoutMs, cfg.maxSteps, cfg.models (KHÔNG có cfg.settings.*)
+  loadConfig: () => store.loadConfig(),          // → AiConfig | null — FLAT shape: cfg.baseUrl, cfg.apiKey, cfg.method, cfg.timeoutMs, cfg.maxSteps, cfg.models (NO cfg.settings.*)
   complete: (cfg, role, req) =>
     createProviderClient({ baseUrl: cfg.baseUrl, apiKey: cfg.apiKey, method: cfg.method, timeoutMs: cfg.timeoutMs }).complete(req),
 };
-// adapterFactory: async () => DbAdapter | null — resolve từ ConnectionManager instance hiện có trong extension.ts
-// (getAdapter() async-lazy; null khi chưa connect). GUARD: chỉ trả adapter khi active connection là postgres.
+// adapterFactory: async () => DbAdapter | null — resolved from the existing ConnectionManager instance in extension.ts
+// (getAdapter() async-lazy; null when not yet connected). GUARD: only return an adapter when the active connection is postgres.
 const adapterFactory: AdapterFactory = async () => { /* connectionManager active postgres adapter else null */ };
 ```
-- E2E test seam: inject fetch fake qua createProviderClient options; adapter fake qua adapterFactory; kịch bản: user "list tables" → provider trả tool_call list_tables → tool chạy trên fake adapter → provider trả answer → assert finalText chứa bảng fake + runQuery KHÔNG BAO GIỜ được gọi với DML (regression guard).
-- Guardrail regression: kịch bản thứ hai — model cố gọi `run_sql` với `DROP TABLE` → tool trả reject reason, vòng lặp tiếp tục, adapter.runQuery chỉ thấy SELECT nếu có.
-- README: section "AI Chat & DB tools" — read-only promise (chỉ SELECT/SHOW/EXPLAIN/WITH sạch), mọi request chỉ tới baseUrl cấu hình, không telemetry, apiKey chỉ trong SecretStorage; hướng dẫn mở AI Settings trước nếu chưa config.
-- Khi `loadConfig()` null (chưa set AI Settings): command hiện info message "Configure AI settings first" + mở AI Settings form — không crash.
+- E2E test seam: inject a fake fetch via createProviderClient options; fake adapter via adapterFactory; scenario: user "list tables" → provider returns a tool_call list_tables → tool runs against the fake adapter → provider returns the answer → assert finalText contains the fake tables AND runQuery is NEVER called with DML (regression guard).
+- Guardrail regression: second scenario — model attempts `run_sql` with `DROP TABLE` → tool returns reject reason, the loop continues, adapter.runQuery only sees SELECT if anything.
+- README: "AI Chat & DB tools" section — read-only promise (only SELECT/SHOW/EXPLAIN/clean WITH), every request only goes to the configured baseUrl, no telemetry, apiKey only in SecretStorage; instructions to open AI Settings first if not yet configured.
+- When `loadConfig()` is null (AI Settings not set): command shows info message "Configure AI settings first" + opens the AI Settings form — no crash.
 
 ## Test Cases
-| # | Loại | Tên | Expected |
-|---|------|-----|----------|
-| 1 | happy E2E | 2-step tool loop qua registry thật | finalText chứa kết quả từ fake adapter |
-| 2 | regression | model gọi run_sql DROP TABLE | tool reject string; runQuery không nhận DML |
-| 3 | edge (unconfigured) | loadConfig resolve null | info message + mở settings form; không crash |
-| 4 | edge (offline) | fetch fake trả 500 | error bubble ProviderError message (đã scrub), panel sống |
-| 5 | wiring | extension.ts register vsdb.aiChat | command xuất hiện trong subscriptions; dispose sạch |
+| # | Type | Name | Expected |
+|---|------|------|----------|
+| 1 | happy E2E | 2-step tool loop through the real registry | finalText contains results from the fake adapter |
+| 2 | regression | model calls run_sql DROP TABLE | tool returns reject string; runQuery never receives DML |
+| 3 | edge (unconfigured) | loadConfig resolves null | info message + opens the settings form; no crash |
+| 4 | edge (offline) | fake fetch returns 500 | error bubble with ProviderError message (already scrubbed), panel stays alive |
+| 5 | wiring | extension.ts registers vsdb.aiChat | command appears in subscriptions; dispose clean |
 
 ## Test Files
-`src/ui/__tests__/aiChatE2e.test.ts`, `src/extension.test.ts` (thêm)
+`src/ui/__tests__/aiChatE2e.test.ts`, `src/extension.test.ts` (additions)
 
 ## Verification Commands
 ```
@@ -44,10 +44,10 @@ npm run compile && npx vitest run src/ui/__tests__/aiChatE2e.test.ts src/extensi
 ```
 
 ## Acceptance
-- [ ] 5 test PASS RED→GREEN (output thật)
-- [ ] README section guardrails tồn tại (README-contract test kiểu cycle J T4 — encouraged)
-- [ ] Không telemetry mới; apiKey không xuất hiện thêm chỗ nào
-- [ ] Full suite + compile + tsc sạch (orchestrator wave boundary)
+- [ ] 5 tests PASS RED→GREEN (real output)
+- [ ] README guardrails section exists (a README-contract test in the style of cycle J T4 — encouraged)
+- [ ] No new telemetry; apiKey never appears in any new location
+- [ ] Full suite + compile + tsc clean (orchestrator wave boundary)
 
 
 ## Executor Report
@@ -55,17 +55,17 @@ npm run compile && npx vitest run src/ui/__tests__/aiChatE2e.test.ts src/extensi
 ### RED Output
 
 ```
-FAIL  src/extension.test.ts > TASK-004 — vsdb.aiChat wiring > Test #5 — vsdb.aiChat được register trong subscriptions sau activate()
+FAIL  src/extension.test.ts > TASK-004 — vsdb.aiChat wiring > Test #5 — vsdb.aiChat is registered in subscriptions after activate()
 AssertionError: expected false to be true // Object.is equality
  ❯ src/extension.test.ts:960:57
     960|     expect(state.registeredCommands.has("vsdb.aiChat")).toBe(true);
 
-FAIL  src/extension.test.ts > TASK-004 — vsdb.aiChat wiring > Test #5b — dispose() sạch: deactivate() không throw sau khi gọi vsdb.aiChat
+FAIL  src/extension.test.ts > TASK-004 — vsdb.aiChat wiring > Test #5b — dispose() clean: deactivate() does not throw after calling vsdb.aiChat
 AssertionError: expected undefined not to be undefined
  ❯ src/extension.test.ts:969:16
     969|     expect(fn).toBeDefined();
 
-FAIL  src/extension.test.ts > TASK-004 — vsdb.aiChat wiring > Test #3 — loadConfig() resolve null → info message + mở AI Settings form; không crash
+FAIL  src/extension.test.ts > TASK-004 — vsdb.aiChat wiring > Test #3 — loadConfig() resolves null → info message + opens AI Settings form; no crash
 AssertionError: expected undefined not to be undefined
  ❯ src/extension.test.ts:985:16
     985|     expect(fn).toBeDefined();
@@ -93,7 +93,7 @@ unic-code
 
 ### FILES_CHANGED
 - `src/extension.ts` — register `vsdb.aiChat` (spec wiring: `AiConfigStore(ctx)`,
-  `createProviderClient` per `complete()`, `adapterFactory` resolves active
+  `createProviderClient` per `complete()`, `adapterFactory` resolves the active
   POSTGRES adapter else null); `commandOpenAiChat` does unconfigured fallback
   (`loadConfig` null → info + `executeCommand("vsdb.openAiSettings")`); `aiChatPanel`
   cached/disposed.
@@ -129,8 +129,8 @@ task's scope — kept frozen.
 yes — wiring live, all 5 tests green.
 
 ## Interfaces
-- Consumes: tất cả T1-T3 productions; `AiConfigStore.loadConfig()` + flat `AiConfig` fields + `createProviderClient` (frozen cycle J); `AdapterFactory` async (src/ai/tools/types.ts).
-- Produces: `(none)` — final consumer. README contract cho QA.
+- Consumes: every T1-T3 production; `AiConfigStore.loadConfig()` + flat `AiConfig` fields + `createProviderClient` (frozen cycle J); `AdapterFactory` async (src/ai/tools/types.ts).
+- Produces: `(none)` — final consumer. README contract for QA.
 
 ## Reviewer Verdict
 
@@ -147,7 +147,7 @@ FINDINGS:
   important:
     - none
   minor:
-    - README.md:127 — "form Settings → Save với apiKey trống" does NOT disable AI: aiSettingsForm.ts:146-159 refuses empty-key save when nothing is stored, or silently reuses the stored key when one exists; AiConfigStore.clear() (src/ai/config.ts:111) has no production caller. Delete that clause — only "Clear Secret Storage" works as written.
+    - README.md:127 — "form Settings → Save with empty apiKey" does NOT disable AI: aiSettingsForm.ts:146-159 refuses empty-key save when nothing is stored, or silently reuses the stored key when one exists; AiConfigStore.clear() (src/ai/config.ts:111) has no production caller. Delete that clause — only "Clear Secret Storage" works as written.
     - src/extension.test.ts:960-961 — Test #5's `ctx.subscriptions.length > 0` is tautological (activate() pushes many disposables); comment claims it proves the aiChat handler is subscribed. Tighten to assert the specific disposable or drop the assert.
 NEXT_STATUS_FOR_INDEX: approved_minor
 NOTES: RED evidence covers the 3 behavior-changing wiring tests; the 3 E2E tests exercise pre-existing T1-T3 seams (nothing to be RED). Read-only guard, POSTGRES-only adapterFactory, per-call adapter resolution, apiKey scrub, and cycle-J file immutability (empty diff c890557..HEAD on src/ai/{settings,config,provider,agent}.ts) all verified in code.

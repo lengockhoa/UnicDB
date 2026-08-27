@@ -26,7 +26,7 @@ Uses `quoteIdent`, `specErrors` from `./createTable`. Table ref `quoteIdent(befo
 No changes → `{statements:[], errors:[]}` (OK disabled — TASK-004).
 
 ## Test Cases (REQUIRED — TDD)
-| # | Loại | Tên test | Expected |
+| # | Type | Test name | Expected |
 |---|------|----------|----------|
 | 1 | unit | rename+add+drop-key ordered | before users(id,name,pk users_pkey); after id→user_id (originalName id), +email varchar, keys [] → EXACTLY `['ALTER TABLE "public"."users" RENAME COLUMN "id" TO "user_id";','ALTER TABLE "public"."users" ADD COLUMN "email" varchar;','ALTER TABLE "public"."users" DROP CONSTRAINT "users_pkey";']` |
 | 2 | unit | type+default+nullability | before a int nullable; after a (originalName a) `varchar(10)` NOT NULL default `'x'` → 4 stmts: SET DATA TYPE varchar(10) → SET DEFAULT 'x' → SET NOT NULL |
@@ -101,8 +101,8 @@ ISSUES:
 HANDOFF_TO_REVIEWER: yes
 NEXT: ready for review — rename path verified, no DROP+ADD emitted for renames (#6 explicit assertion in test).
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor appends `## Executor Report` BELOW this separator.
+Phase 4 reviewer appends `## Reviewer Verdict` BELOW Executor Report.
 -->
 
 ## Reviewer Verdict

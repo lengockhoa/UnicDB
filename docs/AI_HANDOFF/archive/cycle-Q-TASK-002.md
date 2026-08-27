@@ -32,7 +32,7 @@ activationEvents, additive edit preserving the uncommitted AI-Settings content).
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | regression-of-change happy | table node command | `getChildren(category tables)` node: `command.command === "vsdb.browseTableData"`, `command.title === "Browse Data"`, `command.arguments[0].meta.schema/objectName/connection` populated, node still `collapsible: Collapsed` | adapter.listTables returns 1 table |
 | 2 | regression-of-change happy | view node command | same assertions for views; routines node still `"vsdb.copyQualifiedName"` | adapter.listViews/listRoutines stubs |
@@ -94,8 +94,8 @@ raw argument and keeps the argument forward-compatible.
 ---
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor append `## Executor Report` BELOW this separator.
+Phase 4 reviewer append `## Reviewer Verdict` BELOW Executor Report.
 -->
 ## Executor Report
 
@@ -122,15 +122,15 @@ VERIFICATION:
       RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-002
        FAIL  src/extension.test.ts > TASK-002 — vsdb.browseTableData extension wiring > registers vsdb.browseTableData handler trong activate() (case 3)
        AssertionError: expected false to be true  // command not registered yet
-       FAIL  src/extension.test.ts > TASK-002 — vsdb.browseTableData extension wiring > invoking vsdb.browseTableData handler không throw khi palette (no arg) (case 3)
+       FAIL  src/extension.test.ts > TASK-002 — vsdb.browseTableData extension wiring > invoking vsdb.browseTableData handler does not throw when invoked from palette (no arg) (case 3)
        AssertionError: expected undefined not to be undefined  // fn = registeredCommands.get(...)
-       FAIL  src/extension.test.ts > TASK-002 — vsdb.browseTableData extension wiring > package.json contributes.commands có vsdb.browseTableData entry với category VSDB (case 4)
+       FAIL  src/extension.test.ts > TASK-002 — vsdb.browseTableData extension wiring > package.json contributes.commands has vsdb.browseTableData entry with category VSDB (case 4)
        AssertionError: expected undefined not to be undefined  // entry not in manifest yet
-       FAIL  src/extension.test.ts > TASK-002 — vsdb.browseTableData extension wiring > package.json activationEvents có onCommand:vsdb.browseTableData (case 4)
+       FAIL  src/extension.test.ts > TASK-002 — vsdb.browseTableData extension wiring > package.json activationEvents has onCommand:vsdb.browseTableData (case 4)
        AssertionError: expected [ 'onLanguage:sql', …(20) ] to include 'onCommand:vsdb.browseTableData'
-       FAIL  src/ui/__tests__/schemaTree.test.ts > SchemaTreeProvider — TASK-002 browse gesture wiring > table node command = vsdb.browseTableData 'Browse Data' với arguments[0]=node (case 1)
+       FAIL  src/ui/__tests__/schemaTree.test.ts > SchemaTreeProvider — TASK-002 browse gesture wiring > table node command = vsdb.browseTableData 'Browse Data' with arguments[0]=node (case 1)
        AssertionError: expected 'vsdb.copyQualifiedName' to be 'vsdb.browseTableData'  // schemaTree tables block unchanged
-       FAIL  src/ui/__tests__/schemaTree.test.ts > SchemaTreeProvider — TASK-002 browse gesture wiring > view node command = vsdb.browseTableData 'Browse Data' với arguments[0]=node (case 2)
+       FAIL  src/ui/__tests__/schemaTree.test.ts > SchemaTreeProvider — TASK-002 browse gesture wiring > view node command = vsdb.browseTableData 'Browse Data' with arguments[0]=node (case 2)
        AssertionError: expected 'vsdb.copyQualifiedName' to be 'vsdb.browseTableData'  // schemaTree views block unchanged
        Test Files  2 failed | 1 passed (3)
             Tests  6 failed | 91 passed (97)

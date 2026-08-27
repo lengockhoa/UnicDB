@@ -11,100 +11,100 @@
 
 ## How Human Submits Ideas
 
-- Natural language is enough: `ukit:handoff`, `gom ý tưởng`, `chia task`, `đưa vào handoff`.
+- Natural language is enough: `ukit:handoff`, `collect ideas`, `split into tasks`, `put into handoff`.
 - If request is already a concrete task (clear file/logic/output, small enough to do now), bypass handoff and execute directly.
 - If request is broad/ambiguous/multi-step, use handoff.
 
 ## Hard rule — All work stays in `docs/AI_HANDOFF/`
 
-Mọi giao tiếp giữa các AI trong handoff CHỈ qua file dưới `docs/AI_HANDOFF/`:
+All AI communication inside the handoff runs ONLY through files under `docs/AI_HANDOFF/`:
 
-- `PLAN.md` — brainstorm + Test Plan tổng (Phase 1).
-- `INDEX.md` — bảng task + status (mọi phase đọc/ghi).
-- `tasks/TASK-xxx.md` — nơi sống của từng task: Goal + Test Cases + Verification + Executor Report + Reviewer Verdict + **Discussion thread**.
-- `ACTIVE.md` — snapshot cycle hiện tại.
-- `archive/` — cycle cũ.
+- `PLAN.md` — brainstorm + global Test Plan (Phase 1).
+- `INDEX.md` — task table + status (read/write by every phase).
+- `tasks/TASK-xxx.md` — living record for each task: Goal + Test Cases + Verification + Executor Report + Reviewer Verdict + **Discussion thread**.
+- `ACTIVE.md` — snapshot of the current cycle.
+- `archive/` — past cycles.
 
-**Cấm**: AI gửi câu hỏi/comment qua chat tool khác, qua commit message, hay qua file ngoài thư mục này. Lý do: cross-tool/cross-subagent chỉ đồng bộ được qua file. AI nào không đọc folder này = không tham gia handoff.
+**Forbidden**: AI send questions/comments through a different chat tool, a commit message, or any file outside this directory. Reason: cross-tool/cross-subagent synchronization only happens via files. An AI that does not read this folder is not participating in the handoff.
 
 ### Discussion thread (AI-to-AI comments)
 
-Khi cần hỏi-lại / push-back / gợi ý cho phase khác, AI ghi vào `## Discussion` của task file (template ở `tasks/_TEMPLATE.md`). Format:
+When a phase needs to ask back / push back / suggest changes for another phase, the AI writes into `## Discussion` of the task file (template in `tasks/_TEMPLATE.md`). Format:
 
 ```
 ### <YYYY-MM-DD> · <role: planner|executor|reviewer> · <tool/model>
-<nội dung — gửi @planner / @executor / @reviewer nếu có người nhận>
+<content — address @planner / @executor / @reviewer when there is a specific recipient>
 ```
 
-Phase kế tiếp PHẢI đọc Discussion trước khi tiếp tục — coi như inbox.
+The next phase MUST read the Discussion before continuing — treat it as an inbox.
 
-## Autonomy Model — hỏi một lần, chạy tới hết
+## Autonomy Model — ask once, run to completion
 
-Handoff được thiết kế để chạy **không cần người ngồi canh**. Config: `.ukit/storage/config.json` → `handoff.autonomy`.
+The handoff is designed to run **without a person watching**. Config: `.ukit/storage/config.json` → `handoff.autonomy`.
 
-**Cửa sổ hỏi duy nhất là lúc plan.** `/ukit:handoff-create` (và bước P0 của `/ukit:handoff-fullstack`) gom mọi câu hỏi vào **một** lần `AskUserQuestion` rồi đóng cửa sổ. Câu trả lời ghi nguyên văn vào `PLAN.md §1` — các phase sau coi đó là lời của người dùng và không hỏi lại.
+**The only asking window is at plan time.** `/ukit:handoff-create` (and the P0 step of `/ukit:handoff-fullstack`) collect every question into **one** `AskUserQuestion` call, then close the window. Answers are recorded verbatim into `PLAN.md §1` — later phases treat that as the user's words and do not ask again.
 
-Từ sau đó, mọi ngã ba đều có cách giải quyết tự động:
+From then on, every branch has an automatic resolution:
 
-| Tình huống | Xử lý tự động |
-|-----------|---------------|
-| Scope nhiều subsystem | tách module, plan module 1, queue phần còn lại vào `INDEX.md` |
-| Plan review còn `Issues Found` sau 2 vòng | planner áp findings rồi đi tiếp, ghi vào Plan Review Log |
-| 2 task cùng wave đụng 1 file | đẩy task sau xuống wave kế (thêm dependency) |
-| Working tree bẩn | commit checkpoint rồi chạy tiếp |
-| Reviewer trả `changes_requested`/`critical_block` | vào vòng auto-fix, tối đa 2 vòng |
-| Task vẫn fail sau 2 vòng fix | để `blocked`, **các task khác vẫn đi tiếp tới push** |
+| Situation | Automatic handling |
+|-----------|------------------|
+| Scope spans multiple subsystems | split into modules, plan module 1, queue the rest into `INDEX.md` |
+| Plan review still reports `Issues Found` after 2 rounds | planner applies the findings and continues, recording them in the Plan Review Log |
+| Two tasks in the same wave touch one file | push the second task down to the next wave (add a dependency) |
+| Working tree is dirty | commit a checkpoint, then continue |
+| Reviewer returns `changes_requested`/`critical_block` | enter an auto-fix round, maximum 2 rounds |
+| A task still fails after 2 fix rounds | mark `blocked`, **other tasks still continue through to push** |
 
-Chỉ escalate cho người khi: blocker nằm ngoài repo (thiếu credential, service chết), hoặc task còn fail sau cả 2 vòng fix. Kể cả vậy vẫn phải làm xong mọi task khác trước rồi mới báo.
+Only escalate to a human when: the blocker lives outside the repo (missing credentials, dead service), or a task still fails after both fix rounds. Even then, finish every other task first before reporting.
 
-**Quality gate không bị nới.** Bỏ chỗ *hỏi người*, không bỏ chỗ *kiểm tra*: TDD RED→GREEN vẫn bắt buộc, reviewer vẫn phải khác model executor, vẫn re-run Verification Commands, vẫn cấm claim DONE khi chưa có PASS tươi.
+**The quality gate does not relax.** Drop the *asking the human* step, but never drop the *verification* step: TDD RED→GREEN stays mandatory, the reviewer must still be a different model from the executor, Verification Commands are still re-run, claiming DONE without fresh PASS is still forbidden.
 
 ### Run cursor — `RUN.md`
 
-Mỗi command ghi lại `docs/AI_HANDOFF/RUN.md` sau **mỗi bước**:
+Each command updates `docs/AI_HANDOFF/RUN.md` after **every step**:
 
 ```
 Command: <handoff-fullstack|handoff-implement|handoff-review>
-Goal: <1 câu>
+Goal: <one sentence>
 Base: <branch>
-Phase: <phase hiện tại | done>
-Cursor: wave <N> batch <M> — <vừa xong cái gì>
-Next: <bước kế tiếp chính xác>
+Phase: <current phase | done>
+Cursor: wave <N> batch <M> — <what just finished>
+Next: <exact next step>
 ```
 
-`Phase:` khác `done` = có run đang dở. Command được gọi lại sẽ **chạy tiếp từ cursor**, không plan lại, không hỏi. Hook `SessionStart` (`handoff-resume.sh`) đọc file này và tự inject lệnh chạy tiếp — nên compact hay mất session giữa chừng đều không làm mất run.
+`Phase:` other than `done` means a run is still in progress. Re-invoking the command will **resume from the cursor**, not re-plan, not ask. The `SessionStart` hook (`handoff-resume.sh`) reads this file and auto-injects the resume command — so compacting or losing a session mid-run does not lose the run.
 
-### Context: không bao giờ dừng giữa nhiệm vụ
+### Context: never stop mid-task
 
-- Subagent ghi **full log vào task file trên đĩa**, chỉ trả về orchestrator ≤10 dòng (executor) / ≤6 dòng (reviewer). Paste log ngược lại orchestrator là nguyên nhân số 1 làm run chết vì hết context.
-- Hết mỗi wave: commit, ghi cursor, **collapse** wave đó còn 1 dòng/task trong bộ nhớ làm việc, rồi chạy tiếp.
-- Yêu cầu `/compact` **chỉ** được đặt ở cuối command, giữa 2 cycle. Giữa cycle thì tuyệt đối không — state đã nằm hết ở git + `INDEX.md` + `RUN.md` nên compact ở ranh giới cycle không mất gì.
-- Vượt `compact.hardCapTokens` (mặc định 220k, cỡ cho context window 256k) mà `RUN.md` còn run dở: `context-hardcap-gate` cho thêm `compact.hardCapGraceCalls` (mặc định 10) tool call rồi mới chặn cứng. **Grace đó chỉ để hạ cánh** — hoàn tất edit đang dở, commit, ghi cursor, push. Không mở task mới, không đọc thêm file, không spawn agent. Hết grace là chặn thật; budget chỉ reset khi ước lượng token thực sự giảm (có compact thật), không reset theo wave.
-- Không hook nào gọi được `/compact` — đó là lệnh client-only. Nhưng từ 2.1.3, settings mặc định đặt `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = 180000` < `hardCapTokens` (220k), nên **client tự auto-compact trước khi gate chặn**. Đường thường: auto-compact chạy → `handoff-resume.sh` replay cursor → chạy tiếp, không cần người gõ gì. Grace window ở trên chỉ còn là lưới an toàn.
-- Sửa một trong hai số đó thì phải giữ `autoCompactWindow < hardCapTokens`. Đảo thứ tự là deadlock: gate chặn tool trước → transcript ngừng lớn → ngưỡng auto-compact không bao giờ tới. `tests/core/autoCompactWindow.test.js` khóa bất biến này.
+- The subagent writes **the full log into the task file on disk**, returning only ≤10 lines (executor) / ≤6 lines (reviewer) to the orchestrator. Pasting logs back into the orchestrator is the #1 cause of runs dying from context exhaustion.
+- End of every wave: commit, write the cursor, **collapse** that wave down to 1 line/task in working memory, then continue.
+- The `/compact` request **only** goes at the end of a command, between two cycles. Mid-cycle it is strictly forbidden — all state already lives in git + `INDEX.md` + `RUN.md`, so compacting at a cycle boundary loses nothing.
+- Exceeding `compact.hardCapTokens` (default 220k, sized for a 256k context window) while `RUN.md` still has a run in progress: `context-hardcap-gate` allows `compact.hardCapGraceCalls` (default 10) extra tool calls before hard-blocking. **The grace window is only for landing** — finish the in-progress edit, commit, write the cursor, push. No new tasks, no more file reads, no spawning agents. Once grace is spent, the gate blocks for real; the budget only resets when the real token estimate drops (a real compact happens), not per wave.
+- No hook can call `/compact` — that is a client-only command. But since 2.1.3, default settings set `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = 180000` < `hardCapTokens` (220k), so **the client auto-compacts before the gate blocks**. The normal path: auto-compact fires → `handoff-resume.sh` replays the cursor → run continues, no human needed. The grace window above only remains as a safety net.
+- Editing either of those two numbers requires keeping `autoCompactWindow < hardCapTokens`. Reversing them deadlocks: the gate blocks tools first → the transcript stops growing → the auto-compact threshold is never reached. `tests/core/autoCompactWindow.test.js` locks this invariant.
 
 ### Git
 
-- `handoff-implement`: **1 commit / wave**, không push. Mỗi wave revert độc lập được.
-- `handoff-review` / `handoff-fullstack`: commit thêm mỗi vòng auto-fix, rồi **push 1 lần** ở cuối. Push không hỏi (`Bash(git push:*)` nằm trong `allow`); force-push vẫn bị `deny`.
+- `handoff-implement`: **1 commit / wave**, no push. Each wave is independently revertable.
+- `handoff-review` / `handoff-fullstack`: commit additionally on every auto-fix round, then **push once** at the end. Push is silent (`Bash(git push:*)` is in `allow`); force-push is still denied.
 
 ## Handoff Flow (tool-agnostic, file-based state machine)
 
-UKit handoff hoạt động qua **file state**. Anh tự chọn tool nào cho từng phase — Claude Code / Kilo Code / Codex / OpenCode / tool mới sau này — đều được. UKit chỉ care về **role của model**, không care tool.
+UKit handoff runs on **file state**. You pick any tool for each phase — Claude Code / Kilo Code / Codex / OpenCode / future tools — all are supported. UKit only cares about the **role of the model**, not the tool.
 
-3 phase × 3 role model:
+3 phases × 3 model roles:
 
-- **Plan** — model mạnh nhất anh có (reasoning model). Có thể chạy ở bất kỳ tool nào hỗ trợ planning tốt.
-- **Execute** — model rẻ-mà-vẫn-thông-minh (code model). Có thể là subagent code của Kilo, hay agent build của OpenCode, hay feature-implementer của Claude Code.
-- **Review** — **MODEL KHÁC executor** (reasoning model thường tốt hơn). Có thể là tool khác, hoặc cùng tool nhưng subagent khác model (ví dụ Kilo có subagent code và subagent review riêng).
+- **Plan** — the strongest model available (reasoning model). Can run in any tool that supports planning well.
+- **Execute** — a cheap-but-still-smart model (code model). Could be Kilo's code subagent, OpenCode's build agent, or Claude Code's feature-implementer.
+- **Review** — **MODEL DIFFERENT from the executor** (typically a reasoning model). Could be a different tool, or the same tool but a subagent using a different model (Kilo, for example, has separate code and review subagents).
 
-Hai mô hình triển khai đều hợp lệ:
-- **Cross-tool**: ví dụ Claude (plan) → Kilo (execute) → Claude (review). Bridge qua file.
-- **Same-tool different-subagent**: ví dụ Kilo:plan → Kilo:code → Kilo:review, miễn 3 subagent dùng MODEL khác nhau ở role tương ứng.
+Both implementation models are valid:
+- **Cross-tool**: for example Claude (plan) → Kilo (execute) → Claude (review). Bridged via files.
+- **Same-tool different-subagent**: for example Kilo:plan → Kilo:code → Kilo:review, as long as the three subagents use different MODELS for their respective roles.
 
-Mỗi tool/subagent đọc cùng `INDEX.md` + `tasks/TASK-xxx.md` → chọn task theo `status` → cập nhật status khi xong.
+Each tool/subagent reads the same `INDEX.md` + `tasks/TASK-xxx.md` → picks a task by `status` → updates the status when finished.
 
-> **Quan trọng — UKit không enforce model:** `handoff.executor.cheapSmartModelHint` và `handoff.reviewer.model` trong `.ukit/storage/config.json` chỉ là **nhãn** để anh biết MUỐN dùng gì. Tool nào dùng model nào là do anh chọn trong settings của tool đó. UKit enforce contract bằng cách bắt executor TỰ KHAI `EXECUTOR_MODEL` trong Executor Report; reviewer so với chính nó và refuse nếu trùng. Vì vậy nếu trong Kilo anh để cả code-subagent và review-subagent đều dùng cùng model → reviewer sẽ tự refuse, không silent-pass.
+> **Important — UKit does not enforce the model:** `handoff.executor.cheapSmartModelHint` and `handoff.reviewer.model` in `.ukit/storage/config.json` are only **labels** so you know what you INTEND to use. Which tool uses which model is your choice inside that tool's settings. UKit enforces the contract by requiring the executor to DECLARE `EXECUTOR_MODEL` in its Executor Report; the reviewer compares against itself and refuses when they match. So if in Kilo you set both the code subagent and the review subagent to the same model → the reviewer will refuse itself, never silently pass.
 
 ### Status state machine
 
@@ -120,18 +120,18 @@ pending_review ──[reviewer]──▶ approved | approved_minor ──▶ don
 ### 4 Phases
 
 **Phase 1 — Idea + Plan** (smart/reasoning model)
-- Human submit ideas (natural language).
-- AI ghi vào `PLAN.md`: §1 Intent, §2 Scope, §3 Approach, **§4 Test Plan (bắt buộc TDD-style)**, §5 Verification Commands, §6 Acceptance Criteria.
-- Đây là **cửa sổ hỏi duy nhất** của cả pipeline: gom mọi câu hỏi vào 1 lần `AskUserQuestion` trước khi viết, ghi câu trả lời vào §1.
-- Output: PLAN.md đầy đủ + Planner Self-Audit. Chạy standalone (`/ukit:handoff-create`) thì dừng ở đây chờ human xem; chạy trong `/ukit:handoff-fullstack` thì đi thẳng tiếp sang Phase 2 — plan review độc lập là gate thay cho human.
+- The human submits ideas in natural language.
+- AI writes into `PLAN.md`: §1 Intent, §2 Scope, §3 Approach, **§4 Test Plan (mandatory, TDD-style)**, §5 Verification Commands, §6 Acceptance Criteria.
+- This is the **only asking window** for the whole pipeline: collect every question into one `AskUserQuestion` call before writing, and record the answers into §1.
+- Output: a complete PLAN.md + Planner Self-Audit. Standalone run (`/ukit:handoff-create`) stops here for human review; run inside `/ukit:handoff-fullstack` continues straight into Phase 2 — an independent plan review is the gate instead of the human.
 
-**Phase 2 — Create Tasks (TDD-embedded, MANDATORY)** (smart/reasoning model, thường cùng phase 1)
-- Human approve plan → AI split `PLAN.md §7` sang nhiều `tasks/TASK-xxx.md`.
-- **Mỗi TASK file BẮT BUỘC có Test Plan của riêng nó**, không chỉ trỏ về PLAN.md. Cụ thể:
-  - `§ Test Cases`: bảng test (loại, tên test, expected) cho phần task này — happy + ≥2 edge case KHÁC loại nhau (vd null/empty + boundary/concurrent, không tính 2 case gần giống nhau) + regression (nếu fix bug).
-  - `§ Test Files`: đường dẫn cụ thể file test sẽ tạo/sửa (ví dụ `tests/auth/login.test.js`).
-  - `§ Verification Commands`: lệnh executor sẽ chạy để xác nhận PASS. Nếu project có sẵn lint/typecheck script → BẮT BUỘC liệt kê ở đây, không chỉ lệnh test. Project không có thì ghi rõ N/A, không được bỏ qua im lặng.
-  - `§ Acceptance Criteria`: checklist.
+**Phase 2 — Create Tasks (TDD-embedded, MANDATORY)** (smart/reasoning model, usually same as phase 1)
+- Human approves the plan → AI splits `PLAN.md §7` into several `tasks/TASK-xxx.md` files.
+- **Every TASK file MUST carry its own Test Plan**, not only point back to PLAN.md. Specifically:
+  - `§ Test Cases`: a test table (type, test name, expected) for this task's slice — happy + ≥2 edge cases of DIFFERENT kinds (e.g. null/empty + boundary/concurrent, two near-identical cases do not count) + regression (when fixing a bug).
+  - `§ Test Files`: the concrete path of the test file to create/modify (for example `tests/auth/login.test.js`).
+  - `§ Verification Commands`: the commands the executor will run to confirm PASS. If the project already has lint/typecheck scripts → they MUST be listed here, not only the test command. If the project has none, say N/A explicitly; silently skipping is not allowed.
+  - `§ Acceptance Criteria`: a checklist.
 
 #### Test selection (which tests the Verification Commands run)
 
@@ -143,24 +143,24 @@ Resolution order — exactly three steps, in this order. A task's Verification C
 
 **Wave/cycle boundary regression net** — the three steps above narrow one task's Verification Commands only; they are not a substitute for full-suite coverage. A full `yarn test` run at each wave/cycle boundary MUST happen and is the regression net for every per-task narrowed selection made under this policy. `code-reviewer.md`'s "wave-boundary full `yarn test` ... is the regression net" sentence refers to this paragraph.
 
-- Nếu split mà task nào không kèm được Test Cases + Test Files cụ thể → task đó chưa đủ `ready`, đánh `needs_breakdown`.
-- Update `INDEX.md`: thêm row mỗi task với status `ready`.
-- Đây là **điểm cắt cuối trước khi code chạy**: phase này xong, executor được phép pick. Trong `/ukit:handoff-fullstack`, gate ở đây là plan review độc lập (model mạnh, context riêng) chứ không phải human — vì người dùng đã chủ động chọn chạy one-shot.
-- Mục tiêu: executor (cheap-smart model) đọc task file là biết NGAY test gì cần viết trước, KHÔNG phải tự suy diễn.
+- If a split task cannot ship concrete Test Cases + Test Files → that task is not yet `ready`; mark it `needs_breakdown`.
+- Update `INDEX.md`: add a row for each task with status `ready`.
+- This is **the last gate before code runs**: when this phase ends, the executor is allowed to pick. Inside `/ukit:handoff-fullstack`, the gate here is an independent plan review (strong model, fresh context) rather than a human — because the user has explicitly chosen to run one-shot.
+- Goal: when the executor (cheap-smart model) reads the task file it immediately KNOWS which tests to write first — no inference required.
 
 **Phase 3 — Implement + Test** (cheap-smart/code model)
-- User: "execute next task" / "làm TASK-001" / "implement task 1".
-- Executor đọc `INDEX.md` → pick `ready` task → đổi `in_progress` → **viết test trước → RED (paste output failing thật, không chỉ khai đã confirm) → implement → GREEN** → chạy Verification Commands fresh trong turn → append `## Executor Report` (gồm `EXECUTOR_TOOL`/`EXECUTOR_MODEL`/`EXECUTOR_SUBAGENT`/`RED_OUTPUT` + verification output) vào cuối task file → đổi status `pending_review`.
-- KHÔNG được claim DONE nếu chưa có PASS fresh.
+- User: "execute next task" / "do TASK-001" / "implement task 1".
+- Executor reads `INDEX.md` → picks a `ready` task → flips it to `in_progress` → **writes the test first → RED (paste the actual failing output, not just a confirmation claim) → implement → GREEN** → runs the Verification Commands fresh within the turn → appends `## Executor Report` (containing `EXECUTOR_TOOL`/`EXECUTOR_MODEL`/`EXECUTOR_SUBAGENT`/`RED_OUTPUT` plus verification output) at the end of the task file → flips status to `pending_review`.
+- NEVER claim DONE without fresh PASS.
 
-**Phase 4 — Review + Test** (reviewer model — KHÁC model executor)
+**Phase 4 — Review + Test** (reviewer model — DIFFERENT model from executor)
 - User: "review pending tasks" / "review TASK-001".
-- Reviewer đọc INDEX → pick `pending_review` → đọc task file + diff → **so model với `EXECUTOR_MODEL`, refuse nếu trùng/unknown** → **re-run Verification Commands fresh** (không tin executor) → áp `code-review` skill → append `## Reviewer Verdict` vào task file (verdict + findings + reviewer model dùng) → đổi status:
-  - `approved` / `approved_minor` → cho phép `done`.
-  - `changes_requested` → executor phải fix Important → lặp Phase 3-4.
-  - `critical_block` → executor PHẢI fix → lặp Phase 3-4.
+- Reviewer reads INDEX → picks `pending_review` → reads the task file + diff → **compares model against `EXECUTOR_MODEL`, refuses when matching or unknown** → **re-runs Verification Commands fresh** (never trusting the executor) → applies the `code-review` skill → appends `## Reviewer Verdict` to the task file (verdict + findings + the reviewer model used) → changes status:
+  - `approved` / `approved_minor` → allow `done`.
+  - `changes_requested` → executor must fix the Important items → loop Phase 3-4.
+  - `critical_block` → executor MUST fix → loop Phase 3-4.
 
-Nếu `handoff.reviewer.enabled=false`, Phase 4 skip nhưng phải log lý do vào task — bỏ Phase 4 là bỏ lưới an toàn cuối.
+If `handoff.reviewer.enabled=false`, Phase 4 is skipped but the reason must be logged into the task — skipping Phase 4 drops the final safety net.
 
 ## Task Gate
 
@@ -168,10 +168,10 @@ A task is `ready` only when it has:
 - Clear target files
 - Clear action
 - Dependencies stated
-- **Interfaces** — Consumes/Produces với chữ ký thật (function/endpoint/type), không placeholder;
-  `(none)` hợp lệ nếu task không có input/output liên task
-- **Test Plan** (PLAN.md §4) — happy path + ≥2 edge case khác loại (+ regression test nếu fix bug); hoặc `N/A` kèm lý do
-- Verification command (lệnh executor sẽ chạy) — PHẢI gồm lint/typecheck nếu project có sẵn
+- **Interfaces** — Consumes/Produces with real signatures (function/endpoint/type), no placeholders;
+  `(none)` is valid when the task has no cross-task inputs/outputs
+- **Test Plan** (PLAN.md §4) — happy path + ≥2 edge cases of different kinds (+ regression test if a bug is being fixed); or `N/A` with a reason
+- Verification command (the command the executor will run) — MUST include lint/typecheck when the project already has them
 - Acceptance criteria
 
 Missing any → `needs_breakdown`, `blocked`, or `needs_human`.
@@ -179,13 +179,13 @@ Missing any → `needs_breakdown`, `blocked`, or `needs_human`.
 
 ## Clear Handoff
 
-1. Archive current cycle → `archive/cycle-NNN.md`.
-2. If archive > 3 files → delete oldest, append 1-line summary to `HISTORY.md`.
-3. Reset `ACTIVE.md` to empty template.
+1. Archive the current cycle → `archive/cycle-NNN.md`.
+2. If the archive holds > 3 files → delete the oldest, append a 1-line summary to `HISTORY.md`.
+3. Reset `ACTIVE.md` to the empty template.
 4. Clear `INDEX.md`.
-5. Delete all files in `tasks/`.
+5. Delete every file in `tasks/`.
 6. Clear `PLAN.md`.
 
 ## Docs Sync
 
-After cycle, update affected docs only: `WORKLOG.md`, `PROJECT.md`, `CODE_MAP.md`, `CHANGELOG.md`.
+After each cycle, update only the affected docs: `WORKLOG.md`, `PROJECT.md`, `CODE_MAP.md`, `CHANGELOG.md`.

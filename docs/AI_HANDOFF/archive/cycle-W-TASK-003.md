@@ -50,7 +50,7 @@ add a new message or a new `src/` import for this (see Acceptance: no third `../
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | integration (happy) | header sort posts a server requery | a `requery` message with `orderBy: "name ASC"` and `index: 0` | grid rendered, column state `[{colId:"name",sort:"asc",sortIndex:0}]` |
 | 2 | integration (happy) | descending sort | `orderBy: "name DESC"` | `sort:"desc"` |

@@ -66,7 +66,7 @@ persist NOTHING (metadata-last mirrors ConnectionManager's never-half-save inten
 by construction). Empty `apiKey` string ⇒ throw `"API key is required"` before touching stores.
 
 ## Test Cases (REQUIRED — TDD)
-| # | Loại | Tên test | Expected |
+| # | Type | Test name | Expected |
 |---|------|----------|----------|
 | 1 | unit | defaults exact | `defaultAiSettings()` deep-equals the literal in §Spec |
 | 2 | unit | valid → no errors | `aiSettingsErrors(defaultAiSettings() with both modelIds filled) === []` |
@@ -113,8 +113,8 @@ npx vitest run src/ai/__tests__/settings.test.ts src/ai/__tests__/config.test.ts
 Split pure `settings.ts` vs vscode `config.ts` keeps validations unit-testable AND lets the wave-3 form import `aiSettingsErrors` into the webview bundle (no vscode). Note for @executor: tests #10/#12 need a fake `vscode.ExtensionContext` (`{ secrets, globalState }`) — copy the FakeSecretStorage/FakeMemento pattern from `src/core/__tests__/connectionManager.test.ts` (vi.mock('vscode') not needed; pass the fake ctx object directly).
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor appends `## Executor Report` BELOW this separator.
+Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
 
 ## Executor Report

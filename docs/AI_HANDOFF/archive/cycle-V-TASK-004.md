@@ -23,7 +23,7 @@ the webview — new host-side composition must not grow the webview bundle).
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | unit (happy) | `buildFilterWhere emits an IN list` | `buildFilterWhere({name:{values:["a","b"]}}, "postgres")` → `"name" IN ('a', 'b')` | none |
 | 2 | unit (happy) | `two filtered columns are AND-joined` | `{a:{values:["1"]},b:{values:["2"]}}` → `"a" IN ('1') AND "b" IN ('2')` | matches AG Grid's multi-column AND semantics |
@@ -194,8 +194,8 @@ it is optional precisely so TASK-005 can ship the plumbing incrementally, and so
 ---
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor append `## Executor Report` BELOW this separator.
+Phase 4 reviewer append `## Reviewer Verdict` BELOW the Executor Report.
 -->
 
 ---

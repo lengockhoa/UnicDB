@@ -1,95 +1,95 @@
 # VSDB — Manual Testing Checklist (v1)
 
-Smoke checklist cho bản release đầu tiên (v1.0.0). Chạy trên Extension Development
-Host (`F5`) hoặc sau khi install từ `.vsix`. Mỗi DB test một lần; check cả
-positive + negative luồng.
+Smoke checklist for the first release (v1.0.0). Run on the Extension Development
+Host (`F5`) or after installing from a `.vsix`. Test each DB once; check both
+positive + negative flows.
 
-> In checklist này → tick thủ công từng dòng khi test. Báo cáo issue vào
+> In this checklist -> tick each line manually while testing. Report issues at
 > [GitHub Issues](https://github.com/lengockhoa/VSDB/issues).
 
 ---
 
-## Chuẩn bị
+## Prerequisites
 
-- [ ] Docker chạy (Postgres / MySQL / MSSQL testcontainers).
-- [ ] Sample data: bảng `users(id, name, email)` ~100k rows; bảng `orders(id, user_id, total)` ~500k rows.
-- [ ] `npm run watch` đang chạy (dev) HOẶC `.vsix` đã install (release).
-- [ ] `code` CLI trên `PATH`.
+- [ ] Docker running (Postgres / MySQL / MSSQL testcontainers).
+- [ ] Sample data: table `users(id, name, email)` ~100k rows; table `orders(id, user_id, total)` ~500k rows.
+- [ ] `npm run watch` is running (dev) OR `.vsix` is already installed (release).
+- [ ] `code` CLI on `PATH`.
 
 ---
 
 ## 1. Connection management
 
-- [ ] **Add**: `+` trên panel → điền form → test connect thành công với 3 driver (pg / mysql / mssql).
-- [ ] **Edit**: click phải connection → Edit → đổi password → save → test lại OK.
-- [ ] **Delete**: click phải connection → Delete → confirm → biến mất khỏi panel.
-- [ ] **Select active**: status bar hiện tên connection sau khi chọn; click để đổi.
-- [ ] **Persistence**: reload VS Code → connection vẫn còn.
+- [ ] **Add**: `+` on the panel -> fill the form -> test connect succeeds with all 3 drivers (pg / mysql / mssql).
+- [ ] **Edit**: right-click connection -> Edit -> change password -> save -> re-test OK.
+- [ ] **Delete**: right-click connection -> Delete -> confirm -> disappears from the panel.
+- [ ] **Select active**: status bar shows the connection name after selecting; click to switch.
+- [ ] **Persistence**: reload VS Code -> connections still present.
 
 ## 2. Query execution (Cmd+Enter / Ctrl+Enter)
 
-- [ ] **Single statement**: `SELECT 1` → chạy, kết quả hiện trong panel.
-- [ ] **Statement trong script nhiều câu**: chỉ câu đang select chạy, không chạy cả file.
-- [ ] **No selection**: đặt con trỏ giữa câu → chạy đúng câu đó.
-- [ ] **Comment block**: `/* ... */ SELECT ...` → chạy đúng câu SQL, bỏ qua comment.
-- [ ] **String literal có `;`**: `SELECT 'a;b'` → không split nhầm.
-- [ ] **Quoted identifier có `(`**: `[fn(1)](2)` → không nhầm function call với identifier.
-- [ ] **Keybinding đúng OS**: macOS dùng `Cmd+Enter`, Win/Linux dùng `Ctrl+Enter`.
-- [ ] **Outside `.sql` file**: keybinding không kích hoạt.
+- [ ] **Single statement**: `SELECT 1` -> runs, result appears in the panel.
+- [ ] **Statement in a multi-statement script**: only the selected statement runs, not the entire file.
+- [ ] **No selection**: place the cursor inside a statement -> runs that exact statement.
+- [ ] **Comment block**: `/* ... */ SELECT ...` -> runs the SQL statement correctly, skips the comment.
+- [ ] **String literal containing `;`**: `SELECT 'a;b'` -> does NOT split incorrectly.
+- [ ] **Quoted identifier containing `(`**: `[fn(1)](2)` -> does NOT confuse function call with identifier.
+- [ ] **Keybinding matches the OS**: macOS uses `Cmd+Enter`, Win/Linux use `Ctrl+Enter`.
+- [ ] **Outside `.sql` file**: keybinding does NOT trigger.
 
 ## 3. Editor UI buttons
 
-- [ ] **Nút ▶ (Run) trên title bar** khi focus trong `.sql` → chạy query.
-- [ ] **Nút ■ (Cancel)** khi đang chạy → query bị cancel phía server, panel hiện "Cancelled".
-- [ ] **CodeLens ▶ Run** trên mỗi statement → click chạy đúng câu.
-- [ ] **Tắt CodeLens**: setting `vsdb.showRunLens = false` → CodeLens biến mất, restart vẫn tắt.
+- [ ] **▶ (Run) button on the title bar** when focused inside `.sql` -> runs the query.
+- [ ] **■ (Cancel) button** while running -> query is cancelled server-side, panel shows "Cancelled".
+- [ ] **CodeLens ▶ Run** on every statement -> click runs the correct statement.
+- [ ] **Disable CodeLens**: setting `vsdb.showRunLens = false` -> CodeLens disappears, stays disabled after restart.
 
 ## 4. Schema Explorer
 
-- [ ] **Tree expand**: connection → schema → Tables / Views / Routines → table → column.
-- [ ] **Mọi schema hiện**: mở connection → thấy mọi schema truy cập được, không chỉ `public` / `dbo` / database mặc định.
-- [ ] **Count badge**: sau khi expand, category hiện số object (vd Tables → `2`).
-- [ ] **Setting `vsdb.hideSystemSchemas`**: bật (default) → ẩn `pg_*` / `information_schema` / `mysql` / `sys`; tắt → hiện lại.
-- [ ] **Tables + views + routines** (nếu DB có) hiển thị đúng loại.
-- [ ] **Right-click table/view → Generate SELECT** → chèn `SELECT * FROM schema.table` vào editor (đúng cả schema khác mặc định).
-- [ ] **Right-click → Copy Qualified Name** → clipboard có `schema.table` / `schema.table.column`.
+- [ ] **Tree expand**: connection -> schema -> Tables / Views / Routines -> table -> column.
+- [ ] **All schemas shown**: open connection -> every accessible schema appears, not only `public` / `dbo` / the default database.
+- [ ] **Count badge**: after expanding, the category shows the object count (e.g. Tables -> `2`).
+- [ ] **Setting `vsdb.hideSystemSchemas`**: enabled (default) -> hides `pg_*` / `information_schema` / `mysql` / `sys`; disabled -> shows them again.
+- [ ] **Tables + views + routines** (if the DB has them) render the correct kind.
+- [ ] **Right-click table/view -> Generate SELECT** -> inserts `SELECT * FROM schema.table` into the editor (works for non-default schemas too).
+- [ ] **Right-click -> Copy Qualified Name** -> clipboard has `schema.table` / `schema.table.column`.
 
 ## 5. Result panel
 
-- [ ] **Small result** (< 500 rows): hiện tất cả trong 1 lần.
-- [ ] **Large result** (> 500 rows): hiện 500 rows + nút **Load 500 more** ở cuối → click thêm.
-- [ ] **`vsdb.batchSize` = 1000**: reload extension → load 1000 mỗi lần.
-- [ ] **Cancel giữa chừng**: click ■ khi đang load → dừng ngay, không load thêm.
-- [ ] **Column types**: timestamp/date/bytea/blob render đúng (string / hex / base64).
-- [ ] **NULL cells**: hiện `(NULL)`, không vỡ layout.
+- [ ] **Small result** (< 500 rows): shows everything in one go.
+- [ ] **Large result** (> 500 rows): shows 500 rows + a **Load 500 more** button at the bottom -> click to extend.
+- [ ] **`vsdb.batchSize` = 1000**: reload extension -> loads 1000 per batch.
+- [ ] **Cancel mid-load**: click ■ while loading -> stops immediately, no further load.
+- [ ] **Column types**: timestamp/date/bytea/blob render correctly (string / hex / base64).
+- [ ] **NULL cells**: show `(NULL)`, no layout breakage.
 
 ## 6. Cancel & errors
 
-- [ ] **`SELECT pg_sleep(60)`** → click ■ trong vòng 2s → query cancel; check `pg_stat_activity` thấy `idle`.
-- [ ] **`SELECT SLEEP(60)`** (MySQL) → cancel tương tự.
-- [ ] **Syntax error**: `SELEC 1` → panel hiện error message rõ ràng, không crash extension.
-- [ ] **Connection lost giữa chừng**: kill DB container → query báo lỗi, status bar cập nhật, không treo.
+- [ ] **`SELECT pg_sleep(60)`** -> click ■ within 2s -> query cancels; check `pg_stat_activity` shows `idle`.
+- [ ] **`SELECT SLEEP(60)`** (MySQL) -> cancel works the same way.
+- [ ] **Syntax error**: `SELEC 1` -> panel shows a clear error message, extension does NOT crash.
+- [ ] **Connection lost mid-query**: kill the DB container -> query reports an error, status bar updates, no hang.
 
 ## 7. Multi-connection
 
-- [ ] Mở 2 file `.sql` với 2 connection khác nhau (pg + mysql) → mỗi file dùng connection của nó khi chạy.
-- [ ] Đổi active connection → file đang focus dùng connection mới; file kia giữ connection cũ.
+- [ ] Open 2 `.sql` files with 2 different connections (pg + mysql) -> each file uses its own connection when running.
+- [ ] Switch active connection -> the focused file uses the new connection; the other file keeps the old one.
 
 ## 8. Packaging / install (release smoke)
 
-- [ ] `bash scripts/build.sh` exit 0, in path `.vsix`.
+- [ ] `bash scripts/build.sh` exit 0, prints the `.vsix` path.
 - [ ] `bash scripts/install-vsdb.sh --local dist/vsdb-*.vsix` exit 0.
-- [ ] `code --list-extensions | grep vsdb` thấy `lengockhoa.vsdb`.
-- [ ] Gỡ + cài lại nhiều lần (idempotency): luôn ra cùng version cuối.
+- [ ] `code --list-extensions | grep vsdb` shows `lengockhoa.vsdb`.
+- [ ] Uninstall + reinstall multiple times (idempotency): always lands on the same final version.
 
 ---
 
 ## Pass criteria
 
-Bản release v1.0.0 sẵn sàng khi:
+The v1.0.0 release is ready when:
 
-- 100% dòng trên được tick (trừ driver-specific khi chỉ smoke 1 DB).
-- Không có regression từ `npm test` + `npm run test:integration`.
-- `.vsix` install thành công trên ≥ 1 máy macOS và ≥ 1 máy Linux.
+- 100% of the lines above are ticked (except driver-specific lines when only 1 DB is smoked).
+- No regressions from `npm test` + `npm run test:integration`.
+- `.vsix` installs successfully on ≥ 1 macOS machine and ≥ 1 Linux machine.
 
-Báo issue vào repo kèm: VS Code version, OS, DB driver, repro steps, log.
+Report issues in the repo with: VS Code version, OS, DB driver, repro steps, log.

@@ -1,40 +1,40 @@
 # TASK-002 — SQL read-only executor tool + schema→context formatter
 
 ## Goal
-Tool `run_sql` chỉ cho SELECT/SHOW/EXPLAIN (+WITH sạch), chặn mọi thứ khác ở tool layer; và formatter biến introspection thành system-prompt context có budget cap.
+A `run_sql` tool that allows only SELECT/SHOW/EXPLAIN (plus a clean WITH), blocks everything else at the tool layer; plus a formatter that turns introspection output into budget-capped system-prompt context.
 
 ## Target Files
-- `src/ai/tools/sqlTool.ts` (mới)
-- `src/ai/tools/schemaContext.ts` (mới)
-- `src/ai/tools/__tests__/sqlTool.test.ts`, `src/ai/tools/__tests__/schemaContext.test.ts` (mới)
+- `src/ai/tools/sqlTool.ts` (new)
+- `src/ai/tools/schemaContext.ts` (new)
+- `src/ai/tools/__tests__/sqlTool.test.ts`, `src/ai/tools/__tests__/schemaContext.test.ts` (new)
 
 ## Spec (frozen)
 ```ts
 import type { AgentTool } from "../agent";
-import type { AdapterFactory } from "./types"; // async — frozen file, KHÔNG tạo lại
+import type { AdapterFactory } from "./types"; // async — frozen file, do NOT recreate
 export function createSqlTool(f: AdapterFactory): AgentTool // name "run_sql", args {sql: string}; registry-level add: caller register(createSqlTool(f)) alongside createDbTools
 export function isReadOnlySql(sql: string): { ok: boolean; reason?: string }
 // schemaContext.ts
 import type { TableInfo, TableDetail } from "../../adapters/types";
 export function formatSchemaContext(tables: TableInfo[], details: TableDetail[], budgetChars: number): string
 ```
-- **Cursor consumption (F1 — bắt buộc)**: PG single-SELECT qua `adapter.runQuery()` trả `results: []` + cursor (postgres.ts:156-169). `run_sql` MUST: `const run = await adapter.runQuery(sql);` rồi nếu `run.cursor` tồn tại → `await run.cursor.fetchBatch(50)` lấy cột+dòng + `run.cursor.close()` (finally); chỉ fall back sang `run.results` khi không có cursor (fake adapters/tests). Không làm vậy thì path PG thật rỗng.
-- `isReadOnlySql`: trim + strip leading comments (`-- …\n`, `/* */`) trước khi check; lowercase; OK iff **đúng 1 statement** (không `;` ngoài possibly-cuối-câu) VÀ first keyword ∈ {select, show, explain, with} VÀ **không chứa writable-CTE**: nếu first keyword là with → body không được chứa `insert|update|delete|merge` word-boundary ở any vị trí (WITH x AS (INSERT…) SELECT phải reject). `into` scan là unconditional (word-boundary) — SELECT…INTO reject mọi trường hợp. Reasons: `"Only SELECT/SHOW/EXPLAIN/WITH…SELECT are allowed (read-only)"`, `"Multiple statements are not allowed"`, `"Read-only violation: INTO"`, `"Read-only violation: writable CTE (INSERT/UPDATE/DELETE/MERGE)"`.
-- `run_sql` flow: factory resolve null → no-connection message; `!isReadOnlySql().ok` → reason string; else cursor-flow trên → rows slice 50 → JSON `{columns, rows, rowCount, truncated}`. Adapter/cursor throw → `"Tool failed: <msg>"`.
-- `formatSchemaContext`: render `schema.table` + columns (`name type null?`) + PK/FK một dòng mỗi constraint; nếu tổng > budgetChars: ưu tiên bảng theo thứ tự input, cắt ở ranh giới bảng, kết thúc bằng `… (+N more tables omitted)`; budget ≤ 0 → "".
-- Không import vscode.
+- **Cursor consumption (F1 — mandatory)**: PG single-SELECT through `adapter.runQuery()` returns `results: []` + cursor (postgres.ts:156-169). `run_sql` MUST: `const run = await adapter.runQuery(sql);`, then if `run.cursor` exists → `await run.cursor.fetchBatch(50)` to fetch columns+rows + `run.cursor.close()` (in finally); fall back to `run.results` only when no cursor exists (fake adapters/tests). Skipping this leaves the real PG path empty.
+- `isReadOnlySql`: trim + strip leading comments (`-- …\n`, `/* */`) before checking; lowercase; OK iff **exactly 1 statement** (no `;` other than a possible trailing one) AND the first keyword ∈ {select, show, explain, with} AND **no writable CTE**: if the first keyword is with → the body MUST NOT contain word-boundary `insert|update|delete|merge` anywhere (WITH x AS (INSERT…) SELECT must reject). The `into` scan is unconditional (word-boundary) — SELECT…INTO is rejected in every branch. Reasons: `"Only SELECT/SHOW/EXPLAIN/WITH…SELECT are allowed (read-only)"`, `"Multiple statements are not allowed"`, `"Read-only violation: INTO"`, `"Read-only violation: writable CTE (INSERT/UPDATE/DELETE/MERGE)"`.
+- `run_sql` flow: factory resolve null → no-connection message; `!isReadOnlySql().ok` → reason string; otherwise cursor flow above → slice to 50 rows → JSON `{columns, rows, rowCount, truncated}`. Adapter/cursor throw → `"Tool failed: <msg>"`.
+- `formatSchemaContext`: render `schema.table` + columns (`name type null?`) + PK/FK one line per constraint; if total exceeds budgetChars: prefer tables in input order, cut at table boundaries, end with `… (+N more tables omitted)`; budget ≤ 0 → "".
+- No vscode import.
 
 ## Test Cases
-| # | Loại | Tên | Expected |
+| # | Type | Name | Expected |
 |---|------|-----|----------|
-| 1 | happy | SELECT hợp lệ qua fake adapter CÓ cursor | fetchBatch(50) được gọi, cursor.close() luôn gọi, JSON đúng |
-| 1b | happy | fake adapter KHÔNG cursor → fallback run.results | JSON đúng từ results |
-| 2 | happy | formatSchemaContext render đủ trong budget | Chuỗi chứa từng bảng + cột, không dấu cắt |
-| 3 | edge (guard DML) | INSERT/UPDATE/DELETE/DROP/TRUNCATE → reject | ok=false, reason read-only; tool trả reason |
-| 4 | edge (guard khác loại) | multi-statement `SELECT 1; DROP TABLE x`, `SELECT * INTO t2 FROM t`, VÀ `WITH x AS (INSERT INTO a VALUES(1) RETURNING *) SELECT * FROM x` | 3 case đều reject với reason tương ứng (writable-CTE reason riêng) |
-| 5 | edge (masking) | leading `-- comment\n` trước SELECT | ok=true (comment bị strip) |
-| 6 | edge (budget) | schema lớn vượt budget → cắt nguyên bảng + đuôi "(+N more tables omitted)" | Không vượt budgetChars; bảng đầu vẫn nguyên |
-| 7 | edge (factory/throw) | factory null; adapter throw; cursor.fetchBatch throw (close vẫn gọi) | No-connection msg; "Tool failed: …"; "Tool failed: …" |
+| 1 | happy | Valid SELECT through fake adapter WITH cursor | fetchBatch(50) is called, cursor.close() is always called, JSON correct |
+| 1b | happy | Fake adapter WITHOUT cursor → fallback to run.results | JSON correct from results |
+| 2 | happy | formatSchemaContext renders fully within budget | String contains every table + column, no truncation marker |
+| 3 | edge (DML guard) | INSERT/UPDATE/DELETE/DROP/TRUNCATE → reject | ok=false, reason read-only; tool returns the reason |
+| 4 | edge (other-guard) | multi-statement `SELECT 1; DROP TABLE x`, `SELECT * INTO t2 FROM t`, AND `WITH x AS (INSERT INTO a VALUES(1) RETURNING *) SELECT * FROM x` | all 3 cases reject with their respective reasons (separate writable-CTE reason) |
+| 5 | edge (masking) | leading `-- comment\n` before SELECT | ok=true (comment stripped) |
+| 6 | edge (budget) | schema too large for budget → cuts whole tables + trailing "(+N more tables omitted)" | Does not exceed budgetChars; first table remains intact |
+| 7 | edge (factory/throw) | factory null; adapter throws; cursor.fetchBatch throws (close still runs) | No-connection message; "Tool failed: …"; "Tool failed: …" |
 | 8 | regression | truncation >50 rows | JSON `truncated:true`, rows.length==50 |
 
 ## Test Files
@@ -46,11 +46,11 @@ npx vitest run src/ai/tools/__tests__/sqlTool.test.ts src/ai/tools/__tests__/sch
 ```
 
 ## Acceptance
-- [ ] 10 test PASS RED→GREEN (output thật paste)
-- [ ] Guard không dùng chỉ prefix-match: comment-led SELECT pass; `WITH … INSERT …` fail; `SELECT 1;SELECT 2` fail
-- [ ] Cursor path: close() gọi cả khi fetchBatch throw
-- [ ] Không import vscode; không sửa file cycle J; không sửa src/ai/tools/types.ts
-- [ ] `npx tsc --noEmit` sạch
+- [ ] 10 tests PASS RED→GREEN (real output pasted)
+- [ ] Guard does not use prefix-only matching: comment-led SELECT passes; `WITH … INSERT …` fails; `SELECT 1;SELECT 2` fails
+- [ ] Cursor path: close() is called even if fetchBatch throws
+- [ ] No vscode import; no edits to cycle J files; no edits to src/ai/tools/types.ts
+- [ ] `npx tsc --noEmit` clean
 
 ## Interfaces
 - Consumes: `AgentTool` (frozen), `AdapterFactory` (src/ai/tools/types.ts — async, frozen), `DbAdapter.runQuery` + `BatchedQuery` (`fetchBatch`/`close`), `TableInfo`/`TableDetail`.
@@ -131,7 +131,7 @@ TEST_PLAN_COVERAGE: all-followed (8 rows → 17 its, real expect()s; RED output 
 FINDINGS:
   critical: none
   important:
-    - file: src/ai/tools/sqlTool.ts:92-106 — `EXPLAIN ANALYZE <writable stmt>` BYPASSES the guard. Verified by calling the real isReadOnlySql: `EXPLAIN ANALYZE DELETE FROM t`, `EXPLAIN ANALYZE UPDATE t SET a=1`, `EXPLAIN ANALYZE CREATE TABLE t2 AS SELECT * FROM t`, and `EXPLAIN ANALYZE REFRESH MATERIALIZED VIEW mv` all return ok:true. PG semantics: ANALYZE causes the statement to actually EXECUTE (postgresql.org/docs/current/sql-explain.html: "ANALYZE ... causes the statement to be actually executed"), so this is a real write path (DML executed / table created / MV rebuilt), violating the task goal "chặn mọi thứ khác ở tool layer". Fix: when first keyword is explain, strip optional `ANALYZE|ANALYSE [ ( options... ) ]`, then require the next keyword ∈ {select, show, with} (WITH still subject to the writable-CTE + INTO scans). Add regression tests for the 4 payloads above.
+    - file: src/ai/tools/sqlTool.ts:92-106 — `EXPLAIN ANALYZE <writable stmt>` BYPASSES the guard. Verified by calling the real isReadOnlySql: `EXPLAIN ANALYZE DELETE FROM t`, `EXPLAIN ANALYZE UPDATE t SET a=1`, `EXPLAIN ANALYZE CREATE TABLE t2 AS SELECT * FROM t`, and `EXPLAIN ANALYZE REFRESH MATERIALIZED VIEW mv` all return ok:true. PG semantics: ANALYZE causes the statement to actually EXECUTE (postgresql.org/docs/current/sql-explain.html: "ANALYZE ... causes the statement to be actually executed"), so this is a real write path (DML executed / table created / MV rebuilt), violating the task goal "block everything else at the tool layer". Fix: when the first keyword is explain, strip optional `ANALYZE|ANALYSE [ ( options... ) ]`, then require the next keyword ∈ {select, show, with} (WITH still subject to the writable-CTE + INTO scans). Add regression tests for the 4 payloads above.
   minor:
     - file: src/ai/tools/sqlTool.ts:70-73 — single `$` toggles dollar-quote state, so `SELECT $$into$$` is falsely rejected as INTO (PG $$...$$ quoted string content is skipped by src/core/statementParser.ts:278 but not here). False-positive only (fail-closed); acceptable to leave documented or align token rules.
     - file: src/ai/tools/sqlTool.ts:135 — fetchBatch() takes no arg (interface frozen), spec prose said fetchBatch(50); 50-row cap applied after fetch (slice). Executor documented; no action.

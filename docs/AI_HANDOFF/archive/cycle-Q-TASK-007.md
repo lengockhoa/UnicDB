@@ -35,7 +35,7 @@ the transform.
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | regression happy | unqualified keyword table | `SELECT * FROM order;` + listTables `["order"]` → `SELECT * FROM "public"."order";` (changed: true); still ONE statement | transform call |
 | 2 | regression (editor path) | runStatement with keyword table | invoking `vsdb.runStatement` with `SELECT * FROM order;` → `runner.run` receives sql containing `"public"."order"` — RED before fix | extension.test.ts harness |
@@ -159,8 +159,8 @@ HANDOFF_TO_REVIEWER: yes — TASK-007 implementation complete per spec.
 NEXT: ready for review.
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor append `## Executor Report` BELOW this separator.
+Phase 4 reviewer append `## Reviewer Verdict` BELOW Executor Report.
 -->
 
 ## Reviewer Verdict

@@ -2,7 +2,7 @@
 
 ## §1 Intent
 
-Final backlog sweep, 3 items (user-approved "làm hết tất cả"):
+Final backlog sweep, 3 items (user-approved "do all of them"):
 
 1. **Permission detail** — ACP `session/request_permission` currently renders tool id/name
    and a detail line that is effectively always empty (`aiChatPanel.ts:601-602` passes the

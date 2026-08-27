@@ -20,7 +20,7 @@ truncation helper that decides whether the list is complete. No call sites — T
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | unit (happy) | postgres composition | `SELECT DISTINCT "name" FROM (SELECT * FROM t) vsdb_distinct ORDER BY 1 LIMIT 1001` | `("SELECT * FROM t", "name", "postgres", "", 1000)` |
 | 2 | unit (happy) | mysql quoting | identical shape with `` `name` `` and backticked alias-free body | same, `"mysql"` |

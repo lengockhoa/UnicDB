@@ -46,7 +46,7 @@ ordinals, `*`. **A raw unquoted identifier never reaches SQL unquoted** — the 
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | unit (happy) | `parseOrderBy` single bare identifier | `{ ok: true, terms: [{ column: "name", direction: "ASC" }] }` | `"name"` |
 | 2 | unit (happy) | `parseOrderBy` multi-term with directions | `{ ok: true, terms: [{column:"a",direction:"ASC"},{column:"b",direction:"DESC"}] }` | `"a, b DESC"` |

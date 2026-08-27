@@ -2,25 +2,25 @@
 
 Source: user request 2026-08-24, verbatim:
 
-> Ở chỗ AI chat, Khi mà enter thì coi như send. Nếu mà xuống dòng thì phải gõ shift enter
-> là xuống dòng. Cho phép attach hình vào nữa. Có thể paste từ clipboard vào nữa
+> At the AI chat, Enter should mean send. To start a new line, press Shift+Enter
+> to break the line. Also allow attaching images. Pasting from the clipboard should work too
 
 ## Requirements
 
-1. **Enter = send** trong ô input AI Chat (webview/aiChatPanelMain.ts).
-2. **Shift+Enter = xuống dòng** (Enter thường không bao giờ chèn newline).
-3. **Attach hình**: nút attach + chọn file ảnh → preview thumbnail → gửi kèm message.
-4. **Paste ảnh từ clipboard**: Ctrl/Cmd+V ảnh trong ô input → attach như (3).
-5. Images đi vào AI qua vision-capable model path nếu provider hỗ trợ (work model có
-   `vision: true` flag trong settings — xem src/ai/config.ts); nếu model không hỗ trợ,
-   hiển thị cảnh báo rõ ràng thay vì fail im lặng.
+1. **Enter = send** in the AI Chat input box (webview/aiChatPanelMain.ts).
+2. **Shift+Enter = new line** (plain Enter MUST never insert a newline).
+3. **Attach image**: attach button + pick image file → preview thumbnail → send with the message.
+4. **Paste image from clipboard**: Ctrl/Cmd+V an image inside the input → attach as in (3).
+5. Images go into AI via the vision-capable model path if the provider supports it (the work model has a
+   `vision: true` flag in settings — see src/ai/config.ts); if the model does NOT support it,
+   show a clear warning instead of failing silently.
 
 ## Notes for planner
 
-- Executor sau cycle R nên có AI stack đã được audit/fix — cycle này chỉ đụng input UX.
-- File chính: `webview/aiChatPanelMain.ts` + host message contract (`src/ai/*` nếu cần
-  image parts trong message) + `webview/aiChatPanel.css` nếu có.
-- Post Message giữa webview và host cần extension cho image attachments (base64 hoặc
+- After cycle R, the executor should have an AI stack already audited/fixed — this cycle ONLY touches input UX.
+- Main file: `webview/aiChatPanelMain.ts` + host message contract (`src/ai/*` if image
+  parts in the message are needed) + `webview/aiChatPanel.css` if present.
+- PostMessage between webview and host needs an extension for image attachments (base64 or
   workspace URI).
-- Cuối cycle: patch release theo đúng pattern 1.6.x (CHANGELOG + lockfile sync +
-  releaseHygiene test tự bắt).
+- End of cycle: patch release following the 1.6.x pattern exactly (CHANGELOG + lockfile sync +
+  releaseHygiene test auto-checks).

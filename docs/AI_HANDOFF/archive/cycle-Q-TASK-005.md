@@ -28,7 +28,7 @@ behavior and the bottom footer exactly as today.
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | happy (behavior change) | DOM order inside gridWrap | `[...gridWrap.children].findIndex(isRequeryBar) < findIndex(isGridHost)`; and in document order toolbar < requery bar < grid host | bundle loaded, grid active |
 | 2 | regression | Re-Run click with WHERE/ORDER BY | clicking Re-Run posts `requery` message with `where` + `orderBy` values (existing behavior intact) | fill inputs, click |
@@ -103,8 +103,8 @@ HANDOFF_TO_REVIEWER: yes
 NEXT: ready for review (Phase 4)
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor append `## Executor Report` BELOW this separator.
+Phase 4 reviewer append `## Reviewer Verdict` BELOW Executor Report.
 -->
 
 ## Reviewer Verdict

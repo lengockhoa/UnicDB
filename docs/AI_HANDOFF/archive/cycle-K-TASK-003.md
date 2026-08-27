@@ -1,42 +1,42 @@
 # TASK-003 — AI Chat panel webview + host wiring
 
 ## Goal
-Webview chat panel (house pattern như newTableForm/aiSettingsForm): bubbles user/assistant/tool, markdown final text, Stop button, gửi qua runAgent với registry từ T1+T2.
+A chat webview panel (house pattern like newTableForm/aiSettingsForm): user/assistant/tool bubbles, markdown final text, a Stop button, sends through runAgent with the registry from T1+T2.
 
 ## Target Files
-- `src/ui/aiChatPanelMessages.ts` (mới), `src/ui/aiChatPanel.ts` (mới), `webview/aiChatPanelMain.ts` (mới)
-- `esbuild.js` (thêm entry), `package.json` (command `vsdb.aiChat` + menu)
+- `src/ui/aiChatPanelMessages.ts` (new), `src/ui/aiChatPanel.ts` (new), `webview/aiChatPanelMain.ts` (new)
+- `esbuild.js` (add entry), `package.json` (command `vsdb.aiChat` + menu)
 - Tests: `src/ui/__tests__/aiChatPanel.test.ts`, `src/ui/__tests__/aiChatPanelBundle.test.ts`
 
 ## Spec (frozen)
 ```ts
-// aiChatPanelMessages.ts — contract 2 chiều
+// aiChatPanelMessages.ts — two-way contract
 export type ToPanel = { type: "init"; hasHistory: boolean } | { type: "assistant"; text: string; markdown: boolean } | { type: "step"; label: string } | { type: "error"; message: string } | { type: "done" };
 export type FromPanel = { type: "ready" } | { type: "send"; text: string } | { type: "stop" } | { type: "clear" };
 // aiChatPanel.ts
 export interface ChatAbortToken { aborted: boolean }
 export class AiChatPanel {
   constructor(ctx: vscode.ExtensionContext, deps: AgentDeps, adapterFactory: AdapterFactory, style?: { createWebviewPanel?; asWebviewUri? })
-  show(): void; dispose(): void;  // reveal nếu đang mở (pattern newTableForm)
+  show(): void; dispose(): void;  // reveal if already open (newTableForm pattern)
 }
 ```
-- Host flow `send`: guard text rỗng; build messages = system prompt (chứa schema context qua `formatSchemaContext` từ `(await adapterFactory())?.listTables()` + `listTableDetail` cho ≤30 bảng đầu; catch lỗi introspection → context rỗng, không crash; factory null → context rỗng) + history panel nội bộ + user msg. Gọi `runAgent({ messages, tools: createDbTools(adapterFactory) }, deps, callbacks)` — **tools nằm trên AgentInput, không phải tham số thứ ba** (agent.ts:100-103; callbacks là tham số thứ ba).
-- **Stop (F4 — thiết kế token, KHÔNG AbortController vì runAgent không nhận signal)**: host giữ `ChatAbortToken{aborted}` mỗi lượt send. Khi `stop` tới: token.aborted=true. onStep callback: nếu token.aborted → không post step mới. Khi runAgent promise settle: nếu token.aborted → KHÔNG post assistant final (chỉ post `{type:"done"}`); else post assistant+done. Promise reject do hủy → nuốt (đã có error path riêng).
-- Clear: reset history nội bộ + `{type:"init", hasHistory:false}`.
-- Panel lifecycle: dispose parity với newTableForm (onDidDispose, retainContextWhenHidden=false, enableScripts=true, CSP như aiSettingsForm). `error` message KHÔNG BAO GIỜ chứa apiKey (deps errors đã scrub ở provider — chỉ pass message).
-- Webview `aiChatPanelMain.ts`: bubbles, input + Send/Stop/Clear, markdown render (same minimal renderer style as existing webviews — không CDN).
+- Host `send` flow: guard empty text; build messages = system prompt (containing schema context via `formatSchemaContext` from `(await adapterFactory())?.listTables()` + `listTableDetail` for the first ≤30 tables; catch introspection errors → empty context, do not crash; factory null → empty context) + the panel's internal history + the user message. Call `runAgent({ messages, tools: createDbTools(adapterFactory) }, deps, callbacks)` — **tools live on AgentInput, not as a third positional argument** (agent.ts:100-103; callbacks is the third argument).
+- **Stop (F4 — token-based design, NOT AbortController because runAgent takes no signal)**: the host keeps a `ChatAbortToken{aborted}` per send. When `stop` arrives: token.aborted=true. onStep callback: if token.aborted → do not post a new step. When the runAgent promise settles: if token.aborted → do NOT post the assistant final (only post `{type:"done"}`); else post assistant+done. A reject caused by abort is swallowed (the error path already has its own posting).
+- Clear: reset internal history + `{type:"init", hasHistory:false}`.
+- Panel lifecycle: dispose parity with newTableForm (onDidDispose, retainContextWhenHidden=false, enableScripts=true, CSP like aiSettingsForm). The `error` message NEVER contains the apiKey (deps errors are already scrubbed at the provider — only the message is forwarded).
+- Webview `aiChatPanelMain.ts`: bubbles, input + Send/Stop/Clear, markdown render (same minimal renderer style as existing webviews — no CDN).
 - `package.json`: command `vsdb.aiChat` title "VSDB: AI Chat".
 
 ## Test Cases
-| # | Loại | Tên | Expected |
+| # | Type | Name | Expected |
 |---|------|-----|----------|
-| 1 | happy | send → runAgent gọi với tools registry thật, finalText post assistant+done | postMessages theo thứ tự step?/assistant/done |
+| 1 | happy | send → runAgent called with the real registry, finalText posts assistant+done | postMessages in order step?/assistant/done |
 | 2 | happy | ready → init message | `{type:"init"}` posted |
-| 3 | edge (no connection) | adapterFactory resolve null → system prompt không crash, context rỗng | runAgent vẫn gọi; không throw |
-| 4 | edge (stop) | send rồi stop trước khi promise settle | token.aborted; assistant final KHÔNG post; done posted |
-| 5 | edge (error) | runAgent reject | error bubble với message, done posted, panel còn sống |
-| 6 | lifecycle | show 2 lần → reveal panel cũ, không tạo panel mới | createWebviewPanel gọi 1 lần |
-| 7 | bundle | webview/aiChatPanelMain.ts build có trong out/ | file tồn tại sau `npm run compile` |
+| 3 | edge (no connection) | adapterFactory resolves null → system prompt does not crash, empty context | runAgent is still called; no throw |
+| 4 | edge (stop) | send then stop before promise settles | token.aborted; assistant final NOT posted; done posted |
+| 5 | edge (error) | runAgent rejects | error bubble with message, done posted, panel still alive |
+| 6 | lifecycle | show twice → reveal existing panel, no new panel created | createWebviewPanel called once |
+| 7 | bundle | webview/aiChatPanelMain.ts builds into out/ | file exists after `npm run compile` |
 
 ## Test Files
 `src/ui/__tests__/aiChatPanel.test.ts`, `src/ui/__tests__/aiChatPanelBundle.test.ts`
@@ -47,14 +47,14 @@ npm run compile && npx vitest run src/ui/__tests__/aiChatPanel.test.ts src/ui/__
 ```
 
 ## Acceptance
-- [ ] 7 test PASS RED→GREEN (output thật paste)
-- [ ] Không sửa src/ai/* (chỉ consume); esbuild entry + package.json đúng
-- [ ] CSP + dispose parity với aiSettingsForm; không apiKey vào webview
-- [ ] Stop đúng token semantics (không AbortController)
+- [ ] 7 tests PASS RED→GREEN (real output pasted)
+- [ ] No edits to src/ai/* (consume only); esbuild entry + package.json correct
+- [ ] CSP + dispose parity with aiSettingsForm; apiKey never reaches the webview
+- [ ] Stop uses token semantics (no AbortController)
 
 ## Interfaces
-- Consumes: `runAgent({messages, tools}, deps, callbacks)` (frozen — tools trên AgentInput), `createDbTools`/`AdapterFactory` async (T1+src/ai/tools/types.ts), `createSqlTool`/`formatSchemaContext` (T2).
-- Produces: `AiChatPanel`, `ChatAbortToken`, message contract trên (T4 wiring consume).
+- Consumes: `runAgent({messages, tools}, deps, callbacks)` (frozen — tools on AgentInput), `createDbTools`/`AdapterFactory` async (T1+src/ai/tools/types.ts), `createSqlTool`/`formatSchemaContext` (T2).
+- Produces: `AiChatPanel`, `ChatAbortToken`, the message contract above (T4 wiring consumes them).
 
 ## Executor Report
 
@@ -128,7 +128,7 @@ FINDINGS:
   critical: none
   important:
     - file: src/ui/__tests__/aiChatPanel.test.ts:212,264,312,333,379,444,470,495,507 — all 9 constructions call `new AiChatPanel(extUri, makeDeps(), factory)` positionally, but the class (src/ui/aiChatPanel.ts:103) takes a single `AiChatPanelOptions` object (correct form used at src/extension.ts:361 and aiChatE2E.test.ts:309). With the positional call `this.options` is a `vscode.Uri`, so `deps` and `adapterFactory` are `undefined` in every test; sends still "pass" only because buildMessages' catch swallows the `undefined()` TypeError and the runAgent mock ignores deps. Result: the deps→runAgent and adapterFactory→registry/context plumbing is never exercised by this task's suite, and test #3 ("factory resolves null") actually tests the TypeError path, not null-factory tolerance. Fix: use `new AiChatPanel({ extensionUri: extUri, deps: makeDeps(), adapterFactory: factory })` at all 9 sites, then re-run suite (tests must still pass — that is the point).
-    - file: src/ui/aiChatPanel.ts:120 — `retainContextWhenHidden: false` deviates from both house forms (aiSettingsForm.ts:72, newTableForm.ts:70 use `true`) and contradicts the spec's own "dispose parity với newTableForm" clause. Because the panel has no history replay (host only posts `{type:"init", hasHistory}` — webview never re-renders past turns), hiding the tab destroys the visible thread while host history says `hasHistory:true`: user sees an empty chat that claims history. Fix: set `retainContextWhenHidden: true` like the house forms.
+    - file: src/ui/aiChatPanel.ts:120 — `retainContextWhenHidden: false` deviates from both house forms (aiSettingsForm.ts:72, newTableForm.ts:70 use `true`) and contradicts the spec's own "dispose parity with newTableForm" clause. Because the panel has no history replay (host only posts `{type:"init", hasHistory}` — webview never re-renders past turns), hiding the tab destroys the visible thread while host history says `hasHistory:true`: user sees an empty chat that claims history. Fix: set `retainContextWhenHidden: true` like the house forms.
   minor:
     - file: src/ui/aiChatPanel.ts:53 — frozen spec declared positional constructor `(ctx, deps, adapterFactory, style?)`; shipped interface is the options object. T4/extension.ts already consume the object form, so keep it — but record the deviation here so the spec/interfaces section is not silently stale.
     - file: package.json:137-160 — unrelated unicode-escape normalization churn (\u2019 → literal) in titles/descriptions touched by this task's diff; cosmetic, no functional impact.

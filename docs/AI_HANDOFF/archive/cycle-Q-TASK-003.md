@@ -44,7 +44,7 @@ Right-click a connection (or schema) node → "Create New Schema" opens a NewTab
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | unit happy | live preview | typing `my_schema` posts state whose preview SQL is `CREATE SCHEMA "my_schema";`; empty name → preview `—` + error listed + OK disabled | harness instance, input event |
 | 2 | unit happy | OK → runDdl + refresh + reveal + toast | `runDdl('CREATE SCHEMA "x";', "x")` awaited → `tree.refresh` called → `revealSchemaNode` path called → info message `VSDB: schema "x" created` | valid name |
@@ -120,8 +120,8 @@ locally; do not import src/ into webview/). Message unions stay inline in
 ---
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor append `## Executor Report` BELOW this separator.
+Phase 4 reviewer append `## Reviewer Verdict` BELOW Executor Report.
 ## Executor Report
 
 - Status: `done`

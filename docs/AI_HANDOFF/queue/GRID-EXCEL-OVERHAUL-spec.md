@@ -3,16 +3,16 @@
 Consolidates ALL grid-related user requests from 2026-08-24 (supersedes GRID-EDIT-HIGHLIGHT-spec.md,
 which is removed). Source quotes:
 
-1. "Trên table result... khi edit thì phải đánh dấu lại cái field đã edit phải đổi màu...
-   bấm Command Enter hoặc bấm nút icon check (commit) thì save lại luôn"
-2. "[banner] Cannot save: postgres no-PK + ctid lookup failed for every dirty row — Tạo mới
-   hình như chưa có ctid nên không có lưu được. Fix bug này... Tôi muốn cái Grid này như excel...
-   thêm xóa sửa thoải mái như excel và command enter là lưu lại... hoặc bấm commit là lưu lại luôn.
-   Nút undo cũng phải làm sao cho giống như excel... sau khi sửa xong undo lại thì lui lại bước trước"
-3. "Chỗ dòng này [WHERE/ORDER BY bar] không có thẳng hàng... textfield và button phải đều đẹp
-   và nằm chung 1 hàng"
-4. "ở mỗi column, chỗ filter khi bung ra thì select all và từng chi tiết nằm không align đều
-   bên trái, nhìn xấu quá"
+1. "On the result table... when editing, the edited field must be marked and change color...
+   pressing Command Enter or clicking the check (commit) icon button must save immediately"
+2. "[banner] Cannot save: postgres no-PK + ctid lookup failed for every dirty row — Newly
+   created rows apparently don’t have a ctid so they can’t be saved. Fix this bug... I want this Grid to work like Excel...
+   freely add/delete/edit like Excel and Command Enter saves... or clicking commit saves immediately.
+   The undo button must also behave like Excel... after editing, undo steps back to the previous state"
+3. "This row [WHERE/ORDER BY bar] is not aligned... the textfield and buttons must be uniform
+   and on the same row"
+4. "In each column, when the filter dropdown expands, select all and each item are not left-aligned,
+   it looks ugly"
 
 ## Bug root-cause notes (orchestrator investigation)
 

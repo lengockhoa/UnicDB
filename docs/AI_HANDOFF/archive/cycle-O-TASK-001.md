@@ -7,44 +7,30 @@
 
 ## Goal
 
-Thêm 2 typed method lên `AcpClient` thuần: `sessionList()` (list persisted sessions) và
-`sessionLoad(sessionId, cwd)` (load một session + buffer có thứ tự các replay notifications
-trong cửa sổ load, KHÔNG để chúng rơi vào handler đã đăng ký).
+Add 2 typed methods to a pure `AcpClient`: `sessionList()` (list persisted sessions) and `sessionLoad(sessionId, cwd)` (load a session + buffer the ordered replay notifications in the load window, NOT letting them fall into already-registered handlers).
 
 ## Target Files
 
-- `src/ai/omp/acp.ts` — thêm `AcpSessionListItem`, `AcpReplayNotification`,
-  `AcpSessionLoadResult`, method `sessionList()`, `sessionLoad()` + replay buffering trong
-  `dispatchNotification`. Không đổi bất kỳ API/behavior hiện có nào.
+- `src/ai/omp/acp.ts` — add `AcpSessionListItem`, `AcpReplayNotification`, `AcpSessionLoadResult`, the methods `sessionList()`, `sessionLoad()` + replay buffering inside `dispatchNotification`. Do NOT change any existing API/behavior.
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
-|---|------|----------|----------|---------------------|
-| 1 | unit (happy) | `sessionList` gửi frame đúng + normalize entries | outgoing frame `{jsonrpc,id,method:"session/list",params:{}}`; resolve mảng entry với `title:"Fix schema"`, `messageCount:12` từ `_meta` | fake transport: respond `{sessions:[{sessionId:"s1",cwd:"/w",title:"Fix schema",updatedAt:"2026-08-24T01:02:03Z",_meta:{messageCount:12,size:100}}]}` |
-| 2 | unit (edge-junk) | title `"<function>"` / thiếu / non-string → `null`; `_meta` thiếu → 0 | entry có `title:null`, `messageCount:0`, `size:0`; entry với `sessionId` non-string bị drop khỏi mảng (không throw) | sessions: `[{sessionId:1,...}]` (drop), `[{sessionId:"s2",cwd:"/w",title:"<function>",updatedAt:"..."}]` (title null), `[{sessionId:"s3",cwd:"/w",updatedAt:"..."}]` |
-| 3 | unit (edge-order) | replay notifications đến TRƯỚC dòng result (cùng flush stdout) vẫn nằm đúng thứ tự trong `replay` | `replay.notifications` = 3 notifications theo đúng thứ tự feed; handler đăng ký qua `onNotification` KHÔNG được gọi cho notification nào trong cửa sổ | feed: `session/update` n1 → n2 → result của session/load |
-| 4 | unit (edge-multiflush, RED) | replay NHIỀU flush: frame đến SAU result + SAU 1 drain tick vẫn bị hấp thụ, KHÔNG leak | sau settle, feed tiếp n2 rồi `await setTimeout(0)` (drain tick) rồi n3: cả n2, n3 append vào `replay.notifications` (đúng thứ tự), `replay.closed === false`, handler KHÔNG được gọi lần nào (kể cả cho n3) — test này PHẢI RED với semantics cũ "result + drain tick đóng cửa sổ" | load settle với replay=[n1] |
-| 5 | unit (edge-windowclose) | cửa sổ đóng đúng lúc: request/notify đi tiếp theo flush + close buffer | gọi `client.request("session/prompt", {...})` (hoặc `notify`): buffer được hấp thụ TRƯỚC khi frame mới ghi ra (`replay.closed === true`); sau đó feed `session/update` thường → registered handler được gọi 1 lần đúng `{method, params}` | load settle, buffer còn mở |
-| 6 | unit (edge-error) | `session/load` lỗi server (sessionId không tồn tại) | reject với message chứa `ACP session not found` và property `code === -32603` (giữ code thô); handler không được gọi | fake transport respond `{error:{code:-32603,message:"ACP session not found: sX"}}` |
-| 7 | unit (edge-concurrent) | gọi `sessionLoad` lần 2 khi lần 1 chưa settle | lời gọi thứ 2 reject `Error("session load already in progress")` ngay (sync, không viết frame mới); lần 1 tiếp tục bình thường | không respond lời 1; gọi lời 2 |
-| 8 | unit (regression) | notification ngoài cửa sổ load vẫn tới handler như cũ | sau khi cửa sổ đóng (request kế tiếp đã ghi), feed `session/update` thường → registered handler được gọi 1 lần với đúng `{method, params}`; mọi test hiện có trong `acp.test.ts` vẫn pass nguyên | toàn bộ suite cũ không sửa |
+| # | Type | Test name | Expected | Pre-state / Fixture |
+|---|------|-----------|----------|---------------------|
+| 1 | unit (happy) | `sessionList` sends the right frame + normalizes entries | outgoing frame `{jsonrpc,id,method:"session/list",params:{}}`; resolves an entry array with `title:"Fix schema"`, `messageCount:12` from `_meta` | fake transport: responds `{sessions:[{sessionId:"s1",cwd:"/w",title:"Fix schema",updatedAt:"2026-08-24T01:02:03Z",_meta:{messageCount:12,size:100}}]}` |
+| 2 | unit (edge-junk) | title `"<function>"` / missing / non-string → `null`; missing `_meta` → 0 | entry has `title:null`, `messageCount:0`, `size:0`; entry with a non-string `sessionId` is dropped from the array (does not throw) | sessions: `[{sessionId:1,...}]` (drop), `[{sessionId:"s2",cwd:"/w",title:"<function>",updatedAt:"..."}]` (title null), `[{sessionId:"s3",cwd:"/w",updatedAt:"..."}]` |
+| 3 | unit (edge-order) | replay notifications arriving BEFORE the result line (same stdout flush) still sit in the correct order inside `replay` | `replay.notifications` = 3 notifications in exactly the order they were fed; the handler registered via `onNotification` is NOT called for any notification in the window | feed: `session/update` n1 → n2 → result of session/load |
+| 4 | unit (edge-multiflush, RED) | replay across MULTIPLE flushes: a frame arriving AFTER the result + AFTER 1 drain tick is still absorbed, does NOT leak | after settle, feed n2 then `await setTimeout(0)` (drain tick) then n3: both n2, n3 are appended to `replay.notifications` (in correct order), `replay.closed === false`, the handler is NOT called even once (not even for n3) — this test MUST be RED with the old semantics of "result + drain tick closes the window" | load settles with replay=[n1] |
+| 5 | unit (edge-windowclose) | the window closes at the right moment: the next request/notify absorbs + closes the buffer before writing its frame | call `client.request("session/prompt", {...})` (or `notify`): the buffer is absorbed BEFORE the new frame writes out (`replay.closed === true`); then feed a regular `session/update` → the registered handler is called exactly once with the correct `{method, params}` | load settles, buffer still open |
+| 6 | unit (edge-error) | `session/load` server error (sessionId does not exist) | rejects with a message containing `ACP session not found` and property `code === -32603` (preserves the raw code); the handler is not called | fake transport responds `{error:{code:-32603,message:"ACP session not found: sX"}}` |
+| 7 | unit (edge-concurrent) | calling `sessionLoad` a second time while the first has not settled | the 2nd call rejects with `Error("session load already in progress")` immediately (sync, writes no new frame); the 1st call continues normally | do not respond to call 1; call call 2 |
+| 8 | unit (regression) | notifications outside the load window still reach the handler as before | after the window closes (next request has already written), feed a regular `session/update` → the registered handler is called once with the correct `{method, params}`; every existing test in `acp.test.ts` still passes untouched | the full existing suite is not edited |
 
-Lưu ý fixture: envelope replay từ evidence — `params: { sessionId, update: { sessionUpdate,
-delta | content } }`; test chỉ cần method `"session/update"` bất kỳ, nội dung không quan
-trọng cho tầng client (client không parse semantic). **Cửa sổ replay (review F1, frozen
-ở PLAN §3.A):** mở khi `sessionLoad` ghi frame request, ĐÓNG khi request/notify đi kế tiếp
-ghi frame (write absorbs pending buffer TRƯỚC, rồi mới ghi frame của nó) — KHÔNG đóng
-theo "result settle + drain tick" (replay 157 notifications / 14.9 MB trải nhiều stdout
-flush; đóng sớm → late frames leak vào handler live → stray `delta` bubbles ở
-`aiChatPanel.ts:512-518`). Promise settle ngay khi result về, `replay` là buffer LIVE
-tiếp tục lớn lên cho đến khi đóng; buffer chỉ hấp thụ `session/update` có `params.sessionId`
-trùng sessionId của load, frame khác / sau khi đóng → handler như bình thường.
+Fixture note: replay envelope from evidence — `params: { sessionId, update: { sessionUpdate, delta | content } }`; the test only needs method `"session/update"` of any kind, content does not matter at the client layer (client does not parse semantics). **Replay window (review F1, frozen in PLAN §3.A):** opens when `sessionLoad` writes its request frame, CLOSES when the next request/notify writes its frame (write absorbs the pending buffer FIRST, then writes its own frame) — NOT closing on "result settle + drain tick" (replay of 157 notifications / 14.9 MB spans many stdout flushes; closing early → late frames leak into the live handler → stray `delta` bubbles at `aiChatPanel.ts:512-518`). The Promise settles as soon as the result arrives; `replay` is a LIVE buffer that keeps growing until closed; the buffer only absorbs `session/update` notifications whose `params.sessionId` matches the load's sessionId; other frames / frames after close → handler as normal.
 
 ## Test Files
 
-- `src/ai/omp/__tests__/acp.test.ts` — append 8 cases trên vào suite hiện có (cùng
-  FakeAcpTransport pattern).
+- `src/ai/omp/__tests__/acp.test.ts` — append the 8 cases above to the existing suite (same FakeAcpTransport pattern).
 
 ## Verification Commands
 
@@ -52,14 +38,14 @@ trùng sessionId của load, frame khác / sau khi đóng → handler như bình
 npm run typecheck && npx vitest run src/ai/omp/__tests__/acp.test.ts
 ```
 
-(`package.json` không có lint script — N/A.)
+(`package.json` has no lint script — N/A.)
 
 ## Acceptance Criteria
 
-- [ ] Mọi test ở §Test Cases PASS (RED trước — paste output vào Executor Report).
-- [ ] Không method/API hiện có của `AcpClient` đổi hành vi (suite cũ pass nguyên vẹn).
-- [ ] File không import vscode, không spawn (pure/injectable giữ nguyên).
-- [ ] Reviewer verdict APPROVED hoặc APPROVED-WITH-MINOR.
+- [ ] Every test in §Test Cases PASSES (RED before — paste output into the Executor Report).
+- [ ] No existing `AcpClient` method/API changes behavior (the existing suite passes untouched).
+- [ ] The file does NOT import vscode, does NOT spawn (pure/injectable stays).
+- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
 
 ## Dependencies
 
@@ -67,54 +53,47 @@ npm run typecheck && npx vitest run src/ai/omp/__tests__/acp.test.ts
 
 ## Interfaces
 
-- Consumes: (none — chỉ dùng `AcpTransport`, `request()`, `dispatchNotification` sẵn có).
-- Produces (TASK-002/TASK-003 tiêu thụ — chữ ký CHÍNH XÁC):
+- Consumes: (none — only uses the existing `AcpTransport`, `request()`, `dispatchNotification`).
+- Produces (consumed by TASK-002/TASK-003 — EXACT signature):
   ```ts
   export interface AcpSessionListItem {
     sessionId: string;
     cwd: string;
-    title: string | null;   // null khi thiếu / non-string / === "<function>"
+    title: string | null;   // null when missing / non-string / === "<function>"
     updatedAt: string;      // non-string → ""
-    messageCount: number;   // từ _meta, default 0
-    size: number;           // từ _meta, default 0
+    messageCount: number;   // from _meta, default 0
+    size: number;           // from _meta, default 0
   }
   export interface AcpReplayNotification { method: string; params: unknown }
   export interface AcpReplayBuffer {
-    // đúng thứ tự nhận được; TIẾP TỤC lớn lên cho đến khi cửa sổ đóng
+    // in receive order; keeps growing until the window closes
     readonly notifications: readonly AcpReplayNotification[];
-    readonly closed: boolean; // true sau khi request/notify kế flush + close
+    readonly closed: boolean; // true after the next request/notify flush + close
   }
   export interface AcpSessionLoadResult {
     configOptions: unknown;
     modes: unknown;
-    replay: AcpReplayBuffer; // object LIVE — settle mang theo những gì đã đến
+    replay: AcpReplayBuffer; // LIVE object — settle carries whatever has already arrived
   }
   class AcpClient {
     sessionList(): Promise<AcpSessionListItem[]>;
     sessionLoad(sessionId: string, cwd: string): Promise<AcpSessionLoadResult>;
   }
   ```
-  **Semantics cửa sổ replay (frozen — review F1, PLAN §3.A):** cửa sổ mở khi
-  `sessionLoad` ghi frame request; promise settle khi load RESULT về (buffer có thể còn
-  lớn lên — replay nhiều flush là bình thường, probe 157 notifications / 14.9 MB). Cửa sổ
-  ĐÓNG khi request/notify đi kế tiếp: write absorbs buffer đang treo (đánh dấu
-  `closed`) TRƯỚC rồi mới ghi frame của nó — sau đó `session/update` trùng sessionId đi
-  thẳng handler như live turn. Buffer chỉ hấp thụ `session/update` với
-  `params.sessionId === load sessionId`. KHÔNG có drain-tick close.
-  Wire envelopes (evidence-frozen): list `params: {}`; load
-  `params: { sessionId, cwd, mcpServers: [] }`.
+  **Replay window semantics (frozen — review F1, PLAN §3.A):** the window opens when `sessionLoad` writes its request frame; the promise settles when the load RESULT arrives (the buffer may still grow — replay across many flushes is normal, probe showed 157 notifications / 14.9 MB). The window CLOSES when the next request/notify is sent: the write absorbs the pending buffer (marks `closed`) FIRST then writes its own frame — after that, `session/update` for the matching sessionId goes straight to the handler as a live turn. The buffer only absorbs `session/update` notifications with `params.sessionId === load sessionId`. NO drain-tick close.
+  Wire envelopes (evidence-frozen): list `params: {}`; load `params: { sessionId, cwd, mcpServers: [] }`.
 
 ---
 
 ## Discussion
 
-(chưa có comment)
+(no comments yet)
 
 ---
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor append `## Executor Report` BELOW this separator.
+Phase 4 reviewer append `## Reviewer Verdict` BELOW the Executor Report.
 -->
 
 ## Executor Report

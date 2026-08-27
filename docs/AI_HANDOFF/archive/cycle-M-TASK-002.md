@@ -16,7 +16,7 @@ Replace Cycle L’s RPC process with an ACP process wrapper and extension bootst
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | unit | start uses `omp acp` without approval-auto arguments | spawned args never contain `yolo`/`--approval-mode`/`--auto-approve` | FakeSpawn, FakeAcpTransport |
 | 2 | unit | start passes workspace cwd and conditional `--cwd` from evidence | spawn options always have `cwd`; `--cwd` flag appears only if TASK-001 recorded support | FakeSpawn, recorded probe evidence |

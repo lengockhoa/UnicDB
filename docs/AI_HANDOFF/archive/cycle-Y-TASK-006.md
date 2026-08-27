@@ -35,7 +35,7 @@ rejected).
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | happy | DISTINCT for `a` retains WHERE and other filters | Requesting values for `a` after a server requery with bar `WHERE archived = false` and filter `{b:["x"]}` calls `buildDistinctValuesQuery` with `archived = false AND <b predicate>`. | One statement with active bar WHERE and a typed b filter. Exact filter storage contract is blocked below. |
 | 2 | edge — boundary | Requested column filters never self-narrow list | Requesting values for `a` omits all predicates derived from filter `a`, while preserving `b` predicates. | Same active model contains selected `a` and `b` values. |

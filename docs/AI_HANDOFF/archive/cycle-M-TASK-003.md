@@ -16,7 +16,7 @@ Define the host/webview ACP permission wire shape and render requests safely as 
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | unit | host permission message exposes opaque request ID, tool/details, and option IDs | required fields are typed and present without API-key fields | fake host message |
 | 2 | unit | webview posts one `permission_response` with supplied opaque request ID and selected option | one response message is posted after Allow/Deny action | fake DOM |

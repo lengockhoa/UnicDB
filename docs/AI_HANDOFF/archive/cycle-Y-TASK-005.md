@@ -23,7 +23,7 @@ as bundled P3 cleanup.
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | happy | MySQL NULLS LAST is emulated | `parseOrderBy("a ASC NULLS LAST", "mysql")` is `{ok:true}` and `buildOrderByClause` is exactly `` `a` IS NULL ASC, `a` ASC ``. | One valid bare identifier. |
 | 2 | edge — dialect | MSSQL NULLS LAST is emulated without boolean ORDER BY | Exact output is `CASE WHEN [a] IS NULL THEN 1 ELSE 0 END ASC, [a] ASC`; it contains no `NULLS LAST`. | Same term under `mssql`. |

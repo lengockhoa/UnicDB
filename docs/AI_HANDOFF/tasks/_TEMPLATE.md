@@ -1,19 +1,19 @@
 # TASK-XXX — <short title>
 
 <!--
-Template cho mỗi task. Planner copy file này khi split PLAN.md sang task riêng.
-File này BẮT BUỘC giữ structure: Goal + Test Cases + Test Files + Verification + Acceptance + Interfaces.
-Mọi AI (planner / executor / reviewer) đọc và ghi vào file NÀY. Không trao đổi ngoài file.
+Template for every task. The planner copies this file when splitting PLAN.md into individual tasks.
+This file MUST keep its structure: Goal + Test Cases + Test Files + Verification + Acceptance + Interfaces.
+Every AI (planner / executor / reviewer) reads and writes into THIS file. No exchange outside the file.
 -->
 
 - Status: `ready`  <!-- ready | in_progress | pending_review | changes_requested | critical_block | approved | approved_minor | blocked | done -->
-- Owner: `-`       <!-- tool đang giữ task -->
-- Reviewer: `-`    <!-- model name reviewer dùng, set ở Phase 4 -->
+- Owner: `-`       <!-- tool currently holding the task -->
+- Reviewer: `-`    <!-- reviewer model name, set in Phase 4 -->
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §<section>
 
 ## Goal
 
-<!-- 1-2 câu mô tả slice này làm gì. -->
+<!-- 1-2 sentences describing what this slice does. -->
 
 ## Target Files
 
@@ -21,15 +21,15 @@ Mọi AI (planner / executor / reviewer) đọc và ghi vào file NÀY. Không t
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | unit | `<describe behavior>` | `<concrete expected>` | `<input>` |
 | 2 | edge | `<null/empty/boundary>` | `<expected>` | `<input>` |
-| 3 | regression (nếu bug fix) | `<reproduces bug>` | RED before fix, GREEN after | `<repro input>` |
+| 3 | regression (if bug fix) | `<reproduces bug>` | RED before fix, GREEN after | `<repro input>` |
 
 ## Test Files
 
-- `<tests/path/to/file.test.js>` — chứa các test ở trên.
+- `<tests/path/to/file.test.js>` — contains the tests listed above.
 
 ## Verification Commands
 
@@ -39,45 +39,46 @@ npm test tests/path/to/file.test.js
 
 ## Acceptance Criteria
 
-- [ ] Mọi test ở §Test Cases PASS.
-- [ ] Không regression ở suite liên quan.
-- [ ] Reviewer verdict APPROVED hoặc APPROVED-WITH-MINOR.
-- [ ] Docs/CHANGELOG cập nhật nếu user-facing.
+- [ ] Every test in §Test Cases passes.
+- [ ] No regression in related suites.
+- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
+- [ ] Docs/CHANGELOG updated if user-facing.
 
 ## Dependencies
 
-- (none) <!-- hoặc TASK-xxx phải done trước -->
+- (none) <!-- or TASK-xxx must complete first -->
 
 ## Interfaces
 
 <!--
-Executor thường CHỈ thấy task file này, không thấy task khác. Block này là cách nó biết đúng
-tên/kiểu mà task khác kỳ vọng — tránh lỗi kiểu "TASK-3 gọi clearLayers() nhưng TASK-7 lại gọi
-clearFullLayers()". Ghi chữ ký thật (function/endpoint/type), không ghi placeholder.
+The executor usually ONLY sees this task file, not other tasks. This block is how it learns the
+exact names/types that other tasks expect — preventing the kind of bug where "TASK-3 calls
+clearLayers() but TASK-7 calls clearFullLayers()". Record real signatures (function/endpoint/type),
+not placeholders.
 -->
 
-- Consumes: `<what this task uses from earlier tasks — exact function/endpoint signatures, types>` <!-- hoặc (none) -->
-- Produces: `<what later tasks rely on from this task — exact function/endpoint signatures, types>` <!-- hoặc (none) -->
+- Consumes: `<what this task uses from earlier tasks — exact function/endpoint signatures, types>` <!-- or (none) -->
+- Produces: `<what later tasks rely on from this task — exact function/endpoint signatures, types>` <!-- or (none) -->
 
 ---
 
 ## Discussion
 
 <!--
-AI nói chuyện với nhau Ở ĐÂY, không nói qua tool khác.
-Format mỗi comment:
+AIs talk to each other HERE, not via any other tool.
+Format for each comment:
 
 ### <date> · <role: planner|executor|reviewer> · <tool/model>
-<nội dung — câu hỏi, lưu ý, đề xuất, đẩy ngược về phase trước>
+<content — question, note, suggestion, push back to a previous phase>
 
-Reply lùn 1 level (####). Ghi rõ "→ @planner" / "→ @executor" / "→ @reviewer" nếu có người nhận cụ thể.
+Reply at one heading level lower (####). Mark "-> @planner" / "-> @executor" / "-> @reviewer" when there is a specific recipient.
 -->
 
-(chưa có comment)
+(no comments yet)
 
 ---
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor appends `## Executor Report` BELOW this separator.
+Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->

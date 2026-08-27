@@ -26,7 +26,7 @@ render it in the webview as a collapsible block, `textContent` only.
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | unit | SQL preview for run_sql | detail === `"SQL:\nSELECT 1 FROM t"`, id/name passthrough | `{id:"t1", name:"run_sql", arguments:{sql:"SELECT 1 FROM t"}}` |
 | 2 | unit | pretty JSON fallback | detail === `JSON.stringify({schema:"public"},null,2)` | `{name:"describe_table", args:{schema:"public", table:"users"}}` |

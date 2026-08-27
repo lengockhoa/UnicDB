@@ -28,7 +28,7 @@ test below asserts that stays true.
 
 ## Test Cases (REQUIRED — TDD)
 
-| # | Loại | Tên test | Expected | Pre-state / Fixture |
+| # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | unit (happy) | `package.json contributes a grammar injected into source.sql` | `contributes.grammars` has length ≥ 1; entry `.injectTo` contains `"source.sql"`; `.scopeName === "source.sql.vsdb"` | read `package.json` from disk |
 | 2 | unit (happy) | `grammar file exists at the contributed path and parses as JSON` | `fs.existsSync(path)` true; `JSON.parse` does not throw; parsed `.scopeName` equals the contributed `scopeName` | path read out of `package.json`, not hardcoded |
@@ -101,8 +101,8 @@ a `contributes.languages` change and case 6 will fail it. Scope is injection onl
 ---
 
 <!--
-Phase 3 executor append `## Executor Report` BÊN DƯỚI dấu phân cách này.
-Phase 4 reviewer append `## Reviewer Verdict` BÊN DƯỚI Executor Report.
+Phase 3 executor append `## Executor Report` BELOW this separator.
+Phase 4 reviewer append `## Reviewer Verdict` BELOW the Executor Report.
 -->
 
 ## Executor Report
