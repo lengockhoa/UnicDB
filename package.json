@@ -57,7 +57,8 @@
     "onCommand:vsdb.browseTableData",
     "onCommand:vsdb.createSchema",
     "onCommand:vsdb.exportStructure",
-    "onCommand:vsdb.exportAllStructures"
+    "onCommand:vsdb.exportAllStructures",
+    "onCommand:vsdb.openConsole"
   ],
   "contributes": {
     "commands": [
@@ -216,6 +217,12 @@
         "title": "VSDB: Export All Structures (Copy DDL)",
         "category": "VSDB",
         "icon": "$(output)"
+      },
+      {
+        "command": "vsdb.openConsole",
+        "title": "VSDB: Open Console",
+        "category": "VSDB",
+        "icon": "$(window)"
       }
     ],
     "keybindings": [

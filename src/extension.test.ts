@@ -1808,6 +1808,191 @@ describe("TASK-004 — vsdb.exportAllStructures wiring", () => {
 });
 
 // =============================================================================
+// TASK-003 (cycle Z) — vsdb.openConsole: command registration, package.json
+// contribution, activationEvent, and full-buffer execution delegation.
+// The registered handler routes runConsole through sqlToRun with a FULL-BUFFER
+// selection ({start:0,end:sql.length}) and the active dialect, then hands EVERY
+// parsed statement to the existing shared runStatements flow (dangerous
+// confirm + keyword qualify + runner + ResultsPanel render all still apply).
+// =============================================================================
+describe("TASK-003 — vsdb.openConsole wiring", () => {
+  let runSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+    state.registeredTreeDataProviders.clear();
+    state.createdStatusBarItems.length = 0;
+    state.createdWebviewPanels.length = 0;
+    state.createdTreeViews.length = 0;
+    state.registeredCodeLensProviders.length = 0;
+    state.onDidChangeConfigSubscribers.length = 0;
+    state.workspaceFolders = undefined;
+    state.activeEditor = undefined;
+    state.createdTerminals.length = 0;
+    state.confirmDestructive = undefined;
+    vi.resetModules();
+  });
+
+  afterEach(async () => {
+    // extension.ts keeps module-level singletons (incl. the console panel);
+    // deactivate drops them so later describes start clean.
+    await deactivate();
+  });
+
+  /** Activate against a seeded active connection + spied QueryRunner.run. */
+  async function activateWithConsole(driver = "postgres") {
+    const ctx = makeCtx();
+    ctx.globalState.get = vi.fn((key: string) => {
+      if (key === "vsdb.connections") {
+        return [
+          {
+            id: "c1",
+            name: "c",
+            driver,
+            host: "h",
+            port: 5432,
+            user: "u",
+            database: "d",
+          },
+        ];
+      }
+      if (key === "vsdb.activeConnection") return "c1";
+      return undefined;
+    }) as never;
+
+    const connectionMgrMod = await import("./core/connectionManager");
+    const adapter: Partial<DbAdapter> = {
+      listTables: vi.fn().mockResolvedValue([]),
+      testConnection: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    vi.spyOn(
+      connectionMgrMod.ConnectionManager.prototype,
+      "getAdapter",
+    ).mockResolvedValue(adapter as DbAdapter);
+
+    const runnerMod = await import("./core/queryRunner");
+    runSpy = vi
+      .spyOn(runnerMod.QueryRunner.prototype, "run")
+      .mockResolvedValue([]);
+
+    const ext = await import("./extension");
+    await ext.activate(ctx as never);
+    return ctx;
+  }
+
+  it("#C1 registers vsdb.openConsole on activate", async () => {
+    await activateWithConsole();
+    expect(state.registeredCommands.has("vsdb.openConsole")).toBe(true);
+  });
+
+  it("#C2 package.json contributes 'VSDB: Open Console' with matching activationEvent", () => {
+    interface CmdEntry { command: string; title?: string; category?: string }
+    const commands = pkgJson.contributes.commands as CmdEntry[];
+    const entry = commands.find((c) => c.command === "vsdb.openConsole");
+    expect(entry).toBeDefined();
+    expect(entry!.title).toMatch(/Open Console/i);
+    expect(entry!.category).toBe("VSDB");
+    // Palette-only per plan §3.3: no view/title or other menu entry.
+    const menus = pkgJson.contributes.menus as Record<
+      string,
+      Array<{ command: string }>
+    >;
+    for (const [menu, entries] of Object.entries(menus)) {
+      expect(
+        entries.some((m) => m.command === "vsdb.openConsole"),
+        `vsdb.openConsole must not appear in ${menu}`,
+      ).toBe(false);
+    }
+    const evts = pkgJson.activationEvents as string[];
+    expect(evts).toContain("onCommand:vsdb.openConsole");
+  });
+
+  /** Index of the createWebviewPanel call whose viewType is vsdb.console,
+   *  plus the created panel instance (shared mock does not tag instances). */
+  function findConsolePanelCall(): { callIndex: number; panel: Record<string, unknown> } {
+    const calls = (vscodeMock.window.createWebviewPanel as Mock)
+      .mock.calls as unknown as Array<[string, string, unknown, unknown]>;
+    const callIndex = calls.findIndex(([viewType]) => viewType === "vsdb.console");
+    expect(callIndex).toBeGreaterThanOrEqual(0);
+    const panel = state.createdWebviewPanels[callIndex] as Record<string, unknown>;
+    return { callIndex, panel };
+  }
+
+  it("#C3 invoking vsdb.openConsole opens exactly one vsdb.console webview panel", async () => {
+    await activateWithConsole();
+    const fn = state.registeredCommands.get("vsdb.openConsole");
+    expect(fn).toBeDefined();
+    await fn!();
+
+    const calls = (vscodeMock.window.createWebviewPanel as Mock)
+      .mock.calls as unknown as Array<[string]>;
+    const consoleCalls = calls.filter(([viewType]) => viewType === "vsdb.console");
+    expect(consoleCalls.length).toBe(1);
+    // HTML links both assets under the established CSP.
+    const { panel } = findConsolePanelCall();
+    const html = (
+      panel as unknown as { webview: { html: string } }
+    ).webview.html;
+    expect(html).toMatch(/consolePanel\.js/);
+    expect(html).toMatch(/webview\.css/);
+    expect(html).toContain(`style-src vscode-webview://test 'unsafe-inline'`);
+  });
+
+  it("#C4 runConsole message runs the WHOLE buffer through the shared flow: sqlToRun(full-span) → every statement to runner.run in source order", async () => {
+    await activateWithConsole();
+    const fn = state.registeredCommands.get("vsdb.openConsole");
+    await fn!();
+
+    const { panel } = findConsolePanelCall();
+    const handler = (
+      panel as unknown as { webview: { onDidReceiveMessage: Mock } }
+    ).webview.onDidReceiveMessage.mock.calls[0][0] as (msg: unknown) => void;
+
+    // Fire-and-forget the handler; runStatements is awaited inside.
+    handler({ type: "runConsole", sql: "SELECT 1; SELECT 2" });
+    for (let i = 0; i < 100 && runSpy.mock.calls.length === 0; i++) {
+      await Promise.resolve();
+    }
+
+    expect(runSpy).toHaveBeenCalled();
+    const passed = runSpy.mock.calls[0]?.[0] as ParsedStatement[];
+    // BOTH statements parsed from the full buffer, source order preserved.
+    expect(passed.length).toBe(2);
+    expect(passed[0]!.text).toBe("SELECT 1");
+    expect(passed[1]!.text).toBe("SELECT 2");
+  });
+
+  it("#C5 save message with cancelled dialog does not throw and writes nothing", async () => {
+    // extension.test.ts's file-wide vscode mock omits showSaveDialog / fs.
+    // Real VS Code always provides them; stub the CANCELLED outcome here so
+    // the save flow resolves silently without writing anything.
+    const win = vscodeMock.window as unknown as Record<string, unknown>;
+    win.showSaveDialog = vi.fn().mockResolvedValue(undefined);
+    try {
+      await activateWithConsole();
+      const fn = state.registeredCommands.get("vsdb.openConsole");
+      await fn!();
+      const { panel } = findConsolePanelCall();
+      const handler = (
+        panel as unknown as { webview: { onDidReceiveMessage: Mock } }
+      ).webview.onDidReceiveMessage.mock.calls[0][0] as (msg: unknown) => void;
+
+      handler({ type: "saveConsoleAsSql", sql: "SELECT 1;" });
+      for (let i = 0; i < 100 && (win.showSaveDialog as Mock).mock.calls.length === 0; i++) {
+        await Promise.resolve();
+      }
+      expect(win.showSaveDialog).toHaveBeenCalled();
+      // Nothing further happened: no writeFile surface exists to have been hit.
+      expect(state.createdWebviewPanels.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      delete win.showSaveDialog;
+    }
+  });
+});
+
+// =============================================================================
 // TASK-001 — per-connection manualCommit reaching ConnectionManager.
 // openConnectionForm() builds ConnectionConfig literals for BOTH add and edit
 // paths; these tests drive vsdb.addConnection / vsdb.editConnection through

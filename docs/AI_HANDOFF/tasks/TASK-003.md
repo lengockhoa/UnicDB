@@ -71,3 +71,66 @@ npm run typecheck
 Verified source contract: `SchemaForm.buildHtml` links `dist/webview.css` with `webview.asWebviewUri`, so Console must independently link that same emitted asset under `style-src ${webview.cspSource} 'unsafe-inline'`; `webview/main.ts` is the existing stylesheet import that emits it. `sqlToRun` is `sqlToRun(sql, selection, cursorOffset, dialect)`: absent selection takes its cursor-only branch, so Console must force full-buffer parsing with `sqlToRun(sql, { start: 0, end: sql.length }, 0, mgr.getActive()?.driver)`. The selection branch parses the full slice, while `0` is required but ignored there. Do not substitute the editor handler's selection/cursor inputs or bypass `runStatements`.
 
 ---
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT:
+```
+❯ src/ui/__tests__/consolePanel.test.ts (0 test)
+ FAIL src/ui/__tests__/consolePanel.test.ts
+Error: Failed to load url ../consolePanel (resolved id: ../consolePanel)
+in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-003/src/ui/__tests__/consolePanel.test.ts.
+Does the file exist?
+ Test Files  1 failed (1)
+
+(npx vitest run src/extension.test.ts -t "vsdb.openConsole")
+FAIL ... #C1 registers vsdb.openConsole on activate → TypeError: fn is not a function
+FAIL ... #C3 invoking vsdb.openConsole opens exactly one vsdb.console webview panel
+FAIL ... #C4 runConsole message runs the WHOLE buffer...
+FAIL ... #C5 save message with cancelled dialog does not throw and writes nothing
+ Tests  5 failed | 63 skipped (68)
+```
+(`vsdb.openConsole` was unregistered and `src/ui/consolePanel.ts` did not exist —
+the expected pre-implementation failure reasons.)
+
+Verification Output:
+```
+$ npm run typecheck          → tsc --noEmit, exit 0, no errors
+$ npm run compile            → esbuild: build complete; dist/consolePanel.js (3123B),
+                               dist/webview.css (24467B), dist/webview.js all emitted
+
+$ npx vitest run src/ui/__tests__/consolePanel.test.ts src/extension.test.ts
+ ✓ src/ui/__tests__/consolePanel.test.ts  (7 tests) 5ms
+ ✓ src/extension.test.ts  (68 tests) 193ms
+ Test Files  2 passed (2)
+      Tests  75 passed (75)
+
+$ npm test   (aggregate, worktree)
+ Test Files  115 passed | 1 skipped (116)
+      Tests  1691 passed | 2 skipped (1693)
+```
+
+Status: PASS
+
+Note:
+1. sqlToRun cross-check per task prompt: real signature at statementParser.ts:815-831 IS
+   `sqlToRun(sql, selection: {start,end}|undefined, cursorOffset, dialect?)` — matches the plan's
+   assumption exactly. Implemented as `sqlToRun(sql, { start: 0, end: sql.length }, 0,
+   mgr.getActive()?.driver)`; NO deviation from plan required.
+2. Executor-run callback kept inside extension.ts's `commandOpenConsole` so consolePanel.ts has no
+   circular import of extension internals — ConsolePanel takes `onRun(sql)` as an injected callback.
+3. package.json command entry carries `"icon": "$(window)"` because src/scaffold.test.ts:125-127
+   enforces EVERY contributed command to have an icon matching /^\$\(/ — palette-only (no menu
+   contribution), per plan.
+4. Environment note: the worktree had no installed node_modules/.bin, which made the PRE-EXISTING
+   src/ui/__tests__/aiChatPanelWebview.test.ts suite fail with spawnSync ENOENT on clean baseline
+   (verified via stash). Fixed by symlinking parent repo's esbuild binary into the gitignored
+   node_modules/.bin — code untouched; aggregate now fully green (1691 pass).
+5. retainContextWhenHidden: true used — ALL six existing panels use it (resultsPanel,
+   connectionForm, aiSettingsForm, aiChatPanel, newTableForm, schemaForm), so consistent.
+
+---

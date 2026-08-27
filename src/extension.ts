@@ -28,6 +28,7 @@ import { createProviderClient } from "./ai/provider";
 import type { AdapterFactory } from "./ai/tools/types";
 import type { AgentDeps } from "./ai/agent";
 import { AiChatPanel, type AcpPanelDeps } from "./ui/aiChatPanel";
+import { ConsolePanel } from "./ui/consolePanel";
 import { AcpProcess } from "./ai/omp/acpProcess";
 import { detectOmp } from "./ai/omp/detect";
 import { resolveEngine } from "./ai/engineChoice";
@@ -46,6 +47,8 @@ let state: ExtensionState | null = null;
 let aiSettingsForm: AiSettingsForm | null = null;
 /** Cached single-instance AiChatPanel (TASK-004). Reused across calls. */
 let aiChatPanel: AiChatPanel | null = null;
+/** Cached single-instance ConsolePanel (TASK-003 cycle Z). Reused while live. */
+let consolePanel: ConsolePanel | null = null;
 /** extensionUri capture ở activate() — dùng cho ConnectionForm webview resources. */
 let extensionUriForForm: vscode.Uri = vscode.Uri.file("/");
 let runScriptTerminal: vscode.Terminal | null = null;
@@ -386,10 +389,21 @@ export async function activate(
     ),
   );
 
+  // 17. vsdb.openConsole — TASK-003 cycle Z: DataGrip-style SQL Console
+  // (single instance). Run executes the WHOLE buffer via the shared
+  // runStatements flow; Save writes the buffer through an OS save dialog.
+  disposables.push(
+    vscode.commands.registerCommand("vsdb.openConsole", () =>
+      commandOpenConsole(mgr, runner, panel),
+    ),
+  );
+
   // Dispose schemaTree + codeLens on deactivate to drop subscriptions + cache.
   context.subscriptions.push({ dispose: () => tree.dispose() });
   context.subscriptions.push({ dispose: () => codeLens.dispose() });
   context.subscriptions.push({ dispose: () => aiSettingsForm?.dispose() });
+  // TASK-003 cycle Z — console panel teardown with activation.
+  context.subscriptions.push({ dispose: () => consolePanel?.dispose() });
 
   disposables.forEach((d) => context.subscriptions.push(d));
 }
@@ -408,6 +422,8 @@ export async function deactivate(): Promise<void> {
   aiSettingsForm = null;
   aiChatPanel?.dispose();
   aiChatPanel = null;
+  consolePanel?.dispose();
+  consolePanel = null;
   if (runScriptTerminal) {
     try {
       runScriptTerminal.dispose();
@@ -527,6 +543,60 @@ async function commandOpenAiChat(
   });
   aiChatPanel.show();
 }
+/**
+ * TASK-003 cycle Z — vsdb.openConsole: open the SQL Console (single instance).
+ * Reveal-on-reshow while live; onDispose drops the module singleton so a
+ * closed tab leads to fresh empty state on the next open (AiChatPanel
+ * Finding 7 precedent). The injected run callback is explicitly FULL-BUFFER
+ * execution: sqlToRun(sql, { start: 0, end: sql.length }, 0, dialect) parses
+ * every statement in the Console editor (the `0` cursorOffset is required but
+ * unused on the selection branch), and the results delegate to the EXISTING
+ * shared runStatements flow — dangerous confirm, keyword qualify, busy state,
+ * runner updates, ResultsPanel rendering all retained unchanged.
+ */
+function commandOpenConsole(
+  mgr: ConnectionManager,
+  runner: QueryRunner,
+  panel: ResultsPanel,
+): void {
+  if (!consolePanel) {
+    consolePanel = new ConsolePanel({
+      extensionUri: extensionUriForForm,
+      onRun: async (sql: string) => {
+        if (!mgr.getActive()) {
+          await promptToAddConnectionOrSelect();
+          if (!mgr.getActive()) {
+            void vscode.window.showInformationMessage(
+              "VSDB: chưa chọn connection. Dùng 'Add Connection' để tạo.",
+            );
+            return;
+          }
+        }
+        // Full-buffer parse with the ACTIVE connection's dialect so MySQL/MSSQL
+        // splitting rules apply to the whole Console editor content.
+        const { statements } = sqlToRun(
+          sql,
+          { start: 0, end: sql.length },
+          0,
+          mgr.getActive()?.driver,
+        );
+        if (statements.length === 0) {
+          void vscode.window.showInformationMessage(
+            "VSDB: không có statement để chạy.",
+          );
+          return;
+        }
+        await runStatements(mgr, runner, panel, statements);
+      },
+      // Tab closed by the user → drop the singleton so reopening rebuilds.
+      onDispose: () => {
+        consolePanel = null;
+      },
+    });
+  }
+  consolePanel.show();
+}
+
 async function runQueryFromEditor(
   mgr: ConnectionManager,
   runner: QueryRunner,
