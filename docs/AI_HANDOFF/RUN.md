@@ -1,6 +1,6 @@
 Command: handoff-fullstack
 Goal: Cycle Z — DataGrip-style Console panel (type SQL, run, right-click Save as SQL file)
 Base: main
-Phase: I1
-Cursor: plan committed 9eef952 (P2.5 round 2 Approved); 3 chained tasks TASK-001→002→003, all ready
-Next: I1 — verify clean tree, then I2/I3 wave 1 = TASK-001 in worktree
+Phase: I3
+Cursor: wave 1 done — TASK-001 PASS (consolePanelMessages.ts + tests), committed 2ff0be6
+Next: wave 2 — TASK-002 webview console UI (textarea+Run/Save/contextmenu) in fresh worktree

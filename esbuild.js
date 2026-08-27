@@ -95,6 +95,19 @@ const schemaFormConfig = {
   minify,
   logLevel: "info",
 };
+/** TASK-002 (SQL Console): DataGrip-style console browser entry. */
+/** @type {import('esbuild').BuildOptions} */
+const consolePanelConfig = {
+  entryPoints: ["webview/consolePanelMain.ts"],
+  outfile: "dist/consolePanel.js",
+  bundle: true,
+  platform: "browser",
+  format: "iife",
+  target: "es2022",
+  sourcemap: !minify,
+  minify,
+  logLevel: "info",
+};
 
 async function run() {
   if (watch) {
@@ -105,7 +118,8 @@ async function run() {
     const ctx5 = await esbuild.context(aiSettingsFormConfig);
     const ctx6 = await esbuild.context(aiChatPanelConfig);
     const ctx7 = await esbuild.context(schemaFormConfig);
-    await Promise.all([ctx1.watch(), ctx2.watch(), ctx3.watch(), ctx4.watch(), ctx5.watch(), ctx6.watch(), ctx7.watch()]);
+    const ctx8 = await esbuild.context(consolePanelConfig);
+    await Promise.all([ctx1.watch(), ctx2.watch(), ctx3.watch(), ctx4.watch(), ctx5.watch(), ctx6.watch(), ctx7.watch(), ctx8.watch()]);
     console.log("esbuild: watching...");
   } else {
     await Promise.all([
@@ -116,6 +130,7 @@ async function run() {
       esbuild.build(aiSettingsFormConfig),
       esbuild.build(aiChatPanelConfig),
       esbuild.build(schemaFormConfig),
+      esbuild.build(consolePanelConfig),
     ]);
     console.log("esbuild: build complete");
   }

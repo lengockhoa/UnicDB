@@ -1126,3 +1126,70 @@ button.vsdb-requery-clear:disabled {
   word-break: break-all;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
 }
+
+/* --- TASK-002: SQL Console (DataGrip-style) -------------------------------
+ * Toolbar + editor + in-webview context menu for webview/consolePanelMain.ts.
+ * Emitted into dist/webview.css via main.ts's existing `import "./styles.css"`
+ * — TASK-003 links that asset; there is no second CSS pipeline.
+ */
+.vsdb-console {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  height: 100%;
+  box-sizing: border-box;
+}
+.vsdb-console-toolbar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.vsdb-console-toolbar button {
+  padding: 4px 12px;
+  background: var(--vscode-button-secondaryBackground, #3a3d41);
+  color: var(--vscode-button-secondaryForeground, #cccccc);
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+}
+.vsdb-console-primary {
+  background: var(--vscode-button-background, #0e639c) !important;
+  color: var(--vscode-button-foreground, #ffffff) !important;
+}
+.vsdb-console-editor {
+  flex: 1;
+  resize: vertical;
+  min-height: 120px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: var(--vscode-editor-font-size, 13px);
+  background: var(--vscode-input-background, #3c3c3c);
+  color: var(--vscode-input-foreground, #cccccc);
+  border: 1px solid var(--vscode-input-border, #3c3c3c);
+  padding: 6px;
+}
+.vsdb-console-contextmenu {
+  position: absolute;
+  z-index: 70;
+  min-width: 160px;
+  padding: 4px 0;
+  border: 1px solid var(--vscode-panel-border, #444);
+  border-radius: 3px;
+  background: var(--vscode-editorWidget-background, #252526);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+.vsdb-console-context-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 4px 12px;
+  background: transparent;
+  color: var(--vscode-menu-foreground, var(--vscode-foreground, #cccccc));
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+}
+.vsdb-console-context-item:hover {
+  background: var(--vscode-menu-selectionBackground, var(--vscode-button-background, #0e639c));
+  color: var(--vscode-menu-selectionForeground, var(--vscode-button-foreground, #ffffff));
+}

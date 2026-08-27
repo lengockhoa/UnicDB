@@ -66,3 +66,69 @@ npm run typecheck
 `esbuild.js` is the verified bundler path: it separately declares each browser entry and lists every config in both its watch and normal-build Promise arrays. The UI intentionally uses the existing shared `webview/styles.css`, not a new stylesheet or optional SQL highlighting. `webview/main.ts` imports that stylesheet, producing `dist/webview.css`; TASK-003's HTML contract links it with `asWebviewUri`, avoiding an additional CSS bundle.
 
 ---
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT:
+
+```
+npx vitest run src/ui/__tests__/consolePanelBundle.test.ts   (before any implementation)
+
+Error: dist/consolePanel.js missing — run `npm run compile` before this test
+ ❯ loadBundle src/ui/__tests__/consolePanelBundle.test.ts:24:11
+ ❯ src/ui/__tests__/consolePanelBundle.test.ts:119:22
+ ...
+ FAIL  ... > #7 edge-interaction: contextmenu prevented, exposes 'Save as SQL file', choosing it posts the save message
+Error: dist/consolePanel.js missing — run `npm run compile` before this test
+
+ Test Files  1 failed (1)
+      Tests  7 failed (7)
+```
+
+(Re-confirmed after adding menu-visibility assertions — still 7 failed / 7.)
+
+Verification Output:
+
+Command 1 — `npm run compile` (worktree root):
+```
+  dist/consolePanel.js      3.0kb
+  dist/consolePanel.js.map  7.8kb
+⚡ Done in 8ms
+  dist/webview.js        2.2mb ⚠️
+  dist/webview.css      23.9kb
+  ...
+esbuild: build complete
+```
+`dist/consolePanel.js` emitted; Console CSS rules (8 `vsdb-console*` matches) confirmed inside `dist/webview.css`. Bundler path edited: `esbuild.js` (repo root) — added `consolePanelConfig` to both the watch context/Promise array and the normal-build Promise array.
+
+Command 2 — `npx vitest run src/ui/__tests__/consolePanelBundle.test.ts`:
+```
+ ✓ src/ui/__tests__/consolePanelBundle.test.ts  (7 tests) 22ms
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+```
+
+Command 3 — `npm run typecheck`:
+```
+> vsdb@1.6.8 typecheck
+> tsc --noEmit
+typecheck exit: 0
+```
+
+Extra gate check — per-file webview tsc (`tsc --noEmit -p tsconfig.webview.json`): pre-existing baseline has 25 TS2451/TS2393 errors from script-style entries (aiSettingsFormMain x10, connectionFormMain x10, schemaFormMain x5, newTableFormMain x1). My first draft (script-style) added +4; final version is module-style via trailing `export {}` and contributes ZERO new errors (grouped counts match the true measured baseline exactly). Isolated per-file check of consolePanelMain.ts passes clean.
+
+Aggregate — `npm test` (not required by task, run for confidence):
+```
+ Test Files  114 passed | 1 skipped (115)
+      Tests  1679 passed | 2 skipped (1681)
+```
+
+Status: PASS
+Note:
+- Consumes TASK-001's contract behaviorally: webview entries cannot import across the tsconfig.webview rootDir (TS6059 house rule documented in main.ts), so consolePanelMain.ts mirrors the two `ConsoleToHostMessage` shapes structurally exactly like every other entry; the wire payloads are pinned by tests #3/#4/#7 to be exactly `{ type: "runConsole", sql }` / `{ type: "saveConsoleAsSql", sql }`.
+- Whitespace-only editor content is treated as empty (no post) in Run/Save/context-menu paths.
+- `git stash list` shows a pre-existing unrelated stash (`task-007-fix-wip`) that was already there before this task; untouched.
