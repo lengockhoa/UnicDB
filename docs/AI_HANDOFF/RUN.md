@@ -1,6 +1,6 @@
 Command: handoff-fullstack
-Goal: Cycle Y — finish all queued results/query work from Cycle X backlog (8 tasks, 3 waves)
+Goal: Cycle Z — DataGrip-style Console panel (type SQL, run, right-click Save as SQL file)
 Base: main
-Phase: done
-Cursor: Cycle Y COMPLETE — 8/8 tasks approved; full suite 1658 passed / 2 skipped / 0 failed; typecheck + compile clean; pushed 8d3902a; tag v1.6.8; GitHub release v1.6.8 created with vsdb-1.6.8.vsix (1,679,489 bytes).
-Next: none — cycle closed. (Queued for a future cycle: pg-metadata-vs-transaction-window threading.)
+Phase: P1
+Cursor: P0 closed — results→existing ResultsPanel; save via in-panel context menu + Save button; no persistence (empty each open)
+Next: P1 — spawn ukit-small-task-maintainer for INDEX/ACTIVE/RULES/TEMPLATE summary
