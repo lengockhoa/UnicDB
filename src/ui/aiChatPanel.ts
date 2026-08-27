@@ -2101,7 +2101,7 @@ export class AiChatPanel {
       <link rel="stylesheet" href="${styleUri}" />
       <title>VSDB AI Chat</title>
     </head>
-    <body class="vsdb-form-body">
+    <body class="vsdb-form-body vsdb-chat-body">
       <div id="vsdb-root" class="vsdb-chat"></div>
       <script src="${scriptUri}"></script>
     </body>

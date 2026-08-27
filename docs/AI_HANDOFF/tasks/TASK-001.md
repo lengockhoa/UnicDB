@@ -165,3 +165,27 @@ ISSUES: intra-module call to `resolveMentionsForTurn` cannot be intercepted by `
 HANDOFF_TO_REVIEWER: yes
 NEXT: ready for R4.5 re-review
 
+
+## Reviewer Verdict (fix round 1)
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/aiChatPanelThoughtRegen.test.ts src/ui/__tests__/aiChatPanelAcp.test.ts src/ui/__tests__/aiChatPanelResume.test.ts
+  result: 3 files / 57 tests pass (ThoughtRegen 15, Acp 31, Resume 11) — exit 0
+  command: npx vitest run src/ui/__tests__/aiChatPanelMessages.test.ts
+  result: 20 tests pass — exit 0
+  command: npm run typecheck
+  result: exit 0 (no errors)
+TEST_PLAN_COVERAGE: all-followed — both R2 findings each mapped to a wire-level regression test with real assertions (R4.5 #1: second session/prompt carries EXACTLY ONE `--- Referenced context ---` block + adapter re-resolution asserted; R4.5 #2: prompt-write count snapshotted across ALL transports pre/post Clear→Regenerate, no runAgent call, history stays empty) plus 3 pure unit checks for stripReferencedContextMarker. Fix-round RED_OUTPUT contains genuine assertion-failure output ("expected 2 to be 1"), not bare claims. package.json has no lint script; typecheck is the task's declared static gate and passed.
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - src/ui/aiChatPanel.ts:1650 — if a user's ORIGINAL text itself contains "\n\n--- Referenced context ---", strip eats user content on regenerate; documented trade-off, negligible in practice (already noted in the helper's doc comment).
+    - src/ui/__tests__/aiChatPanelThoughtRegen.test.ts:775 — block-count assertions split on the bare marker string; a user quoting the header inside their message would inflate the count. Cosmetic; same negligible-collision class as the helper itself.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Fix delta verified via git diff 97012cc..56a7b36 scoped to the regenerate/clear/resume regions (mention-parser changes in the same diff are TASK-005 scope, approved separately by ReRevT5). Thought forwarding (acp 31/31) and replay filtering (resume 11/11) regressions clean; Clear/resume lastSentText resets cannot break the Stop→Regenerate path (stop leaves lastSentText intact; only Clear/resume null it, where no-op is the correct behavior).

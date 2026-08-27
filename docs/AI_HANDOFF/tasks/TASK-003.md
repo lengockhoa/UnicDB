@@ -173,3 +173,26 @@ RED OUTPUT (paste from `npx vitest run src/ui/__tests__/chatLayoutCss.test.ts` B
   ❯ src/ui/__tests__/chatLayoutCss.test.ts > TASK-003 - chat layout CSS contract > TASK-002 affordances (CSS contract) > regenerateBtn: button-level affordance styled or inherits .vsdb-chat-secondary
     → #regenerateBtn must be styled inline OR inherit from .vsdb-chat-secondary (which must itself be styled): expected false toBe true
   Tests  7 failed | 8 passed (15)
+
+---
+
+## Reviewer Verdict (fix round 1)
+
+VERDICT: CRITICAL
+REVIEWER_MODEL: unic/unic-smart
+EXECUTOR_MODEL: unic/unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/chatLayoutCss.test.ts src/ui/__tests__/aiChatPanel.test.ts
+  result: 48 pass / 0 fail
+  command: npm run typecheck
+  result: exit code 0
+TEST_PLAN_COVERAGE: partial — CSS contract tests all present and green (15 tests: height chain, affordances, scope preservation); but NO test asserts the buildHtml DOM contract, which is where the fix is broken (see critical #1).
+FINDINGS:
+  critical:
+    - src/ui/aiChatPanel.ts:2104 — buildHtml still emits `<body class="vsdb-form-body">`; the reported fix `<body class="vsdb-form-body vsdb-chat-body">` was NEVER applied (git log -S 'vsdb-chat-body' -- src/ui/aiChatPanel.ts is empty across all commits). body.vsdb-chat-body { height:100vh } (webview/styles.css:1302) therefore matches nothing in the chat webview; body height stays auto and `.vsdb-chat { height:100% }` still collapses — the original ~205px critical bug is NOT fixed. Executor FILES_CHANGED contains a false claim (likely the same edit-tool silent-failure noted in ISSUES; the aiChatPanel.ts edit was not re-verified after the tool reported success).
+  important:
+    - src/ui/__tests__/chatLayoutCss.test.ts — the suite green-lights an unfixed runtime bug because it only parses styles.css. Add a getHtml assertion: `expect(getHtml()).toContain('class="vsdb-form-body vsdb-chat-body"')` (mirrors existing getHtml-assertion style in src/ui/__tests__/aiChatPanel.test.ts). This is the exact gap that let the false FILES_CHANGED slip through.
+  minor:
+    - webview/styles.css:1341 — `.vsdb-chat-jump` uses position:absolute with no positioned ancestor (.vsdb-chat is static), so it anchors to the viewport (initial containing block). Correct outcome today (body is 100vh overflow:hidden); worth a `position:relative` on .vsdb-chat for robustness, not blocking.
+NEXT_STATUS_FOR_INDEX: critical_block
+NOTES: CSS-side fix (height rule + 6 affordance blocks, all --vscode-* themed, .vsdb-form-body untouched) is verified present and correct; only the one-line buildHtml class change is missing. One-line re-fix + one getHtml assertion test, then re-run.

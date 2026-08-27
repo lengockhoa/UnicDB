@@ -147,3 +147,22 @@ ISSUES:
   - Edit scope: changes are confined to aiChatPanel.ts lines 105-118 (regex + comment) and 384-443 (resolveFileBlock rewrite + comment). FixT1 owns the regenerate region of the same file in a different worktree (no overlap).
 HANDOFF_TO_REVIEWER: yes
 NEXT: ready for re-review
+
+## Reviewer Verdict (fix round 1)
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/aiChatPanelMentions.test.ts src/ui/__tests__/aiChatPanelWebviewTask005.test.ts src/ui/__tests__/aiChatPanelPrivacy.test.ts
+  result: 3 files / 60 tests pass (Mentions 38, WebviewTask005 16, Privacy 6) — exit 0
+  command: npm run typecheck
+  result: exit 0 (no errors)
+TEST_PLAN_COVERAGE: all-followed — R3 findings each mapped to new tests with real assertions: #6a-#6e multi-segment parse, #7a-#7d traversal rejection (fs-read-count == 0 asserted), #8a byte-cap (re-encodes truncated block, asserts ≤ cap+256 bytes). Email false-positive guard #6c held under the widened regex. RED_OUTPUT in fix-round report contains genuine failing output (7 failed | 31 passed with concrete assertion diffs) consistent with the pre-fix regex/char-count code.
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/ui/aiChatPanel.ts:741 — file-block heading uses `/` unconditionally; on Windows-hosted workspaces the token won't match backslash paths. Cosmetic; parse-level tokens are already slash-canonical.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Diff scoped to aiChatPanel.ts mention region only (verified via git diff 97012cc..56a7b36); TASK-004 privacy sentinel 6/6 and runQuery==0 invariant intact; `@/` absolute and `a//b` degenerate inputs cannot produce tokens (regex backtracks to shortest identifier), defense-in-depth guard still holds for programmatic callers.

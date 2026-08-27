@@ -11,7 +11,7 @@ dependent consumer wave.
 | TASK-002 | Webview chat UX: thinking block, copy, keybind, scroll, message states | approved | TASK-001 | unic-smart |
 | TASK-003 | Chat layout: pinned composer, full-height thread (CSS) | critical_block | none | unic-smart |
 | TASK-004 | Privacy regression lock: auto-context is DDL-only (HARD invariant) | approved_minor | none | unic-smart |
-| TASK-005 | @-mention references (DB objects + workspace files) | changes_requested | TASK-001, TASK-002 | unic-smart |
+| TASK-005 | @-mention references (DB objects + workspace files) | approved | TASK-001, TASK-002 | unic-smart |
 
 Graph: TASK-001 → TASK-002; TASK-003 independent; TASK-004 independent.
 

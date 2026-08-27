@@ -333,4 +333,16 @@ describe("TASK-003 - chat layout CSS contract", () => {
       ".vsdb-chat-mention-kind must declare a font-size",
     ).toBe(true);
   });
+
+  it("getHtml emits vsdb-chat-body on <body> so the height chain actually applies (fix round 1 re-review)", () => {
+    // The CSS rule alone is dead if buildHtml never puts the class on the
+    // body element. Same text-contract approach as the CSS checks above:
+    // parse the panel source and assert the emitted body tag carries both
+    // classes (the wire side of the height chain, reviewer R4.5 finding).
+    const panelSrc = readFileSync(
+      resolve(process.cwd(), "src", "ui", "aiChatPanel.ts"),
+      "utf8",
+    );
+    expect(panelSrc).toContain('<body class="vsdb-form-body vsdb-chat-body">');
+  });
 });
