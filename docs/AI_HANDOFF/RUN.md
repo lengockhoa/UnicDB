@@ -1,6 +1,6 @@
 Command: handoff-fullstack
 Goal: Cycle Z — DataGrip-style Console panel (type SQL, run, right-click Save as SQL file)
 Base: main
-Phase: I3
-Cursor: wave 1 done — TASK-001 PASS (consolePanelMessages.ts + tests), committed 2ff0be6
-Next: wave 2 — TASK-002 webview console UI (textarea+Run/Save/contextmenu) in fresh worktree
+Phase: R1
+Cursor: I4 done — all 3 tasks pending_review; waves committed (2ff0be6, 5e1594d, a1c27ab); main-tree typecheck + 20/20 console tests green after compile
+Next: R2-R4 — spawn code-reviewer per task (3 parallel), review range = git diff 9eef952

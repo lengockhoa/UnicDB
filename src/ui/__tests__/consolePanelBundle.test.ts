@@ -179,4 +179,73 @@ describe("webview/consolePanelMain.ts bundle (TASK-002)", () => {
     // Choosing an item closes the menu (no stale overlay left behind).
     expect(menu!.hidden).toBe(true);
   });
+
+  function openMenu(editor: HTMLTextAreaElement): HTMLElement {
+    editor.dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+    );
+    return document.querySelector(
+      ".vsdb-console-contextmenu",
+    ) as HTMLElement;
+  }
+
+  it("#8 edge-dismissal: Escape closes the open context menu", () => {
+    loadBundle();
+    const editor = editorEl();
+    const menu = openMenu(editor);
+    expect(menu.hidden).toBe(false);
+
+    editor.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    expect(menu.hidden).toBe(true);
+
+    // Reopening after Escape still works (single node, not stacked).
+    const reopened = openMenu(editor);
+    expect(reopened.hidden).toBe(false);
+    expect(document.querySelectorAll(".vsdb-console-contextmenu")).toHaveLength(
+      1,
+    );
+  });
+
+  it("#9 edge-dismissal: Cmd/Ctrl+Enter closes the menu at execution; click-away closes it; reopen never stacks duplicates", () => {
+    const received = loadBundle();
+    const editor = editorEl();
+    editor.value = "SELECT 9";
+
+    // Menu is open while the keyboard shortcut executes.
+    const menu = openMenu(editor);
+    expect(menu.hidden).toBe(false);
+    keydownOn(editor, { key: "Enter", ctrlKey: true });
+    expect(received).toEqual([{ type: "runConsole", sql: "SELECT 9" }]);
+    expect(menu.hidden).toBe(true);
+
+    // Running again with a second shortcut — still exactly one run message.
+    keydownOn(editor, { key: "Enter", metaKey: true });
+    expect(received).toEqual([
+      { type: "runConsole", sql: "SELECT 9" },
+      { type: "runConsole", sql: "SELECT 9" },
+    ]);
+
+    // Click-away closes an open menu without posting anything.
+    const menu2 = openMenu(editor);
+    expect(menu2.hidden).toBe(false);
+    document.body.click();
+    expect(menu2.hidden).toBe(true);
+    expect(received).toHaveLength(2);
+
+    // Right-click repeatedly: the menu node must never be duplicated.
+    openMenu(editor);
+    openMenu(editor);
+    openMenu(editor);
+    expect(document.querySelectorAll(".vsdb-console-contextmenu")).toHaveLength(
+      1,
+    );
+    const items = document.querySelectorAll(".vsdb-console-context-item");
+    expect(items).toHaveLength(1);
+  });
 });

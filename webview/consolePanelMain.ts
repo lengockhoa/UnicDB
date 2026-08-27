@@ -62,8 +62,8 @@ function postSave(): void {
 
 /** The menu node is created up-front (hidden) so the DOM contract — a
  * `.vsdb-console-contextmenu` element present from the first render — holds
- * before any right-click, and so the document-level outside-click closer is
- * bound exactly once for the panel's lifetime. */
+ * before any right-click, and so the document-level dismissers (click-away,
+ * Escape) are bound exactly once for the panel's lifetime. */
 let contextMenu: HTMLDivElement | null = null;
 
 function ensureContextMenu(): HTMLDivElement {
@@ -96,6 +96,18 @@ function ensureContextMenu(): HTMLDivElement {
         !menu.contains(ev.target)
       ) {
         menu.hidden = true;
+      }
+    },
+    true,
+  );
+  // Escape closes an open menu. Capture phase mirrors main.ts's overlay
+  // keydown handling; targeted at the key only when something is open.
+  document.addEventListener(
+    "keydown",
+    (ev: KeyboardEvent) => {
+      if (!menu.hidden && ev.key === "Escape") {
+        menu.hidden = true;
+        ev.stopPropagation();
       }
     },
     true,
@@ -143,16 +155,21 @@ function wireControls(): void {
     postSave();
   });
 
-  // Cmd/Ctrl+Enter executes. preventDefault keeps the keystroke from
-  // inserting a newline into the textarea; plain Enter types normally.
+  // Cmd/Ctrl+Enter executes and dismisses the right-click menu first, so a
+  // keyboard run never leaves the stale menu hovering over results.
+  // preventDefault keeps the keystroke from inserting a newline into the
+  // textarea; plain Enter types normally.
   editor?.addEventListener("keydown", (ev: KeyboardEvent) => {
     if ((ev.ctrlKey || ev.metaKey) && ev.key === "Enter") {
       ev.preventDefault();
+      hideContextMenu();
       postRun();
     }
   });
 
   // In-webview right-click menu replaces the browser menu on the editor.
+  // The menu itself is a singleton (ensureContextMenu reuses one node), so
+  // repeated right-clicks reposition it instead of stacking copies.
   editor?.addEventListener("contextmenu", (ev: MouseEvent) => {
     ev.preventDefault();
     const menu = ensureContextMenu();

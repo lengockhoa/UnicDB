@@ -132,3 +132,73 @@ Note:
 - Consumes TASK-001's contract behaviorally: webview entries cannot import across the tsconfig.webview rootDir (TS6059 house rule documented in main.ts), so consolePanelMain.ts mirrors the two `ConsoleToHostMessage` shapes structurally exactly like every other entry; the wire payloads are pinned by tests #3/#4/#7 to be exactly `{ type: "runConsole", sql }` / `{ type: "saveConsoleAsSql", sql }`.
 - Whitespace-only editor content is treated as empty (no post) in Run/Save/context-menu paths.
 - `git stash list` shows a pre-existing unrelated stash (`task-007-fix-wip`) that was already there before this task; untouched.
+
+---
+
+## Executor Report (fix round 1)
+
+Blocking finding addressed: right-click context menu ignored Escape and stayed open after Cmd/Ctrl+Enter execution (webview/consolePanelMain.ts ~:147).
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+
+Scope kept tight — one implementation file + one test file:
+- `webview/consolePanelMain.ts`: added a document-level capture-phase `keydown` closer (`Escape` → hide, mirroring main.ts's overlay pattern; stopPropagation so the webview host doesn't also process it). Wired `hideContextMenu()` into the Cmd/Ctrl+Enter handler **before** `postRun()`. Click-away close already existed (kept as-is); menu is a singleton via `ensureContextMenu`, now explicitly commented/verified as never stacking.
+- `src/ui/__tests__/consolePanelBundle.test.ts`: added tests #8 (Escape closes open menu; reopen works with exactly one `.vsdb-console-contextmenu` node) and #9 (Ctrl/Cmd+Enter closes menu at execution while still posting runConsole exactly once per keystroke; document-body click closes an open menu without posting; triple right-click yields exactly 1 menu node + 1 context item).
+
+RED_OUTPUT:
+
+```
+npx vitest run src/ui/__tests__/consolePanelBundle.test.ts   (before the fix)
+
+ FAIL ... > #8 edge-dismissal: Escape closes the open context menu
+AssertionError: expected false to be true // Object.is equality
+ ❯ src/ui/__tests__/consolePanelBundle.test.ts:201
+ FAIL ... > #9 edge-dismissal: Cmd/Ctrl+Enter closes the menu at execution; click-away closes it; reopen never stacks duplicates
+AssertionError: expected false to be true // Object.is equality
+ ❯ src/ui/__tests__/consolePanelBundle.test.ts:225:25
+ Test Files  1 failed (1)
+      Tests  2 failed | 7 passed (9)
+```
+
+Both failures are the exact finding (#8 Escape left menu open; #9 shortcut-run left menu open); all 7 pre-existing tests still passed in RED state.
+
+Verification Output (worktree /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-002-fix):
+
+Command 1 — `npm run compile`:
+```
+  dist/consolePanel.js      3.3kb
+  dist/consolePanel.js.map  8.6kb
+esbuild: build complete
+```
+
+Command 2 — `npx vitest run src/ui/__tests__/consolePanelBundle.test.ts`:
+```
+ ✓ src/ui/__tests__/consolePanelBundle.test.ts  (9 tests)
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+```
+All three console suites together (`consolePanelBundle` + `consolePanel` + `consolePanelMessages`): 3 files, 22 tests, all pass.
+
+Command 3 — `npm run typecheck`:
+```
+> vsdb@1.6.8 typecheck
+> tsc --noEmit
+(exit 0, no output = clean)
+```
+
+Command 4 — aggregate `npm test`:
+```
+ Test Files  115 passed | 1 skipped (116)
+      Tests  1693 passed | 2 skipped (1695)
+```
+
+Extra gate — per-file webview tsc (`tsc --noEmit -p tsconfig.webview.json`): `consolePanelMain.ts` contributes ZERO errors after the edit (grep across all 38 reported errors matches 0 of that file; remaining errors are the documented pre-existing script-style baselines in untouched entries).
+
+Status: PASS
+
+Note:
+- Env: fresh worktree had no node_modules (same trap TASK-003's executor hit); symlinked parent repo's node_modules in — code untouched by this.
+- Click-away needed no code (already present); it is now pinned by test #9 against regressions.
+- No git add/commit/push performed, per instructions.
