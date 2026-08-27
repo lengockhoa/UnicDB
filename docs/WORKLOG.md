@@ -22,6 +22,34 @@ For each significant action, append:
 
 ---
 
+## 2026-08-27 — Cycle Z: SQL Console feature + release v1.7.0
+
+- Action: full handoff cycle (P0→R5) for a DataGrip-style SQL Console. P0 decisions:
+  results render in the EXISTING ResultsPanel via the shared runStatements flow; Save-as-SQL
+  via in-webview context menu + toolbar Save button; no persistence (empty each open).
+  Plan reviewed in 2 rounds (round 1: CSS contract + sqlToRun full-buffer semantics → fixed
+  → Approved).
+- Implementation: 3 chained tasks, one wave each. TASK-001 src/ui/consolePanelMessages.ts
+  (pure helpers: suggestSaveFileName timestamped console_YYYYMMDD_HHMMSS.sql + message
+  contract). TASK-002 webview/consolePanelMain.ts (textarea, Run/Save, Cmd/Ctrl+Enter,
+  custom right-click menu) + esbuild.js entry → dist/consolePanel.js + .vsdb-console*
+  styles + bundle pin tests. TASK-003 src/ui/consolePanel.ts host panel (CSP posture matches
+  other panels) + extension.ts `vsdb.openConsole` + package.json contributes.
+- Review: bao-opus per task — TASK-001 approved_minor, TASK-003 approved, TASK-002
+  changes_requested (context menu ignored Escape / stayed open after keyboard run).
+  R4.5 fix round 1: Escape + click-away + run-closes-menu behavior added with regression
+  tests (#8/#9) → re-review APPROVED.
+- Verification: aggregate suite 1693 passed / 2 skipped / 0 failed; typecheck clean;
+  build.sh → vsdb-1.7.0.vsix (1,682,919 bytes), artifact assertions (console bundle
+  present, zero forbidden paths), installer dry-run OK. Note: first build.sh run had 1
+  flaky test failure mid npm-ci install; two subsequent full runs green — treated as
+  environment flake, not product defect.
+- Release: v1.7.0 — CHANGELOG entry, README feature bullet (vi), tag + push +
+  `gh release create` with vsix attached.
+- Files: src/ui/{consolePanelMessages,consolePanel}.ts (new),
+  webview/consolePanelMain.ts (new), esbuild.js, webview/styles.css,
+  src/extension.ts, package.json, 3 new test suites (20 targeted tests).
+
 ## 2026-08-27 — Cycle Y close + release v1.6.8
 
 - Action: finished every queued results/query item from Cycle X backlog in one unattended
