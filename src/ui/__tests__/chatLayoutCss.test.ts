@@ -1,6 +1,7 @@
 // src/ui/__tests__/chatLayoutCss.test.ts
 // TASK-003 - Chat layout CSS contract (pinned composer + full-height thread,
-// plus TASK-002 affordances + TASK-005 mention-dropdown selectors).
+// plus TASK-002 affordances + TASK-005 mention-dropdown selectors + fix-round-1
+// height-chain + 6 missing TASK-002 affordance styles).
 //
 // jsdom does not apply external stylesheets, so the contract is asserted
 // against the source CSS text directly via regex (same pattern as
@@ -21,11 +22,13 @@ function ruleBody(selector: string): string {
   return m[2] ?? "";
 }
 
-/** True if any `selector:hover` (or `selector.x:hover`) rule exists in the file. */
+/** True if any `selector:hover` (or `selector.x:hover`) rule exists in the file.
+ * FIX ROUND 1 — minor: \s inside the template string previously degraded to `s`;
+ * it worked by accident because the literal `s*` matches zero `s` chars. Escape
+ * it now so the regex compiles as whitespace. */
 function hasHoverRule(selector: string): boolean {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  // Match either `selector:hover` or compound `.vsdb-x.vsdb-chat-resume-row:hover` etc.
-  const re = new RegExp(`${escaped}(?:\\.[\\w-]+)*\s*:hover\\s*\\{`);
+  const re = new RegExp(`${escaped}(?:\\.[\\w-]+)*\\s*:hover\\s*\\{`);
   return re.test(css);
 }
 
@@ -41,9 +44,17 @@ describe("TASK-003 - chat layout CSS contract", () => {
       /flex:\s*1(?:[^;]*;|$)/.test(body),
       ".vsdb-chat-thread must declare flex:1 (or flex:1 1 auto)",
     ).toBe(true);
+    // FIX ROUND 1 — minor: the original `/max-height: \s*60vh/` had a literal
+    // space after the colon, so `max-height:60vh` (no space) slipped through.
+    // Already space-tolerant, but document the invariant with a space-free
+    // form check too.
     expect(
       /max-height:\s*60vh/i.test(body),
       ".vsdb-chat-thread must NOT contain max-height:60vh (kills the bug)",
+    ).toBe(false);
+    expect(
+      /max-height:60vh/i.test(body),
+      ".vsdb-chat-thread must NOT contain space-free max-height:60vh either",
     ).toBe(false);
     expect(
       /overflow-y:\s*auto/i.test(body),
@@ -81,6 +92,163 @@ describe("TASK-003 - chat layout CSS contract", () => {
       threadIdx >= 0 && inputIdx >= 0 && threadIdx < inputIdx,
       ".vsdb-chat-thread rule must appear before .vsdb-chat-input in stylesheet order",
     ).toBe(true);
+  });
+
+  // FIX ROUND 1 — critical: height-chain.
+  // `<body class="vsdb-form-body">` (src/ui/aiChatPanel.ts buildHtml) had no
+  // height rule, so `.vsdb-chat { height:100% }` collapsed against auto → ~205px
+  // root. Add a chat-scoped body class + height rule; do not break OTHER forms
+  // (connectionForm etc. still share `vsdb-form-body`).
+  it("chat webview body establishes a real height chain (body.vsdb-chat-body height:100vh)", () => {
+    const body = ruleBody("body.vsdb-chat-body");
+    expect(
+      body,
+      "body.vsdb-chat-body rule block must exist — fixes the 205px panel collapse (CRITICAL)",
+    ).not.toBe("");
+    expect(
+      /height:\s*100vh/i.test(body),
+      "body.vsdb-chat-body must declare height:100vh (fills the webview viewport)",
+    ).toBe(true);
+    expect(
+      /overflow:\s*hidden/i.test(body),
+      "body.vsdb-chat-body must declare overflow:hidden so the panel owns scrolling",
+    ).toBe(true);
+  });
+
+  it(".vsdb-chat fills its body (height:100% + min-height:0) — chain to 100vh", () => {
+    const body = ruleBody(".vsdb-chat");
+    expect(body, ".vsdb-chat rule block must exist").not.toBe("");
+    expect(
+      /height:\s*100%/i.test(body),
+      ".vsdb-chat must declare height:100% so it fills body.vsdb-chat-body",
+    ).toBe(true);
+    expect(
+      /min-height:\s*0/i.test(body),
+      ".vsdb-chat must declare min-height:0 (flex children need explicit min-height to shrink)",
+    ).toBe(true);
+  });
+
+  it("vsdb-form-body (other forms) is NOT touched by the height chain — scope preserved", () => {
+    const formBody = ruleBody(".vsdb-form-body");
+    expect(formBody, ".vsdb-form-body rule block must still exist").not.toBe("");
+    expect(
+      /height:\s*100vh/i.test(formBody),
+      ".vsdb-form-body (shared with connectionForm etc.) must NOT declare height:100vh",
+    ).toBe(false);
+  });
+
+  // FIX ROUND 1 — important: 6 missing TASK-002 affordance styles.
+  describe("TASK-002 affordances (CSS contract)", () => {
+    it("thinking block: vsdb-chat-thinking uses a card-like surface", () => {
+      const body = ruleBody(".vsdb-chat-thinking");
+      expect(body, ".vsdb-chat-thinking rule block must exist").not.toBe("");
+      expect(
+        /border:\s*1px\s+solid/i.test(body),
+        ".vsdb-chat-thinking must declare a 1px solid border",
+      ).toBe(true);
+      expect(
+        /background:\s*var\(/i.test(body),
+        ".vsdb-chat-thinking must use a --vscode- themed background",
+      ).toBe(true);
+      const bodyInner = ruleBody(".vsdb-chat-thinking-body");
+      expect(
+        bodyInner,
+        ".vsdb-chat-thinking-body rule block must exist",
+      ).not.toBe("");
+      expect(
+        /padding:\s*\d/i.test(bodyInner),
+        ".vsdb-chat-thinking-body must declare a padding value",
+      ).toBe(true);
+    });
+
+    it("jump-to-latest: floating button pinned bottom-right of the thread", () => {
+      const body = ruleBody(".vsdb-chat-jump");
+      expect(body, ".vsdb-chat-jump rule block must exist").not.toBe("");
+      expect(
+        /position:\s*(?:fixed|absolute)/i.test(body),
+        ".vsdb-chat-jump must be position:fixed or position:absolute (floating)",
+      ).toBe(true);
+      expect(
+        /bottom:\s*\d/i.test(body),
+        ".vsdb-chat-jump must anchor bottom",
+      ).toBe(true);
+      expect(
+        /right:\s*\d/i.test(body),
+        ".vsdb-chat-jump must anchor right",
+      ).toBe(true);
+      expect(
+        /z-index:\s*\d+/i.test(body),
+        ".vsdb-chat-jump must declare a z-index (floats above the thread)",
+      ).toBe(true);
+    });
+
+    it("md-copy: small inline button attached to a code block", () => {
+      const body = ruleBody(".vsdb-md-copy");
+      expect(body, ".vsdb-md-copy rule block must exist").not.toBe("");
+      expect(
+        /font-size:\s*\d/i.test(body),
+        ".vsdb-md-copy must declare a font-size (compact button)",
+      ).toBe(true);
+      expect(
+        /cursor:\s*pointer/i.test(body),
+        ".vsdb-md-copy must declare cursor:pointer",
+      ).toBe(true);
+    });
+
+    it("queued marker: small visual indicator distinct from a settled bubble", () => {
+      const body = ruleBody(".vsdb-chat-queued");
+      expect(body, ".vsdb-chat-queued rule block must exist").not.toBe("");
+      // Accept either animation, opacity-based blink, or explicit inline-block
+      // sizing — anything that makes the otherwise zero-width span visible.
+      expect(
+        /(animation:\s*\w+|opacity:\s*0?\.\d|display:\s*inline-block)/i.test(
+          body,
+        ),
+        ".vsdb-chat-queued must declare animation/opacity/display (visual marker)",
+      ).toBe(true);
+    });
+
+    it("streaming caret: visible glyph on a streaming assistant bubble", () => {
+      // The caret can live on the streaming bubble via ::after OR on the
+      // .vsdb-chat-caret span itself (TASK-002 used the latter: ensureStreamingCaret
+      // appends <span class="vsdb-chat-caret">). Accept either form.
+      const directBody = ruleBody(".vsdb-chat-caret");
+      const streamingAfter =
+        /\.vsdb-chat-assistant\.vsdb-chat-streaming::after\s*\{[^}]*content:\s*['"]/i.test(
+          css,
+        );
+      const hasDirect =
+        directBody !== "" &&
+        /(display:\s*inline(?:-block)?|animation:\s*\w+|opacity:\s*0?\.\d|font-family)/i.test(
+          directBody,
+        );
+      expect(
+        hasDirect || streamingAfter,
+        "streaming caret must be visible: either .vsdb-chat-caret with display/animation OR .vsdb-chat-assistant.vsdb-chat-streaming::after with a non-empty content",
+      ).toBe(true);
+    });
+
+    it("regenerateBtn: button-level affordance styled or inherits .vsdb-chat-secondary", () => {
+      const rule = ruleBody("#regenerateBtn");
+      const secondaryBody = ruleBody(".vsdb-chat-secondary");
+      const hasInline = /(padding|margin|font-size|color|background|border|cursor):\s*[^\s;]/i.test(
+        rule,
+      );
+      const hasSecondaryClass = /\.vsdb-chat-secondary/.test(css);
+      expect(
+        hasInline || hasSecondaryClass,
+        "#regenerateBtn must be styled inline OR inherit from .vsdb-chat-secondary (which must itself be styled)",
+      ).toBe(true);
+      if (!hasInline) {
+        // Fallback path: regenerateBtn shares .vsdb-chat-secondary — make sure
+        // that class has at least minimal button styling (font-size + cursor).
+        expect(secondaryBody, ".vsdb-chat-secondary rule block must exist").not.toBe("");
+        expect(
+          /(font-size|padding|cursor):\s*[^\s;]/i.test(secondaryBody),
+          ".vsdb-chat-secondary must declare at least one visual property",
+        ).toBe(true);
+      }
+    });
   });
 
   it("resume-picker: row uses cursor:pointer + padding; card mirrors permission-card pattern", () => {

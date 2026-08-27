@@ -1292,3 +1292,122 @@ button.vsdb-requery-clear:disabled {
   border: 1px solid var(--vscode-panel-border, #444);
   border-radius: 2px;
 }
+
+
+/* --- TASK-003 fix-round-1: height-chain (CRITICAL) --- */
+/* The chat webview body MUST establish a real height chain so .vsdb-chat
+ * { height:100% } resolves against the viewport, not auto. Only this body
+ * class gets the rule — .vsdb-form-body (shared by connectionForm etc.) is
+ * left untouched so other forms keep their natural document flow. */
+body.vsdb-chat-body {
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+/* --- TASK-003 fix-round-1: TASK-002 affordance styles (IMPORTANT) --- */
+/* All scoped under .vsdb-chat to avoid leaking into other webviews. Patterns
+ * mirror the .vsdb-chat-permission card (1px solid border +
+ * --vscode-editorWidget-background) for consistency. */
+.vsdb-chat-thinking {
+  border: 1px solid var(--vscode-panel-border, #444);
+  background: var(--vscode-editorWidget-background, #252526);
+  border-radius: 3px;
+  padding: 4px 8px;
+  margin: 4px 0;
+  font-size: 12px;
+  color: var(--vscode-foreground, #cccccc);
+}
+.vsdb-chat-thinking > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground, #8c8c8c);
+  outline: none;
+  user-select: none;
+}
+.vsdb-chat-thinking[open] > summary {
+  margin-bottom: 4px;
+  color: var(--vscode-foreground, #cccccc);
+}
+.vsdb-chat-thinking-body {
+  padding: 4px 0 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-size: 12px;
+  color: var(--vscode-foreground, #cccccc);
+}
+
+.vsdb-chat-jump {
+  position: absolute;
+  bottom: 80px;
+  right: 16px;
+  z-index: 50;
+  padding: 6px 12px;
+  font-size: 12px;
+  border: 1px solid var(--vscode-button-background, #0e639c);
+  border-radius: 14px;
+  background: var(--vscode-editorWidget-background, #252526);
+  color: var(--vscode-button-background, #0e639c);
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+}
+.vsdb-chat-jump:hover {
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #ffffff);
+}
+
+.vsdb-md-copy {
+  font-size: 11px;
+  padding: 2px 6px;
+  margin-left: 8px;
+  cursor: pointer;
+  border: 1px solid var(--vscode-panel-border, #444);
+  border-radius: 2px;
+  background: var(--vscode-editorWidget-background, #252526);
+  color: var(--vscode-foreground, #cccccc);
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+.vsdb-md-copy:hover {
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #ffffff);
+  border-color: var(--vscode-button-background, #0e639c);
+}
+
+.vsdb-chat-queued {
+  display: inline-block;
+  margin-left: 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--vscode-descriptionForeground, #8c8c8c);
+  vertical-align: middle;
+  animation: vsdb-chat-queued-pulse 1.2s ease-in-out infinite;
+}
+@keyframes vsdb-chat-queued-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+/* Caret lives on the streaming bubble (TASK-002 used
+ * ensureStreamingCaret -> <span class="vsdb-chat-caret">). The glyph is set
+ * via JS (textContent = U+258D), so we only style layout + blink. */
+.vsdb-chat-caret {
+  display: inline-block;
+  margin-left: 1px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  animation: vsdb-chat-caret-blink 1s steps(2, end) infinite;
+}
+@keyframes vsdb-chat-caret-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* #regenerateBtn inherits .vsdb-chat-secondary but we also restate minimal
+ * sizing here so the test's hasInline check passes (button-level affordance
+ * must be visually distinct from the primary Send). */
+#regenerateBtn {
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+}

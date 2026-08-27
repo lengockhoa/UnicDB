@@ -537,6 +537,185 @@ describe("TASK-005 resolveMentionsForTurn — contextBlock shape for per-turn in
   });
 });
 
+// ---- #6 fix-round: multi-segment path tokens (TASK-005 R3 review #1) --
+
+describe("parseMentionTokens — multi-segment path tokens (fix round 1)", () => {
+  it("#6a @src/ui/aiChatPanel.ts → full multi-segment token (not just 'src/ui')", () => {
+    // The reviewer caught that the regex's `(?:[\w.-]+\/)?` allows only ONE
+    // path segment, so any @-token with ≥2 slashes was truncating at the
+    // second segment. This is the production-export case that motivated the
+    // fix — every file ≥2 directories deep always missed.
+    expect(parseMentionTokens("check @src/ui/aiChatPanel.ts please")).toEqual([
+      "src/ui/aiChatPanel.ts",
+    ]);
+  });
+
+  it("#6b @a/b/c/d.txt → full four-segment token", () => {
+    expect(parseMentionTokens("open @a/b/c/d.txt")).toEqual([
+      "a/b/c/d.txt",
+    ]);
+  });
+
+  it("#6c email 'user@example.com' is NOT extracted (no false positive)", () => {
+    // The existing email guard MUST hold under the new regex — the prefix
+    // group now matches 0..N segments, but a lookbehind `(?<![\w@])` still
+    // blocks word-char-before-@.
+    expect(parseMentionTokens("mail me at user@example.com")).toEqual([]);
+  });
+
+  it("#6d multiple tokens in one message — full paths preserved", () => {
+    expect(
+      parseMentionTokens("compare @src/ui/foo.ts and @src/ui/bar.ts"),
+    ).toEqual(["src/ui/foo.ts", "src/ui/bar.ts"]);
+  });
+
+  it("#6e schema.path still parses (schema prefix unaffected)", () => {
+    // The fix replaces `?` with `*` on the prefix group; the trailing
+    // identifier group is unchanged. Schema-style tokens still parse.
+    expect(parseMentionTokens("explain @public.users")).toEqual([
+      "public.users",
+    ]);
+  });
+});
+
+// ---- #7 fix-round: path-traversal rejection in resolveFileBlock -------
+
+describe("resolveMentionsForTurn — rejects '..' segments (fix round 1)", () => {
+  // Spy that records every path it gets asked to read; throws if asked
+  // outside the staged set so any escape attempt is loud.
+  function makeRecordingFs(
+    staged: Record<string, string>,
+  ): { readFile: Mock; reads: string[] } {
+    const reads: string[] = [];
+    return {
+      reads,
+      readFile: vi.fn(async (uri: { fsPath: string }) => {
+        reads.push(uri.fsPath);
+        const content = staged[uri.fsPath];
+        if (content === undefined) {
+          throw new Error(`ENOENT: ${uri.fsPath}`);
+        }
+        return new Uint8Array(
+          content.split("").map((c) => c.charCodeAt(0)),
+        );
+      }),
+    };
+  }
+
+  it("#7a @../sibling.txt → mention_miss, NO file read attempt", async () => {
+    const adapter = createSpyAdapter();
+    const factory: AdapterFactory = vi.fn(async () => adapter);
+    const fs = makeRecordingFs({}); // nothing staged — any read throws
+
+    const result = await resolveMentionsForTurn(
+      factory,
+      ["../sibling.txt"],
+      { fs: fs.readFile as unknown as FsReadFile, workspaceRoot: "/ws" },
+    );
+
+    expect(result.resolved.length).toBe(0);
+    expect(result.misses).toEqual(["../sibling.txt"]);
+    // CRITICAL: resolveFileBlock must NOT have attempted any read.
+    expect(fs.reads.length).toBe(0);
+    // Adapter is untouched (path-traversal token isn't an object token).
+    expect(adapter.calls.runQuery).toBe(0);
+  });
+
+  it("#7b @../etc/passwd → mention_miss, NO file read attempt", async () => {
+    const adapter = createSpyAdapter();
+    const factory: AdapterFactory = vi.fn(async () => adapter);
+    const fs = makeRecordingFs({});
+
+    const result = await resolveMentionsForTurn(
+      factory,
+      ["../etc/passwd"],
+      { fs: fs.readFile as unknown as FsReadFile, workspaceRoot: "/ws" },
+    );
+
+    expect(result.resolved.length).toBe(0);
+    expect(result.misses).toEqual(["../etc/passwd"]);
+    expect(fs.reads.length).toBe(0);
+  });
+
+  it("#7c legitimate @src/nested/deep.ts still resolves (no regression)", async () => {
+    // The rejection must be scoped to '..' segments specifically — deep
+    // nested paths inside the workspace must keep working.
+    const adapter = createSpyAdapter();
+    const factory: AdapterFactory = vi.fn(async () => adapter);
+    const fs = makeRecordingFs({
+      "/ws/src/nested/deep.ts": "ok",
+    });
+
+    const result = await resolveMentionsForTurn(
+      factory,
+      ["src/nested/deep.ts"],
+      { fs: fs.readFile as unknown as FsReadFile, workspaceRoot: "/ws" },
+    );
+
+    expect(result.resolved.length).toBe(1);
+    expect(result.resolved[0]!.kind).toBe("file");
+    expect(fs.reads).toEqual(["/ws/src/nested/deep.ts"]);
+  });
+
+  it("#7d mid-path '..' is also rejected (@a/../b.txt)", async () => {
+    // Defense-in-depth: any '..' segment, not just leading ones.
+    const adapter = createSpyAdapter();
+    const factory: AdapterFactory = vi.fn(async () => adapter);
+    const fs = makeRecordingFs({});
+
+    const result = await resolveMentionsForTurn(
+      factory,
+      ["a/../b.txt"],
+      { fs: fs.readFile as unknown as FsReadFile, workspaceRoot: "/ws" },
+    );
+
+    expect(result.resolved.length).toBe(0);
+    expect(result.misses).toEqual(["a/../b.txt"]);
+    expect(fs.reads.length).toBe(0);
+  });
+});
+
+// ---- #8 fix-round: byte-cap correctness in truncation (review #3) ----
+
+describe("resolveFileBlock — truncation cap is bytes (fix round 1)", () => {
+  // Each char in the multibyte fixture encodes to ≥2 UTF-8 bytes. If the
+  // implementation truncates by .length (UTF-16 code units), the resulting
+  // block is well under MENTION_RESOLVE_FILE_CAP_BYTES and the encoded
+  // representation easily exceeds the byte cap on the wire.
+  it("#8a multibyte content is truncated by byte count, not char count", async () => {
+    const adapter = createSpyAdapter();
+    const factory: AdapterFactory = vi.fn(async () => adapter);
+    // 60_000 BMP code points × 3 bytes/char = 180 KB of UTF-8.
+    const multibyte = "中".repeat(60_000);
+    const encoded = new TextEncoder().encode(multibyte);
+    expect(encoded.byteLength).toBeGreaterThan(MENTION_RESOLVE_FILE_CAP_BYTES);
+    const fsRead = vi.fn(async () => encoded);
+    const fs = { readFile: fsRead };
+
+    const result = await resolveMentionsForTurn(
+      factory,
+      ["big.txt"],
+      {
+        fs: fs.readFile as unknown as FsReadFile,
+        workspaceRoot: "/ws",
+      },
+    );
+
+    expect(result.resolved.length).toBe(1);
+    const block = result.resolved[0]!.block;
+    // Block contains a truncation notice (we know the byte cap is binding).
+    expect(block).toMatch(/truncated/i);
+    // Encoded body is bounded: without the fix (char-count truncation),
+    // the encoded block would be > MENTION_RESOLVE_FILE_CAP_BYTES.
+    // With the fix, byte-length ≤ cap + heading + notice slack.
+    const reencoded = new TextEncoder().encode(block);
+    expect(reencoded.byteLength).toBeLessThanOrEqual(
+      MENTION_RESOLVE_FILE_CAP_BYTES + 256,
+    );
+    expect(adapter.calls.runQuery).toBe(0);
+  });
+});
+
 // Avoid unused import warning for ChatMessage (kept for future tests).
 const _typeMarker: ChatMessage | null = null;
 void _typeMarker;

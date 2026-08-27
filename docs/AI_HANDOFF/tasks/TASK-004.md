@@ -105,3 +105,24 @@ VERIFICATION:
 ISSUES: Hook runner blocked the `write` and `edit` tools on this file; fell back to `bash + python3 heredoc` per the task constraints. `aiChatPanel.ts` left byte-identical (`git diff --stat` shows zero changes). The vscode import at module top required a minimal `vi.mock("vscode", …)` prelude (Uri + window.createWebviewPanel stubs) — same pattern already used in `aiChatE2e.test.ts`. Test 4 budget-cut required one iteration: initial column widths were too thin to exceed the 300-char budget; rebuilt with 6 tables × 8 wide columns at budget=600 and all assertions including the `more objects omitted` footer + `export_structure` hint pass on the first rerun. No production code touched.
 HANDOFF_TO_REVIEWER: yes
 NEXT: ready for review (TASK-004 marked DONE pending reviewer verdict; main agent should advance INDEX.md to pending_review if handoff.reviewer.enabled).
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/aiChatPanelPrivacy.test.ts; npx vitest run src/ui/__tests__/aiChatPanel.test.ts; npm run typecheck
+  result: 6 pass / 0 fail; 33 pass / 0 fail; typecheck exit 0 (all fresh)
+TEST_PLAN_COVERAGE: all-followed — 6/6 task tests implemented against the real buildMessages; assertions run through the production function, no mocked-internals assertions.
+FINDINGS:
+  critical:
+    - (none)
+  important:
+    - (none)
+  minor:
+    - src/ui/__tests__/aiChatPanelPrivacy.test.ts:64 — SENTINEL_VIEW (XSECRETROWDATA42X) is asserted absent (lines 279, 284, 374) but never planted in any adapter mock data, so those specific assertions are vacuous. Fix: plant it in a view/table metadata or row payload, or drop the constant. Core lock unaffected — runQuery-count===0 plus planted SENTINEL_ROW carry the invariant.
+    - src/ui/__tests__/aiChatPanelPrivacy.test.ts:237-239 — empty beforeEach is dead code; remove.
+    - Executor Report omits the scratch-mutation observation required by acceptance criterion #1 (paperwork gap only — reviewer executed the mutation: see NOTES).
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Mutation test performed by reviewer: temporarily patched buildMessages to runQuery `SELECT * ... LIMIT 2` and inject rows into DDL — 4/6 tests went RED (sentinel sweep + runQuery-count assertions fired, proving a row leak cannot slip through); file restored byte-identical (diff vs 0817c28 unchanged at 722 lines), suite re-greened 6/6. DDL-only property holds across the full handoff diff: TASK-001/005 production changes (mention resolver, ACP prompt path, regenerate) use only listSchemas/listTables/listViews/listColumns — no runQuery on any context path. Cursor (RUN.md) left to orchestrator to avoid racing sibling reviewers.

@@ -132,6 +132,29 @@ export function parseMentionTokens(text: string): string[] {
   return out;
 }
 
+
+/**
+ * Strip the `--- Referenced context ---` mention-augmentation block from
+ * a user-message string. `handleSend` mutates `userMsg.content` to embed
+ * the resolved DDL/file body under this header (see `:908`), then that
+ * augmented text is what lands in `this.history`. Regenerate pops the
+ * trailing `[user, assistant]` pair; before re-sending, we strip the
+ * augmentation so the normal send path re-resolves mentions fresh from
+ * the ORIGINAL trimmed text — otherwise the model sees the DDL twice
+ * (once in the prompt text, once as a freshly-appended block) and the
+ * wire's "user text" leaks the schema body verbatim.
+ *
+ * The marker is exactly the prefix `resolveMentionsForTurn` writes
+ * (`--- Referenced context ---` plus the appended body). A user typing
+ * this literal header themselves would need the exact `\n\n` separator
+ * AND the exact header text — collisions are not a concern in practice.
+ */
+export function stripReferencedContextMarker(text: string): string {
+  const idx = text.indexOf("\n\n--- Referenced context ---");
+  if (idx === -1) return text;
+  return text.slice(0, idx);
+}
+
 /** Resolved mention item returned by `resolveMentionsForTurn`. `block` is
  * the per-turn context text that gets appended under the `--- Referenced
  * context ---` header. `kind` mirrors `MentionObjectItem.kind` so the
@@ -1578,14 +1601,20 @@ export class AiChatPanel {
    *
    * Semantics:
    *   - Busy (`this.token !== null`) → no-op — a turn is already in flight.
-   *   - Trailing `[user, assistant]` pair in history → pop both, then
-   *     `await this.handleSend(poppedUser.content)`. The completed rerun
-   *     appends exactly one new pair, so history never duplicates.
+   *   - Trailing `[user, assistant]` pair in history → pop both, strip
+   *     the TASK-005 mention-augmentation block from the popped user text
+   *     (so re-send does NOT leak the DDL/file body AND does NOT cause
+   *     `resolveMentionsForTurn` to append a fresh `--- Referenced
+   *     context ---` block on top of the stale one), then
+   *     `await this.handleSend(stripped)`. The completed rerun appends
+   *     exactly one new pair, so history never duplicates.
    *   - Otherwise the last UI exchange is a STOPPED one (history push sits
    *     inside `!token?.aborted`, so the stopped user message was never
    *     appended): re-send the stopped user text verbatim via
-   *     `this.lastSentText`. History is not pre-mutated — handleSend's
-   *     normal completion path appends the pair.
+   *     `this.lastSentText`. `lastSentText` is reset by `handleClear` and
+   *     `handleResumePick` so a Regenerate after either never resurrects
+   *     a wiped/old-session prompt. History is not pre-mutated —
+   *     handleSend's normal completion path appends the pair.
    *   - Empty history + nothing ever sent → no-op.
    */
   private async handleRegenerate(): Promise<void> {
@@ -1599,7 +1628,16 @@ export class AiChatPanel {
       const poppedUserText = prev.content;
       if (typeof poppedUserText !== "string") return;
       this.history = this.history.slice(0, -2);
-      await this.handleSend(poppedUserText);
+      // TASK-005 mention augmentation mutated `userMsg.content` at handleSend
+      // (:908) to embed the `--- Referenced context ---` block. Re-sending
+      // the popped text verbatim would (a) leak the DDL/file content back
+      // through the user's prompt text on the wire and (b) cause
+      // resolveMentionsForTurn to APPEND a fresh block on top, producing
+      // duplicated context. Strip the marker-then-onward before handleSend
+      // so the normal send path re-resolves mentions fresh from the
+      // ORIGINAL trimmed text.
+      const stripped = stripReferencedContextMarker(poppedUserText);
+      await this.handleSend(stripped);
       return;
     }
     // Not an intact trailing pair: the last UI exchange was stopped
@@ -1657,6 +1695,11 @@ export class AiChatPanel {
       this.disposeAcpSession();
     }
     this.history = [];
+    // Fix round 4.5 (review): Clear must also reset `lastSentText`. Without
+    // this, Regenerate after Clear falls through to the stopped-path branch
+    // (history has no trailing pair) and re-sends the pre-clear text,
+    // resurrecting a message the user explicitly wiped.
+    this.lastSentText = null;
     this.post({ type: "init", hasHistory: false });
     this.post({ type: "done" });      // belt: webview busy flag về false
   }
@@ -1853,6 +1896,11 @@ export class AiChatPanel {
       handle.sessionId = sessionId;
       acpSession.sessionId = sessionId;
       this.post({ type: "history", items, truncated, truncatedCount });
+      // Fix round 4.5 (review): loading a saved session must NOT inherit
+      // the in-memory `lastSentText` — a Regenerate pressed right after a
+      // resume would re-send the pre-resume prompt into the reloaded
+      // session. Drop it on every resume_pick settle.
+      this.lastSentText = null;
       // dropReplayFrames stays armed until the next session/prompt write
       // (see runAcpTurn) — that write is what closes the AcpClient's
       // replay window, and the guard mirrors that lifecycle exactly.

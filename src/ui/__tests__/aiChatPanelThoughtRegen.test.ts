@@ -15,6 +15,7 @@ import type {
   AgentRunResult,
 } from "../../ai/agent";
 import type { AdapterFactory } from "../../ai/tools/types";
+import type { DbAdapter } from "../../adapters/types";
 import {
   AcpClient,
   type AcpTransport,
@@ -33,7 +34,38 @@ vi.mock("../../ai/agent", async (importOriginal) => {
   };
 });
 
-import { AiChatPanel } from "../aiChatPanel";
+import {
+  AiChatPanel,
+  stripReferencedContextMarker,
+  resolveMentionsForTurn,
+} from "../aiChatPanel";
+// Tiny adapter that resolves a single table token to a deterministic
+// DDL block. Used by the R4.5 mention-regenerate regression to drive
+// the REAL `resolveMentionsForTurn` (which is called intra-module, so
+// vi.mock can't intercept it) — the test asserts the wire-level effect
+// (block embedded exactly once after regenerate), not the resolver
+// internals. Adapter never calls runQuery → privacy invariant holds.
+function makeMentionAdapter(): DbAdapter {
+  const columns = [
+    { name: "id", dataType: "integer", nullable: false, isPrimaryKey: true, schema: "public", table: "users" },
+    { name: "email", dataType: "text", nullable: false, isPrimaryKey: false, schema: "public", table: "users" },
+  ];
+  return {
+    connect: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    runQuery: vi.fn(async () => ({ results: [{ columns: [], rows: [] }] })) as unknown as DbAdapter["runQuery"],
+    listSchemas: vi.fn(async () => [{ name: "public" }]) as unknown as DbAdapter["listSchemas"],
+    listTables: vi.fn(async () => [{ schema: "public", name: "users", type: "table" }]) as unknown as DbAdapter["listTables"],
+    listViews: vi.fn(async () => []) as unknown as DbAdapter["listViews"],
+    listRoutines: vi.fn(async () => []) as unknown as DbAdapter["listRoutines"],
+    listColumns: vi.fn(async () => columns) as unknown as DbAdapter["listColumns"],
+    listRoutineParams: vi.fn(async () => []),
+    estimateTableRows: vi.fn(async () => null),
+    estimateTableRowsBatch: vi.fn(async () => new Map<string, number | null>()),
+    listTableDetail: vi.fn(async () => ({ columns, constraints: [] })),
+    testConnection: vi.fn(async () => {}),
+  };
+}
 
 // ---- vscode mock (mirrors aiChatPanelAcp.test.ts) ------------------------
 type Listener<T> = (e: T) => void;
@@ -101,7 +133,7 @@ vi.mock("vscode", () => ({
     })),
   },
   ViewColumn: { Active: 1 },
-  workspace: { workspaceFolders: undefined },
+  workspace: { workspaceFolders: undefined, fs: { readFile: vi.fn(async () => { throw new Error("ENOENT"); }) } },
   EventEmitter: vi.fn().mockImplementation(() => new FakeEventEmitter<unknown>()),
 }));
 
@@ -702,5 +734,208 @@ describe("AiChatPanel — thought forwarding regression (TASK-001 #10)", () => {
         (m as { type?: string }).type === "permission_request",
     );
     expect(reqs).toHaveLength(1);
+  });
+});
+describe("AiChatPanel — fix round 4.5: regenerate after @-mention + Clear-then-regenerate (TASK-001)", () => {
+  it("R4.5 #1 send with @-mention → regenerate → history + re-sent prompt carry EXACTLY ONE --- Referenced context --- block (no duplication)", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const adapter = makeMentionAdapter();
+    const adapterFactory: AdapterFactory = vi.fn(async () => adapter);
+    const { start, sessions } = makeFakeAcpDeps();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory,
+      acp: { start },
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+
+    // Original send with a mention — the REAL resolveMentionsForTurn
+    // runs against the stub adapter, returns a non-empty contextBlock,
+    // handleSend embeds it into userMsg.content, and the prompt text +
+    // the history push both carry the block.
+    handler({ type: "send", text: "describe @public.users" });
+    await until(() => sessions.length > 0);
+    const session = sessions[0] as FakeAcpSession;
+    await until(() => lastPromptRequestId(session.transport) !== undefined);
+
+    const firstPrompt = session.transport
+      .allWritten()
+      .filter((f) => f["method"] === "session/prompt");
+    expect(firstPrompt).toHaveLength(1);
+    const firstText =
+      ((firstPrompt[0]!["params"] as { prompt: Array<{ text: string }> })
+        .prompt[0]?.text) ?? "";
+    // First send: augmentation IS present (the bug is about the SECOND
+    // send carrying it twice — this baseline assertion just locks in
+    // that the first send legitimately contains the block).
+    const firstBlocks = firstText.split("--- Referenced context ---").length - 1;
+    expect(firstBlocks).toBe(1);
+    expect(firstText).toContain("describe @public.users");
+    expect(firstText).toMatch(/CREATE TABLE public\.users/);
+
+
+    // Complete the first turn so history gains [user, assistant].
+    feedAgentMessageChunk(session.transport, "first answer");
+    respondPrompt(
+      session.transport,
+      lastPromptRequestId(session.transport),
+      "end_turn",
+    );
+    await until(() => postedMessages(p).some(isDone));
+
+    // Wait until history gains the [user, assistant] pair. The done post
+    // can race ahead of the history.push() inside runAcpTurn — both are
+    // synchronous in the same microtask, but `postedMessages(p).some(isDone)`
+    // is the webview-side signal and the panel.history assignment is a
+    // host-side mutation. Poll explicitly to keep the test deterministic.
+    await until(() => internals(panel).history.length >= 2);
+    const histAfterFirst = internals(panel).history.map((m) => m.content);
+    expect(histAfterFirst).toHaveLength(2);
+    expect(histAfterFirst[0]?.startsWith("describe @public.users\n\n--- Referenced context ---")).toBe(true);
+    expect(histAfterFirst[1]).toBe("first answer");
+    // Adapter factory was hit at least once (handleSend resolved the token).
+    expect(adapterFactory.mock.calls.length).toBeGreaterThanOrEqual(1);
+
+    // Regenerate. Bug repro (pre-fix): handleRegenerate re-sent the
+    // popped `prev.content` verbatim → resolveMentionsForTurn ran
+    // AGAIN and appended a fresh block on top of the stale one →
+    // two `--- Referenced context ---` markers reached the model.
+    // Fix: handleRegenerate strips the marker before handleSend so
+    // re-resolution lands ONE block, not two.
+    const callsBefore = adapterFactory.mock.calls.length;
+    handler({ type: "regenerate" });
+    await until(() =>
+      session.transport
+        .allWritten()
+        .filter((f) => f["method"] === "session/prompt").length === 2,
+    );
+
+    const secondPrompt = session.transport
+      .allWritten()
+      .filter((f) => f["method"] === "session/prompt")[1]!;
+    const secondText =
+      ((secondPrompt["params"] as { prompt: Array<{ text: string }> })
+        .prompt[0]?.text) ?? "";
+    // Hard regression assertion — the heart of the bug. The re-sent
+    // prompt carries EXACTLY ONE `--- Referenced context ---` block,
+    // not two. Pre-fix this would be 2 (stale + freshly appended).
+    const secondBlocks = secondText.split("--- Referenced context ---").length - 1;
+    expect(secondBlocks).toBe(1);
+    // the model still sees the user's actual question.
+    expect(secondText).toContain("describe @public.users");
+    // The adapter was queried again — re-resolution from the stripped
+    // text is the whole point of the fix.
+    expect(adapterFactory.mock.calls.length).toBeGreaterThan(callsBefore);
+
+    // Complete the regenerated turn; the new history tail must be
+    // [strippedUser, newAnswer] — no stale embedded context.
+    feedAgentMessageChunk(session.transport, "second answer");
+    respondPrompt(
+      session.transport,
+      lastPromptRequestId(session.transport),
+      "end_turn",
+    );
+    await until(() => postedMessages(p).filter(isDone).length === 2);
+
+    const histAfterRegen = internals(panel).history.map((m) => m.content);
+    expect(histAfterRegen).toHaveLength(2);
+    expect(histAfterRegen[0]?.startsWith("describe @public.users\n\n--- Referenced context ---")).toBe(true);
+    expect(histAfterRegen[1]).toBe("second answer");
+    // The post-regen user message has exactly one Referenced-context
+    // block — strip-then-resolve replaced the stale one, did not stack.
+    const postBlocks = (histAfterRegen[0] ?? "").split("--- Referenced context ---").length - 1;
+    expect(postBlocks).toBe(1);
+  });
+
+  it("R4.5 #2 send → Clear → regenerate: no-op (no runAgent call, no new session/prompt write, history stays empty)", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const { start, sessions } = makeFakeAcpDeps();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      acp: { start },
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+
+    // Send something real, complete the turn so history gains a pair.
+    handler({ type: "send", text: "hello" });
+    await until(() => sessions.length > 0);
+    const session = sessions[0] as FakeAcpSession;
+    await until(() => lastPromptRequestId(session.transport) !== undefined);
+    feedAgentMessageChunk(session.transport, "hi back");
+    respondPrompt(
+      session.transport,
+      lastPromptRequestId(session.transport),
+      "end_turn",
+    );
+    await until(() => postedMessages(p).some(isDone));
+    await until(() => internals(panel).history.length >= 2);
+    expect(internals(panel).history.length).toBe(2);
+
+    // Snapshot total session/prompt writes across EVERY fake transport
+    // (Clear disposes the live ACP session → ensureAcpSession() spawns
+    // a fresh one on the next send, so checking only the original
+    // session.transport misses the bug — the resurrected write goes to
+    // a new transport).
+    const promptsBefore = sessions.reduce(
+      (n, s) => n + s.transport.allWritten().filter((f) => f["method"] === "session/prompt").length,
+      0,
+    );
+    const sessionsBefore = sessions.length;
+    const runAgentBefore = agentState.runAgentMock.mock.calls.length;
+
+
+    // Clear — wipe history AND (fix) lastSentText. Pre-fix: lastSentText
+    // survived the clear, so a regenerate after Clear would re-send
+    // "hello" into the wiped chat, resurrecting the wiped message.
+    handler({ type: "clear" });
+    await flush(10);
+    expect(internals(panel).history).toEqual([]);
+
+    // Regenerate after Clear must be a true no-op: history is empty
+    // AND lastSentText is null, so neither pop-pair nor stopped-path
+    // branches fire. Verify by snapshotting counters BEFORE the call.
+    handler({ type: "regenerate" });
+    await flush(20);
+
+    // No new session spawned (no fresh ACP session required) AND no new
+    // session/prompt write reached any transport AND no runAgent call
+    // leaked through the builtin path.
+    expect(sessions.length).toBe(sessionsBefore);
+    expect(sessions.reduce(
+      (n, s) => n + s.transport.allWritten().filter((f) => f["method"] === "session/prompt").length,
+      0,
+    )).toBe(promptsBefore);
+    expect(agentState.runAgentMock.mock.calls.length).toBe(runAgentBefore);
+    // History stayed empty — no resurrected pair.
+    expect(internals(panel).history).toEqual([]);
+  });
+
+
+  // Pure-unit guard for the strip helper itself — keeps the regex/
+  // boundary contract honest without spinning a panel.
+  describe("stripReferencedContextMarker helper", () => {
+    it("returns input unchanged when no marker is present", () => {
+      expect(stripReferencedContextMarker("plain text")).toBe("plain text");
+      expect(stripReferencedContextMarker("")).toBe("");
+    });
+    it("strips the marker line + everything after it", () => {
+      const before = "describe @public.users\n\n--- Referenced context ---\nCREATE TABLE x";
+      const after = stripReferencedContextMarker(before);
+      expect(after).toBe("describe @public.users");
+    });
+    it("does not strip a user-written header missing the leading \\n\\n separator", () => {
+      const user = "line one\n--- Referenced context ---\nline two";
+      // No leading blank line → not the augmentation shape → leave alone.
+      expect(stripReferencedContextMarker(user)).toBe(user);
+    });
   });
 });

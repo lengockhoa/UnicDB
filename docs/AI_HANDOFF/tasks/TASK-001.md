@@ -119,3 +119,49 @@ NEXT: ready for review
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator. -->
 <!-- Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
+
+## Executor Report (fix round 1)
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+SUMMARY: Fixed both R2 reviewer findings. Finding 1: `handleRegenerate` now strips the TASK-005 `--- Referenced context ---` marker from the popped user text before re-sending, so the normal send path re-resolves mentions fresh from the original trimmed text — eliminating the duplicated-context bug + the wire-leak of the DDL/file body inside the user prompt. Finding 2: `handleClear` (and `handleResumePick`) now reset `lastSentText`, so Regenerate after Clear or after a session reload is a true no-op.
+TEST_PLAN_FOLLOWED: task §4 inline (regression tests added; RED verified before GREEN for both)
+FILES_CHANGED:
+  - src/ui/aiChatPanel.ts:
+    - new `stripReferencedContextMarker(text)` export near `parseMentionTokens` — strips from the first `\n\n--- Referenced context ---` substring onward (returns input unchanged when absent). Pure, no I/O.
+    - `handleRegenerate()` pop-pair branch now calls `await this.handleSend(stripReferencedContextMarker(poppedUserText))` instead of re-sending the augmented text verbatim.
+    - `handleClear()` now sets `this.lastSentText = null` alongside `this.history = []`.
+    - `handleResumePick()` now sets `this.lastSentText = null` after posting the loaded `history` batch (same stale-text exposure: a Regenerate right after a resume must not re-send the pre-resume prompt into the reloaded session).
+    - `handleRegenerate` doc comment updated to document the strip-on-pop contract and the Clear/resume interaction with `lastSentText`.
+  - src/ui/__tests__/aiChatPanelThoughtRegen.test.ts:
+    - new `vscode.workspace.fs.readFile` stub (ENOENT) added to the vscode mock — required by `resolveMentionsForTurn`'s file-fallback path under the R4.5 #1 test.
+    - new `makeMentionAdapter()` factory returning a spy DbAdapter (runQuery never called → privacy invariant holds) that resolves `@public.users` to a deterministic CREATE TABLE block via the REAL `resolveMentionsForTurn` (intra-module call → vi.mock cannot intercept it; the regression asserts the wire-level effect, not the resolver internals).
+    - new describe block "fix round 4.5" with 5 tests (2 main regressions + 3 unit checks for `stripReferencedContextMarker`).
+TESTS_ADDED:
+  - src/ui/__tests__/aiChatPanelThoughtRegen.test.ts:
+    - R4.5 #1 — send "describe @public.users" → complete turn → regenerate. Asserts the first send's prompt carries EXACTLY ONE `--- Referenced context ---` block (baseline), the second send ALSO carries EXACTLY ONE block (regression for the duplicate-context bug), `describe @public.users` survives the round-trip, the adapter factory is queried again (re-resolution actually ran), and the post-regen history tail has exactly one block per entry. RED check (fix reverted): `expected 2 to be 1 // Object.is equality` on the second-prompt block count.
+    - R4.5 #2 — send "hello" → complete turn → Clear → regenerate. Asserts total session/prompt writes (across all fake transports, because Clear disposes the live ACP session and a regenerate-after-respawn would land on a NEW transport) is unchanged, no new ACP session was spawned, no runAgent call leaked through the builtin path, and `this.history` stays empty. RED check (fix reverted): `expected 2 to be 1 // Object.is equality` on total session/prompt count.
+    - 3 unit checks for `stripReferencedContextMarker`: returns input unchanged when no marker; strips the marker line + everything after; does NOT strip a user-written `--- Referenced context ---` header that lacks the `\n\n` separator (so a user typing the literal header text for unrelated reasons is preserved).
+VERIFICATION:
+  command: npx vitest run src/ui/__tests__/aiChatPanelThoughtRegen.test.ts src/ui/__tests__/aiChatPanelAcp.test.ts src/ui/__tests__/aiChatPanelResume.test.ts src/ui/__tests__/aiChatPanelMessages.test.ts src/ui/__tests__/aiChatPanelMentions.test.ts src/ui/__tests__/aiChatPanelPrivacy.test.ts
+  result: 6 files / 111 pass / 0 fail
+  output_excerpt: |
+    ✓ src/ui/__tests__/aiChatPanelThoughtRegen.test.ts  (15 tests) 23ms
+    ✓ src/ui/__tests__/aiChatPanelAcp.test.ts  (31 tests) 45ms
+    ✓ src/ui/__tests__/aiChatPanelResume.test.ts  (11 tests) 20ms
+    ✓ src/ui/__tests__/aiChatPanelMessages.test.ts  (20 tests) 6ms
+    ✓ src/ui/__tests__/aiChatPanelMentions.test.ts  (28 tests) 7ms
+    ✓ src/ui/__tests__/aiChatPanelPrivacy.test.ts  (6 tests) 4ms
+    Test Files  6 passed (6)
+    Tests  111 passed (111)
+  command: npm run typecheck
+  result: exit 0 (Wall time: 1.02 seconds)
+  RED evidence (separate verification runs with the source-fix reverted):
+    R4.5 #1 reverted → "expected 2 to be 1 // Object.is equality" on second-prompt block count
+    R4.5 #2 reverted → "expected 2 to be 1 // Object.is equality" on total session/prompt count
+ISSUES: intra-module call to `resolveMentionsForTurn` cannot be intercepted by `vi.mock("../aiChatPanel", ...)` — the resolver is called by reference inside the same module. Switched the R4.5 #1 test to drive the REAL resolver via a stub DbAdapter (privacy-preserving: `runQuery` returns no rows + never called). All assertion strength preserved: the wire-level effect (one block, not two) is what the contract requires, and that is exactly what we measure.
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for R4.5 re-review
+

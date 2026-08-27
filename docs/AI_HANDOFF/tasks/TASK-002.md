@@ -109,3 +109,23 @@ RED_OUTPUT: 19/19 initially RED (16 meaningful failures: no .vsdb-chat-thinking,
 Verification Output: npx vitest run aiChatPanelWebviewTask002.test.ts aiChatPanelBundle.test.ts aiChatPanel.test.ts aiChatPanelMessages.test.ts aiChatPanelAcp.test.ts -> 103 passed | 11 skipped. npm run typecheck exit 0.
 Status: PASS
 Note: Executor hit budget at 17/19; orchestrator finished final 2 (restored missing `case "done"` block that had been orphaned after the error case's return — done never re-enabled buttons; error path now also resolves queued marker). All 19 green in main tree.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/aiChatPanelWebviewTask002.test.ts src/ui/__tests__/aiChatPanelWebview.test.ts src/ui/__tests__/aiChatPanelBundle.test.ts && npm run typecheck
+  result: 57 passed / 0 failed (19+27+11); typecheck exit 0
+TEST_PLAN_COVERAGE: all-followed — §4 #1-#10 all implemented in aiChatPanelWebviewTask002.test.ts (+2 extra: #11 Regenerate, #12 Esc-on-picker); RED_OUTPUT contains real failing output ("expected ... to have a length of +0 but got 1" for Ctrl+Enter send)
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - webview/aiChatPanelMain.ts:722-733 — autoScroll measures distanceFromBottom AFTER the append, so an append taller than 40px while the user is pinned at bottom (e.g. final rendered assistant message replacing a shorter streaming bubble) fails the near-bottom check and shows #jumpLatest instead of following the stream. Consider capturing near-bottom state before mutation; no test covers the large-append-while-following case.
+    - src/ui/__tests__/aiChatPanelWebviewTask002.test.ts:352 — #5 cannot truly assert the unhandledrejection path (jsdom does not fire it for caught promises, per the in-test comment); the no-throw + label-unchanged assertions remain the operative guard. Acceptable.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Security contract verified — fence copy double-escape is sound (fences captured AFTER escapeHtml, so data-raw="...&amp;quot;..." can never terminate the attribute early; click-time unescapeHtml round-trips to exact raw code); no inline on*= handlers anywhere; permission/resume/mention/error surfaces remain textContent-only. Enter/Shift+Enter/Ctrl-Cmd-Enter semantics match spec (aiChatPanelMain.ts:520-524) with tests #3/#9. Done re-enables buttons, error resolves queued (host always posts done after error in finally — aiChatPanel.ts:1028-1029,1238-1241). Replay agent_thought_chunk still dropped (test #10). DDL-only privacy invariant untouched by this diff.

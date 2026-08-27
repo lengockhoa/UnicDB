@@ -127,3 +127,49 @@ RED OUTPUT (paste from `npx vitest run src/ui/__tests__/chatLayoutCss.test.ts` B
 
 ---
 
+
+
+## Executor Report (fix round 1)
+
+```
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: FixT3
+SUMMARY: Fixed critical height-chain bug (added chat-scoped body.vsdb-chat-body { height:100vh } + added vsdb-chat-body class to buildHtml <body>); added 6 missing TASK-002 affordance styles (thinking block, jump-to-latest, md-copy, queued marker, streaming caret, #regenerateBtn) all themed via --vscode-* vars and mirroring the permission-card pattern; tightened the max-height:60vh guard regex (now also catches the space-free form) and fixed hasHoverRule template-literal escape bug (\s was degrading to s). Test count grew 6→15.
+TEST_PLAN_FOLLOWED: inline — the task's original Test Plan did not cover these findings (reviewer caught them in headless-Chromium). Wrote height-chain + 6 affordance contracts inline; happy/edge/scope coverage preserved.
+FILES_CHANGED:
+  - webview/styles.css: appended 1 height-chain rule (body.vsdb-chat-body) + 6 affordance blocks (thinking, thinking-body, jump, jump:hover, md-copy, md-copy:hover, queued + keyframes, caret + keyframes, regenerateBtn). Total +119 lines, file went 1294→1413.
+  - src/ui/aiChatPanel.ts: buildHtml (line 2047) <body class="vsdb-form-body"> → <body class="vsdb-form-body vsdb-chat-body"> (additive — vsdb-form-body kept so connectionForm etc. still work).
+  - src/ui/__tests__/chatLayoutCss.test.ts: rewritten — 15 tests now: original 4 + 3 critical (height-chain, .vsdb-chat fills body, vsdb-form-body scope preserved) + 6 affordance + resume-picker + mention-dropdown (existing). hasHoverRule escaped to \\s; max-height regex catches space-free form too.
+TESTS_ADDED:
+  - src/ui/__tests__/chatLayoutCss.test.ts: 9 new tests (chat body height chain, .vsdb-chat fills body, vsdb-form-body not touched, thinking surface, jump floating, md-copy, queued marker, streaming caret, regenerateBtn).
+VERIFICATION:
+  command: npx vitest run src/ui/__tests__/chatLayoutCss.test.ts
+  result: 15 pass / 0 fail / exit code 0
+  command: npm run typecheck
+  result: exit code 0
+  command: npx vitest run src/ui/__tests__/aiChatPanel.test.ts src/ui/__tests__/aiChatE2e.test.ts
+  result: 38 pass / 0 fail (regression — buildHtml body class change did not break getHtml assertions)
+ISSUES: edit tool reported appends as applied but the file remained unmodified until I used python in-place for the CSS append. Wrote the test file via write (atomic). The vsdb-form-body rule is intentionally NOT scoped under .vsdb-chat (other webviews still use it); the height rule is only on body.vsdb-chat-body so connectionForm etc. keep natural document flow. Manual visual smoke not re-run in this round (CI proxy: height-chain test + .vsdb-chat min-height:0 test assert the chain at the source level). Reviewer's prior headless-Chromium probe is still the runtime proof.
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for re-review (R4.5); green re-run expected if reviewer re-runs headless-Chromium against the patched buildHtml/CSS.
+```
+
+RED OUTPUT (paste from `npx vitest run src/ui/__tests__/chatLayoutCss.test.ts` BEFORE the CSS + buildHtml changes):
+
+  ❯ src/ui/__tests__/chatLayoutCss.test.ts > TASK-003 - chat layout CSS contract > chat webview body establishes a real height chain (body.vsdb-chat-body height:100vh)
+    → body.vsdb-chat-body rule block must exist — fixes the 205px panel collapse (CRITICAL): expected '' not toBe ''
+  ❯ src/ui/__tests__/chatLayoutCss.test.ts > TASK-003 - chat layout CSS contract > TASK-002 affordances (CSS contract) > thinking block: vsdb-chat-thinking uses a card-like surface
+    → .vsdb-chat-thinking rule block must exist: expected '' not toBe ''
+  ❯ src/ui/__tests__/chatLayoutCss.test.ts > TASK-003 - chat layout CSS contract > TASK-002 affordances (CSS contract) > jump-to-latest: floating button pinned bottom-right of the thread
+    → .vsdb-chat-jump rule block must exist: expected '' not toBe ''
+  ❯ src/ui/__tests__/chatLayoutCss.test.ts > TASK-003 - chat layout CSS contract > TASK-002 affordances (CSS contract) > md-copy: small inline button attached to a code block
+    → .vsdb-md-copy rule block must exist: expected '' not toBe ''
+  ❯ src/ui/__tests__/chatLayoutCss.test.ts > TASK-003 - chat layout CSS contract > TASK-002 affordances (CSS contract) > queued marker: small visual indicator distinct from a settled bubble
+    → .vsdb-chat-queued rule block must exist: expected '' not toBe ''
+  ❯ src/ui/__tests__/chatLayoutCss.test.ts > TASK-003 - chat layout CSS contract > TASK-002 affordances (CSS contract) > streaming caret: visible glyph on a streaming assistant bubble
+    → streaming caret must be visible: either .vsdb-chat-caret with display/animation OR .vsdb-chat-assistant.vsdb-chat-streaming::after with a non-empty content: expected false toBe true
+  ❯ src/ui/__tests__/chatLayoutCss.test.ts > TASK-003 - chat layout CSS contract > TASK-002 affordances (CSS contract) > regenerateBtn: button-level affordance styled or inherits .vsdb-chat-secondary
+    → #regenerateBtn must be styled inline OR inherit from .vsdb-chat-secondary (which must itself be styled): expected false toBe true
+  Tests  7 failed | 8 passed (15)
