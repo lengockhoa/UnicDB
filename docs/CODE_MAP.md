@@ -49,7 +49,7 @@ Requery/filter/sort → `resultsPanel.composeRequerySql` → `composeKeysetQuery
 
 ## Test Coverage
 
-- `src/**/__tests__/` + `src/extension.test.ts` + `src/scaffold.test.ts` + `src/__tests__/releaseHygiene.test.ts` — 40 files / 453 tests (sau cycle H). Bundle-eval tests load `dist/webview.js` → compile trước vitest.
+- `src/**/__tests__/` + `src/extension.test.ts` + `src/scaffold.test.ts` + `src/__tests__/releaseHygiene.test.ts` — 117 files / 1695 tests (sau cycle Z). Bundle-eval tests load `dist/*.js` → compile trước vitest (`consolePanelBundle.test.ts` yêu cầu `dist/consolePanel.js`).
 - Gaps: version/README consistency tự động rồi (releaseHygiene); browser-only behaviors (CSS/display) jsdom-blind — cần browser smoke.
 
 ## Dangerous Areas
