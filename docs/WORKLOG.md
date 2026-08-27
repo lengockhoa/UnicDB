@@ -22,6 +22,26 @@ For each significant action, append:
 
 ---
 
+## 2026-08-28 — Cycle AA: AI Chat UX overhaul + release v1.8.0
+
+- Action: full handoff cycle (P0→R5+release) rebuilding the AI Chat panel to modern
+  AI-chat standards. Mid-plan steering added: resume-picker repair (zero CSS existed),
+  @-mentions (DB objects DDL + workspace files content, per-turn), Enter=send keybind.
+  Plan reviewed: round 1 Issues Found (2 importants: thought-pin supersession unlisted,
+  Regenerate-after-Stop undefined) → revised → loop cap reached, applied without re-review.
+- Implementation: 5 tasks / 3 waves in worktrees. T1 thought+regenerate contract;
+  T2 webview UX (thinking block, copy, keybind, scroll, states); T3 layout CSS (60vh
+  kill, height chain, picker/mention styles); T4 privacy lock (DDL-only sentinel,
+  mutation-tested by reviewer); T5 @-mentions (pure parser, host resolution, dropdown).
+  Two executor parks (infra) → orchestrator finished T2 last 2 tests + T5 verification.
+- Review: R2-R4 5 parallel reviewers. T2/T4 approved(+minor); T1 changes_requested
+  (stale mention-context re-sent on Regenerate; Clear didn't reset lastSentText);
+  T3 critical_block (height chain dead in real browser — body class missing, found via
+  headless-Chromium probe); T5 changes_requested (single-segment regex, '..' escape,
+  UTF-16 vs bytes). Fix round 1 + 1b fixed all; re-review approved 5/5.
+- Verification: 73 files / 1086 tests pass, typecheck 0. vsix 18 entries, 0 forbidden,
+  0 markers. Released v1.8.0 (commit 10d44f3, GitHub release with vsdb-1.8.0.vsix).
+
 ## 2026-08-27 — Cycle Z: SQL Console feature + release v1.7.0
 
 - Action: full handoff cycle (P0→R5) for a DataGrip-style SQL Console. P0 decisions:
