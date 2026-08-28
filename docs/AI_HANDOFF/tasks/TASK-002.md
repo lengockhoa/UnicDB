@@ -124,3 +124,7 @@ npm run typecheck
   ```
 - **GREEN_CONFIRMED**: 28/28 in aiChatPanelWebviewTask002.test.ts; 80/80 across regression set (aiChatPanelWebview 27/27, aiChatPanelAttachments 11/11, aiChatPanelThoughtRegen 15/15, aiChatPanelWebviewTask002 28/28); `npm run typecheck` exit 0. Cycle-AA Enter=send / Shift+Enter=newline keybind preserved (no edits in wireControls keydown).
 - **COMMIT**: `818d01df1dcffb432cb712fbe13fd989e6dcd5a2` (`handoff: cycle AB task-002 — webview image attach + clipboard paste UX`)
+
+## Reviewer Metadata (cycle AB)
+- REVIEWER_MODEL: unic-smart
+- REVIEWER_TOOL: code-reviewer (agent type)

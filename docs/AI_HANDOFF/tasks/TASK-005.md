@@ -116,3 +116,7 @@ npm run typecheck
 - VERIFICATION_RERUN: `npx vitest run src/ui/__tests__/aiChatAttachments.test.ts` → 23/23 pass; `npx vitest run src/ui/__tests__/aiChatPanelAttachments.test.ts` (spec §Verification) → 10/10 pass; `npm run typecheck` → exit 0. Hygiene grep: zero imports (no vscode/fs/net/http) in aiChatAttachments.ts. Constants (5MB/4-cap/4-mime Set), all 5 AttachRejectReason reasons, check order count_cap→oversize→unsupported_type→mime_mismatch, PNG-8B/JPEG-3B/GIF-4B-prefix/WEBP RIFF+marker@8-11 sniff, exact-keys `{count,totalBytes,mimes}`, and `imageBytesToDataUrl` TypeError throw all verified in source + tests. Cycle-AA intact: buildMessages(factory,history,userMsg) @ aiChatPanel.ts:556, CSP default-src 'none'/style-src/script-src @ aiChatPanel.ts:2212-2219.
 - BLOCKING: none
 - NOTES: (1) src/ui/__tests__/aiChatPanelAttachments.test.ts:106 imports `type { ImageAttachment }` from ../aiChatAttachments but no such export exists anywhere — latent only, because tsconfig excludes **/*.test.ts and vitest erases type imports; fix: import `MinimalAttachment` instead (TASK-001 territory, logged for owner). (2) Comment at aiChatAttachments.ts:74 "Throws on malformed base64" is inaccurate — Buffer.from never throws; the try/catch at :157 is dead but harmless.
+
+## Reviewer Metadata (cycle AB)
+- REVIEWER_MODEL: unic-smart
+- REVIEWER_TOOL: code-reviewer (agent type)

@@ -138,3 +138,7 @@ T3 (wave 1) consumes T2's (wave 2) class names. Mechanically OK only because T3'
 - VERIFICATION_RERUN: npx vitest run src/ui/__tests__/chatLayoutCss.test.ts → 25/25 pass (1 file); npm run typecheck → exit 0. All 8 acceptance rows confirmed in webview/styles.css (attach-btn 1453, strip 1481, thumb 1489, img cover 1499, remove overlay 1507, warning token 1529, focus ring 1473, dark block 1436) + cycle-AA pin body.vsdb-chat-body{height:100vh} intact at 1302 (guarded by test h). No hardcoded color values in new rules — hex appears only as var() fallbacks per file-wide convention.
 - BLOCKING: none
 - NOTES: Minor (non-blocking): (1) styles.css:1452 comment says "24×24 hit target" but the rule is 28×28 — fix the comment; (2) styles.css:1436-1448 dark-block overrides for warning/error tokens are byte-identical to :root (only --vsdb-overlay-bg alpha 0.4→0.6 differs), so the "sharpen contrast" comment overstates — harmless since --vscode-* vars track theme; (3) chatLayoutCss.test.ts:469-493 test g only requires ≥1 dark token, could pin all 6. Model isolation OK: executor unic-code ≠ reviewer unic-smart. RED baseline evidence (8 fail / 17 pass → 25/25) is in commit da29b04 message, not appended to this task file.
+
+## Reviewer Metadata (cycle AB)
+- REVIEWER_MODEL: unic-smart
+- REVIEWER_TOOL: code-reviewer (agent type)
