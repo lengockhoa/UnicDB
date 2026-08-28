@@ -455,17 +455,22 @@ export async function activate(
     ),
   );
 
-  // 17. vsdb.openConsole — TASK-003 cycle Z: DataGrip-style SQL Console
-  // (single instance). Run executes the WHOLE buffer via the shared
-  // runStatements flow; Save writes the buffer through an OS save dialog.
+  // 17. vsdb.openConsole — TASK-003 cycle Z: DataGrip-style SQL Console.
+  // TASK-AF-004 cycle AF: passes `globalState` Memento so query history
+  // (capped at 200 entries) persists across panel reloads.
   disposables.push(
     vscode.commands.registerCommand("vsdb.openConsole", () =>
-      commandOpenConsole(mgr, runner, panel),
+      commandOpenConsole(mgr, runner, panel, context.globalState),
     ),
   );
-
-  // 18. vsdb.ai.useWithOmp — cycle AD TASK-003 §9/§10
-  // Writes `.vscode/vsdb-ai-config.yml` + `.vscode/vsdb-db-context.md` and
+  // 17b. vsdb.consoleNewTab — TASK-AF-004: add a new tab to the existing
+  // Console panel (no-op if the user hasn't opened the panel yet).
+  disposables.push(
+    vscode.commands.registerCommand(
+      "vsdb.consoleNewTab",
+      () => commandOpenConsoleCreateTab(),
+    ),
+  );
   // surfaces a copy-pasteable `omp` command line (Copy button puts it on
   // the clipboard). apiKey is NEVER written to disk; the YAML carries an
   // env-var hint so OMP picks it up from the user's `OPENAI_API_KEY`.
@@ -684,10 +689,12 @@ function commandOpenConsole(
   mgr: ConnectionManager,
   runner: QueryRunner,
   panel: ResultsPanel,
+  memento: vscode.Memento,
 ): void {
   if (!consolePanel) {
     consolePanel = new ConsolePanel({
       extensionUri: extensionUriForForm,
+      memento,
       onRun: async (sql: string) => {
         if (!mgr.getActive()) {
           await promptToAddConnectionOrSelect();
@@ -721,6 +728,16 @@ function commandOpenConsole(
     });
   }
   consolePanel.show();
+}
+
+/**
+ * TASK-AF-004 — vsdb.openConsole.createTab: open a fresh tab in an existing
+ * Console panel. No-op when the panel hasn't been opened yet (the user must
+ * run `vsdb.openConsole` first to seed the singleton).
+ */
+function commandOpenConsoleCreateTab(): void {
+  consolePanel?.createTab();
+  consolePanel?.show();
 }
 
 async function runQueryFromEditor(

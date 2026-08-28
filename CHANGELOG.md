@@ -3,6 +3,12 @@
 All notable changes to VSDB are documented in this file. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 
+## [Unreleased] — cycle AF (DataGrip parity wave 1)
+
+### Added
+- **SQL Console v2**: multi-tab console (create/switch/close/rename, host-side buffers that survive panel reload), per-statement run (run only the statement at a given index), selection-only run, query history persisted in global state (`vsdb.consoleHistory`, capped at 200 entries) with ArrowUp/ArrowDown recall, an EXPLAIN / EXPLAIN ANALYZE plan pane (ANALYZE executes only behind the existing destructive-confirm gate), and a Format button backed by the new `formatSql` core module.
+- **`vsdb.consoleNewTab` command**: opens a fresh tab in the SQL Console.
+
 ## [1.11.0] — 2026-08-28
 
 Cycle AE: OMP runtime session wiring. The AI Chat panel can now use a local `omp` install as its runtime when `vsdb.ai.engine` is set to `omp` — VSDB hosts the cycle-AD DB-aware tools as an in-process MCP HTTP server, `omp` connects to that endpoint, and the chat panel routes streaming responses and tool-call permission cards through the same engine.

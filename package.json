@@ -60,7 +60,8 @@
     "onCommand:vsdb.createSchema",
     "onCommand:vsdb.exportStructure",
     "onCommand:vsdb.exportAllStructures",
-    "onCommand:vsdb.openConsole"
+    "onCommand:vsdb.openConsole",
+    "onCommand:vsdb.consoleNewTab"
   ],
   "contributes": {
     "commands": [
@@ -237,6 +238,12 @@
         "title": "VSDB: Open Console",
         "category": "VSDB",
         "icon": "$(window)"
+      },
+      {
+        "command": "vsdb.consoleNewTab",
+        "title": "VSDB: Console — New Tab",
+        "category": "VSDB",
+        "icon": "$(add)"
       }
     ],
     "keybindings": [
