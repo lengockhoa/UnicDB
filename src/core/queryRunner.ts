@@ -44,12 +44,13 @@ export interface StatementResult {
   batched?: BatchedQuery;
   error?: string;
   durationMs: number;
-  /**
-   * TASK-007 — optional per-statement tab label (e.g. "public.users" when
-   * browsing table data via the schema tree). The webview's result tab
-   * shows this instead of the generic "Statement N" title. Absent or
-   * empty → the webview falls back to "Statement N".
-   */
+  /** True when a batched cursor was released before this run completed. */
+  cursorClosed?: boolean;
+  /** 1-based run ordinal, present only for append-mode entries. */
+  runNo?: number;
+  /** 1-based statement ordinal within an append-mode run. */
+  runStmtNo?: number;
+  /** Optional per-statement tab label used by browse flows. */
   label?: string;
 }
 
@@ -69,6 +70,7 @@ export class QueryRunner {
   private running: Promise<void> | null = null;
   /** Per-index in-flight promise — serializes concurrent loadMore cho cùng index. */
   private loadMoreInFlight: Map<number, Promise<StatementResult[]>> = new Map();
+  private runCount = 0;
 
   constructor(
     adapterProvider: () => Promise<DbAdapter>,
@@ -106,10 +108,14 @@ export class QueryRunner {
   async run(
     statements: ParsedStatement[],
     onUpdate: (results: StatementResult[]) => void,
+    opts: { append?: boolean } = {},
   ): Promise<StatementResult[]> {
     if (this.running) {
       throw new Error("QueryRunner is already running");
     }
+    const append = opts.append === true;
+    const base = append ? this.results.length : 0;
+    const runNo = ++this.runCount;
     this.cancelRequested = false;
     this.currentBatched = null;
     this.loadMoreInFlight.clear();
@@ -117,25 +123,28 @@ export class QueryRunner {
     // mà chưa fetch hết rows cũ). Pool Postgres max=1 — nếu không đóng,
     // statement đầu của lần chạy này xếp hàng chờ client và fail sau
     // connectionTimeoutMillis ("timeout exceeded when trying to connect").
-    const stale = this.results
-      .filter((r) => r.status === "done" && r.batched)
-      .map((r) => r.batched!);
-    for (const b of stale) {
+    const stale = this.results.filter(
+      (r) => r.status === "done" && r.batched && !r.cursorClosed,
+    );
+    for (const entry of stale) {
       try {
-        await b.close();
+        await entry.batched!.close();
       } catch {
         // best-effort — cursor có thể đã đóng.
       }
+      entry.cursorClosed = true;
     }
-    this.results = statements.map((s, i) => ({
-      index: i,
+    const nextResults = statements.map((s, i) => ({
+      index: base + i,
       sql: s.text,
       status: "running" as StatementStatus,
       durationMs: 0,
+      ...(append ? { runNo, runStmtNo: i + 1 } : {}),
     }));
+    this.results = append ? [...this.results, ...nextResults] : nextResults;
     onUpdate(this.results.slice());
 
-    const runPromise = this.executeAll(statements, onUpdate);
+    const runPromise = this.executeAll(statements, onUpdate, base, append);
     this.running = runPromise;
     try {
       await runPromise;
@@ -149,17 +158,20 @@ export class QueryRunner {
   private async executeAll(
     statements: ParsedStatement[],
     onUpdate: (results: StatementResult[]) => void,
+    base: number,
+    append: boolean,
   ): Promise<void> {
     const adapter = await this.adapterProvider();
 
     for (let i = 0; i < statements.length; i++) {
+      const index = base + i;
       if (this.cancelRequested) {
         // statements còn lại → cancelled.
-        this.results[i].status = "cancelled";
+        this.results[index].status = "cancelled";
         continue;
       }
-      this.currentIndex = i;
-      this.results[i].status = "running";
+      this.currentIndex = index;
+      this.results[index].status = "running";
       onUpdate(this.results.slice());
 
       const start = Date.now();
@@ -176,7 +188,7 @@ export class QueryRunner {
         }
 
         if (this.cancelRequested) {
-          this.results[i].status = "cancelled";
+          this.results[index].status = "cancelled";
           if (runResult.batched) {
             try {
               await runResult.batched.close();
@@ -195,7 +207,7 @@ export class QueryRunner {
         // Re-check cancel: cancel có thể đã được gọi trong lúc fetchBatch(initial)
         // đang chờ. Status cuối cùng là 'cancelled', KHÔNG done.
         if (this.cancelRequested) {
-          this.results[i].status = "cancelled";
+          this.results[index].status = "cancelled";
           if (runResult.batched) {
             try {
               await runResult.batched.close();
@@ -208,21 +220,31 @@ export class QueryRunner {
           continue;
         }
 
-        this.results[i].status = "done";
-        this.results[i].result = result;
-        this.results[i].durationMs = Date.now() - start;
+        this.results[index].status = "done";
+        this.results[index].result = result;
+        this.results[index].durationMs = Date.now() - start;
         if (runResult.batched) {
-          this.results[i].batched = runResult.batched;
-          // currentBatched đã set ở trên — giữ để loadMore dùng.
+          this.results[index].batched = runResult.batched;
+          // In append multi-statement runs, release non-final cursors before
+          // starting the next statement (the pool may have max=1 client).
+          if (append && statements.length > 1 && i < statements.length - 1) {
+            try {
+              await runResult.batched.close();
+            } catch {
+              // best-effort — cursor may already be closed.
+            }
+            this.results[index].cursorClosed = true;
+            this.currentBatched = null;
+          }
         }
         onUpdate(this.results.slice());
       } catch (err) {
         if (this.cancelRequested) {
-          this.results[i].status = "cancelled";
+          this.results[index].status = "cancelled";
         } else {
-          this.results[i].status = "error";
-          this.results[i].error = err instanceof Error ? err.message : String(err);
-          this.results[i].durationMs = Date.now() - start;
+          this.results[index].status = "error";
+          this.results[index].error = err instanceof Error ? err.message : String(err);
+          this.results[index].durationMs = Date.now() - start;
         }
         this.currentBatched = null;
         // Emit state change (error dừng chuỗi).
@@ -231,7 +253,7 @@ export class QueryRunner {
         if (!this.cancelRequested) {
           // Đánh dấu các statements còn lại là cancelled.
           for (let j = i + 1; j < statements.length; j++) {
-            this.results[j].status = "cancelled";
+            this.results[base + j].status = "cancelled";
           }
           onUpdate(this.results.slice());
           return;
@@ -274,6 +296,9 @@ export class QueryRunner {
     const r = this.results[index];
     if (!r) {
       throw new Error(`Statement ${index} not found`);
+    }
+    if (r.cursorClosed) {
+      throw new Error(`Statement ${index} cursor closed after its run finished — run this statement alone to page more rows`);
     }
     if (!r.batched) {
       throw new Error(`Statement ${index} has no batched cursor`);
