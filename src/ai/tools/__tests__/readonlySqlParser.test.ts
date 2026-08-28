@@ -115,6 +115,9 @@ describe("parseReadonly — defense in depth", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toBe("non_select");
   });
+  it("rejects SELECT INTO, which can create or write server-side data", () => {
+    expect(parseReadonly("SELECT * INTO t2 FROM t1").ok).toBe(false);
+  });
 
   it("rejects a forbidden keyword hidden inside a string literal", () => {
     const r = parseReadonly("SELECT 'drop table x' AS s");

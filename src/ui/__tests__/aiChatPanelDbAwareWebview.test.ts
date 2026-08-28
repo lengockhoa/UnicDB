@@ -124,13 +124,13 @@ describe("AiChatPanelWebview — DB-aware tool permission_request card (cycle AD
       type: "permission_request",
       requestId: "dbtool-1k7c-0",
       tool: {
-        id: "dbtool:count_rows",
+        id: "dbtool-1k7c-0",
         name: "count_rows",
         detail: "schema=public table=users where=active=true",
       },
       options: [
-        { optionId: "allow_once", label: "Allow once" },
-        { optionId: "allow_session", label: "Allow session" },
+        { optionId: "allow-once", label: "Allow once" },
+        { optionId: "allow-session", label: "Allow for this session" },
         { optionId: "deny", label: "Deny" },
       ],
     });
@@ -146,7 +146,7 @@ describe("AiChatPanelWebview — DB-aware tool permission_request card (cycle AD
     expect(nameNode?.textContent).toBe("count_rows");
     // Tool id is rendered alongside (matches the ACP card shape).
     const idNode = card.querySelector(".vsdb-chat-permission-tool-id");
-    expect(idNode?.textContent).toBe("dbtool:count_rows");
+    expect(idNode?.textContent).toBe("dbtool-1k7c-0");
     // Three buttons: allow once / allow session / deny — rendered with
     // the cycle AC class split (allow → primary, deny → secondary).
     const buttons = Array.from(
@@ -154,7 +154,7 @@ describe("AiChatPanelWebview — DB-aware tool permission_request card (cycle AD
     );
     expect(buttons.length).toBe(3);
     const labels = buttons.map((b) => b.textContent);
-    expect(labels).toEqual(["Allow once", "Allow session", "Deny"]);
+    expect(labels).toEqual(["Allow once", "Allow for this session", "Deny"]);
     const deny = buttons.find((b) =>
       b.classList.contains("vsdb-chat-permission-deny"),
     );
@@ -183,13 +183,13 @@ describe("AiChatPanelWebview — DB-aware tool Deny emits permission_response (c
       type: "permission_request",
       requestId: "dbtool-1k7c-0",
       tool: {
-        id: "dbtool:count_rows",
+        id: "dbtool-1k7c-0",
         name: "count_rows",
         detail: "schema=public table=users",
       },
       options: [
-        { optionId: "allow_once", label: "Allow once" },
-        { optionId: "allow_session", label: "Allow session" },
+        { optionId: "allow-once", label: "Allow once" },
+        { optionId: "allow-session", label: "Allow for this session" },
         { optionId: "deny", label: "Deny" },
       ],
     });
@@ -236,7 +236,7 @@ describe("AiChatPanelWebview — DB-aware tool Deny emits permission_response (c
 // #3 Allow Once echoes optionId on the wire
 // ============================================================================
 describe("AiChatPanelWebview — DB-aware tool Allow Once echoes optionId (cycle AD TASK-002)", () => {
-  it("clicking Allow once posts {type:permission_response,requestId,optionId:'allow_once'}", () => {
+  it("clicking Allow once posts {type:permission_response,requestId,optionId:'allow-once'}", () => {
     const h = makeHarness();
     h.dispatch({
       type: "init",
@@ -251,13 +251,13 @@ describe("AiChatPanelWebview — DB-aware tool Allow Once echoes optionId (cycle
       type: "permission_request",
       requestId: "dbtool-9zzz-3",
       tool: {
-        id: "dbtool:run_readonly_query",
+        id: "dbtool-9zzz-3",
         name: "run_readonly_query",
         detail: "SELECT id FROM public.users LIMIT 5",
       },
       options: [
-        { optionId: "allow_once", label: "Allow once" },
-        { optionId: "allow_session", label: "Allow session" },
+        { optionId: "allow-once", label: "Allow once" },
+        { optionId: "allow-session", label: "Allow for this session" },
         { optionId: "deny", label: "Deny" },
       ],
     });
@@ -272,7 +272,7 @@ describe("AiChatPanelWebview — DB-aware tool Allow Once echoes optionId (cycle
       card.querySelectorAll<HTMLButtonElement>(
         "button.vsdb-chat-permission-allow",
       ),
-    ).find((b) => b.dataset.optionId === "allow_once");
+    ).find((b) => b.dataset.optionId === "allow-once");
     expect(allowOnce).toBeDefined();
     allowOnce!.click();
 
@@ -282,6 +282,61 @@ describe("AiChatPanelWebview — DB-aware tool Allow Once echoes optionId (cycle
     expect(responses.length).toBe(1);
     expect(responses[0].type).toBe("permission_response");
     expect(responses[0].requestId).toBe("dbtool-9zzz-3");
-    expect(responses[0].optionId).toBe("allow_once");
+    expect(responses[0].optionId).toBe("allow-once");
+  });
+});
+
+// ============================================================================
+// #4 Allow Session echoes optionId on the wire
+// ============================================================================
+describe("AiChatPanelWebview — DB-aware tool Allow Session echoes optionId (cycle AD TASK-002)", () => {
+  it("clicking Allow for this session posts optionId:'allow-session'", () => {
+    const h = makeHarness();
+    h.dispatch({
+      type: "init",
+      engine: { name: "builtin" },
+      busy: false,
+      attachmentsCapable: false,
+      visionCapable: false,
+      cwdLabel: "/workspace",
+    });
+
+    h.dispatch({
+      type: "permission_request",
+      requestId: "dbtool-allow-session-1",
+      tool: {
+        id: "dbtool-allow-session-1",
+        name: "get_table_relationships",
+        detail: "schema=public table=orders",
+      },
+      options: [
+        { optionId: "allow-once", label: "Allow once" },
+        { optionId: "allow-session", label: "Allow for this session" },
+        { optionId: "deny", label: "Deny" },
+      ],
+    });
+
+    const card = h.root.querySelector<HTMLDivElement>(
+      '.vsdb-chat-permission[data-request-id="dbtool-allow-session-1"]',
+    );
+    expect(card).not.toBeNull();
+    if (!card) return;
+    const allowSession = Array.from(
+      card.querySelectorAll<HTMLButtonElement>(
+        "button.vsdb-chat-permission-allow",
+      ),
+    ).find((button) => button.dataset.optionId === "allow-session");
+    expect(allowSession).toBeDefined();
+    allowSession!.click();
+
+    const responses = h.received.filter(
+      (message) => message.type === "permission_response",
+    );
+    expect(responses).toHaveLength(1);
+    expect(responses[0]).toMatchObject({
+      type: "permission_response",
+      requestId: "dbtool-allow-session-1",
+      optionId: "allow-session",
+    });
   });
 });

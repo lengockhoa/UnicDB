@@ -26,7 +26,7 @@ export type ParseResult =
  * behaviour we want (`inserted_at` IS rejected). See the module header.
  */
 const FORBIDDEN_RE =
-  /\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|copy|merge|call|exec)/i;
+  /\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|copy|merge|call|exec|into)/i;
 
 /** True when `text` contains any forbidden keyword (case-insensitive). */
 export function containsForbidden(text: string): boolean {
