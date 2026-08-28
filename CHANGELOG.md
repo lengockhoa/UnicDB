@@ -3,6 +3,24 @@
 All notable changes to VSDB are documented in this file. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 
+## [1.9.0] — 2026-08-28
+
+Cycle AB: AI chat image attach + clipboard paste. The composer can now carry screenshots, schema sketches, and paste-from-clipboard images straight into the model — with explicit caps, a clear warning when the active model can't see, and zero contact with the database auto-context (which stays schema-DDL-only as in cycle AA).
+
+### Added
+- **Image attach button in the chat composer**: a `+` button next to Send opens the system file picker; selecting PNG/JPEG/WEBP/GIF (≤5 MB each, ≤4 per turn) appends a thumbnail strip above the textarea. Each thumbnail has a small remove button. The attach button auto-disables when the active model lacks vision (tooltip: "Current model does not support images").
+- **Clipboard paste in the composer**: `Cmd/Ctrl+V` with an image on the clipboard adds the same thumbnail-pipeline entry — the user does not have to round-trip through the file picker. Paste-image is rejected with the same amber warning when the active model is non-vision.
+- **Wire-contract extension**: `AiChatPanelWebviewSend` gains `attachments?: ImageAttachment[]`. Image bytes reach the model as `ChatContentPart[]` siblings to the text part — never inside the system prompt, the auto-context, or resume replay.
+- **Engine gate (omp/ACP)**: even when the active model advertises vision, the omp/ACP branch drops image attachments with one `vision_unsupported` warning per attachment, then proceeds text-only — so an image can never silently disappear.
+- **5 rejection reasons with a single UX path**: `oversize` / `count_cap` / `unsupported_type` / `mime_mismatch` / `vision_unsupported` — each surfaces a `.vsdb-chat-attach-warning` bubble named with the offending file.
+- **Logging hygiene**: a `summarizeAttachmentsForLog` helper is the only function allowed to receive attachments for logging. Base64 bytes never enter `console.log` / telemetry.
+- **CSP fix**: `buildHtml` now declares `img-src 'self' data:` so the data-URL thumbnails render under the panel's strict CSP (the prior `default-src 'none'` would have stripped them).
+- **CSS for the new strip + button + warning** (with `[data-theme="dark"]` variants and `:focus-visible` ring): `.vsdb-chat-attach-btn`, `.vsdb-chat-attachments`, `.vsdb-chat-thumb`, `.vsdb-chat-thumb-remove`, `.vsdb-chat-attach-warning`.
+- **Pure helpers module** (`src/ui/aiChatAttachments.ts`) — single source of truth for caps, magic-byte sniff, data-URL builder. Webview mirrors the caps via `webview/attachLimits.ts` (equality-pinned by a test).
+
+### Changed
+- None — cycle AA's UX contract (Enter=send, Shift+Enter=newline, pinned composer, Thinking block, mention dropdown, regenerate, resume picker) is unchanged.
+
 ## [1.8.0] — 2026-08-28
 
 Cycle AA: AI Chat panel overhaul to modern AI-chat standards — the chat is the core of VSDB, and this cycle rebuilds its daily UX around the patterns users know from ChatGPT/Claude/Cursor.
@@ -341,3 +359,5 @@ Cycle G: set-filter, toolbar icons, `run-sh` fix.
 [1.6.0]: https://github.com/lengockhoa/VSDB/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/lengockhoa/VSDB/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/lengockhoa/VSDB/compare/v1.4.1...v1.5.0
+
+[1.9.0]: https://github.com/lengockhoa/VSDB/compare/v1.8.0...v1.9.0
