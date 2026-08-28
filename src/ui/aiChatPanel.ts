@@ -39,6 +39,7 @@
    runAgent,
    type AgentDeps,
    type AgentStep,
+  type AgentTool,
    type AgentCallbacks,
    type ToolRegistry,
  } from "../ai/agent";
@@ -55,6 +56,7 @@ import { defaultAiSettings } from "../ai/settings";
 import { createDbTools } from "../ai/tools/registry";
 import { createSqlTool } from "../ai/tools/sqlTool";
 import { createExportStructureTool } from "../ai/tools/schemaTools";
+import { createDbAwareTools } from "../ai/tools/dbAwareTools";
 import type { AcpProcessHandle } from "../ai/omp/acpProcess";
 import { createMcpBridge, type McpBridge } from "../ai/omp/mcpBridge";
  import {
@@ -553,6 +555,142 @@ export interface SchemaContextCacheEntry {
   context: string;
 }
 
+// ============================================================================
+// Cycle AD TASK-001 — host permission gate for the DB-aware tools
+// ============================================================================
+
+/** Verbatim text bubbled back to the model when the user denies (or lets a
+ * request lapse). Criterion 12: the rejection reason reaches the model
+ * unaltered. */
+export const DB_TOOL_DENIED_MESSAGE =
+  "Permission denied by user: this tool was not allowed to read the database.";
+
+const DB_TOOL_PERMISSION_OPTIONS: ReadonlyArray<{
+  optionId: string;
+  label: string;
+}> = [
+  { optionId: "allow-once", label: "Allow once" },
+  { optionId: "allow-session", label: "Allow for this session" },
+  { optionId: "deny", label: "Deny" },
+];
+
+interface DbToolPending {
+  settled: boolean;
+  toolName: string;
+  timeoutHandle: ReturnType<typeof setTimeout>;
+  resolve(optionId: string | undefined): void;
+}
+
+/**
+ * Wraps a DB-aware `AgentTool` so every invocation first posts a
+ * `permission_request` card (same wire shape as the ACP bridge, so the
+ * webview needs no new rendering) and blocks until the user answers.
+ *
+ * Default-deny on EVERY abnormal exit: unknown/duplicate/late response,
+ * unlisted optionId, missing optionId, timeout, and `cancelAll()` (stop /
+ * dispose / process exit) all resolve to `DB_TOOL_DENIED_MESSAGE` without
+ * ever calling the underlying tool.
+ *
+ * `allow-session` grants the tool for the panel's lifetime; `allow-once`
+ * grants exactly this call and the next invocation re-asks.
+ */
+export class DbToolPermissionGate {
+  private readonly pending = new Map<string, DbToolPending>();
+  private readonly sessionAllowed = new Set<string>();
+  private readonly timeoutMs: number;
+  private seq = 0;
+
+  constructor(
+    private readonly post: (msg: AiChatPanelHostMessage) => void,
+    options: { timeoutMs?: number } = {},
+  ) {
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_PERMISSION_TIMEOUT_MS;
+  }
+
+  wrap(tool: AgentTool): AgentTool {
+    return {
+      ...tool,
+      execute: async (args: Record<string, unknown>): Promise<string> => {
+        const granted = await this.request(tool.name, args);
+        if (!granted) return DB_TOOL_DENIED_MESSAGE;
+        return tool.execute(args);
+      },
+    };
+  }
+
+  /** Apply a webview answer. Unknown/duplicate/late ids are ignored. */
+  respond(requestId: string, optionId: string | undefined): boolean {
+    const entry = this.pending.get(requestId);
+    if (entry === undefined || entry.settled) return false;
+    entry.settled = true;
+    clearTimeout(entry.timeoutHandle);
+    this.pending.delete(requestId);
+    entry.resolve(optionId);
+    return true;
+  }
+
+  /** Default-deny every outstanding request (stop / dispose / exit). */
+  cancelAll(): void {
+    for (const requestId of Array.from(this.pending.keys())) {
+      this.respond(requestId, undefined);
+    }
+  }
+
+  private request(
+    toolName: string,
+    args: Record<string, unknown>,
+  ): Promise<boolean> {
+    if (this.sessionAllowed.has(toolName)) return Promise.resolve(true);
+    const requestId = `dbtool-${Date.now().toString(36)}-${(this.seq++).toString(36)}`;
+    return new Promise<boolean>((resolve) => {
+      const entry: DbToolPending = {
+        settled: false,
+        toolName,
+        timeoutHandle: setTimeout(() => {
+          this.respond(requestId, undefined);
+        }, this.timeoutMs),
+        resolve: (optionId) => {
+          if (optionId === "allow-session") {
+            this.sessionAllowed.add(toolName);
+            resolve(true);
+            return;
+          }
+          // Anything that is not the exact `allow-once` option is a deny.
+          resolve(optionId === "allow-once");
+        },
+      };
+      this.pending.set(requestId, entry);
+      this.post({
+        type: "permission_request",
+        requestId,
+        tool: {
+          id: requestId,
+          name: toolName,
+          detail: summarizeDbToolArgs(args),
+        },
+        options: DB_TOOL_PERMISSION_OPTIONS.map((o) => ({
+          optionId: o.optionId,
+          label: o.label,
+        })),
+      });
+    });
+  }
+}
+
+/**
+ * One-line human detail for the permission card. Values are the model's own
+ * arguments (never DB row bytes) and are truncated so a giant generated SQL
+ * string cannot blow up the card.
+ */
+function summarizeDbToolArgs(args: Record<string, unknown>): string {
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(args)) {
+    const raw = typeof value === "string" ? value : JSON.stringify(value);
+    parts.push(`${key}=${(raw ?? "").slice(0, 200)}`);
+  }
+  return parts.join(" ");
+}
+
 export async function buildMessages(
   factory: AdapterFactory,
   history: ChatMessage[],
@@ -766,6 +904,10 @@ export class AiChatPanel {
    * signal flip exactly when the user clicks Stop. ACP path ignores this. */
   private currentAbort: AbortController | null = null;
   private permissionTimeoutMs: number;
+  /** Cycle AD: permission gate for the DB-aware (row-reading) tools.
+   * Assigned in the constructor because it reads `permissionTimeoutMs`,
+   * which class-field initialisation order would leave undefined here. */
+  private readonly dbToolGate: DbToolPermissionGate;
   /** Drop-guard (F1 belt): true between `resume_pick` settle and the next
    * `session/prompt` write. While set, `session/update` notifications for
    * the loaded sessionId are absorbed silently (AcpReplayBuffer is the
@@ -797,6 +939,9 @@ export class AiChatPanel {
   ) {
     this.permissionTimeoutMs =
       tuning.permissionTimeoutMs ?? DEFAULT_PERMISSION_TIMEOUT_MS;
+    this.dbToolGate = new DbToolPermissionGate((m) => this.post(m), {
+      timeoutMs: this.permissionTimeoutMs,
+    });
   }
 
   show(): void {
@@ -853,6 +998,7 @@ export class AiChatPanel {
     // Cancel every pending permission request with one cancelled ACP
     // result per server request before tearing the session down.
     this.cancelAllPending();
+    this.dbToolGate.cancelAll();
     this.disposeAcpSession();
     this.panel = null;
     for (const d of this.disposables) d.dispose();
@@ -875,6 +1021,11 @@ export class AiChatPanel {
         this.handleClear();
         return;
       case "permission_response":
+        // Cycle AD: one wire kind, two consumers. DB-aware tool cards carry
+        // host-generated `dbtool-` ids owned by `dbToolGate`; every other id
+        // belongs to the ACP permission bridge. `respond` returns false for
+        // ids it does not own, so ACP ids still reach the ACP path.
+        if (this.dbToolGate.respond(msg.requestId, msg.optionId)) return;
         this.handlePermissionResponse(msg.requestId, msg.optionId);
         return;
       case "resume_list":
@@ -1110,6 +1261,12 @@ export class AiChatPanel {
     const registry = createDbTools(this.options.adapterFactory);
     registry.register(createSqlTool(this.options.adapterFactory));
     registry.register(createExportStructureTool(this.options.adapterFactory));
+    // Cycle AD: the five DB-aware tools reach real row data, so each one is
+    // wrapped in the permission gate — the model may call them, but nothing
+    // executes until the user answers the card (default-deny).
+    for (const tool of createDbAwareTools(this.options.adapterFactory)) {
+      registry.register(this.dbToolGate.wrap(tool));
+    }
 
     const messages = await buildMessages(
       this.options.adapterFactory,
@@ -1428,6 +1585,12 @@ export class AiChatPanel {
     const registry = createDbTools(this.options.adapterFactory);
     registry.register(createSqlTool(this.options.adapterFactory));
     registry.register(createExportStructureTool(this.options.adapterFactory));
+    // Cycle AD: the five DB-aware tools reach real row data, so each one is
+    // wrapped in the permission gate — the model may call them, but nothing
+    // executes until the user answers the card (default-deny).
+    for (const tool of createDbAwareTools(this.options.adapterFactory)) {
+      registry.register(this.dbToolGate.wrap(tool));
+    }
     const bridge: McpBridge = await createMcpBridge(registry);
     const mcpServers: ReadonlyArray<Record<string, unknown>> = [bridge.descriptor];
 
@@ -1705,6 +1868,9 @@ export class AiChatPanel {
 
   private handleStop(): void {
     if (this.token) this.token.aborted = true;
+    // Stop is an abnormal exit for any card still on screen: default-deny
+    // every outstanding DB-tool request so its execute() unblocks.
+    this.dbToolGate.cancelAll();
     if (this.engine === "builtin") {
       // Flip the per-turn signal so any in-flight streamComplete sees the
       // abort and stops reading from the SSE body. Agent-side emits the
