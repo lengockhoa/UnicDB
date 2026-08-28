@@ -192,6 +192,11 @@ npm run typecheck
 - BLOCKING: none — all 3 R1 blockers resolved: (1) `## Executor Report (cycle AB)` present before Reviewer Verdict with EXECUTOR_MODEL=unic-code (≠ reviewer unic-smart), FILES_CHANGED, real RED_OUTPUT ("7 failed / 3 passed" failing vitest run), GREEN_CONFIRMED, COMMIT ad87300; (2) privacy test #7 asserts SENTINEL_* absent from system AND user parts; (3) acceptance #0b dedicated mention×attachment test present.
 - NOTES: Regression re-checks clean — CSP (src/ui/aiChatPanel.ts:2211-2219) retains default-src 'none'/style-src/script-src and adds img-src 'self' data:; prepareAttachments still emits all 5 reject reasons (vision_unsupported :1064, count_cap :1079, oversize/unsupported_type/mime_mismatch via validateImageAttachment src/ui/aiChatAttachments.ts:144-161 with PNG/JPEG/GIF/WEBP magic sniff). Non-blocking: executor RED_OUTPUT predates the two R1.5 tests (7 failed/3 passed = original 10-case cycle) — acceptable since c6000c7 is the R1.5 fix commit, not the executor's TDD cycle.
 
+
+## Executor Metadata (cycle AB)
+- EXECUTOR_MODEL: unic-code
+- EXECUTOR_TOOL: task agent (general-purpose)
+
 ## Reviewer Metadata (cycle AB)
 - REVIEWER_MODEL: unic-smart
 - REVIEWER_TOOL: code-reviewer (agent type)

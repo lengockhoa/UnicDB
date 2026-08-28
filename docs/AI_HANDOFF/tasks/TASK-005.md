@@ -117,6 +117,11 @@ npm run typecheck
 - BLOCKING: none
 - NOTES: (1) src/ui/__tests__/aiChatPanelAttachments.test.ts:106 imports `type { ImageAttachment }` from ../aiChatAttachments but no such export exists anywhere — latent only, because tsconfig excludes **/*.test.ts and vitest erases type imports; fix: import `MinimalAttachment` instead (TASK-001 territory, logged for owner). (2) Comment at aiChatAttachments.ts:74 "Throws on malformed base64" is inaccurate — Buffer.from never throws; the try/catch at :157 is dead but harmless.
 
+
+## Executor Metadata (cycle AB)
+- EXECUTOR_MODEL: unic-code
+- EXECUTOR_TOOL: task agent (general-purpose)
+
 ## Reviewer Metadata (cycle AB)
 - REVIEWER_MODEL: unic-smart
 - REVIEWER_TOOL: code-reviewer (agent type)

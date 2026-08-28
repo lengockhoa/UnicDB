@@ -139,6 +139,11 @@ T3 (wave 1) consumes T2's (wave 2) class names. Mechanically OK only because T3'
 - BLOCKING: none
 - NOTES: Minor (non-blocking): (1) styles.css:1452 comment says "24×24 hit target" but the rule is 28×28 — fix the comment; (2) styles.css:1436-1448 dark-block overrides for warning/error tokens are byte-identical to :root (only --vsdb-overlay-bg alpha 0.4→0.6 differs), so the "sharpen contrast" comment overstates — harmless since --vscode-* vars track theme; (3) chatLayoutCss.test.ts:469-493 test g only requires ≥1 dark token, could pin all 6. Model isolation OK: executor unic-code ≠ reviewer unic-smart. RED baseline evidence (8 fail / 17 pass → 25/25) is in commit da29b04 message, not appended to this task file.
 
+
+## Executor Metadata (cycle AB)
+- EXECUTOR_MODEL: unic-code
+- EXECUTOR_TOOL: task agent (general-purpose)
+
 ## Reviewer Metadata (cycle AB)
 - REVIEWER_MODEL: unic-smart
 - REVIEWER_TOOL: code-reviewer (agent type)
