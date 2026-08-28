@@ -139,6 +139,11 @@ vi.mock("vscode", () => {
       get workspaceFolders() {
         return state.workspaceFolders;
       },
+      // TASK-AF-002: DDL viewer registers a TextDocumentContentProvider for the
+      // `vsdb-ddl:` URI scheme at activate(). The default mock returns a
+      // disposable so registration is a no-op (no provider body needed) for
+      // the smoke tests; ddlView.test.ts builds its own richer provider mock.
+      registerTextDocumentContentProvider: vi.fn(() => ({ dispose: () => {} })),
     },
     commands: {
       registerCommand: vi.fn((id: string, fn: Function) => {

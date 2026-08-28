@@ -12,6 +12,7 @@ import {
   qualifiedName,
   registerSchemaTreeProvider,
 } from "./ui/schemaTree";
+import { registerDdlView } from "./ui/ddlView";
 import { registerTableCommands } from "./ui/tableCommands";
 import { VsdbCodeLensProvider } from "./ui/codeLensProvider";
 import { ConnectionForm } from "./ui/connectionForm";
@@ -94,6 +95,11 @@ export async function activate(
   disposables.push(treeView);
   // TASK-005 — 6 table-utility commands (New/Modify/Copy DDL/Sample Data/Analyze/Vacuum).
   registerTableCommands({ mgr, tree, treeView, context });
+
+  // TASK-AF-002 — vsdb-ddl: virtual document provider for "Open DDL" on
+  // view/routine/trigger nodes. Registers content provider + vsdb.openDdl +
+  // vsdb.refreshDdl. Disposables go to ctx.subscriptions for clean teardown.
+  registerDdlView(mgr, context.subscriptions);
 
   // ---- Status bar ----
   const statusBar = createStatusBar(mgr);

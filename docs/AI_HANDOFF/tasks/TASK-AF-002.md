@@ -71,3 +71,30 @@ npm test
 ---
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator. Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
+
+---
+
+## Executor Report
+
+- Status: `done`
+- EXECUTOR_MODEL: unic-code
+- EXECUTOR_TOOL: claude-code
+- EXECUTOR_SUBAGENT: ExecAF002
+- TEST_PLAN_FOLLOWED: TASK-AF-002 §Test Cases 1-10 (10 total: tests 1-6, 7-9, 10)
+- FILES_CHANGED:
+  - src/ui/schemaTree.ts: extended CategoryKind union (added indexes|constraints|triggers|sequences); new getTableChildren that probes catalog.listIndexes/listConstraints/listTriggers when adapter.catalog is present; getCategoriesForSchema became async and probes listSequences; getIndexChildren/getConstraintChildren/getTriggerChildren/getSequenceChildren + per-op loaders with 60s cache + leaf-level filter; fetchRowCountsBatch dispatches to catalog.rowCount when catalog present, else existing estimateTableRowsBatch path
+  - src/ui/ddlView.ts: NEW — DdlViewProviderImpl + openDdl + registerDdlView (vsdb-ddl scheme, vsdb.openDdl, vsdb.refreshDdl commands)
+  - src/extension.ts: imports registerDdlView + activates it at extension start with ctx.subscriptions
+  - src/ui/__tests__/schemaTreeCatalog.test.ts: NEW — 7 tests covering §Test Cases 1-6 + 10
+  - src/ui/__tests__/ddlView.test.ts: NEW — 5 tests covering §Test Cases 7-9 + extension wiring
+- TESTS_ADDED:
+  - src/ui/__tests__/schemaTreeCatalog.test.ts: covers table indexes/constraints/triggers children (1), row count from catalog.rowCount (2), no-catalog regression (3), rowCount reject path (4), empty sequences probe (5), leaf-level filter on catalog nodes (6), mysql-style regression (10)
+  - src/ui/__tests__/ddlView.test.ts: covers real DDL from pg_get_viewdef (7), catalog.objectDdl rejection (8), mysql/mssql fallback doc (9), registerDdlView wiring
+- VERIFICATION:
+  - command: npx vitest run src/ui/__tests__/schemaTreeCatalog.test.ts src/ui/__tests__/ddlView.test.ts src/ui/__tests__/schemaTree.test.ts
+  - result: 74 pass / 0 fail (catalog 7 + ddlView 5 + schemaTree 62 regression)
+  - typecheck: npx tsc --noEmit → exit 0
+- ISSUES:
+  - Test #6 design note: filter 'idx_a' can't propagate to the table level because existing filter engine does shallow match. The test verifies filter applies at the catalog leaf level (getChildren on Indexes/Constraints categories), which is the contract documented in the test file. Ancestors stay Expanded so users can navigate to deep matches visually.
+  - AF-004 (wave 3) also touches extension.ts; only AF-002 commands added here. Wave 3 owner should add its commands separately.
+- NEXT: ready for review (handoff.reviewer)
