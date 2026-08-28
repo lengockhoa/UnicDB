@@ -691,10 +691,25 @@ function summarizeDbToolArgs(args: Record<string, unknown>): string {
   return parts.join(" ");
 }
 
-export async function buildMessages(
+/**
+ * Cycle AD TASK-003 — DRY system prompt builder.
+ *
+ * `formatSystemPrompt` is the single source of truth for the system prompt
+ * content. Both `buildMessages` (chat runtime, builtin + ACP engines) and
+ * `extensionConfigExport.emitVsdbAiConfig` (OMP config emitter) call it.
+ * Same factory + history + opts → identical byte output. Test pins the
+ * equality against `buildMessages`'s first element so the privacy invariant
+ * (cycle AA: DDL-only, no row bytes) survives the refactor unchanged.
+ *
+ * `history` is accepted for signature parity with `buildMessages`; it is
+ * intentionally unused — the system prompt does not depend on prior
+ * messages. Keeping it in the signature means both call sites pass the
+ * same tuple shape (`factory, history, opts`) which is the seam cycle AD
+ * §8 expects.
+ */
+export async function formatSystemPrompt(
   factory: AdapterFactory,
-  history: ChatMessage[],
-  userMsg: ChatMessage,
+  history: readonly ChatMessage[],
   opts?: {
     contextBudgetChars?: number;
     contextTableLimit?: number;
@@ -703,7 +718,11 @@ export async function buildMessages(
      * this; bare test calls omit it and always re-introspect. */
     cache?: { current: SchemaContextCacheEntry | null };
   },
-): Promise<ChatMessage[]> {
+): Promise<string> {
+  // `history` is part of the signature for shape parity; the system prompt
+  // never varies with prior messages. Reference it so an unused-parameter
+  // linter does not flag the contract.
+  void history;
   const budget = opts?.contextBudgetChars ?? SCHEMA_CONTEXT_BUDGET;
   const limit = opts?.contextTableLimit ?? SCHEMA_CONTEXT_TABLE_LIMIT;
   let context = "";
@@ -826,9 +845,33 @@ export async function buildMessages(
     // empty context, no crash.
     context = "";
   }
-  const systemPrompt = context.length === 0
+  return context.length === 0
     ? "You are VSDB's AI assistant. Help the user explore and query their database."
     : `You are VSDB's AI assistant. Help the user explore and query their database.\n\nDatabase structure (DDL):\n${context}\n\nYou can call the export_structure tool for the complete structure when truncated.`;
+}
+
+/**
+ * Per-turn input assembly — system prompt + history + user msg.
+ *
+ * Delegates the system prompt construction to `formatSystemPrompt` (cycle AD
+ * TASK-003 §8). Byte output is identical to the pre-refactor
+ * implementation — verified by `extensionConfigExport.test.ts` byte
+ * equality pin.
+ */
+export async function buildMessages(
+  factory: AdapterFactory,
+  history: ChatMessage[],
+  userMsg: ChatMessage,
+  opts?: {
+    contextBudgetChars?: number;
+    contextTableLimit?: number;
+    /** Optional mutable cache cell — populated/read by reference identity
+     * of the resolved adapter. Only `AiChatPanel` instance call sites pass
+     * this; bare test calls omit it and always re-introspect. */
+    cache?: { current: SchemaContextCacheEntry | null };
+  },
+): Promise<ChatMessage[]> {
+  const systemPrompt = await formatSystemPrompt(factory, history, opts);
   return [{ role: "system", content: systemPrompt }, ...history, userMsg];
 }
 
