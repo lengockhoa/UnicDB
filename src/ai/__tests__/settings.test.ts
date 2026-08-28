@@ -20,6 +20,7 @@ describe("ai/settings — defaults + validation + helpers", () => {
         work: { modelId: "", vision: true },
         smart: { modelId: "", vision: false },
       },
+      engine: "builtin",
     });
   });
 
@@ -44,6 +45,7 @@ describe("ai/settings — defaults + validation + helpers", () => {
         work: { modelId: "", vision: true },
         smart: { modelId: "ok", vision: false },
       },
+      engine: "builtin",
     } as AiSettings;
     const errs = aiSettingsErrors(invalid);
     expect(errs).toHaveLength(5);
@@ -68,9 +70,9 @@ describe("ai/settings — defaults + validation + helpers", () => {
         work: { modelId: "m", vision: true },
         smart: { modelId: "m", vision: false },
       },
+      engine: "builtin",
     };
   }
-
   it("Test #4 — bounds inclusive", () => {
     const base: AiSettings = {
       baseUrl: "http://localhost:8080/v1",
@@ -81,9 +83,9 @@ describe("ai/settings — defaults + validation + helpers", () => {
         work: { modelId: "m", vision: true },
         smart: { modelId: "m", vision: false },
       },
+      engine: "builtin",
     };
     expect(aiSettingsErrors(base)).toEqual([]);
-
     const tLower: AiSettings = { ...base, timeoutMs: 999 };
     expect(aiSettingsErrors(tLower)).toContain(
       "Timeout must be between 1000 and 600000 ms",
@@ -140,14 +142,15 @@ describe("ai/settings — defaults + validation + helpers", () => {
     };
     const red = redactAiConfig(cfg);
     expect(Object.keys(red).sort()).toEqual(
-      ["baseUrl", "maxSteps", "method", "models", "timeoutMs"].sort(),
+      ["baseUrl", "engine", "maxSteps", "method", "models", "timeoutMs"].sort(),
     );
     expect((red as unknown as Record<string, unknown>).apiKey).toBeUndefined();
-    // Sanity: the 5 settings fields equal default.
+    // Sanity: the 6 settings fields equal default.
     expect(red.baseUrl).toBe(cfg.baseUrl);
     expect(red.method).toBe(cfg.method);
     expect(red.timeoutMs).toBe(cfg.timeoutMs);
     expect(red.maxSteps).toBe(cfg.maxSteps);
     expect(red.models).toEqual(cfg.models);
+    expect(red.engine).toBe("builtin");
   });
 });

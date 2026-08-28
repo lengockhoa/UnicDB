@@ -5,6 +5,13 @@
 
 export type AiCompletionMethod = "responses" | "chat/completions";
 export type AiModelRole = "work" | "smart";
+/**
+ * Cycle AE TASK-003 §Engine selection — chat engine routing.
+ * `"builtin"` runs `runAgent` against `provider.completeStream`. `"omp"`
+ * delegates to `OmpChatEngine.send` (the hostMcp bridge + ACP session).
+ * Default is `"builtin"` for back-compat with every existing config.
+ */
+export type AiEngine = "builtin" | "omp";
 
 export interface AiModelConfig {
   modelId: string;
@@ -17,6 +24,8 @@ export interface AiSettings {
   timeoutMs: number; // 1000..600000
   maxSteps: number; // 1..100 — agent step budget (consumed by TASK-003)
   models: Record<AiModelRole, AiModelConfig>;
+  /** Cycle AE — chat engine selection. Default "builtin". */
+  engine: AiEngine;
 }
 
 export interface AiConfig extends AiSettings {
@@ -34,6 +43,7 @@ export function defaultAiSettings(): AiSettings {
       work: { modelId: "", vision: true },
       smart: { modelId: "", vision: false },
     },
+    engine: "builtin",
   };
 }
 
@@ -98,6 +108,13 @@ export function aiSettingsErrors(s: AiSettings): string[] {
     }
   }
 
+  // engine (cycle AE) — undefined / anything other than the two legal
+  // values is rejected so a mis-saved config can't silently degrade to
+  // the wrong engine.
+  if (s.engine !== "builtin" && s.engine !== "omp") {
+    errors.push("Engine must be builtin or omp");
+  }
+
   return errors;
 }
 
@@ -112,6 +129,7 @@ export function normalizeBaseUrl(url: string): string {
 
 /** Strip apiKey only — return settings-shape. */
 export function redactAiConfig(cfg: AiConfig): AiSettings {
+  const engine: AiEngine = cfg.engine === "omp" ? "omp" : "builtin";
   return {
     baseUrl: cfg.baseUrl,
     method: cfg.method,
@@ -121,5 +139,6 @@ export function redactAiConfig(cfg: AiConfig): AiSettings {
       work: { modelId: cfg.models.work.modelId, vision: cfg.models.work.vision },
       smart: { modelId: cfg.models.smart.modelId, vision: cfg.models.smart.vision },
     },
+    engine,
   };
 }

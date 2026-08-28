@@ -30,9 +30,8 @@ import type { AgentDeps } from "./ai/agent";
 import { AiChatPanel, type AcpPanelDeps } from "./ui/aiChatPanel";
 import { ConsolePanel } from "./ui/consolePanel";
 import { AcpProcess } from "./ai/omp/acpProcess";
-import { detectOmp } from "./ai/omp/detect";
+import { detectOmp, OMP_INSTALL_HINT, OMP_UPDATE_HINT } from "./ai/omp/detect";
 import { resolveEngine } from "./ai/engineChoice";
-import type { ConnectionConfig } from "./config/types";
 import { registerBrowseCommands } from "./ui/browseCommands";
 import { SchemaCache } from "./ui/schemaCache";
 import { SqlCompletionProvider } from "./ui/sqlCompletionProvider";
@@ -41,7 +40,7 @@ import {
   SqlSemanticTokensProvider,
 } from "./ui/sqlSemanticTokens";
 import { defaultAiSettings, type AiSettings } from "./ai/settings";
-import type { ParsedStatement } from "./config/types";
+import type { ConnectionConfig, ParsedStatement } from "./config/types";
 import { writeVsdbAiConfig } from "./extensionConfigExport";
 let disposables: vscode.Disposable[] = [];
 let state: ExtensionState | null = null;
@@ -49,7 +48,6 @@ let state: ExtensionState | null = null;
 let aiSettingsForm: AiSettingsForm | null = null;
 /** Cached single-instance AiChatPanel (TASK-004). Reused across calls. */
 let aiChatPanel: AiChatPanel | null = null;
-/** Cached single-instance ConsolePanel (TASK-003 cycle Z). Reused while live. */
 let consolePanel: ConsolePanel | null = null;
 /** extensionUri capture ở activate() — dùng cho ConnectionForm webview resources. */
 let extensionUriForForm: vscode.Uri = vscode.Uri.file("/");
@@ -346,13 +344,36 @@ export async function activate(
   );
 
   // 15. vsdb.openAiSettings — TASK-004: open AI Settings form (single instance).
+  // TASK-003 cycle AE — read the user-toggled `vsdb.ai.engine` setting.
+  // When "omp", detect OMP once at activation. If the binary is missing
+  // or too old, show a one-time install/update info notice, flip the
+  // setting back to "builtin" so the chat panel uses the OpenAI path on
+  // the first invocation (and stays there until the user re-selects
+  // "omp" after installing). PLAN_AE.md §Acceptance 0.
+  const initialEngine = vscode.workspace
+    .getConfiguration("vsdb")
+    .get<string>("ai.engine", "builtin");
+  if (initialEngine === "omp") {
+    void (async () => {
+      const detection = await detectOmp();
+      if (!detection.ok) {
+        const hint = detection.available ? OMP_UPDATE_HINT : OMP_INSTALL_HINT;
+        void vscode.window.showInformationMessage(
+          `VSDB: omp engine unavailable — falling back to builtin. ${hint}`,
+        );
+        await vscode.workspace
+          .getConfiguration("vsdb")
+          .update("ai.engine", "builtin", vscode.ConfigurationTarget.Global);
+      }
+    })();
+  }
+
   const aiStore = new AiConfigStore(context);
   disposables.push(
     vscode.commands.registerCommand("vsdb.openAiSettings", () =>
       commandOpenAiSettings(aiStore),
     ),
   );
-
   // 16. vsdb.aiChat — TASK-004: AI chat panel with real deps.
   // Spec: store.loadConfig() (flat AiConfig), createProviderClient per
   // complete() call, adapterFactory resolves ConnectionManager's active

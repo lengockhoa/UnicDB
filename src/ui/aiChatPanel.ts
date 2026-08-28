@@ -84,7 +84,8 @@ import { createMcpBridge, type McpBridge } from "../ai/omp/mcpBridge";
    type AiChatPanelEngine,
    type AiChatPanelHostMessage,
    type AiChatPanelWebviewMessage,
- } from "./aiChatPanelMessages";
+} from "./aiChatPanelMessages";
+import type { OmpChatEngine } from "../ai/omp/ompChatEngine";
  import { buildPermissionToolInfo } from "./permissionDetail";
  
  const PANEL_ID = "vsdb.aiChatPanel";
@@ -526,8 +527,16 @@ export interface AiChatPanelOptions {
    * install/uninstall or config change until a full reload).
    */
   onDispose?: () => void;
+  /**
+   * Cycle AE TASK-003 — when the engine is "omp", the chat panel
+   * delegates `handleSend` to `OmpChatEngine.send(text, events)` instead
+   * of the raw ACP session/prompt path. Wire `createOmpChatEngine()` in
+   * `extension.ts` when `vsdb.ai.engine === "omp"`. When this is absent
+   * (default), the panel keeps the existing raw ACP path used by cycle
+   * AB's tests — opt-in by host.
+   */
+  ompChatEngine?: OmpChatEngine;
 }
-
 /**
  * Per-turn input assembly — system prompt + history + user msg.
  *
@@ -1224,6 +1233,15 @@ export class AiChatPanel {
     // surviving userMsg.content for an omp turn is text-only by invariant).
     const acpPrompt =
       typeof userMsg.content === "string" ? userMsg.content : trimmed;
+    // Cycle AE TASK-003: when the host wired an OmpChatEngine, route the
+    // turn through `engine.send(text, events)` — that module owns the
+    // HostMcp bridge + ACP session lifecycle. Falling back to the raw
+    // runAcpTurn path is preserved for cycle AB's tests which inject only
+    // `acp.start` (no OmpChatEngine).
+    if (this.options.ompChatEngine !== undefined) {
+      await this.runOmpEngineTurn(acpPrompt, userMsg);
+      return;
+    }
     await this.runAcpTurn(acpPrompt, userMsg);
   }
 
@@ -1406,6 +1424,116 @@ export class AiChatPanel {
     // call would have already posted via onToolCall.
   }
 
+  /**
+   * Cycle AE TASK-003 — OmpChatEngine routing.
+   *
+   * When `vsdb.ai.engine === "omp"` and the host wired an `OmpChatEngine`,
+   * handleSend delegates here. The engine owns session/prompt, the
+   * HostMcp bridge, and the ACP notification forwarder. The panel's only
+   * job is to wire the event callbacks back to the webview's
+   * `{type:"delta"|"step"|"error"|"done"}` messages and to enforce the
+   * mid-turn fallback contract: if the engine's `send()` rejects (process
+   * crash / connection lost), the panel posts ONE error bubble, flips the
+   * engine to "builtin" in `vsdb.ai.engine` so subsequent turns run on
+   * the builtin engine, and resolves. The next `handleSend` will read the
+   * flipped value from config and dispatch to the builtin path on its
+   * own — no caller-side bookkeeping required.
+   */
+  private async runOmpEngineTurn(
+    text: string,
+    userMsg: ChatMessage,
+  ): Promise<void> {
+    const engine = this.options.ompChatEngine;
+    if (engine === undefined) {
+      // Defensive: handleSend already gated on options.ompChatEngine.
+      this.engine = "builtin";
+      this.postEngine("builtin");
+      this.post({ type: "error", message: "OmpChatEngine not configured; falling back" });
+      this.post({ type: "done" });
+      this.turnSettled = true;
+      this.token = null;
+      return;
+    }
+    const token = this.token;
+    let postedError = false;
+    try {
+      await engine.send(text, {
+        onDelta: (delta) => {
+          if (token?.aborted) return;
+          this.post({ type: "delta", text: delta });
+        },
+        onThought: (chunk) => {
+          if (token?.aborted) return;
+          this.post({ type: "step", label: chunk });
+        },
+        onToolStart: (toolName) => {
+          if (token?.aborted) return;
+          this.post({ type: "step", label: toolName });
+        },
+        onToolEnd: (toolName, result, isError) => {
+          if (token?.aborted) return;
+          this.post({
+            type: "step",
+            label: isError ? `${toolName}: error` : toolName,
+          });
+          void result;
+        },
+        onError: (message) => {
+          // Mid-turn crash. Post ONE error bubble, flip engine back to
+          // builtin in settings, re-post engine so the banner self-
+          // corrects on failover. Subsequent handleSend calls will route
+          // through the builtin engine.
+          if (postedError) return;
+          postedError = true;
+          this.post({ type: "error", message });
+          this.engine = "builtin";
+          this.postEngine("builtin");
+          this.flipEngineToBuiltinInSettings().catch(() => {
+            /* best-effort */
+          });
+        },
+        onDone: () => {
+          // Engine contract: never throws on crash; onError handles the
+          // error path. Reaching onDone = clean turn end.
+        },
+      });
+    } catch (err) {
+      // OmpChatEngine.send is contractually non-throwing, but defend
+      // anyway so a stray rejection surfaces as one error bubble + flip.
+      if (!postedError) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.post({ type: "error", message });
+        this.engine = "builtin";
+        this.postEngine("builtin");
+        this.flipEngineToBuiltinInSettings().catch(() => {
+          /* best-effort */
+        });
+      }
+    } finally {
+      this.post({ type: "done" });
+      this.token = null;
+      this.turnSettled = true;
+      void userMsg;
+    }
+  }
+
+  /**
+   * Cycle AE TASK-003 §5 — flip the user's `vsdb.ai.engine` setting back
+   * to "builtin" so the next handleSend reads the flipped value and routes
+   * to the builtin engine. Best-effort: silently swallows any config-store
+   * rejection so a failed workspace write never bubbles a second error
+   * bubble to the user (the engine flip in `this.engine` already surfaces
+   * the same intent in the current panel).
+   */
+  private async flipEngineToBuiltinInSettings(): Promise<void> {
+    try {
+      await vscode.workspace
+        .getConfiguration("vsdb")
+        .update("ai.engine", "builtin", vscode.ConfigurationTarget.Global);
+    } catch {
+      /* best-effort */
+    }
+  }
   /**
    * ACP engine turn (TASK-007 rewrite — B1/B5/B6/B9).
    *

@@ -434,6 +434,15 @@
           "type": "boolean",
           "default": true,
           "description": "Hide system schemas such as pg_catalog and information_schema in the Schema Explorer."
+        },
+        "vsdb.ai.engine": {
+          "type": "string",
+          "enum": [
+            "builtin",
+            "omp"
+          ],
+          "default": "builtin",
+          "description": "Cycle AE — chat engine selection. \"omp\" routes the AI Chat panel through the in-process OmpChatEngine (requires the `omp` CLI installed and >= 17.0.0). \"builtin\" runs runAgent against the configured OpenAI-compatible provider. When \"omp\" is selected but the binary is missing or too old, VSDB silently degrades to \"builtin\" and shows a one-time install/update notice."
         }
       }
     },
