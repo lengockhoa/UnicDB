@@ -288,6 +288,16 @@ export function createHostMcp(opts: CreateHostMcpOptions): HostMcp {
   let stopped = false;
 
   async function start(): Promise<void> {
+    if (stopped) {
+      // Lifecycle reset: stop() flips `stopped` to true. A subsequent
+      // start() must clear the flag (and defensively reset `port` to 0)
+      // before binding a fresh listener — otherwise the early-return at
+      // `if (server !== undefined) return` would skip the rebind and the
+      // caller would be left with a stale closed URL / 0 port.
+      stopped = false;
+      port = 0;
+    }
+
     if (server !== undefined) return;
     await new Promise<void>((resolve, reject) => {
       const srv = http.createServer((req, res) => {
