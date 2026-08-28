@@ -1201,6 +1201,49 @@ button.vsdb-requery-clear:disabled {
   background: var(--vscode-menu-selectionBackground, var(--vscode-button-background, #0e639c));
   color: var(--vscode-menu-selectionForeground, var(--vscode-button-foreground, #ffffff));
 }
+/* --- TASK-AF-004: SQL Console v2 tabs + history + plan pane ---------------- */
+.vsdb-console-tabs {
+  display: flex;
+  gap: 2px;
+  align-items: stretch;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--vscode-panel-border, #444);
+}
+.vsdb-console-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--vscode-foreground, #ccc);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.vsdb-console-tab:hover { background: var(--vscode-list-hoverBackground, #2a2d2e); }
+.vsdb-console-tab-active {
+  border-bottom-color: var(--vscode-focusBorder, #007acc);
+  background: var(--vscode-editor-background, #1e1e1e);
+}
+.vsdb-console-tab-close { opacity: .7; font-size: 13px; }
+.vsdb-console-tab-close:hover { opacity: 1; }
+.vsdb-console-plan {
+  margin: 0;
+  padding: 8px;
+  min-height: 60px;
+  max-height: 35%;
+  overflow: auto;
+  white-space: pre-wrap;
+  background: var(--vscode-textCodeBlock-background, #202020);
+  color: var(--vscode-editor-foreground, #ccc);
+  border: 1px solid var(--vscode-panel-border, #444);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: var(--vscode-editor-font-size, 12px);
+}
+.vsdb-console-history { display: flex; flex-direction: column; gap: 2px; max-height: 180px; overflow: auto; }
+.vsdb-console-history-item { text-align: left; padding: 4px 8px; border: 0; background: transparent; color: var(--vscode-foreground, #ccc); cursor: pointer; white-space: pre-wrap; }
+.vsdb-console-history-item:hover { background: var(--vscode-list-hoverBackground, #2a2d2e); }
 
 /* --- TASK-003: chat layout shell + resume picker + mention dropdown ----------
  * CSS-first styles so TASK-002 (resume picker) and TASK-005 (mention dropdown)

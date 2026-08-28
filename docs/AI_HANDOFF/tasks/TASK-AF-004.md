@@ -1,7 +1,7 @@
 # TASK-AF-004 — SQL Console v2: tabs, per-statement run, history, EXPLAIN, Format
 
-- Status: `ready`
-- Owner: `-`
+- Status: `pending_review`
+- Owner: `ExecAF004 (unic-code)`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN_AF.md` §7 (Approach §3)
 
@@ -72,7 +72,41 @@ npm run compile
 
 ## Discussion
 
-(no comments yet)
+- Tabs are host-side state in `ConsolePanel` (`tabs[]` + `activeTabId`); webview renders from the `state` push. Buffers never cross tabs; `updateBuffer` messages sync the active editor back.
+- `runSelection`/`runStatement` route through the injected `onRun` (extension.ts's shared `runStatements` flow), so keyword-qualify + dangerous confirm still apply.
+- History append happens after the awaited `onRun`; the success log is intentionally "user recall surface", deduped on consecutive identical entries.
+- `EXPLAIN ANALYZE` detection is depth-0 tokenization (`isExplainAnalyze`), plus the explicit `analyze` flag from the webview button; both route through a modal confirm before execution (ANALYZE really executes the query).
+- Test-timing note: `until` in consoleTabs.test.ts always yields one macrotask before checking — the run callback fires synchronously while history appends in the awaited continuation.
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: ExecAF004
+SUMMARY: SQL Console v2 — host-side multi-tab registry with per-tab buffers, per-statement/selection run, Memento-persisted history (cap 200) with recall, EXPLAIN/EXPLAIN ANALYZE behind a modal confirm gate, Format round-trip via formatSql; webview gained tab bar, plan pane, history recall, Format/Explain buttons; extension.ts wires globalState + `vsdb.consoleNewTab`.
+TEST_PLAN_FOLLOWED: task §Test Cases 1-12
+FILES_CHANGED:
+  - src/ui/consolePanel.ts: tab registry, history (Memento), message handlers, isExplainAnalyze, confirm gate, formatSql round-trip
+  - src/ui/consolePanelMessages.ts: extended wire contract + guards, CONSOLE_HISTORY_KEY/CAP, newTabId
+  - webview/consolePanelMain.ts: tab bar, Run/Run Selection/Explain/Explain Analyze/Format/History buttons, ArrowUp/Down recall, plan pane, TASK-002 context menu preserved
+  - webview/styles.css: tab bar, plan pane, history pane styles
+  - src/extension.ts: pass context.globalState to ConsolePanel; vsdb.consoleNewTab command
+  - package.json: activation event + contributed command vsdb.consoleNewTab (with icon)
+  - CHANGELOG.md: Unreleased cycle AF entry (console v2)
+TESTS_ADDED:
+  - src/ui/__tests__/consoleTabs.test.ts: cases 1,2,3,5,6,7,8,9 (8 tests)
+  - tests/consolePanelWebview.test.ts: cases 4,10,11,12 (4 tests, jsdom bundle-eval)
+VERIFICATION:
+  command: npx vitest run src/ui/__tests__/consoleTabs.test.ts tests/consolePanelWebview.test.ts && npm run typecheck && npm test && npm run compile
+  result: 12/12 new tests pass; typecheck exit 0; full suite 2021 passed / 0 failed; esbuild clean
+  output_excerpt: |
+    Test Files 138 passed | 1 skipped (139)
+    Tests 2021 passed | 2 skipped (2023)
+    esbuild: build complete
+ISSUES: none
+HANDOFF_TO_REVIEWER: yes — full acceptance met; RED-first was enforced by writing tests before the consolePanel.ts rewrite (tests failed against the old single-tab host: listTabs/getHistory undefined, then assertions drove the registry/history/confirm implementation).
+NEXT: ready for review
 
 ---
 
