@@ -3,6 +3,20 @@
 All notable changes to VSDB are documented in this file. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 
+## [1.10.0] — 2026-08-28
+
+Cycle AD: DB-aware AI Chat tools and an OMP configuration bridge. The AI Chat panel can now inspect approved database state through five read-only tools, with explicit permission cards and default-deny behavior; users can export the active AI settings and schema context for a local `omp` session without writing API keys to disk.
+
+### Added
+- **Five read-only DB-aware tools**: `list_table_data_sample`, `count_rows`, `run_readonly_query`, `explain_query`, and `get_table_relationships`.
+- **Readonly SQL guard**: only single-statement `SELECT`/`WITH` queries pass; write keywords, `SELECT INTO`, multi-statements, unbalanced parentheses, and `EXPLAIN ANALYZE` are rejected before adapter execution.
+- **Explicit DB permission gate**: every DB tool request uses the existing permission-card wire shape with Allow once, Allow for this session, or Deny; unknown, late, timed-out, and abnormal paths default-deny.
+- **OMP configuration bridge**: `VSDB: Use AI with OMP` writes `.vscode/vsdb-ai-config.yml` and `.vscode/vsdb-db-context.md`, and returns a copyable `omp --config ...` command. API keys remain environment-variable hints only.
+- **Refresh DB context command**: `VSDB: Refresh AI DB Context` re-emits the context file.
+
+### Changed
+- Extracted `formatSystemPrompt` as the shared DDL-only system-prompt builder used by the chat runtime and OMP exporter.
+
 ## [1.9.0] — 2026-08-28
 
 Cycle AB: AI chat image attach + clipboard paste. The composer can now carry screenshots, schema sketches, and paste-from-clipboard images straight into the model — with explicit caps, a clear warning when the active model can't see, and zero contact with the database auto-context (which stays schema-DDL-only as in cycle AA).
