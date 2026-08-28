@@ -200,3 +200,60 @@ npm run typecheck
 ## Reviewer Metadata (cycle AB)
 - REVIEWER_MODEL: unic-smart
 - REVIEWER_TOOL: code-reviewer (agent type)
+
+## Reviewer Verdict — cycle AD R1 [TASK-001 / T1] (unic-smart)
+
+TASK: TASK-001 (cycle AD wave 1) — readonly SQL parser + 5 DB-aware tools + host permission gate
+REVIEWER_MODEL: unic-smart
+COMMIT_SHA: 9bdad5f716013072b31b75c5043877aebef81772
+EXECUTOR_MODEL: unic-code (commit trailer; ≠ reviewer — isolation OK)
+SCOPE: src/ai/tools/readonlySqlParser.ts (NEW), src/ai/tools/dbAwareTools.ts (NEW), src/ai/tools/__tests__/readonlySqlParser.test.ts (NEW, 33), src/ai/tools/__tests__/dbAwareTools.test.ts (NEW, 23), src/ui/aiChatPanel.ts (DbToolPermissionGate :558-693 + wiring), src/ui/__tests__/aiChatPanelDbAware.test.ts (NEW, 12)
+VERIFICATION_RERUN:
+  npx vitest run readonlySqlParser/dbAwareTools/aiChatPanelDbAware → 68 pass / 0 fail
+  npx vitest run aiChatPanelPrivacy (7) + aiChatPanelAttachments (11) + aiChatPanelWebview (24) + aiChatPanelThoughtRegen (18) → 60 pass / 0 fail (criterion 11 anchors green)
+  npm run typecheck → exit 0
+TEST_PLAN_COVERAGE: all-followed — parser accepts SELECT/WITH/case/trailing-;/comments, rejects all 13 FORBIDDEN + semicolon-stacked + identifier-embedded; tools cover limit default/cap/floor, count with/without WHERE, reject-before-adapter (spy length 0), EXPLAIN ANALYZE, FK+reverse-FK with runQuery-spy-0; gate covers card post, allow-once non-persist, allow-session, deny, unknown optionId, missing optionId, fake-timer timeout, cancelAll, duplicate/late response, DDL-only sentinel with tools registered.
+FINDING_SUMMARY:
+  important:
+    - src/ai/tools/readonlySqlParser.ts:23 (FORBIDDEN_RE) — `SELECT * INTO newt FROM users` and `SELECT * INTO OUTFILE '/tmp/x' FROM users` parse ok:true (probe-verified). Postgres SELECT…INTO creates a table; MySQL INTO OUTFILE/DUMPFILE writes a server-side file. This breaks run_readonly_query's read-only contract (criterion 4) — the "SELECT/WITH only" letter is met but the write-escape the parser exists to prevent is reachable; module header claims "parser-bypass impossible", contradicted. `into` is syntax, not a function name — one word in FORBIDDEN_RE + a test fixes it.
+  minor:
+    - src/ai/tools/readonlySqlParser.ts:20-24 — doc/comment (and criterion 1 wording) say "substrings", but FORBIDDEN_RE has no trailing pattern, so mid-token insertions like `myinsertcol` pass (prefix/suffix forms like inserted_at/created_at are caught as designed). Harmless for writes; align doc or note the boundary rule.
+    - src/ai/tools/dbAwareTools.ts (count_rows/guardSql) — mutating scalar functions (`setval(...)`, `pg_terminate_backend(...)`) pass the guard by design of a keyword blocklist; accepted-risk per module header, but worth listing in the tool description or PLAN for the next cycle.
+    - src/ui/aiChatPanel.ts:686-693 summarizeDbToolArgs — 200-char truncation can hide the tail of a long generated SQL on the permission card; a user may approve SQL whose `INTO OUTFILE` clause is invisible. Consider truncating head+tail.
+    - src/ui/aiChatPanel.ts:624-629 / DB_TOOL_DENIED_MESSAGE — timeout and cancelAll (no user action) bubble "Permission denied by user"; mildly misleading to the model. Non-blocking.
+    - src/ui/aiChatPanel.ts:1261-1266 / 1585-1590 — identical 5-line DB-aware registration block duplicated in builtin and omp/mcp paths; extract a helper on the next touch.
+    - src/ai/tools/dbAwareTools.ts (get_table_relationships) — reverse-FK scans listTableDetail per sibling table (N+1 over schema tables); user-gated introspection, bounded, acceptable — noted for scale.
+  verified-clean: gate default-deny matrix (unknown/duplicate/late/missing optionId, timeout, cancelAll, stop :1871, dispose :1001); dbtool-/req- id namespaces cannot collide, unowned ids fall through to the ACP bridge unchanged (cycle AB seam intact); explain_query composes `EXPLAIN ` + validated SELECT so EXPLAIN(ANALYZE-option) escapes are unreachable; identifiers regex-validated before interpolation (no quote injection); no row bytes in system prompt (sentinel test green); no ACP permission_request behavior change (aiChatPanelAttachments/Acp suites green).
+VERDICT: CHANGES-REQUESTED
+SUGGESTED_FIXES:
+  1. Add `into` to FORBIDDEN_RE in src/ai/tools/readonlySqlParser.ts + parser test `expect(parseReadonly("SELECT * INTO t2 FROM t1").ok).toBe(false)`; keep the comment explaining the boundary rule.
+  2. Re-run: npx vitest run src/ai/tools/__tests__/ src/ui/__tests__/aiChatPanelDbAware.test.ts && npm run typecheck; append RED/GREEN evidence to this file.
+NOTES: Cycle AD tracks executor reports as commit trailers (9bdad5f/8525ece both carry EXECUTOR_MODEL: unic-code) instead of per-task Executor Report sections; TDD RED evidence for AD is therefore not on file — non-blocking here (model isolation verified via trailer), but the AD flow should paste RED output in fix rounds. INDEX not updated: no INDEX_AD exists; INDEX.md is cycle-AA's approved record.
+
+## Executor Report (cycle AD fix round) — TASK-001
+- **EXECUTOR_MODEL**: unic-code
+- **FILES_CHANGED**: `src/ai/tools/readonlySqlParser.ts`, `src/ai/tools/__tests__/readonlySqlParser.test.ts`
+- **RED_OUTPUT**: Added regression initially failed: `SELECT * INTO t2 FROM t1` parsed `ok:true` (1 failed / 33 passed).
+- **GREEN_CONFIRMED**: `readonlySqlParser.test.ts` + `dbAwareTools.test.ts`: 57/57; `npm run typecheck`: exit 0.
+- **FIX**: Added `into` to the forbidden-token guard, blocking PostgreSQL `SELECT INTO` and MySQL `INTO OUTFILE`/`INTO DUMPFILE` escape paths.
+- **COMMIT**: `247471e` (shared review-fix commit).
+
+
+## Reviewer Verdict — cycle AD R2 [TASK-001] (unic-smart)
+
+TASK: TASK-001 (cycle AD R2 — re-review of fix commit 247471e against R1 CHANGES-REQUESTED)
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code (fix-round executor report; ≠ reviewer — isolation OK)
+COMMIT_SHA: 247471e — T1 scope touches only src/ai/tools/readonlySqlParser.ts (1-line FORBIDDEN_RE change) + src/ai/tools/__tests__/readonlySqlParser.test.ts (+3 lines); other files in this commit belong to T2/T3 scope.
+SCOPE: verify only the R1 fix (`SELECT * INTO/OUTFILE/DUMPFILE` bypass) + regression re-check of 5 db-aware tools, host permission gate, privacy anchors.
+VERIFICATION_RERUN:
+  npx vitest run src/ai/tools/__tests__/readonlySqlParser.test.ts src/ai/tools/__tests__/dbAwareTools.test.ts src/ui/__tests__/aiChatPanelDbAware.test.ts src/ui/__tests__/aiChatPanelPrivacy.test.ts → 4 files, 76 pass / 0 fail (34+23+12+7)
+  npm run typecheck → exit 0
+FINDINGS:
+  critical: none
+  important: none — R1 blocker CLOSED: `into` present in FORBIDDEN_RE (readonlySqlParser.ts:23); new test readonlySqlParser.test.ts:118-119 asserts `SELECT * INTO t2 FROM t1` → ok:false. Test is meaningful, not vacuous: pre-fix the RE had no `into`, the statement started with SELECT, parens balanced → parseReadonly returned ok:true (executor RED: 1 failed / 33 passed confirms). `\binto` prefix match catches INTO as a standalone token, covering INTO t2 / INTO OUTFILE / INTO DUMPFILE; over-rejection of e.g. an `introduce` column is the documented strict-overreject posture, not a write escape.
+  minor: none new. R1 minor notes remain open, non-blocking, for a future cycle: doc wording "substrings" vs word-boundary rule (readonlySqlParser.ts:20-24), 200-char tail truncation on permission card SQL (aiChatPanel.ts:686-693), deny-message phrasing for timeout/cancelAll, duplicated 5-line tool-registration block (aiChatPanel.ts:1261/1585).
+REGRESSION_RECHECK: 5 db-aware tools — dbAwareTools.test.ts 23/23 (limit default/cap/floor, count ±WHERE, reject-before-adapter spy-0, EXPLAIN ANALYZE, FK + reverse-FK) green; gate — aiChatPanelDbAware.test.ts 12/12 (default-deny, allow-once/allow-session, deny, unknown/missing/late optionId, timeout, cancelAll, sentinel isolation) green; privacy — aiChatPanelPrivacy.test.ts 7/7 (SENTINEL absent from system + user parts, runQuery spy 0) green.
+VERDICT: APPROVED
+SUGGESTED_FIXES: none required. Carry the R1 minor notes listed above into the next planning cycle.
+NOTES: Model isolation per contract (executor unic-code ≠ reviewer unic-smart). Minimal, correctly-scoped fix; INDEX_AD does not exist, so no index row updated — orchestrator to reconcile INDEX status.

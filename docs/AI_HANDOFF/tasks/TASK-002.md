@@ -69,8 +69,7 @@ TASK-003 (CSS) consumes the class names TASK-002 emits:
 ## §Verification Commands
 
 ```bash
-cd .worktrees/task-002
-npx vitest run src/ui/__tests__/aiChatPanelWebviewTask002.test.ts
+npx vitest run src/ui/__tests__/aiChatPanelDbAwareWebview.test.ts
 npm run typecheck
 ```
 
@@ -133,3 +132,60 @@ npm run typecheck
 ## Reviewer Metadata (cycle AB)
 - REVIEWER_MODEL: unic-smart
 - REVIEWER_TOOL: code-reviewer (agent type)
+
+## Reviewer Verdict — cycle AD R1 [TASK-002] (unic-smart)
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code (from ExecADT2 artifact; model isolation OK — differs)
+COMMIT_SHA: 8525ece (wave-2 merge 5934983 == 8525ece, 1 file +287; test file at HEAD identical)
+SCOPE: src/ui/__tests__/aiChatPanelDbAwareWebview.test.ts (new, 287 ln, 3 tests); webview/aiChatPanelMain.ts untouched by design (reuse claim verified: renderPermissionRequest is option-agnostic, special-cases only literal "deny").
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/aiChatPanelDbAwareWebview.test.ts src/ui/__tests__/aiChatPanelDbAware.test.ts src/ui/__tests__/aiChatPanelWebview.test.ts src/ui/__tests__/aiChatPanelPrivacy.test.ts src/ui/__tests__/aiChatPanelAttachments.test.ts && npm run typecheck
+  result: 3/3 + 12/12 + 27/27 + 7/7 + 11/11 pass; typecheck exit 0
+TEST_PLAN_COVERAGE: partial — render/deny/allow-once/stale-click pinned (PLAN_AD §A7, §A12); Allow Session click path untested (see important #2).
+FINDINGS:
+  critical: none
+  important:
+    - src/ui/__tests__/aiChatPanelDbAwareWebview.test.ts:132-134,191-193,259-261 — fixture optionIds "allow_once"/"allow_session" do not match the real host wire: DbToolPermissionGate posts "allow-once"/"allow-session" (src/ui/aiChatPanel.ts:572-573) and resolves optionId === "allow-once" (aiChatPanel.ts:659), so a client learning the contract from this file emits ids the host silently denies. Header comment claims it "pins that contract" — it pins a wrong variant. Fix: hyphenate all 9 fixture ids, align test #3 assertion to "allow-once" (:275,:285).
+    - src/ui/__tests__/aiChatPanelDbAwareWebview.test.ts:127 — tool.id fixture "dbtool:count_rows" vs host tool.id = requestId "dbtool-…" form (aiChatPanel.ts:666); also label "Allow session" (:133 etc.) vs host "Allow for this session" (:573). Same fidelity fix.
+    - src/ui/__tests__/aiChatPanelDbAwareWebview.test.ts (missing case) — no test clicks the allow-session button and asserts the echoed optionId; PLAN_AD §A7 names all three options. Webview handler is shared so risk is low, but the file's purpose is pinning exactly this surface. Fix: add a 4th test mirroring #3 with optionId "allow-session".
+    - docs/AI_HANDOFF/tasks/TASK-002.md — no cycle-AD Executor Report in this file (only cycle-AB one) and §Verification Commands still point at the removed .worktrees/task-002 / cycle-AB suite. Executor report exists in ExecADT2 artifact with real RED evidence ("document is not defined", 3/3 fail under node env). Fix: append the AD report + AD verification commands before handoff closes.
+  minor: none
+NEXT_STATUS_FOR_INDEX: changes_requested (create INDEX_AD row; do NOT touch cycle-AA INDEX.md TASK-002 row)
+NOTES: Harness/jsdom pragma correct (line 20, matches cycle-AB pattern; required since vitest.config.ts defaults to node env); isolation sound (per-test harness, fresh eval of IIFE resets pendingPermissionRequests, addEventListener stub restored, no window listener accumulation). Deny wire shape verified correct vs host: hasOwnProperty(optionId)=false (:219) matches webview :1117-1119 special case and gate's undefined→deny. Zero production-code surface in diff; ACP permission rendering regression-checked 27/27.
+SUGGESTED_FIXES: (1) hyphenated optionIds + host labels + requestId-form tool.id in fixtures; (2) add Allow Session click test; (3) append cycle-AD Executor Report + fresh §Verification Commands to this task file.
+
+## Executor Report (cycle AD) — TASK-002
+- **EXECUTOR_MODEL**: unic-code
+- **EXECUTOR_TOOL**: task agent (general-purpose), worktree `.worktrees/task-ad-002` (branch `handoff/ad-task-002`)
+- **FILES_CHANGED**: `src/ui/__tests__/aiChatPanelDbAwareWebview.test.ts`; `webview/aiChatPanelMain.ts` intentionally unchanged because `renderPermissionRequest` is option-agnostic.
+- **RED_OUTPUT**: Initial test run under the default Node environment failed with `ReferenceError: document is not defined` (3/3); adding the existing cycle-AB jsdom pragma made the test executable.
+- **GREEN_CONFIRMED**: Initial implementation 3/3; review-fix coverage now 4/4. Full suite after merge: 128 files, 1937 passed / 2 skipped; `npm run typecheck`: exit 0.
+- **FIX ROUND**: Fixtures now use the host wire contract (`dbtool-*` request IDs, `allow-once`, `allow-session`, label `Allow for this session`) and cover Allow Once, Allow Session, Deny, and stale double-click suppression.
+- **COMMIT**: `8525ece` (task) + `247471e` (review fixes).
+
+
+## Reviewer Verdict — cycle AD R2 [TASK-002] (unic-smart)
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code (cycle-AD report in this file; model isolation OK — differs)
+COMMIT_SHA: 247471e (review-fix on top of wave merge 5934983; task base 8525ece)
+SCOPE: fix commit touches only src/ui/__tests__/aiChatPanelDbAwareWebview.test.ts (+83); webview/aiChatPanelMain.ts untouched, so R1's renderPermissionRequest reuse + CSP (0 inline handlers) conclusions carry over.
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/aiChatPanelDbAwareWebview.test.ts src/ui/__tests__/aiChatPanelDbAware.test.ts src/ui/__tests__/aiChatPanelWebview.test.ts src/ui/__tests__/aiChatPanelAttachments.test.ts && npm run typecheck
+  result: 4/4 + 12/12 + 27/27 + 11/11 pass; typecheck exit 0
+FINDINGS (R1 → R2):
+  critical: none
+  important: none — all four R1 importants verified FIXED in source at 247471e:
+    - R1#1 fixture optionIds → now hyphenated allow-once/allow-session/deny in all 3 fixtures; test #1 asserts labels ["Allow once","Allow for this session","Deny"] matching DB_TOOL_PERMISSION_OPTIONS (src/ui/aiChatPanel.ts:572-574) and gate resolution allow-session :653 / allow-once :659.
+    - R1#2 tool.id/labels → tool.id now requestId form "dbtool-…"; label strings verbatim host.
+    - R1#3 Allow Session → new describe #4 clicks the session button and asserts echoed {type:"permission_response", requestId:"dbtool-…", optionId:"allow-session"}.
+    - R1#4 AD executor report → now in this file (unic-code, real RED "document is not defined" 3/3, GREEN 4/4, commits 8525ece + 247471e).
+  minor:
+    - docs/AI_HANDOFF/tasks/TASK-002.md — §Verification Commands still points at the removed .worktrees/task-002 / cycle-AB suite; stale doc pointer only (AD evidence lives in the cycle-AD report and this re-run).
+  retained-valid: deny emits NO optionId (hasOwnProperty=false, test #2) matching webview deny special case + gate undefined→deny; stale orphan deny click emits exactly one response; per-test fresh IIFE eval + addEventListener stub restored in makeHarness + DOM cleared beforeEach/afterEach → test isolation sound.
+SUGGESTED_FIXES: doc-only — refresh §Verification Commands (or add a cycle-AD block); create INDEX_AD.md (none exists yet) with TASK-002 status approved_minor / reviewer unic-smart.
+NOTES: Re-checked all acceptance anchors on the current file at HEAD: wire fidelity, Allow Session coverage, deny/no-optionId, stale suppression, isolation — all valid. No new issues introduced by 247471e.
+NEXT_STATUS_FOR_INDEX: approved_minor
