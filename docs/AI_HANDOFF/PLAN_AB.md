@@ -44,7 +44,20 @@ Image attach is **user-pushed** (the user explicitly selected or pasted it) — 
 
 **CONSTRAINT honored:** no two same-wave tasks modify the same file. Wave plan in INDEX.md.
 
-## §3 Approach
+## §3 Approach (revised round 2)
+
+### Plan review findings applied (cycle AB round 2 — BLOCKING)
+
+- **CSP `img-src data:`** is required for thumbnails to render. Current `buildHtml` at `src/ui/aiChatPanel.ts:2091-2095` only declares `default-src 'none'`, `style-src …`, `script-src …`. Without an `img-src` directive, every `<img src="data:image/png;base64,…">` is blocked. TASK-001 now owns adding `img-src 'self' data:` plus a source-text test that pins the exact CSP string.
+- **omp / ACP engine gate** must mirror the non-vision gate. Current `handleSend` ACP branch coerces `userMsg.content` to a string — silently dropping image parts. TASK-001 now owns treating `engine === "omp"` as a vision-unsupported case: emit one `attach_error` per attachment, drop ALL images, proceed with text-only. The text-only turn still uses the legacy ACP path.
+- **`userContentOverride` removed.** Cycle-AA `buildMessages(factory, history, userMsg, …)` already accepts `userMsg.content: ChatContentPart[]`. The handler constructs the user message directly — no new parameter. TASK-001 acceptance rows #1, #4, #5 updated.
+
+### Plan review minor findings applied
+
+- **T3 dependency direction** declared explicitly: T3 (wave 1) asserts the CSS source as text, fulfilling the contract that T2 (wave 2) will use at runtime. T3 declares; T2 fulfils.
+- **T3 edge rows added** — overflow scroll, theme-token fallback, focus-visible, dark-theme variants. Self-audit item 9 now passes for T3.
+
+
 
 Research convergence (ChatGPT / Claude / Cursor observed image-attach UX) yields the design pillars:
 - **Attachments strip above textarea, not inline** — standard pattern; survives text edits, easy to remove individually.
@@ -79,6 +92,14 @@ Key grounded facts driving the design:
 | happy | clipboard image paste | `paste` event with `clipboardData.items[i].type.startsWith("image/")` → same thumbnail pipeline as file picker | T2 |
 | happy | send includes attachments | composer has 2 valid thumbnails + text → click send → posted `{type:"send", text, attachments:[…base64…]}` (base64 verified present, bytes field verified correct) | T2 |
 | edge (non-vision) | attach button disabled | init `{visionCapable:false}` → `.vsdb-chat-attach-btn` has `disabled` attribute + tooltip "Current model does not support images" | T2 |
+| edge (omp mode) | attach rejected in omp mode | `engine === "omp"` + 2 valid attachments → 2 `attach_error { reason: "vision_unsupported" }` posted, ALL images dropped, text sent only (no silent drop) | T1 |
+| CSP | img-src data: present | `buildHtml` output's CSP meta contains `img-src 'self' data:` | T1 |
+| CSP (regression) | legacy CSP string still present | `default-src 'none'`, `style-src …`, `script-src …` all preserved when `img-src` is added | T1 |
+| mention × attachment | mention block + images coexist | user message has 1 text part (prompt + referenced-context block) + N image_url parts; text is augmented, images are siblings | T1 |
+| edge (CSS overflow) | >4 thumbnails scroll | `.vsdb-chat-attachments { overflow-x: auto }` declared; no flex overflow breaks composer | T3 |
+| edge (CSS theme) | warning uses theme tokens | `.vsdb-chat-attach-warning` references `var(--vsdb-warning-bg)` (no hardcoded hex) | T3 |
+| edge (CSS focus) | attach button focus-visible | `.vsdb-chat-attach-btn:focus-visible` declares a focus ring via theme token | T3 |
+| edge (CSS dark) | dark theme variants | `[data-theme="dark"]` block declares dark variants of the new tokens | T3 |
 | edge (non-vision paste) | clipboard image paste rejected | vision=false + paste image → host receives no send; webview shows amber `.vsdb-chat-attach-warning`; text paste still works | T2 |
 | edge (oversize) | 5 MB cap exceeded | 6 MB blob → host never called, single `{type:"attach_error", id, reason:"oversize"}` posted, warning bubble names the file | T1 + T2 |
 | edge (overcount) | 4 cap exceeded | 5 attachments → 5th rejected with `reason:"count_cap"`, first 4 kept | T1 + T2 |

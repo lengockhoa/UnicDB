@@ -15,7 +15,7 @@ Constraint: no same-wave file overlap (T-003 owns `webview/styles.css`; T-005 ow
 
 2. `AiChatPanelWebviewMessage["send"]` gains `attachments?: ImageAttachment[]`:
    - `ImageAttachment { id: string; mime: string; base64: string; bytes: number; }`
-   - When present and length > 0, the host forwards them as `ChatContentPart[]` (image_url parts with `dataUrl`) attached to the user message via the new `userContentOverride` hook.
+   - When present and length > 0, the host forwards them as `ChatContentPart[]` (image_url parts with `dataUrl`) attached to the user message constructed in `handleSend`.
    - When absent OR empty array, legacy text-only path runs (cycle AA baseline).
 
 3. New host → webview message kind `AiChatPanelAttachError`:
@@ -38,24 +38,39 @@ Before invoking `runAgent`:
 
 ### buildMessages image-parts path (the privacy-critical bit)
 
-Add optional parameter to `buildMessages`:
+No new parameter needed — `buildMessages(factory, history, userMsg, …)` already accepts a `userMsg: ChatMessage` whose `content` field is typed `string | ChatContentPart[]` (`src/ai/provider.ts:24`). The handler constructs the user message directly:
 ```ts
-userContentOverride?: ChatContentPart[]
+const textPart: ChatContentPart = { type: "text", text };
+const imageParts: ChatContentPart[] = validAttachments.map((a) => ({
+  type: "image_url",
+  imageUrl: `data:${a.mime};base64,${a.base64}`,
+}));
+const userMsg: ChatMessage = {
+  role: "user",
+  content: [textPart, ...imageParts],
+};
 ```
-When present, the user message is constructed as:
-```ts
-{ role: "user", content: userContentOverride }
+Then call `buildMessages(factory, history, userMsg)`. The legacy string-content path stays byte-identical (no code change to `buildMessages` itself).
+
+**Mention × attachment interaction:** when an `@-mention` block already adds a "Referenced context" section, it appends to the text part (so the text part becomes "user prompt + referenced-context block"). Image parts stay as siblings — never replaced.
+
+### CSP posture (BLOCKING — required for thumbnails)
+
+`buildHtml` (`src/ui/aiChatPanel.ts:2091-2095`) currently sets:
 ```
-The system message (DDL-only context) is computed exactly as today. The history chain is untouched.
+"default-src 'none'", "style-src ${webview.cspSource} 'unsafe-inline'", "script-src ${webview.cspSource}"
+```
+No `img-src` directive → falls back to `default-src 'none'` → every `<img src="data:image/png;base64,…">` thumbnail is BLOCKED. The attachments strip renders empty images.
 
-`buildMessages` MUST keep its cycle-AA signature, default arg, and zero-behavior change when `userContentOverride` is undefined. Existing privacy sentinel test (`aiChatPanelPrivacy.test.ts`) stays green; this cycle adds the "with attachments" extension row (TASK-001 acceptance #6 below).
+**Fix:** add `img-src 'self' data:` to the CSP array. Test pins the exact CSP string so a future regression re-tightening cannot strip it silently.
 
-### runBuiltinTurn / runAcpTurn changes
+### omp / ACP engine gate
 
-Both engines already call `buildMessages(... , userMsg)`. The new code path is:
-1. Compute `attachments` from `handleSend(msg.attachments)`.
-2. If non-empty, build `userContentOverride` from base64 → dataURL (`data:${mime};base64,${base64}`) wrapped in `ChatContentPart[]` with text + image_url parts.
-3. Pass `userContentOverride` to `buildMessages`. Text-only turn continues to use the legacy path.
+`handleSend` ACP branch (`src/ui/aiChatPanel.ts:1039-1043`) currently coerces `userMsg.content` to a string prompt. If the user attaches images in omp mode, this would silently drop the image parts — violating §1's "never silently drops the image".
+
+**Fix:** when `this.engine === "omp"`, run the SAME vision_unsupported gate as a non-vision model: emit ONE `attach_error` per attachment, drop ALL images, proceed with text-only turn. The user sees the same amber warning. ACP's `streamComplete` is not called with image parts.
+
+The work role (default `agent.ts:204 — "work"`) is the assumed vision lane; `agent.ts:216-218` already throws if the role lacks vision capability — that's the final belt.
 
 ### Logging hygiene
 
@@ -93,20 +108,6 @@ export interface AiChatPanelWebviewSend {
 ```
 
 ```ts
-// src/ui/aiChatPanel.ts — new param on buildMessages
-export async function buildMessages(
-  factory: AdapterFactory,
-  history: ChatMessage[],
-  userMsg: ChatMessage,
-  opts?: {
-    contextBudgetChars?: number;
-    contextTableLimit?: number;
-    userContentOverride?: ChatContentPart[]; // NEW — task-001
-  },
-): Promise<ChatMessage[]>
-```
-
-```ts
 // caps (export for tests + webview mirror)
 export const MAX_ATTACH_BYTES = 5 * 1024 * 1024; // 5 MB
 export const MAX_ATTACHMENTS_PER_TURN = 4;
@@ -127,13 +128,19 @@ npx vitest run src/ui/__tests__/aiChatPanelPrivacy.test.ts
 npm run typecheck
 ```
 
-## §Acceptance Criteria
+## §Acceptance Criteria (revised round 2)
 
-1. `handleSend({text, attachments:[…valid]})` forwards validated attachments via `userContentOverride` to `runAgent` (RED first against current code that has no `attachments` field, GREEN after).
+0. **CSP img-src**: `buildHtml` output's `<meta http-equiv="Content-Security-Policy">` contains `img-src 'self' data:`. Source-text test against `src/ui/aiChatPanel.ts`.
+
+0a. **omp/ACP gate**: when `this.engine === "omp"` AND `attachments.length > 0` after per-item validation → emit `attach_error { reason: "vision_unsupported" }` per attachment, drop ALL images, proceed with text-only turn (NOT a silent drop). BuildMessages never receives image parts in omp mode.
+
+0b. **Mention × attachment**: when user sends `@schema.table` + 2 valid images → user message has 1 text part (containing prompt + referenced-context block) + 2 image_url parts. The text part is augmented, the image parts are siblings.
+
+1. `handleSend({text, attachments:[…valid]})` constructs a user message with text + image_url parts and forwards to `runAgent` (RED first against current code that has no `attachments` field, GREEN after).
 2. `handleReady()` reads `loadSettings()` and posts `{type:"init", hasHistory, visionCapable}` matching the active role's vision flag.
 3. `AiChatPanelAttachError` posted per rejected attachment with the named `reason` (oversize / count_cap / unsupported_type / mime_mismatch / vision_unsupported).
-4. `buildMessages` with `userContentOverride` produces a user message carrying text + image_url parts; system message still DDL-only.
-5. `buildMessages` without `userContentOverride` is byte-identical to cycle AA baseline (legacy call sites keep working).
+4. `handleSend` produces a user message carrying text + image_url parts; system message still DDL-only.
+5. Text-only path (attachments absent or empty) is byte-identical to cycle AA baseline.
 6. Privacy sentinel test (cycle-AA `aiChatPanelPrivacy.test.ts`) extended: seed sentinel + 2 valid attachments → sentinel absent from system AND user parts; `runQuery` spy still 0.
 7. `MAX_ATTACH_BYTES = 5 MB`, `MAX_ATTACHMENTS_PER_TURN = 4`, `ATTACH_ALLOWED_MIME` exactly the four MIMEs — exported and unit-tested.
 8. No apiKey string appears anywhere in the new message shapes (grep test on the host file).

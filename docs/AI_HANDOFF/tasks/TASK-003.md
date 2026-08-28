@@ -106,7 +106,21 @@ npx vitest run src/ui/__tests__/chatLayoutCss.test.ts
 npm run typecheck
 ```
 
-## §Acceptance Criteria
+## §Dependency direction note (cycle AB review round 2)
+
+T3 (wave 1) consumes T2's (wave 2) class names. Mechanically OK only because T3's tests assert the CSS source as text — the DOM is constructed by T2 and not asserted by T3. T3 declares the contract; T2 fulfils it.
+
+## §Acceptance Criteria (revised round 2 — added edge rows)
+
+1. **Happy**: all required declarations present in `webview/styles.css` (regex check, one assertion per declaration).
+2. **Happy (theme)**: theme tokens used (no hardcoded colors).
+3. **Happy (thumb)**: `.vsdb-chat-thumb img { object-fit: cover }` ensures 56×56 thumbnails don't distort.
+4. **Regression (cycle AA)**: body height chain still present (regression pin: `.vsdb-chat-body { height: 100vh }`).
+5. **Edge (overflow)**: with >4 thumbnails the strip scrolls horizontally (`overflow-x: auto`), no layout overflow breaks the composer column.
+6. **Edge (theme fallback)**: the warning rule references `var(--vsdb-warning-bg)` (or an existing token) — never a hardcoded color string.
+7. **Edge (focus)**: `.vsdb-chat-attach-btn:focus-visible` (or equivalent) declares a visible focus ring via theme token.
+8. **Edge (dark theme)**: the `[data-theme="dark"]` block declares dark variants of the new tokens (no light-only fallback that breaks dark mode).
+
 
 1. All required declarations present in `webview/styles.css` (regex check, one assertion per declaration).
 2. Theme tokens used (no hardcoded colors).
