@@ -33,9 +33,6 @@ import { ConsolePanel } from "./ui/consolePanel";
 import { AcpProcess } from "./ai/omp/acpProcess";
 import { detectOmp, OMP_INSTALL_HINT, OMP_UPDATE_HINT } from "./ai/omp/detect";
 import { resolveEngine } from "./ai/engineChoice";
-import { createOmpChatEngine, type OmpChatEngine } from "./ai/omp/ompChatEngine";
-import type { AcpSession } from "./ai/omp/ompChatEngine";
-import { createHostMcp } from "./ai/omp/hostMcp";
 import { registerBrowseCommands } from "./ui/browseCommands";
 import { SchemaCache } from "./ui/schemaCache";
 import { SqlCompletionProvider } from "./ui/sqlCompletionProvider";
@@ -54,15 +51,6 @@ let aiSettingsForm: AiSettingsForm | null = null;
 let aiChatPanel: AiChatPanel | null = null;
 let consolePanel: ConsolePanel | null = null;
 
-/**
- * Cycle AE R4.5 — Engine source of truth at activation. Constructed during
- * `activate()` when the user-toggled `vsdb.ai.engine` is "omp" AND
- * `detectOmp()` reports a usable binary. `commandOpenAiChat` reads this
- * reference to decide which engine to wire into the panel.
- */
-let ompChatEngineRef: OmpChatEngine | null = null;
-/** Cached omp version string for the engine banner. */
-let ompEngineVersion: string | undefined = undefined;
 /** extensionUri capture ở activate() — dùng cho ConnectionForm webview resources. */
 let extensionUriForForm: vscode.Uri = vscode.Uri.file("/");
 let runScriptTerminal: vscode.Terminal | null = null;
@@ -372,12 +360,10 @@ export async function activate(
   const initialEngine = vscode.workspace
     .getConfiguration("vsdb")
     .get<string>("ai.engine", "builtin");
+  // Cycle AE.5 — perform only the lightweight availability gate at activation.
+  // AcpProcess is intentionally created when the user opens chat, not here,
+  // so activating VS Code without opening chat never leaks a child process.
   if (initialEngine === "omp") {
-    // Cycle AE R4.5 — Engine source of truth at activation. The actual
-    // construction is fire-and-forget (matches pre-cycle-AE IIFE pattern
-    // for tests that sync-call activate); `commandOpenAiChat` falls
-    // back to the builtin path silently if `ompChatEngineRef` is still
-    // null when the user opens chat. PLAN_AE.md §Acceptance 0/1/8.
     void (async () => {
       const detection = await detectOmp();
       if (!detection.ok) {
@@ -388,26 +374,6 @@ export async function activate(
         await vscode.workspace
           .getConfiguration("vsdb")
           .update("ai.engine", "builtin", vscode.ConfigurationTarget.Global);
-        ompChatEngineRef = null;
-        return;
-      }
-      try {
-        const hostMcp = createHostMcp({
-          gatePost: () => {
-            /* see makeActivationAcpShim below — panel rebinds its own gate */
-          },
-          tools: [],
-        });
-        ompEngineVersion = detection.version;
-        ompChatEngineRef = createOmpChatEngine({
-          acp: makeActivationAcpShim(),
-          hostMcp,
-          cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "/",
-        });
-      } catch {
-        // Defensive: any failure during engine construction must NOT
-        // crash activate(). Fall back to builtin.
-        ompChatEngineRef = null;
       }
     })();
   }
@@ -571,25 +537,6 @@ function commandOpenAiSettings(aiStore: AiConfigStore): void {
  * omp engine gets real database access instead of `mcpServers: []`.
  */
 
-/** AcpSession shim used to construct `OmpChatEngine` as a stored
- * reference at activation. The real session needs a live omp process
- * (AcpProcess.start), which must NOT happen here. The shim's rpc
- * methods throw — the first `engine.send()` from `runOmpEngineTurn`
- * will see the rejection, post one error bubble, and flip the setting
- * back to "builtin" via the panel's mid-turn fallback. */
-function makeActivationAcpShim(): AcpSession {
-  const notImplemented = (): never => {
-    throw new Error("AcpSession shim: not wired at activation");
-  };
-  return {
-    sessionNew: notImplemented,
-    sessionPrompt: notImplemented,
-    sessionLoad: notImplemented,
-    onNotification: () => undefined,
-    onClose: () => undefined,
-    dispose: () => undefined,
-  };
-}
 function buildAcpDeps(): AcpPanelDeps {
   return {
     start: async (
@@ -612,16 +559,12 @@ async function commandOpenAiChat(
   adapterFactory: AdapterFactory,
   deps: AgentDeps,
 ): Promise<void> {
-  // Cycle AE R4.5 — Engine selection. The user-toggled `vsdb.ai.engine`
-  // is the source of truth. Three branches:
-  //   1. engine="omp" AND ompChatEngineRef set → thread the pre-built
-  //      OmpChatEngine through to the panel.
-  //   2. engine="omp" AND ompChatEngineRef null → activation's fire-and-
-  //      forget init hasn't finished (or it detected a missing binary
-  //      and flipped the setting to "builtin"); fall back to the
-  //      builtin path silently — no interstitial.
-  //   3. engine="builtin" → existing resolveEngine() path with config
-  //      interstitial when needed.
+  // Cycle AE R4.5/AE.5 — `vsdb.ai.engine` is the user's source of truth.
+  // One path: fresh detectOmp() per open; when detection ok, the panel
+  // runs the ACP runtime (AcpProcess-backed) with omp's real binary —
+  // `resolveEngine()` gates omp-vs-builtin and the config interstitial
+  // applies to the builtin engine only. The activation IIFE only does
+  // the install-hint gate; no engine object is built at activation.
   if (aiChatPanel) {
     aiChatPanel.show();
     return;
@@ -629,29 +572,21 @@ async function commandOpenAiChat(
   const engine = vscode.workspace
     .getConfiguration("vsdb")
     .get<string>("ai.engine", "builtin");
-  if (engine === "omp" && ompChatEngineRef !== null) {
-    aiChatPanel = new AiChatPanel({
-      extensionUri: extensionUriForForm,
-      deps,
-      adapterFactory,
-      acp: buildAcpDeps(),
-      ompChatEngine: ompChatEngineRef,
-      engineVersion: ompEngineVersion,
-      onDispose: () => {
-        aiChatPanel = null;
-      },
-    });
-    aiChatPanel.show();
-    return;
-  }
-  // Fallback path (builtin OR engine=omp without a constructed ref).
-  // For tests + activation race, do a fresh detectOmp() pass here so
-  // the panel can still be wired for omp when activation's IIFE hasn't
-  // completed yet.
   const [detection, cfg] = await Promise.all([
     detectOmp(),
     aiStore.loadConfig(),
   ]);
+  if (engine === "omp" && !detection.ok) {
+    // User chose omp but binary is missing/too old at open-time — flip
+    // back and continue on the builtin path this invocation.
+    const hint = detection.available ? OMP_UPDATE_HINT : OMP_INSTALL_HINT;
+    void vscode.window.showInformationMessage(
+      `VSDB: omp engine unavailable — falling back to builtin. ${hint}`,
+    );
+    await vscode.workspace
+      .getConfiguration("vsdb")
+      .update("ai.engine", "builtin", vscode.ConfigurationTarget.Global);
+  }
   const choice = resolveEngine({ detection, config: cfg });
   if (choice.requiresConfig) {
     void vscode.window.showInformationMessage(
