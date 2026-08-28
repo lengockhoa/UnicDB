@@ -40,7 +40,9 @@ import {
   SQL_SEMANTIC_LEGEND,
   SqlSemanticTokensProvider,
 } from "./ui/sqlSemanticTokens";
+import { defaultAiSettings, type AiSettings } from "./ai/settings";
 import type { ParsedStatement } from "./config/types";
+import { writeVsdbAiConfig } from "./extensionConfigExport";
 let disposables: vscode.Disposable[] = [];
 let state: ExtensionState | null = null;
 /** Cached single-instance AiSettingsForm (TASK-004). Reused across calls. */
@@ -397,6 +399,31 @@ export async function activate(
       commandOpenConsole(mgr, runner, panel),
     ),
   );
+
+  // 18. vsdb.ai.useWithOmp — cycle AD TASK-003 §9/§10
+  // Writes `.vscode/vsdb-ai-config.yml` + `.vscode/vsdb-db-context.md` and
+  // surfaces a copy-pasteable `omp` command line (Copy button puts it on
+  // the clipboard). apiKey is NEVER written to disk; the YAML carries an
+  // env-var hint so OMP picks it up from the user's `OPENAI_API_KEY`.
+  disposables.push(
+    vscode.commands.registerCommand(
+      "vsdb.ai.useWithOmp",
+      async () => commandUseWithOmp(aiStore, adapterFactory),
+    ),
+  );
+
+  // 19. vsdb.ai.refreshDbContext — cycle AD TASK-003 §9 (refresh path).
+  // Re-runs the DB introspection that powers `vsdb-db-context.md` so the
+  // appended system-prompt OMP loads is current. Same write path as
+  // `vsdb.ai.useWithOmp` minus the on-screen notification (silent refresh).
+  disposables.push(
+    vscode.commands.registerCommand(
+      "vsdb.ai.refreshDbContext",
+      async () => commandRefreshDbContext(aiStore, adapterFactory),
+    ),
+  );
+
+
 
   // Dispose schemaTree + codeLens on deactivate to drop subscriptions + cache.
   context.subscriptions.push({ dispose: () => tree.dispose() });
@@ -1043,4 +1070,77 @@ async function commandRunScript(): Promise<void> {
   }
   runScriptTerminal.sendText(text + "\n");
   runScriptTerminal.show();
+}
+
+/**
+ * TASK-003 cycle AD §9/§10 — `vsdb.ai.useWithOmp`.
+ *
+ * Writes `.vscode/vsdb-ai-config.yml` + `.vscode/vsdb-db-context.md` and
+ * shows an information message containing the copy-pasteable `omp` command
+ * line. The "Copy" button puts the command line on the clipboard.
+ *
+ * Falls back gracefully when no workspace folder is open (info message
+ * + no-op). Falls back to defaults when AI settings haven't been saved
+ * (so the user can still try the command — `omp` will pick up
+ * `OPENAI_API_KEY` from the env).
+ */
+async function commandUseWithOmp(
+  aiStore: AiConfigStore,
+  adapterFactory: AdapterFactory,
+): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (!folder) {
+    void vscode.window.showErrorMessage(
+      "VSDB: open a folder before running `Use with OMP`.",
+    );
+    return;
+  }
+  const live = await aiStore.loadSettings();
+  const settings: AiSettings = live ?? defaultAiSettings();
+  const history: ReadonlyArray<never> = [];
+  const result = await writeVsdbAiConfig(folder, settings, adapterFactory, history);
+  // Surface a Copy button so the user can paste into a terminal.
+  const choice = await vscode.window.showInformationMessage(
+    `VSDB: OMP config written. Run this in a terminal:\n\n${result.ompCommandLine}`,
+    { modal: false },
+    "Copy",
+  );
+  if (choice === "Copy") {
+    await vscode.env.clipboard.writeText(result.ompCommandLine);
+  }
+}
+
+/**
+ * TASK-003 cycle AD §9 — `vsdb.ai.refreshDbContext`.
+ *
+ * Re-runs DB introspection and rewrites `.vscode/vsdb-db-context.md`. The
+ * YAML is not rewritten (provider / model settings haven't changed) but
+ * we route through `writeVsdbAiConfig` to keep a single write path — the
+ * YAML overwrite is idempotent.
+ *
+ * No notification on success (silent refresh per the command spec).
+ * Errors surface as a status-bar message so they don't interrupt flow.
+ */
+async function commandRefreshDbContext(
+  aiStore: AiConfigStore,
+  adapterFactory: AdapterFactory,
+): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (!folder) {
+    void vscode.window.showErrorMessage(
+      "VSDB: open a folder before refreshing the DB context.",
+    );
+    return;
+  }
+  const live = await aiStore.loadSettings();
+  const settings: AiSettings = live ?? defaultAiSettings();
+  const history: ReadonlyArray<never> = [];
+  try {
+    await writeVsdbAiConfig(folder, settings, adapterFactory, history);
+  } catch (err) {
+    void vscode.window.setStatusBarMessage(
+      `VSDB: refresh failed — ${err instanceof Error ? err.message : String(err)}`,
+      5000,
+    );
+  }
 }
