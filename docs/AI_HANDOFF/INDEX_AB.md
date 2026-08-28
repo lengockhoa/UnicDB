@@ -4,10 +4,10 @@ Cycle AB — **AI CHAT IMAGE ATTACH + CLIPBOARD PASTE**: attach button + Cmd/Ctr
 
 | Task | Title | Status | Dependencies | Reviewer |
 |------|-------|--------|--------------|----------|
-| TASK-001 | Host message contract + buildMessages image-parts path (host side) | done | none | unic-smart |
-| TASK-002 | Webview image attach + clipboard paste UX | done | TASK-001 | unic-smart |
-| TASK-003 | CSS for attachments strip + attach button + warning | done | none | unic-smart |
-| TASK-005 | Pure helpers: validateImageAttachment / log redaction / dataURL | done | none | unic-smart |
+| TASK-001 | Host message contract + buildMessages image-parts path (host side) | done (R1.5 approved) | none | unic-smart |
+| TASK-002 | Webview image attach + clipboard paste UX | done (R4.5 fixed) | TASK-001 | unic-smart |
+| TASK-003 | CSS for attachments strip + attach button + warning | done (R2 approved-with-minor) | none | unic-smart |
+| TASK-005 | Pure helpers: validateImageAttachment / log redaction / dataURL | done (R3 approved-with-minor) | none | unic-smart |
 
 Graph: TASK-001 → TASK-002; TASK-003 independent; TASK-005 independent.
 
