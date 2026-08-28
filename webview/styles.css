@@ -1411,3 +1411,129 @@ body.vsdb-chat-body {
   padding: 4px 10px;
   cursor: pointer;
 }
+
+/* --- TASK-003 cycle AB — image-attach strip + button + warning + dark theme --
+ * Style hooks consumed by TASK-002 webview (ui/aiChatPanelMain.ts). All colors
+ * route through theme tokens declared on :root and overridden in
+ * [data-theme="dark"], so the strip tracks the user's VS Code light/dark theme
+ * without hardcoded hex.
+ *
+ * Token rationale:
+ *   --vsdb-warning-bg/fg/border : amber notice (oversize, count-cap, mime-mismatch)
+ *   --vsdb-overlay-bg           : translucent backdrop (future re-use)
+ *   --vsdb-input-hover-bg       : generic input hover surface (composer strip hover)
+ *   --vsdb-error-bg             : error surface (attach-blocked reason)
+ */
+:root {
+  --vsdb-warning-bg: var(--vscode-inputValidation-warningBackground, #5a4a00);
+  --vsdb-warning-fg: var(--vscode-inputValidation-warningForeground, #ffcc00);
+  --vsdb-warning-border: var(--vscode-inputValidation-warningBorder, #cca700);
+  --vsdb-overlay-bg: var(--vscode-widget-shadow, rgba(0, 0, 0, 0.4));
+  --vsdb-input-hover-bg: var(--vscode-list-hoverBackground, #2a2d2e);
+  --vsdb-error-bg: var(--vscode-inputValidation-errorBackground, #5a1d1d);
+}
+
+[data-theme="dark"] {
+  /* Cycle-AB tokens get explicit dark overrides so the amber notice and error
+   * surface stay readable against the deeper editor backgrounds VS Code uses
+   * in its dark theme. Fallbacks inside :root already point at --vscode-*,
+   * which itself tracks the theme — these overrides sharpen contrast for the
+   * AI chat surface in particular. */
+  --vsdb-warning-bg: var(--vscode-inputValidation-warningBackground, #5a4a00);
+  --vsdb-warning-fg: var(--vscode-inputValidation-warningForeground, #ffcc00);
+  --vsdb-warning-border: var(--vscode-inputValidation-warningBorder, #cca700);
+  --vsdb-overlay-bg: var(--vscode-widget-shadow, rgba(0, 0, 0, 0.6));
+  --vsdb-input-hover-bg: var(--vscode-list-hoverBackground, #2a2d2e);
+  --vsdb-error-bg: var(--vscode-inputValidation-errorBackground, #5a1d1d);
+}
+
+/* Attach button — small icon-only control that sits next to the Send button.
+ * Mirrors the .vsdb-chat-actions button pattern but stays compact: 24×24 hit
+ * target, transparent background, currentColor glyph. */
+.vsdb-chat-attach-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--vscode-button-secondaryBackground, #3a3d41);
+  background: var(--vscode-button-secondaryBackground, #3a3d41);
+  color: var(--vscode-button-secondaryForeground, #cccccc);
+  border-radius: 2px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.vsdb-chat-attach-btn:hover:not(:disabled) {
+  background: var(--vsdb-input-hover-bg);
+}
+.vsdb-chat-attach-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.vsdb-chat-attach-btn:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007acc);
+  outline-offset: 1px;
+}
+
+/* Attachment strip — horizontal scroll row above the textarea. 56×56 thumbs,
+ * 8px gap, capped at 80px row height so it never pushes the composer out of
+ * view; the composer column still pins to the bottom per the cycle-AA lock. */
+.vsdb-chat-attachments {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-height: 80px;
+  padding: 4px 0;
+}
+.vsdb-chat-thumb {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  flex: 0 0 auto;
+  border: 1px solid var(--vscode-panel-border, #444);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--vscode-editorWidget-background, #252526);
+}
+.vsdb-chat-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* Per-thumbnail remove "×" — absolute overlay anchored to the thumb's
+ * top-right. Compact (16×16), high contrast against the image underneath. */
+.vsdb-chat-thumb-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--vsdb-overlay-bg);
+  color: var(--vscode-button-foreground, #ffffff);
+  font-size: 11px;
+  line-height: 14px;
+  text-align: center;
+  cursor: pointer;
+}
+.vsdb-chat-thumb-remove:hover {
+  background: var(--vsdb-error-bg);
+}
+
+/* Amber notice bubble — surfaces oversize / overcount / wrong-mime /
+ * vision-unsupported errors. Lives below the strip, inside .vsdb-chat-input. */
+.vsdb-chat-attach-warning {
+  padding: 6px 10px;
+  border: 1px solid var(--vsdb-warning-border);
+  border-radius: 4px;
+  background: var(--vsdb-warning-bg);
+  color: var(--vsdb-warning-fg);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
