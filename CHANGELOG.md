@@ -3,6 +3,21 @@
 All notable changes to VSDB are documented in this file. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 
+## [1.11.0] — 2026-08-28
+
+Cycle AE: OMP runtime session wiring. The AI Chat panel can now use a local `omp` install as its runtime when `vsdb.ai.engine` is set to `omp` — VSDB hosts the cycle-AD DB-aware tools as an in-process MCP HTTP server, `omp` connects to that endpoint, and the chat panel routes streaming responses and tool-call permission cards through the same engine.
+
+### Added
+- **`vsdb.ai.engine` setting** (`builtin` | `omp`, default `builtin`). When `omp` and a usable binary is detected, the chat panel delegates to `OmpChatEngine`.
+- **`src/ai/omp/hostMcp.ts`** — in-process MCP Streamable-HTTP server bound to `127.0.0.1`. Exposes the 5 cycle-AD DB-aware tools with the existing `DbToolPermissionGate` wire shape. apiKey never on wire.
+- **`src/ai/omp/ompChatEngine.ts`** — chat-level glue mapping ACP `session/update` notifications to `OmpChatEvents` (delta / thought / toolStart / toolEnd / error / done).
+- **Legacy settings migration**: stored configurations without an `engine` field are normalized to `builtin` on load.
+- **Activation detection gate**: at extension activation, `omp --version` is probed; missing or outdated binaries flip the setting back to `builtin` with a one-time install/update notice.
+
+### Changed
+- `src/extension.ts` reads `vsdb.ai.engine` at activation; the chat-panel command routes engine selection through it.
+- `src/ai/settings.ts` now requires `engine: "builtin" | "omp"` on persisted settings.
+
 ## [1.10.0] — 2026-08-28
 
 Cycle AD: DB-aware AI Chat tools and an OMP configuration bridge. The AI Chat panel can now inspect approved database state through five read-only tools, with explicit permission cards and default-deny behavior; users can export the active AI settings and schema context for a local `omp` session without writing API keys to disk.
