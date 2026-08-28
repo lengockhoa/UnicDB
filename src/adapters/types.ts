@@ -144,8 +144,8 @@ export interface DbAdapter {
    */
   listTableDetail(schema: string, table: string): Promise<TableDetail>;
   testConnection(): Promise<void>;
+  catalog?: CatalogApi;
 }
-
 /**
  * Result shape cho adapter.listTableDetail. Row format giữ stringly-typed cho
  * pg_catalog (pgIntrospect map sang TableSpec sau).
@@ -176,4 +176,57 @@ export class NotImplementedError extends Error {
     super(`Driver "${driver}" is not implemented yet (TASK-004 will add it).`);
     this.name = "NotImplementedError";
   }
+}
+
+// =============================================================================
+// TASK-AF-001 — OPTIONAL catalog capability for adapters (PostgreSQL-first).
+// Definitions live here so the DbAdapter interface stays self-contained.
+// pgCatalog.ts owns the SQL template + mapper implementations and re-exports
+// the info types so the schema tree (AF-002) can import from either side
+// without circular imports.
+// =============================================================================
+
+export interface IndexInfo {
+  name: string;
+  schema: string;
+  table: string;
+  isUnique: boolean;
+  method: string;
+  columns: string[];
+}
+
+export type ConstraintType = "pk" | "fk" | "unique" | "check";
+
+export interface TableConstraintInfo {
+  name: string;
+  type: ConstraintType;
+  columns: string[];
+  fkTarget?: { table: string; schema?: string; columns: string[] };
+}
+
+export interface TriggerInfo {
+  name: string;
+  event: string;
+  timing: string;
+  statement: string;
+}
+
+export interface SequenceInfo {
+  name: string;
+  schema: string;
+  dataType: string;
+  lastValue?: string;
+}
+
+export interface CatalogApi {
+  listIndexes(schema: string, table: string): Promise<IndexInfo[]>;
+  listConstraints(schema: string, table: string): Promise<TableConstraintInfo[]>;
+  listTriggers(schema: string, table: string): Promise<TriggerInfo[]>;
+  listSequences(schema: string): Promise<SequenceInfo[]>;
+  rowCount(schema: string, table: string): Promise<number>;
+  objectDdl(
+    kind: "view" | "routine" | "trigger",
+    name: string,
+    schema?: string,
+  ): Promise<string>;
 }

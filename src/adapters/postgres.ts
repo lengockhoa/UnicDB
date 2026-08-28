@@ -31,18 +31,36 @@ import { Client, Pool, PoolClient } from "pg";
 import type { ConnectionConfig } from "../config/types";
 import { resolveSslOptions } from "../core/sslOptions";
 import type {
+  CatalogApi,
   BatchedQuery,
   DbTransaction,
   ColumnInfo,
   DbAdapter,
+  IndexInfo,
   QueryResult,
   RoutineInfo,
   RunResult,
   SchemaInfo,
+  SequenceInfo,
+  TableConstraintInfo,
   TableDetail,
   TableInfo,
+  TriggerInfo,
   ViewInfo,
 } from "./types";
+import {
+  indexesSql,
+  constraintsSql,
+  triggersSql,
+  sequencesSql,
+  rowCountSql,
+  objectDdlSql,
+  rowsToIndexes,
+  rowsToConstraints,
+  rowsToTriggers,
+  rowsToSequences,
+  objectNotFoundError,
+} from "../core/ddl/pgCatalog";
 import {
   INTROSPECT_COLUMNS_SQL,
   INTROSPECT_CONSTRAINTS_SQL,
@@ -674,6 +692,115 @@ export class PostgresAdapter implements DbAdapter {
   }
 
   // ---- Helpers --------------------------------------------------------------
+
+  // ---- Catalog (TASK-AF-001) -----------------------------------------------
+  //
+  // OPTIONAL DbAdapter.catalog capability. PostgreSQL-only — mysql/mssql
+  // adapters leave `catalog` undefined. AF-002 (schema tree) and AF-004
+  // (DDL viewer) consume this surface.
+
+  readonly catalog: CatalogApi = {
+    listIndexes: (schema: string, table: string) =>
+      this.query<{
+        indexname: string;
+        schemaname: string;
+        tablename: string;
+        indexdef: string;
+      }>(indexesSql(schema, table), [schema, table]).then((r) =>
+        rowsToIndexes(r.rows),
+      ),
+
+    listConstraints: (schema: string, table: string) =>
+      this.query<{
+        conname: string;
+        contype: string;
+        conkeycols: string[];
+        consrc: string | null;
+        confrelidname: string | null;
+        confkeycols: string[] | null;
+      }>(constraintsSql(schema, table), [schema, table]).then((r) =>
+        rowsToConstraints(r.rows),
+      ),
+
+    listTriggers: (schema: string, table: string) =>
+      this.query<{
+        tgname: string;
+        tgtype: number;
+        tgrelid: string | null;
+        action_statement: string;
+      }>(triggersSql(schema, table), [schema, table]).then((r) =>
+        rowsToTriggers(r.rows),
+      ),
+
+    listSequences: (schema: string) =>
+      this.query<{
+        schemaname: string;
+        sequencename: string;
+        data_type: string;
+        last_value: string | null;
+      }>(sequencesSql(schema), [schema]).then((r) => rowsToSequences(r.rows)),
+
+    rowCount: async (schema: string, table: string): Promise<number> => {
+      const r = await this.query<{ n: string | number }>(
+        rowCountSql(schema, table),
+      );
+      if (r.rows.length === 0) {
+        throw new Error(
+          "pgCatalog.rowCount: no rows for " + schema + "." + table,
+        );
+      }
+      const raw = r.rows[0].n;
+      const value = typeof raw === "string" ? Number(raw) : raw;
+      if (!Number.isFinite(value) || value < 0) {
+        throw new Error(
+          "pgCatalog.rowCount: invalid count for " + schema + "." + table,
+        );
+      }
+      return value;
+    },
+
+    objectDdl: async (
+      kind: "view" | "routine" | "trigger",
+      name: string,
+      schema?: string,
+    ): Promise<string> => {
+      if (kind === "trigger") {
+        // The trigger SQL needs (schema, table) for the table the trigger
+        // is attached to. The high-level call name is the trigger's
+        // <table> (or qualified). For simplicity we ask callers to pass
+        // a "schema.table.trigger" composite when they need disambig.
+        const parts = name.split(".");
+        let tableName: string;
+        let triggerName: string;
+        let trigSchema: string;
+        if (parts.length === 3) {
+          trigSchema = parts[0];
+          tableName = parts[1];
+          triggerName = parts[2];
+        } else {
+          trigSchema = schema ?? "public";
+          tableName = parts[0];
+          triggerName = parts[1] ?? name;
+        }
+        const r = await this.query<{ ddl: string }>(
+          objectDdlSql(kind, triggerName, trigSchema),
+          [trigSchema, tableName],
+        );
+        if (r.rows.length === 0) {
+          throw objectNotFoundError(kind, triggerName, trigSchema);
+        }
+        return r.rows[0].ddl;
+      }
+      const r = await this.query<{ ddl: string }>(
+        objectDdlSql(kind, name, schema),
+        [],
+      );
+      if (r.rows.length === 0) {
+        throw objectNotFoundError(kind, name, schema);
+      }
+      return r.rows[0].ddl;
+    },
+  };
 
   private async query<T = any>(
     sql: string,
