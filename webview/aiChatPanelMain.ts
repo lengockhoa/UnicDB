@@ -431,7 +431,12 @@ function setBusy(busy: boolean): void {
   if (resumeBtn) resumeBtn.disabled = busy;
   if (regenBtn) regenBtn.disabled = busy;
   // Attach: disabled while busy OR when the active model can't see images.
-  if (attachBtn) attachBtn.disabled = busy || !state.visionCapable;
+  if (attachBtn) {
+    attachBtn.disabled = busy || !state.visionCapable;
+    attachBtn.title = !state.visionCapable
+      ? "Current model does not support images"
+      : "Attach image";
+  }
   const prompt = document.getElementById("prompt") as HTMLTextAreaElement | null;
   if (prompt) prompt.disabled = busy;
 }
@@ -1456,6 +1461,10 @@ async function ingestFile(file: File | Blob): Promise<void> {
     return;
   }
   const dataUrl = await readAsDataUrl(file);
+  if (!dataUrl) {
+    renderAttachWarning(`Could not read file — file is unreadable.`);
+    return;
+  }
   const base64 = dataUrl.split(",")[1] ?? "";
   const bytes = approximateBytesFromBase64(base64);
   if (bytes > MAX_ATTACH_BYTES) {
