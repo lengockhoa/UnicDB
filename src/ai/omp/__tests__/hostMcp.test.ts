@@ -456,3 +456,55 @@ describe("createHostMcp — MCP HTTP server (T1)", () => {
     expect(probed instanceof Error).toBe(true);
   });
 });
+
+describe("createHostMcp — call() wrapper (T2 contract bridge)", () => {
+  it("call(name, args) delegates to handle() and returns { result, isError } for a successful tool result", async () => {
+    fixture = await buildFixture({
+      tools: fiveDbTools(),
+      postPermission: (m) => {
+        queueMicrotask(() => fixture!.host.respond(m.requestId, "allow-once"));
+      },
+    });
+    await probeJson(fixture.host.url, {
+      method: "POST",
+      body: { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+    });
+
+    const out = await fixture.host.call("run_readonly_query", { sql: "SELECT 1" });
+    expect(out).toEqual({ result: "OUT-run_readonly_query", isError: false });
+  });
+
+  it("call(name, args) returns { result, isError: true } when the gate denies the tool", async () => {
+    fixture = await buildFixture({
+      tools: fiveDbTools(),
+      postPermission: (m) => {
+        queueMicrotask(() => fixture!.host.respond(m.requestId, "deny"));
+      },
+    });
+    await probeJson(fixture.host.url, {
+      method: "POST",
+      body: { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+    });
+
+    const out = await fixture.host.call("list_table_data_sample", {
+      schema: "public",
+      table: "users",
+    });
+    expect(out.isError).toBe(true);
+    expect(out.result).toBe(DB_TOOL_DENIED_MESSAGE);
+  });
+
+  it("call(name, args) returns { result, isError: true } when handle() emits a JSON-RPC error envelope", async () => {
+    fixture = await buildFixture();
+    await probeJson(fixture.host.url, {
+      method: "POST",
+      body: { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+    });
+
+    // Unknown tool name → handle() emits a JSON-RPC error envelope.
+    const out = await fixture.host.call("does_not_exist", {});
+    expect(out.isError).toBe(true);
+    expect(typeof out.result).toBe("string");
+    expect(out.result.length).toBeGreaterThan(0);
+  });
+});
