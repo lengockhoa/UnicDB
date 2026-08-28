@@ -11,6 +11,11 @@
 // yields AT MOST ONE response per visible request.
 
 import { highlightSql } from "./sqlHighlight";
+import {
+  ATTACH_ALLOWED_MIME,
+  MAX_ATTACH_BYTES,
+  MAX_ATTACHMENTS_PER_TURN,
+} from "./attachLimits";
 
 declare const acquireVsCodeApi: undefined | (() => {
   postMessage: (msg: unknown) => void;
@@ -22,6 +27,9 @@ const vscodeApi =
 interface InitMsg {
   type: "init";
   hasHistory: boolean;
+  /** TASK-002 (cycle AB): true iff the active role's vision flag is on.
+   * Gates the attach button + clipboard-paste-image affordances. */
+  visionCapable: boolean;
 }
 interface StepMsg {
   type: "step";
@@ -104,6 +112,20 @@ interface MentionMissMsg {
   type: "mention_miss";
   token: string;
 }
+/** TASK-002 (cycle AB): host rejects one attachment (oversize, count cap,
+ * wrong MIME, etc.). Webview surfaces as an amber notice bubble naming
+ * the offending file. NEVER carries apiKey material. */
+interface AttachErrorMsg {
+  type: "attach_error";
+  id: string;
+  reason:
+    | "oversize"
+    | "count_cap"
+    | "unsupported_type"
+    | "mime_mismatch"
+    | "vision_unsupported";
+  message: string;
+}
 type HostMsg =
   | InitMsg
   | StepMsg
@@ -117,13 +139,26 @@ type HostMsg =
   | HistoryMsg
   | ThoughtMsg
   | MentionObjectsMsg
-  | MentionMissMsg;
+  | MentionMissMsg
+  | AttachErrorMsg;
 // ---- State -----------------------------------------------------------------
 interface State {
   busy: boolean;
   hasHistory: boolean;
+  /** TASK-002 (cycle AB): true iff the active model's vision flag is on.
+   * Drives attach-button enabled state + clipboard-paste-image gating. */
+  visionCapable: boolean;
+  /** TASK-002 (cycle AB): image attachments queued in the strip above the
+   * textarea. Each entry carries id+mime+base64+bytes; `id` is a client-
+   * minted UUID (no apiKey path). Cleared on send. */
+  attachments: Array<{ id: string; mime: string; base64: string; bytes: number }>;
 }
-const state: State = { busy: false, hasHistory: false };
+const state: State = {
+  busy: false,
+  hasHistory: false,
+  visionCapable: true,
+  attachments: [],
+};
 
 // ---- TASK-005 — @-mention dropdown state ----------------------------------
 //
@@ -389,11 +424,14 @@ function setBusy(busy: boolean): void {
   const stopBtn = document.getElementById("stopBtn") as HTMLButtonElement | null;
   const resumeBtn = document.getElementById("resumeBtn") as HTMLButtonElement | null;
   const regenBtn = document.getElementById("regenerateBtn") as HTMLButtonElement | null;
+  const attachBtn = document.getElementById("attachBtn") as HTMLButtonElement | null;
   if (sendBtn) sendBtn.disabled = busy;
   // stopBtn is always clickable — host ignores stop when no agent is in flight.
   if (stopBtn) stopBtn.disabled = false;
   if (resumeBtn) resumeBtn.disabled = busy;
   if (regenBtn) regenBtn.disabled = busy;
+  // Attach: disabled while busy OR when the active model can't see images.
+  if (attachBtn) attachBtn.disabled = busy || !state.visionCapable;
   const prompt = document.getElementById("prompt") as HTMLTextAreaElement | null;
   if (prompt) prompt.disabled = busy;
 }
@@ -402,15 +440,30 @@ function renderInitial(): void {
   <div class="vsdb-chat-thread" id="thread" aria-live="polite"></div>
   <button type="button" id="jumpLatest" class="vsdb-chat-jump" hidden>Jump to latest</button>
   <div class="vsdb-chat-input">
+    <div class="vsdb-chat-attachments" id="attachStrip" hidden></div>
     <textarea id="prompt" rows="3" placeholder="Ask about your database…"></textarea>
     <div class="vsdb-chat-actions">
       <button id="resumeBtn" class="vsdb-chat-secondary">Resume session</button>
       <button id="clearBtn">Clear</button>
       <button id="regenerateBtn" class="vsdb-chat-secondary" title="Regenerate last response">Regenerate</button>
       <button id="stopBtn" class="vsdb-chat-secondary">Stop</button>
+      <button type="button" id="attachBtn" class="vsdb-chat-attach-btn" title="Attach image" aria-label="Attach image">+</button>
       <button id="sendBtn" class="vsdb-chat-primary">Send</button>
     </div>
   </div>`;
+  // Hidden file input lives on <body> (not inside the composer card) so
+  // jsdom + the VS Code webview can fire its `change` event without being
+  // clipped by the composer column. Created exactly once; never re-created.
+  if (!document.getElementById("attachFileInput")) {
+    const fi = document.createElement("input");
+    fi.type = "file";
+    fi.id = "attachFileInput";
+    fi.accept = "image/*";
+    fi.multiple = true;
+    fi.hidden = true;
+    fi.setAttribute("aria-hidden", "true");
+    document.body.appendChild(fi);
+  }
   wireControls();
   wireJumpLatest();
 }
@@ -439,10 +492,20 @@ function wireControls(): void {
     const text = prompt.value;
     if (text.trim().length === 0) return;
     appendUser(text);
-    post({ type: "send", text });
+    if (state.attachments.length > 0) {
+      post({ type: "send", text, attachments: state.attachments.map((a) => ({
+        id: a.id,
+        mime: a.mime,
+        base64: a.base64,
+        bytes: a.bytes,
+      })) });
+    } else {
+      post({ type: "send", text });
+    }
     setBusy(true);
     prompt.value = "";
     disposeMentionDropdown();
+    clearAttachments();
   });
   stopBtn?.addEventListener("click", () => {
     post({ type: "stop" });
@@ -569,6 +632,48 @@ function wireControls(): void {
       return;
     }
     disposeMentionDropdown();
+  });
+
+  // TASK-002 (cycle AB) — attach button + file input + clipboard paste.
+  const attachBtn = document.getElementById("attachBtn") as
+    | HTMLButtonElement
+    | null;
+  const fileInput = document.getElementById("attachFileInput") as
+    | HTMLInputElement
+    | null;
+  attachBtn?.addEventListener("click", () => {
+    if (state.busy || !state.visionCapable) return;
+    fileInput?.click();
+  });
+  fileInput?.addEventListener("change", () => {
+    if (!fileInput.files) return;
+    for (const f of Array.from(fileInput.files)) {
+      void ingestFile(f);
+    }
+    // Reset so picking the same file twice still fires change.
+    fileInput.value = "";
+  });
+  // Clipboard image paste — same pipeline as the file picker.
+  prompt?.addEventListener("paste", (ev: ClipboardEvent) => {
+    const items = ev.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (!item) continue;
+      if (!item.type.startsWith("image/")) continue;
+      // Vision-disabled model → reject the paste with an inline warning;
+      // do NOT add to the strip, do NOT swallow the event (text paste
+      // should still work — see cycle-AA paste regression).
+      if (!state.visionCapable) {
+        renderAttachWarning(
+          `Cannot attach image — current model does not support images`,
+        );
+        continue;
+      }
+      const blob = item.getAsFile();
+      if (!blob) continue;
+      void ingestFile(blob);
+    }
   });
 }
 
@@ -885,6 +990,7 @@ function applyEngine(msg: EngineMsg): void {
 
 function applyInit(msg: InitMsg): void {
   state.hasHistory = msg.hasHistory;
+  state.visionCapable = msg.visionCapable;
   // init{hasHistory:false} đến sau khi panel từng busy (Clear path) →
   // chắc chắn re-enable input + đóng streaming bubble. Host cũng post
   // done, nhưng done một mình không de-stream nếu panel replay init.
@@ -892,6 +998,12 @@ function applyInit(msg: InitMsg): void {
     deStreamOpenBubble();
     setBusy(false);
   }
+  // Re-apply attach-button enabled state on every init (visionCapable
+  // might have flipped since last init — e.g. role switch in host).
+  const attachBtn = document.getElementById("attachBtn") as
+    | HTMLButtonElement
+    | null;
+  if (attachBtn) attachBtn.disabled = state.busy || !state.visionCapable;
 }
 
 // ---- Permission request rendering (text-only) -----------------------------
@@ -1233,6 +1345,9 @@ function renderHistory(msg: HistoryMsg): void {
     case "mention_miss":
       renderMentionMiss(msg.token);
       return;
+    case "attach_error":
+      renderAttachWarning(msg.message);
+      return;
   }
 });
 
@@ -1247,6 +1362,141 @@ function renderMentionMiss(token: string): void {
   div.className = "vsdb-chat-mention-miss";
   div.textContent = `Could not resolve @${token}`;
   thread.appendChild(div);
+}
+
+// ---- TASK-002 (cycle AB) — attachment strip + warning bubble ---------------
+//
+// The strip lives above the textarea, inside the composer card, and is
+// rendered as `.vsdb-chat-attachments` with one `.vsdb-chat-thumb` per
+// attachment. Each thumb has a `.vsdb-chat-thumb-remove` button (top-right)
+// that drops the attachment from local state. The strip is hidden when
+// empty (no padding tax for the text-only path).
+
+/** Reset the strip and local attachment state. Called on send + on Clear. */
+function clearAttachments(): void {
+  state.attachments = [];
+  renderAttachStrip();
+}
+
+/** Render the attachment strip from `state.attachments`. Idempotent —
+ * drops + recreates the strip contents (cheap, ≤4 nodes) so a thumb add /
+ * remove doesn't have to track individual nodes. */
+function renderAttachStrip(): void {
+  const strip = document.getElementById("attachStrip") as
+    | HTMLDivElement
+    | null;
+  if (!strip) return;
+  strip.replaceChildren();
+  if (state.attachments.length === 0) {
+    strip.hidden = true;
+    return;
+  }
+  strip.hidden = false;
+  for (const att of state.attachments) {
+    const thumb = document.createElement("div");
+    thumb.className = "vsdb-chat-thumb";
+    thumb.dataset.attachId = att.id;
+    const img = document.createElement("img");
+    img.alt = "";
+    img.src = `data:${att.mime};base64,${att.base64}`;
+    thumb.appendChild(img);
+    const rm = document.createElement("button");
+    rm.type = "button";
+    rm.className = "vsdb-chat-thumb-remove";
+    rm.setAttribute("aria-label", "Remove attachment");
+    rm.textContent = "×";
+    rm.addEventListener("click", () => {
+      state.attachments = state.attachments.filter((a) => a.id !== att.id);
+      renderAttachStrip();
+    });
+    thumb.appendChild(rm);
+    strip.appendChild(thumb);
+  }
+}
+
+/** Render an amber warning bubble naming the offending attachment. textContent
+ * only — host-supplied strings never reach innerHTML. */
+function renderAttachWarning(message: string): void {
+  const thread = document.getElementById("thread");
+  if (!thread) return;
+  const div = document.createElement("div");
+  div.className = "vsdb-chat-attach-warning";
+  div.textContent = message;
+  thread.appendChild(div);
+}
+
+/** Client-minted attachment id (no apiKey path). Uses crypto.randomUUID when
+ * available (modern webview + jsdom 22+), falls back to a counter for older
+ * runtimes so the test harness can stay deterministic. */
+let __attachCounter = 0;
+function mintAttachId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  __attachCounter += 1;
+  return `att-${__attachCounter}`;
+}
+
+/** Ingest a single File / Blob through the local cap validator. Reads as
+ * data URL, splits the base64 payload, checks the byte + count caps and
+ * the MIME whitelist, then appends to the strip state. Rejected entries
+ * surface an amber warning instead of being silently dropped. */
+async function ingestFile(file: File | Blob): Promise<void> {
+  const mime = file.type;
+  if (!ATTACH_ALLOWED_MIME.has(mime)) {
+    renderAttachWarning(
+      `Unsupported image type: ${mime || "unknown"}`,
+    );
+    return;
+  }
+  if (state.attachments.length >= MAX_ATTACHMENTS_PER_TURN) {
+    renderAttachWarning(
+      `Too many attachments (limit ${MAX_ATTACHMENTS_PER_TURN})`,
+    );
+    return;
+  }
+  const dataUrl = await readAsDataUrl(file);
+  const base64 = dataUrl.split(",")[1] ?? "";
+  const bytes = approximateBytesFromBase64(base64);
+  if (bytes > MAX_ATTACH_BYTES) {
+    renderAttachWarning(
+      `Image too large (${Math.round(bytes / 1024 / 1024)} MB > ${MAX_ATTACH_BYTES / 1024 / 1024} MB cap)`,
+    );
+    return;
+  }
+  state.attachments.push({
+    id: mintAttachId(),
+    mime,
+    base64,
+    bytes,
+  });
+  renderAttachStrip();
+}
+
+/** Read a Blob as a data URL via FileReader. Returns the URL on success;
+ * resolves with empty string on failure (caller drops + warns). */
+function readAsDataUrl(blob: Blob): Promise<string> {
+  return new Promise<string>((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      resolve(typeof reader.result === "string" ? reader.result : "");
+    };
+    reader.onerror = () => resolve("");
+    reader.readAsDataURL(blob);
+  });
+}
+
+/** Best-effort base64 byte length. We don't have Buffer in the webview, so
+ * decode the base64 alphabet (4 chars → 3 bytes) with a pad fix-up. Good
+ * enough for the cap validator; the host re-validates with the real
+ * base64 decoder before forwarding to the model. */
+function approximateBytesFromBase64(b64: string): number {
+  const len = b64.length;
+  if (len === 0) return 0;
+  let padding = 0;
+  if (b64[len - 1] === "=") padding = 1;
+  if (len > 1 && b64[len - 2] === "=") padding = 2;
+  return Math.floor((len * 3) / 4) - padding;
 }
 
 // ---- Boot ------------------------------------------------------------------

@@ -653,3 +653,321 @@ describe("AiChatPanelWebview — Esc dismisses resume picker (TASK-002 #12)", ()
     expect(h.root.querySelector(".vsdb-chat-resume-picker")).toBeNull();
   });
 });
+
+// ============================================================================
+// #13 (cycle AB) — image attach button visible with the right class.
+// ============================================================================
+describe("AiChatPanelWebview — image attach button (cycle AB TASK-002)", () => {
+  it("attachBtn exists in the DOM with class vsdb-chat-attach-btn after renderInitial", () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false, visionCapable: true });
+    const attachBtn = document.getElementById("attachBtn") as
+      | HTMLButtonElement
+      | null;
+    expect(attachBtn).not.toBeNull();
+    expect(attachBtn?.classList.contains("vsdb-chat-attach-btn")).toBe(true);
+  });
+
+  it("attachBtn is enabled when init reports visionCapable:true", () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false, visionCapable: true });
+    const attachBtn = document.getElementById("attachBtn") as
+      HTMLButtonElement;
+    expect(attachBtn.disabled).toBe(false);
+  });
+});
+
+// ============================================================================
+// #14 (cycle AB) — attach button disabled when visionCapable:false.
+// ============================================================================
+describe("AiChatPanelWebview — visionCapable:false disables attach (cycle AB TASK-002)", () => {
+  it("init{visionCapable:false} → attachBtn.disabled === true", () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false, visionCapable: false });
+    const attachBtn = document.getElementById("attachBtn") as
+      HTMLButtonElement;
+    expect(attachBtn.disabled).toBe(true);
+  });
+});
+
+// ============================================================================
+// #15 (cycle AB) — caps mirror equality (webview/attachLimits.ts ≡ src/ui/aiChatAttachments.ts).
+// Pure value comparison — both files export the same three constants.
+// ============================================================================
+describe("AiChatPanelWebview — caps mirror equality (cycle AB TASK-002)", () => {
+  it("webview/attachLimits.ts values match src/ui/aiChatAttachments.ts", async () => {
+    const webviewLimits = await import(
+      "../../../webview/attachLimits"
+    );
+    const hostLimits = await import(
+      "../aiChatAttachments"
+    );
+    expect(webviewLimits.MAX_ATTACH_BYTES).toBe(hostLimits.MAX_ATTACH_BYTES);
+    expect(webviewLimits.MAX_ATTACH_BYTES).toBe(5 * 1024 * 1024);
+    expect(webviewLimits.MAX_ATTACHMENTS_PER_TURN).toBe(
+      hostLimits.MAX_ATTACHMENTS_PER_TURN,
+    );
+    expect(webviewLimits.MAX_ATTACHMENTS_PER_TURN).toBe(4);
+    const webviewMimes = Array.from(webviewLimits.ATTACH_ALLOWED_MIME).sort();
+    const hostMimes = Array.from(hostLimits.ATTACH_ALLOWED_MIME).sort();
+    expect(webviewMimes).toEqual(hostMimes);
+    expect(webviewMimes).toEqual([
+      "image/gif",
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+    ]);
+  });
+});
+
+// ============================================================================
+// #16 (cycle AB) — text-only send (no attachments) keeps legacy path. Cycle AA
+// regression — the new attach UI must not change the wire shape when the
+// strip is empty.
+// ============================================================================
+describe("AiChatPanelWebview — text-only send unchanged (cycle AB TASK-002)", () => {
+  it("send with empty strip posts {type:'send', text} — no attachments field", () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false, visionCapable: true });
+
+    const prompt = inputEl("prompt");
+    prompt.value = "hello world";
+    btn("sendBtn").click();
+
+    const sends = h.received.filter((m) => m.type === "send");
+    expect(sends).toHaveLength(1);
+    expect(sends[0]?.text).toBe("hello world");
+    // Attachments key absent (or undefined) — legacy cycle-AA path.
+    expect((sends[0] as Record<string, unknown>).attachments).toBeUndefined();
+  });
+});
+
+// ============================================================================
+// #17 (cycle AB) — paste event with image clipboard → thumbnail added +
+// click send → post carries 1 attachment.
+// ============================================================================
+describe("AiChatPanelWebview — clipboard paste adds thumbnail + send carries attachment (cycle AB TASK-002)", () => {
+  it("paste event with image/* clipboard → strip has 1 thumb, send carries 1 attachment", async () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false, visionCapable: true });
+
+    // Stub FileReader to immediately resolve with a data URL + bytes.
+    const fakeBytes = new Uint8Array([1, 2, 3, 4]);
+    const fakeDataUrl =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII=";
+    class FakeFileReader {
+      public result: string | ArrayBuffer | null = null;
+      public onload: ((ev: ProgressEvent) => void) | null = null;
+      public onerror: ((ev: ProgressEvent) => void) | null = null;
+      readonly _self = "FakeFileReader";
+      readAsDataURL(_blob: Blob): void {
+        // Fire onload on next tick so listeners attached after .readAsDataURL
+        // can still receive the event.
+        Promise.resolve().then(() => {
+          this.result = fakeDataUrl;
+          this.onload?.(new ProgressEvent("load"));
+        });
+      }
+    }
+    (globalThis as unknown as { FileReader: typeof FakeFileReader }).FileReader =
+      FakeFileReader as unknown as typeof FileReader;
+
+    // Build a fake clipboard item mimicking an image paste.
+    const blob = new Blob([fakeBytes], { type: "image/png" });
+    const fakeItem = {
+      kind: "file",
+      type: "image/png",
+      getAsFile: () => blob,
+    } as unknown as DataTransferItem;
+    const clipboardData = {
+      items: [fakeItem],
+    } as unknown as DataTransfer;
+
+    const prompt = inputEl("prompt");
+    const pasteEv = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(pasteEv, "clipboardData", { value: clipboardData });
+    prompt.dispatchEvent(pasteEv);
+
+    // Wait a microtask for FileReader onload.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Strip has one thumb.
+    const strip = document.querySelector(".vsdb-chat-attachments");
+    expect(strip).not.toBeNull();
+    const thumbs = strip?.querySelectorAll(".vsdb-chat-thumb") ?? [];
+    expect(thumbs.length).toBe(1);
+
+    // Click send — payload must carry one attachment with mime+base64+bytes.
+    prompt.value = "describe";
+    btn("sendBtn").click();
+
+    const sends = h.received.filter((m) => m.type === "send");
+    expect(sends).toHaveLength(1);
+    const atts = (sends[0] as { attachments?: unknown }).attachments as
+      | Array<{ id: string; mime: string; base64: string; bytes: number }>
+      | undefined;
+    expect(atts).toBeDefined();
+    expect(atts).toHaveLength(1);
+    expect(atts?.[0]?.mime).toBe("image/png");
+    expect(atts?.[0]?.base64.length).toBeGreaterThan(0);
+    expect(typeof atts?.[0]?.bytes).toBe("number");
+  });
+});
+
+// ============================================================================
+// #18 (cycle AB) — send with 2 attachments → post carries attachments[2] with
+// correct mime/base64/bytes fields. Exercises the local cap validator
+// (≤ MAX_ATTACHMENTS_PER_TURN) and the per-attachment mime preservation.
+// ============================================================================
+describe("AiChatPanelWebview — send with 2 attachments (cycle AB TASK-002)", () => {
+  it("paste two images (png + jpeg) → strip carries 2 thumbs → send carries attachments[2]", async () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false, visionCapable: true });
+
+    const fakeBytesPng = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+    const fakeBytesJpg = new Uint8Array([0xff, 0xd8, 0xff]);
+    const pngDataUrl =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII=";
+    const jpgDataUrl =
+      "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/2wBDAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAv/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwA/wD/2Q==";
+
+    let readIndex = 0;
+    const dataUrls = [pngDataUrl, jpgDataUrl];
+    const byteLengths = [fakeBytesPng.length, fakeBytesJpg.length];
+    class FakeFileReader {
+      public result: string | ArrayBuffer | null = null;
+      public onload: ((ev: ProgressEvent) => void) | null = null;
+      public onerror: ((ev: ProgressEvent) => void) | null = null;
+      readAsDataURL(_blob: Blob): void {
+        const idx = readIndex++;
+        const url = dataUrls[idx] ?? "";
+        Promise.resolve().then(() => {
+          this.result = url;
+          this.onload?.(new ProgressEvent("load"));
+        });
+      }
+    }
+    (globalThis as unknown as { FileReader: typeof FakeFileReader }).FileReader =
+      FakeFileReader as unknown as typeof FileReader;
+
+    // Build clipboard items: png first, then jpeg.
+    const pngBlob = new Blob([fakeBytesPng], { type: "image/png" });
+    const jpgBlob = new Blob([fakeBytesJpg], { type: "image/jpeg" });
+    const items = [
+      {
+        kind: "file",
+        type: "image/png",
+        getAsFile: () => pngBlob,
+      },
+      {
+        kind: "file",
+        type: "image/jpeg",
+        getAsFile: () => jpgBlob,
+      },
+    ] as unknown as DataTransferItem[];
+    const clipboardData = { items } as unknown as DataTransfer;
+
+    const prompt = inputEl("prompt");
+    const pasteEv = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(pasteEv, "clipboardData", { value: clipboardData });
+    prompt.dispatchEvent(pasteEv);
+
+    // Wait microtasks for FileReader onload.
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+
+    // Strip carries 2 thumbs.
+    const strip = document.querySelector(".vsdb-chat-attachments");
+    expect(strip).not.toBeNull();
+    const thumbs = strip?.querySelectorAll(".vsdb-chat-thumb") ?? [];
+    expect(thumbs.length).toBe(2);
+
+    // Click send — payload carries 2 attachments in the same order.
+    prompt.value = "two";
+    btn("sendBtn").click();
+
+    const sends = h.received.filter((m) => m.type === "send");
+    expect(sends).toHaveLength(1);
+    const atts = (sends[0] as { attachments?: unknown }).attachments as
+      | Array<{ id: string; mime: string; base64: string; bytes: number }>
+      | undefined;
+    expect(atts).toBeDefined();
+    expect(atts).toHaveLength(2);
+    expect(atts?.[0]?.mime).toBe("image/png");
+    expect(atts?.[0]?.base64.length).toBeGreaterThan(0);
+    expect(typeof atts?.[0]?.bytes).toBe("number");
+    expect(atts?.[1]?.mime).toBe("image/jpeg");
+    expect(atts?.[1]?.base64.length).toBeGreaterThan(0);
+    expect(typeof atts?.[1]?.bytes).toBe("number");
+
+    // Bytes field = base64-decoded byte length (host validates via
+    // Buffer.byteLength). The webview's `approximateBytesFromBase64`
+    // applies the same 4-chars-→-3-bytes rule so the value matches.
+    function approxB64Bytes(b64: string): number {
+      const len = b64.length;
+      if (len === 0) return 0;
+      let p = 0;
+      if (b64[len - 1] === "=") p = 1;
+      if (len > 1 && b64[len - 2] === "=") p = 2;
+      return Math.floor((len * 3) / 4) - p;
+    }
+    expect(atts?.[0]?.bytes).toBe(approxB64Bytes(atts![0]!.base64));
+    expect(atts?.[1]?.bytes).toBe(approxB64Bytes(atts![1]!.base64));
+    // And those lengths equal what we'd get from the test's data URLs.
+    expect(atts?.[0]?.bytes).toBe(approxB64Bytes(
+      pngDataUrl.split(",")[1] ?? "",
+    ));
+    expect(atts?.[1]?.bytes).toBe(approxB64Bytes(
+      jpgDataUrl.split(",")[1] ?? "",
+    ));
+  });
+});
+
+// ============================================================================
+// #19 (cycle AB) — attach button click opens the hidden file input.
+// ============================================================================
+describe("AiChatPanelWebview — attach button click opens file input (cycle AB TASK-002)", () => {
+  it("clicking attachBtn programmatically invokes .click() on the file input", () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false, visionCapable: true });
+
+    const fileInput = document.getElementById("attachFileInput") as
+      | HTMLInputElement
+      | null;
+    expect(fileInput).not.toBeNull();
+    expect(fileInput?.type).toBe("file");
+    expect(fileInput?.accept).toBe("image/*");
+    expect(fileInput?.multiple).toBe(true);
+    expect(fileInput?.hidden).toBe(true);
+
+    // Spy on .click() — jsdom normally throws because the input is hidden +
+    // not in the document; we patch .click to a no-op spy for this assertion.
+    let clickCount = 0;
+    fileInput!.click = () => {
+      clickCount++;
+    };
+    btn("attachBtn").click();
+    expect(clickCount).toBe(1);
+  });
+});
+
+// ============================================================================
+// #20 (cycle AB) — host posts attach_error → warning bubble rendered.
+// ============================================================================
+describe("AiChatPanelWebview — attach_error renders warning bubble (cycle AB TASK-002)", () => {
+  it("host posts {type:'attach_error', id, reason, message} → .vsdb-chat-attach-warning bubble with the message text", () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false, visionCapable: true });
+
+    h.dispatch({
+      type: "attach_error",
+      id: "att-1",
+      reason: "oversize",
+      message: "File too big (6 MB > 5 MB cap)",
+    });
+
+    const warnings = h.root.querySelectorAll(".vsdb-chat-attach-warning");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.textContent).toContain("File too big");
+  });
+});
