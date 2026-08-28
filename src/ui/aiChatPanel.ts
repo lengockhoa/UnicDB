@@ -49,7 +49,7 @@ import {
   validateImageAttachment,
   validateAttachmentsForVision,
   summarizeAttachmentsForLog,
-  type ImageAttachment,
+  type MinimalAttachment,
 } from "./aiChatAttachments";
 import { defaultAiSettings } from "../ai/settings";
 import { createDbTools } from "../ai/tools/registry";
@@ -933,7 +933,7 @@ export class AiChatPanel {
 
   private async handleSend(
     text: string,
-    attachments?: ImageAttachment[],
+    attachments?: MinimalAttachment[],
   ): Promise<void> {
     const trimmed = text.trim();
     // TASK-001 Regenerate: remember the trimmed user text so a Regenerate
@@ -1038,15 +1038,15 @@ export class AiChatPanel {
    *   - `[]`                : no attachments sent (legacy text-only)
    *   - `"empty"` sentinel  : every attachment was rejected; caller proceeds
    *                           text-only, legacy shape intact
-   *   - `ImageAttachment[]` : surviving attachments ready to forward
+   *   - `MinimalAttachment[]` : surviving attachments ready to forward
    *
    * On entry: posts zero or more `{type:"attach_error", id, reason, message}`
    * bubbles — one per rejection. Pure with respect to the user message; the
    * side effect is the post call. Never logs base64.
    */
   private prepareAttachments(
-    attachments: ImageAttachment[] | undefined,
-  ): ImageAttachment[] | "empty" {
+    attachments: MinimalAttachment[] | undefined,
+  ): MinimalAttachment[] | "empty" {
     if (!Array.isArray(attachments) || attachments.length === 0) {
       return [];
     }
@@ -1069,7 +1069,7 @@ export class AiChatPanel {
     }
     // Count cap — first N kept; the suffix is dropped with one error per
     // dropped item so the webview can name every offending file.
-    const accepted: ImageAttachment[] = [];
+    const accepted: MinimalAttachment[] = [];
     for (let i = 0; i < attachments.length; i++) {
       const a = attachments[i]!;
       if (i >= MAX_ATTACHMENTS_PER_TURN) {
@@ -1081,7 +1081,7 @@ export class AiChatPanel {
         });
         continue;
       }
-      const r = validateImageAttachment(a);
+      const r = validateImageAttachment(a, accepted);
       if (r.ok) {
         accepted.push(a);
       } else {
@@ -1089,7 +1089,7 @@ export class AiChatPanel {
           type: "attach_error",
           id: r.attachmentId ?? a.id,
           reason: r.reason,
-          message: r.message ?? `Attachment "${a.id}" rejected: ${r.reason}.`,
+          message: `Attachment "${a.id}" rejected: ${r.reason}.`,
         });
       }
     }

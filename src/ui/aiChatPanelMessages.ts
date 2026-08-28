@@ -9,12 +9,12 @@
 // respond to permission requests with one opaque {requestId, optionId?}.
 
 import type { ChatMessage } from "../ai/provider";
-// TASK-001 (cycle AB): ImageAttachment is the wire shape the webview sends
+// TASK-001 (cycle AB): MinimalAttachment is the wire shape the webview sends
 // over for each image attachment. The single source of truth lives in
 // src/ui/aiChatAttachments.ts (task-005); we re-export here so consumers
 // can import it from either module without a hidden dep.
-import type { ImageAttachment } from "./aiChatAttachments";
-export type { ImageAttachment };
+import type { MinimalAttachment } from "./aiChatAttachments";
+export type { MinimalAttachment };
 
 export interface AiChatPanelInit {
   type: "init";
@@ -246,7 +246,7 @@ export interface AiChatPanelSend {
    * parts on the user message. Absent OR empty array → legacy text-only
    * path (cycle AA baseline). NEVER carries apiKey material.
    */
-  attachments?: ImageAttachment[];
+  attachments?: MinimalAttachment[];
 }
 
 /** User pressed Stop mid-turn; host flips abort token. */
