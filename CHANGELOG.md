@@ -9,6 +9,20 @@ All notable changes to VSDB are documented in this file. The format follows
 - **SQL Console v2**: multi-tab console (create/switch/close/rename, host-side buffers that survive panel reload), per-statement run (run only the statement at a given index), selection-only run, query history persisted in global state (`vsdb.consoleHistory`, capped at 200 entries) with ArrowUp/ArrowDown recall, an EXPLAIN / EXPLAIN ANALYZE plan pane (ANALYZE executes only behind the existing destructive-confirm gate), and a Format button backed by the new `formatSql` core module.
 - **`vsdb.consoleNewTab` command**: opens a fresh tab in the SQL Console.
 
+## [1.12.0] — 2026-08-28
+
+Cycle AF: DataGrip parity wave 1 (PostgreSQL-first), plus cycle AE.5 fix.
+
+### Added
+- **Catalog introspection** (`src/core/ddl/pgCatalog.ts` + `adapter.catalog`): indexes, constraints (PK/FK/unique/check), triggers, sequences, row counts, and REAL DDL for views/routines/triggers via `pg_get_*`. Postgres-only capability; mysql/mssql degrade gracefully.
+- **Schema tree catalog nodes**: per-table Indexes/Constraints/Triggers categories, schema-level Sequences, formatted row counts in table descriptions; filter-aware.
+- **DDL viewer**: read-only `vsdb-ddl:` virtual documents ("Open DDL" context menu on table/view/routine/trigger nodes) + `vsdb.refreshDdl`.
+- **SQL formatter** (`src/core/sqlFormat.ts`): pure `formatSql(sql, opts)` — keyword case, clause line breaks, JOIN/ON + subquery indentation, idempotent.
+- **SQL Console v2**: multi-tab (host-side buffers), per-statement + selection-only run, persisted query history (cap 200, ArrowUp/Down recall), EXPLAIN / EXPLAIN ANALYZE plan pane (ANALYZE behind destructive-confirm), Format button.
+
+### Fixed
+- Cycle AE.5: dropped the activation-time omp engine shim — the omp runtime is wired at chat-open with a fresh detect gate; no dead engine object, no leaked subprocess.
+
 ## [1.11.0] — 2026-08-28
 
 Cycle AE: OMP runtime session wiring. The AI Chat panel can now use a local `omp` install as its runtime when `vsdb.ai.engine` is set to `omp` — VSDB hosts the cycle-AD DB-aware tools as an in-process MCP HTTP server, `omp` connects to that endpoint, and the chat panel routes streaming responses and tool-call permission cards through the same engine.
