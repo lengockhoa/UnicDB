@@ -1,168 +1,111 @@
-# TASK-005 — @-mention references (DB objects + workspace files)
+# TASK-005 (cycle AB) — Pure helpers for attachment validation + log redaction
 
-Status: ready | Owner: executor (code tier) | Reviewer: unic-smart | Parent: docs/AI_HANDOFF/PLAN.md cycle AA
-Dependencies: TASK-001, TASK-002 (wave 3 — serializes on host contract + webview input work).
+Wave: 1 (parallel with TASK-001 host + TASK-003 CSS).
+Owner files: `src/ui/aiChatAttachments.ts` (new) + new test file.
+Constraint: no same-wave file overlap (T-001 owns .ts host modifications; T-003 owns CSS).
 
-## Goal
+## §Spec
 
-Typing `@` in the chat composer opens a candidate dropdown of database objects (tables/views/routines) AND
-workspace files (Cursor/Copilot-style). Selecting inserts an `@token`. On send, the host resolves every token
-for that turn: object → DDL structure block; file → file content (size-capped, truncation notice). Unresolved
-tokens get an inline notice. User-initiated only; the auto-context path (`buildMessages` DDL baseline) is
-untouched — the TASK-004 lock must stay green.
+Pure, unit-testable helpers. NO `vscode` import. NO network. NO filesystem. All exported for use by TASK-001 and TASK-002 (webview mirror subset).
 
-## Target Files
+### `validateImageAttachment(input, existing): { ok: true } | { ok: false, reason, message }`
 
-- `src/ui/aiChatPanelMessages.ts` — extend webview message union: `mention_objects` (host→webview candidates),
-  `webview→host`: `mention_list` request, send carries `mentions: string[]` parsed out; host message union
-  gains `mention_objects` + per-turn context injection API on the host side.
-- `src/ui/aiChatPanel.ts` — pure `parseMentionTokens(text)` helper (exported for tests); candidates provider
-  (adapter.listTables/listViews/listRoutines via existing adapterFactory + `vscode.workspace.findFiles` with
-  default excludes, cap 50, debounced); on send: resolve each token (object → buildDatabaseStructure DDL block;
-  file → read, >100KB truncate + notice), append "Referenced context" block to that turn's messages; unresolved
-  → inline notice message to webview.
-- `webview/aiChatPanelMain.ts` — `@` keyup listener on #prompt; dropdown DOM (`.vsdb-chat-mention-*` classes,
-  textContent-only), keyboard nav (ArrowUp/Down, Enter/Tab select, Esc close), insert-token-into-textarea,
-  Enter-while-open selects and NEVER sends; send strips @tokens from text and ships `mentions` array.
-- `webview/styles.css` — dropdown card/rows/kind-badge/hover styles (mirror permission-card pattern).
+Pure function. Validates a single attachment against:
+- `existing.length + 1 <= MAX_ATTACHMENTS_PER_TURN` (else `count_cap`).
+- `input.bytes <= MAX_ATTACH_BYTES` (else `oversize`).
+- `ATTACH_ALLOWED_MIME.has(input.mime)` (else `unsupported_type`).
+- Magic-byte sniff matches declared mime (else `mime_mismatch`).
 
-## Test Cases
+Returns a discriminated union. The host's `handleSend` loops over attachments, calling this once per item, accumulating the kept list + the dropped list (each drop fires `attach_error`).
 
-| # | Type | Name | Expected |
-|---|------|------|----------|
-| 1 | happy | dropdown lifecycle | `@` keyup → `mention_list` posted; host replies `mention_objects` (≤50, DB+files, kind badges); typing filters client-side |
-| 2 | happy | keyboard select | ArrowUp/Down moves active row; Enter or Tab inserts `@schema.name ` token + closes; Esc closes without insert |
-| 3 | happy (invariant interplay) | Enter-while-open selects, not sends | dropdown open + Enter → selection inserted, NO `{type:"send"}` posted; dropdown closed + Enter → sends |
-| 4 | happy | object DDL injection | send text containing `@public.users` → messages include "Referenced context" block with CREATE TABLE DDL for users; listTables/listColumns called; runQuery call count 0 |
-| 5 | happy | file content injection | send with `@src/foo.ts` → block contains file content; oversized (>100KB) file → truncated + notice line |
-| 6 | edge | unresolved token | `@does.not.exist` → inline notice bubble; send proceeds without a block; no throw |
-| 7 | edge | no send when candidates empty + @ | `@` with zero matches → dropdown shows "No matches"; Enter closes only |
-| 8 | edge (invariant) | no auto-fire | without user `@` input, zero `mention_list` posts; buildMessages output identical to TASK-004 baseline |
-| 9 | edge | multiple + duplicate tokens | `@a @b @a` → dedupe, two resolved blocks, order stable |
-| 10 | regression | privacy lock intact | TASK-004 sentinel test still green after mention work (run in Verification) |
+### `validateAttachmentsForVision(attachments, visionCapable)`
 
-## Test Files
+If `visionCapable === false` and `attachments.length > 0`, returns `{ok: false, reason:"vision_unsupported", message:"Current model does not support images"}`. Else `{ok: true}`.
 
-- `src/ui/__tests__/aiChatPanelMentions.test.ts` (new) — host-side parser + resolution + message shapes.
-- `src/ui/__tests__/aiChatPanelBundle.test.ts` (extend) — dropdown DOM lifecycle + keyboard nav + Enter semantics (bundle-based, pattern exists).
+### `summarizeAttachmentsForLog(attachments)`
 
-## Verification Commands
+Returns `{count: number, totalBytes: number, mimes: string[]}`. Never includes base64. NEVER logs the returned object as a single concatenation with bytes — only count + names. Used at every log site that would otherwise dump `attachments`.
+
+### `imageBytesToDataUrl(bytes, mime)`
+
+Pure: `Uint8Array` + mime string → `data:${mime};base64,${base64}`. Throws `TypeError` if mime is not in `ATTACH_ALLOWED_MIME`. Used by TASK-001 host to build `ChatContentPart.image_url.url`.
+
+### `attachmentBytesFromBase64(base64)`
+
+Pure: base64 string → byte length (using `Buffer.byteLength(base64, "base64")`). The webview mirror computes bytes independently to cross-check the host's count.
+
+## §Exports
+
+```ts
+// src/ui/aiChatAttachments.ts
+export const MAX_ATTACH_BYTES = 5 * 1024 * 1024;
+export const MAX_ATTACHMENTS_PER_TURN = 4;
+export const ATTACH_ALLOWED_MIME: ReadonlySet<string> = new Set([
+  "image/png", "image/jpeg", "image/webp", "image/gif",
+]);
+export type AttachRejectReason =
+  | "oversize" | "count_cap" | "unsupported_type"
+  | "mime_mismatch" | "vision_unsupported";
+
+export interface AttachmentValidationOk { ok: true }
+export interface AttachmentValidationErr {
+  ok: false;
+  reason: AttachRejectReason;
+  message: string;
+}
+
+export interface MinimalAttachment {
+  id: string;
+  mime: string;
+  base64: string;
+  bytes: number;
+}
+
+export function validateImageAttachment(
+  input: MinimalAttachment,
+  existing: readonly MinimalAttachment[],
+): AttachmentValidationOk | AttachmentValidationErr;
+
+export function validateAttachmentsForVision(
+  attachments: readonly MinimalAttachment[],
+  visionCapable: boolean,
+): AttachmentValidationOk | AttachmentValidationErr;
+
+export function summarizeAttachmentsForLog(
+  attachments: readonly MinimalAttachment[],
+): { count: number; totalBytes: number; mimes: string[] };
+
+export function imageBytesToDataUrl(
+  bytes: Uint8Array,
+  mime: string,
+): string;
+
+export function attachmentBytesFromBase64(base64: string): number;
+```
+
+## §Verification Commands
 
 ```bash
-npx vitest run src/ui/__tests__/aiChatPanelMentions.test.ts src/ui/__tests__/aiChatPanelBundle.test.ts
+cd .worktrees/task-005
+npx vitest run src/ui/__tests__/aiChatPanelAttachments.test.ts
 npm run typecheck
 ```
 
-## Acceptance Criteria
+## §Acceptance Criteria
 
-- [ ] `@` opens unified DB+file candidates dropdown; keyboard navigable; Enter/Tab select; Esc dismiss.
-- [ ] Enter-while-open NEVER sends (TASK-002 keybind semantics preserved).
-- [ ] Object tokens resolve to DDL-only blocks; file tokens to capped content; both per-turn only.
-- [ ] Unresolved tokens → inline notice; never silent, never throw.
-- [ ] Privacy invariant intact: TASK-004 sentinel green; auto-context baseline unchanged.
-- [ ] No new dependencies; CSP-safe; typecheck green.
+1. `validateImageAttachment` happy path: 1 valid PNG, 1 valid JPEG, 1 valid WEBP, 1 valid GIF → all pass.
+2. Edge oversize: 6 MB blob → returns `{ok:false, reason:"oversize"}`.
+3. Edge count cap: passing 5 attachments where 1 is being validated with 4 existing → `{ok:false, reason:"count_cap"}`.
+4. Edge unsupported mime: `image/svg+xml` → `{ok:false, reason:"unsupported_type"}`.
+5. Edge mime mismatch: `image/jpeg` declared + PDF magic bytes → `{ok:false, reason:"mime_mismatch"}`.
+6. `validateAttachmentsForVision`: visionCapable=false + non-empty → `{ok:false, reason:"vision_unsupported"}`; visionCapable=true → `{ok:true}`.
+7. `summarizeAttachmentsForLog`: never returns base64; returns `{count, totalBytes, mimes}` (test inspects the object's keys).
+8. `imageBytesToDataUrl`: `Uint8Array([0x89,0x50,0x4E,…])` + `"image/png"` → `"data:image/png;base64,iVBORw0KGgo…"`.
+9. `attachmentBytesFromBase64`: known base64 strings produce the right byte count (cross-check with `Buffer.byteLength`).
+10. No `vscode` import in this file (grep test).
+11. Constants exported match TASK-001 host's local copies and TASK-002 webview mirror exactly (test asserts equality by reading the import sites).
 
-## Discussion thread
-
-- 2026-08-27 orchestrator: created during Round-2 revision (user steering: mentions must cover files too).
-
-## Executor Report
-
-STATUS: DONE
-EXECUTOR_TOOL: claude-code
-EXECUTOR_MODEL: unic-code
-EXECUTOR_SUBAGENT: ExecT5 (feature-implementer)
-SUMMARY: Implemented @-mention host resolution + webview dropdown lifecycle + keyboard nav; host parses tokens, resolves DB objects (tables/views/routines) to DDL blocks and files (≤100KB) to content; webview renders dropdown, handles ArrowUp/Down/Tab/Esc/click-outside, and Enter-while-open NEVER sends (preserves TASK-002 semantics). 135 tests pass across 8 suites; typecheck green; compile clean.
-TEST_PLAN_FOLLOWED: inline — happy (parser, resolution, dropdown lifecycle, keyboard nav, Enter semantics), edge (no-matches, miss notice, click-outside, send-while-open), regression (TASK-004 privacy sentinel).
-FILES_CHANGED:
-  - src/ui/aiChatPanelMessages.ts: extended host→webview with `mention_objects` + `mention_miss`; webview→host with `mention_list`; added AiChatPanelMentionObjects / AiChatPanelMentionMiss / AiChatPanelMentionList unions.
-  - src/ui/aiChatPanel.ts: added `parseMentionTokens` + `resolveMentionsForTurn` exports, `handleMentionList`, `case "mention_list"` dispatch, mention resolution + `contextBlock` augmentation on `handleSend`, ACP engine receives augmented content as prompt text.
-  - webview/aiChatPanelMain.ts: @-mention dropdown lifecycle (mentionOpen, mentionActiveIndex, mentionItems, mentionQuery, lastCaretPos), DOM helpers (render/position/dispose/filter/move/select), keyup→mention_list, keydown→Arrow/Tab/Enter/Esc (Enter on no-match closes), mousedown click-outside, message handlers for mention_objects + mention_miss.
-  - src/ui/__tests__/aiChatPanelMentions.test.ts: 28 tests covering parser (9), object resolution (8), file resolution (5), message shapes (3), contextBlock (3).
-  - src/ui/__tests__/aiChatPanelWebviewTask005.test.ts: 16 tests covering dropdown open+refresh (3), DOM render (1), keyboard nav (2), Enter/Tab select (2), Esc (1), no-matches Enter close (1), Send-while-open (1), mention_miss (1), click-outside (1), no apiKey leak (1).
-  - webview/styles.css: already had `.vsdb-chat-mention-*` hooks from wave 1.
-TESTS_ADDED:
-  - src/ui/__tests__/aiChatPanelMentions.test.ts: 28 tests
-  - src/ui/__tests__/aiChatPanelWebviewTask005.test.ts: 16 tests
-VERIFICATION:
-  command: npx vitest run src/ui/__tests__/aiChatPanelMentions.test.ts src/ui/__tests__/aiChatPanelPrivacy.test.ts src/ui/__tests__/aiChatPanelBundle.test.ts src/ui/__tests__/aiChatPanelMessages.test.ts src/ui/__tests__/aiChatPanelThoughtRegen.test.ts src/ui/__tests__/aiChatPanel.test.ts src/ui/__tests__/aiChatPanelResume.test.ts src/ui/__tests__/aiChatPanelWebviewTask005.test.ts
-  result: 8 files / 135 tests pass (exit 0)
-  output_excerpt: |
-    ✓ src/ui/__tests__/aiChatPanelPrivacy.test.ts  (6 tests) 3ms
-    ✓ src/ui/__tests__/aiChatPanelMentions.test.ts  (28 tests) 12ms
-    ✓ src/ui/__tests__/aiChatPanel.test.ts  (33 tests) 22ms
-    ✓ src/ui/__tests__/aiChatPanelWebviewTask005.test.ts  (16 tests) 44ms
-    ✓ src/ui/__tests__/aiChatPanelBundle.test.ts  (11 tests) 39ms
-    ✓ src/ui/__tests__/aiChatPanelMessages.test.ts  (20 tests) 11ms
-    ✓ src/ui/__tests__/aiChatPanelThoughtRegen.test.ts  (10 tests) 25ms
-    ✓ src/ui/__tests__/aiChatPanelResume.test.ts  (11 tests) 28ms
-    Test Files 8 passed (8)
-    Tests 135 passed (135)
-  command: npx tsc --noEmit
-  result: exit 0 (no output)
-  command: npm run compile
-  result: dist/webview.js + dist/webview.css regenerated
-ISSUES:
-  - Earlier webview-source corruption from prior PUT chains (lost `function post`, `const root`, boot block, escapeHtml switch default) — fixed by restoring each via fresh PUTs; final compile + bundle + tests all green.
-  - aiChatPanelWebviewTask002.test.ts uses `node_modules/.bin/esbuild` without parent fallback; only runs in parent repo where node_modules exists (verified: 19/19 PASS in parent). TASK-005's own bundle-based test mirrors wave-2's pattern but adds the parent fallback for worktree execution.
-  - Enter-on-empty dropdown originally did not dispose the dropdown (the else-branch was comment-only after a copy-paste edit); added the explicit `disposeMentionDropdown()` call.
-HANDOFF_TO_REVIEWER: yes
-NEXT: ready for review
-
-
-(fix-round note, orchestrator): executor parked twice on infra (worktree esbuild missing). Orchestrator linked node_modules and re-ran verification: 69/69 in worktree, then full main-tree suite 73 files / 1061 tests green, typecheck exit 0. EXECUTOR_MODEL: unic-code (from earlier plan review contract + executor transcript). Copy-back verified: mention contracts in aiChatPanelMessages.ts, parseMentionTokens/resolveMentionsForTurn in aiChatPanel.ts, dropdown in webview/aiChatPanelMain.ts (331 insertions).
-
-## Executor Report (fix round 1)
-
-STATUS: DONE
-EXECUTOR_TOOL: claude-code
-EXECUTOR_MODEL: unic-code
-EXECUTOR_SUBAGENT: FixT5 (feature-implementer)
-SUMMARY: Addressed all 3 R3 review findings on src/ui/aiChatPanel.ts mention region only. (1) Regex prefix group `?` → `*` so tokens with ≥2 path segments (`@src/ui/aiChatPanel.ts`) parse as the full multi-segment token instead of truncating at the second slash. (2) resolveFileBlock now rejects `..` segments and absolute paths BEFORE the workspaceRoot join — caller treats the token as a miss and never attempts a disk read. (3) Truncation is now byte-accurate (slice source bytes at the cap, decode the bounded buffer) so multibyte content can't blow past the 100KB cap.
-TEST_PLAN_FOLLOWED: inline — happy (parser @src/ui/aiChatPanel.ts → full token, file resolve still works on deep paths), edge (4-segment token, multi-token message, mid-path `..` rejection), invariant (email still NOT extracted, runQuery=0 sentinel, deep nested legitimate path still resolves), regression (TASK-004 privacy lock 6/6, every prior mention test green).
-FILES_CHANGED:
-  - src/ui/aiChatPanel.ts: MENTION_TOKEN_RE prefix group `?` → `*` (+comment); resolveFileBlock adds `..`/absolute-path guard + byte-accurate truncation (+comment).
-  - src/ui/__tests__/aiChatPanelMentions.test.ts: 10 new tests across 3 new describe blocks (#6 multi-segment parser, #7 path-traversal rejection, #8 byte-cap truncation).
-TESTS_ADDED:
-  - src/ui/__tests__/aiChatPanelMentions.test.ts: #6a #6b #6c #6d #6e (5 parser tests), #7a #7b #7c #7d (4 traversal-guard tests), #8a (1 byte-cap test) — 10 new tests, all RED before fix, all GREEN after.
-VERIFICATION:
-  RED command: npx vitest run src/ui/__tests__/aiChatPanelMentions.test.ts
-  RED result: 7 failed | 31 passed (38 tests) — exit 1
-  RED output_excerpt: |
-    ❯ #6a expected [ 'src/ui' ] to deeply equal [ 'src/ui/aiChatPanel.ts' ]
-    ❯ #6b expected [ 'a/b' ] to deeply equal [ 'a/b/c/d.txt' ]
-    ❯ #6d expected [ 'src/ui' ] to deeply equal [ 'src/ui/foo.ts', 'src/ui/bar.ts' ]
-    ❯ #7a AssertionError: expected 1 to be +0 (fs.reads.length) — '../sibling.txt' was read
-    ❯ #7b same — '../etc/passwd' was read
-    ❯ #7d same — 'a/../b.txt' was read
-    ❯ #8a block did not contain /truncated/i — UTF-16 .length vs byte cap
-  GREEN command: npx vitest run src/ui/__tests__/aiChatPanelMentions.test.ts src/ui/__tests__/aiChatPanelWebviewTask005.test.ts src/ui/__tests__/aiChatPanelPrivacy.test.ts
-  GREEN result: 60/60 pass (Mentions 38/38, WebviewTask005 16/16, Privacy 6/6) — exit 0
-  GREEN command: npx vitest run src/ui/__tests__/aiChatPanel.test.ts src/ui/__tests__/aiChatPanelThoughtRegen.test.ts src/ui/__tests__/aiChatPanelResume.test.ts src/ui/__tests__/aiChatPanelMessages.test.ts
-  GREEN result: 134/134 pass (33+10+11+20+60=134) — exit 0
-  GREEN command: npx tsc --noEmit
-  GREEN result: exit 0 (no errors)
-ISSUES:
-  - bundle-based test src/ui/__tests__/aiChatPanelBundle.test.ts is `runIf(dist/aiChatPanel.js exists)` — skipped in this worktree since orchestrator owns final compile (mirrors prior wave-3 report). The host-side contract is fully covered by Mentions + Privacy; no bundle regression path here.
-  - Edit scope: changes are confined to aiChatPanel.ts lines 105-118 (regex + comment) and 384-443 (resolveFileBlock rewrite + comment). FixT1 owns the regenerate region of the same file in a different worktree (no overlap).
-HANDOFF_TO_REVIEWER: yes
-NEXT: ready for re-review
-
-## Reviewer Verdict (fix round 1)
-
-VERDICT: APPROVED
-REVIEWER_MODEL: unic-smart
-EXECUTOR_MODEL: unic-code
-VERIFICATION_RERUN:
-  command: npx vitest run src/ui/__tests__/aiChatPanelMentions.test.ts src/ui/__tests__/aiChatPanelWebviewTask005.test.ts src/ui/__tests__/aiChatPanelPrivacy.test.ts
-  result: 3 files / 60 tests pass (Mentions 38, WebviewTask005 16, Privacy 6) — exit 0
-  command: npm run typecheck
-  result: exit 0 (no errors)
-TEST_PLAN_COVERAGE: all-followed — R3 findings each mapped to new tests with real assertions: #6a-#6e multi-segment parse, #7a-#7d traversal rejection (fs-read-count == 0 asserted), #8a byte-cap (re-encodes truncated block, asserts ≤ cap+256 bytes). Email false-positive guard #6c held under the widened regex. RED_OUTPUT in fix-round report contains genuine failing output (7 failed | 31 passed with concrete assertion diffs) consistent with the pre-fix regex/char-count code.
-FINDINGS:
-  critical: none
-  important: none
-  minor:
-    - src/ui/aiChatPanel.ts:741 — file-block heading uses `/` unconditionally; on Windows-hosted workspaces the token won't match backslash paths. Cosmetic; parse-level tokens are already slash-canonical.
-NEXT_STATUS_FOR_INDEX: approved
-NOTES: Diff scoped to aiChatPanel.ts mention region only (verified via git diff 97012cc..56a7b36); TASK-004 privacy sentinel 6/6 and runQuery==0 invariant intact; `@/` absolute and `a//b` degenerate inputs cannot produce tokens (regex backtracks to shortest identifier), defense-in-depth guard still holds for programmatic callers.
+## §Out of scope
+- Host wire handling (TASK-001)
+- Webview DOM construction (TASK-002)
+- CSS (TASK-003)

@@ -1,131 +1,93 @@
-# TASK-002 — Webview chat UX: thinking block, copy, keybind, scroll, message states
+# TASK-002 (cycle AB) — Webview image attach + clipboard paste UX
 
-- Status: `ready`
-- Owner: `-`
-- Reviewer: `-`
-- Parent plan: `docs/AI_HANDOFF/PLAN.md` §2.2, §3, §4, §7
+Wave: 2 (depends on TASK-001 for `init.visionCapable` and `send.attachments`).
+Owner files: `webview/aiChatPanelMain.ts` + new test file.
+Constraint: no same-wave file overlap (this is the only wave-2 task).
 
-## Goal
+## §Spec
 
-Bring `webview/aiChatPanelMain.ts` to modern AI-chat behavior: render `thought` messages as one collapsible
-"Thinking" block (default collapsed); add copy buttons to every code block + a copy action on assistant
-messages; replace Ctrl/Cmd+Enter with Enter=send / Shift+Enter=newline; enforce auto-scroll only when near
-bottom + a jump-to-latest affordance; show a queued placeholder on the just-sent user bubble, a streaming
-caret on the open assistant bubble, and resolve queued/honest-error states cleanly. Regenerate button
-posting `{type:"regenerate"}` (button itself styled in TASK-003; wire via the actions row added in
-renderInitial so TASK-003 only styles it).
+### UI additions to the composer
 
-## Target Files
+1. **Attach button** (icon, left of the send button): renders only when `visionCapable === true`. When `false`, the button is rendered but with `disabled` attribute and tooltip "Current model does not support images".
 
-- `webview/aiChatPanelMain.ts` — all rendering + wiring changes. Include:
-  (a) `applyThought(text)` → single `#thinkingBlock` (details/summary or div+toggle): label "Thinking",
-  default collapsed, chunks append to its body; state (open/closed) survives chunk appends.
-  (b) `renderMarkdown` fenced-block branch emits a copy button per block (data-raw on a sibling text node
-  or closure — no inline `on*=`); navigator.clipboard.writeText with .catch(() => {}) degrade.
-  Copy-message action on assistant bubbles (raw markdown source).
-  (c) keydown: `ev.key === "Enter" && !ev.shiftKey` → preventDefault + send; Shift+Enter falls through
-  (default newline); plain Enter NEVER inserts a newline.
-  (d) scroll discipline: on append/delta, if `scrollTop + clientHeight >= scrollHeight - 40` scroll to
-  bottom else show `#jumpLatest` (click → scroll to bottom + hide).
-  (e) queued placeholder: on send, user bubble carries a "queued" state element; first delta/error/done
-  resolves it; error keeps the honest error bubble (existing `.vsdb-chat-error`).
-  (f) streaming caret on the open streaming bubble; removed on done/stop (stopped turns keep partial text —
-  existing de-stream path).
-  (g) Reset per-turn: new user send collapses thinking block + starts fresh; `done` finalizes it.
-  (h) Regenerate button in actions row → `post({ type: "regenerate" })`, disabled while `state.busy`.
+2. **Hidden file input** (`<input type="file" accept="image/*" multiple>`) appended to `<body>` once. The attach button click opens it. The `change` event reads every file via `FileReader.readAsDataURL`, then runs the local-cap validator. Rejection → warning bubble without host send.
 
-## Test Cases (REQUIRED — TDD)
+3. **Attachments strip** above the textarea (inside `.vsdb-chat-input`, before the textarea row):
+   - Horizontal flex row, gap 8px, max-height 80px, scroll-x overflow.
+   - One thumbnail per attachment: 56×56, object-fit cover, border-radius 6px.
+   - Each thumbnail has a small remove button overlay (top-right, 16×16).
+   - Empty strip removes the DOM node.
 
-| # | Type | Test name | Expected | Pre-state / Fixture |
-|---|------|----------|----------|---------------------|
-| 1 | unit (bundle, jsdom) | thinking block renders collapsed + appends chunks | After 2 thought msgs: exactly one `.vsdb-chat-thinking` node, no `open` attr / collapsed class, body text === "t1t2"; after `done` block stays visible | bundle of real aiChatPanelMain.ts; dispatch InitMsg → thought×2 → done |
-| 2 | edge (state) | thinking state survives append; resets next turn | Toggle open → append chunk → still open; new send → block reset collapsed+empty | same harness, second turn |
-| 3 | happy | Enter sends, Shift+Enter newlines | keydown Enter on #prompt → `{type:"send"}` posted + textarea cleared; keydown Shift+Enter → no post, `\n` inserted by default behavior (preventDefault NOT called); plain Enter never inserts newline | bundle; synthetic KeyboardEvent |
-| 4 | happy | code-block copy button copies raw code | Assistant msg with one fenced block → exactly one copy button inside rendered markdown; click → clipboard.writeText called with raw code sans fences | clipboard stubbed via navigator.clipboard mock |
-| 5 | edge (environment) | clipboard rejection degrades silently | writeText rejects → no unhandled rejection, button label unchanged after revert | clipboard mock rejects |
-| 6 | happy | message-level copy on assistant bubble | Copy action present; click → clipboard.writeText with the un-rendered markdown source | assistant msg markdown:true |
-| 7 | edge (boundary) | auto-scroll threshold | Thread with scrollHeight > clientHeight: appended delta with scrollTop within 40px of bottom → scrollTo bottom; scrollTop moved 200px up → no scroll, `#jumpLatest` visible; click it → scrolled to bottom, hidden | jsdom scroll metrics stubbed |
-| 8 | edge (state) | queued placeholder lifecycle | send → user bubble shows queued marker; then delta → marker gone; separate turn: send → error msg → marker gone + honest error bubble rendered | bundle harness |
-| 9 | edge (invariant) | legacy keybind removed | Ctrl/Cmd+Enter no longer posts send | synthetic keydown with ctrlKey/metaKey |
-| 10 | regression | agent_thought_chunk kind still never renders via history | HistoryMsg item `{kind:"agent_thought_chunk", ...}` is still dropped by the history branch (no thinking-block reuse from replay) | existing webview #3 pattern |
+4. **Paste handler** on the textarea (`paste` event):
+   - Iterate `e.clipboardData.items`.
+   - For each item with `kind === "file"` and `type.startsWith("image/")`: read via `FileReader.readAsDataURL`, run through the same thumbnail pipeline as the attach button.
+   - If `visionCapable === false`: do NOT add to the strip; instead render an amber `.vsdb-chat-attach-warning` inline bubble with the message: "Current model does not support images. Remove attachment to send text only."
+   - Text paste (`kind === "string"`) is unaffected — let the browser default behavior insert the text.
 
-## Test Files
+### Send-with-attachments
 
-- `src/ui/__tests__/aiChatPanelWebview.test.ts` — extend (it already bundles the real source via esbuild +
-  jsdom; reuse its harness for dispatching HostMsg and clicking elements).
+When the user clicks Send:
+- Build `attachments: ImageAttachment[]` from the current strip.
+- Read every `dataUrl` and split into `{mime, base64, bytes = base64.length * 3/4}`. (Webview doesn't have a `File` here in the strip — strip keeps `dataUrl` + computed bytes.)
+- Post `{type:"send", text, attachments}` to the host.
+- Clear the strip locally.
+- The host's `attach_error` reply drives the warning bubble.
 
-## Verification Commands
+When `attachments` are absent (legacy text-only), the payload is exactly `{type:"send", text}` — additive only.
+
+### Webview defense
+
+- FileReader errors (read failure) → drop that file with a console warning, do NOT post host.
+- dataURL exceeds `MAX_ATTACH_BYTES` → reject locally with the same warning shape (avoid round trip). Cross-check: webview mirrors the cap.
+- No `innerHTML` for any host text. Warning bubbles use `textContent` only.
+
+### Mirror caps from host
+
+The webview imports the constants from a small webview-safe module:
+```ts
+// webview/attachLimits.ts (no vscode import)
+export const MAX_ATTACH_BYTES = 5 * 1024 * 1024;
+export const MAX_ATTACHMENTS_PER_TURN = 4;
+export const ATTACH_ALLOWED_MIME = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+```
+Test asserts webview mirror matches host export values.
+
+## §Interfaces (downstream contract)
+
+TASK-001 owns the wire types. TASK-002 consumes:
+- `AiChatPanelInit.visionCapable` — drives attach button enabled state.
+- `AiChatPanelAttachError` — drives the warning bubble.
+- `AiChatPanelWebviewSend.attachments` — outgoing payload.
+
+TASK-003 (CSS) consumes the class names TASK-002 emits:
+- `.vsdb-chat-attach-btn` — attach button.
+- `.vsdb-chat-attachments` — strip container.
+- `.vsdb-chat-thumb` — each thumbnail.
+- `.vsdb-chat-thumb-remove` — remove button overlay.
+- `.vsdb-chat-attach-warning` — warning bubble.
+
+## §Verification Commands
 
 ```bash
-npx vitest run src/ui/__tests__/aiChatPanelWebview.test.ts
+cd .worktrees/task-002
+npx vitest run src/ui/__tests__/aiChatPanelWebviewTask002.test.ts
 npm run typecheck
 ```
 
-`package.json` defines no lint script; `npm run typecheck` is this task's required static gate. No
-`npm run compile` prerequisite: this suite bundles `webview/aiChatPanelMain.ts` itself.
-(Test selection: target file under `webview/` — no tests-map entry; path convention resolves to the
-existing webview bundle suite. Full `npm test` at wave boundary is the regression net.)
+## §Acceptance Criteria
 
-## Acceptance Criteria
+1. Attach button click opens a hidden file picker (multiple, image/*); selected files appear as thumbnails in the strip (RED first — current code has no attach button).
+2. Cmd/Ctrl+V an image inside the textarea → same thumbnail pipeline.
+3. Each thumbnail has a working remove control that drops it from the strip.
+4. Send with thumbnails → posted `{type:"send", text, attachments:[{id, mime, base64, bytes}]}` — base64 verified present, bytes field verified correct (test inspects the actual post).
+5. `visionCapable=false` → attach button has `disabled` attribute + tooltip; paste-image rejected with warning bubble; text paste still works (regression-pins cycle AA keybind).
+6. Legacy `send` payload (`attachments` absent) still works — cycle AA tests stay green.
+7. FileReader errors degrade silently (no unhandled rejection, no host post).
+8. Caps mirrored from host: `MAX_ATTACH_BYTES`, `MAX_ATTACHMENTS_PER_TURN`, `ATTACH_ALLOWED_MIME` — test asserts equality.
+9. CSP-safe: no inline `on*=` handlers; addEventListener only.
+10. Enter=send / Shift+Enter=newline behavior unchanged with attachments in the strip (cycle AA keybind regression).
 
-- [ ] Every test in §Test Cases passes; RED first for #3/#9 (current code sends on Ctrl/Cmd+Enter only).
-- [ ] `npm run typecheck` exits 0.
-- [ ] No inline `on*=` handlers introduced (CSP-safe); no new dependencies.
-- [ ] Enter never inserts a newline; Shift+Enter never sends (both asserted).
-- [ ] Stopped turns keep partial assistant text (regression-safe de-stream path untouched).
-- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
-
-## Dependencies
-
-- TASK-001 (consumes `thought` and `regenerate` message shapes on the wire)
-
-## Interfaces
-
-- Consumes: `AiChatPanelThought { type: "thought"; text: string }` and
-  `AiChatPanelRegenerate { type: "regenerate" }` from TASK-001 (exact names/types); existing
-  HostMsg union at `webview/aiChatPanelMain.ts:78-88`.
-- Produces: DOM ids/classes TASK-003 styles: `#thinkingBlock` (class `vsdb-chat-thinking`, body
-  `vsdb-chat-thinking-body`), `#jumpLatest` (class `vsdb-chat-jump`), per-code-block copy button class
-  `vsdb-md-copy`, queued marker class `vsdb-chat-queued`, caret class `vsdb-chat-caret`, Regenerate
-  button id `regenerateBtn`.
-
----
-
-## Discussion
-
-(no comments yet)
-
----
-
-<!-- Phase 3 executor appends `## Executor Report` BELOW this separator. -->
-<!-- Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
-
-
-## Executor Report
-EXECUTOR_TOOL: omp task agent (claude-code)
-EXECUTOR_MODEL: unic-code
-EXECUTOR_SUBAGENT: ExecT2 (+ orchestrator finish)
-RED_OUTPUT: 19/19 initially RED (16 meaningful failures: no .vsdb-chat-thinking, no copy buttons, no #jumpLatest, no #regenerateBtn, no queued marker, Ctrl+Enter still sent). Excerpt: "expected [{type:'send',text:'ctrl-send'}] to have a length of +0 but got 1".
-Verification Output: npx vitest run aiChatPanelWebviewTask002.test.ts aiChatPanelBundle.test.ts aiChatPanel.test.ts aiChatPanelMessages.test.ts aiChatPanelAcp.test.ts -> 103 passed | 11 skipped. npm run typecheck exit 0.
-Status: PASS
-Note: Executor hit budget at 17/19; orchestrator finished final 2 (restored missing `case "done"` block that had been orphaned after the error case's return — done never re-enabled buttons; error path now also resolves queued marker). All 19 green in main tree.
-
-## Reviewer Verdict
-
-VERDICT: APPROVED
-REVIEWER_MODEL: unic-smart
-EXECUTOR_MODEL: unic-code
-VERIFICATION_RERUN:
-  command: npx vitest run src/ui/__tests__/aiChatPanelWebviewTask002.test.ts src/ui/__tests__/aiChatPanelWebview.test.ts src/ui/__tests__/aiChatPanelBundle.test.ts && npm run typecheck
-  result: 57 passed / 0 failed (19+27+11); typecheck exit 0
-TEST_PLAN_COVERAGE: all-followed — §4 #1-#10 all implemented in aiChatPanelWebviewTask002.test.ts (+2 extra: #11 Regenerate, #12 Esc-on-picker); RED_OUTPUT contains real failing output ("expected ... to have a length of +0 but got 1" for Ctrl+Enter send)
-FINDINGS:
-  critical:
-    - none
-  important:
-    - none
-  minor:
-    - webview/aiChatPanelMain.ts:722-733 — autoScroll measures distanceFromBottom AFTER the append, so an append taller than 40px while the user is pinned at bottom (e.g. final rendered assistant message replacing a shorter streaming bubble) fails the near-bottom check and shows #jumpLatest instead of following the stream. Consider capturing near-bottom state before mutation; no test covers the large-append-while-following case.
-    - src/ui/__tests__/aiChatPanelWebviewTask002.test.ts:352 — #5 cannot truly assert the unhandledrejection path (jsdom does not fire it for caught promises, per the in-test comment); the no-throw + label-unchanged assertions remain the operative guard. Acceptable.
-NEXT_STATUS_FOR_INDEX: approved
-NOTES: Security contract verified — fence copy double-escape is sound (fences captured AFTER escapeHtml, so data-raw="...&amp;quot;..." can never terminate the attribute early; click-time unescapeHtml round-trips to exact raw code); no inline on*= handlers anywhere; permission/resume/mention/error surfaces remain textContent-only. Enter/Shift+Enter/Ctrl-Cmd-Enter semantics match spec (aiChatPanelMain.ts:520-524) with tests #3/#9. Done re-enables buttons, error resolves queued (host always posts done after error in finally — aiChatPanel.ts:1028-1029,1238-1241). Replay agent_thought_chunk still dropped (test #10). DDL-only privacy invariant untouched by this diff.
+## §Out of scope
+- Host validation (TASK-001)
+- CSS (TASK-003)
+- Drag-and-drop file attach (intentional CSP scope cut)
