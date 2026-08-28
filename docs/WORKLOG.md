@@ -22,6 +22,13 @@ For each significant action, append:
 
 ---
 
+## 2026-08-28 — Cycle AB: AI chat image attach + clipboard paste + release v1.9.0
+
+- Action: full handoff cycle (P0→R5+release) adding image attach + Cmd/Ctrl+V paste to the AI Chat composer. P0 decisions: scope = image attach + paste (slash commands deferred); caps = 5 MB / 4 per turn; non-vision policy = block at attach with amber warning (rejected: auto-route to vision model / send-with-warning — both surprise the user or violate "no broken messages"). Plan review round 1 = Issues Found (3 BLOCKING: CSP img-src missing, omp/ACP silent-drop, userContentOverride redundant) → revised → loop cap reached, applied without re-review.
+- Implementation: 4 tasks / 2 waves in 4 worktrees. Wave 1 (3 parallel): T1 host message contract + CSP fix + omp/ACP gate + buildMessages image-parts path; T3 CSS for attach strip + button + warning + dark theme + :focus-visible; T5 pure helpers (validateImageAttachment / log redaction / dataURL) + magic-byte sniff. Wave 2 (1): T2 webview UX (attach button + hidden file input + paste handler + strip renderer + dynamic tooltip + FileReader onerror drop+warn). All TDD: RED first, GREEN after. Cycle-AA keybind (Enter=send / Shift+Enter=newline) + height chain (.vsdb-chat-body) preserved.
+- Review: 4 reviewers (unic-smart). R1 (T1) CHANGES-REQUESTED on paperwork (missing Executor Report with EXECUTOR_MODEL/RED_OUTPUT) + 2 missing tests (privacy sentinel + attachments, mention×attachment). R2 (T3) APPROVED-WITH-MINOR (stale comment + dark-token test pins 1 of 6). R3 (T5) APPROVED-WITH-MINOR (phantom ImageAttachment type import in test; misleading comment). R4 (T2) CHANGES-REQUESTED on paperwork (same gap as R1) + FileReader onerror resolved empty base64 → corrupt push + missing dynamic tooltip. R1.5 + R4.5 fixed all; re-review R1.5 APPROVED. Loop cap 2 reached → R5.
+- Verification: 75 files / 1139 tests pass / 0 fail (TDD + cycle-AA + cycle-AB all green); typecheck exit 0. vsdb-1.9.0.vsix 18 entries / 0 forbidden / 0 markers; vsdb-chat-body + mention_objects + vsdb-chat-attach-btn + img-src 'self' data: all present in extension bundle. Released v1.9.0 (commit 5a9bb1d, tag v1.9.0, GitHub release with vsdb-1.9.0.vsix 1.65 MB).
+
 ## 2026-08-28 — Cycle AA: AI Chat UX overhaul + release v1.8.0
 
 - Action: full handoff cycle (P0→R5+release) rebuilding the AI Chat panel to modern
