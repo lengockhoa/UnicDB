@@ -42,13 +42,21 @@
    type AgentCallbacks,
    type ToolRegistry,
  } from "../ai/agent";
- import type { ChatMessage } from "../ai/provider";
- import type { AdapterFactory } from "../ai/tools/types";
- import { createDbTools } from "../ai/tools/registry";
- import { createSqlTool } from "../ai/tools/sqlTool";
- import { createExportStructureTool } from "../ai/tools/schemaTools";
- import type { AcpProcessHandle } from "../ai/omp/acpProcess";
- import { createMcpBridge, type McpBridge } from "../ai/omp/mcpBridge";
+import type { ChatMessage, ChatContentPart } from "../ai/provider";
+import type { AdapterFactory } from "../ai/tools/types";
+import {
+  MAX_ATTACHMENTS_PER_TURN,
+  validateImageAttachment,
+  validateAttachmentsForVision,
+  summarizeAttachmentsForLog,
+  type ImageAttachment,
+} from "./aiChatAttachments";
+import { defaultAiSettings } from "../ai/settings";
+import { createDbTools } from "../ai/tools/registry";
+import { createSqlTool } from "../ai/tools/sqlTool";
+import { createExportStructureTool } from "../ai/tools/schemaTools";
+import type { AcpProcessHandle } from "../ai/omp/acpProcess";
+import { createMcpBridge, type McpBridge } from "../ai/omp/mcpBridge";
  import {
    buildDatabaseStructure,
    buildTableStructure,
@@ -852,15 +860,13 @@ export class AiChatPanel {
     this.options.onDispose?.();
   }
 
-  // ---- Private -------------------------------------------------------------
-
   private async handleMessage(msg: AiChatPanelWebviewMessage): Promise<void> {
     switch (msg.type) {
       case "ready":
         await this.handleReady();
         return;
       case "send":
-        await this.handleSend(msg.text);
+        await this.handleSend(msg.text, msg.attachments);
         return;
       case "stop":
         this.handleStop();
@@ -899,10 +905,36 @@ export class AiChatPanel {
       this.engine = this.options.acp === undefined ? "builtin" : "omp";
       this.postEngine(this.engine);
     }
-    this.post({ type: "init", hasHistory: this.history.length > 0 });
+    // TASK-001 (cycle AB): the omp engine cannot accept images regardless
+    // of the active role's `vision` flag — engine is the belt. Skip the
+    // (expensive, potentially throwing) settings read in omp mode. For
+    // builtin we consult `loadSettings()` via the AI config store. Any
+    // failure (null config, store absent, transient error) collapses to
+    // the legacy default (`defaultAiSettings()` → work.vision: true) so
+    // the webview UX does not regress on first-launch-with-no-settings.
+    let visionCapable: boolean;
+    if (this.engine === "omp") {
+      visionCapable = false;
+    } else {
+      try {
+        const cfg = await this.options.deps.loadConfig();
+        visionCapable = cfg?.models.work.vision
+          ?? defaultAiSettings().models.work.vision;
+      } catch {
+        visionCapable = defaultAiSettings().models.work.vision;
+      }
+    }
+    this.post({
+      type: "init",
+      hasHistory: this.history.length > 0,
+      visionCapable,
+    });
   }
 
-  private async handleSend(text: string): Promise<void> {
+  private async handleSend(
+    text: string,
+    attachments?: ImageAttachment[],
+  ): Promise<void> {
     const trimmed = text.trim();
     // TASK-001 Regenerate: remember the trimmed user text so a Regenerate
     // pressed after Stop can re-send it verbatim. Overwritten only by a
@@ -919,16 +951,49 @@ export class AiChatPanel {
     this.turnSettled = false;
     // Per-turn AbortController for the builtin engine — `signal` flows
     // straight through runAgent → deps.streamComplete so a mid-stream Stop
-    // cancels the SSE read. Aborted by handleStop().
     this.currentAbort = new AbortController();
+    // turn starts. Pure pipeline — see aiChatAttachments.ts. Per-rejection
+    // we post one `attach_error` bubble so the webview can name the
+    // offending file in its amber notice; we never echo the base64 bytes
+    // back, never log them, and never silently drop them.
+    const validAttachments = this.prepareAttachments(attachments);
+    if (validAttachments === "empty") {
+      // Either the user sent zero attachments, or every attachment was
+      // rejected by per-item validation. Either way: legacy text-only
+      // turn. We still log the rejection summary so an operator can
+      // observe the silent-drop surface without logging bytes.
+      if (Array.isArray(attachments) && attachments.length > 0) {
+        console.warn(
+          "[aiChatPanel] all attachments rejected before turn",
+          summarizeAttachmentsForLog(attachments),
+        );
+      }
+    } else {
+      console.log(
+        "[aiChatPanel] attachments accepted for turn",
+        summarizeAttachmentsForLog(validAttachments),
+      );
+    }
 
-    const userMsg: ChatMessage = { role: "user", content: trimmed };
+    const textPart: ChatContentPart = { type: "text", text: trimmed };
+    const imageParts: ChatContentPart[] = Array.isArray(validAttachments)
+      ? validAttachments.map((a) => ({
+          type: "image_url" as const,
+          imageUrl: `data:${a.mime};base64,${a.base64}`,
+        }))
+      : [];
+    const userMsg: ChatMessage = {
+      role: "user",
+      content: imageParts.length > 0 ? [textPart, ...imageParts] : trimmed,
+    };
 
     // TASK-005: resolve @-mentions BEFORE the turn runs. Object tokens →
     // DDL block (per-turn only — base buildMessages is untouched). File
     // tokens → file content (capped at MENTION_RESOLVE_FILE_CAP_BYTES).
     // Misses → one mention_miss bubble per missing token so the user
-    // sees a silent drop instead of a silent ignore.
+    // sees a silent drop instead of a silent ignore. Mention block is
+    // concatenated into the TEXT part so image parts stay siblings and
+    // never get re-encoded into the schema context.
     const tokens = parseMentionTokens(trimmed);
     if (tokens.length > 0) {
       try {
@@ -937,16 +1002,15 @@ export class AiChatPanel {
           tokens,
         );
         if (resolved.contextBlock.length > 0) {
-          userMsg.content = `${trimmed}\n\n${resolved.contextBlock}`;
+          const mergedText = `${trimmed}\n\n${resolved.contextBlock}`;
+          userMsg.content = imageParts.length > 0
+            ? [{ type: "text" as const, text: mergedText }, ...imageParts]
+            : mergedText;
         }
         for (const miss of resolved.misses) {
           this.post({ type: "mention_miss", token: miss });
         }
       } catch (err) {
-        // Mention resolution is best-effort. A throw never blocks the
-        // turn — the user sees a single mention_miss with the literal
-        // "resolution error" token so the silent-drop surface remains
-        // honest without crashing the panel.
         const message = err instanceof Error ? err.message : String(err);
         this.post({
           type: "error",
@@ -961,10 +1025,75 @@ export class AiChatPanel {
 
     // ACP engine: pass the augmented userMsg content as the prompt text so
     // the schema context + the @-mention Referenced-context block both
-    // reach the model in one session/prompt write.
+    // reach the model in one session/prompt write. Image parts are NEVER
+    // forwarded here (the omp/ACP gate ran in `prepareAttachments` and the
+    // surviving userMsg.content for an omp turn is text-only by invariant).
     const acpPrompt =
       typeof userMsg.content === "string" ? userMsg.content : trimmed;
     await this.runAcpTurn(acpPrompt, userMsg);
+  }
+
+  /**
+   * TASK-001 (cycle AB) attachment pipeline. Returns:
+   *   - `[]`                : no attachments sent (legacy text-only)
+   *   - `"empty"` sentinel  : every attachment was rejected; caller proceeds
+   *                           text-only, legacy shape intact
+   *   - `ImageAttachment[]` : surviving attachments ready to forward
+   *
+   * On entry: posts zero or more `{type:"attach_error", id, reason, message}`
+   * bubbles — one per rejection. Pure with respect to the user message; the
+   * side effect is the post call. Never logs base64.
+   */
+  private prepareAttachments(
+    attachments: ImageAttachment[] | undefined,
+  ): ImageAttachment[] | "empty" {
+    if (!Array.isArray(attachments) || attachments.length === 0) {
+      return [];
+    }
+    // Vision gate (engine belt + model flag). Order: when engine is "omp"
+    // we treat the whole batch as unsupported regardless of model flag.
+    const visionOk = validateAttachmentsForVision(
+      attachments,
+      this.engine === "builtin",
+    );
+    if (!visionOk.ok) {
+      for (const a of attachments) {
+        this.post({
+          type: "attach_error",
+          id: a.id,
+          reason: "vision_unsupported",
+          message: `Attachment "${a.id}" rejected: image attachments are not supported in this engine.`,
+        });
+      }
+      return "empty";
+    }
+    // Count cap — first N kept; the suffix is dropped with one error per
+    // dropped item so the webview can name every offending file.
+    const accepted: ImageAttachment[] = [];
+    for (let i = 0; i < attachments.length; i++) {
+      const a = attachments[i]!;
+      if (i >= MAX_ATTACHMENTS_PER_TURN) {
+        this.post({
+          type: "attach_error",
+          id: a.id,
+          reason: "count_cap",
+          message: `Attachment "${a.id}" rejected: more than ${MAX_ATTACHMENTS_PER_TURN} attachments in one turn.`,
+        });
+        continue;
+      }
+      const r = validateImageAttachment(a);
+      if (r.ok) {
+        accepted.push(a);
+      } else {
+        this.post({
+          type: "attach_error",
+          id: r.attachmentId ?? a.id,
+          reason: r.reason,
+          message: r.message ?? `Attachment "${a.id}" rejected: ${r.reason}.`,
+        });
+      }
+    }
+    return accepted.length > 0 ? accepted : "empty";
   }
   /**
    * Built-in engine turn.
@@ -1687,29 +1816,20 @@ export class AiChatPanel {
     // `token?.aborted` reading false (and `forced` also false, since Clear
     // doesn't push an acpTurnResolvers entry), that rejection was re-thrown
     // as `promptError` and rendered as an error bubble into the
-    // freshly-cleared chat instead of being recognized as user-initiated.
     if (this.token) this.token.aborted = true;
     this.token = null;
-    this.currentAbort?.abort();      // hủy SSE đang đọc (builtin)
+    const beforeAbort = this.currentAbort;
+    this.currentAbort?.abort();
     this.currentAbort = null;
-    this.turnDonePosted = false;
-    this.turnSettled = true;
-    this.cancelAllPending();          // ACP pending → cancelled (giữ pattern stop)
-    // Finding 3 (review): Clear was a no-op on the omp engine — it reset the
-    // host-side history but left the server-side omp session alive, so the
-    // next prompt answered with full memory of a chat the user just
-    // "cleared". Dispose the ACP session; ensureAcpSession() spawns a fresh
-    // one (fresh session/new) on the next send.
     if (this.engine === "omp") {
       this.disposeAcpSession();
     }
     this.history = [];
-    // Fix round 4.5 (review): Clear must also reset `lastSentText`. Without
     // this, Regenerate after Clear falls through to the stopped-path branch
     // (history has no trailing pair) and re-sends the pre-clear text,
     // resurrecting a message the user explicitly wiped.
     this.lastSentText = null;
-    this.post({ type: "init", hasHistory: false });
+    this.post({ type: "init", hasHistory: false, visionCapable: this.engine === "builtin" });
     this.post({ type: "done" });      // belt: webview busy flag về false
   }
 
@@ -2090,6 +2210,10 @@ export class AiChatPanel {
     );
     const csp = [
       "default-src 'none'",
+      // TASK-001 (cycle AB): the attachments strip renders
+      // `<img src="data:image/png;base64,…">` thumbnails; without an
+      // `img-src` directive every thumbnail is blocked by default-src 'none'.
+      "img-src 'self' data:",
       `style-src ${webview.cspSource} 'unsafe-inline'`,
       `script-src ${webview.cspSource}`,
     ].join("; ");
