@@ -1,6 +1,6 @@
 # TASK-AI-001 — Configurable below/beside initial placement + preserve existing panel group
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN_AI.md` §7 (Approach §3)
@@ -75,3 +75,34 @@ Test #6 note: if any existing test asserts the Beside default, updating that exp
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+### 2026-08-29 · executor · unic-code
+**Deviation from spec (documented per Discussion protocol):** `vscode.ViewColumn.Below` does not exist — verified against pinned `@types/vscode@1.75.0` AND latest `1.134.0` (enum is only `Active(-1), Beside(-2), One..Nine`; the spec's "value 6" is `Six` = sixth horizontal column). A literal implementation fails `tsc` (TS2339) and passes `undefined` at runtime. The spec's *intent* — a vertical split below the active editor — is implemented with the real platform mechanism: after panel creation, `vscode.commands.executeCommand("workbench.action.moveEditorToBelowGroup")` (the built-in VS Code command confirmed in vscode source `editorCommands.ts`); fires ONLY in the creation branch, never on reveal. Placement is resolved at CREATE time (whitelisted read of `vsdb.resultsPlacement`; unknown values and partial vscode mocks without `workspace`/`commands` safely degrade to plain `beside` creation, no throw) so test 5's dispose+recreate semantics hold; the panel singleton in extension.ts is constructed once per activation, so a construction-time read would have frozen the setting. `extension.ts` therefore required NO change (its construction site already matches the new behavior through the options-less path) — diff is 3 files, not 4.
+
+## Executor Report
+
+```
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+SUMMARY: Results panel now opens in a vertical split below the active editor by default via new `vsdb.resultsPlacement` setting ("below"|"beside", default "below"); existing panels are revealed with NO column arg so user-dragged groups are preserved; setting applies only at next panel creation.
+TEST_PLAN_FOLLOWED: task §Test Cases 1,2,3,3a,4,5,6 — all implemented; test 3 (extension construction mapping) is covered at unit level inside ResultsPanel (creation-time whitelisted setting read incl. malformed→"below" fallback, T3/T5) because extension.ts needed no change after moving the read into the panel's creation path (see Discussion deviation).
+FILES_CHANGED:
+  - package.json: contributes.configuration adds vsdb.resultsPlacement (enum ["below","beside"], default "below", description).
+  - src/ui/resultsPanel.ts: ResultsPanelOptions.resultsPlacement option; placement resolved per creation (static whitelisted reader, safe against partial vscode mocks); show() creation branch fires workbench.action.moveEditorToBelowGroup when placement !== "beside"; existing-panel branch → reveal() with no args.
+  - src/ui/__tests__/resultsPanel.test.ts: mock gains commands.executeCommand + workspace.getConfiguration + createCalls recording + revealArgs recording; 6 new tests T1/T2/T3/T3a/T4/T5.
+  - CHANGELOG.md: [Unreleased] Added bullet.
+TESTS_ADDED:
+  - src/ui/__tests__/resultsPanel.test.ts: "T1. default creation (no options) opens below: moveEditorToBelowGroup fired exactly once"; "T2. explicit viewColumn: Beside honored at creation — no move-below command"; "T3. placement 'beside' (via config) → plain creation, no move-below command"; "T3a. package.json manifest declares vsdb.resultsPlacement (enum below|beside, default below)"; "T4. existing panel: second render reuses panel and calls reveal() with NO column arg"; "T5. changing placement never moves a live panel; only dispose+recreate applies it"
+VERIFICATION:
+  command: npx vitest run src/ui/__tests__/resultsPanel.test.ts && npm run typecheck && npm test && npm run compile
+  result: 28/28 file pass; typecheck 0 errors; full suite 2027 passed / 2 skipped / 0 failed; compile OK
+  output_excerpt: |
+    Test Files  138 passed | 1 skipped (139)
+         Tests  2027 passed | 2 skipped (2029)
+    typecheck exit=0; compile exit=0
+ISSUES: none. RED output (before implementation): T1 `expected "spy" to be called 1 times, but got 0 times`; T3a `expected undefined not to be undefined`; T4+T5 `expected [ 1 ] to have a length of +0 but got 1` (4 failed | 24 passed — exactly the intended failures; existing suite untouched). Test #6 note: NO existing test asserted the Beside default, so no expectation flips were needed (verified by grep across resultsPanel*.test.ts + manualCommit.test.ts). Mid-implementation full-suite run surfaced 104 sibling failures ("No commands export on vscode mock" in 7 minimal-mock suites) — fixed in PRODUCTION code with namespace narrowing (canExecuteCommands guard), not by touching sibling test files; those files remain byte-identical.
+HANDOFF_TO_REVIEWER: yes — task status flipped to pending_review in INDEX.md.
+NEXT: ready for review.
+```

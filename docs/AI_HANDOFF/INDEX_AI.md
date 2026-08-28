@@ -4,7 +4,7 @@ Cycle AI — **RESULTS PANEL OPENS BELOW THE EDITOR**: configurable below/beside
 
 | Task | Title | Status | Dependencies | Reviewer |
 |------|-------|--------|--------------|----------|
-| TASK-AI-001 | Configurable below/beside initial placement + preserve existing panel group | ready | none | - |
+| TASK-AI-001 | Configurable below/beside initial placement + preserve existing panel group | pending_review | none | - |
 
 Graph: TASK-AI-001 (single task, wave 1).
 

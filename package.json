@@ -450,6 +450,15 @@
           ],
           "default": "builtin",
           "description": "Cycle AE — chat engine selection. \"omp\" routes the AI Chat panel through the in-process OmpChatEngine (requires the `omp` CLI installed and >= 17.0.0). \"builtin\" runs runAgent against the configured OpenAI-compatible provider. When \"omp\" is selected but the binary is missing or too old, VSDB silently degrades to \"builtin\" and shows a one-time install/update notice."
+        },
+        "vsdb.resultsPlacement": {
+          "type": "string",
+          "enum": [
+            "below",
+            "beside"
+          ],
+          "default": "below",
+          "description": "AI-001 — vị trí của panel VSDB Results cho các lần chạy MỚI: \"below\" mở vertical split ngay dưới editor đang active, \"beside\" mở side-by-side bên cạnh. Setting chỉ áp dụng khi panel được tạo mới; panel đang mở không bao giờ bị di chuyển (reveal giữ nguyên group người dùng đã kéo)."
         }
       }
     },
