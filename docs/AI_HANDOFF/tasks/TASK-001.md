@@ -151,3 +151,36 @@ npm run typecheck
 - Webview UX (TASK-002)
 - CSS (TASK-003)
 - Pure helpers (TASK-005 — note: `summarizeAttachmentsForLog` is task-005, task-001 imports it)
+
+
+## Executor Report (cycle AB) — TASK-001
+- **EXECUTOR_MODEL**: unic-code
+- **EXECUTOR_TOOL**: task agent (general-purpose), worktree `.worktrees/task-001` (branch `handoff/ab-task-001`)
+- **FILES_CHANGED**:
+  - `src/ui/aiChatPanelMessages.ts` — additive: `ImageAttachment`, `AiChatPanelInit.visionCapable`, `AiChatPanelAttachError`, `AiChatPanelWebviewSend.attachments?`
+  - `src/ui/aiChatPanel.ts` — CSP `img-src 'self' data:` (line 2096), `prepareAttachments` host validation + `omp` engine gate, `handleSend` builds `userMsg.content = [textPart, ...imageParts]`
+  - `src/ui/__tests__/aiChatPanelAttachments.test.ts` — new file (313 lines, 10 cases a-j)
+- **RED_OUTPUT (baseline, before any implementation)**:
+  ```
+  $ npx vitest run src/ui/__tests__/aiChatPanelAttachments.test.ts
+  FAIL  src/ui/__tests__/aiChatPanelAttachments.test.ts > AiChatPanel — image attach (TASK-001 cycle AB) > #a happy: handleSend forwards {text, attachments:[valid]} as ChatContentPart[] (1 text + 1 image_url)
+  FAIL  #b oversize (6 MB png): attach_error{reason:oversize}
+  FAIL  #c count cap: 5 attachments → 5th rejected
+  FAIL  #d mime text/plain → reason:unsupported_type
+  FAIL  #e mime mismatch (jpeg + PDF magic)
+  FAIL  #f engine='omp' + 2 valid → 2×{reason:vision_unsupported}
+  FAIL  #g buildMessages with image parts → DDL-only sentinel
+  ... 7 failed / 3 passed
+  ```
+- **GREEN_CONFIRMED**: 10/10 in aiChatPanelAttachments.test.ts; 164/164 across 8 chat-panel suites; `npm run typecheck` exit 0.
+- **COMMIT**: `ad87300` (`handoff: cycle AB task-001 — host image attach (CSP fix, omp gate, buildMessages parts)`)
+
+## Reviewer Verdict — R1 [TASK-001] (unic-smart)
+- TASK: TASK-001
+- VERDICT: CHANGES-REQUESTED
+- VERIFICATION_RERUN: npx vitest run aiChatPanelAttachments/aiChatAttachments/aiChatPanelPrivacy/chatLayoutCss → 4 files, 64 pass / 0 fail (10+23+6+25); regression sweep aiChatPanelAcp+Messages+Mentions+ThoughtRegen → 104 pass / 0 fail; npm run typecheck → exit 0. Code substance verified: CSP at src/ui/aiChatPanel.ts:2211-2219 has img-src 'self' data: AND retains default-src 'none'/style-src/script-src; omp vision gate runs in prepareAttachments (aiChatPanel.ts:1055-1067) BEFORE the acpPrompt coercion (aiChatPanel.ts:1031-1033), so image parts can never reach ACP; prepareAttachments covers all 5 reasons (vision_unsupported :1055, count_cap :1075, oversize/unsupported_type/mime_mismatch via validateImageAttachment :1084-1092); only log shaper is summarizeAttachmentsForLog (aiChatPanel.ts:966-975), no raw base64 in any console call; no apiKey in message shapes (test #j green); text-only path byte-identity pinned by test #i; aiChatPanelPrivacy 6/6 green.
+- BLOCKING:
+  - docs/AI_HANDOFF/tasks/TASK-001.md (current revision @ 7db7faf) — no cycle-AB `## Executor Report`: EXECUTOR_MODEL / EXECUTOR_TOOL / RED_OUTPUT absent, so reviewer-vs-executor model isolation is unverifiable (the report visible in commit ad87300's tree is stale cycle-AA thought/regenerate text, never rewritten for AB). Fix: executor appends the AB report to this file — EXECUTOR_MODEL, FILES_CHANGED, VERIFICATION, and real RED output (failing vitest run of aiChatPanelAttachments.test.ts against pre-attachment host code) — then resubmit for re-review.
+  - src/ui/__tests__/aiChatPanelPrivacy.test.ts (acceptance criterion 6) — required extension missing: file still contains only the 6 cycle-AA tests; no sentinel-seeded case with 2 valid attachments exists (grep "attachment|image" → 0 fixtures). Fix: add test [#7] seeding sentinelRows + driving the turn with 2 valid PNG attachments; assert SENTINEL_ROW/SENTINEL_VIEW absent from the system message AND every user part (stringified) and adapter runQuery spy still 0.
+  - (minor→fix in same round) acceptance criterion 0b has no dedicated test: no suite combines @-mention + attachments (aiChatPanelMentions.test.ts has no attach cases; aiChatPanelAttachments.test.ts has no mention cases) even though the code path exists at src/ui/aiChatPanel.ts:1003-1014. Fix: one test sending "@public.users" + 2 valid attachments → user message has exactly 1 text part containing "--- Referenced context ---" + 2 sibling image_url parts.
+- NOTES: No functional defect found in the diff (ba08bb7/8db1482 lineage); blockers are Quality-Gate paperwork (model self-report, per contract "executor did not self-report model") plus one named missing acceptance test. Minor drift noted, non-blocking: host vision gate is engine-only (aiChatPanel.ts:1057 passes engine==="builtin" as capability) — model-flag enforcement lives in init.visionCapable → webview (TASK-002) + agent.ts final belt, consistent with revised criterion 0a but diverging from the §Spec "Vision gating" bullet. package.json has no lint script; typecheck is the declared static gate and passed. Suggest INDEX_AB.md Status: done → changes_requested for this row after orchestrator reconciles (left untouched to avoid concurrent-writer conflict with R2/R3).

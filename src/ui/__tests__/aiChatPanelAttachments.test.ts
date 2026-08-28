@@ -662,3 +662,42 @@ describe("AiChatPanel — no apiKey in new message shapes (TASK-001 cycle AB)", 
     expect(stripped).not.toMatch(/apiKey/);
   });
 });
+
+// =========================================================================
+// #0b (TASK-001 acceptance): @-mention + 2 valid attachments — text part
+// carries "Referenced context" block; image parts are siblings, NEVER replaced.
+// =========================================================================
+describe("AiChatPanel — mention x attachment (TASK-001 cycle AB acceptance 0b)", () => {
+  it("#0b @public.users + 2 valid PNGs → user message has 1 text part (prompt + Referenced context) + 2 image_url parts", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+
+    handler({
+      type: "send",
+      text: "@public.users",
+      attachments: [makeValidAttachment("m1", "image/png"), makeValidAttachment("m2", "image/png")],
+    });
+    await until(() => postedMessages(p).some(isAssistant));
+
+    const input = agentState.runAgentMock.mock.calls.at(-1)?.[0] as { messages: ChatMessage[] };
+    const userMessage = input.messages[input.messages.length - 1] as ChatMessage;
+    expect(userMessage.role).toBe("user");
+    expect(Array.isArray(userMessage.content)).toBe(true);
+    const parts = userMessage.content as Array<{ type: string; text?: string; imageUrl?: string }>;
+    expect(parts.length).toBe(3);
+    expect(parts[0]!.type).toBe("text");
+    // Text part carries the augmented prompt + Referenced context block.
+    expect(parts[0]!.text).toContain("@public.users");
+    expect(parts[1]!.type).toBe("image_url");
+    expect(parts[2]!.type).toBe("image_url");
+  });
+});

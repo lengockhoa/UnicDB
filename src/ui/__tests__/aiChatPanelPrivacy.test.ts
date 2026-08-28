@@ -420,4 +420,48 @@ describe("AiChatPanel.buildMessages — privacy regression lock (TASK-004)", () 
     expect(adapter.calls.runQuery.length).toBe(0);
     expect(systemText).not.toContain(SENTINEL_ROW);
   });
+
+  // ---- cycle AB acceptance #6: privacy sentinel + 2 valid attachments --
+  it("[#7 cycle AB] sentinel-seeded adapter + 2 valid image attachments: SENTINEL_* absent from system AND user parts; runQuery spy 0", async () => {
+    const adapter = createSpyAdapter({ sentinelRows: true });
+    const factory: AdapterFactory = vi.fn(async () => adapter);
+
+    const pngHead = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const jpegHead = new Uint8Array([0xff, 0xd8, 0xff]);
+    function b64(bytes: Uint8Array): string {
+      let bin = "";
+      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+      return (globalThis as { btoa: (s: string) => string }).btoa(bin);
+    }
+    const pngB64 = b64(pngHead);
+    const jpegB64 = b64(jpegHead);
+
+    const userMsgParts: ChatMessage = {
+      role: "user",
+      content: [
+        { type: "text", text: "describe these" },
+        { type: "image_url", imageUrl: "data:image/png;base64," + pngB64 },
+        { type: "image_url", imageUrl: "data:image/jpeg;base64," + jpegB64 },
+      ],
+    };
+
+    const messages = await buildMessages(factory, [], userMsgParts, {
+      contextBudgetChars: 200000,
+      contextTableLimit: 200,
+    });
+
+    expect(adapter.calls.runQuery.length).toBe(0);
+    const allText = JSON.stringify(messages);
+    expect(allText).not.toContain(SENTINEL_ROW);
+    expect(allText).not.toContain(SENTINEL_VIEW);
+
+    const lastUser = messages[messages.length - 1] as ChatMessage;
+    expect(lastUser.role).toBe("user");
+    const parts = lastUser.content as unknown as Array<Record<string, unknown>>;
+    expect(Array.isArray(parts)).toBe(true);
+    expect(parts.length).toBe(3);
+    expect(parts[0].type).toBe("text");
+    expect(parts[1].type).toBe("image_url");
+    expect(parts[2].type).toBe("image_url");
+  });
 });
