@@ -90,8 +90,15 @@ export interface SaveContext {
 export interface ResultsPanelOptions {
   /** QueryRunner instance (để loadMore / cancel). */
   runner: QueryRunner;
-  /** View column mặc định (mặc định Beside). */
+  /** View column hint used at CREATE time when `resultsPlacement` is
+   *  "beside" (mặc định Beside). Ignored on later show() calls — an existing
+   *  panel is revealed without a column so the user's dragged group wins. */
   viewColumn?: vscode.ViewColumn;
+  /** AI-001 — "below" (default): newly created panels open in a vertical
+   *  split under the active editor; "beside": classic side-by-side. Read
+   *  fresh at every panel creation, so dispose+recreate picks up the
+   *  current setting (a live panel is never moved). */
+  resultsPlacement?: "below" | "beside";
   /** Title cho panel. */
   title?: string;
   /** Save flow dependencies — must be supplied when SaveEdits is wired in. */
@@ -103,6 +110,14 @@ export class ResultsPanel {
   private readonly saveContext: SaveContext | null;
   private readonly viewColumn: vscode.ViewColumn;
   private readonly title: string;
+  /** AI-001 — effective placement applied at panel CREATION: "below" opens
+   *  a vertical split under the active editor, "beside" is classic
+   *  side-by-side. Null until the next show() CREATE resolves it from the
+   *  explicit option or the vsdb.resultsPlacement setting (whitelisted;
+   *  unknown → "below") — resolved fresh per creation, never cached, so a
+   *  dispose+recreate picks up the latest setting while a LIVE panel is
+   *  never moved. */
+  private resultsPlacement: "below" | "beside" | null;
   private panel: vscode.WebviewPanel | null = null;
   private disposables: vscode.Disposable[] = [];
   private header: string = "";
@@ -171,6 +186,53 @@ export class ResultsPanel {
     this.saveContext = options.saveContext ?? null;
     this.viewColumn = options.viewColumn ?? vscode.ViewColumn.Beside;
     this.title = options.title ?? "VSDB Results";
+    this.resultsPlacement = options.resultsPlacement ?? null;
+  }
+
+  /**
+   * AI-001 — đọc setting `vsdb.resultsPlacement` ("below" | "beside")
+   * lúc CREATE panel. Whitelist: giá trị lạ → "below", không bao giờ
+   * throw (partial vscode mock / host lạ cũng an toàn). Không cache —
+   * dispose + recreate áp dụng setting mới nhất; panel đang sống thì
+   * KHÔNG bao giờ bị di chuyển.
+   */
+  private static readPlacementSetting(): "below" | "beside" {
+    try {
+      const workspace = vscode.workspace as unknown;
+      if (
+        !workspace ||
+        typeof workspace !== "object" ||
+        !("getConfiguration" in workspace) ||
+        typeof workspace.getConfiguration !== "function"
+      ) {
+        return "below";
+      }
+      const cfg = workspace.getConfiguration("vsdb");
+      if (!cfg || typeof cfg !== "object" || !("get" in cfg)) {
+        return "below";
+      }
+      const raw: unknown = cfg.get("resultsPlacement", "below");
+      return raw === "beside" ? "beside" : "below";
+    } catch {
+      return "below";
+    }
+  }
+
+  /** AI-001 — partial vscode mock / host lạ có thể không export `commands`;
+   *  move-below là enhancement placement, không bao giờ được phép crash
+   *  việc mở panel. */
+  private static canExecuteCommands(): boolean {
+    try {
+      const commands = vscode.commands as unknown;
+      return (
+        !!commands &&
+        typeof commands === "object" &&
+        "executeCommand" in commands &&
+        typeof commands.executeCommand === "function"
+      );
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -178,7 +240,9 @@ export class ResultsPanel {
    */
   show(): void {
     if (this.panel) {
-      this.panel.reveal(this.viewColumn);
+      // AI-001 — reveal() KHÔNG kèm column: giữ nguyên group người dùng đã
+      // kéo panel tới, không bao giờ ép panel về column cấu hình.
+      this.panel.reveal();
       return;
     }
     this.panel = vscode.window.createWebviewPanel(
@@ -191,6 +255,18 @@ export class ResultsPanel {
         localResourceRoots: [vscode.Uri.joinPath(this.extensionUri(), "dist")],
       },
     );
+    const placement =
+      this.resultsPlacement ?? ResultsPanel.readPlacementSetting();
+    if (placement !== "beside" && ResultsPanel.canExecuteCommands()) {
+      // AI-001 — ViewColumn không có "Below" trong VS Code API, nên vị trí
+      // "dưới editor" (vertical split) được đặt bằng lệnh built-in: panel
+      // vừa tạo đang active → moveEditorToBelowGroup chuyển nó vào group
+      // NGAY DƯỚI editor. Chỉ chạy lúc CREATE — panel sống lại (reveal)
+      // và panel "beside" không bao giờ bị di chuyển.
+      void vscode.commands.executeCommand(
+        "workbench.action.moveEditorToBelowGroup",
+      );
+    }
     this.panel.webview.html = this.buildHtml(this.panel.webview);
 
     // Listen messages từ webview.

@@ -8,6 +8,7 @@ All notable changes to VSDB are documented in this file. The format follows
 ### Added
 - **SQL Console v2**: multi-tab console (create/switch/close/rename, host-side buffers that survive panel reload), per-statement run (run only the statement at a given index), selection-only run, query history persisted in global state (`vsdb.consoleHistory`, capped at 200 entries) with ArrowUp/ArrowDown recall, an EXPLAIN / EXPLAIN ANALYZE plan pane (ANALYZE executes only behind the existing destructive-confirm gate), and a Format button backed by the new `formatSql` core module.
 - **`vsdb.consoleNewTab` command**: opens a fresh tab in the SQL Console.
+- **`vsdb.resultsPlacement` setting** (`below` | `beside`, default `below`): newly created Results panels open in a vertical split directly below the active editor; `beside` restores classic side-by-side. Re-opening an existing panel no longer forces it back to its configured column — `reveal()` preserves whatever group the user dragged it to. Setting applies only at panel creation (dispose + re-run to move it).
 
 ## [1.12.0] — 2026-08-28
 

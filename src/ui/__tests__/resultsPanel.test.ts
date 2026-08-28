@@ -2,6 +2,8 @@
 // Unit tests for ResultsPanel — fix round 1 (IMPORTANT #5 BigInt serialization
 // + postMessage rejection surfacing).
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import * as fs from "node:fs";
+import * as path from "node:path";
 
 // ---- vscode mock -----------------------------------------------------------
 
@@ -22,10 +24,13 @@ class FakeWebview {
 class FakeWebviewPanel {
   webview = new FakeWebview();
   visible = true;
+  /** AI-001 — every reveal() call's argument list (tests assert the
+   *  no-arg "preserve user's group" contract via args.length === 0). */
+  revealArgs: unknown[][] = [];
   private disposables: { dispose: () => void }[] = [];
   private didDisposeHandlers: (() => void)[] = [];
   constructor(public viewType: string, public title: string, public viewColumn: number, public options: unknown) {}
-  reveal(_col?: unknown) {}
+  reveal(...args: unknown[]) { this.revealArgs.push(args); }
   onDidReceiveMessage(h: MessageHandler) { return { dispose: () => undefined }; }
   onDidDispose(h: () => void) {
     this.didDisposeHandlers.push(h);
@@ -38,6 +43,12 @@ class FakeWebviewPanel {
 
 const lastPanel: { current: FakeWebviewPanel | null } = { current: null };
 
+const createCalls: Array<{ col: number | undefined }> = [];
+
+/** AI-001 — mutable placement the mocked getConfiguration returns.
+ *  Tests flip it between cases to exercise the resultsPlacement setting. */
+const configState: { resultsPlacement: unknown } = { resultsPlacement: undefined };
+
 vi.mock("vscode", () => {
   return {
     Uri: {
@@ -49,11 +60,20 @@ vi.mock("vscode", () => {
     ViewColumn: { Beside: 1, Active: 2, One: 3, Two: 4, Three: 5 },
     window: {
       createWebviewPanel: (vt: string, t: string, col: number, opts: unknown) => {
+        createCalls.push({ col });
         const p = new FakeWebviewPanel(vt, t, col, opts);
         lastPanel.current = p;
         return p;
       },
       showErrorMessage: vi.fn(async () => undefined),
+    },
+    commands: {
+      executeCommand: vi.fn(async () => undefined),
+    },
+    workspace: {
+      getConfiguration: vi.fn(() => ({
+        get: (_key: string) => configState.resultsPlacement,
+      })),
     },
     env: {
       clipboard: { writeText: vi.fn(async () => undefined) },
@@ -73,6 +93,8 @@ function makeRunnerStub(): QueryRunner {
 
 beforeEach(() => {
   lastPanel.current = null;
+  createCalls.length = 0;
+  configState.resultsPlacement = undefined;
   vi.clearAllMocks();
 });
 
@@ -743,3 +765,194 @@ describe("ResultsPanel — header (A14)", () => {
   });
 });
 
+
+// ---- AI-001 — resultsPlacement (below default, beside opt-out) -------------
+
+/** Minimal StatementResult fixture for tests that only exercise placement. */
+function makePlacementRunner(): QueryRunner {
+  return {
+    loadMore: vi.fn(async () => []),
+    cancel: vi.fn(async () => {}),
+  } as unknown as QueryRunner;
+}
+
+describe("ResultsPanel — resultsPlacement (AI-001)", () => {
+  it("T1. default creation (no options) opens below: moveEditorToBelowGroup fired exactly once", () => {
+    const panel = new ResultsPanel({ runner: makePlacementRunner() });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT 1",
+          status: "done",
+          result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "Statement 1",
+    );
+    const mock = vi.mocked(vscode.commands.executeCommand);
+    expect(mock).toHaveBeenCalledTimes(1);
+    expect(mock).toHaveBeenCalledWith("workbench.action.moveEditorToBelowGroup");
+  });
+
+  it("T2. explicit viewColumn: Beside honored at creation — no move-below command", () => {
+    configState.resultsPlacement = "beside";
+    const panel = new ResultsPanel({
+      runner: makePlacementRunner(),
+      viewColumn: vscode.ViewColumn.Beside,
+    });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT 1",
+          status: "done",
+          result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "Statement 1",
+    );
+    expect(lastPanel.current!.viewColumn).toBe(vscode.ViewColumn.Beside);
+    expect(vi.mocked(vscode.commands.executeCommand)).not.toHaveBeenCalled();
+  });
+
+  it("T3. placement 'beside' (via config) → plain creation, no move-below command", () => {
+    configState.resultsPlacement = "beside";
+    const panel = new ResultsPanel({ runner: makePlacementRunner() });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT 1",
+          status: "done",
+          result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "Statement 1",
+    );
+    expect(vi.mocked(vscode.commands.executeCommand)).not.toHaveBeenCalled();
+  });
+
+  it("T3a. package.json manifest declares vsdb.resultsPlacement (enum below|beside, default below)", () => {
+    const raw = fs.readFileSync(
+      path.join(__dirname, "..", "..", "..", "package.json"),
+      "utf-8",
+    );
+    const manifest = JSON.parse(raw) as {
+      contributes?: {
+        configuration?: {
+          properties?: Record<
+            string,
+            { enum?: string[]; default?: string; description?: string }
+          >;
+        };
+      };
+    };
+    const prop = manifest.contributes?.configuration?.properties?.[
+      "vsdb.resultsPlacement"
+    ];
+    expect(prop).toBeDefined();
+    expect(prop!.enum).toEqual(["below", "beside"]);
+    expect(prop!.default).toBe("below");
+    expect(typeof prop!.description).toBe("string");
+    expect(prop!.description!.length).toBeGreaterThan(0);
+  });
+
+  it("T4. existing panel: second render reuses panel and calls reveal() with NO column arg", () => {
+    const panel = new ResultsPanel({ runner: makePlacementRunner() });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT 1",
+          status: "done",
+          result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "Statement 1",
+    );
+    const fake = lastPanel.current!;
+    expect(createCalls).toHaveLength(1);
+    vi.mocked(vscode.commands.executeCommand).mockClear();
+
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT 2",
+          status: "done",
+          result: { columns: ["x"], rows: [[2]], rowCount: 1, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "Statement 1",
+    );
+    expect(lastPanel.current).toBe(fake);
+    expect(createCalls).toHaveLength(1);
+    expect(fake.revealArgs).toHaveLength(1);
+    expect(fake.revealArgs[0]).toHaveLength(0);
+    expect(vi.mocked(vscode.commands.executeCommand)).not.toHaveBeenCalled();
+  });
+
+  it("T5. changing placement never moves a live panel; only dispose+recreate applies it", () => {
+    configState.resultsPlacement = "below";
+    const panel = new ResultsPanel({ runner: makePlacementRunner() });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT 1",
+          status: "done",
+          result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "Statement 1",
+    );
+    const fake = lastPanel.current!;
+
+    configState.resultsPlacement = "beside";
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT 2",
+          status: "done",
+          result: { columns: ["x"], rows: [[2]], rowCount: 1, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "Statement 1",
+    );
+    expect(lastPanel.current).toBe(fake);
+    expect(fake.revealArgs[0]).toHaveLength(0);
+    expect(createCalls).toHaveLength(1);
+
+    // Dispose → onDidDispose fires → panel=null → next render recreates,
+    // and the CURRENT setting applies to the new panel.
+    panel.dispose();
+    configState.resultsPlacement = "beside";
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT 3",
+          status: "done",
+          result: { columns: ["x"], rows: [[3]], rowCount: 1, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "Statement 1",
+    );
+    expect(lastPanel.current).not.toBe(fake);
+    expect(createCalls).toHaveLength(2);
+    // Exactly ONE move-below total: creation #1 (placement "below").
+    // The live-panel re-render (step 2) and the "beside" recreate
+    // (step 3) must never fire the command.
+    expect(vi.mocked(vscode.commands.executeCommand)).toHaveBeenCalledTimes(1);
+  });
+});
