@@ -276,3 +276,12 @@ For each significant action, append:
 - Files: src/ui/permissionDetail.ts (pure sanitizer: redact secret keys, SQL preview, JSON pretty, cap 2000), aiChatPanel.ts + webview (collapsible textContent detail), agent.ts (AgentCallbacks.onToolCall additive — fires before executeToolCall, no abort-check inside the loop), CHANGELOG.md (I–P), docs/RELEASE.md, .vscodeignore (add vitest.integration-all.config.ts that was leaking).
 - Bug caught: releaseHygiene test detected package-lock root version 1.5.1 ≠ package.json 1.6.0 → npm install --package-lock-only to resync.
 - Verification: full suite 838 passed / 2 opt-in skipped exit 0; compile + typecheck clean; vsdb-1.6.0.vsix (15 files, 1.55 MB, no src/node_modules). Pushed 6df9083.
+
+## 2026-08-28 — Cycle AD: DB-aware AI Chat + OMP bridge + release v1.10.0
+
+- Action: implemented five read-only DB-aware tools with a strict parser and explicit ACP-style permission gate; added OMP config injection and two discoverable VS Code commands; extracted the shared DDL-only `formatSystemPrompt` builder.
+- Files: `src/ai/tools/readonlySqlParser.ts`, `src/ai/tools/dbAwareTools.ts`, `src/ui/aiChatPanel.ts`, `src/extensionConfigExport.ts`, `src/extension.ts`, `package.json`, `package-lock.json`, webview regression tests and AD handoff docs.
+- TDD/review fixes: parser tests caught and closed `SELECT INTO`; webview fixtures now match hyphenated host option IDs and cover Allow Once/Session/Deny plus stale clicks; package declarations preserve `vsdb.aiChat` and expose both OMP commands.
+- Review: TASK-001 approved; TASK-002 and TASK-003 approved with non-blocking minor notes. Reviewer unic-smart was isolated from executor unic-code.
+- Verification: full suite 128 files / 1937 passed / 2 skipped; `npm run typecheck` exit 0; `npm run package -- --no-dependencies` produced `vsdb-1.10.0.vsix` with 18 entries, 0 forbidden entries, and all AD/AB markers.
+- Delivery: commit `3f24080`, pushed `main`, tag `v1.10.0` pushed, GitHub release live at https://github.com/lengockhoa/VSDB/releases/tag/v1.10.0.
