@@ -1,7 +1,8 @@
 // src/ui/__tests__/chatLayoutCss.test.ts
 // TASK-003 - Chat layout CSS contract (pinned composer + full-height thread,
 // plus TASK-002 affordances + TASK-005 mention-dropdown selectors + fix-round-1
-// height-chain + 6 missing TASK-002 affordance styles).
+// height-chain + 6 missing TASK-002 affordance styles + cycle-AB image-attach
+// strip + button + warning + dark theme tokens).
 //
 // jsdom does not apply external stylesheets, so the contract is asserted
 // against the source CSS text directly via regex (same pattern as
@@ -344,5 +345,163 @@ describe("TASK-003 - chat layout CSS contract", () => {
       "utf8",
     );
     expect(panelSrc).toContain('<body class="vsdb-form-body vsdb-chat-body">');
+  });
+
+  // -----------------------------------------------------------------------
+  // Cycle AB — TASK-003 image-attach CSS contract.
+  // The webview needs:
+  //   - .vsdb-chat-attach-btn     (icon button next to send)
+  //   - .vsdb-chat-attachments    (thumbnail strip ABOVE the textarea)
+  //   - .vsdb-chat-thumb          (56×56 frame, hosts an <img>)
+  //   - .vsdb-chat-thumb-remove   (absolute overlay on the thumbnail)
+  //   - .vsdb-chat-attach-warning (amber notice bubble)
+  // Plus theme tokens declared at :root (light defaults) and overridden in a
+  // [data-theme="dark"] block:
+  //   --vsdb-warning-bg / --vsdb-warning-fg / --vsdb-warning-border
+  //   --vsdb-overlay-bg
+  //   --vsdb-input-hover-bg
+  //   --vsdb-error-bg
+  // The thumb strip lives inside .vsdb-chat-input so the cycle-AA pinned
+  // composer + height chain still owns scrolling; the css contract test below
+  // guards that lock too (case h).
+  // -----------------------------------------------------------------------
+  describe("TASK-003 cycle AB — image attach CSS contract", () => {
+    it("a) .vsdb-chat-attach-btn present with cursor:pointer", () => {
+      const body = ruleBody(".vsdb-chat-attach-btn");
+      expect(body, ".vsdb-chat-attach-btn rule block must exist").not.toBe("");
+      expect(
+        /cursor:\s*pointer/i.test(body),
+        ".vsdb-chat-attach-btn must declare cursor:pointer",
+      ).toBe(true);
+    });
+
+    it("a-focus) .vsdb-chat-attach-btn:focus-visible declares a visible focus ring via theme token", () => {
+      // The focus rule lives in a sibling block (selector + :focus-visible),
+      // so scan the file-level CSS rather than ruleBody().
+      expect(
+        /\.vsdb-chat-attach-btn(?:\.[\w-]+)*\s*:focus-visible\s*\{[^}]*outline\s*:/i.test(
+          css,
+        ),
+        ".vsdb-chat-attach-btn:focus-visible must declare an outline (visible focus ring)",
+      ).toBe(true);
+    });
+
+    it("b) .vsdb-chat-attachments strip layout (display:flex, gap:8px, overflow-x:auto, max-height:80px)", () => {
+      const body = ruleBody(".vsdb-chat-attachments");
+      expect(body, ".vsdb-chat-attachments rule block must exist").not.toBe("");
+      expect(
+        /display:\s*flex/i.test(body),
+        ".vsdb-chat-attachments must declare display:flex (horizontal row of thumbnails)",
+      ).toBe(true);
+      expect(
+        /gap:\s*8px/i.test(body),
+        ".vsdb-chat-attachments must declare gap:8px",
+      ).toBe(true);
+      expect(
+        /overflow-x:\s*auto/i.test(body),
+        ".vsdb-chat-attachments must declare overflow-x:auto (strip scrolls horizontally)",
+      ).toBe(true);
+      expect(
+        /max-height:\s*80px/i.test(body),
+        ".vsdb-chat-attachments must declare max-height:80px (capped row height)",
+      ).toBe(true);
+    });
+
+    it("c) .vsdb-chat-thumb is a 56×56 frame with position:relative (anchors the remove button)", () => {
+      const body = ruleBody(".vsdb-chat-thumb");
+      expect(body, ".vsdb-chat-thumb rule block must exist").not.toBe("");
+      expect(
+        /width:\s*56px/i.test(body),
+        ".vsdb-chat-thumb must declare width:56px",
+      ).toBe(true);
+      expect(
+        /height:\s*56px/i.test(body),
+        ".vsdb-chat-thumb must declare height:56px",
+      ).toBe(true);
+      expect(
+        /position:\s*relative/i.test(body),
+        ".vsdb-chat-thumb must declare position:relative (anchors .vsdb-chat-thumb-remove)",
+      ).toBe(true);
+    });
+
+    it("d) .vsdb-chat-thumb img uses object-fit:cover (fills the 56×56 frame without distortion)", () => {
+      // ruleBody() does not understand compound selectors like
+      // ".vsdb-chat-thumb img", so scan the file-level CSS for a rule body
+      // that declares object-fit:cover under that selector.
+      expect(
+        /\.vsdb-chat-thumb\s+img\s*\{[^}]*object-fit:\s*cover/i.test(css),
+        ".vsdb-chat-thumb img must declare object-fit:cover",
+      ).toBe(true);
+    });
+
+    it("e) .vsdb-chat-thumb-remove is an absolute overlay (top:2px, right:2px)", () => {
+      const body = ruleBody(".vsdb-chat-thumb-remove");
+      expect(
+        body,
+        ".vsdb-chat-thumb-remove rule block must exist",
+      ).not.toBe("");
+      expect(
+        /position:\s*absolute/i.test(body),
+        ".vsdb-chat-thumb-remove must declare position:absolute (overlay)",
+      ).toBe(true);
+      expect(
+        /top:\s*2px/i.test(body),
+        ".vsdb-chat-thumb-remove must declare top:2px",
+      ).toBe(true);
+      expect(
+        /right:\s*2px/i.test(body),
+        ".vsdb-chat-thumb-remove must declare right:2px",
+      ).toBe(true);
+    });
+
+    it("f) .vsdb-chat-attach-warning references var(--vsdb-warning-bg) (theme-token contract)", () => {
+      const body = ruleBody(".vsdb-chat-attach-warning");
+      expect(
+        body,
+        ".vsdb-chat-attach-warning rule block must exist",
+      ).not.toBe("");
+      expect(
+        /var\(\s*--vsdb-warning-bg\s*\)/i.test(body),
+        ".vsdb-chat-attach-warning must reference var(--vsdb-warning-bg)",
+      ).toBe(true);
+    });
+
+    it("g) [data-theme=\"dark\"] block declares at least one of the new tokens (dark variant present)", () => {
+      // The dark block may be one or many rules; scan every body in the file
+      // that opens with [data-theme="dark"] { … } and require at least one
+      // cycle-AB token inside. At minimum this proves the token system is
+      // wired; surface-specific dark overrides may be added later.
+      const re = /\[data-theme=["']dark["']\]\s*\{([^}]*)\}/gi;
+      const bodies: string[] = [];
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(css)) !== null) bodies.push(m[1]);
+      const tokens = [
+        "--vsdb-warning-bg",
+        "--vsdb-warning-fg",
+        "--vsdb-warning-border",
+        "--vsdb-overlay-bg",
+        "--vsdb-input-hover-bg",
+        "--vsdb-error-bg",
+      ];
+      const found = bodies.some((b) =>
+        tokens.some((tok) => new RegExp(tok + "\\s*:", "i").test(b)),
+      );
+      expect(
+        found,
+        `[data-theme="dark"] block must declare at least one of: ${tokens.join(", ")}`,
+      ).toBe(true);
+    });
+
+    it("h) regression: body.vsdb-chat-body { height: 100vh } rule still present (cycle AA height chain)", () => {
+      const body = ruleBody("body.vsdb-chat-body");
+      expect(
+        body,
+        "body.vsdb-chat-body rule block must still exist (cycle AA lock)",
+      ).not.toBe("");
+      expect(
+        /height:\s*100vh/i.test(body),
+        "body.vsdb-chat-body must still declare height:100vh",
+      ).toBe(true);
+    });
   });
 });
