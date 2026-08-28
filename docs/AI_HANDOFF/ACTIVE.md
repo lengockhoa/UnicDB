@@ -1,5 +1,16 @@
 # ACTIVE
 
+Cycle: (none — pick from ROADMAP.md; AG/AH/AI plan stubs exist untracked)
+Goal: —
+Status: idle — cycle AF released v1.12.0
+
+---
+Previous:
+Cycle: AF   Date: 2026-08-28   Base: main @ v1.11.0
+Goal: DataGrip parity wave 1 — catalog introspection, real DDL viewer (vsdb-ddl:), SQL formatter, Console v2.
+Status: done — released v1.12.0 (2021 tests green, typecheck 0, tag pushed, GitHub release live).
+
+---
 Cycle: AI   Date: 2026-08-28   Base: main @ v1.11.0
 Goal: Results panel opens below the editor by default (DataGrip-style vertical split), with below/beside setting and user-drag placement preserved. Release target v1.11.2 (next free patch).
 Tasks: 1 total (AI-001 ResultsPanel placement + manifest setting + construction wiring + tests). Plan: PLAN_AI.md · Index: INDEX_AI.md

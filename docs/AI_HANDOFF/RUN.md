@@ -1,7 +1,7 @@
 Command: handoff-fullstack
-Goal: Cycle AF — DataGrip parity wave 1 (catalog + tree/DDL viewer + SQL formatter + Console v2)
-Base: main @ v1.11.0
-Phase: in_progress
-Cursor: AF wave 1 dispatching now (AF-001 pgCatalog + AF-003 sqlFormat, file-disjoint). AF-002 consumes AF-001; AF-004 consumes AF-003 + AF-002.
-Next: Cycle AE.5: drop ompChatEngine stub shim — build live engine inline at commandOpenAiChat (R2 critical on TASK-003).
+Goal: (idle — no active cycle)
+Base: main @ v1.12.0
+Phase: done
+Cursor: AF released v1.12.0 (a72b9cf) + AE.5 fix (49f49cd) merged. 2021 tests / 2 skipped; typecheck 0; compile clean.
+Next: cycle AI (ResultsPanel below-editor placement) — PLAN_AI.md ready; then AH (multi-statement results); then AG (webview composer). AG/AH/AI plan files currently untracked — commit before dispatch.
 Next: —

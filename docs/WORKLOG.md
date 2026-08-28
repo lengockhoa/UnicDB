@@ -294,3 +294,10 @@ For each significant action, append:
 - Review: TASK-001 R2 APPROVED; TASK-002/TASK-003 still flagged but loop cap 2 reached per cycle AA/AB precedent. T3 still ships the engine="omp" branch with a runtime stub that flips to builtin on first turn — known caveat documented in CHANGELOG and next cycle.
 - Verification: 1963 tests passed / 2 skipped; `npm run typecheck` exit 0; `npm run package -- --no-dependencies` produced `vsdb-1.11.0.vsix` (18 entries, 0 forbidden, all AD + AB + AE markers present).
 - Delivery: commit `1a5b8ca`, pushed `main`, tag `v1.11.0` pushed, GitHub release live at https://github.com/lengockhoa/VSDB/releases/tag/v1.11.0.
+
+## 2026-08-28 — Cycle AF: DataGrip parity wave 1 + AE.5 fix + release v1.12.0
+
+- Action: shipped 4 AF tasks in 3 waves (AF-001 pgCatalog + adapter.catalog capability; AF-003 sqlFormat pure module; AF-002 schema-tree catalog categories + vsdb-ddl: DDL viewer; AF-004 Console v2 multi-tab/history/EXPLAIN/Format). Fixed cycle AE R2-critical by dropping the activation-time omp engine shim (AE.5) — omp runtime now gated at chat open.
+- Files: src/core/ddl/pgCatalog.ts (NEW), src/core/sqlFormat.ts (NEW), src/ui/ddlView.ts (NEW), src/ui/schemaTree.ts, src/ui/consolePanel.ts, src/ui/consolePanelMessages.ts, webview/consolePanelMain.ts, webview/styles.css, src/extension.ts, src/adapters/types.ts, src/adapters/postgres.ts, package.json (vsdb.openDdl/refreshDdl/consoleNewTab), + 6 new test files.
+- Verification: 2021 tests passed / 2 skipped; npm run typecheck exit 0; npm run compile clean; vsdb-1.12.0.vsix = 18 entries, 0 forbidden, all markers (pgCatalog, formatSql, consoleHistory, vsdb-ddl, hostMcp).
+- Delivery: merge commits c0af36b (wave1) + 3ed2da4 (wave2) + 0a70c99 (wave3) + 49f49cd (AE.5), release a72b9cf; tag v1.12.0 pushed; GitHub release live.
