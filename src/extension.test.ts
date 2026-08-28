@@ -1421,6 +1421,7 @@ function makeConfiguredCtx() {
       work: { modelId: "gpt-test", vision: true },
       smart: { modelId: "gpt-test", vision: false },
     },
+    engine: "builtin",
   };
   return {
     subscriptions,
