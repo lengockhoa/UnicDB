@@ -240,3 +240,25 @@ NOTES: Model isolation OK — executor unic-code ≠ reviewer unic-smart. R2's c
   - important — `src/ai/config.ts:41-45` validates old stored settings with the new required `engine` field; `src/ai/settings.ts:114-116` rejects every pre-AE persisted setting lacking it. Existing configured builtin users are treated as unconfigured. Normalize a missing persisted engine to `"builtin"` before validation and add a migration regression test.
   - important — `src/ui/__tests__/aiChatPanelEngine.test.ts:261-265, 324-344` simulates `engine="omp"` by supplying `acp`, not by setting/reading `vsdb.ai.engine`; it cannot catch either production defect and has no activation/detection test. Test actual configuration-driven wiring for builtin, OMP, and detection failure.
 - SUGGESTED_FIXES: Make `vsdb.ai.engine` the single engine-selection source at activation/open; await or share its detection result for a deterministic fallback notice/config flip; migrate legacy stored settings; replace acp-presence fixtures with configuration-backed integration tests.
+
+## Reviewer Verdict — cycle AE R2 [TASK-003]
+
+VERDICT: CRITICAL
+REVIEWER_MODEL: unic-smart (matches .ukit/storage/config.json handoff.reviewer.model:228)
+EXECUTOR_MODEL: unic-code (self-reported in de0706f commit message; no cycle-AE Executor Report block in this task file — process gap, isolation still verifiable, differs from reviewer)
+COMMIT_SHA: de0706f (main @ 6ecf4bc)
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/aiChatPanelEngine.test.ts src/ai/__tests__/config.test.ts src/ai/__tests__/settings.test.ts src/ai/__tests__/engineChoice.test.ts src/extension.test.ts && npm run typecheck
+  result: 97/97 pass (5 files); typecheck exit 0
+TEST_PLAN_COVERAGE: partial — legacy-migration regression test present and real (config.test.ts:200-221); extension tests now config-driven via state.aiEngine (extension.test.ts:131,1141,1208); MISSING: no test asserts opts.ompChatEngine or exercises the threaded engine's usability, so the suite stays green while the shipped omp path is dead (critical below).
+FINDINGS:
+  critical:
+    - src/extension.ts:396-400,569-579,621-633 — activation builds ompChatEngineRef around makeActivationAcpShim(), whose sessionNew/sessionPrompt/sessionLoad throw unconditionally; commandOpenAiChat branch 1 threads this doomed engine into every panel opened with engine="omp". First turn: runOmpEngineTurn → engine.send → acp.sessionNew throws (ompChatEngine.ts:259-264) → onError → one error bubble "session/new failed: AcpSession shim: not wired at activation" + vsdb.ai.engine silently flipped to "builtin" (aiChatPanel.ts:1488-1493). All later turns run builtin. Net: with omp installed and "omp" selected, the omp engine NEVER completes a turn — while the banner advertises "oh-my-pi (omp) v18.0.1 — streaming" (engineVersion threaded at extension.ts:628). PLAN_AE §Approach step 2 (spawn omp acp) is implemented nowhere; the activation hostMcp is never start()ed either. R1's "route unreachable" became "route reachable but self-destructs on first use". Fix direction: at panel open, construct a usable engine (await hostMcp.start() + AcpProcess-backed AcpSession → createOmpChatEngine), or drop branch 1's ompChatEngine threading entirely and let the already-working open-time fallback (fresh detectOmp + acp deps, extension.ts:636-663, raw runAcpTurn) serve engine="omp". Add an extension-level test that the threaded engine completes a turn.
+  important:
+    - src/extension.test.ts:1140-1174 — "Happy" test cannot distinguish branch 1 (shim engine) from the open-time fallback: both yield engineVersion="18.0.1" and acp defined; opts.ompChatEngine is never asserted. This is why the critical shipped green.
+    - src/extension.ts:370-374 — activation detect is still a fire-and-forget IIFE, not awaited (R2 anchor: "detect awaited not IIFE"); the consumer-side fallback (ref null → fresh detect) closes the race in effect, but the steady state it deterministically produces is the broken branch-1 engine above.
+  minor:
+    - docs/AI_HANDOFF/tasks/TASK-003.md — cycle-AE Executor Report block (FILES_CHANGED/RED_OUTPUT for 7f22df1..de0706f) absent; model self-report lives only in the commit message.
+R1_FIX_STATUS: legacy migration FIXED (config.ts:45-49 normalizes missing engine → "builtin" pre-validation + test); vsdb.ai.engine source of truth FIXED mechanically (extension.ts:618-621 reads the setting; detect-fail → flip to builtin at extension.ts:377-386); activation race closed at the consumer — but R1-critical's core demand ("create/pass createOmpChatEngine for selected, detected OMP") was satisfied with an engine that cannot run a turn, so the R1 CRITICAL is NOT green.
+NEXT_STATUS_FOR_INDEX: critical_block
+NOTES: All R1 findings were addressed at the mechanism level and the full suite passes (1963 pass/2 skip per orchestrator), yet the production omp path is guaranteed-fail-by-construction — the same suite-green/production-dead gap R1 flagged, one layer deeper. Blocking until the threaded engine is a usable, turn-completing session with a test proving it.

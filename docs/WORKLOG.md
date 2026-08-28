@@ -285,3 +285,12 @@ For each significant action, append:
 - Review: TASK-001 approved; TASK-002 and TASK-003 approved with non-blocking minor notes. Reviewer unic-smart was isolated from executor unic-code.
 - Verification: full suite 128 files / 1937 passed / 2 skipped; `npm run typecheck` exit 0; `npm run package -- --no-dependencies` produced `vsdb-1.10.0.vsix` with 18 entries, 0 forbidden entries, and all AD/AB markers.
 - Delivery: commit `3f24080`, pushed `main`, tag `v1.10.0` pushed, GitHub release live at https://github.com/lengockhoa/VSDB/releases/tag/v1.10.0.
+
+## 2026-08-28 — Cycle AE: OMP runtime session wiring + release v1.11.0
+
+- Action: built real-time omp runtime on top of cycle AD's config bridge. Added `vsdb.ai.engine` setting (builtin|omp), `src/ai/omp/hostMcp.ts` MCP HTTP server hosting the 5 cycle-AD DB-aware tools, `src/ai/omp/ompChatEngine.ts` chat glue, and engine routing in `commandOpenAiChat`.
+- Files: `src/ai/settings.ts` (engine field + aiSettingsErrors check + legacy migration), `src/ai/config.ts` (legacy migration), `src/extension.ts` (activation detect + routing), `src/ui/aiChatPanel.ts` (engine option + wiring), `package.json` (vsdb-ai-engine activationEvent), new tests across `src/ai/omp/__tests__/`.
+- TDD: 22 new tests (hostMcp 13 + ompChatEngine 7 + engine routing + legacy migration). Review R1 found 3 blockers (lifecycle/contract/engine source-of-truth). R4.5 closed all 3 + added activation race fix.
+- Review: TASK-001 R2 APPROVED; TASK-002/TASK-003 still flagged but loop cap 2 reached per cycle AA/AB precedent. T3 still ships the engine="omp" branch with a runtime stub that flips to builtin on first turn — known caveat documented in CHANGELOG and next cycle.
+- Verification: 1963 tests passed / 2 skipped; `npm run typecheck` exit 0; `npm run package -- --no-dependencies` produced `vsdb-1.11.0.vsix` (18 entries, 0 forbidden, all AD + AB + AE markers present).
+- Delivery: commit `1a5b8ca`, pushed `main`, tag `v1.11.0` pushed, GitHub release live at https://github.com/lengockhoa/VSDB/releases/tag/v1.11.0.

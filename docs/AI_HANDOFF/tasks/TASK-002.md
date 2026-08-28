@@ -206,3 +206,27 @@ NEXT_STATUS_FOR_INDEX: approved_minor
 - FINDINGS (minor): dead `vi.mock("../acp")`/`vi.mock("../hostMcp")` blocks — the SUT imports neither module (deps injected via options), so the mocks are no-ops implying boundaries that don't exist; untested branches: sessionNew-failure onError path (:259-266), malformed frames (non-record params/missing name); `enablePromptImage` option is dead weight (YAGNI).
 - NEXT_STATUS_FOR_INDEX: changes_requested
 - NOTES: Test quality itself is good (real expects, correct ACP frame shapes from research, async-aware flushMicrotasks). All defects are integration-level and invisible to the unit suite because every collaborator is a fake. Model isolation OK (executor unic-code ≠ reviewer unic-smart).
+
+## Reviewer Verdict — cycle AE R2 [TASK-002] (unic-smart)
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unverifiable — task file still has NO cycle-AE Executor Report (R1#5 open); fix commits carry no self-report → model isolation NOT established for the AE round.
+COMMIT: 530c2fb (hostMcp call() + 3 tests) + 4503e2e (wave-2 wiring); src/ai/omp/ompChatEngine.ts is byte-identical since 57fe767 (git diff empty — no fix commit touched the engine).
+VERIFICATION_RERUN:
+  command: npx vitest run src/ai/omp/__tests__/hostMcp.test.ts src/ai/omp/__tests__/ompChatEngine.test.ts src/extension.test.ts && npm run typecheck
+  result: 13/13 + 7/7 + 68/68 pass; typecheck exit 0
+ANCHORS (R4.5 T2 contract bridge) — FIXED & VERIFIED:
+  - HostMcp declares call(name, args): Promise<{result: string; isError: boolean}> in the real T1 interface (hostMcp.ts:66-79) AND the engine mirror (ompChatEngine.ts:70-80); typecheck green with the production site extension.ts:396-399 passing the real createHostMcp(...) into createOmpChatEngine — the island defect R1#1 is closed.
+  - call() normalizes to {result, isError} for success / gate-deny / JSON-RPC-error envelope (hostMcp.ts:442-460); 3 new tests pin all three (hostMcp.test.ts:514-563: exact-equal success, DB_TOOL_DENIED_MESSAGE, unknown-tool envelope).
+  - engine dispatches through it: dispatchNotification tool_call branch → hostMcp.call → onToolEnd(name, out.result, out.isError) (ompChatEngine.ts:216-231).
+FINDINGS (R1 package status):
+  critical: none
+  important:
+    - src/ai/omp/ompChatEngine.ts:216-231 with :155-169,:258-263 — R1#2 double dispatch STILL OPEN: send() still hands omp the mcpServers HTTP descriptor while tool_call still calls hostMcp.call; against a live session every DB tool executes twice and posts two permission cards (ACP-TOOLS-research.md:33 proves omp issues tools/call itself). Latent only because today's production AcpSession is a fail-closed throwing shim (extension.ts:569-584) — first send() errors and flips to builtin.
+    - src/ai/omp/ompChatEngine.ts:292-298 — R1#3 replay re-execution STILL OPEN: resume() replays ALL absorbed frames through dispatchNotification, so a replayed historical tool_call re-runs hostMcp.call and re-prompts permission. Test still feeds only an empty replay buffer (ompChatEngine.test.ts:293) — the named case remains untested. Expected: replay renders via onDelta/onThought only, never dispatches.
+    - src/ai/omp/ompChatEngine.ts:269-272,:308-311 — R1#4 open: handlers registered in send()/resume() never settle; late frames after the turn resolves still fire onDelta into the next render (no per-turn settled flag).
+    - docs/AI_HANDOFF/tasks/TASK-002.md — R1#5 open: no cycle-AE Executor Report (EXECUTOR_MODEL/RED_OUTPUT/GREEN_CONFIRMED/COMMIT) → incomplete handoff package per Quality Gate.
+  minor: (carried from R1) dead vi.mock("../acp")/vi.mock("../hostMcp") blocks in ompChatEngine.test.ts:39-51 — deps are injected via options; the mocks are no-ops.
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: The R4.5 target for T2 — the contract mismatch — is genuinely closed and well-tested. Remaining blockers are the untouched engine dispatch defects (R1#2/#3/#4) and the missing AE executor report. Fix path unchanged from R1: make replay render-only, gate dispatch on a per-turn settled flag, resolve the double-dispatch path (render-only tool_call + tool_call_update as the result carrier, per R1), then append the AE report and re-submit.

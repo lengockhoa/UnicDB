@@ -268,3 +268,26 @@ NOTES: Model isolation per contract (executor unic-code ≠ reviewer unic-smart)
 - **FINDING (important)**: `src/ai/omp/hostMcp.ts:378-401` latches `stopped=true` permanently. After a valid `start() → stop() → start()` sequence, the final `stop()` returns at :379 and leaves the restarted listener open. `src/ai/omp/__tests__/hostMcp.test.ts:440-456` claims start/stop idempotence but never calls `start()` twice or restarts the same host, so it cannot detect this lifecycle leak. Reset the stopped state when a new listener starts (or make restart explicitly rejected), and add a same-instance start→stop→start→stop probe that observes `ECONNREFUSED` after the final stop.
 - **VERDICT**: CHANGES-REQUESTED
 - **SUGGESTED FIXES**: repair the restart/stop lifecycle state and add the missing same-instance lifecycle regression; re-run the targeted Vitest file and typecheck.
+
+## Reviewer Verdict — cycle AE R2 [TASK-001]
+
+- **REVIEWER_MODEL**: unic-smart (configured `handoff.reviewer.model=unic-smart`; ≠ executor)
+- **EXECUTOR_MODEL**: unic-code (fix commit `4503e2e` metadata; ≠ reviewer — isolation OK)
+- **COMMIT**: `4503e2e` (wave 2 fix, AE R4.5), reviewed at HEAD `6ecf4bc`
+- **SCOPE**: `src/ai/omp/hostMcp.ts`, `src/ai/omp/__tests__/hostMcp.test.ts` (T1 lifecycle only)
+- **R1 FINDING RECHECK (start/stop/start-again leak, hostMcp.ts:378-401 → now :288-403)**: CLOSED.
+  Reset branch present at `hostMcp.ts:291-299`: `start()` clears `stopped` and defensively resets
+  `port=0` before the `if (server !== undefined) return` guard, so a second `start()` actually
+  rebinds. `stop()` (:400-426) closes the current `server`, tears down sockets, nulls the handle,
+  and zeroes `port` — no state carries across the cycle.
+- **NEW TEST VERIFIED**: `"stop then start again works on the same instance"`
+  (`hostMcp.test.ts:459-508`) exercises the exact R1 failure shape: same instance → stop → probe
+  `originalUrl` → Error; restart → new port >0, new URL ≠ original; wire `initialize` on the
+  restarted listener → 200; second stop (×2, idempotent) → port 0 and probe → Error. Meaningful,
+  not vacuous — pre-fix this fails at `restartedPort > 0` because start() early-returned on the
+  latched flag.
+- **VERIFICATION_RERUN**: `npx vitest run src/ai/omp/__tests__/hostMcp.test.ts` → 13 passed /
+  0 failed (9 pre-R1 + 4 new: idempotent lifecycle, same-instance restart, 2× call() wrapper);
+  `npm run typecheck` → exit 0.
+- **FINDINGS**: critical: none. important: none. minor: none new.
+- **VERDICT: APPROVED**
