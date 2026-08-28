@@ -65,6 +65,18 @@ export interface HostMcp {
   handle(
     req: { method: string; params?: unknown; id?: unknown },
   ): Promise<{ result?: unknown; error?: { code: number; message: string } }>;
+  /**
+   * Chat-engine-friendly wrapper around `handle()` that wraps a
+   * `tools/call` JSON-RPC request and normalises the wire response into
+   * `{ result, isError }`. The engine (T2 ompChatEngine) threads this
+   * shape into `events.onToolEnd(name, result, isError)` directly. No
+   * double dispatch — this is the single boundary that funnels
+   * `tools/call` through the JSON-RPC handler. PLAN_AE.md §Acceptance 4.
+   */
+  call(
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<{ result: string; isError: boolean }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -276,6 +288,16 @@ export function createHostMcp(opts: CreateHostMcpOptions): HostMcp {
   let stopped = false;
 
   async function start(): Promise<void> {
+    if (stopped) {
+      // Lifecycle reset: stop() flips `stopped` to true. A subsequent
+      // start() must clear the flag (and defensively reset `port` to 0)
+      // before binding a fresh listener — otherwise the early-return at
+      // `if (server !== undefined) return` would skip the rebind and the
+      // caller would be left with a stale closed URL / 0 port.
+      stopped = false;
+      port = 0;
+    }
+
     if (server !== undefined) return;
     await new Promise<void>((resolve, reject) => {
       const srv = http.createServer((req, res) => {
@@ -417,6 +439,24 @@ export function createHostMcp(opts: CreateHostMcpOptions): HostMcp {
     },
     respond,
     handle,
+    async call(name, args) {
+      const out = await handle({
+        method: "tools/call",
+        params: { name, arguments: args },
+        id: Math.floor(Math.random() * 1e9),
+      });
+      if (out.error) {
+        return { result: out.error.message, isError: true };
+      }
+      const r = out.result as
+        | { content?: Array<{ text?: string }>; isError?: boolean }
+        | undefined;
+      if (!r || !Array.isArray(r.content)) {
+        return { result: "", isError: true };
+      }
+      const text = r.content.map((c) => c?.text ?? "").join("");
+      return { result: text, isError: r.isError === true };
+    },
   };
 }
 

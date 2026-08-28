@@ -455,4 +455,110 @@ describe("createHostMcp — MCP HTTP server (T1)", () => {
     );
     expect(probed instanceof Error).toBe(true);
   });
+
+  it("stop then start again works on the same instance", async () => {
+    fixture = await buildFixture();
+    const originalUrl = fixture.host.url;
+    const originalPort = fixture.host.port;
+    expect(originalPort).toBeGreaterThan(0);
+
+    // First stop — must release the listener and reset port.
+    await fixture.host.stop();
+    expect(fixture.host.port).toBe(0);
+
+    // Probe must fail now that the original listener is closed.
+    const probedAfterStop = await probeJson(originalUrl, { method: "GET" }).catch(
+      (err: unknown) => err,
+    );
+    expect(probedAfterStop instanceof Error).toBe(true);
+
+    // Restart on the SAME instance — start() must clear the `stopped` flag
+    // and reset port=0 before binding a new server, otherwise the second
+    // start() early-returns and we never get a usable URL back.
+    await fixture.host.start();
+    const restartedUrl = fixture.host.url;
+    const restartedPort = fixture.host.port;
+    expect(restartedPort).toBeGreaterThan(0);
+    expect(restartedUrl).not.toBe(originalUrl);
+    expect(restartedUrl.startsWith("http://127.0.0.1:")).toBe(true);
+
+    // The new listener must answer initialize on the wire.
+    const res = await probeJson(restartedUrl, {
+      method: "POST",
+      body: {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-11-25",
+          capabilities: {},
+          clientInfo: { name: "test", version: "0" },
+        },
+      },
+    });
+    expect(res.status).toBe(200);
+
+    // Second stop — must close the new listener without throwing.
+    await fixture.host.stop();
+    await fixture.host.stop(); // second call is idempotent and a no-op
+    expect(fixture.host.port).toBe(0);
+
+    // Probe must fail after the second stop too.
+    const probedAfterSecondStop = await probeJson(restartedUrl, {
+      method: "GET",
+    }).catch((err: unknown) => err);
+    expect(probedAfterSecondStop instanceof Error).toBe(true);
+  });
+});
+
+describe("createHostMcp — call() wrapper (T2 contract bridge)", () => {
+  it("call(name, args) delegates to handle() and returns { result, isError } for a successful tool result", async () => {
+    fixture = await buildFixture({
+      tools: fiveDbTools(),
+      postPermission: (m) => {
+        queueMicrotask(() => fixture!.host.respond(m.requestId, "allow-once"));
+      },
+    });
+    await probeJson(fixture.host.url, {
+      method: "POST",
+      body: { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+    });
+
+    const out = await fixture.host.call("run_readonly_query", { sql: "SELECT 1" });
+    expect(out).toEqual({ result: "OUT-run_readonly_query", isError: false });
+  });
+
+  it("call(name, args) returns { result, isError: true } when the gate denies the tool", async () => {
+    fixture = await buildFixture({
+      tools: fiveDbTools(),
+      postPermission: (m) => {
+        queueMicrotask(() => fixture!.host.respond(m.requestId, "deny"));
+      },
+    });
+    await probeJson(fixture.host.url, {
+      method: "POST",
+      body: { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+    });
+
+    const out = await fixture.host.call("list_table_data_sample", {
+      schema: "public",
+      table: "users",
+    });
+    expect(out.isError).toBe(true);
+    expect(out.result).toBe(DB_TOOL_DENIED_MESSAGE);
+  });
+
+  it("call(name, args) returns { result, isError: true } when handle() emits a JSON-RPC error envelope", async () => {
+    fixture = await buildFixture();
+    await probeJson(fixture.host.url, {
+      method: "POST",
+      body: { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+    });
+
+    // Unknown tool name → handle() emits a JSON-RPC error envelope.
+    const out = await fixture.host.call("does_not_exist", {});
+    expect(out.isError).toBe(true);
+    expect(typeof out.result).toBe("string");
+    expect(out.result.length).toBeGreaterThan(0);
+  });
 });

@@ -37,6 +37,16 @@ export class AiConfigStore {
       }
     }
     if (!parsed || typeof parsed !== "object") return null;
+    // Cycle AE — legacy migration: configs persisted before the `engine`
+    // field was added have no engine key. Normalize to "builtin" BEFORE
+    // validation so `aiSettingsErrors()` does NOT flag the saved config
+    // as invalid. Without this, every pre-cycle-AE user's settings load
+    // returns null and the panel falls through to its empty-state flow.
+    const obj = parsed as Record<string, unknown>;
+    if (obj.engine === undefined) {
+      obj.engine = "builtin";
+      parsed = obj;
+    }
     // Defense-in-depth: re-validate against the schema. Corrupted store ⇒ null.
     try {
       const errors = aiSettingsErrors(parsed as AiSettings);
