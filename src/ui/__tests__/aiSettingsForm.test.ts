@@ -171,6 +171,7 @@ const validSettings: AiSettings = {
     work: { modelId: "gpt-4o-mini", vision: true },
     smart: { modelId: "gpt-4o", vision: false },
   },
+  engine: "builtin",
 };
 
 const invalidSettings: AiSettings = {
@@ -182,8 +183,8 @@ const invalidSettings: AiSettings = {
     work: { modelId: "gpt-4o-mini", vision: true },
     smart: { modelId: "gpt-4o", vision: false },
   },
+  engine: "builtin",
 };
-
 beforeEach(() => {
   state.panels.length = 0;
 });

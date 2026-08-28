@@ -102,6 +102,7 @@ export class AiConfigStore {
           vision: settings.models.smart.vision,
         },
       },
+      engine: settings.engine,
     };
 
     await this.ctx.globalState.update(KEY_AI_SETTINGS, toPersist);
