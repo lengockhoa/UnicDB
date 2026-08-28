@@ -9,13 +9,25 @@
 // respond to permission requests with one opaque {requestId, optionId?}.
 
 import type { ChatMessage } from "../ai/provider";
-
-// ---- Host → Webview --------------------------------------------------------
+// TASK-001 (cycle AB): ImageAttachment is the wire shape the webview sends
+// over for each image attachment. The single source of truth lives in
+// src/ui/aiChatAttachments.ts (task-005); we re-export here so consumers
+// can import it from either module without a hidden dep.
+import type { ImageAttachment } from "./aiChatAttachments";
+export type { ImageAttachment };
 
 export interface AiChatPanelInit {
   type: "init";
   /** True iff the panel already holds multi-turn history. */
   hasHistory: boolean;
+  /**
+   * TASK-001 (cycle AB): true iff the active AI role's `models.<role>.vision`
+   * is on at panel-ready time. Source: `AiConfigStore.loadSettings()`. The
+   * webview gates the attach button + clipboard-paste-image affordances on
+   * this flag and rejects with an inline amber notice when false. NEVER
+   * carries apiKey material.
+   */
+  visionCapable: boolean;
 }
 // TASK-003 D2: init{hasHistory:false} doubles as a host-driven panel
 // reset signal — Clear emits it after cancelling the in-flight turn.
@@ -91,6 +103,33 @@ export interface AiChatPanelPermissionRequest {
     label: string;
   }>;
 }
+/** TASK-001 (cycle AB): host → webview rejection for one attachment.
+ * The webview surfaces this as an amber notice naming the offending file.
+ * Reasons:
+ *   - `oversize`        : attachment.bytes > MAX_ATTACH_BYTES (5 MB).
+ *   - `count_cap`       : caller sent > MAX_ATTACHMENTS_PER_TURN (4); this
+ *                         single rejection covers the suffix drop.
+ *   - `unsupported_type`: mime not in ATTACH_ALLOWED_MIME.
+ *   - `mime_mismatch`   : declared mime disagrees with the magic bytes of the
+ *                         base64 payload (defense-in-depth against a
+ *                         `image/jpeg` blob that is actually `application/
+ *                         octet-stream`).
+ *   - `vision_unsupported`: model/engine cannot accept images (model.vision
+ *                         === false OR engine === "omp"); ALL attachments
+ *                         are rejected and the text-only turn proceeds.
+ * `id` is the attachment id the webview sent; `message` is a human-readable
+ * string. NEVER carries apiKey material. */
+export interface AiChatPanelAttachError {
+  type: "attach_error";
+  id: string;
+  reason:
+    | "oversize"
+    | "count_cap"
+    | "unsupported_type"
+    | "mime_mismatch"
+    | "vision_unsupported";
+  message: string;
+}
 
 export type AiChatPanelHostMessage =
   | AiChatPanelInit
@@ -105,7 +144,8 @@ export type AiChatPanelHostMessage =
   | AiChatPanelResumeSessions
   | AiChatPanelHistory
   | AiChatPanelMentionObjects
-  | AiChatPanelMentionMiss;
+  | AiChatPanelMentionMiss
+  | AiChatPanelAttachError;
 
 /** TASK-005: host answer for `mention_list` (≤30 DB objects + ≤20 files).
  * Each item carries `kind` discriminator (table|view|routine|file), a
@@ -198,6 +238,15 @@ export interface AiChatPanelReady {
 export interface AiChatPanelSend {
   type: "send";
   text: string;
+  /**
+   * TASK-001 (cycle AB): optional list of image attachments the user
+   * dropped on the composer or pasted from the clipboard. The host
+   * validates bytes + count + MIME + magic bytes, gates on vision/engine,
+   * and forwards surviving attachments as ChatContentPart[] image_url
+   * parts on the user message. Absent OR empty array → legacy text-only
+   * path (cycle AA baseline). NEVER carries apiKey material.
+   */
+  attachments?: ImageAttachment[];
 }
 
 /** User pressed Stop mid-turn; host flips abort token. */
