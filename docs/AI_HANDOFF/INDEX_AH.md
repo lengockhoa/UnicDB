@@ -1,0 +1,22 @@
+# INDEX_AH
+
+Cycle AH — **RESULTS PANEL: DATAGRIP-STYLE ACCUMULATING MULTI-STATEMENT RESULTS**: each run appends result tabs, never overwrites. Release target = next free minor (1.12.0 unless AF/AG released first). Plan: PLAN_AH.md.
+
+| Task | Title | Status | Dependencies | Reviewer |
+|------|-------|--------|--------------|----------|
+| TASK-AH-001 | Runner append mode + global indices + multi-statement cursor discipline | ready | none | - |
+| TASK-AH-002 | ResultsPanel append-aware render + editor run path threads {append:true} | ready | TASK-AH-001 | - |
+| TASK-AH-003 | Webview accumulating tabs, "Run N · Statement M" labels, per-tab cache preservation | ready | TASK-AH-002 | - |
+
+Graph: TASK-AH-001 → TASK-AH-002 → TASK-AH-003.
+
+- Wave 1 (1): TASK-AH-001
+- Wave 2 (1): TASK-AH-002
+- Wave 3 (1): TASK-AH-003
+
+No same-wave file overlap (sequential chain). File locks respected: styles.css = cycle AG;
+src/ai/** + src/adapters/** + src/core/ddl/** + src/core/sqlFormat.ts = cycle AF (wave 1 in-flight).
+extension.ts is shared with pending AF-004 (disjoint regions; AH-002 edits only the runStatements body).
+
+Scope lock: results panel only; no SQL Console internals (AF-004), no tab eviction, no OFFSET-stateless
+paging of closed cursors, no change to src/ui/messages.ts wire contract.
