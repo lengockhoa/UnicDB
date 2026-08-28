@@ -37,6 +37,13 @@ const state = {
   workspaceFolders: undefined as unknown,
   // TASK-606: giá trị setting vsdb.confirmDestructive (undefined = default true).
   confirmDestructive: undefined as boolean | undefined,
+
+  /**
+   * Cycle AE R4.5 — value returned by `vscode.workspace.getConfiguration("vsdb").get("ai.engine")`.
+   * undefined → default arg `"builtin"` applies. Tests that exercise the omp
+   * path set this to `"omp"` to mirror the user-toggled setting.
+   */
+  aiEngine: undefined as string | undefined,
   configurationChangeEmitter: new FakeEventEmitter<unknown>(),
   // Active editor stub (cho runQuery/generateSelect tests).
   activeEditor: undefined as unknown as {
@@ -120,8 +127,8 @@ vi.mock("vscode", () => {
       getConfiguration: vi.fn(() => ({
         get: <T>(key: string): T | undefined => {
           if (key === "showRunLens") return true as T;
-          if (key === "batchSize") return 500 as T;
           if (key === "confirmDestructive") return state.confirmDestructive as T;
+          if (key === "ai.engine") return (state.aiEngine ?? "builtin") as T;
           return undefined;
         },
       })),
@@ -219,6 +226,7 @@ beforeEach(() => {
     ok: false,
     reason: "not-installed",
   });
+  state.aiEngine = undefined;
 });
 
 // ---- helpers used by TASK-003 case #6 (declared above all uses) ------------
@@ -1118,6 +1126,7 @@ describe("TASK-011 (B3) — commandOpenAiChat resolves engine via detectOmp() + 
       ok: false,
       reason: "not-installed",
     });
+    state.aiEngine = undefined;
   });
 
   afterEach(async () => {
@@ -1129,6 +1138,7 @@ describe("TASK-011 (B3) — commandOpenAiChat resolves engine via detectOmp() + 
   });
 
   it("Happy — omp detected + ok, NO ai config saved → panel opens directly, no config interstitial", async () => {
+    state.aiEngine = "omp";
     detectOmpState.impl = async () => ({
       available: true,
       ok: true,
@@ -1195,6 +1205,7 @@ describe("TASK-011 (B3) — commandOpenAiChat resolves engine via detectOmp() + 
   // disposed instance forever, and a later omp install/config change was
   // never picked up without a full window reload.
   it("R(Finding7) regression: closing the webview tab (onDispose) lets the NEXT vsdb.aiChat re-detect the engine and open a fresh panel", async () => {
+    state.aiEngine = "omp";
     detectOmpState.impl = async () => ({
       available: true,
       ok: true,

@@ -196,4 +196,27 @@ describe("ai/config — AiConfigStore (SecretStorage + globalState)", () => {
     expect(secrets._raw().size).toBe(0);
     expect(global._raw().size).toBe(0);
   });
+
+  it("AE — legacy settings without `engine` field normalize to 'builtin' before validation", async () => {
+    // Pre-cycle-AE configs persisted before the engine field was added
+    // (no engine key at all). loadSettings must normalize engine to
+    // "builtin" so aiSettingsErrors() does NOT flag it as invalid and
+    // the user's saved config remains usable.
+    const { store, global } = makeStore();
+    const legacy = {
+      baseUrl: "https://api.openai.com/v1",
+      method: "chat/completions" as const,
+      timeoutMs: 60000,
+      maxSteps: 12,
+      models: {
+        work: { modelId: "gpt-4o-mini", vision: true },
+        smart: { modelId: "gpt-4o", vision: false },
+      },
+      // engine intentionally absent (legacy shape)
+    };
+    global._setRaw("vsdb.ai.settings", legacy);
+    const loaded = await store.loadSettings();
+    expect(loaded).not.toBeNull();
+    expect(loaded!.engine).toBe("builtin");
+  });
 });
