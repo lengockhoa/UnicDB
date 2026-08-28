@@ -257,3 +257,14 @@ REGRESSION_RECHECK: 5 db-aware tools — dbAwareTools.test.ts 23/23 (limit defau
 VERDICT: APPROVED
 SUGGESTED_FIXES: none required. Carry the R1 minor notes listed above into the next planning cycle.
 NOTES: Model isolation per contract (executor unic-code ≠ reviewer unic-smart). Minimal, correctly-scoped fix; INDEX_AD does not exist, so no index row updated — orchestrator to reconcile INDEX status.
+
+## Reviewer Verdict — cycle AE R1 [TASK-001]
+
+- **REVIEWER_MODEL**: unic-smart (runtime: unic/unic-smart; configured `handoff.reviewer.model=unic-smart`)
+- **COMMIT**: `d356553` (`handoff/ae-task-001`)
+- **SCOPE**: `src/ai/omp/hostMcp.ts`, `src/ai/omp/__tests__/hostMcp.test.ts`
+- **MODEL ISOLATION**: OK — executor `unic-code` ≠ reviewer `unic-smart`.
+- **VERIFICATION_RERUN**: exact detached `d356553`: `npx vitest run src/ai/omp/__tests__/hostMcp.test.ts` → 9 passed / 0 failed; `npm run typecheck` → exit 0.
+- **FINDING (important)**: `src/ai/omp/hostMcp.ts:378-401` latches `stopped=true` permanently. After a valid `start() → stop() → start()` sequence, the final `stop()` returns at :379 and leaves the restarted listener open. `src/ai/omp/__tests__/hostMcp.test.ts:440-456` claims start/stop idempotence but never calls `start()` twice or restarts the same host, so it cannot detect this lifecycle leak. Reset the stopped state when a new listener starts (or make restart explicitly rejected), and add a same-instance start→stop→start→stop probe that observes `ECONNREFUSED` after the final stop.
+- **VERDICT**: CHANGES-REQUESTED
+- **SUGGESTED FIXES**: repair the restart/stop lifecycle state and add the missing same-instance lifecycle regression; re-run the targeted Vitest file and typecheck.

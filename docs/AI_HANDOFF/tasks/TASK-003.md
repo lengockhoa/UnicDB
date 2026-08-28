@@ -227,3 +227,16 @@ FINDINGS:
     - src/__tests__/extensionConfigExport.test.ts:103-106 — ompCommandLine flag assertions check substring presence, not exact ordering; acceptable for a shape contract, noted for a future pin.
 NEXT_STATUS_FOR_INDEX: approved_minor
 NOTES: Model isolation OK — executor unic-code ≠ reviewer unic-smart. R2's critical path (vsdb.aiChat schema-tree toolbar entry + palette item pointing at an undeclared command) is fully resolved; no genuine blocker remains. INDEX.md TASK-003 row describes the cycle-AA CSS task, not this cycle-AD work — index left untouched as in R2.
+
+## Reviewer Verdict — cycle AE R1 [TASK-003]
+
+- REVIEWER_MODEL: unic/unic-smart (configured `unic-smart`; model isolation: executor `unic-code` differs)
+- COMMIT: `7f22df168af9be7d608d75b9ab12fb30d0f35198` (fixture follow-up `1c10e08`)
+- SCOPE: `src/ai/settings.ts`, `src/ai/config.ts`, `src/extension.ts`, `src/ui/aiChatPanel.ts`, `src/ui/__tests__/aiChatPanelEngine.test.ts`
+- VERIFICATION_RERUN: `npx vitest run src/ui/__tests__/aiChatPanelEngine.test.ts` — 5 passed, 0 failed.
+- VERDICT: CRITICAL
+- FINDINGS:
+  - critical — `src/extension.ts:558-581` ignores `vsdb.ai.engine`: `commandOpenAiChat` always calls `resolveEngine()`, whose policy selects OMP whenever it is installed, then supplies only raw `acp` deps. It never constructs/passes `ompChatEngine`; therefore the new `src/ui/aiChatPanel.ts:1241` route is unreachable in production and selecting `builtin` still runs OMP. Wire the selected setting through panel construction and create/pass `createOmpChatEngine(...)` only for selected, detected OMP.
+  - important — `src/ai/config.ts:41-45` validates old stored settings with the new required `engine` field; `src/ai/settings.ts:114-116` rejects every pre-AE persisted setting lacking it. Existing configured builtin users are treated as unconfigured. Normalize a missing persisted engine to `"builtin"` before validation and add a migration regression test.
+  - important — `src/ui/__tests__/aiChatPanelEngine.test.ts:261-265, 324-344` simulates `engine="omp"` by supplying `acp`, not by setting/reading `vsdb.ai.engine`; it cannot catch either production defect and has no activation/detection test. Test actual configuration-driven wiring for builtin, OMP, and detection failure.
+- SUGGESTED_FIXES: Make `vsdb.ai.engine` the single engine-selection source at activation/open; await or share its detection result for a deterministic fallback notice/config flip; migrate legacy stored settings; replace acp-presence fixtures with configuration-backed integration tests.
