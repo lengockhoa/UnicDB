@@ -27,7 +27,15 @@ const DRIVER_ICONS: Record<string, string> = {
   mssql: "azure",
 };
 
-export type CategoryKind = "tables" | "views" | "routines" | "columns";
+export type CategoryKind =
+  | "tables"
+  | "views"
+  | "routines"
+  | "columns"
+  | "indexes"
+  | "constraints"
+  | "triggers"
+  | "sequences";
 
 export interface VsdbNode {
   label: string;
@@ -62,6 +70,26 @@ interface CacheEntry<T> {
   data: T;
   expiresAt: number;
 }
+
+/**
+ * TASK-AF-002 — Build a tree-friendly error node khi 1 trong các catalog
+ * method (listIndexes/listConstraints/listTriggers/listSequences) reject.
+ * Returns the node only (caller wraps in array); keeps error message human
+ * readable cho user mở rộng category node trong tree.
+ */
+function catalogErrorNode(
+  op: "listIndexes" | "listConstraints" | "listTriggers" | "listSequences",
+  err: unknown,
+): VsdbNode {
+  const message = err instanceof Error ? err.message : String(err);
+  return {
+    label: `Failed to load ${op}: ${message}`,
+    icon: "error",
+    contextValue: "error",
+    collapsible: vscode.TreeItemCollapsibleState.None,
+  };
+}
+
 
 export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
   private readonly mgr: ConnectionManager;
@@ -185,12 +213,18 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
         return this.getCategoriesForSchema(node);
       }
       if (node.contextValue === "category") {
+        const cat = node.meta?.category;
+        if (cat === "indexes") return this.getIndexChildren(node);
+        if (cat === "constraints") return this.getConstraintChildren(node);
+        if (cat === "triggers") return this.getTriggerChildren(node);
+        if (cat === "sequences") return this.getSequenceChildren(node);
         return this.getCategoryChildren(node);
       }
       if (node.contextValue === "table") {
-        return this.getColumnChildren(node);
+        return this.getTableChildren(node);
       }
-      // Error / empty / others → không có children.
+      // view / routine / column / error / empty-add / index / constraint /
+      // trigger / sequence → không có children.
       return [];
     } catch (_err) {
       // Phòng trường hợp exception ngoài luồng — tree không bao giờ crash.
@@ -315,7 +349,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
     return children;
   }
 
-  private getCategoriesForSchema(node: VsdbNode): VsdbNode[] {
+  private async getCategoriesForSchema(node: VsdbNode): Promise<VsdbNode[]> {
     const conn = node.meta?.connection;
     const schema = node.meta?.schema;
     if (!conn || !schema) return [];
@@ -323,7 +357,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
     const collapsible = this.filterText !== ""
       ? vscode.TreeItemCollapsibleState.Expanded
       : vscode.TreeItemCollapsibleState.Collapsed;
-    return [
+    const out: VsdbNode[] = [
       {
         label: "Tables",
         icon: "table",
@@ -346,6 +380,27 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
         meta: { connection: conn, schema, category: "routines" },
       },
     ];
+    // TASK-AF-002 — Sequences category chỉ xuất hiện khi adapter có catalog
+    // (Postgres) AND listSequences trả về non-empty. Catalog thiếu / query
+    // lỗi → omit Sequences, không throw (try/catch nuốt).
+    try {
+      const adapter = await this.getAdapterFor(conn);
+      if (adapter.catalog) {
+        const seqs = await adapter.catalog.listSequences(schema);
+        if (seqs.length > 0) {
+          out.push({
+            label: "Sequences",
+            icon: "symbol-number",
+            contextValue: "category",
+            collapsible,
+            meta: { connection: conn, schema, category: "sequences" },
+          });
+        }
+      }
+    } catch {
+      // Probe lỗi → không hiển thị Sequences, các category khác vẫn nguyên.
+    }
+    return out;
   }
 
   // ---- Category children: tables/views/routines ----------------------------
@@ -553,37 +608,369 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
     this.rowCountFetching.add(inFlightKey);
 
     this.getAdapterFor(conn)
-      .then((adapter) => adapter.estimateTableRowsBatch(schema, pendingNames))
-      .then((counts) => {
-        this.rowCountFetching.delete(inFlightKey);
-        for (const tNode of pendingNodes) {
-          const tName = tNode.meta?.objectName;
-          if (!tName) continue;
-          const count = counts.get(tName);
-          // Omitted (dropped mid-flight) hoặc null → giữ schema fallback.
-          if (count === undefined || count === null) continue;
-          const key = `rowcount|${conn.id}|${schema}|${tName}`;
-          this.rowCountCache.set(key, {
-            data: count,
-            expiresAt: Date.now() + CACHE_TTL_MS,
-          });
-          tNode.description = formatRows(count);
-          // (review fix round C, Finding #7) — fire PER changed node instead
-          // of `fire(undefined)` (whole-tree refresh). `undefined` tells VS
-          // Code to re-query every node in the tree from root, which is far
-          // more work than re-rendering just the table nodes whose row-count
-          // description actually changed; `fire(tNode)` mirrors the existing
-          // narrow pattern already used at the description-update call site
-          // above (line ~479) for the same VsdbNode type.
-          this._onDidChangeTreeData.fire(tNode);
+      .then((adapter) => {
+        // TASK-AF-002 — Khi adapter có `catalog` (Postgres), dùng
+        // `catalog.rowCount` (exact count từ pg_class.reltuples) thay vì
+        // `estimateTableRowsBatch` (planner estimate, có thể stale cho
+        // tables chưa VACUUM/ANALYZE). Mỗi table vẫn cache qua cùng
+        // `rowCountCache` namespace nên các lần load sau đều cache-hit.
+        if (adapter.catalog) {
+          return this.fetchRowCountsViaCatalog(
+            adapter.catalog,
+            pendingNodes,
+            conn,
+            schema,
+          );
         }
+        return adapter.estimateTableRowsBatch(schema, pendingNames).then((counts) => {
+          this.rowCountFetching.delete(inFlightKey);
+          for (const tNode of pendingNodes) {
+            const tName = tNode.meta?.objectName;
+            if (!tName) continue;
+            const count = counts.get(tName);
+            // Omitted (dropped mid-flight) hoặc null → giữ schema fallback.
+            if (count === undefined || count === null) continue;
+            const key = `rowcount|${conn.id}|${schema}|${tName}`;
+            this.rowCountCache.set(key, {
+              data: count,
+              expiresAt: Date.now() + CACHE_TTL_MS,
+            });
+            tNode.description = formatRows(count);
+            this._onDidChangeTreeData.fire(tNode);
+          }
+        });
       })
       .catch(() => {
         this.rowCountFetching.delete(inFlightKey);
       });
   }
 
+  /**
+   * TASK-AF-002 — Per-table `catalog.rowCount` cho Postgres (1 query / table,
+   * fire-and-forget). Dùng khi adapter có `catalog`. Reject trên 1 table →
+   * console.error + bỏ qua table đó (description giữ schema fallback).
+   * KHÔNG nuốt lỗi im lặng — phải log để debug pg permission/schema drift.
+   */
+  private fetchRowCountsViaCatalog(
+    catalog: NonNullable<DbAdapter["catalog"]>,
+    tableNodes: VsdbNode[],
+    conn: ConnectionConfig,
+    schema: string,
+  ): Promise<void> {
+    const inFlightKey = `rowcountbatch|${conn.id}|${schema}`;
+    for (const tNode of tableNodes) {
+      const tName = tNode.meta?.objectName;
+      if (!tName) continue;
+      catalog
+        .rowCount(schema, tName)
+        .then((count) => {
+          const key = `rowcount|${conn.id}|${schema}|${tName}`;
+          this.rowCountCache.set(key, {
+            data: count,
+            expiresAt: Date.now() + CACHE_TTL_MS,
+          });
+          tNode.description = formatRows(count);
+          this._onDidChangeTreeData.fire(tNode);
+        })
+        .catch((err: unknown) => {
+          // Spec: "On rejection, swallow to console and fall back to current
+          // description." Description không đổi (giữ schema fallback).
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(
+            `[vsdb] catalog.rowCount failed for ${schema}.${tName}: ${message}`,
+          );
+        });
+    }
+    return Promise.resolve().finally(() => {
+      this.rowCountFetching.delete(inFlightKey);
+    });
+  }
+  // ---- Table children (catalog categories + columns) ---------------------
+  //
+  // TASK-AF-002 — Khi adapter có `catalog` (Postgres), table node có 3
+  // category nodes bổ sung: Indexes / Constraints / Triggers, mỗi cái chỉ
+  // render khi list tương ứng non-empty. Khi catalog thiếu → fallback chỉ
+  // trả columns (giữ behavior cũ, regression #10).
+
+  private async getTableChildren(node: VsdbNode): Promise<VsdbNode[]> {
+    const conn = node.meta?.connection;
+    const schema = node.meta?.schema;
+    const tableName = node.meta?.objectName;
+    const objectKey = node.meta?.objectKey;
+    if (!conn || !schema || !tableName) return [];
+
+    // Lấy columns trước (existing path) — vẫn luôn show.
+    const columns = await this.getColumnChildren(node);
+    if (!objectKey) return columns;
+
+    let catalog: DbAdapter["catalog"] | undefined;
+    try {
+      const adapter = await this.getAdapterFor(conn);
+      catalog = adapter.catalog;
+    } catch {
+      return columns;
+    }
+    if (!catalog) return columns;
+
+    // Catalog có → probe 3 list methods. Mỗi list probe riêng trong try/catch
+    // để 1 query lỗi không block 2 còn lại (consistent với categories probe).
+    const collapsible = this.filterText !== ""
+      ? vscode.TreeItemCollapsibleState.Expanded
+      : vscode.TreeItemCollapsibleState.Collapsed;
+
+    const cats: VsdbNode[] = [];
+    try {
+      const idxs = await catalog.listIndexes(schema, tableName);
+      if (idxs.length > 0) {
+        cats.push({
+          label: "Indexes",
+          icon: "list-ordered",
+          contextValue: "category",
+          collapsible,
+          meta: {
+            connection: conn,
+            schema,
+            category: "indexes",
+            objectKey: `${objectKey}.indexes`,
+            objectName: tableName,
+          },
+        });
+      }
+    } catch {
+      // Probe lỗi → omit category này.
+    }
+    try {
+      const cons = await catalog.listConstraints(schema, tableName);
+      if (cons.length > 0) {
+        cats.push({
+          label: "Constraints",
+          icon: "shield",
+          contextValue: "category",
+          collapsible,
+          meta: {
+            connection: conn,
+            schema,
+            category: "constraints",
+            objectKey: `${objectKey}.constraints`,
+            objectName: tableName,
+          },
+        });
+      }
+    } catch {
+      // Probe lỗi → omit.
+    }
+    try {
+      const trigs = await catalog.listTriggers(schema, tableName);
+      if (trigs.length > 0) {
+        cats.push({
+          label: "Triggers",
+          icon: "zap",
+          contextValue: "category",
+          collapsible,
+          meta: {
+            connection: conn,
+            schema,
+            category: "triggers",
+            objectKey: `${objectKey}.triggers`,
+            objectName: tableName,
+          },
+        });
+      }
+    } catch {
+      // Probe lỗi → omit.
+    }
+
+    // Trộn catalog categories trước columns để user thấy structure overview
+    // trước khi expand xuống leaves.
+    return [...cats, ...columns];
+  }
+
+  private async getIndexChildren(node: VsdbNode): Promise<VsdbNode[]> {
+    return this.loadIndexLeaves(node);
+  }
+
+  private async getConstraintChildren(node: VsdbNode): Promise<VsdbNode[]> {
+    return this.loadConstraintLeaves(node);
+  }
+
+  private async getTriggerChildren(node: VsdbNode): Promise<VsdbNode[]> {
+    return this.loadTriggerLeaves(node);
+  }
+
+  private async getSequenceChildren(node: VsdbNode): Promise<VsdbNode[]> {
+    return this.loadSequenceLeaves(node);
+  }
+
+  private async loadIndexLeaves(node: VsdbNode): Promise<VsdbNode[]> {
+    const conn = node.meta?.connection;
+    const schema = node.meta?.schema;
+    const tableName = node.meta?.objectName;
+    const objectKey = node.meta?.objectKey;
+    if (!conn || !schema || !tableName) return [];
+    const cacheKey = `catalog|indexes|${objectKey ?? `${conn.id}.${schema}.${tableName}`}`;
+    const cached = this.cache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return this.applyLeafFilter(cached.data);
+    }
+    try {
+      const adapter = await this.getAdapterFor(conn);
+      if (!adapter.catalog) return [];
+      const raw = await adapter.catalog.listIndexes(schema, tableName);
+      const data: VsdbNode[] = raw.map((info) => ({
+        label: info.name,
+        description: info.method,
+        tooltip: `${info.schema}.${info.table}: ${info.name} (${info.method})${info.isUnique ? " UNIQUE" : ""}`,
+        contextValue: "index",
+        collapsible: vscode.TreeItemCollapsibleState.None,
+        meta: {
+          connection: conn,
+          schema,
+          objectKey,
+          objectName: tableName,
+        },
+      }));
+      this.cache.set(cacheKey, {
+        data,
+        expiresAt: Date.now() + CACHE_TTL_MS,
+      });
+      return this.applyLeafFilter(data);
+    } catch (err) {
+      return [catalogErrorNode("listIndexes", err)];
+    }
+  }
+
+  private async loadConstraintLeaves(node: VsdbNode): Promise<VsdbNode[]> {
+    const conn = node.meta?.connection;
+    const schema = node.meta?.schema;
+    const tableName = node.meta?.objectName;
+    const objectKey = node.meta?.objectKey;
+    if (!conn || !schema || !tableName) return [];
+    const cacheKey = `catalog|constraints|${objectKey ?? `${conn.id}.${schema}.${tableName}`}`;
+    const cached = this.cache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return this.applyLeafFilter(cached.data);
+    }
+    try {
+      const adapter = await this.getAdapterFor(conn);
+      if (!adapter.catalog) return [];
+      const raw = await adapter.catalog.listConstraints(schema, tableName);
+      const data: VsdbNode[] = raw.map((info) => ({
+        label: info.name,
+        description: info.type,
+        tooltip: info.fkTarget
+          ? `${info.name} (${info.type}) → ${info.fkTarget.table}(${info.fkTarget.columns.join(", ")})`
+          : `${info.name} (${info.type})`,
+        contextValue: "constraint",
+        collapsible: vscode.TreeItemCollapsibleState.None,
+        meta: {
+          connection: conn,
+          schema,
+          objectKey,
+          objectName: tableName,
+        },
+      }));
+      this.cache.set(cacheKey, {
+        data,
+        expiresAt: Date.now() + CACHE_TTL_MS,
+      });
+      return this.applyLeafFilter(data);
+    } catch (err) {
+      return [catalogErrorNode("listConstraints", err)];
+    }
+  }
+
+  private async loadTriggerLeaves(node: VsdbNode): Promise<VsdbNode[]> {
+    const conn = node.meta?.connection;
+    const schema = node.meta?.schema;
+    const tableName = node.meta?.objectName;
+    const objectKey = node.meta?.objectKey;
+    if (!conn || !schema || !tableName) return [];
+    const cacheKey = `catalog|triggers|${objectKey ?? `${conn.id}.${schema}.${tableName}`}`;
+    const cached = this.cache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return this.applyLeafFilter(cached.data);
+    }
+    try {
+      const adapter = await this.getAdapterFor(conn);
+      if (!adapter.catalog) return [];
+      const raw = await adapter.catalog.listTriggers(schema, tableName);
+      const data: VsdbNode[] = raw.map((info) => ({
+        label: info.name,
+        description: `${info.timing} ${info.event}`,
+        tooltip: `${info.name} (${info.timing} ${info.event})`,
+        contextValue: "trigger",
+        collapsible: vscode.TreeItemCollapsibleState.None,
+        meta: {
+          connection: conn,
+          schema,
+          objectKey,
+          objectName: tableName,
+        },
+      }));
+      this.cache.set(cacheKey, {
+        data,
+        expiresAt: Date.now() + CACHE_TTL_MS,
+      });
+      return this.applyLeafFilter(data);
+    } catch (err) {
+      return [catalogErrorNode("listTriggers", err)];
+    }
+  }
+
+  private async loadSequenceLeaves(node: VsdbNode): Promise<VsdbNode[]> {
+    const conn = node.meta?.connection;
+    const schema = node.meta?.schema;
+    const objectKey = node.meta?.objectKey;
+    if (!conn || !schema) return [];
+    const cacheKey = `catalog|sequences|${objectKey ?? `${conn.id}.${schema}`}`;
+    const cached = this.cache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return this.applyLeafFilter(cached.data);
+    }
+    try {
+      const adapter = await this.getAdapterFor(conn);
+      if (!adapter.catalog) return [];
+      const raw = await adapter.catalog.listSequences(schema);
+      const data: VsdbNode[] = raw.map((info) => ({
+        label: info.name,
+        description: info.dataType,
+        tooltip: `${info.schema}.${info.name}${info.lastValue ? ` (last: ${info.lastValue})` : ""}`,
+        contextValue: "sequence",
+        collapsible: vscode.TreeItemCollapsibleState.None,
+        meta: {
+          connection: conn,
+          schema,
+          objectKey,
+          objectName: info.name,
+        },
+      }));
+      this.cache.set(cacheKey, {
+        data,
+        expiresAt: Date.now() + CACHE_TTL_MS,
+      });
+      return this.applyLeafFilter(data);
+    } catch (err) {
+      return [catalogErrorNode("listSequences", err)];
+    }
+  }
+  private applyLeafFilter(data: VsdbNode[]): VsdbNode[] {
+    if (this.filterText === "") return data;
+    const filtered = data.filter((c) => this.matchesFilter(c.label));
+    if (filtered.length === 0) {
+      return [
+        {
+          label: `No matches for '${this.filterText}'`,
+          contextValue: "empty-add",
+          collapsible: vscode.TreeItemCollapsibleState.None,
+        },
+      ];
+    }
+    return filtered;
+  }
+
   // ---- Table columns ------------------------------------------------------
+
+
 
   private async getColumnChildren(node: VsdbNode): Promise<VsdbNode[]> {
     const conn = node.meta?.connection;
