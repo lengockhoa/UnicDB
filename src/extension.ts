@@ -372,12 +372,10 @@ export async function activate(
   const initialEngine = vscode.workspace
     .getConfiguration("vsdb")
     .get<string>("ai.engine", "builtin");
+  // Cycle AE.5 — perform only the lightweight availability gate at activation.
+  // AcpProcess is intentionally created when the user opens chat, not here,
+  // so activating VS Code without opening chat never leaks a child process.
   if (initialEngine === "omp") {
-    // Cycle AE R4.5 — Engine source of truth at activation. The actual
-    // construction is fire-and-forget (matches pre-cycle-AE IIFE pattern
-    // for tests that sync-call activate); `commandOpenAiChat` falls
-    // back to the builtin path silently if `ompChatEngineRef` is still
-    // null when the user opens chat. PLAN_AE.md §Acceptance 0/1/8.
     void (async () => {
       const detection = await detectOmp();
       if (!detection.ok) {
@@ -388,26 +386,6 @@ export async function activate(
         await vscode.workspace
           .getConfiguration("vsdb")
           .update("ai.engine", "builtin", vscode.ConfigurationTarget.Global);
-        ompChatEngineRef = null;
-        return;
-      }
-      try {
-        const hostMcp = createHostMcp({
-          gatePost: () => {
-            /* see makeActivationAcpShim below — panel rebinds its own gate */
-          },
-          tools: [],
-        });
-        ompEngineVersion = detection.version;
-        ompChatEngineRef = createOmpChatEngine({
-          acp: makeActivationAcpShim(),
-          hostMcp,
-          cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "/",
-        });
-      } catch {
-        // Defensive: any failure during engine construction must NOT
-        // crash activate(). Fall back to builtin.
-        ompChatEngineRef = null;
       }
     })();
   }
@@ -571,25 +549,6 @@ function commandOpenAiSettings(aiStore: AiConfigStore): void {
  * omp engine gets real database access instead of `mcpServers: []`.
  */
 
-/** AcpSession shim used to construct `OmpChatEngine` as a stored
- * reference at activation. The real session needs a live omp process
- * (AcpProcess.start), which must NOT happen here. The shim's rpc
- * methods throw — the first `engine.send()` from `runOmpEngineTurn`
- * will see the rejection, post one error bubble, and flip the setting
- * back to "builtin" via the panel's mid-turn fallback. */
-function makeActivationAcpShim(): AcpSession {
-  const notImplemented = (): never => {
-    throw new Error("AcpSession shim: not wired at activation");
-  };
-  return {
-    sessionNew: notImplemented,
-    sessionPrompt: notImplemented,
-    sessionLoad: notImplemented,
-    onNotification: () => undefined,
-    onClose: () => undefined,
-    dispose: () => undefined,
-  };
-}
 function buildAcpDeps(): AcpPanelDeps {
   return {
     start: async (
