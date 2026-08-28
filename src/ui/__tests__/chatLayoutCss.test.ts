@@ -230,19 +230,26 @@ describe("TASK-003 - chat layout CSS contract", () => {
     });
 
     it("regenerateBtn: button-level affordance styled or inherits .vsdb-chat-secondary", () => {
+      // TASK-AG-001: regenerateBtn is an icon-only tile styled by the shared
+      // `.vsdb-chat-actions button` rule (28×28 square, cursor:pointer) — the
+      // old per-ID override and the .vsdb-chat-secondary text-button styling
+      // are gone. Accept either the shared tile rule, a per-ID override, or
+      // the legacy .vsdb-chat-secondary class as the affordance contract.
       const rule = ruleBody("#regenerateBtn");
+      const tile = ruleBody(".vsdb-chat-actions button");
       const secondaryBody = ruleBody(".vsdb-chat-secondary");
       const hasInline = /(padding|margin|font-size|color|background|border|cursor):\s*[^\s;]/i.test(
         rule,
       );
+      const hasTile = /(width|height|cursor):\s*[^\s;]/i.test(tile);
       const hasSecondaryClass = /\.vsdb-chat-secondary/.test(css);
       expect(
-        hasInline || hasSecondaryClass,
-        "#regenerateBtn must be styled inline OR inherit from .vsdb-chat-secondary (which must itself be styled)",
+        hasInline || hasTile || hasSecondaryClass,
+        "#regenerateBtn must be styled by the shared .vsdb-chat-actions button tile, styled inline, OR inherit from .vsdb-chat-secondary",
       ).toBe(true);
-      if (!hasInline) {
-        // Fallback path: regenerateBtn shares .vsdb-chat-secondary — make sure
-        // that class has at least minimal button styling (font-size + cursor).
+      if (!hasInline && !hasTile) {
+        // Legacy fallback path: regenerateBtn shares .vsdb-chat-secondary —
+        // make sure that class has at least minimal button styling.
         expect(secondaryBody, ".vsdb-chat-secondary rule block must exist").not.toBe("");
         expect(
           /(font-size|padding|cursor):\s*[^\s;]/i.test(secondaryBody),
