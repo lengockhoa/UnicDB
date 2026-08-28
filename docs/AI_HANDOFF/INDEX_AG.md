@@ -4,7 +4,7 @@ Cycle AG — **AI CHAT COMPOSER: ICON-ONLY TOOLBAR WITH HOVER TOOLTIPS**: 5 text
 
 | Task | Title | Status | Dependencies | Reviewer |
 |------|-------|--------|--------------|----------|
-| TASK-AG-001 | Composer toolbar → icon-only SVG buttons with hover tooltips | ready | none | - |
+| TASK-AG-001 | Composer toolbar → icon-only SVG buttons with hover tooltips | pending_review | none | - |
 
 Graph: TASK-AG-001 (single task, wave 1).
 

@@ -8,6 +8,7 @@ All notable changes to VSDB are documented in this file. The format follows
 ### Added
 - **SQL Console v2**: multi-tab console (create/switch/close/rename, host-side buffers that survive panel reload), per-statement run (run only the statement at a given index), selection-only run, query history persisted in global state (`vsdb.consoleHistory`, capped at 200 entries) with ArrowUp/ArrowDown recall, an EXPLAIN / EXPLAIN ANALYZE plan pane (ANALYZE executes only behind the existing destructive-confirm gate), and a Format button backed by the new `formatSql` core module.
 - **`vsdb.consoleNewTab` command**: opens a fresh tab in the SQL Console.
+- **AI Chat composer icon-only toolbar** (TASK-AG-001): the six composer action buttons (Resume session, Clear conversation, Regenerate, Stop, Attach image, Send) now render as 28×28 square icon tiles with 16×16 inline SVG glyphs (currentColor, same drawing idiom as the results-grid toolbar). Labels moved to hover tooltips synced 1:1 with `aria-label` accessible names; busy-state and vision-incapable attach tooltip behavior is unchanged.
 
 ## [1.12.0] — 2026-08-28
 

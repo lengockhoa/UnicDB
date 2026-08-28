@@ -431,15 +431,102 @@ function setBusy(busy: boolean): void {
   if (resumeBtn) resumeBtn.disabled = busy;
   if (regenBtn) regenBtn.disabled = busy;
   // Attach: disabled while busy OR when the active model can't see images.
+  // TASK-AG-001: the title/aria-label pair is re-asserted together so the
+  // hover tooltip and the accessible name never drift apart.
   if (attachBtn) {
     attachBtn.disabled = busy || !state.visionCapable;
-    attachBtn.title = !state.visionCapable
+    const attachLabel = !state.visionCapable
       ? "Current model does not support images"
-      : "Attach image";
+      : COMPOSER_ICONS.attachBtn.label;
+    attachBtn.title = attachLabel;
+    attachBtn.setAttribute("aria-label", attachLabel);
   }
   const prompt = document.getElementById("prompt") as HTMLTextAreaElement | null;
   if (prompt) prompt.disabled = busy;
 }
+/** TASK-AG-001 — icon-only composer toolbar. Each action button renders a
+ * 16×16 inline SVG (stroke="currentColor", same drawing idiom as the grid
+ * toolbar in webview/main.ts) with its text label carried by title +
+ * aria-label instead of visible text. The map is the single source of truth
+ * for the tooltip string so the hover tooltip and the accessible name can
+ * never drift apart. */
+interface ComposerIconDef {
+  label: string;
+  svg: string;
+}
+const COMPOSER_ICONS: Record<string, ComposerIconDef> = {
+  resumeBtn: {
+    label: "Resume session",
+    svg:
+      // history / clock-rewind — arc + rewind arrow + clock hands.
+      '<path d="M3.5 8a4.5 4.5 0 1 0 1.3-3.2" />' +
+      '<path d="M3.5 3.5 V6.5 H6.5" />' +
+      '<path d="M8 5.5 V8 L9.8 9.5" />',
+  },
+  clearBtn: {
+    label: "Clear conversation",
+    svg:
+      // trash — lid + body + handle (same glyph as the grid delete-row icon).
+      '<path d="M3 5 H13" />' +
+      '<path d="M5 5 V13 a1 1 0 0 0 1 1 h4 a1 1 0 0 0 1 -1 V5" />' +
+      '<path d="M6 5 V3.5 a0.5 0.5 0 0 1 0.5 -0.5 h3 a0.5 0.5 0 0 1 0.5 0.5 V5" />' +
+      '<path d="M6.8 7.5 V11.5" />' +
+      '<path d="M9.2 7.5 V11.5" />',
+  },
+  regenerateBtn: {
+    label: "Regenerate",
+    svg:
+      // counter-clockwise return arrow — "run the turn again".
+      '<path d="M12.5 8a4.5 4.5 0 1 1-1.3-3.2" />' +
+      '<path d="M12.5 3.5 V6.5 H9.5" />',
+  },
+  stopBtn: {
+    label: "Stop",
+    svg:
+      // filled square — universal stop glyph.
+      '<rect x="4" y="4" width="8" height="8" rx="1" fill="currentColor" stroke="none" />',
+  },
+  attachBtn: {
+    label: "Attach image",
+    svg:
+      // paperclip — nested rounded loops on a diagonal.
+      '<path d="M14.3 7.4 8.2 13.5a4 4 0 0 1-5.7-5.7l5.7-5.7A2.7 2.7 0 1 1 12 5.9l-5.7 5.7a1.4 1.4 0 0 1-1.9-1.9l5.7-5.7" />',
+  },
+  sendBtn: {
+    label: "Send",
+    svg:
+      // paper plane — classic send glyph with fold line.
+      '<path d="M14.7 1.3 7.3 8.7" />' +
+      '<path d="M14.7 1.3 10 14.7 7.3 8.7 1.3 6 14.7 1.3 Z" />',
+  },
+};
+
+/** The shared 16×16 currentColor svg for a composer icon (TASK-AG-001).
+ * aria-hidden + focusable="false" so screen readers skip the glyph and read
+ * the button's aria-label (=== title) instead. */
+function composerIconSvg(id: string): string {
+  const def = COMPOSER_ICONS[id];
+  return (
+    `<svg viewBox="0 0 16 16" width="16" height="16"` +
+    ` xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor"` +
+    ` stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"` +
+    ` aria-hidden="true" focusable="false">${def.svg}</svg>`
+  );
+}
+
+/** Render one icon-only composer button from the COMPOSER_ICONS map — the
+ * single source of truth for the tooltip string, so the hover tooltip and
+ * the accessible name can never drift apart. */
+function iconButtonHtml(id: string, className: string): string {
+  const def = COMPOSER_ICONS[id];
+  const cls = className ? ` class="${className}"` : "";
+  return (
+    `<button type="button" id="${id}"${cls}` +
+    ` title="${def.label}" aria-label="${def.label}">` +
+    `${composerIconSvg(id)}</button>`
+  );
+}
+
 function renderInitial(): void {
   root.innerHTML = `
   <div class="vsdb-chat-thread" id="thread" aria-live="polite"></div>
@@ -448,12 +535,12 @@ function renderInitial(): void {
     <div class="vsdb-chat-attachments" id="attachStrip" hidden></div>
     <textarea id="prompt" rows="3" placeholder="Ask about your database…"></textarea>
     <div class="vsdb-chat-actions">
-      <button id="resumeBtn" class="vsdb-chat-secondary">Resume session</button>
-      <button id="clearBtn">Clear</button>
-      <button id="regenerateBtn" class="vsdb-chat-secondary" title="Regenerate last response">Regenerate</button>
-      <button id="stopBtn" class="vsdb-chat-secondary">Stop</button>
-      <button type="button" id="attachBtn" class="vsdb-chat-attach-btn" title="Attach image" aria-label="Attach image">+</button>
-      <button id="sendBtn" class="vsdb-chat-primary">Send</button>
+      ${iconButtonHtml("resumeBtn", "vsdb-chat-secondary")}
+      ${iconButtonHtml("clearBtn", "")}
+      ${iconButtonHtml("regenerateBtn", "vsdb-chat-secondary")}
+      ${iconButtonHtml("stopBtn", "vsdb-chat-secondary")}
+      <button type="button" id="attachBtn" class="vsdb-chat-attach-btn" title="Attach image" aria-label="Attach image">${composerIconSvg("attachBtn")}</button>
+      ${iconButtonHtml("sendBtn", "vsdb-chat-primary")}
     </div>
   </div>`;
   // Hidden file input lives on <body> (not inside the composer card) so

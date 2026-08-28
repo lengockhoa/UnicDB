@@ -125,15 +125,6 @@ function inputEl(id: string): HTMLTextAreaElement {
 function btn(id: string): HTMLButtonElement {
   return document.getElementById(id) as HTMLButtonElement;
 }
-function btnContaining(
-  root: HTMLElement,
-  fragment: string,
-): HTMLButtonElement | null {
-  for (const b of Array.from(root.querySelectorAll("button"))) {
-    if (b.textContent?.includes(fragment)) return b;
-  }
-  return null;
-}
 
 beforeEach(() => {
   document.body.innerHTML = "";
@@ -627,7 +618,9 @@ describe("AiChatPanelWebview — Esc dismisses resume picker (TASK-002 #12)", ()
     h.dispatch({ type: "init", hasHistory: false });
 
     // Open the picker.
-    const resumeBtn = btnContaining(h.root, "Resume");
+    const resumeBtn = document.getElementById(
+      "resumeBtn",
+    ) as HTMLButtonElement | null;
     resumeBtn?.click();
     h.dispatch({
       type: "resume_sessions",

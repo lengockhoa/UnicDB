@@ -966,16 +966,35 @@
   justify-content: flex-end;
 }
 .vsdb-chat-actions button {
-  padding: 4px 12px;
+  /* TASK-AG-001: icon-only buttons — square tile around a 16×16 glyph. */
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: var(--vscode-button-secondaryBackground, #3a3d41);
   color: var(--vscode-button-secondaryForeground, #cccccc);
   border: none;
   border-radius: 2px;
   cursor: pointer;
 }
+.vsdb-chat-actions button svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+  pointer-events: none;
+}
+.vsdb-chat-actions button:hover:not(:disabled) {
+  background: var(--vsdb-input-hover-bg);
+}
 .vsdb-chat-actions button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+.vsdb-chat-actions button:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007acc);
+  outline-offset: 1px;
 }
 .vsdb-chat-primary {
   background: var(--vscode-button-background, #0e639c) !important;
@@ -1446,14 +1465,9 @@ body.vsdb-chat-body {
   50% { opacity: 0; }
 }
 
-/* #regenerateBtn inherits .vsdb-chat-secondary but we also restate minimal
- * sizing here so the test's hasInline check passes (button-level affordance
- * must be visually distinct from the primary Send). */
-#regenerateBtn {
-  font-size: 12px;
-  padding: 4px 10px;
-  cursor: pointer;
-}
+/* #regenerateBtn is now an icon tile (TASK-AG-001); the shared
+ * .vsdb-chat-actions button rules size and style it — no per-ID override
+ * remains. */
 
 /* --- TASK-003 cycle AB — image-attach strip + button + warning + dark theme --
  * Style hooks consumed by TASK-002 webview (ui/aiChatPanelMain.ts). All colors

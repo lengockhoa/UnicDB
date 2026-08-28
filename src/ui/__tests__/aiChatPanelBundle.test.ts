@@ -145,13 +145,9 @@ describeIfBundle("webview/aiChatPanelMain.ts bundle (TASK-004 Resume)", () => {
     const { received: _r } = loadBundle();
     dispatch({ type: "init", hasHistory: false });
     const root = document.getElementById("vsdb-root") as HTMLDivElement;
-    let resumeBtn: HTMLButtonElement | null = null;
-    for (const b of Array.from(root.querySelectorAll("button"))) {
-      if ((b.textContent ?? "").includes("Resume")) {
-        resumeBtn = b;
-        break;
-      }
-    }
+    const resumeBtn = document.getElementById(
+      "resumeBtn",
+    ) as HTMLButtonElement | null;
     expect(resumeBtn).not.toBeNull();
     expect(resumeBtn?.disabled).toBe(false);
   });
@@ -160,13 +156,9 @@ describeIfBundle("webview/aiChatPanelMain.ts bundle (TASK-004 Resume)", () => {
     const { received } = loadBundle();
     dispatch({ type: "init", hasHistory: false });
     const root = document.getElementById("vsdb-root") as HTMLDivElement;
-    let resumeBtn: HTMLButtonElement | null = null;
-    for (const b of Array.from(root.querySelectorAll("button"))) {
-      if ((b.textContent ?? "").includes("Resume")) {
-        resumeBtn = b;
-        break;
-      }
-    }
+    const resumeBtn = document.getElementById(
+      "resumeBtn",
+    ) as HTMLButtonElement | null;
     expect(resumeBtn).not.toBeNull();
     resumeBtn?.click();
     const listPosts = received.filter((m) => m.type === "resume_list");
@@ -177,13 +169,9 @@ describeIfBundle("webview/aiChatPanelMain.ts bundle (TASK-004 Resume)", () => {
     const { received } = loadBundle();
     dispatch({ type: "init", hasHistory: false });
     const root = document.getElementById("vsdb-root") as HTMLDivElement;
-    let resumeBtn: HTMLButtonElement | null = null;
-    for (const b of Array.from(root.querySelectorAll("button"))) {
-      if ((b.textContent ?? "").includes("Resume")) {
-        resumeBtn = b;
-        break;
-      }
-    }
+    const resumeBtn = document.getElementById(
+      "resumeBtn",
+    ) as HTMLButtonElement | null;
     resumeBtn?.click();
     dispatch({
       type: "resume_sessions",
@@ -199,3 +187,118 @@ describeIfBundle("webview/aiChatPanelMain.ts bundle (TASK-004 Resume)", () => {
     expect(allText).not.toMatch(/api_?key/i);
   });
 });
+
+
+// ============================================================================
+// TASK-AG-001 — icon-only composer toolbar (inline SVG + hover tooltips)
+// ============================================================================
+
+/** The six composer action buttons, in DOM order. */
+const COMPOSER_BUTTON_IDS = [
+  "resumeBtn",
+  "clearBtn",
+  "regenerateBtn",
+  "stopBtn",
+  "attachBtn",
+  "sendBtn",
+] as const;
+
+describeIfBundle(
+  "webview/aiChatPanelMain.ts bundle (TASK-AG-001 icon-only composer)",
+  () => {
+    itIfBundle(
+      "#AG1 each composer button renders exactly one inline SVG icon",
+      () => {
+        loadBundle();
+        dispatch({ type: "init", hasHistory: false });
+        for (const id of COMPOSER_BUTTON_IDS) {
+          const b = btn(id);
+          expect(
+            b,
+            `#${id} must exist in the composer actions row`,
+          ).not.toBeNull();
+          const svgs = b.querySelectorAll("svg");
+          expect(svgs.length, `#${id} must contain exactly one <svg>`).toBe(1);
+          expect(
+            svgs[0]?.getAttribute("aria-hidden"),
+            `#${id} svg must be aria-hidden`,
+          ).toBe("true");
+        }
+      },
+    );
+
+    itIfBundle("#AG2 composer actions row carries zero visible text labels", () => {
+      loadBundle();
+      dispatch({ type: "init", hasHistory: false });
+      for (const id of COMPOSER_BUTTON_IDS) {
+        const b = btn(id);
+        expect(
+          (b.textContent ?? "").trim(),
+          `#${id} must be icon-only (no visible text)`,
+        ).toBe("");
+      }
+    });
+
+    itIfBundle(
+      "#AG3 every composer button has a non-empty title synced with aria-label",
+      () => {
+        loadBundle();
+        dispatch({ type: "init", hasHistory: false });
+        for (const id of COMPOSER_BUTTON_IDS) {
+          const b = btn(id);
+          const title = b.getAttribute("title") ?? "";
+          const aria = b.getAttribute("aria-label") ?? "";
+          expect(title, `#${id} must carry a hover tooltip`).not.toBe("");
+          expect(aria, `#${id} must carry an accessible name`).not.toBe("");
+          expect(
+            title === aria,
+            `#${id} title and aria-label must match ("${title}" vs "${aria}")`,
+          ).toBe(true);
+        }
+      },
+    );
+
+    itIfBundle(
+      "#AG7 composer click handlers still post send/stop/clear/regenerate/resume_list",
+      () => {
+        const { received } = loadBundle();
+        dispatch({ type: "init", hasHistory: false });
+        inputEl("prompt").value = "go";
+        btn("sendBtn").click();
+        btn("stopBtn").click();
+        btn("clearBtn").click();
+        // Clear's host reply (init{hasHistory:false}) un-busies the panel;
+        // emulate it so the busy guards on regenerate/resume handlers let
+        // their posts through (both guard on state.busy by design).
+        dispatch({ type: "init", hasHistory: false });
+        btn("regenerateBtn").click();
+        btn("resumeBtn").click();
+        const types = received.map((m) => m.type);
+        expect(types).toContain("send");
+        expect(types).toContain("stop");
+        expect(types).toContain("clear");
+        expect(types).toContain("regenerate");
+        expect(types).toContain("resume_list");
+      },
+    );
+
+    itIfBundle(
+      "#AG8 resume flow keeps working via #resumeBtn (selector migration)",
+      () => {
+        const { received } = loadBundle();
+        dispatch({ type: "init", hasHistory: false });
+        btn("resumeBtn").click();
+        const listPosts = received.filter((m) => m.type === "resume_list");
+        expect(listPosts).toHaveLength(1);
+      },
+    );
+
+    itIfBundle("#AG9 .vsdb-btn svg sizing rule stays intact in styles.css", () => {
+      const cssPath = resolve(process.cwd(), "webview", "styles.css");
+      const css = readFileSync(cssPath, "utf8");
+      expect(/\.vsdb-btn svg\s*\{[^}]*pointer-events:\s*none/.test(css)).toBe(
+        true,
+      );
+    });
+  },
+);
