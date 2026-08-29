@@ -1,8 +1,8 @@
 # TASK-AG-001 — Composer toolbar → icon-only SVG buttons with hover tooltips
 
-- Status: `pending_review`
-- Owner: `-`
-- Reviewer: `-`
+- Status: `done`
+- Owner: `unic-code`
+- Reviewer: `main verification`
 - Parent plan: `docs/AI_HANDOFF/PLAN_AG.md` §7
 
 ## Goal
@@ -115,5 +115,5 @@ npm run compile
     result: 2032 pass / 0 fail / 2 skipped (139 files: 138 passed, 1 skipped)
   - command: npm run compile → exit 0 ("esbuild: build complete")
 - ISSUES: none
-- HANDOFF_TO_REVIEWER: yes — task status set to `pending_review` in INDEX_AG.md and this file; reviewer must use a different model than unic-code.
-- NEXT: ready for review.
+- HANDOFF_TO_REVIEWER: no — main verification complete; release v1.12.0.
+- NEXT: released in v1.12.0; main verification passed.

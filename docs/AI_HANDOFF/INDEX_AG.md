@@ -1,10 +1,10 @@
 # INDEX_AG
 
-Cycle AG — **AI CHAT COMPOSER: ICON-ONLY TOOLBAR WITH HOVER TOOLTIPS**: 5 text buttons → inline SVG icons + native title tooltips, a11y via aria-label. Release target v1.11.1. Plan: PLAN_AG.md.
+Cycle AG — **AI CHAT COMPOSER: ICON-ONLY TOOLBAR WITH HOVER TOOLTIPS**: inline SVG icons + native title tooltips, a11y via aria-label. Released in v1.12.0. Plan: PLAN_AG.md.
 
 | Task | Title | Status | Dependencies | Reviewer |
 |------|-------|--------|--------------|----------|
-| TASK-AG-001 | Composer toolbar → icon-only SVG buttons with hover tooltips | pending_review | none | - |
+| TASK-AG-001 | Composer toolbar → icon-only SVG buttons with hover tooltips | done | none | main verification |
 
 Graph: TASK-AG-001 (single task, wave 1).
 

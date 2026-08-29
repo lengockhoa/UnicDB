@@ -1,10 +1,10 @@
 # INDEX_AI
 
-Cycle AI — **RESULTS PANEL OPENS BELOW THE EDITOR**: configurable below/beside initial placement; existing panel reveal preserves user-dragged position. Release target = next free patch (1.11.2 unless taken). Plan: PLAN_AI.md.
+Cycle AI — **RESULTS PANEL OPENS BELOW THE EDITOR**: configurable below/beside initial placement; existing panel reveal preserves user-dragged position. Released in v1.12.0. Plan: PLAN_AI.md.
 
 | Task | Title | Status | Dependencies | Reviewer |
 |------|-------|--------|--------------|----------|
-| TASK-AI-001 | Configurable below/beside initial placement + preserve existing panel group | pending_review | none | - |
+| TASK-AI-001 | Configurable below/beside initial placement + preserve existing panel group | done | none | main verification |
 
 Graph: TASK-AI-001 (single task, wave 1).
 

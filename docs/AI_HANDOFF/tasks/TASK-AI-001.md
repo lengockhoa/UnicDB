@@ -1,8 +1,8 @@
 # TASK-AI-001 — Configurable below/beside initial placement + preserve existing panel group
 
-- Status: `pending_review`
-- Owner: `-`
-- Reviewer: `-`
+- Status: `done`
+- Owner: `unic-code`
+- Reviewer: `main verification`
 - Parent plan: `docs/AI_HANDOFF/PLAN_AI.md` §7 (Approach §3)
 
 ## Goal
@@ -103,6 +103,6 @@ VERIFICATION:
          Tests  2027 passed | 2 skipped (2029)
     typecheck exit=0; compile exit=0
 ISSUES: none. RED output (before implementation): T1 `expected "spy" to be called 1 times, but got 0 times`; T3a `expected undefined not to be undefined`; T4+T5 `expected [ 1 ] to have a length of +0 but got 1` (4 failed | 24 passed — exactly the intended failures; existing suite untouched). Test #6 note: NO existing test asserted the Beside default, so no expectation flips were needed (verified by grep across resultsPanel*.test.ts + manualCommit.test.ts). Mid-implementation full-suite run surfaced 104 sibling failures ("No commands export on vscode mock" in 7 minimal-mock suites) — fixed in PRODUCTION code with namespace narrowing (canExecuteCommands guard), not by touching sibling test files; those files remain byte-identical.
-HANDOFF_TO_REVIEWER: yes — task status flipped to pending_review in INDEX.md.
-NEXT: ready for review.
+HANDOFF_TO_REVIEWER: no — main verification complete; release v1.12.0.
+NEXT: released in v1.12.0; main verification passed.
 ```
