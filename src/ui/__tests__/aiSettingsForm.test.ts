@@ -170,9 +170,11 @@ const validSettings: AiSettings = {
   models: {
     work: { modelId: "gpt-4o-mini", vision: true },
     smart: { modelId: "gpt-4o", vision: false },
+    autocomplete: { modelId: "", vision: false },
   },
   engine: "builtin",
 };
+
 
 const invalidSettings: AiSettings = {
   baseUrl: "not-a-url",
@@ -182,6 +184,7 @@ const invalidSettings: AiSettings = {
   models: {
     work: { modelId: "gpt-4o-mini", vision: true },
     smart: { modelId: "gpt-4o", vision: false },
+    autocomplete: { modelId: "", vision: false },
   },
   engine: "builtin",
 };

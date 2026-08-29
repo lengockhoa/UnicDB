@@ -88,6 +88,7 @@ function validSettings(): AiSettings {
     models: {
       work: { modelId: "gpt-4o-mini", vision: true },
       smart: { modelId: "gpt-4o", vision: false },
+      autocomplete: { modelId: "", vision: false },
     },
   };
 }

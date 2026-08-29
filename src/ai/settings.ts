@@ -4,7 +4,12 @@
 // Spec: docs/AI_HANDOFF/tasks/TASK-001.md §Spec (normative, frozen).
 
 export type AiCompletionMethod = "responses" | "chat/completions";
-export type AiModelRole = "work" | "smart";
+/**
+ * Cycle AIC — adds a third, free-form OpenAI-compatible model role used only
+ * for SQL ghost-text autocomplete. An empty `modelId` means the feature is
+ * disabled (NOT invalid); work/smart remain required.
+ */
+export type AiModelRole = "work" | "smart" | "autocomplete";
 /**
  * Cycle AE TASK-003 §Engine selection — chat engine routing.
  * `"builtin"` runs `runAgent` against `provider.completeStream`. `"omp"`
@@ -42,6 +47,7 @@ export function defaultAiSettings(): AiSettings {
     models: {
       work: { modelId: "", vision: true },
       smart: { modelId: "", vision: false },
+      autocomplete: { modelId: "", vision: false },
     },
     engine: "builtin",
   };
@@ -51,8 +57,8 @@ const TIMEOUT_MIN = 1000;
 const TIMEOUT_MAX = 600000;
 const MAX_STEPS_MIN = 1;
 const MAX_STEPS_MAX = 100;
+const AI_MODEL_ROLES: readonly AiModelRole[] = ["work", "smart", "autocomplete"];
 
-const AI_MODEL_ROLES: readonly AiModelRole[] = ["work", "smart"];
 
 /**
  * Validate `AiSettings`. Returns list of error messages (empty ⇒ valid).
@@ -89,20 +95,26 @@ export function aiSettingsErrors(s: AiSettings): string[] {
     errors.push("Max steps must be between 1 and 100");
   }
 
-  // models
+  // models — Cycle AIC: autocomplete is allowed to be empty (means feature
+  // disabled). work + smart remain required.
   const models = s.models;
   if (!models || typeof models !== "object") {
-    errors.push("models must define both work and smart roles");
+    errors.push("models must define work, smart, and autocomplete roles");
   } else {
     for (const role of AI_MODEL_ROLES) {
       if (!(role in models)) {
-        errors.push("models must define both work and smart roles");
+        errors.push("models must define work, smart, and autocomplete roles");
         break;
       }
     }
     for (const role of AI_MODEL_ROLES) {
       const m = models[role];
       if (!m || typeof m !== "object" || typeof m.modelId !== "string" || m.modelId.trim() === "") {
+        if (role === "autocomplete") {
+          // Empty autocomplete = feature disabled, not invalid. Skip the
+          // error so legacy two-role valid configs aren't blocked.
+          continue;
+        }
         errors.push(`Model is required for role: ${role}`);
       }
     }
@@ -138,6 +150,10 @@ export function redactAiConfig(cfg: AiConfig): AiSettings {
     models: {
       work: { modelId: cfg.models.work.modelId, vision: cfg.models.work.vision },
       smart: { modelId: cfg.models.smart.modelId, vision: cfg.models.smart.vision },
+      autocomplete: {
+        modelId: cfg.models.autocomplete?.modelId ?? "",
+        vision: cfg.models.autocomplete?.vision ?? false,
+      },
     },
     engine,
   };

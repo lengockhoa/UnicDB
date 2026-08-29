@@ -17,7 +17,7 @@ const vscodeApi =
   typeof acquireVsCodeApi === "function" ? acquireVsCodeApi() : null;
 
 type Method = "responses" | "chat/completions";
-type Role = "work" | "smart";
+type Role = "work" | "smart" | "autocomplete";
 
 interface InitMsg {
   type: "init";
@@ -74,6 +74,7 @@ const state: State = {
     models: {
       work: { modelId: "", vision: true },
       smart: { modelId: "", vision: false },
+      autocomplete: { modelId: "", vision: false },
     },
   },
   hasApiKey: false,
@@ -92,7 +93,13 @@ function select(id: string): HTMLSelectElement {
   return document.getElementById(id) as HTMLSelectElement;
 }
 
-function readSettings(): State["settings"] {
+function readSettings(): {
+  baseUrl: string;
+  method: Method;
+  timeoutMs: number;
+  maxSteps: number;
+  models: Record<Role, { modelId: string; vision: boolean }>;
+} {
   return {
     baseUrl: input("baseUrl").value.trim(),
     method: select("method").value as Method,
@@ -106,6 +113,10 @@ function readSettings(): State["settings"] {
       smart: {
         modelId: input("modelSmart").value.trim(),
         vision: input("visionSmart").checked,
+      },
+      autocomplete: {
+        modelId: input("modelAutocomplete").value.trim(),
+        vision: false,
       },
     },
   };
@@ -135,7 +146,7 @@ function validateSettings(s: State["settings"]): string[] {
     errors.push("Max steps must be between 1 and 100");
   }
   if (!s.models || typeof s.models !== "object") {
-    errors.push("models must define both work and smart roles");
+    errors.push("models must define work, smart, and autocomplete roles");
   } else {
     for (const role of ["work", "smart"] as const) {
       const m = s.models[role];
@@ -143,6 +154,7 @@ function validateSettings(s: State["settings"]): string[] {
         errors.push(`Model is required for role: ${role}`);
       }
     }
+    // Cycle AIC: empty autocomplete is allowed (feature disabled), not invalid.
   }
   return errors;
 }
@@ -207,20 +219,26 @@ function escapeHtml(s: string): string {
   });
 }
 
-function modelBlock(role: Role, label: string, defaultVision: boolean): string {
+function modelBlock(role: Role, label: string, defaultVision: boolean, opts: { placeholder?: string; showVision?: boolean } = {}): string {
+  const id = role[0].toUpperCase() + role.slice(1);
+  const placeholder = opts.placeholder ?? "gpt-4o-mini";
+  const showVision = opts.showVision ?? true;
+  const visionHtml = showVision
+    ? `<div class="vsdb-field">
+          <label class="vsdb-form-check">
+            <input id="vision${id}" type="checkbox"${defaultVision ? " checked" : ""} /> Vision-capable
+          </label>
+        </div>`
+    : "";
   return `
     <div class="vsdb-form-section">
       <h3>${label} model</h3>
       <div class="vsdb-row">
         <div class="vsdb-field grow">
-          <label for="model${role[0].toUpperCase()}${role.slice(1)}">Model ID <span class="req">*</span></label>
-          <input id="model${role[0].toUpperCase()}${role.slice(1)}" type="text" placeholder="gpt-4o-mini" />
+          <label for="model${id}">Model ID <span class="req">*</span></label>
+          <input id="model${id}" type="text" placeholder="${escapeHtml(placeholder)}" />
         </div>
-        <div class="vsdb-field">
-          <label class="vsdb-form-check">
-            <input id="vision${role[0].toUpperCase()}${role.slice(1)}" type="checkbox"${defaultVision ? " checked" : ""} /> Vision-capable
-          </label>
-        </div>
+        ${visionHtml}
       </div>
     </div>`;
 }
@@ -258,6 +276,9 @@ function render(): void {
 
   ${modelBlock("work", "Work", true)}
   ${modelBlock("smart", "Smart", false)}
+  ${modelBlock("autocomplete", "Autocomplete (SQL ghost text)", false, { placeholder: "vendor/free-fast-sql", showVision: false })}
+
+
 
   <div class="vsdb-form-section">
     <h3>API key</h3>
@@ -278,7 +299,7 @@ function render(): void {
   </div>`;
 
   // Wire change handlers — live-validate on every edit.
-  for (const id of ["baseUrl", "timeoutMs", "maxSteps", "modelWork", "modelSmart", "apiKey"]) {
+  for (const id of ["baseUrl", "timeoutMs", "maxSteps", "modelWork", "modelSmart", "modelAutocomplete", "apiKey"]) {
     const el = document.getElementById(id) as HTMLInputElement | null;
     el?.addEventListener("input", () => refreshOkButton(validateSettings(readSettings())));
     el?.addEventListener("change", () => refreshOkButton(validateSettings(readSettings())));
@@ -320,9 +341,9 @@ function applyInit(msg: InitMsg): void {
   input("baseUrl").value = msg.settings.baseUrl;
   select("method").value = msg.settings.method;
   input("timeoutMs").value = String(msg.settings.timeoutMs);
-  input("maxSteps").value = String(msg.settings.maxSteps);
   input("modelWork").value = msg.settings.models.work.modelId;
   input("modelSmart").value = msg.settings.models.smart.modelId;
+  input("modelAutocomplete").value = msg.settings.models.autocomplete?.modelId ?? "";
   (input("visionWork") as HTMLInputElement).checked =
     msg.settings.models.work.vision;
   (input("visionSmart") as HTMLInputElement).checked =

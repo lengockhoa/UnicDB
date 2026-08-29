@@ -1,5 +1,6 @@
 // src/ai/__tests__/settings.test.ts
-// Unit tests cho src/ai/settings.ts (pure) — TASK-001 §Test Cases #1..#7.
+// Unit tests cho src/ai/settings.ts (pure) — TASK-001 §Test Cases #1..#7
+// + Cycle AIC §4 (autocomplete role is allowed to be empty).
 import { describe, it, expect } from "vitest";
 import {
   defaultAiSettings,
@@ -10,7 +11,7 @@ import {
 import type { AiSettings, AiConfig } from "../settings";
 
 describe("ai/settings — defaults + validation + helpers", () => {
-  it("Test #1 — defaultAiSettings exact literal", () => {
+  it("Test #1 — defaultAiSettings exact literal (work + smart + autocomplete)", () => {
     expect(defaultAiSettings()).toEqual({
       baseUrl: "https://api.openai.com/v1",
       method: "chat/completions",
@@ -19,17 +20,31 @@ describe("ai/settings — defaults + validation + helpers", () => {
       models: {
         work: { modelId: "", vision: true },
         smart: { modelId: "", vision: false },
+        autocomplete: { modelId: "", vision: false },
       },
       engine: "builtin",
     });
   });
 
-  it("Test #2 — valid → no errors", () => {
+  it("Test #2 — valid (all three roles populated) → no errors", () => {
     const s: AiSettings = {
       ...defaultAiSettings(),
       models: {
         work: { modelId: "gpt-4o-mini", vision: true },
         smart: { modelId: "gpt-4o", vision: false },
+        autocomplete: { modelId: "vendor/free-fast-sql", vision: false },
+      },
+    };
+    expect(aiSettingsErrors(s)).toEqual([]);
+  });
+
+  it("Test #2b (Cycle AIC regression) — empty autocomplete role is valid", () => {
+    const s: AiSettings = {
+      ...defaultAiSettings(),
+      models: {
+        work: { modelId: "gpt-4o-mini", vision: true },
+        smart: { modelId: "gpt-4o", vision: false },
+        autocomplete: { modelId: "", vision: false },
       },
     };
     expect(aiSettingsErrors(s)).toEqual([]);
@@ -44,6 +59,7 @@ describe("ai/settings — defaults + validation + helpers", () => {
       models: {
         work: { modelId: "", vision: true },
         smart: { modelId: "ok", vision: false },
+        autocomplete: { modelId: "", vision: false },
       },
       engine: "builtin",
     } as AiSettings;
@@ -69,22 +85,13 @@ describe("ai/settings — defaults + validation + helpers", () => {
       models: {
         work: { modelId: "m", vision: true },
         smart: { modelId: "m", vision: false },
+        autocomplete: { modelId: "", vision: false },
       },
       engine: "builtin",
     };
   }
   it("Test #4 — bounds inclusive", () => {
-    const base: AiSettings = {
-      baseUrl: "http://localhost:8080/v1",
-      method: "responses",
-      timeoutMs: 1000,
-      maxSteps: 1,
-      models: {
-        work: { modelId: "m", vision: true },
-        smart: { modelId: "m", vision: false },
-      },
-      engine: "builtin",
-    };
+    const base: AiSettings = base2();
     expect(aiSettingsErrors(base)).toEqual([]);
     const tLower: AiSettings = { ...base, timeoutMs: 999 };
     expect(aiSettingsErrors(tLower)).toContain(
@@ -111,9 +118,9 @@ describe("ai/settings — defaults + validation + helpers", () => {
   });
 
   it("Test #4b (R1 fix regression) — null/non-object role entry or non-string modelId is rejected", () => {
-    const bad1 = { ...base2(), models: { work: null, smart: { modelId: "m", vision: false } } } as unknown as AiSettings;
+    const bad1 = { ...base2(), models: { work: null, smart: { modelId: "m", vision: false }, autocomplete: { modelId: "", vision: false } } } as unknown as AiSettings;
     expect(aiSettingsErrors(bad1)).toContain("Model is required for role: work");
-    const bad2 = { ...base2(), models: { work: { modelId: 42, vision: true }, smart: { modelId: "m", vision: false } } } as unknown as AiSettings;
+    const bad2 = { ...base2(), models: { work: { modelId: 42, vision: true }, smart: { modelId: "m", vision: false }, autocomplete: { modelId: "", vision: false } } } as unknown as AiSettings;
     expect(aiSettingsErrors(bad2)).toContain("Model is required for role: work");
   });
 
@@ -135,22 +142,40 @@ describe("ai/settings — defaults + validation + helpers", () => {
     expect(normalizeBaseUrl("not-a-url")).toBe("not-a-url");
   });
 
-  it("Test #7 — redactAiConfig strips apiKey only", () => {
+  it("Test #7 — redactAiConfig strips apiKey only, preserves all three roles", () => {
     const cfg: AiConfig = {
       ...defaultAiSettings(),
       apiKey: "sk-very-secret",
     };
+    cfg.models.autocomplete = { modelId: "vendor/free-fast-sql", vision: false };
     const red = redactAiConfig(cfg);
     expect(Object.keys(red).sort()).toEqual(
       ["baseUrl", "engine", "maxSteps", "method", "models", "timeoutMs"].sort(),
     );
     expect((red as unknown as Record<string, unknown>).apiKey).toBeUndefined();
-    // Sanity: the 6 settings fields equal default.
     expect(red.baseUrl).toBe(cfg.baseUrl);
     expect(red.method).toBe(cfg.method);
     expect(red.timeoutMs).toBe(cfg.timeoutMs);
     expect(red.maxSteps).toBe(cfg.maxSteps);
     expect(red.models).toEqual(cfg.models);
     expect(red.engine).toBe("builtin");
+    expect(red.models.autocomplete.modelId).toBe("vendor/free-fast-sql");
+  });
+
+  it("Test #7b (Cycle AIC regression) — redactAiConfig tolerates missing autocomplete in input", () => {
+    const cfg = {
+      baseUrl: "https://x",
+      method: "chat/completions" as const,
+      timeoutMs: 60000,
+      maxSteps: 12,
+      models: {
+        work: { modelId: "m", vision: true },
+        smart: { modelId: "m", vision: false },
+      },
+      engine: "builtin" as const,
+      apiKey: "sk-x",
+    } as unknown as AiConfig;
+    const red = redactAiConfig(cfg);
+    expect(red.models.autocomplete).toEqual({ modelId: "", vision: false });
   });
 });

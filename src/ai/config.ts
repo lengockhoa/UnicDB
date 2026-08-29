@@ -42,9 +42,20 @@ export class AiConfigStore {
     // validation so `aiSettingsErrors()` does NOT flag the saved config
     // as invalid. Without this, every pre-cycle-AE user's settings load
     // returns null and the panel falls through to its empty-state flow.
+
+    // Cycle AIC — same idea for the new `autocomplete` role: pre-AIC
+    // configs lack it; add `{ modelId: "", vision: false }` so the
     const obj = parsed as Record<string, unknown>;
     if (obj.engine === undefined) {
       obj.engine = "builtin";
+      parsed = obj;
+    }
+
+
+    const modelsObj = obj.models as Record<string, unknown> | undefined;
+    if (modelsObj && typeof modelsObj === "object" && modelsObj.autocomplete === undefined) {
+      modelsObj.autocomplete = { modelId: "", vision: false };
+      obj.models = modelsObj;
       parsed = obj;
     }
     // Defense-in-depth: re-validate against the schema. Corrupted store ⇒ null.
@@ -110,6 +121,10 @@ export class AiConfigStore {
         smart: {
           modelId: settings.models.smart.modelId,
           vision: settings.models.smart.vision,
+        },
+        autocomplete: {
+          modelId: settings.models.autocomplete?.modelId ?? "",
+          vision: settings.models.autocomplete?.vision ?? false,
         },
       },
       engine: settings.engine,
