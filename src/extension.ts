@@ -12,15 +12,19 @@ import {
   qualifiedName,
   registerSchemaTreeProvider,
 } from "./ui/schemaTree";
+import { AdminTreeProvider } from "./ui/adminTree";
+import { AdminSessionsPanel } from "./ui/adminSessionsPanel";
+import { commandOpenGrantWizard } from "./ui/adminWizard";
 import { registerDdlView } from "./ui/ddlView";
-import { registerTableCommands } from "./ui/tableCommands";
 import { VsdbCodeLensProvider } from "./ui/codeLensProvider";
+import { registerTableCommands } from "./ui/tableCommands";
 import { ConnectionForm } from "./ui/connectionForm";
 import { sqlToRun, type SqlDialect } from "./core/statementParser";
 import {
   createKeywordTableCache,
   qualifyKeywordTables,
 } from "./core/keywordQualify";
+
 import { analyzeStatement, guardTier } from "./core/dangerousStatement";
 import { truncateAtBoundary } from "./core/text";
 import { AiConfigStore } from "./ai/config";
@@ -458,6 +462,88 @@ export async function activate(
     ),
   );
 
+  // ── TASK-AHL-004 — admin features (PG-only; mysql/mssql degrade).
+  // ADDITIVE: never modifies runStatements body or resultsPanel construction.
+  // The admin tree is a sibling view registered alongside vsdb.schemaTree;
+  // the sessions/locks panel is a separate webview panel opened by command.
+  const adminTree = new AdminTreeProvider(mgr);
+  const adminTreeView = vscode.window.createTreeView("vsdb.adminTree", {
+    treeDataProvider: adminTree,
+  });
+  disposables.push(adminTreeView);
+  context.subscriptions.push({ dispose: () => adminTree.dispose() });
+
+  // vsdb.refreshAdmin — invalidate the admin tree cache.
+  disposables.push(
+    vscode.commands.registerCommand("vsdb.refreshAdmin", () => {
+      adminTree.refresh();
+    }),
+  );
+
+  // vsdb.openSessionsPanel — open the sessions/locks webview for the
+  // active connection. Reuses the existing single-instance pattern.
+  disposables.push(
+    vscode.commands.registerCommand("vsdb.openSessionsPanel", async () => {
+      const active = mgr.getActive();
+      if (!active) {
+        void vscode.window.showWarningMessage(
+          "VSDB: select a connection first to open the Sessions panel.",
+        );
+        return;
+      }
+      await AdminSessionsPanel.show(mgr, active);
+    }),
+  );
+
+  // vsdb.killSession / vsdb.terminateSession — drive the same path the
+  // panel buttons do. Self-pid detection + confirm modal are owned by
+  // AdminSessionsPanelCore, so these stay thin wrappers.
+  disposables.push(
+    vscode.commands.registerCommand(
+      "vsdb.killSession",
+      async (pid: number) => {
+        const panel = AdminSessionsPanel.current;
+        if (!panel) {
+          void vscode.window.showInformationMessage(
+            "VSDB: open the Sessions panel first.",
+          );
+          return;
+        }
+        await panel.runKill(pid);
+      },
+    ),
+  );
+  disposables.push(
+    vscode.commands.registerCommand(
+      "vsdb.terminateSession",
+      async (pid: number) => {
+        const panel = AdminSessionsPanel.current;
+        if (!panel) {
+          void vscode.window.showInformationMessage(
+            "VSDB: open the Sessions panel first.",
+          );
+          return;
+        }
+        await panel.runTerminate(pid);
+      },
+    ),
+  );
+
+  // vsdb.runGrantSql — host-driven grant/revoke wizard entry. The wizard
+  // (adminWizard.ts) opens vscode quickPicks, previews the SQL via
+  // adapter.admin.buildGrantSql / buildRevokeSql, and posts the result
+  // through the existing confirmDangerousStatements gate (now extended
+  // for admin-red). Imported statically at top of file via the same
+  // import as AdminTreeProvider/AdminSessionsPanel.
+  disposables.push(
+    vscode.commands.registerCommand(
+      "vsdb.runGrantSql",
+      async (kind: "grant" | "revoke") => {
+        await commandOpenGrantWizard(mgr, kind);
+      },
+    ),
+  );
+
 
 
   // Dispose schemaTree + codeLens on deactivate to drop subscriptions + cache.
@@ -823,10 +909,31 @@ async function confirmDangerousStatements(
 
   const red: string[] = [];
   const amber: string[] = [];
+  const admin: string[] = [];
   for (const stmt of statements) {
     const tier = guardTier(analyzeStatement(stmt.text, dialect));
     if (tier === "red") red.push(stmt.text.trim());
     else if (tier === "amber") amber.push(stmt.text.trim());
+    else if (tier === "admin-red") admin.push(stmt.text.trim());
+  }
+
+  // TASK-AHL-004 — admin DCL (GRANT/REVOKE/KILL/TERMINATE) always prompts.
+  // Gated by `vsdb.admin.confirmGrant` (default true) — separate from
+  // `vsdb.confirmDestructive` because admin DCL is a distinct risk class
+  // (changes who-can-do-what, or kills another user's session).
+  if (admin.length > 0) {
+    const adminEnabled =
+      vscode.workspace
+        .getConfiguration("vsdb.admin")
+        .get<boolean>("confirmGrant") ?? true;
+    if (adminEnabled) {
+      const picked = await vscode.window.showWarningMessage(
+        "VSDB: ADMIN DCL — câu lệnh này thay đổi quyền (GRANT/REVOKE) hoặc kết thúc session khác (KILL/TERMINATE). Chắc chắn chưa?",
+        { modal: true, detail: capDetail(admin, RED_DETAIL_CAP) },
+        "Vẫn chạy (admin)",
+      );
+      if (picked !== "Vẫn chạy (admin)") return false;
+    }
   }
 
   if (red.length > 0) {

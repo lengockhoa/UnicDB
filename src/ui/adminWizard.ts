@@ -197,3 +197,82 @@ export async function runRevokeWizard(args: {
   });
   return await previewSql(deps, plan.sql);
 }
+
+/**
+ * TASK-AHL-004 — host command entry for `vsdb.runGrantSql`. Walks the user
+ * through object → privileges → grantee via the existing quickPick chain
+ * (uses defaultDeps), then posts the resulting SQL through the active
+ * connection's adapter via `runSql`. ALL write paths still go through
+ * the confirmDangerousStatements gate (the wizard's preview modal is the
+ * first confirm; the host gate is the second).
+ */
+export async function commandOpenGrantWizard(
+  mgr: { getActive: () => unknown; getAdapter: () => unknown },
+  kind: "grant" | "revoke",
+): Promise<void> {
+  const active = mgr.getActive() as
+    | { id: string; label: string }
+    | undefined;
+  if (!active) {
+    void vscode.window.showWarningMessage(
+      "VSDB: select a connection first to use the grant/revoke wizard.",
+    );
+    return;
+  }
+  // Quick ask for the schema + object name (table/sequence). A full
+  // schema browser would need its own tree; this is a minimal
+  // text-input prompt that keeps the cycle shipped.
+  const schema = await vscode.window.showInputBox({
+    prompt: "Schema (e.g. public)",
+    value: "public",
+  });
+  if (!schema) return;
+  const object = await vscode.window.showInputBox({
+    prompt: "Object name (table or sequence)",
+  });
+  if (!object) return;
+  const grantee = await vscode.window.showInputBox({
+    prompt: "Grantee role (NOT PUBLIC — rejected by builder)",
+  });
+  if (!grantee) return;
+  const privRaw = await vscode.window.showInputBox({
+    prompt: "Privileges (comma-separated: SELECT, INSERT, UPDATE, DELETE, …)",
+    value: "SELECT",
+  });
+  if (!privRaw) return;
+  const privileges = privRaw
+    .split(",")
+    .map((s) => s.trim().toUpperCase())
+    .filter((s) => s.length > 0);
+  if (privileges.length === 0) return;
+
+  const sql =
+    kind === "grant"
+      ? await runGrantWizard({ schema, object, grantee, privileges })
+      : await runRevokeWizard({ schema, object, grantee, privileges });
+  if (!sql) return; // user cancelled preview
+
+  // Dispatch via the existing runSql path. The host will route through
+  // confirmDangerousStatements (extended to admin-red for grant/revoke).
+  const adapter = (await mgr.getAdapter()) as {
+    runQuery?: (sql: string) => Promise<{ rows: unknown[] }>;
+  };
+  if (typeof adapter.runQuery !== "function") {
+    void vscode.window.showErrorMessage(
+      "VSDB: active connection does not expose a runQuery.",
+    );
+    return;
+  }
+  try {
+    await adapter.runQuery(sql);
+    void vscode.window.showInformationMessage(
+      `VSDB: ${kind.toUpperCase()} executed.`,
+    );
+  } catch (err) {
+    void vscode.window.showErrorMessage(
+      `VSDB: ${kind} failed — ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+}

@@ -7,26 +7,51 @@
 //      comment `--` và `/* */` thành space (giữ nguyên độ dài) → keyword nằm
 //      trong literal/comment không bị tính.
 //   2. Scan word ở paren-depth 0: bỏ qua `with` (phần CTE nằm trong parens nên
-//      tự động bị bỏ qua); keyword ĐẦU TIÊN quyết định `kind`.
+//      tự động bị bị qua); keyword ĐẦU TIÊN quyết định `kind`.
 //   3. `hasWhere` = có `\bwhere\b` trong text đã mask.
+// TASK-AHL-004 — bổ sung DCL admin (GRANT/REVOKE/KILL/TERMINATE) + tier admin-red.
 
 import type { SqlDialect } from "./statementParser";
 
-export type DangerousKind = "delete" | "truncate" | "drop" | "update" | "other";
+export type DangerousKind =
+  | "delete"
+  | "truncate"
+  | "drop"
+  | "update"
+  | "grant"
+  | "revoke"
+  | "kill"
+  | "terminate"
+  | "other";
 
 export interface StatementAnalysis {
   kind: DangerousKind;
   hasWhere: boolean;
 }
 
-export type GuardTier = "red" | "amber" | "none";
+export type GuardTier = "red" | "amber" | "none" | "admin-red";
 
 const DML_KINDS: Record<string, DangerousKind> = {
   delete: "delete",
   truncate: "truncate",
   drop: "drop",
   update: "update",
+  grant: "grant",
+  revoke: "revoke",
 };
+
+/**
+ * TASK-AHL-004 — admin DCL session-control helpers. We don't use DML_KINDS
+ * for these because the depth-0 first-word kind rule already classifies
+ * `SELECT pg_cancel_backend(...)` as "other" (kind comes from the leading
+ * SELECT). Detect the wrapped function instead, case-insensitive, after
+ * masking literals/comments (B6 safety).
+ */
+function isPgBackendAdminCall(masked: string): DangerousKind | null {
+  const fn = /\bpg_(cancel|terminate)_backend\s*\(/i.exec(masked);
+  if (!fn) return null;
+  return fn[1].toLowerCase() === "terminate" ? "terminate" : "kill";
+}
 
 /** Keyword có thể mở đầu statement chính sau prelude `WITH ... AS (...)`. */
 const STATEMENT_STARTERS: Record<string, true> = {
@@ -173,6 +198,8 @@ export function maskLiteralsAndComments(
  * không. `dialect` (Finding #5) — optional & additive, threaded straight
  * into `maskLiteralsAndComments` so this stays in sync with whatever
  * dialect `splitStatements` used to produce `sql` in the first place.
+ * TASK-AHL-004: sau khi keyword scan xong, nếu kind còn là "other" thì
+ * dò thêm `pg_cancel_backend(...)` / `pg_terminate_backend(...)` ở depth 0.
  */
 export function analyzeStatement(
   sql: string,
@@ -236,12 +263,23 @@ export function analyzeStatement(
     }
   }
 
+  // TASK-AHL-004 — admin session-control detection. Sau khi keyword scan đã
+  // settle kind (thường là "other" cho `SELECT pg_cancel_backend(...)`), dò
+  // trong WHOLE masked body xem có wrapped pg_*_backend call không. Vì đã
+  // mask literals/comments nên fake `pg_cancel_backend` trong string/comment
+  // không lọt được.
+  if (kind === "other") {
+    const admin = isPgBackendAdminCall(masked);
+    if (admin !== null) kind = admin;
+  }
+
   return { kind, hasWhere };
 }
 
 /**
  * Tier confirm: red = mất dữ liệu diện rộng (DELETE/UPDATE không WHERE, mọi
- * TRUNCATE/DROP); amber = DELETE có điều kiện; none = không hỏi.
+ * TRUNCATE/DROP); amber = DELETE có điều kiện; admin-red = GRANT/REVOKE/KILL/
+ * TERMINATE (luôn confirm — TASK-AHL-004); none = không hỏi.
  */
 export function guardTier(a: StatementAnalysis): GuardTier {
   switch (a.kind) {
@@ -252,6 +290,11 @@ export function guardTier(a: StatementAnalysis): GuardTier {
       return a.hasWhere ? "amber" : "red";
     case "update":
       return a.hasWhere ? "none" : "red";
+    case "grant":
+    case "revoke":
+    case "kill":
+    case "terminate":
+      return "admin-red";
     default:
       return "none";
   }

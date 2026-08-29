@@ -59,3 +59,15 @@ npm run compile
 
 - Consumes: `AdminApi` from TASK-AHL-001; existing `vscode.window.showWarningMessage` modal flow.
 - Produces: `vscode.window.createWebviewPanel("vsdb.adminSessions", ...)` (id declared in `package.json` — wired by TASK-AHL-004). Messages handled by the panel webview; no new host messages in TASK-AHL-003 scope.
+
+---
+
+## Executor Report (added in handoff-fullstack wrap-up)
+
+- Status: PASS
+- EXECUTOR_TOOL: bash (git show + vitest rerun)
+- EXECUTOR_MODEL: unic-code
+- EXECUTOR_SUBAGENT: - (in-session wrap)
+- RED_OUTPUT: Wave 2 was implemented earlier in commit cc7fdbe; this session re-verified. `npx vitest run src/ui/__tests__/adminSessionsPanel.test.ts` → `✓ 10 tests passed (3ms)`. Earlier session recorded full RED→GREEN for the 8 cases listed in §Test Cases.
+- VERIFICATION_OUTPUT: `npm test` → `Test Files 145 passed | 1 skipped (146) / Tests 2133 passed | 2 skipped (2135)`; `npm run typecheck` exit 0; `npm run compile` clean.
+- Note: Implementation already shipped in commit `cc7fdbe` alongside AHL-002. Self-pid detection via `SELECT pg_backend_pid()` is real (not stubbed) and surfaces "(self)" badge + disabled buttons. CSP-clean webview HTML. No apiKey/password bytes in any panel surface.

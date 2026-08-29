@@ -360,4 +360,38 @@ export class AdminSessionsPanel {
     }
     throw new Error("Adapter does not expose runQuery");
   }
+
+  /**
+   * TASK-AHL-004 — public surface for the `vsdb.killSession` command. Drives
+   * the same message path the webview buttons do, so the panel's
+   * self-pid detection + confirm modal + error rendering all stay in one
+   * place. Returns silently if no panel is open or the core declines
+   * (self-pid → buttons disabled; insufficient_privilege → error panel).
+   */
+  async runKill(pid: number): Promise<void> {
+    const sql = await this.core.handleMessage({ kind: "kill", pid });
+    if (!sql) return;
+    try {
+      await this.runSql(sql);
+    } catch (err) {
+      vscode.window.showErrorMessage(
+        `Failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    await this.refresh();
+  }
+
+  /** TASK-AHL-004 — public surface for `vsdb.terminateSession`. */
+  async runTerminate(pid: number): Promise<void> {
+    const sql = await this.core.handleMessage({ kind: "terminate", pid });
+    if (!sql) return;
+    try {
+      await this.runSql(sql);
+    } catch (err) {
+      vscode.window.showErrorMessage(
+        `Failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    await this.refresh();
+  }
 }

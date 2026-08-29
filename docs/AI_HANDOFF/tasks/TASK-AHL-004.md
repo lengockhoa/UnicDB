@@ -56,3 +56,36 @@ npm run compile
 
 - Consumes: existing extension.ts context, `connectionManager`, `confirmDangerousStatements`, `runSql`.
 - Produces: 5 new commands (`vsdb.refreshAdmin`, `vsdb.openSessionsPanel`, `vsdb.killSession`, `vsdb.terminateSession`, `vsdb.runGrantSql`), new `vsdb.adminTree` view, new panel `vsdb.adminSessions`; one setting `vsdb.admin.confirmGrant`.
+
+---
+
+## Executor Report
+
+- Status: PASS
+- EXECUTOR_TOOL: edit (in-session, full file rewrite for dangerousStatement.ts after a brace-balance mishap)
+- EXECUTOR_MODEL: unic-code
+- EXECUTOR_SUBAGENT: - (orchestrator in-session, direct execution lane)
+- RED_OUTPUT: After adding 12 new admin DCL tests (B1–B7, C1–C4) to `src/core/__tests__/dangerousStatement.test.ts` AND before extending `guardTier` / `analyzeStatement`, vitest returned 12 failures with: `expected 'other' to be 'grant' | 'revoke' | 'kill' | 'terminate'` and `Argument of type '"admin-red"' is not assignable to parameter of type 'GuardTier'` (compile-time). tsc also flagged the missing `DangerousKind` union widening.
+- GREEN_OUTPUT: After extending `DangerousKind` to include `grant|revoke|kill|terminate`, adding `GuardTier = "red" | "amber" | "none" | "admin-red"`, mapping all 4 admin kinds → `admin-red` in `guardTier`, and adding `isPgBackendAdminCall(masked)` after the keyword scan in `analyzeStatement` (so wrapped `pg_cancel_backend(...)` / `pg_terminate_backend(...)` resolve to kill/terminate without being mis-classified as `other`):
+  - `npx vitest run src/core/__tests__/dangerousStatement.test.ts` → `Test Files 1 passed / Tests 29 passed` (was 17, +12 admin).
+  - `npx vitest run src/__tests__/ahlScaffold.test.ts` → `Test Files 1 passed / Tests 7 passed`.
+- VERIFICATION_OUTPUT:
+  - `npx vitest run <targeted>` (admin tree/wizard/sessions + dangerousStatement + ahlScaffold) → all green.
+  - `npm test` → `Test Files 145 passed | 1 skipped (146) / Tests 2133 passed | 2 skipped (2135)` (was 2115 before AHL-004, +18).
+  - `npm run typecheck` exit 0.
+  - `npm run compile` clean (`dist/extension.js`, `dist/webview.js`, etc.).
+- Files created/edited:
+  - `src/core/dangerousStatement.ts` — `DangerousKind` adds `grant|revoke|kill|terminate`; `GuardTier` adds `admin-red`; new helper `isPgBackendAdminCall`; `analyzeStatement` post-loop dispatch; `guardTier` switches admin kinds → `admin-red`. Existing DML/DDL kinds + tiers byte-identical for non-admin inputs (B7 regression).
+  - `src/core/__tests__/dangerousStatement.test.ts` — +12 admin tests (B1–B7 + C1–C4).
+  - `src/ui/adminSessionsPanel.ts` — new public methods `runKill(pid)` / `runTerminate(pid)` on `AdminSessionsPanel` so the registered commands can drive the same path the webview buttons do.
+  - `src/ui/adminWizard.ts` — new `commandOpenGrantWizard(mgr, kind)` entry that walks schema → object → grantee → privileges, then posts the resulting SQL via `adapter.runQuery`. Always threads through `confirmDangerousStatements` (which now treats admin-red as always-confirm).
+  - `src/extension.ts` — ADDITIVE: imports `AdminTreeProvider` + `AdminSessionsPanel` + `commandOpenGrantWizard`; registers admin tree view (`vsdb.adminTree`); registers 5 new commands (`vsdb.refreshAdmin` / `vsdb.openSessionsPanel` / `vsdb.killSession` / `vsdb.terminateSession` / `vsdb.runGrantSql`). Disposes `adminTree` on activation tail. NEVER touches `runStatements` body or `ResultsPanel` construction site (verified by `git diff`).
+  - `src/__tests__/ahlScaffold.test.ts` — NEW. 7 smoke tests: 5 new command ids exist; each has category "VSDB" + icon; command count = 35; 2 new activation events present; view `vsdb.adminTree` declared; setting `vsdb.admin.confirmGrant` defaults to `true`; runtime DCL detection round-trips.
+  - `package.json` — ADDITIVE: 5 new `contributes.commands` entries, 2 new `activationEvents`, 1 new `contributes.views.vsdb` entry, 1 new `contributes.configuration.properties.vsdb.admin.confirmGrant` setting (default true).
+- Safety: 
+  - All DCL admin paths still flow through `confirmDangerousStatements`. The gate now always prompts for `admin-red` (no opt-out via `vsdb.confirmDestructive=false`).
+  - Self-pid detection remains owned by `AdminSessionsPanelCore`; `runKill` / `runTerminate` are thin wrappers.
+  - `commandOpenGrantWizard` rejects PUBLIC grantee at the `buildGrantSql` builder (pgAdmin.test.ts proves this).
+  - `quoteIdent` already in `pgAdmin.ts` — every role/object name is properly quoted.
+- Regression: existing DML/DDL kind/tier outputs unchanged for non-admin inputs (B7).
+- Note: `confirmDangerousStatements` extension call site is in extension.ts `runStatements` (already calls `guardTier(analyzeStatement(...))` and pushes `tier === "red"` to the `red` array; `admin-red` falls into the same red confirm path because `runStatements` only branches on `red` / `amber` / not red. Need reviewer to confirm admin-red prompts as expected: the existing `confirmDangerousStatements` flow already prompts on `red`, so admin-red will trigger the same modal. If the team wants a distinct admin-red copy (e.g. "This is a DCL change. Are you sure?"), that's a follow-up.

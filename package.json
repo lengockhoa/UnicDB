@@ -61,7 +61,9 @@
     "onCommand:vsdb.exportStructure",
     "onCommand:vsdb.exportAllStructures",
     "onCommand:vsdb.openConsole",
-    "onCommand:vsdb.consoleNewTab"
+    "onCommand:vsdb.consoleNewTab",
+    "onCommand:vsdb.refreshAdmin",
+    "onCommand:vsdb.openSessionsPanel"
   ],
   "contributes": {
     "commands": [
@@ -244,6 +246,36 @@
         "title": "VSDB: Console — New Tab",
         "category": "VSDB",
         "icon": "$(add)"
+      },
+      {
+        "command": "vsdb.refreshAdmin",
+        "title": "VSDB: Refresh Admin",
+        "category": "VSDB",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "vsdb.openSessionsPanel",
+        "title": "VSDB: Open Sessions Panel",
+        "category": "VSDB",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "vsdb.killSession",
+        "title": "VSDB: Kill Session (Cancel Query)",
+        "category": "VSDB",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "vsdb.terminateSession",
+        "title": "VSDB: Terminate Session",
+        "category": "VSDB",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "vsdb.runGrantSql",
+        "title": "VSDB: Run GRANT/REVOKE SQL",
+        "category": "VSDB",
+        "icon": "$(shield)"
       }
     ],
     "keybindings": [
@@ -394,6 +426,10 @@
         {
           "id": "vsdb.schemaTree",
           "name": "Schema Explorer"
+        },
+        {
+          "id": "vsdb.adminTree",
+          "name": "Admin (Roles / Sessions / Locks)"
         }
       ]
     },
@@ -431,6 +467,11 @@
           "minimum": 50,
           "maximum": 10000,
           "description": "Số rows tải về mỗi lần (Load 500 more)."
+        },
+        "vsdb.admin.confirmGrant": {
+          "type": "boolean",
+          "default": true,
+          "description": "TASK-AHL-004 — ask for confirmation before running GRANT/REVOKE/KILL/TERMINATE statements (admin DCL). Always ON by default; set to false to skip the confirm modal at your own risk."
         },
         "vsdb.confirmDestructive": {
           "type": "boolean",
