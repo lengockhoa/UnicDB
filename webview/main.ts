@@ -134,6 +134,12 @@ interface StatementResult {
   /** TASK-007 — per-table tab label (e.g. "public.users" from a schema-tree
    *  browse). Absent/empty → "Statement N" fallback. */
   label?: string;
+  /** TASK-AH-001 — append-run ordinal for the tab title. */
+  runNo?: number;
+  /** TASK-AH-001 — statement ordinal within the append run. */
+  runStmtNo?: number;
+  /** TASK-AH-001 — cursor was closed after this statement's initial batch. */
+  cursorClosed?: boolean;
 }
 /** TASK-005 — structural mirror of the host's ColumnFilterModel
  *  (src/ui/queryComposer.ts), defined locally so the webview program never
@@ -1095,6 +1101,9 @@ const TAB_LABEL_MAX = 40;
  *  is assigned via textContent (never innerHTML) so label text is always
  *  rendered as literal text — no XSS surface. */
 function tabTitle(r: StatementResult, i: number): string {
+  if (typeof r.runNo === "number" && typeof r.runStmtNo === "number") {
+    return `Run ${r.runNo} · Stmt ${r.runStmtNo}`;
+  }
   const label = typeof r.label === "string" ? r.label : "";
   if (label.length === 0) return `Statement ${i + 1}`;
   return label.length > TAB_LABEL_MAX
@@ -3430,6 +3439,37 @@ window.addEventListener("message", (ev: MessageEvent) => {
   const msg = ev.data as HostMsg;
   if (msg.type === "state") {
     headerText = msg.header;
+    // Results are append-only only when the host sends a longer array. Capture
+    // the old length before replacing it so loadMore/refresh posts cannot take
+    // this path just because their rows changed.
+    const prevLen = results.length;
+    const grew = msg.results.length > prevLen;
+    // AH-002 append runs stamp their new entries. Older browse/replace hosts
+    // can still send a longer multi-result payload, so leave those payloads
+    // on the replace path rather than pinning an unrelated tab as active.
+    const isAppend = grew && msg.results.slice(prevLen).some(
+      (r) => typeof r.runNo === "number" && typeof r.runStmtNo === "number",
+    );
+    if (isAppend) {
+      // The first result in the appended range is the active tab. Keep every
+      // cache belonging to an older tab; entries outside the old range are
+      // stale and must not leak into the new tab identities.
+      activeTab = prevLen;
+      for (const key of distinctByColumn.keys()) {
+        const sep = key.indexOf("::");
+        const index = Number(sep < 0 ? key : key.slice(0, sep));
+        if (!Number.isInteger(index) || index >= prevLen) {
+          distinctByColumn.delete(key);
+        }
+      }
+      for (const key of distinctNotesByColumn.keys()) {
+        const sep = key.indexOf("::");
+        const index = Number(sep < 0 ? key : key.slice(0, sep));
+        if (!Number.isInteger(index) || index >= prevLen) {
+          distinctNotesByColumn.delete(key);
+        }
+      }
+    }
     results = msg.results || [];
     busy = msg.busy;
     // TASK-007 (cycle Y) — prefer the typed dialect; keep the header parse
@@ -3468,10 +3508,22 @@ window.addEventListener("message", (ev: MessageEvent) => {
       lastStatementIdentity = identity;
       statementGeneration++;
       distinctStatementToken = statementGeneration;
-      distinctByColumn.clear();
-      // TASK-006 — footer notes describe a specific reply; they die with the
-      // same generation as the value cache they annotate.
-      distinctNotesByColumn.clear();
+      if (isAppend) {
+        // A generation bump for an append applies only to its newly-active
+        // statement. Caches for the preceding tabs remain valid by index.
+        const prefix = `${activeTab}::`;
+        for (const key of distinctByColumn.keys()) {
+          if (key.startsWith(prefix)) distinctByColumn.delete(key);
+        }
+        for (const key of distinctNotesByColumn.keys()) {
+          if (key.startsWith(prefix)) distinctNotesByColumn.delete(key);
+        }
+      } else {
+        distinctByColumn.clear();
+        // TASK-006 — footer notes describe a specific reply; they die with the
+        // same generation as the value cache they annotate.
+        distinctNotesByColumn.clear();
+      }
       statementIdentityChanged = true;
     }
     render();

@@ -79,3 +79,50 @@ Append detection is deliberately derived (`msg.results.length > results.length`)
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: other
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: ExecAH003
+SUMMARY: Implemented append-aware webview result tabs with stamped Run/Stmt labels, first-new-tab activation, and scoped DISTINCT cache preservation. Added a jsdom bundle suite covering growth, labels, cache stability, shrink clamping, replace-mode pinning, and tab switching.
+TEST_PLAN_FOLLOWED: task §4 / TDD RED→GREEN
+FILES_CHANGED:
+  - webview/main.ts: added AH metadata fields and append-aware state handling; old-tab caches survive append and new-tab identity invalidation is scoped
+  - tests/webviewMultiRunTabs.test.ts: added six jsdom bundle tests for AH-003 behavior
+  - docs/AI_HANDOFF/tasks/TASK-AH-003.md: appended this executor report
+TESTS_ADDED:
+  - tests/webviewMultiRunTabs.test.ts: growth/activation, stamped labels, DISTINCT cache stability, shrink clamp, replace pin, tab switching
+VERIFICATION:
+  command: npx vitest run tests/webviewMultiRunTabs.test.ts (RED before implementation)
+  result: 3 failed, 3 passed / exit 1; expected failures were growth activation, stamped labels, and cache preservation
+  output_excerpt: |
+    Failed Tests: 3
+    growth state post grows the tab strip and activates the first new tab
+    stamped entries show Run N · Stmt M and unstamped entries keep fallback labels
+    append post preserves old DISTINCT cache while activating a new tab
+  command: npm run compile
+  result: exit 0 (one existing ES2024 target warning)
+  command: npx vitest run tests/webviewMultiRunTabs.test.ts
+  result: 6 passed, 0 failed / exit 0
+  output_excerpt: |
+    Test Files 1 passed (1)
+    Tests 6 passed (6)
+  command: npx vitest run tests/webviewEditHighlight.test.ts tests/webviewRequeryAlignment.test.ts tests/webviewUndoRedo.test.ts
+  result: 19 passed, 0 failed / exit 0
+  output_excerpt: |
+    Test Files 3 passed (3)
+    Tests 19 passed (19)
+  command: npm run typecheck
+  result: exit 0
+  output_excerpt: |
+    > vsdb@1.12.0 typecheck
+    > tsc --noEmit
+  command: npm test
+  result: exit 0
+  output_excerpt: |
+    Full Vitest suite completed successfully; only existing stderr warnings were emitted.
+ISSUES: npm compile emits the existing unrecognized ES2024 target warning; no failures.
+HANDOFF_TO_REVIEWER: yes — Handoff mode requires a different-model reviewer
+NEXT: ready for review
