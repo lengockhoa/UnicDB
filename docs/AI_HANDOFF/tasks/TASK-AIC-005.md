@@ -66,3 +66,23 @@ No lint script is defined in `package.json`.
 This is intentionally the only task editing `src/extension.ts`. Do not alter package.json: no command, setting contribution, or activation event is required because behavior is automatic for already supported SQL/Console surfaces. The status-bar affordance reuses the existing AI Settings command and must never be shown as a typing-time notification.
 
 ---
+
+---
+## Executor Report
+EXECUTOR_TOOL: omp-direct (unic-code)
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+RED_OUTPUT:
+  ✓ src/__tests__/extensionAutocomplete.test.ts (5 cases) — SQL provider registered, dispose drops provider, no-op when registerInlineCompletionItemProvider unavailable, consoleAutocomplete delegates with callerScope=tabId, unconfigured→null.
+GREEN_OUTPUT:
+  ✓ New src/extensionAutocomplete.ts — `registerSqlAutocomplete(deps)` registers InlineCompletionItemProvider for `{scheme:"file", language:"sql"}` via `AiSqlCompletionProvider` (AIC-003) and returns `{dispose, consoleAutocomplete}` adapter that scopes service.suggest via `callerScope: tabId` and short-circuits to null when loadConfig is null.
+  ✓ src/extension.ts — instantiate `SqlAutocompleteService` + registration in `activate()` (provider uses `createProviderClient(...).complete(req)`, resolveSchema pulls `listTables` from active adapter with empty fallback); pass `onAutocomplete` to ConsolePanel in `commandOpenConsole`; dispose both in `deactivate()`.
+Verification Output:
+  $ npm run typecheck → clean.
+  $ npm run compile → clean.
+  $ npx vitest run src/__tests__/extensionAutocomplete.test.ts
+    Test Files  1 passed (1)
+    Tests       5 passed (5)
+  $ npx vitest run → 2188 passed | 2 skipped (+5 over AIC-004 baseline of 2183)
+Status: PASS
+Note: AIC-005 closes the cycle — the AIC-002 service is now the single source of truth wired through both editor (AIC-003) and Console (AIC-004) without duplicating debounce/cancellation/cache. Committed as 87ecc48.

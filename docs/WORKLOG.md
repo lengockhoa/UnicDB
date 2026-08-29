@@ -316,3 +316,10 @@ For each significant action, append:
 - Action: shipped AH-001 queryRunner append mode/cursor discipline, AH-002 results-panel append wiring/cache isolation, and AH-003 append-only webview tabs with `Run N · Statement M` labels and per-tab DISTINCT cache preservation.
 - Verification: 2057 tests passed / 2 skipped; `npm run typecheck` exit 0; `npm run compile` clean; `vsdb-1.13.0.vsix` 18 entries with all AF/AG/AH markers.
 - Delivery: release commit, tag `v1.13.0`, and GitHub release live.
+
+## 2026-08-30 — Cycle AIC: SQL autocomplete (5 tasks, AIC-001 → AIC-005)
+
+- Action: shipped the full AIC cycle. AIC-001 settings form + every-load migration; AIC-002 schema-only `SqlAutocompleteService` (debounce/cancel/sequence/cache/cooldown as the single source of truth); AIC-003 editor `AiSqlCompletionProvider` with VS Code `CancellationToken` bridge; AIC-004 Console ghost-text overlay (no textarea mutation, Tab/right-arrow accept, per-tab lifecycle); AIC-005 `registerSqlAutocomplete` adapts the service into both the editor provider and the Console panel's `onAutocomplete` callback.
+- Files: `src/ai/settings.ts`, `src/ai/sqlAutocomplete.ts`, `src/ui/aiSettingsForm.ts`, `src/ui/aiSqlCompletionProvider.ts`, `src/ui/consolePanel.ts`, `src/ui/consolePanelMessages.ts`, `webview/consolePanelMain.ts`, new `src/extensionAutocomplete.ts`, `src/extension.ts`, plus unit/bundle tests for each task.
+- Behavior: every prompt contains schema-only context (no rows/history/apiKey/baseUrl); no logging of prompt/response; service is the sole debounce/cancel/cache owner (no second controller in callers); Console callerScope = `tabId` so editor/console caches partition cleanly; unconfigured/cancelled/stale/malformed resolve to `null` or `[]` silently.
+- Verification: 2188 passed | 2 skipped (+121 over v1.13.0 baseline of 2066); `npm run typecheck` exit 0; `npm run compile` clean; 5 handoff commits on `main` (AIC-001..AIC-005). Manual VS Code smoke test for the Console overlay alignment is logged in `docs/AI_HANDOFF/tasks/TASK-AIC-004.md`.

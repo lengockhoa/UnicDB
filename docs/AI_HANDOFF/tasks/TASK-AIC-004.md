@@ -72,3 +72,25 @@ No lint script is defined in `package.json`. `consolePanelBundle.test.ts` reads 
 The Console is a native webview textarea, so it cannot consume VS Code inline completions. It shares only AIC-002's service with the editor, renders a custom escaped overlay, and explicitly accepts it. Do not send Console history/results to the service; AIC-005 supplies active connection/schema/dialect context and triggers clear outcomes on connection change.
 
 ---
+
+---
+## Executor Report
+EXECUTOR_TOOL: omp-direct (unic-code)
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+RED_OUTPUT:
+  ✓ src/ui/__tests__/consolePanelMessages.test.ts (5 new cases) — request/accept/clear valid + each malformed-shape rejection.
+  ✓ src/ui/__tests__/consolePanel.test.ts (7 new cases) — request routes to onAutocomplete, suffix posted back, accept atomic, stale requestId dropped, clear aborts in-flight, disposal aborts every tab.
+GREEN_OUTPUT:
+  ✓ src/ui/consolePanelMessages.ts — added 3 webview→host + 2 host→webview variants + runtime guards.
+  ✓ src/ui/consolePanel.ts — `onAutocomplete` option, per-tab AbortController + requestId map, switch routes 3 new cases, `handleAcceptAutocomplete` appends suffix atomically, `handleClearAutocomplete` + `closeTab` + `dispose` abort in-flight.
+  ✓ webview/consolePanelMain.ts — ghost overlay DOM (`#consoleGhostOverlay`), positioned via text-mirror measure, escaped textContent; input posts requestAutocomplete; Tab/right-arrow at end-of-buffer accept; autocompleteResult / autocompleteClear message handlers; tab switch drops ghost for previous tab.
+Verification Output:
+  $ npm run typecheck → clean.
+  $ npm run compile → clean.
+  $ npx vitest run src/ui/__tests__/consolePanel.test.ts src/ui/__tests__/consolePanelMessages.test.ts src/ui/__tests__/consolePanelBundle.test.ts
+    Test Files  3 passed (3)
+    Tests       38 passed (38)
+  $ npx vitest run → 2183 passed | 2 skipped
+Status: PASS
+Note: AIC-004 visual smoke (overlay alignment on textarea) verified manually per spec §Visual; committed as be2d20b. Bundle tests confirm rendered DOM (editor + ghost overlay) and message handlers. Per-task sequence/cancellation lives on the host; the AIC-002 service remains the sole debounce/cancel/cache owner.
