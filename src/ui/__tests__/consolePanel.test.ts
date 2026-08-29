@@ -312,3 +312,228 @@ describe("ConsolePanel — malformed message guard (case 6)", () => {
     expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
   });
 });
+
+// ============================================================================
+// AIC-004 — Console ghost-text autocomplete host seam
+// ============================================================================
+describe("ConsolePanel — AIC-004 ghost-text host seam", () => {
+  it("routes a requestAutocomplete message to onAutocomplete with the right args", async () => {
+    const onAutocomplete = vi.fn().mockResolvedValue("ers");
+    const panel = new ConsolePanel({
+      extensionUri: extUri,
+      onRun: vi.fn(),
+      onAutocomplete,
+    });
+    panel.show();
+    const { handler } = panelHarness();
+    handler({
+      type: "requestAutocomplete",
+      tabId: panel.getActiveTabId(),
+      requestId: "req-1",
+      cursorOffset: 16,
+      documentText: "SELECT * FROM us",
+    });
+    await until(() => onAutocomplete.mock.calls.length > 0);
+    expect(onAutocomplete).toHaveBeenCalledTimes(1);
+    const [req] = onAutocomplete.mock.calls[0] as [
+      { tabId: string; requestId: string; cursorOffset: number; documentText: string; schemaFingerprint: string; signal: AbortSignal },
+    ];
+    expect(req.tabId).toBe(panel.getActiveTabId());
+    expect(req.requestId).toBe("req-1");
+    expect(req.cursorOffset).toBe(16);
+    expect(req.documentText).toBe("SELECT * FROM us");
+    expect(req.schemaFingerprint).toBe("v1");
+    expect(req.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("posts autocompleteResult with the resolved suffix back to the webview", async () => {
+    const onAutocomplete = vi.fn().mockResolvedValue("ers");
+    const panel = new ConsolePanel({
+      extensionUri: extUri,
+      onRun: vi.fn(),
+      onAutocomplete,
+    });
+    panel.show();
+    const p = consolePanels()[0];
+    const { handler } = panelHarness();
+    handler({
+      type: "requestAutocomplete",
+      tabId: panel.getActiveTabId(),
+      requestId: "req-1",
+      cursorOffset: 16,
+      documentText: "SELECT * FROM us",
+    });
+    await until(() => p.webview.postMessage.mock.calls.some((c: unknown[]) => {
+      const m = c[0] as { type?: string };
+      return m?.type === "autocompleteResult";
+    }));
+    const sentMessages = p.webview.postMessage.mock.calls.map((c: unknown[]) => c[0]);
+    const result = sentMessages.find((m) => (m as { type?: string }).type === "autocompleteResult") as { tabId: string; requestId: string; suffix: string | null } | undefined;
+    expect(result).toBeDefined();
+    expect(result!.suffix).toBe("ers");
+    expect(result!.requestId).toBe("req-1");
+    expect(result!.tabId).toBe(panel.getActiveTabId());
+  });
+
+  it("posts autocompleteResult with suffix=null when the callback resolves null", async () => {
+    const onAutocomplete = vi.fn().mockResolvedValue(null);
+    const panel = new ConsolePanel({
+      extensionUri: extUri,
+      onRun: vi.fn(),
+      onAutocomplete,
+    });
+    panel.show();
+    const p = consolePanels()[0];
+    const { handler } = panelHarness();
+    handler({
+      type: "requestAutocomplete",
+      tabId: panel.getActiveTabId(),
+      requestId: "req-1",
+      cursorOffset: 0,
+      documentText: "SELECT 1",
+    });
+    await until(() => p.webview.postMessage.mock.calls.some((c: unknown[]) => {
+      const m = c[0] as { type?: string };
+      return m?.type === "autocompleteResult";
+    }));
+    const result = p.webview.postMessage.mock.calls
+      .map((c: unknown[]) => c[0])
+      .find((m) => (m as { type?: string }).type === "autocompleteResult") as { suffix: string | null } | undefined;
+    expect(result?.suffix).toBeNull();
+  });
+
+  it("a new requestAutocomplete on the same tab supersedes the previous one (requestId guard)", async () => {
+    let resolveFirst: (v: string) => void = () => {};
+    const firstPromise = new Promise<string>((r) => { resolveFirst = r; });
+    let secondSeen = false;
+    const onAutocomplete = vi.fn().mockImplementation((req: { requestId: string }) => {
+      if (req.requestId === "req-1") return firstPromise;
+      secondSeen = true;
+      return Promise.resolve("second");
+    });
+    const panel = new ConsolePanel({
+      extensionUri: extUri,
+      onRun: vi.fn(),
+      onAutocomplete,
+    });
+    panel.show();
+    const p = consolePanels()[0];
+    const { handler } = panelHarness();
+    const tab1 = panel.getActiveTabId();
+    handler({
+      type: "requestAutocomplete",
+      tabId: tab1,
+      requestId: "req-1",
+      cursorOffset: 16,
+      documentText: "SELECT * FROM us",
+    });
+    // Fire a NEW request while the first is still pending.
+    handler({
+      type: "requestAutocomplete",
+      tabId: tab1,
+      requestId: "req-2",
+      cursorOffset: 17,
+      documentText: "SELECT * FROM use",
+    });
+    // Resolve the FIRST (now stale) request — must NOT post a result.
+    resolveFirst("STALE");
+    await new Promise((r) => setTimeout(r, 5));
+    // Now the SECOND request's result lands.
+    await until(() => p.webview.postMessage.mock.calls.some((c: unknown[]) => {
+      const m = c[0] as { type?: string };
+      return m?.type === "autocompleteResult";
+    }));
+    const resultMsgs = p.webview.postMessage.mock.calls
+      .map((c: unknown[]) => c[0])
+      .filter((m) => (m as { type?: string }).type === "autocompleteResult") as Array<{ requestId: string; suffix: string | null }>;
+    // Only one result posted, and it's for the second (current) request.
+    expect(resultMsgs).toHaveLength(1);
+    expect(resultMsgs[0].requestId).toBe("req-2");
+    expect(resultMsgs[0].suffix).toBe("second");
+    expect(secondSeen).toBe(true);
+  });
+  it("clearAutocomplete cancels in-flight requests for the given tab", async () => {
+    let aborted = false;
+    const onAutocomplete = vi.fn().mockImplementation((req: { signal: AbortSignal }) => {
+      req.signal.addEventListener("abort", () => { aborted = true; });
+      return new Promise<string>(() => { /* never resolves */ });
+    });
+    const panel = new ConsolePanel({
+      extensionUri: extUri,
+      onRun: vi.fn(),
+      onAutocomplete,
+    });
+    panel.show();
+    const { handler } = panelHarness();
+    const tab1 = panel.getActiveTabId();
+    handler({
+      type: "requestAutocomplete",
+      tabId: tab1,
+      requestId: "req-1",
+      cursorOffset: 16,
+      documentText: "SELECT * FROM us",
+    });
+    await until(() => onAutocomplete.mock.calls.length > 0);
+    handler({ type: "clearAutocomplete", tabId: tab1 });
+    await until(() => aborted);
+    expect(aborted).toBe(true);
+  });
+
+  it("acceptAutocomplete writes the suffix atomically into the tab buffer", async () => {
+    const panel = new ConsolePanel({ extensionUri: extUri, onRun: vi.fn() });
+    panel.show();
+    const { handler } = panelHarness();
+    const tab1 = panel.getActiveTabId();
+    panel.setBuffer(tab1, "SELECT * FROM us");
+    handler({
+      type: "acceptAutocomplete",
+      tabId: tab1,
+      requestId: "req-1",
+      suffix: "ers",
+    });
+    await until(() => panel.getBuffer(tab1) === "SELECT * FROM users");
+    expect(panel.getBuffer(tab1)).toBe("SELECT * FROM users");
+  });
+
+  it("acceptAutocomplete is a no-op on unknown tabId", async () => {
+    const panel = new ConsolePanel({ extensionUri: extUri, onRun: vi.fn() });
+    panel.show();
+    const { handler } = panelHarness();
+    expect(() =>
+      handler({
+        type: "acceptAutocomplete",
+        tabId: "tab-does-not-exist",
+        requestId: "req-1",
+        suffix: "x",
+      }),
+    ).not.toThrow();
+  });
+
+  it("disposal cancels all in-flight autocomplete requests for every tab", async () => {
+    let aborted = false;
+    const onAutocomplete = vi.fn().mockImplementation((req: { signal: AbortSignal }) => {
+      req.signal.addEventListener("abort", () => { aborted = true; });
+      return new Promise<string>(() => {});
+    });
+    const panel = new ConsolePanel({
+      extensionUri: extUri,
+      onRun: vi.fn(),
+      onAutocomplete,
+    });
+    panel.show();
+    const p = consolePanels()[0];
+    const { handler } = panelHarness();
+    const tab1 = panel.getActiveTabId();
+    handler({
+      type: "requestAutocomplete",
+      tabId: tab1,
+      requestId: "req-1",
+      cursorOffset: 0,
+      documentText: "SELECT 1",
+    });
+    await until(() => onAutocomplete.mock.calls.length > 0);
+    p.dispose();
+    await until(() => aborted);
+    expect(aborted).toBe(true);
+  });
+});

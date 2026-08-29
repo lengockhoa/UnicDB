@@ -34,7 +34,17 @@ export type ConsoleToHostMessage =
   | { type: "closeTab"; tabId: string }
   | { type: "switchTab"; tabId: string }
   | { type: "renameTab"; tabId: string; name: string }
-  | { type: "updateBuffer"; tabId: string; buffer: string };
+  | { type: "updateBuffer"; tabId: string; buffer: string }
+  // Cycle AIC TASK-AIC-004 — Console ghost-text autocomplete variants.
+  | {
+      type: "requestAutocomplete";
+      tabId: string;
+      requestId: string;
+      cursorOffset: number;
+      documentText: string;
+    }
+  | { type: "acceptAutocomplete"; tabId: string; requestId: string; suffix: string }
+  | { type: "clearAutocomplete"; tabId: string };
 
 /** Runtime guard for untrusted webview postMessage data. Rejects null,
  *  non-object carriers, unknown discriminants, and non-string fields BEFORE
@@ -79,12 +89,26 @@ export function isConsoleToHostMessage(
     case "closeTab":
     case "switchTab":
       return typeof msg.tabId === "string";
-    case "renameTab":
-      return typeof msg.tabId === "string" && typeof msg.name === "string";
     case "updateBuffer":
       return (
         typeof msg.tabId === "string" && typeof msg.buffer === "string"
       );
+    case "requestAutocomplete":
+      return (
+        typeof msg.tabId === "string" &&
+        typeof msg.requestId === "string" &&
+        typeof msg.cursorOffset === "number" &&
+        Number.isFinite(msg.cursorOffset) &&
+        typeof msg.documentText === "string"
+      );
+    case "acceptAutocomplete":
+      return (
+        typeof msg.tabId === "string" &&
+        typeof msg.requestId === "string" &&
+        typeof msg.suffix === "string"
+      );
+    case "clearAutocomplete":
+      return typeof msg.tabId === "string";
     default:
       return false;
   }
@@ -108,7 +132,10 @@ export type ConsoleHostToWebviewMessage =
       history: string[];
     }
   | { type: "historyList"; items: string[] }
-  | { type: "explainResult"; plan: string; error?: string };
+  | { type: "explainResult"; plan: string; error?: string }
+  // Cycle AIC TASK-AIC-004 — Console ghost-text.
+  | { type: "autocompleteResult"; tabId: string; requestId: string; suffix: string | null }
+  | { type: "autocompleteClear"; tabId: string };
 
 // ---- Helpers ----------------------------------------------------------------
 

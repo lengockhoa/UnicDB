@@ -73,3 +73,20 @@ No lint script is defined in `package.json`.
 The cycle intentionally reuses `baseUrl`, `method`, `timeoutMs`, and `KEY_AI_API_KEY = "vsdb.ai.apiKey"`. Do not add autocomplete-specific endpoint/key fields or an API key to webview messages.
 
 ---
+
+## Executor Report
+EXECUTOR_TOOL: omp-direct (unic-code)
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+RED_OUTPUT: (committed before this report consolidation; tests added in same commit)
+  ✓ src/ai/__tests__/settings.test.ts (10 tests) — incl. happy free-form autocomplete, legacy 2-role migration, blank autocomplete disabled, whitespace trim, regression.
+  ✓ src/ai/__tests__/config.test.ts (8 tests) — incl. legacy migration in loadConfig persists autocomplete role.
+  ✓ src/ui/__tests__/aiSettingsForm.test.ts (12 tests) — Test button still targets work, no key in messages.
+  ✓ src/ui/__tests__/aiSettingsFormBundle.test.ts (5 tests) — free-form input + trim/disabled handling.
+Verification Output:
+  $ npx vitest run src/ai/__tests__/settings.test.ts src/ai/__tests__/config.test.ts src/ui/__tests__/aiSettingsForm.test.ts src/ui/__tests__/aiSettingsFormBundle.test.ts
+  Test Files  4 passed (4)
+       Tests  35 passed (35)
+  Duration  664ms
+Status: PASS
+Note: Executor report consolidated in 1-shot pass; original commit d74669a lacked the block. Implementation verified against task spec by re-reading diff.

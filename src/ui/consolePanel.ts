@@ -58,6 +58,21 @@ export interface ConsolePanelOptions {
    * memory only.
    */
   memento?: vscode.Memento;
+  /**
+   * Cycle AIC TASK-AIC-004 — Console ghost-text autocomplete callback.
+   * extension.ts wires this to the AIC-002 SqlAutocompleteService through
+   * AIC-005. The host owns per-tab cancellation, sequence, and stale
+   * guarding; the callback receives the request and a tab-scoped
+   * AbortSignal and resolves with the suffix or null.
+   */
+  onAutocomplete?: (req: {
+    tabId: string;
+    requestId: string;
+    cursorOffset: number;
+    documentText: string;
+    schemaFingerprint: string;
+    signal: AbortSignal;
+  }) => Promise<string | null>;
 }
 
 /** Detect `EXPLAIN ANALYZE` (or ANALYSE) at depth 0 — the only EXPLAIN form
@@ -109,6 +124,11 @@ export class ConsolePanel {
   private readonly onRun: (sql: string) => void | Promise<void>;
   private readonly options: ConsolePanelOptions;
   private readonly memento: vscode.Memento | undefined;
+  private readonly onAutocomplete: ConsolePanelOptions["onAutocomplete"];
+  /** Per-tab AbortController for the in-flight autocomplete request. */
+  private readonly acControllers = new Map<string, AbortController>();
+  /** Per-tab last requestId — late results are dropped if it changed. */
+  private readonly acRequestId = new Map<string, string>();
   private readonly tabs: ConsoleTabSpec[] = [];
   private activeTabId = "";
   private panel: vscode.WebviewPanel | null = null;
@@ -118,6 +138,7 @@ export class ConsolePanel {
     this.extensionUri = options.extensionUri;
     this.onRun = options.onRun;
     this.memento = options.memento;
+    this.onAutocomplete = options.onAutocomplete;
     this.options = options;
     this.tabs.push({ id: newTabId(), name: "Query 1", buffer: "" });
     this.activeTabId = this.tabs[0].id;
@@ -155,6 +176,9 @@ export class ConsolePanel {
     );
     this.disposables.push(
       this.panel.onDidDispose(() => {
+        for (const ctrl of this.acControllers.values()) ctrl.abort();
+        this.acControllers.clear();
+        this.acRequestId.clear();
         this.panel = null;
         for (const d of this.disposables) d.dispose();
         this.disposables = [];
@@ -164,6 +188,11 @@ export class ConsolePanel {
   }
 
   dispose(): void {
+    // AIC-004: cancel every in-flight autocomplete before tearing down so
+    // the underlying service / abort signal path settles cleanly.
+    for (const ctrl of this.acControllers.values()) ctrl.abort();
+    this.acControllers.clear();
+    this.acRequestId.clear();
     const panel = this.panel;
     this.panel = null;
     panel?.dispose();
@@ -230,6 +259,10 @@ export class ConsolePanel {
   closeTab(tabId: string): void {
     const idx = this.tabs.findIndex((t) => t.id === tabId);
     if (idx < 0) return;
+    // AIC-004: cancel any in-flight autocomplete for the tab being closed.
+    this.acControllers.get(tabId)?.abort();
+    this.acControllers.delete(tabId);
+    this.acRequestId.delete(tabId);
     this.tabs.splice(idx, 1);
     if (this.tabs.length === 0) {
       const fresh = { id: newTabId(), name: "Query 1", buffer: "" };
@@ -368,6 +401,24 @@ export class ConsolePanel {
       case "updateBuffer":
         this.setBuffer(msg.tabId, msg.buffer);
         return;
+      case "requestAutocomplete":
+        void this.handleAutocompleteRequest(
+          msg.tabId,
+          msg.requestId,
+          msg.cursorOffset,
+          msg.documentText,
+        );
+        return;
+      case "acceptAutocomplete":
+        this.handleAcceptAutocomplete(
+          msg.tabId,
+          msg.requestId,
+          msg.suffix,
+        );
+        return;
+      case "clearAutocomplete":
+        this.handleClearAutocomplete(msg.tabId);
+        return;
     }
   }
 
@@ -462,6 +513,82 @@ export class ConsolePanel {
     if (!formatted) return;
     this.setBuffer(tabId, formatted);
     this.postState();
+  }
+
+  // ---- AIC-004 ghost-text seam ---------------------------------------------
+
+  private async handleAutocompleteRequest(
+    tabId: string,
+    requestId: string,
+    cursorOffset: number,
+    documentText: string,
+  ): Promise<void> {
+    // Cancel any previous in-flight request for this tab.
+    this.acControllers.get(tabId)?.abort();
+    const controller = new AbortController();
+    this.acControllers.set(tabId, controller);
+    this.acRequestId.set(tabId, requestId);
+    if (!this.onAutocomplete) {
+      await this.postAutocompleteResult(tabId, requestId, null);
+      return;
+    }
+    let suffix: string | null;
+    try {
+      suffix = await this.onAutocomplete({
+        tabId,
+        requestId,
+        cursorOffset,
+        documentText,
+        schemaFingerprint: "v1",
+        signal: controller.signal,
+      });
+    } catch {
+      // Silent failure per spec — never notify on autocomplete errors.
+      suffix = null;
+    }
+    // Late guard: if a newer request superseded us, or the tab switched,
+    // or the user cleared, do not post. Also drop if the tab disappeared.
+    if (this.acRequestId.get(tabId) !== requestId) return;
+    if (!this.tabById(tabId)) return;
+    if (controller.signal.aborted) return;
+    this.acControllers.delete(tabId);
+    this.acRequestId.delete(tabId);
+    await this.postAutocompleteResult(tabId, requestId, suffix);
+  }
+
+  private handleAcceptAutocomplete(
+    tabId: string,
+    _requestId: string,
+    suffix: string,
+  ): void {
+    const tab = this.tabById(tabId);
+    if (!tab) return;
+    // Atomic: just append the suffix to the buffer (webview chooses the
+    // insertion offset at accept time; the host is the single source of
+    // truth for buffer state). No textarea mutation in the webview path.
+    tab.buffer = tab.buffer + suffix;
+    this.postState();
+  }
+
+  private handleClearAutocomplete(tabId: string): void {
+    this.acControllers.get(tabId)?.abort();
+    this.acControllers.delete(tabId);
+    this.acRequestId.delete(tabId);
+  }
+
+  private async postAutocompleteResult(
+    tabId: string,
+    requestId: string,
+    suffix: string | null,
+  ): Promise<void> {
+    if (!this.panel) return;
+    const msg: ConsoleHostToWebviewMessage = {
+      type: "autocompleteResult",
+      tabId,
+      requestId,
+      suffix,
+    };
+    await this.panel.webview.postMessage(msg);
   }
 
   private pushHistory(sql: string): void {

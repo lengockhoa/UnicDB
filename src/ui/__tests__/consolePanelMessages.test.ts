@@ -1,5 +1,86 @@
 // src/ui/__tests__/consolePanelMessages.test.ts — TASK-001 Console protocol.
-//
+// Cycle AIC TASK-AIC-004 — adds Console ghost-text autocomplete message
+// variants with strict runtime validation, mirroring the existing pattern.
+import { describe, it, expect } from "vitest";
+import {
+  isConsoleToHostMessage,
+  suggestSaveFileName,
+} from "../consolePanelMessages";
+
+describe("isConsoleToHostMessage — AIC-004 autocomplete variants", () => {
+  it("accepts a well-formed requestAutocomplete message", () => {
+    const raw: unknown = {
+      type: "requestAutocomplete",
+      tabId: "tab-1",
+      requestId: "req-1",
+      cursorOffset: 16,
+      documentText: "SELECT * FROM us",
+    };
+    expect(isConsoleToHostMessage(raw)).toBe(true);
+  });
+
+  it("accepts a well-formed acceptAutocomplete message", () => {
+    const raw: unknown = {
+      type: "acceptAutocomplete",
+      tabId: "tab-1",
+      requestId: "req-1",
+      suffix: "ers",
+    };
+    expect(isConsoleToHostMessage(raw)).toBe(true);
+  });
+
+  it("accepts a well-formed clearAutocomplete message", () => {
+    const raw: unknown = {
+      type: "clearAutocomplete",
+      tabId: "tab-1",
+    };
+    expect(isConsoleToHostMessage(raw)).toBe(true);
+  });
+
+  it("rejects requestAutocomplete with missing tabId", () => {
+    const raw: unknown = {
+      type: "requestAutocomplete",
+      requestId: "req-1",
+      cursorOffset: 16,
+      documentText: "SELECT 1",
+    };
+    expect(isConsoleToHostMessage(raw)).toBe(false);
+  });
+
+  it("rejects requestAutocomplete with non-string requestId", () => {
+    const raw: unknown = {
+      type: "requestAutocomplete",
+      tabId: "tab-1",
+      requestId: 42,
+      cursorOffset: 16,
+      documentText: "SELECT 1",
+    };
+    expect(isConsoleToHostMessage(raw)).toBe(false);
+  });
+
+  it("rejects acceptAutocomplete with non-string suffix", () => {
+    const raw: unknown = {
+      type: "acceptAutocomplete",
+      tabId: "tab-1",
+      requestId: "req-1",
+      suffix: 7,
+    };
+    expect(isConsoleToHostMessage(raw)).toBe(false);
+  });
+
+  it("rejects clearAutocomplete with missing tabId", () => {
+    const raw: unknown = {
+      type: "clearAutocomplete",
+    };
+    expect(isConsoleToHostMessage(raw)).toBe(false);
+  });
+
+  it("rejects unknown autocomplete type", () => {
+    const raw: unknown = { type: "ghostTextApply", tabId: "x" };
+    expect(isConsoleToHostMessage(raw)).toBe(false);
+  });
+});
+
 // Pure unit coverage for the Console host/webview message contract:
 //   - isConsoleToHostMessage gates EVERY inbound postMessage value because the
 //     webview is untrusted runtime input (plan §3.1: "host consumes only
