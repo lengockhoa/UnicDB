@@ -3,6 +3,18 @@
 All notable changes to VSDB are documented in this file. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 
+## [1.13.0] — 2026-08-29
+
+Cycle AH: DataGrip-style accumulating multi-statement results.
+
+### Added
+- **Accumulating result tabs**: running multiple selected SQL statements appends one result tab per statement instead of overwriting prior results. New tabs are labeled `Run N · Statement M`; the first tab from the newest run becomes active.
+- **Per-tab result state**: prior result tabs retain their loaded rows and DISTINCT caches while later runs append new results.
+
+### Fixed
+- Multi-statement SELECT runs now close completed cursors before advancing, avoiding cursor/resource hangs.
+- `Load More` on a closed cursor follows the existing visible error path rather than hanging.
+
 ## [Unreleased] — cycle AF (DataGrip parity wave 1)
 
 ### Added

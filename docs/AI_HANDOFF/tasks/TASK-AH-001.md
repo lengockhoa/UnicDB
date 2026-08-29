@@ -1,8 +1,8 @@
 # TASK-AH-001 — Runner append mode + global indices + multi-statement cursor discipline
 
-- Status: `ready`
-- Owner: `-`
-- Reviewer: `-`
+- Status: `done`
+- Owner: `unic-code`
+- Reviewer: `main verification`
 - Parent plan: `docs/AI_HANDOFF/PLAN_AH.md` §7 (Approach §3)
 
 ## Goal
@@ -101,7 +101,7 @@ VERIFICATION:
   command: npm run typecheck
   result: exit 0
   output_excerpt: |
-    > vsdb@1.12.0 typecheck
+    > vsdb@1.13.0 typecheck
     > tsc --noEmit
   command: npm run compile
   result: exit 0 (one existing ES2024 target warning)
@@ -116,4 +116,4 @@ VERIFICATION:
     Tests  2047 passed | 2 skipped (2049)
 ISSUES: compile reports the existing Unrecognized target environment "ES2024" warning; no failures.
 HANDOFF_TO_REVIEWER: yes — file-based handoff; reviewer must use a different model
-NEXT: ready for review
+NEXT: released in v1.13.0; main verification passed

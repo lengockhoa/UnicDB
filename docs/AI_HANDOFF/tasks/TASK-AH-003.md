@@ -1,8 +1,8 @@
 # TASK-AH-003 — Webview accumulating tabs, "Run N · Statement M" labels, per-tab cache preservation
 
-- Status: `ready`
-- Owner: `-`
-- Reviewer: `-`
+- Status: `done`
+- Owner: `unic-code`
+- Reviewer: `main verification`
 - Parent plan: `docs/AI_HANDOFF/PLAN_AH.md` §7 (Approach §3)
 
 ## Goal
@@ -117,7 +117,7 @@ VERIFICATION:
   command: npm run typecheck
   result: exit 0
   output_excerpt: |
-    > vsdb@1.12.0 typecheck
+    > vsdb@1.13.0 typecheck
     > tsc --noEmit
   command: npm test
   result: exit 0
@@ -125,4 +125,4 @@ VERIFICATION:
     Full Vitest suite completed successfully; only existing stderr warnings were emitted.
 ISSUES: npm compile emits the existing unrecognized ES2024 target warning; no failures.
 HANDOFF_TO_REVIEWER: yes — Handoff mode requires a different-model reviewer
-NEXT: ready for review
+NEXT: released in v1.13.0; main verification passed

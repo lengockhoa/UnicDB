@@ -1,8 +1,8 @@
 # TASK-AH-002 — ResultsPanel append-aware render + editor run path threads {append:true}
 
-- Status: `ready`
-- Owner: `-`
-- Reviewer: `-`
+- Status: `done`
+- Owner: `unic-code`
+- Reviewer: `main verification`
 - Parent plan: `docs/AI_HANDOFF/PLAN_AH.md` §7 (Approach §3)
 
 ## Goal
@@ -107,7 +107,7 @@ VERIFICATION:
   command: npm run typecheck
   result: exit 0
   output_excerpt: |
-    > vsdb@1.12.0 typecheck
+    > vsdb@1.13.0 typecheck
     > tsc --noEmit
   command: npm run compile
   result: exit 0
@@ -120,4 +120,4 @@ VERIFICATION:
     Full suite completed successfully; stderr contained only existing test diagnostics.
 ISSUES: Existing ES2024 target warning from esbuild/Vitest and expected stderr diagnostics from existing tests; no task failures.
 HANDOFF_TO_REVIEWER: no — no reviewer enablement is configured in the available handoff config; orchestrator may review separately.
-NEXT: ready for review
+NEXT: released in v1.13.0; main verification passed

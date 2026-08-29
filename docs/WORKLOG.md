@@ -301,3 +301,9 @@ For each significant action, append:
 - Files: src/core/ddl/pgCatalog.ts (NEW), src/core/sqlFormat.ts (NEW), src/ui/ddlView.ts (NEW), src/ui/schemaTree.ts, src/ui/consolePanel.ts, src/ui/consolePanelMessages.ts, webview/consolePanelMain.ts, webview/styles.css, src/extension.ts, src/adapters/types.ts, src/adapters/postgres.ts, package.json (vsdb.openDdl/refreshDdl/consoleNewTab), + 6 new test files.
 - Verification: 2021 tests passed / 2 skipped; npm run typecheck exit 0; npm run compile clean; vsdb-1.12.0.vsix = 18 entries, 0 forbidden, all markers (pgCatalog, formatSql, consoleHistory, vsdb-ddl, hostMcp).
 - Delivery: merge commits c0af36b (wave1) + 3ed2da4 (wave2) + 0a70c99 (wave3) + 49f49cd (AE.5), release a72b9cf; tag v1.12.0 pushed; GitHub release live.
+
+## 2026-08-29 — Cycle AH: accumulating multi-statement result tabs + release v1.13.0
+
+- Action: shipped AH-001 queryRunner append mode/cursor discipline, AH-002 results-panel append wiring/cache isolation, and AH-003 append-only webview tabs with `Run N · Statement M` labels and per-tab DISTINCT cache preservation.
+- Verification: 2057 tests passed / 2 skipped; `npm run typecheck` exit 0; `npm run compile` clean; `vsdb-1.13.0.vsix` 18 entries with all AF/AG/AH markers.
+- Delivery: release commit, tag `v1.13.0`, and GitHub release live.

@@ -1,12 +1,12 @@
 # INDEX_AH
 
-Cycle AH — **RESULTS PANEL: DATAGRIP-STYLE ACCUMULATING MULTI-STATEMENT RESULTS**: each run appends result tabs, never overwrites. Release target = next free minor (1.12.0 unless AF/AG released first). Plan: PLAN_AH.md.
+- Cycle AH — results-panel accumulation. Release: v1.13.0.
 
 | Task | Title | Status | Dependencies | Reviewer |
 |------|-------|--------|--------------|----------|
-| TASK-AH-001 | Runner append mode + global indices + multi-statement cursor discipline | ready | none | - |
-| TASK-AH-002 | ResultsPanel append-aware render + editor run path threads {append:true} | ready | TASK-AH-001 | - |
-| TASK-AH-003 | Webview accumulating tabs, "Run N · Statement M" labels, per-tab cache preservation | ready | TASK-AH-002 | - |
+| TASK-AH-001 | Runner append mode + global indices + multi-statement cursor discipline | done | none | - |
+| TASK-AH-002 | ResultsPanel append-aware render + editor run path threads {append:true} | done | TASK-AH-001 | - |
+| TASK-AH-003 | Webview accumulating tabs, "Run N · Statement M" labels, per-tab cache preservation | done | TASK-AH-002 | - |
 
 Graph: TASK-AH-001 → TASK-AH-002 → TASK-AH-003.
 
