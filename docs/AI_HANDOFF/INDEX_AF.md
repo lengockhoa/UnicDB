@@ -4,10 +4,12 @@ Cycle AF — **DATAGRIP PARITY, WAVE 1**: catalog/DDL expansion + Console v2 + S
 
 | Task | Title | Status | Dependencies | Reviewer |
 |------|-------|--------|--------------|----------|
-| TASK-AF-001 | pgCatalog pure module + Postgres adapter catalog capability | ready | none | - |
-| TASK-AF-002 | Schema tree catalog nodes + real DDL viewer | ready | TASK-AF-001 | - |
-| TASK-AF-003 | SQL formatter pure module | ready | none | - |
-| TASK-AF-004 | SQL Console v2: tabs, per-statement run, history, EXPLAIN, Format | ready | TASK-AF-002, TASK-AF-003 | - |
+| TASK-AF-001 | pgCatalog pure module + Postgres adapter catalog capability | done | none | unic-smart |
+| TASK-AF-002 | Schema tree catalog nodes + real DDL viewer | done | TASK-AF-001 | unic-smart |
+| TASK-AF-003 | SQL formatter pure module | done | none | unic-smart |
+| TASK-AF-004 | SQL Console v2: tabs, per-statement run, history, EXPLAIN, Format | done | TASK-AF-002, TASK-AF-003 | unic-smart |
+
+Closure (2026-08-29): Phase 4 review completed post-release by unic-smart (mustDifferFromExecutor ok, executor unic-code). Verdicts: AF-001 approved_minor (executor report recovered from parked artifact ExecAF001), AF-002 approved_minor, AF-003 approved, AF-004 approved_minor. Targeted suites re-run fresh: pgCatalog+adapterCatalog 24/24, sqlFormat 10/10, tree+ddl 74/74 (incl. 62 regression), console 12/12; typecheck exit 0. Cycle shipped in v1.12.0 (a72b9cf); no product code changed by review.
 
 Graph: TASK-AF-001 → TASK-AF-002; TASK-AF-003 independent; TASK-AF-002 + TASK-AF-003 → TASK-AF-004.
 

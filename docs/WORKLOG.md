@@ -22,6 +22,15 @@ For each significant action, append:
 
 ---
 
+## 2026-08-29 — AI Chat slash commands + session UX
+
+- Action: implemented local slash-command parsing and composer UX for `/clear`, `/resume`, `/engine`, `/context`, `/export`, and `/model`.
+- Files: `src/ui/aiChatPanelCommands.ts`, `src/ui/aiChatPanelMessages.ts`, `src/ui/aiChatPanel.ts`, `webview/aiChatPanelMain.ts`, `webview/styles.css`, and focused AI chat tests.
+- Behavior: slash autocomplete uses text-safe DOM nodes; Enter/Tab/Arrow/Esc precedence is isolated from mention handling; recognized commands never enter normal `send`; clear/resume reuse existing wire handlers; context/export stay local; engine/model are host-routed without secrets.
+- Model role: `/model work|smart` is session-local and is passed into the next builtin `runAgent` turn. Engine selection validates `builtin|omp`, persists the setting, and explains when reopening is required.
+- Verification: targeted parser/host/bundle suites 58 passed; final bundle suite 21 passed; all AI chat suites 316 passed; full suite 2066 passed with 2 skipped; `npm run typecheck` and `npm run compile` passed; release hygiene 3 passed; `git diff --check` passed.
+- Release prep: `npm version minor --no-git-tag-version` set v1.14.0, changelog and comparison links updated, `scripts/build.sh` passed, and the final `npx @vscode/vsce package --no-dependencies -o dist/` produced `dist/vsdb-1.14.0.vsix` (1,720,515 bytes). External tagging/publishing intentionally not performed; release remains local-prepared.
+
 ## 2026-08-28 — Cycle AB: AI chat image attach + clipboard paste + release v1.9.0
 
 - Action: full handoff cycle (P0→R5+release) adding image attach + Cmd/Ctrl+V paste to the AI Chat composer. P0 decisions: scope = image attach + paste (slash commands deferred); caps = 5 MB / 4 per turn; non-vision policy = block at attach with amber warning (rejected: auto-route to vision model / send-with-warning — both surprise the user or violate "no broken messages"). Plan review round 1 = Issues Found (3 BLOCKING: CSP img-src missing, omp/ACP silent-drop, userContentOverride redundant) → revised → loop cap reached, applied without re-review.

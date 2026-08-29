@@ -302,3 +302,49 @@ describeIfBundle(
     });
   },
 );
+
+describeIfBundle("webview/aiChatPanelMain.ts bundle (slash commands)", () => {
+  itIfBundle("typing slash opens a local command picker", () => {
+    const { received } = loadBundle();
+    dispatch({ type: "init", hasHistory: false });
+    const prompt = inputEl("prompt");
+    prompt.value = "/";
+    prompt.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(document.querySelector(".vsdb-chat-slash-dropdown")).not.toBeNull();
+    expect(received.filter((m) => m.type === "send")).toHaveLength(0);
+  });
+
+  itIfBundle("Enter on /resume reuses resume picker and never sends", () => {
+    const { received } = loadBundle();
+    dispatch({ type: "init", hasHistory: false });
+    const prompt = inputEl("prompt");
+    prompt.value = "/resume";
+    prompt.dispatchEvent(new Event("input", { bubbles: true }));
+    prompt.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(received.filter((m) => m.type === "resume_list")).toEqual([
+      { type: "resume_list" },
+    ]);
+    expect(received.filter((m) => m.type === "send")).toHaveLength(0);
+  });
+
+  itIfBundle("Enter on incomplete slash input selects a candidate, never sends", () => {
+    const { received } = loadBundle();
+    dispatch({ type: "init", hasHistory: false });
+    const prompt = inputEl("prompt");
+    prompt.value = "/";
+    prompt.dispatchEvent(new Event("input", { bubbles: true }));
+    prompt.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(prompt.value).toBe("/clear ");
+    expect(received.filter((m) => m.type === "send")).toHaveLength(0);
+  });
+
+  itIfBundle("ordinary text containing slash still uses normal send", () => {
+    const { received } = loadBundle();
+    dispatch({ type: "init", hasHistory: false });
+    const prompt = inputEl("prompt");
+    prompt.value = "explain /model in this query";
+    btn("sendBtn").click();
+    expect(received.filter((m) => m.type === "send")).toHaveLength(1);
+    expect(received.filter((m) => m.type === "command")).toHaveLength(0);
+  });
+});

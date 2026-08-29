@@ -1,8 +1,8 @@
 # TASK-AF-004 — SQL Console v2: tabs, per-statement run, history, EXPLAIN, Format
 
-- Status: `pending_review`
+- Status: `done`
 - Owner: `ExecAF004 (unic-code)`
-- Reviewer: `-`
+- Reviewer: `unic-smart`
 - Parent plan: `docs/AI_HANDOFF/PLAN_AF.md` §7 (Approach §3)
 
 ## Goal
@@ -111,3 +111,20 @@ NEXT: ready for review
 ---
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator. Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart (running as unic/unic-smart; matches handoff.reviewer.model in .ukit/storage/config.json)
+EXECUTOR_MODEL: unic-code (self-reported below; differs from reviewer — mustDifferFromExecutor satisfied)
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/consoleTabs.test.ts tests/consolePanelWebview.test.ts
+  result: 12 pass / 0 fail (fresh re-run 2026-08-29: host 8 + webview 4); npm run typecheck exit 0
+TEST_PLAN_COVERAGE: all-followed — §Cases 1–12 implemented (verified in test source); safety-critical edges hold: #2 close-last-tab no-crash, #6 history cap evicts oldest, #7 Memento rehydrate, #9 EXPLAIN ANALYZE deny → no execution (confirm gate verified in src/ui/__tests__/consoleTabs.test.ts:341-344).
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - Full-suite and compile claims in the report trusted via the cycle's release gate (v1.12.0, a72b9cf) rather than re-run by reviewer per assignment scope; targeted suites + typecheck re-run fresh and green.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Implementation commit 0ccaab9 verified in history (consolePanel.ts +445, consolePanelMessages.ts +125, webview +315, package.json command contribution, CHANGELOG entry). AF-003's formatSql consumed as contracted; extension.ts wave-3 ownership respected.

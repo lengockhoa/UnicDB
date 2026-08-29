@@ -52,7 +52,7 @@ import {
   summarizeAttachmentsForLog,
   type MinimalAttachment,
 } from "./aiChatAttachments";
-import { defaultAiSettings } from "../ai/settings";
+import { defaultAiSettings, type AiModelRole } from "../ai/settings";
 import { createDbTools } from "../ai/tools/registry";
 import { createSqlTool } from "../ai/tools/sqlTool";
 import { createExportStructureTool } from "../ai/tools/schemaTools";
@@ -931,6 +931,8 @@ export class AiChatPanel {
    * `[user, assistant]` pair — i.e. the last UI exchange was stopped
    * mid-turn and the pair was therefore never appended (PLAN §3). */
   private lastSentText: string | null = null;
+  /** Session-local model role selected by the `/model` slash command. */
+  private activeRole: AiModelRole = "work";
   /** Cached engine resolution — set on first show; reused on every turn. */
   private engine: EngineKind | null = null;
   /** Cached ACP session — created on first acp-mode send. */
@@ -1092,11 +1094,89 @@ export class AiChatPanel {
       case "regenerate":
         await this.handleRegenerate();
         return;
+      case "command":
+        await this.handleCommand(msg.command, msg.args);
+        return;
       case "mention_list":
         await this.handleMentionList(msg.query);
         return;
     }
   }
+  private async handleCommand(
+    command: "engine" | "model",
+    args: string[],
+  ): Promise<void> {
+    if (command === "model") {
+      if (args.length === 0) {
+        this.post({
+          type: "assistant",
+          text: `Active model role: ${this.activeRole}`,
+          markdown: false,
+        });
+        return;
+      }
+      if (args.length !== 1 || (args[0] !== "work" && args[0] !== "smart")) {
+        this.post({
+          type: "error",
+          message: "Usage: /model work|smart",
+        });
+        return;
+      }
+      this.activeRole = args[0];
+      this.post({
+        type: "assistant",
+        text: `Active model role set to ${this.activeRole}`,
+        markdown: false,
+      });
+      return;
+    }
+
+    const current = this.engine ?? (this.options.acp === undefined ? "builtin" : "omp");
+    if (args.length === 0) {
+      this.post({ type: "assistant", text: `Active engine: ${current}`, markdown: false });
+      return;
+    }
+    const target = args[0];
+    if (args.length !== 1 || (target !== "builtin" && target !== "omp")) {
+      this.post({ type: "error", message: "Usage: /engine builtin|omp" });
+      return;
+    }
+    try {
+      await vscode.workspace
+        .getConfiguration("vsdb")
+        .update("ai.engine", target, vscode.ConfigurationTarget.Global);
+    } catch {
+      this.post({ type: "error", message: "Could not save the engine selection." });
+      return;
+    }
+    if (target === "builtin") {
+      if (this.engine === "omp") this.disposeAcpSession();
+      this.engine = "builtin";
+      this.postEngine("builtin");
+      this.post({
+        type: "assistant",
+        text: "Engine set to builtin for this chat and future panels.",
+        markdown: false,
+      });
+      return;
+    }
+    if (this.options.acp !== undefined) {
+      this.engine = "omp";
+      this.postEngine("omp");
+      this.post({
+        type: "assistant",
+        text: "Engine set to omp for this chat and future panels.",
+        markdown: false,
+      });
+      return;
+    }
+    this.post({
+      type: "assistant",
+      text: "Engine set to omp for future panels; reopen this chat to activate it.",
+      markdown: false,
+    });
+  }
+
 
   private async handleReady(): Promise<void> {
     if (this.engine === null) {
@@ -1284,7 +1364,7 @@ export class AiChatPanel {
     const accepted: MinimalAttachment[] = [];
     for (let i = 0; i < attachments.length; i++) {
       const a = attachments[i]!;
-      if (i >= MAX_ATTACHMENTS_PER_TURN) {
+      if (accepted.length >= MAX_ATTACHMENTS_PER_TURN) {
         this.post({
           type: "attach_error",
           id: a.id,
@@ -1365,7 +1445,7 @@ export class AiChatPanel {
 
     try {
       const result = await runAgent(
-        { messages, tools: registry },
+        { messages, role: this.activeRole, tools: registry },
         this.options.deps,
         callbacks,
         signal,

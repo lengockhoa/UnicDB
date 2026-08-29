@@ -1314,6 +1314,39 @@ button.vsdb-requery-clear:disabled {
   word-break: break-word;
 }
 
+.vsdb-chat-slash-dropdown {
+  position: absolute;
+  z-index: 71;
+  min-width: 180px;
+  max-width: 300px;
+  padding: 4px 0;
+  border: 1px solid var(--vscode-panel-border, #444);
+  border-radius: 3px;
+  background: var(--vscode-editorWidget-background, #252526);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+}
+.vsdb-chat-slash-row {
+  border: 0;
+  padding: 5px 12px;
+  text-align: left;
+  cursor: pointer;
+  background: transparent;
+  color: var(--vscode-foreground, #cccccc);
+}
+.vsdb-chat-slash-row:hover,
+.vsdb-chat-slash-row:focus {
+  background: var(--vscode-list-activeSelectionBackground, #094771);
+  color: var(--vscode-list-activeSelectionForeground, #ffffff);
+}
+.vsdb-chat-local-notice {
+  align-self: flex-start;
+  color: var(--vscode-descriptionForeground, #8c8c8c);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
 .vsdb-chat-mention-dropdown {
   position: absolute;
   z-index: 70;

@@ -269,6 +269,13 @@ export interface AiChatPanelPermissionResponse {
   optionId?: string;
 }
 
+/** Local slash command requiring host settings/state access. */
+export interface AiChatPanelCommand {
+  type: "command";
+  command: "engine" | "model";
+  args: string[];
+}
+
 export type AiChatPanelWebviewMessage =
   | AiChatPanelReady
   | AiChatPanelSend
@@ -279,6 +286,7 @@ export type AiChatPanelWebviewMessage =
   | AiChatPanelResumePick
   | AiChatPanelResumeCancel
   | AiChatPanelRegenerate
+  | AiChatPanelCommand
   | AiChatPanelMentionList;
 
 /** TASK-005: webview opened the @-mention dropdown. `query` is the

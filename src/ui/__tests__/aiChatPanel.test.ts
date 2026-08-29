@@ -1822,3 +1822,25 @@ describe("AiChatPanel — Clear recovery + not-configured (TASK-003)", () => {
     }
   });
 });
+
+describe("AiChatPanel — slash model command", () => {
+  it("changes the role used by the next builtin turn without model-uploading command text", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], "answer"));
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "command", command: "model", args: ["smart"] });
+    await until(() => postedMessages(p).some(isAssistant));
+    handler({ type: "send", text: "show users" });
+    await until(() => agentState.runAgentMock.mock.calls.length === 1);
+    const input = agentState.runAgentMock.mock.calls[0]?.[0] as { role?: string; messages: ChatMessage[] };
+    expect(input.role).toBe("smart");
+    expect(JSON.stringify(input.messages)).not.toContain("/model");
+  });
+});

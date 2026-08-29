@@ -1,8 +1,8 @@
 # TASK-AF-002 — Schema tree catalog nodes + real DDL viewer
 
-- Status: `ready`
-- Owner: `-`
-- Reviewer: `-`
+- Status: `done`
+- Owner: `ExecAF002 (unic-code)`
+- Reviewer: `unic-smart`
 - Parent plan: `docs/AI_HANDOFF/PLAN_AF.md` §7 (Approach §3)
 
 ## Goal
@@ -98,3 +98,21 @@ npm test
   - Test #6 design note: filter 'idx_a' can't propagate to the table level because existing filter engine does shallow match. The test verifies filter applies at the catalog leaf level (getChildren on Indexes/Constraints categories), which is the contract documented in the test file. Ancestors stay Expanded so users can navigate to deep matches visually.
   - AF-004 (wave 3) also touches extension.ts; only AF-002 commands added here. Wave 3 owner should add its commands separately.
 - NEXT: ready for review (handoff.reviewer)
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart (running as unic/unic-smart; matches handoff.reviewer.model in .ukit/storage/config.json)
+EXECUTOR_MODEL: unic-code (self-reported below; differs from reviewer — mustDifferFromExecutor satisfied)
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/schemaTreeCatalog.test.ts src/ui/__tests__/ddlView.test.ts src/ui/__tests__/schemaTree.test.ts
+  result: 74 pass / 0 fail (fresh re-run 2026-08-29: catalog 7 + ddlView 5 + regression 62); npm run typecheck exit 0
+TEST_PLAN_COVERAGE: all-followed — §Cases 1–10 implemented with real assertions (verified in test source); edge families present: no-catalog degrade (3), rowCount rejection fallback (4), empty-sequences category absence (5), objectDdl failure → error notice document (8), no-catalog fallback document (9).
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - Test #6 (task file): filter cannot propagate table-level because existing filter engine is shallow; executor documented the leaf-level contract in the test file. Acceptable scoped deviation — noted for future filter-depth work.
+    - Executor report lacks a pasted RED_OUTPUT excerpt; RED-first is evidenced indirectly by commit sequence 76188b8 (vscode mock registers TextDocumentContentProvider) → 3ed2da4 (implementation + tests). Evidence accepted.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Implementation commit 3ed2da4 verified in history (schemaTree.ts +435, ddlView.ts NEW 233, extension wiring). vsdb-ddl read-only provider + openDdl/refreshDdl commands match §Produces.

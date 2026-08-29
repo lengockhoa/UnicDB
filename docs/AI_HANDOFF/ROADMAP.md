@@ -2,39 +2,33 @@
 
 Mục đích: bản đồ multi-cycle đưa VSDB tới feature-parity với JetBrains DataGrip, PostgreSQL-first.
 File này **durable** — sống qua các vòng archive; mỗi cycle khi bắt đầu bóc phần của mình ra vào PLAN_XX.md.
-Trạng thái hiện hành của từng cycle xem `ACTIVE.md` + `INDEX_XX.md`; đây chỉ là bản đồ.
-
-Nguyên tắc chung:
-- TDD bắt buộc (RED trước); mọi cycle có full-suite green + typecheck 0.
-- PostgreSQL-first: feature mới làm chuẩn trên Postgres; MySQL/MSSQL parity gom về Cycle AK.
-- Foundation trước: AF (catalog + DDL) mở đường cho diff/diagram/refactor.
-- AI synergy: panel chat AI hiện có (DB-aware tools, permission cards) được tái sử dụng — không viết trùng tính năng AI.
-
 | Cycle | Chủ đề | Trạng thái |
 |---|---|---|
-| AF | Catalog + DDL + Console + Formatter | planned (wave 1 của roadmap) |
-| AG | Import/Export + Data grid nâng cao | planned |
-| AH | Admin: users/roles/grants + sessions/locks | planned |
+| AF | Catalog + DDL + Console + Formatter | complete — released |
+| AG (roadmap) | Import/Export + advanced grid | planned (AG2026 draft rejected) |
+| AH | Admin: users/roles/grants + sessions/locks | in progress — AHL plan/index/4 tasks drafted (use AHL suffix to avoid clashing with shipped PLAN_AH / INDEX_AH) |
 | AI | Diff (schema + data) + rename refactor | planned |
 | AJ | ER diagrams + SSH tunnel + connection UX | planned |
 | AK | MySQL/MSSQL parity + polish | planned |
 
----
+## Cycle AF — Catalog + DDL + Console + Formatter (released)
+## Cycle AG (roadmap-named) — Import/Export + Advanced grid (NOT YET PURSUED)
+- Import wizard CSV/JSON (column mapping + dry-run + INSERT batches).
+- Numbered pagination alongside Load More.
+- Form view + JSON / large-text value editor.
+- Copy table between two connections (schema + data, batched).
+- Cycle was drafted as AG2026 but rejected on execution; plan files removed.
+| AF | Catalog + DDL + Console + Formatter | complete — released |
+| AG | Import/Export + Data grid nâng cao | planned |
+| AH | Admin: users/roles/grants + sessions/locks | in progress — AHL plan/index/4 tasks drafted (use AHL suffix to avoid clashing with shipped PLAN_AH / INDEX_AH) |
+| AI | Diff (schema + data) + rename refactor | planned |
+| AJ | ER diagrams + SSH tunnel + connection UX | planned |
+| AK | MySQL/MSSQL parity + polish | planned |
 
-## Cycle AF — Catalog + DDL + Console + Formatter (current, see PLAN_AF.md)
-- Schema tree: indexes / constraints / triggers per table, sequences, row counts.
-- DDL viewer: real DDL (pg_get_viewdef / functiondef / triggerdef) qua `vsdb-ddl:` docs.
-- SQL formatter pure module (`formatSql`).
-- Console v2: multi-tab, per-statement + selection run, history (recall + persisted), EXPLAIN(ANALYZE) pane, Format button.
-- Rough: 4 tasks. Foundation cho AI, AJ.
-
-## Cycle AG — Import/Export + Data grid nâng cao
-- Import wizard: CSV/JSON từ disk → column mapping preview → INSERT batches (dangerousStatement compliance, dry-run count).
-- Grid: row add/delete inline, numbered pagination (bên cạnh Load More), form view (sửa theo row), value editor JSON/large text.
-- Copy table giữa 2 connections (schema + data, chọn batch).
-- Rough: 4-5 tasks. Depends: none cứng (AF giúp DDL copy nhưng không bắt buộc).
 
 ## Cycle AH — Admin: users/roles/grants + sessions/locks
+
+(See `docs/AI_HANDOFF/PLAN_AHL.md` + `docs/AI_HANDOFF/INDEX_AHL.md` + `docs/AI_HANDOFF/tasks/TASK-AHL-001..004.md`. Suffix `AHL` was used because `PLAN_AH.md` + `INDEX_AH.md` already document the shipped results-panel cycle.)
 - Tree category `Roles` (login/role attributes), per-role grants (tables/sequences/schema), member-of.
 - Grant/revoke wizard với preview SQL + confirm (dangerous-statement gate).
 - Sessions viewer: active queries (pid, user, state, duration, query), lock waits (blocked → blocking chain), kill/terminate (confirm).

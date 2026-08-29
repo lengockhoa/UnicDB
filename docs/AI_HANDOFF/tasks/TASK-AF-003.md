@@ -1,8 +1,8 @@
 # TASK-AF-003 — SQL formatter pure module
 
-- Status: `ready`
-- Owner: `-`
-- Reviewer: `-`
+- Status: `done`
+- Owner: `ExecAF003 (unic-code)`
+- Reviewer: `unic-smart`
 - Parent plan: `docs/AI_HANDOFF/PLAN_AF.md` §7 (Approach §3)
 
 ## Goal
@@ -68,3 +68,28 @@ npm run typecheck
 ---
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator. Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
+
+## Executor Report (recovered 2026-08-29 by reviewer from parked agent artifact `ExecAF003` — not appended to this file at execution time)
+
+- STATUS: PASS
+- EXECUTOR_MODEL: unic-code
+- FILES: src/core/sqlFormat.ts (NEW), src/core/__tests__/sqlFormat.test.ts (NEW)
+- RED: confirmed — module missing initially, test suite failed to load; GREEN 10/10 (T1–T10)
+- VERIFY: npx vitest run src/core/__tests__/sqlFormat.test.ts → 10 passed; npm run typecheck exit 0
+- COMMIT: 33485ff (feat AF: SQL formatter pure module); wave commit 0040e4f
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart (running as unic/unic-smart; matches handoff.reviewer.model in .ukit/storage/config.json)
+EXECUTOR_MODEL: unic-code (self-reported in recovered artifact; differs from reviewer — mustDifferFromExecutor satisfied)
+VERIFICATION_RERUN:
+  command: npx vitest run src/core/__tests__/sqlFormat.test.ts
+  result: 10 pass / 0 fail (fresh re-run 2026-08-29); npm run typecheck exit 0
+TEST_PLAN_COVERAGE: all-followed — T1–T10 implemented with real expect/assert (verified in source), incl. edge cases T5 empty input, T6 unbalanced parens no-throw, T7 string/comment byte-preservation, and T8 idempotence regression; FormatOptions interface matches §Interfaces exactly (src/core/sqlFormat.ts:6-9).
+FINDINGS:
+  critical: none
+  important: none
+  minor: none
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Pure module confirmed (zero non-stdlib imports). Executor artifact noted pre-existing dist-bundle failures needing `npm run compile`; resolved by later waves — full suite green at the AF-004 boundary per its executor report.

@@ -71,14 +71,14 @@ Manual smoke (review phase): connect to Postgres → tree shows Indexes/Constrai
 
 ## §6 Acceptance
 
-- [ ] All 4 tasks `approved` or `approved_minor` with executor self-report (tool/model/subagent + RED output) per Quality Gate.
-- [ ] Full `npm test` green at every wave boundary; `npm run typecheck` exit 0; `npm run compile` clean.
-- [ ] Postgres-only capability: mysql/mssql suites untouched and green; new UI degrades with catalog absent (no thrown errors).
-- [ ] No AE regression: `src/ai/omp/*` files untouched by AF diffs; AE tests green in full suite.
-- [ ] Privacy invariant intact: DDL/catalog reads expose schema metadata only; no row data outside existing approved paths.
-- [ ] Cycle-AA tree/grid/console regression pins stay green.
-- [ ] User-facing: CHANGELOG updated; version bumped to the next free minor at release step (`1.12.0` unless deferred cycle AE released first and claimed it — then take the next free number; only ONE cycle rebases, the releasing cycle wins).
-- [ ] ROADMAP.md exists and maps every DataGrip-parity gap to exactly one future cycle (no orphans).
+- [x] All 4 tasks `approved` or `approved_minor` with executor self-report (tool/model/subagent + RED output) per Quality Gate.
+- [x] Full `npm test` green at every wave boundary; `npm run typecheck` exit 0; `npm run compile` clean.
+- [x] Postgres-only capability: mysql/mssql suites untouched and green; new UI degrades with catalog absent (no thrown errors).
+- [x] No AE regression: `src/ai/omp/*` files untouched by AF diffs; AE tests green in full suite.
+- [x] Privacy invariant intact: DDL/catalog reads expose schema metadata only; no row data outside existing approved paths.
+- [x] Cycle-AA tree/grid/console regression pins stay green.
+- [x] User-facing: CHANGELOG updated; version bumped to the next free minor at release step (`1.12.0` unless deferred cycle AE released first and claimed it — then take the next free minor; only ONE cycle rebases, the releasing cycle wins).
+- [x] ROADMAP.md exists and maps every DataGrip-parity gap to exactly one future cycle (no orphans).
 
 ## §7 Task split
 

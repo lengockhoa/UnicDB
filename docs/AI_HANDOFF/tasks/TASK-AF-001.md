@@ -1,8 +1,8 @@
 # TASK-AF-001 — pgCatalog pure module + Postgres adapter catalog capability
 
-- Status: `ready`
-- Owner: `-`
-- Reviewer: `-`
+- Status: `done`
+- Owner: `ExecAF001 (unic-code)`
+- Reviewer: `unic-smart`
 - Parent plan: `docs/AI_HANDOFF/PLAN_AF.md` §7 (Approach §3)
 
 ## Goal
@@ -80,3 +80,30 @@ npm test
 ---
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator. Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
+
+## Executor Report (recovered 2026-08-29 by reviewer from parked agent artifact `ExecAF001` — not appended to this file at execution time)
+
+- STATUS: PASS
+- EXECUTOR_MODEL: unic-code
+- FILES: src/core/ddl/pgCatalog.ts (NEW), src/core/ddl/__tests__/pgCatalog.test.ts (NEW), src/adapters/types.ts (MOD), src/adapters/postgres.ts (MOD), src/adapters/__tests__/postgresCatalog.test.ts (NEW)
+- RED: confirmed (5 failed before implementation, 24/24 pass after)
+- VERIFY: targeted vitest 24/24; npx tsc --noEmit exit 0; npm test 1987/1987 pass (after `npm run compile`)
+- COMMIT: d7c80cb
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart (running as unic/unic-smart; matches handoff.reviewer.model in .ukit/storage/config.json)
+EXECUTOR_MODEL: unic-code (self-reported in recovered artifact; differs from reviewer — mustDifferFromExecutor satisfied)
+VERIFICATION_RERUN:
+  command: npx vitest run src/core/ddl/__tests__/pgCatalog.test.ts src/adapters/__tests__/postgresCatalog.test.ts
+  result: 24 pass / 0 fail (fresh re-run 2026-08-29); npm run typecheck exit 0
+TEST_PLAN_COVERAGE: all-followed — §Cases 1–12 present incl. both edge families (empty/malformed rows skipped; hostile `"` and empty-identifier quoting with structured error; objectDdl not-found structured rejection); CatalogApi signature matches the pinned §Interfaces contract exactly (src/adapters/types.ts:221-230); mysql.ts/mssql.ts proven untouched (git show d7c80cb --stat → 0 files changed).
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - docs/AI_HANDOFF/tasks/TASK-AF-001.md — executor report was never appended to this file at execution time; reviewer recovered it from parked artifact ExecAF001 (appended above). Process gap only; evidence complete.
+    - §Case 10 literal "mysql/mssql adapter instances have catalog === undefined" has no direct unit assertion; guaranteed structurally (optional `catalog?` field + untouched driver files) and behaviorally by TASK-AF-002 schemaTreeCatalog test 3 (no-catalog degrade path). No action required.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: RED evidence real (artifact: "5 failed before implementation, 24/24 pass after"). Implementation commit d7c80cb verified in history. Zero vscode imports in pure module confirmed by source scan.

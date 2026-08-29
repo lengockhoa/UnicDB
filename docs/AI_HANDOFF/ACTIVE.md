@@ -1,8 +1,8 @@
 # ACTIVE
 
-Cycle: (none)   Base: main @ v1.13.0
+Cycle: (none)   Base: main @ v1.14.0 (local release-prepared; no external publication)
 Goal: —
-Status: idle — cycles AI, AG, AF, AH complete and released; select next cycle from ROADMAP.md.
+Status: idle — historical cycles AI, AG, AF, AH complete and released; roadmap parity scopes (AG import/export + advanced grid, AH admin, AI diff/refactor, AJ ER diagrams/SSH, AK MySQL/MSSQL parity) remain planned where their topic differs from shipped cycle scope; select next cycle from ROADMAP.md.
 
 Previous:
 Cycle: AH   Date: 2026-08-29   Base: main @ v1.12.0

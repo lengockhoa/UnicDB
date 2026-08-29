@@ -31,12 +31,15 @@ import { Client, Pool, PoolClient } from "pg";
 import type { ConnectionConfig } from "../config/types";
 import { resolveSslOptions } from "../core/sslOptions";
 import type {
+  AdminApi,
   CatalogApi,
   BatchedQuery,
   DbTransaction,
   ColumnInfo,
   DbAdapter,
   IndexInfo,
+  ListRolesOptions,
+  ListSessionsOptions,
   QueryResult,
   RoutineInfo,
   RunResult,
@@ -53,14 +56,22 @@ import {
   constraintsSql,
   triggersSql,
   sequencesSql,
-  rowCountSql,
   objectDdlSql,
+  objectNotFoundError,
   rowsToIndexes,
   rowsToConstraints,
   rowsToTriggers,
   rowsToSequences,
-  objectNotFoundError,
+  rowCountSql,
 } from "../core/ddl/pgCatalog";
+import {
+  listRolesSql,
+  listRoleGrantsSql,
+  listSessionsSql,
+  listLockWaitsSql,
+  buildGrantSql,
+  buildRevokeSql,
+} from "../core/admin/pgAdmin";
 import {
   INTROSPECT_COLUMNS_SQL,
   INTROSPECT_CONSTRAINTS_SQL,
@@ -800,6 +811,88 @@ export class PostgresAdapter implements DbAdapter {
       }
       return r.rows[0].ddl;
     },
+  };
+
+  // Cycle AHL (TASK-AHL-001) — optional admin capability. Reuses pgAdmin SQL
+  // templates + row mappers and this.query<T>() plumbing. mysql/mssql adapters
+  // leave `admin` undefined; callers guard on `adapter.admin` first.
+  readonly admin: AdminApi = {
+    listRoles: (opts?: ListRolesOptions) => {
+      const r = listRolesSql(opts);
+      return this.query<{
+        name: string;
+        can_login: boolean;
+        is_superuser: boolean;
+        member_of: string[] | null;
+      }>(r.sql, r.params).then((res) =>
+        res.rows.map((row) => ({
+          name: row.name,
+          canLogin: row.can_login,
+          isSuperuser: row.is_superuser,
+          memberOf: row.member_of ?? [],
+        })),
+      );
+    },
+    listRoleGrants: (role: string) =>
+      this.query<{
+        grantee: string;
+        schema: string;
+        object: string;
+        object_kind: "table" | "column";
+        privileges: string[];
+      }>(listRoleGrantsSql(role), [role]).then((res) =>
+        res.rows
+          .filter((r) => r.object_kind === "table")
+          .map((r) => ({
+            objectKind: "table" as const,
+            schema: r.schema,
+            object: r.object,
+            privileges: r.privileges,
+            grantee: r.grantee,
+          })),
+      ),
+    listSessions: (opts?: ListSessionsOptions) =>
+      this.query<{
+        pid: number;
+        usename: string;
+        state: string;
+        duration_ms: number;
+        query: string;
+        wait_event: string;
+        application_name: string;
+      }>(listSessionsSql(opts), []).then((res) =>
+        res.rows.map((row) => ({
+          pid: row.pid,
+          usename: row.usename,
+          state: row.state,
+          durationMs: Number(row.duration_ms),
+          query: row.query,
+          waitEvent: row.wait_event || undefined,
+          applicationName: row.application_name || undefined,
+        })),
+      ),
+    listLockWaits: () =>
+      this.query<{
+        blocked_pid: number;
+        blocked_query: string;
+        blocking_pid: number;
+        blocking_query: string;
+        lock_type: string;
+        mode: string;
+        relation: string | null;
+      }>(listLockWaitsSql(), []).then((res) =>
+        res.rows.map((row) => ({
+          blockedPid: row.blocked_pid,
+          blockedQuery: row.blocked_query,
+          blockingPid: row.blocking_pid,
+          blockingQuery: row.blocking_query,
+          lockType: row.lock_type,
+          mode: row.mode,
+          relation: row.relation ?? undefined,
+        })),
+      ),
+    buildGrantSql: (req, opts) => buildGrantSql(req, opts),
+    buildRevokeSql: (req, opts) => buildRevokeSql(req, opts),
   };
 
   private async query<T = any>(

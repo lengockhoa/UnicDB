@@ -16,6 +16,11 @@ import {
   MAX_ATTACH_BYTES,
   MAX_ATTACHMENTS_PER_TURN,
 } from "./attachLimits";
+import {
+  parseAiChatCommand,
+  AI_CHAT_COMMANDS,
+  type AiChatCommand,
+} from "../src/ui/aiChatPanelCommands";
 
 declare const acquireVsCodeApi: undefined | (() => {
   postMessage: (msg: unknown) => void;
@@ -159,6 +164,9 @@ const state: State = {
   visionCapable: true,
   attachments: [],
 };
+let slashOpen = false;
+let slashActiveIndex = 0;
+let slashCandidates: AiChatCommand[] = [];
 
 // ---- TASK-005 — @-mention dropdown state ----------------------------------
 //
@@ -527,6 +535,112 @@ function iconButtonHtml(id: string, className: string): string {
   );
 }
 
+function disposeSlashDropdown(): void {
+  slashOpen = false;
+  slashActiveIndex = 0;
+  slashCandidates = [];
+  document.querySelector(".vsdb-chat-slash-dropdown")?.remove();
+}
+
+function renderSlashDropdown(candidates: AiChatCommand[]): void {
+  document.querySelector(".vsdb-chat-slash-dropdown")?.remove();
+  if (candidates.length === 0) {
+    slashOpen = false;
+    return;
+  }
+  slashOpen = true;
+  slashCandidates = candidates;
+  slashActiveIndex = Math.min(slashActiveIndex, candidates.length - 1);
+  const dropdown = document.createElement("div");
+  dropdown.className = "vsdb-chat-slash-dropdown";
+  dropdown.setAttribute("role", "listbox");
+  for (const [index, command] of candidates.entries()) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "vsdb-chat-slash-row";
+    row.setAttribute("role", "option");
+    row.textContent = `/${command}`;
+    row.setAttribute("aria-selected", String(index === slashActiveIndex));
+    row.addEventListener("mousedown", (ev) => ev.preventDefault());
+    row.addEventListener("click", () => {
+      const prompt = document.getElementById("prompt") as HTMLTextAreaElement | null;
+      if (prompt) {
+        prompt.value = `/${command} `;
+        prompt.focus();
+      }
+      disposeSlashDropdown();
+    });
+    dropdown.appendChild(row);
+  }
+  document.querySelector(".vsdb-chat-input")?.appendChild(dropdown);
+}
+
+function updateSlashDropdown(value: string): void {
+  const trimmed = value.trimStart();
+  if (!trimmed.startsWith("/") || /\s/.test(trimmed.slice(1).split(/\s/, 1)[0] ?? "")) {
+    disposeSlashDropdown();
+    return;
+  }
+  const query = trimmed.slice(1).toLowerCase();
+  const candidates = AI_CHAT_COMMANDS.filter((command) => command.startsWith(query));
+  slashActiveIndex = 0;
+  renderSlashDropdown(candidates);
+}
+
+function appendLocalNotice(message: string): void {
+  const thread = document.getElementById("thread");
+  if (!thread) return;
+  const notice = document.createElement("div");
+  notice.className = "vsdb-chat-local-notice";
+  notice.textContent = message;
+  thread.appendChild(notice);
+  autoScroll(notice);
+}
+
+function exportTranscript(filename?: string): void {
+  const thread = document.getElementById("thread");
+  const text = thread?.innerText?.trim() ?? "";
+  const safeName = (filename?.trim() || "vsdb-ai-transcript.md").replace(/[\\/:*?\"<>|]/g, "_");
+  const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = safeName;
+  link.click();
+  URL.revokeObjectURL(url);
+  appendLocalNotice(`Transcript exported as ${safeName}`);
+}
+
+function executeSlashCommand(text: string): boolean {
+  const parsed = parseAiChatCommand(text);
+  if (!parsed) return false;
+  const prompt = document.getElementById("prompt") as HTMLTextAreaElement | null;
+  disposeSlashDropdown();
+  if (prompt) prompt.value = "";
+  switch (parsed.command) {
+    case "clear":
+      post({ type: "clear" });
+      document.getElementById("thread")?.replaceChildren();
+      clearAttachments();
+      return true;
+    case "resume":
+      post({ type: "resume_list" });
+      return true;
+    case "context":
+      appendLocalNotice(
+        `Context: ${state.hasHistory ? "session history" : "no session history"}; ${state.attachments.length} queued attachment(s).`,
+      );
+      return true;
+    case "export":
+      exportTranscript(parsed.args[0]);
+      return true;
+    case "engine":
+    case "model":
+      post({ type: "command", command: parsed.command, args: parsed.args });
+      return true;
+  }
+}
+
 function renderInitial(): void {
   root.innerHTML = `
   <div class="vsdb-chat-thread" id="thread" aria-live="polite"></div>
@@ -581,6 +695,7 @@ function wireControls(): void {
       return;
     }
     if (!prompt) return;
+    if (executeSlashCommand(prompt.value)) return;
     const text = prompt.value;
     if (text.trim().length === 0) return;
     appendUser(text);
@@ -650,7 +765,6 @@ function wireControls(): void {
         if (typeof token === "string" && token.length > 0) {
           selectMentionToken(token);
         } else {
-          // Empty dropdown ("No matches") → just close.
           disposeMentionDropdown();
         }
         return;
@@ -671,12 +785,59 @@ function wireControls(): void {
         return;
       }
     }
-    // Fall through to wave-2 Enter=send semantics.
+    if (slashOpen) {
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        disposeSlashDropdown();
+        return;
+      }
+      if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+        ev.preventDefault();
+        const delta = ev.key === "ArrowDown" ? 1 : -1;
+        slashActiveIndex =
+          (slashActiveIndex + delta + slashCandidates.length) % slashCandidates.length;
+        renderSlashDropdown(slashCandidates);
+        return;
+      }
+      if (ev.key === "Tab") {
+        ev.preventDefault();
+        const command = slashCandidates[slashActiveIndex];
+        if (command && prompt) {
+          prompt.value = `/${command} `;
+          prompt.focus();
+        }
+        disposeSlashDropdown();
+        return;
+      }
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        if (prompt && executeSlashCommand(prompt.value)) return;
+        const command = slashCandidates[slashActiveIndex];
+        if (command && prompt) {
+          prompt.value = `/${command} `;
+          prompt.focus();
+        }
+        disposeSlashDropdown();
+        return;
+      }
+    }
+    if (ev.key === "Enter" && !ev.shiftKey && !ev.ctrlKey && !ev.metaKey) {
+      if (prompt && executeSlashCommand(prompt.value)) {
+        ev.preventDefault();
+        return;
+      }
+    }
+    // Fall through to normal Enter=send semantics.
     if (ev.key !== "Enter") return;
     if (ev.shiftKey) return;
     if (ev.ctrlKey || ev.metaKey) return;
     ev.preventDefault();
     sendBtn?.click();
+  });
+
+  prompt?.addEventListener("input", () => {
+    if (!prompt || state.busy || mentionOpen) return;
+    updateSlashDropdown(prompt.value);
   });
 
   // TASK-005: open / refresh the @-mention dropdown on each keystroke that

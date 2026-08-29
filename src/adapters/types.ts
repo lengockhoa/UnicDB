@@ -145,6 +145,7 @@ export interface DbAdapter {
   listTableDetail(schema: string, table: string): Promise<TableDetail>;
   testConnection(): Promise<void>;
   catalog?: CatalogApi;
+  admin?: AdminApi;
 }
 /**
  * Result shape cho adapter.listTableDetail. Row format giữ stringly-typed cho
@@ -229,4 +230,53 @@ export interface CatalogApi {
     name: string,
     schema?: string,
   ): Promise<string>;
+}
+
+
+// =============================================================================
+// Cycle AHL (TASK-AHL-001) — OPTIONAL admin capability for adapters (Postgres-first).
+// pgAdmin.ts owns the SQL templates + row mappers + safe GRANT/REVOKE builders;
+// this file only re-declares the public interface contract that callers use.
+// mysql/mssql leave adapter.admin undefined.
+// =============================================================================
+
+import type {
+  RoleInfo,
+  RoleGrantInfo,
+  SessionInfo,
+  LockWaitInfo,
+  GrantRequest,
+  RevokeRequest,
+  GrantOptions,
+  RevokeOptions,
+  AdminErrorCode,
+} from "../core/admin/pgAdmin";
+
+export type {
+  RoleInfo,
+  RoleGrantInfo,
+  SessionInfo,
+  LockWaitInfo,
+  GrantRequest,
+  RevokeRequest,
+  GrantOptions,
+  RevokeOptions,
+  AdminErrorCode,
+} from "../core/admin/pgAdmin";
+
+export interface ListRolesOptions {
+  includeSystemRoles?: boolean;
+}
+
+export interface ListSessionsOptions {
+  limit?: number;
+}
+
+export interface AdminApi {
+  listRoles(opts?: ListRolesOptions): Promise<RoleInfo[]>;
+  listRoleGrants(role: string): Promise<RoleGrantInfo[]>;
+  listSessions(opts?: ListSessionsOptions): Promise<SessionInfo[]>;
+  listLockWaits(): Promise<LockWaitInfo[]>;
+  buildGrantSql(req: GrantRequest, opts?: GrantOptions): string;
+  buildRevokeSql(req: RevokeRequest, opts?: RevokeOptions): string;
 }

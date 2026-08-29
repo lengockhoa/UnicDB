@@ -15,6 +15,20 @@ Cycle AH: DataGrip-style accumulating multi-statement results.
 - Multi-statement SELECT runs now close completed cursors before advancing, avoiding cursor/resource hangs.
 - `Load More` on a closed cursor follows the existing visible error path rather than hanging.
 
+## [1.14.0] — 2026-08-29
+
+AI Chat slash commands and local session controls.
+
+### Added
+- **Local slash commands**: `/clear`, `/resume`, `/engine`, `/context`, `/export`, and `/model` with autocomplete and keyboard navigation.
+- Recognized commands execute locally and are never sent to the model as chat messages.
+- `/model work|smart` selects the active builtin model role for the chat session; `/engine builtin|omp` validates and persists engine selection.
+- Local transcript export and context status output, while `/resume` reuses the existing session picker.
+
+### Fixed
+- Slash command handling preserves normal chat Enter/Shift+Enter behavior and mention-dropdown precedence.
+
+
 ## [Unreleased]
 
 ## [1.12.0] — 2026-08-28
@@ -421,3 +435,5 @@ Cycle G: set-filter, toolbar icons, `run-sh` fix.
 [1.5.0]: https://github.com/lengockhoa/VSDB/compare/v1.4.1...v1.5.0
 
 [1.9.0]: https://github.com/lengockhoa/VSDB/compare/v1.8.0...v1.9.0
+[1.14.0]: https://github.com/lengockhoa/VSDB/compare/v1.13.0...v1.14.0
+[1.13.0]: https://github.com/lengockhoa/VSDB/compare/v1.12.0...v1.13.0
