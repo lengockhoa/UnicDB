@@ -47,6 +47,8 @@ import {
 import { defaultAiSettings, type AiSettings } from "./ai/settings";
 import type { ConnectionConfig, ParsedStatement } from "./config/types";
 import { writeVsdbAiConfig } from "./extensionConfigExport";
+import { SqlAutocompleteService, type ProviderFn, type SchemaContext } from "./ai/sqlAutocomplete";
+import { registerSqlAutocomplete, type AutocompleteRegistration } from "./extensionAutocomplete";
 let disposables: vscode.Disposable[] = [];
 let state: ExtensionState | null = null;
 /** Cached single-instance AiSettingsForm (TASK-004). Reused across calls. */
@@ -54,8 +56,9 @@ let aiSettingsForm: AiSettingsForm | null = null;
 /** Cached single-instance AiChatPanel (TASK-004). Reused across calls. */
 let aiChatPanel: AiChatPanel | null = null;
 let consolePanel: ConsolePanel | null = null;
-
-/** extensionUri capture ở activate() — dùng cho ConnectionForm webview resources. */
+/** Cycle AIC TASK-AIC-005 — singletons for the autocomplete wiring. */
+let autocompleteService: SqlAutocompleteService | null = null;
+let autocompleteRegistration: AutocompleteRegistration | null = null;
 let extensionUriForForm: vscode.Uri = vscode.Uri.file("/");
 let runScriptTerminal: vscode.Terminal | null = null;
 
@@ -425,6 +428,42 @@ export async function activate(
     ),
   );
 
+  // 16b. Cycle AIC TASK-AIC-005 — register the SQL InlineCompletionItemProvider
+  // AND the Console panel's onAutocomplete adapter. Both share the AIC-002
+  // service singleton; the service is the sole debounce/cancel/cache owner.
+  const acProvider: ProviderFn = (cfg, role, req) =>
+    createProviderClient({
+      baseUrl: cfg.baseUrl,
+      apiKey: cfg.apiKey,
+      method: cfg.method,
+      timeoutMs: cfg.timeoutMs,
+    }).complete(req);
+  const acResolveSchema = async (_scope: string): Promise<SchemaContext> => {
+    const active = mgr.getActive();
+    if (!active || active.driver !== "postgres") {
+      return { dialect: "postgres", connectionName: "", tables: [] };
+    }
+    try {
+      const adapter = await mgr.getAdapter();
+      const tables = await adapter.listTables();
+      return {
+        dialect: active.driver,
+        connectionName: active.name ?? "",
+        tables: [],
+      };
+    } catch {
+      return { dialect: "postgres", connectionName: "", tables: [] };
+    }
+  };
+  autocompleteService = new SqlAutocompleteService({
+    provider: acProvider,
+    resolveSchema: acResolveSchema,
+  });
+  autocompleteRegistration = registerSqlAutocomplete({
+    service: autocompleteService,
+    loadConfig: () => aiStore.loadConfig(),
+  });
+
   // 17. vsdb.openConsole — TASK-003 cycle Z: DataGrip-style SQL Console.
   // TASK-AF-004 cycle AF: passes `globalState` Memento so query history
   // (capped at 200 entries) persists across panel reloads.
@@ -572,6 +611,10 @@ export async function deactivate(): Promise<void> {
   aiChatPanel = null;
   consolePanel?.dispose();
   consolePanel = null;
+  // Cycle AIC TASK-AIC-005 — drop the autocomplete wiring.
+  autocompleteRegistration?.dispose();
+  autocompleteRegistration = null;
+  autocompleteService = null;
   if (runScriptTerminal) {
     try {
       runScriptTerminal.dispose();
@@ -716,6 +759,12 @@ function commandOpenConsole(
     consolePanel = new ConsolePanel({
       extensionUri: extensionUriForForm,
       memento,
+      // Cycle AIC TASK-AIC-005 — Console ghost-text autocomplete. Routes
+      // through the AIC-002 service via the AIC-005 registration; per-tab
+      // sequence and cancellation stay on the host.
+      onAutocomplete: autocompleteRegistration
+        ? (req) => autocompleteRegistration!.consoleAutocomplete(req)
+        : undefined,
       onRun: async (sql: string) => {
         if (!mgr.getActive()) {
           await promptToAddConnectionOrSelect();
