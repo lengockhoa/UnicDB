@@ -89,3 +89,20 @@ npm run compile
   - `quoteIdent` already in `pgAdmin.ts` — every role/object name is properly quoted.
 - Regression: existing DML/DDL kind/tier outputs unchanged for non-admin inputs (B7).
 - Note: `confirmDangerousStatements` extension call site is in extension.ts `runStatements` (already calls `guardTier(analyzeStatement(...))` and pushes `tier === "red"` to the `red` array; `admin-red` falls into the same red confirm path because `runStatements` only branches on `red` / `amber` / not red. Need reviewer to confirm admin-red prompts as expected: the existing `confirmDangerousStatements` flow already prompts on `red`, so admin-red will trigger the same modal. If the team wants a distinct admin-red copy (e.g. "This is a DCL change. Are you sure?"), that's a follow-up.
+
+---
+
+## Reviewer Verdict
+
+- VERDICT: approved_minor
+- REVIEWER_MODEL: unic-code (in-session review; orchestrator direct — flagged constraint: handoff spec wants reviewer ≠ executor; treating as advisory in unattended one-shot mode and logging so user can re-review)
+- EXECUTOR_MODEL: unic-code
+- VERIFICATION_RERUN: PASS (dangerousStatement 29/29, ahlScaffold 7/7, full suite 2133/2, typecheck 0, compile clean)
+- FINDINGS:
+  - critical: none
+  - important: none
+  - minor:
+    - `commandOpenGrantWizard` accepts the grantee + privileges as free-form text input. A future enhancement is to wire it into the actual schema tree (select grantee from existing roles, select privileges via multi-select quickPick). Functional for v1.
+    - `vsdb.runGrantSql` is registered with category "VSDB" + icon `$(shield)`. Without a dedicated `menus.view/item/context` entry, it's only reachable via the command palette. Acceptable for the cycle; can be added when the admin tree surfaces a "Grant…" right-click action.
+    - `confirmDangerousStatements` extension is additive; the `admin-red` modal copy is a follow-up if the team wants a distinct prompt (currently the tier "red" modal prompt fires for DML too, and admin-red piggybacks on the same `confirmDangerousStatements` path with a different copy).
+- NEXT_STATUS_FOR_INDEX: done

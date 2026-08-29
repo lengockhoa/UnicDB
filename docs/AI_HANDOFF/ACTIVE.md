@@ -1,8 +1,13 @@
 # ACTIVE
 
-Cycle: (none)   Base: main @ v1.14.0 (local release-prepared; no external publication)
-Goal: —
-Status: idle — historical cycles AI, AG, AF, AH complete and released; roadmap parity scopes (AG import/export + advanced grid, AH admin, AI diff/refactor, AJ ER diagrams/SSH, AK MySQL/MSSQL parity) remain planned where their topic differs from shipped cycle scope; select next cycle from ROADMAP.md.
+Cycle: AHL   Date: 2026-08-29   Base: main @ v1.14.0
+Goal: Admin (Roles / Grants / Sessions / Locks) — PG-only; mysql/mssql degrade gracefully.
+Status: done — 4/4 tasks approved (AHL-001..003 approved, AHL-004 approved_minor). Full suite 2133 passed / 2 skipped; typecheck 0; compile clean. Wave commits: adcd977, cc7fdbe, 480e8df.
+
+Previous:
+Cycle: AA   Date: 2026-08-29   Base: main @ v1.14.0
+Goal: AI Chat panel UX overhaul (pinned composer, copy, Enter/Shift+Enter, thinking block, message states, regenerate) + privacy regression lock.
+Status: done — 5/5 tasks approved (TASK-001..005). Cycle AA shipped in 1.14.0; pre-empted by AHL on the same base.
 
 Previous:
 Cycle: AH   Date: 2026-08-29   Base: main @ v1.12.0

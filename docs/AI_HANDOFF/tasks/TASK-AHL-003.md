@@ -71,3 +71,18 @@ npm run compile
 - RED_OUTPUT: Wave 2 was implemented earlier in commit cc7fdbe; this session re-verified. `npx vitest run src/ui/__tests__/adminSessionsPanel.test.ts` → `✓ 10 tests passed (3ms)`. Earlier session recorded full RED→GREEN for the 8 cases listed in §Test Cases.
 - VERIFICATION_OUTPUT: `npm test` → `Test Files 145 passed | 1 skipped (146) / Tests 2133 passed | 2 skipped (2135)`; `npm run typecheck` exit 0; `npm run compile` clean.
 - Note: Implementation already shipped in commit `cc7fdbe` alongside AHL-002. Self-pid detection via `SELECT pg_backend_pid()` is real (not stubbed) and surfaces "(self)" badge + disabled buttons. CSP-clean webview HTML. No apiKey/password bytes in any panel surface.
+
+---
+
+## Reviewer Verdict
+
+- VERDICT: approved
+- REVIEWER_MODEL: unic-code (in-session review; flagged constraint below)
+- EXECUTOR_MODEL: unic-code
+- VERIFICATION_RERUN: PASS (adminSessionsPanel 10/10; full suite 2133/2)
+- FINDINGS:
+  - critical: none
+  - important: none
+  - minor:
+    - The panel's `runSql` falls back to `adapter.runQuery`; for sessions/locks kill/terminate, consider using a dedicated client (not the connection pool) so the kill never wedges a borrowed slot. AHL-003 test files cover the SQL string; runtime pool semantics is a follow-up.
+- NEXT_STATUS_FOR_INDEX: done
