@@ -77,3 +77,43 @@ Root-cause note for the executor: the hang is pool max=1 — a held keyset curso
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: other (omp)
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: ExecAH001
+SUMMARY: Implemented append-mode QueryRunner runs with global indices, run metadata, stale-cursor marking, and early cursor release between append multi-statement queries. Added closed-cursor Load More degradation and complete AH-001 append/cursor regression coverage.
+TEST_PLAN_FOLLOWED: task §Test Cases (RED→GREEN)
+FILES_CHANGED:
+  - src/core/queryRunner.ts: added append run options, accumulation/indexing, run metadata, cursorClosed lifecycle, multi-statement cursor release, and Load More guard
+  - src/core/__tests__/queryRunner.test.ts: added Cycle AH append, cancellation, cursor lifecycle, and stale-cursor regression tests
+TESTS_ADDED:
+  - src/core/__tests__/queryRunner.test.ts: append accumulation/replacement, empty append, cancel preservation, single/multi-statement cursor paging, closed-cursor errors, last-cursor retention, stale close metadata
+VERIFICATION:
+  command: npx vitest run src/core/__tests__/queryRunner.test.ts
+  result: 27 pass / 0 fail
+  output_excerpt: |
+    ✓ src/core/__tests__/queryRunner.test.ts  (27 tests) 113ms
+    Test Files 1 passed (1)
+    Tests 27 passed (27)
+  command: npm run typecheck
+  result: exit 0
+  output_excerpt: |
+    > vsdb@1.12.0 typecheck
+    > tsc --noEmit
+  command: npm run compile
+  result: exit 0 (one existing ES2024 target warning)
+  output_excerpt: |
+    > node esbuild.js
+    dist/schemaForm.js 3.0kb
+    dist/schemaForm.js.map 6.7kb
+  command: npm test
+  result: 2047 pass / 0 fail (2 skipped)
+  output_excerpt: |
+    Test Files  138 passed | 1 skipped (139)
+    Tests  2047 passed | 2 skipped (2049)
+ISSUES: compile reports the existing Unrecognized target environment "ES2024" warning; no failures.
+HANDOFF_TO_REVIEWER: yes — file-based handoff; reviewer must use a different model
+NEXT: ready for review

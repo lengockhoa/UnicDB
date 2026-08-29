@@ -7,8 +7,7 @@
 //   - Non-SELECT / multi-statement → adapter returns { results: [...] }.
 //   - pickResult() builds QueryResult from batched.columns + initial fetchBatch.
 import { describe, it, expect, vi } from "vitest";
-import { QueryRunner } from "../queryRunner";
-import { pickResult } from "../queryRunner";
+import { QueryRunner, pickResult, type StatementResult } from "../queryRunner";
 import type { ParsedStatement } from "../../config/types";
 import type {
   BatchedQuery,
@@ -457,5 +456,147 @@ describe("QueryRunner — stale batched cursor release (pool wedge fix)", () => 
     await runner.run([stmt("SELECT * FROM big", 0, 18)], () => {});
 
     expect(events).toEqual(["close", "runQuery:SELECT * FROM big"]);
+  });
+});
+
+describe("Cycle AH — append runs", () => {
+  it("append run accumulates results and keeps old entries", async () => {
+    const adapter = makeAdapter(async (sql) => okResult(["value"], [[sql]]));
+    const runner = new QueryRunner(async () => adapter);
+    const first = await runner.run([stmt("SELECT a", 0, 8)], () => {});
+    const oldEntry = first[0];
+    const results = await runner.run(
+      [stmt("SELECT b", 0, 8), stmt("SELECT c", 0, 8)],
+      () => {},
+      { append: true },
+    );
+    expect(results).toHaveLength(3);
+    expect(results.map((r) => r.index)).toEqual([0, 1, 2]);
+    expect(results[0]).toBe(oldEntry);
+    expect(results[1].runNo).toBe(2);
+    expect(results[1].runStmtNo).toBe(1);
+    expect(results[2].runNo).toBe(2);
+    expect(results[2].runStmtNo).toBe(2);
+  });
+
+  it("default run (no opts) still replaces", async () => {
+    const adapter = makeAdapter(async (sql) => okResult(["value"], [[sql]]));
+    const runner = new QueryRunner(async () => adapter);
+    await runner.run([stmt("SELECT a", 0, 8), stmt("SELECT b", 0, 8)], () => {});
+    const result = await runner.run([stmt("SELECT c", 0, 8)], () => {});
+    expect(result).toHaveLength(1);
+    expect(result[0].sql).toBe("SELECT c");
+    expect(result[0].runNo).toBeUndefined();
+  });
+
+  it("append run with empty statements leaves results unchanged", async () => {
+    const adapter = makeAdapter(async () => okResult(["value"], [[1]]));
+    const runner = new QueryRunner(async () => adapter);
+    const seeded = await runner.run([stmt("SELECT a", 0, 8)], () => {});
+    const updates: StatementResult[][] = [];
+    const result = await runner.run([], (next) => updates.push(next), { append: true });
+    expect(result).toHaveLength(1);
+    expect(result[0]).toBe(seeded[0]);
+    expect(updates).toHaveLength(1);
+  });
+
+  it("cancel mid-append-run leaves old tabs intact", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let secondStartedResolve!: () => void;
+    const secondStarted = new Promise<void>((resolve) => { secondStartedResolve = resolve; });
+    let calls = 0;
+    const adapter = makeAdapter(async (sql) => {
+      calls++;
+      if (calls === 2) {
+        secondStartedResolve();
+        await gate;
+      }
+      return okResult(["value"], [[sql]]);
+    });
+    const runner = new QueryRunner(async () => adapter);
+    const seeded = await runner.run([stmt("SELECT old", 0, 10)], () => {});
+    const appendRun = runner.run(
+      [stmt("SELECT one", 0, 10), stmt("SELECT two", 0, 10), stmt("SELECT three", 0, 12)],
+      () => {},
+      { append: true },
+    );
+    await secondStarted;
+    await runner.cancel();
+    release();
+    const result = await appendRun;
+    expect(result[0]).toBe(seeded[0]);
+    expect(result[0].cursorClosed).toBeUndefined();
+    expect(result.slice(1).map((r) => r.status)).toEqual(["cancelled", "cancelled", "cancelled"]);
+  });
+
+  it("single-statement append run keeps cursor open and Load More works", async () => {
+    const batched = makeBatched(["n"], [[[1]], [[2]], null]);
+    const adapter = makeAdapter(async () => ({ results: [], batched }));
+    const runner = new QueryRunner(async () => adapter);
+    const result = await runner.run([stmt("SELECT n", 0, 8)], () => {}, { append: true });
+    expect(result[0].cursorClosed).toBeUndefined();
+    const loaded = await runner.loadMore(0);
+    expect(loaded[0].result?.rows).toEqual([[1], [2]]);
+  });
+
+  it("2 batched statements close the first cursor before the second starts", async () => {
+    const first = makeBatched(["n"], [[[1]]]);
+    const second = makeBatched(["n"], [[[2]]]);
+    const events: string[] = [];
+    first.close.mockImplementation(async () => { events.push("close:first"); });
+    const adapter = makeAdapter(async (sql) => {
+      events.push(`run:${sql}`);
+      return sql === "SELECT 1" ? { results: [], batched: first } : { results: [], batched: second };
+    });
+    const runner = new QueryRunner(async () => adapter);
+    const result = await runner.run(
+      [stmt("SELECT 1", 0, 8), stmt("SELECT 2", 0, 8)],
+      () => {},
+      { append: true },
+    );
+    expect(result[0].cursorClosed).toBe(true);
+    expect(result[0].result?.rows).toEqual([[1]]);
+    expect(result[1].cursorClosed).toBeUndefined();
+    expect(first.close).toHaveBeenCalledTimes(1);
+    expect(events).toEqual(["run:SELECT 1", "close:first", "run:SELECT 2"]);
+  });
+
+  it("loadMore on a cursorClosed entry rejects before touching the cursor", async () => {
+    const first = makeBatched(["n"], [[[1]]]);
+    const second = makeBatched(["n"], [[[2]]]);
+    const adapter = makeAdapter(async (sql) => sql === "SELECT 1"
+      ? { results: [], batched: first }
+      : { results: [], batched: second });
+    const runner = new QueryRunner(async () => adapter);
+    await runner.run([stmt("SELECT 1", 0, 8), stmt("SELECT 2", 0, 8)], () => {}, { append: true });
+    await expect(runner.loadMore(0)).rejects.toThrow(/run this statement alone/);
+    expect(first.fetchBatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("last statement of an append multi-statement run keeps its cursor", async () => {
+    const first = makeBatched(["n"], [[[1]]]);
+    const last = makeBatched(["n"], [[[2]], [[3]]]);
+    const adapter = makeAdapter(async (sql) => sql === "SELECT 1"
+      ? { results: [], batched: first }
+      : { results: [], batched: last });
+    const runner = new QueryRunner(async () => adapter);
+    const result = await runner.run([stmt("SELECT 1", 0, 8), stmt("SELECT 2", 0, 8)], () => {}, { append: true });
+    expect(result[1].cursorClosed).toBeUndefined();
+    await runner.loadMore(1);
+    expect(result[1].result?.rows).toEqual([[2], [3]]);
+  });
+
+  it("stale cursor close marks old entry and preserves degrade message", async () => {
+    const oldBatched = makeBatched(["n"], [[[1]]]);
+    const adapter = makeAdapter(async (sql) => sql === "SELECT old"
+      ? { results: [], batched: oldBatched }
+      : okResult(["ok"], [[1]]));
+    const runner = new QueryRunner(async () => adapter);
+    await runner.run([stmt("SELECT old", 0, 10)], () => {});
+    await runner.run([stmt("SELECT new", 0, 10)], () => {}, { append: true });
+    expect(oldBatched.close).toHaveBeenCalledTimes(1);
+    await expect(runner.loadMore(0)).rejects.toThrow(/run this statement alone/);
+    expect(oldBatched.fetchBatch).toHaveBeenCalledTimes(1);
   });
 });
