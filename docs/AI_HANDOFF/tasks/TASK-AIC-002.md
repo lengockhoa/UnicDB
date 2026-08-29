@@ -64,4 +64,38 @@ No lint script is defined in `package.json`.
 ### 2026-08-29 · planner · unic-smart
 Use the existing chat/completions-shaped `complete`, not streaming, for the first version. Service constants are pinned in PLAN §3.0 and must be exported/tested. Do not import VS Code in this service.
 
+## Executor Report
+EXECUTOR_TOOL: omp-direct (unic-code)
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+RED_OUTPUT:
+  ✓ src/ai/sqlAutocomplete.ts (new) — pure service, no vscode import.
+    Exported bounds: DEBOUNCE_MS=300, SQL_PREFIX_MAX_CHARS=2000, SQL_SUFFIX_MAX_CHARS=500,
+    SCHEMA_CONTEXT_MAX_CHARS=12000, MAX_OUTPUT_TOKENS=64, CACHE_TTL_MS=30000,
+    CACHE_MAX_ENTRIES=100, COOLDOWN_MS=500. Prompt is schema-only (dialect, connection
+    name, table(column: type) list, bounded cursor prefix/suffix). Never embeds
+    rows, history, apiKey, baseUrl. Result is sanitized to a single safe SQL line
+    (strip fences, drop leading ";", drop trailing ";", reject English prose).
+  ✓ src/ai/__tests__/sqlAutocomplete.test.ts (new) — 25 tests:
+    happy configured request, privacy boundary, concurrency/cancellation, exact
+    bound pin, LRU/cooldown/connection/fingerprint cache, regression for absent
+    config, malformed/error/throw resilience.
+Verification Output:
+  $ npx vitest run src/ai/__tests__/sqlAutocomplete.test.ts
+  Test Files  1 passed (1)
+       Tests  25 passed (25)
+  Duration  221ms
+  $ npm run typecheck
+  (clean, no diagnostics)
+  $ npx vitest run  (full suite regression)
+  Test Files  146 passed | 1 skipped (147)
+       Tests  2160 passed | 2 skipped (2162)
+Status: PASS
+Note: in-pass correction — initial impl had a "most-recent cache for same scope"
+fallback inside the cooldown short-circuit. Spec test #5 requires that a distinct
+cursor request inside COOLDOWN_MS returns null with no extra provider call, so the
+fallback was removed before committing. Touched file: src/ai/sqlAutocomplete.ts
+(suggest() cooldown branch and dead findCacheForScope helper; touchCooldown inlined
+as a 1-line assignment per the no-tiny-functions rule).
+
 ---
