@@ -80,3 +80,44 @@ extension.ts coordination: this file is also owned by pending cycle AF-004 (wave
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: other
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: ExecAH002
+SUMMARY: Added append-aware ResultsPanel cache invalidation and threaded append mode plus pre-run base length through the editor run path. Added regression coverage for cache scoping, edge bases, editor wiring, and closed-cursor loadMore error surfacing.
+TEST_PLAN_FOLLOWED: task §Test Cases (TDD)
+FILES_CHANGED:
+  - src/ui/resultsPanel.ts: added optional appendBase render mode with scoped cache/generation/manual-index handling.
+  - src/extension.ts: runStatements now captures appendBase, passes { append: true }, and renders with appendBase.
+  - src/ui/__tests__/resultsPanel.test.ts: added append cache, boundary, and closed-cursor loadMore tests.
+  - src/extension.test.ts: added editor append threading/render-base test.
+TESTS_ADDED:
+  - src/ui/__tests__/resultsPanel.test.ts: closed-cursor loadMore surfaces the run-alone message once and reposts state; append-aware render cache and edge-base cases.
+  - src/extension.test.ts: AH-002 editor run threads append mode and pre-run appendBase.
+RED: confirmed — new panel tests initially failed 2 cases (appendBase unsupported/wholesale cache behavior); editor test initially failed because runner.run lacked the third append options argument. Closed-cursor regression passed against the existing error path.
+VERIFICATION:
+  command: npx vitest run src/ui/__tests__/resultsPanel.test.ts src/ui/__tests__/resultsPanelRequery.test.ts src/extension.test.ts
+  result: 115 pass, 0 fail
+  output_excerpt: |
+    Test Files 3 passed (3)
+    Tests 115 passed (115)
+  command: npm run typecheck
+  result: exit 0
+  output_excerpt: |
+    > vsdb@1.12.0 typecheck
+    > tsc --noEmit
+  command: npm run compile
+  result: exit 0
+  output_excerpt: |
+    > node esbuild.js
+    dist/schemaForm.js 3.0kb
+  command: npm test
+  result: exit 0
+  output_excerpt: |
+    Full suite completed successfully; stderr contained only existing test diagnostics.
+ISSUES: Existing ES2024 target warning from esbuild/Vitest and expected stderr diagnostics from existing tests; no task failures.
+HANDOFF_TO_REVIEWER: no — no reviewer enablement is configured in the available handoff config; orchestrator may review separately.
+NEXT: ready for review

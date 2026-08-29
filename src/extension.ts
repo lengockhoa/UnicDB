@@ -785,13 +785,14 @@ async function applyKeywordQualify(
   // actual tables in `public` (see core/keywordQualify).
   const rewritten = await applyKeywordQualify(mgr, statements);
   const header = `Run at ${new Date().toISOString()} — ${active ? `${active.driver}@${active.host}/${active.database}` : "no connection"}`;
+  const appendBase = runner.getResults().length;
   panel.setBusy(true);
   try {
     const results = await runner.run(rewritten, () => {
       // Each onUpdate re-render the panel.
-      panel.render(runner.getResults(), header);
-    });
-    panel.render(results, header);
+      panel.render(runner.getResults(), header, { appendBase });
+    }, { append: true });
+    panel.render(results, header, { appendBase });
   } catch (err) {
     void vscode.window.showErrorMessage(
       `VSDB: ${err instanceof Error ? err.message : String(err)}`,

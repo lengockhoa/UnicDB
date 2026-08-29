@@ -477,6 +477,84 @@ describe("ResultsPanel — handleMessage loadMore (TASK-204)", () => {
     const lastMsg = String(errMock.mock.calls[errMock.mock.calls.length - 1][0]);
     expect(lastMsg).toBe("Load more failed: connection refused");
   });
+  it("closed-cursor loadMore surfaces the run-alone message once and reposts state", async () => {
+    const { runner, fake } = newPanel();
+    const showErr = vscode.window.showErrorMessage as unknown as { mockClear: () => void; mock: { calls: unknown[][] } };
+    showErr.mockClear();
+    runner.loadMore = vi.fn(async () => {
+      throw new Error("Statement 0 cursor closed after its run finished — run this statement alone");
+    }) as unknown as typeof runner.loadMore;
+
+    fake.webview.dispatch({ type: "loadMore", index: 0 });
+    await waitForPostMessage(fake, (m) => m.type === "busy" && m.busy === false);
+
+    expect(showErr.mock.calls).toHaveLength(1);
+    expect(String(showErr.mock.calls[0]?.[0])).toMatch(/run this statement alone/);
+    expect(fake.webview.postMessage.mock.calls.some((c) => (c[0] as { type?: string }).type === "state")).toBe(true);
+  });
+});
+
+describe("ResultsPanel — append-aware render (TASK-AH-002)", () => {
+  type Internals = {
+    distinctCache: Map<string, unknown>;
+    columnTypesByStatement: Map<number, unknown>;
+    whereByStatement: Map<number, unknown>;
+    tableByStatement: Map<number, unknown>;
+    manualStatementIndex: number | null;
+    statementGeneration: number;
+  };
+
+  function result(index: number, sql = `SELECT * FROM table_${index}`): StatementResult {
+    return {
+      index,
+      sql,
+      status: "done",
+      result: { columns: ["id"], rows: [[index]], rowCount: 1, durationMs: 0 },
+      durationMs: 0,
+    };
+  }
+
+  it("preserves old-tab caches while invalidating only appended indexes", () => {
+    const panel = new ResultsPanel({ runner: makeRunnerStub() });
+    const internal = panel as unknown as Internals;
+    internal.distinctCache.set("0::id", {});
+    internal.distinctCache.set("1::id", {});
+    internal.columnTypesByStatement.set(0, {});
+    internal.columnTypesByStatement.set(1, {});
+    internal.whereByStatement.set(0, {});
+    internal.whereByStatement.set(1, {});
+    const oldTable = { schema: "public", table: "cached_old" };
+    internal.tableByStatement.set(0, oldTable);
+    internal.tableByStatement.set(1, { schema: "public", table: "stale_new" });
+    internal.manualStatementIndex = 1;
+    const generation = internal.statementGeneration;
+
+    panel.render([result(0), result(1)], "hdr", { appendBase: 1 });
+
+    expect(internal.distinctCache.has("0::id")).toBe(true);
+    expect(internal.distinctCache.has("1::id")).toBe(false);
+    expect(internal.columnTypesByStatement.has(0)).toBe(true);
+    expect(internal.columnTypesByStatement.has(1)).toBe(false);
+    expect(internal.whereByStatement.has(0)).toBe(true);
+    expect(internal.whereByStatement.has(1)).toBe(false);
+    expect(internal.tableByStatement.get(0)).toBe(oldTable);
+    expect(internal.tableByStatement.get(1)).toEqual({ table: "table_1" });
+    expect(internal.manualStatementIndex).toBeNull();
+    expect(internal.statementGeneration).toBe(generation + 1);
+  });
+
+  it("appendBase at or beyond the result edge preserves caches and generation", () => {
+    const panel = new ResultsPanel({ runner: makeRunnerStub() });
+    const internal = panel as unknown as Internals;
+    internal.distinctCache.set("0::id", {});
+    const generation = internal.statementGeneration;
+
+    panel.render([result(0)], "hdr", { appendBase: 1 });
+    panel.render([result(0)], "hdr", { appendBase: 2 });
+
+    expect(internal.distinctCache.has("0::id")).toBe(true);
+    expect(internal.statementGeneration).toBe(generation);
+  });
 });
 
 // ---- TASK-006 (cycle X) — P3-3: sanitizeStatementResult must emit a

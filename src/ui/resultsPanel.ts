@@ -288,7 +288,11 @@ export class ResultsPanel {
   /**
    * Render results mới vào panel. Nếu panel chưa mở → show().
    */
-  render(results: StatementResult[], header: string): void {
+  render(
+    results: StatementResult[],
+    header: string,
+    opts?: { appendBase?: number },
+  ): void {
     // A14 — this.header was never assigned, so every later post (loadMore,
     // requery, saveEdits refresh, ready) sent an empty header and the query
     // duration/title was always blank.
@@ -299,36 +303,77 @@ export class ResultsPanel {
     const browseMatch = /^Browse (.+) at /.exec(header);
     this.browseLabel = browseMatch ? browseMatch[1] : null;
     this.lastResults = results;
-    // TASK-004 — new statement set: every cached DISTINCT list is stale and
-    // every in-flight DISTINCT response must be dropped on arrival.
-    this.distinctCache.clear();
-    this.statementGeneration += 1;
-    // TASK-004 (cycle Y) — a fresh render invalidates the recorded manual
-    // window's statement index: the slot it pointed at now belongs to an
-    // unrelated statement, and a later Commit/Rollback must not requery it.
-    this.manualStatementIndex = null;
+
+    const appendBase = opts?.appendBase;
+    const appendAware = typeof appendBase === "number" && appendBase >= 0;
+    // An append render only has new statement slots when appendBase falls
+    // inside the displayed array. At the edge (or beyond it), no statement
+    // identity changed, so in-flight metadata requests remain valid too.
+    const hasNewEntries = appendAware && appendBase < results.length;
+
+    if (!appendAware) {
+      // TASK-004 — new statement set: every cached DISTINCT list is stale and
+      // every in-flight DISTINCT response must be dropped on arrival.
+      this.distinctCache.clear();
+      this.statementGeneration += 1;
+      // TASK-004 (cycle Y) — a fresh render invalidates the recorded manual
+      // window's statement index: the slot it pointed at now belongs to an
+      // unrelated statement, and a later Commit/Rollback must not requery it.
+      this.manualStatementIndex = null;
+      this.tableByStatement.clear();
+      this.columnTypesByStatement.clear();
+      this.whereByStatement.clear();
+    } else {
+      // Preserve all old-tab caches, dropping only entries whose statement
+      // slots belong to the appended portion of the accumulated array.
+      if (hasNewEntries) {
+        for (const key of this.distinctCache.keys()) {
+          const separator = key.indexOf("::");
+          const index = Number(separator < 0 ? key : key.slice(0, separator));
+          if (Number.isInteger(index) && index >= appendBase) {
+            this.distinctCache.delete(key);
+          }
+        }
+        for (const index of this.columnTypesByStatement.keys()) {
+          if (index >= appendBase) this.columnTypesByStatement.delete(index);
+        }
+        for (const index of this.whereByStatement.keys()) {
+          if (index >= appendBase) this.whereByStatement.delete(index);
+        }
+        for (const index of this.tableByStatement.keys()) {
+          if (index >= appendBase) this.tableByStatement.delete(index);
+        }
+        // Drop in-flight DISTINCT responses for replaced/new statement slots;
+        // old-tab responses remain valid against their preserved identities.
+        this.statementGeneration += 1;
+      }
+      if (
+        this.manualStatementIndex !== null &&
+        this.manualStatementIndex >= appendBase
+      ) {
+        this.manualStatementIndex = null;
+      }
+    }
+
     // Derive (schema?, table) per statement FROM the parsed SQL — host-side
     // truth. The webview's tableName/pkColumns message is IGNORED (Fix R1
     // critical #1). Statements whose SQL has no FROM/INSERT/UPDATE have no
     // addressable table and trigger a hard refusal.
-    this.tableByStatement.clear();
     for (const r of results) {
       const parsed = parseFromClause(r.sql);
-      if (parsed) {
+      if (
+        parsed &&
+        (!appendAware || r.index >= appendBase || !this.tableByStatement.has(r.index))
+      ) {
         this.tableByStatement.set(r.index, parsed);
       }
     }
-    // TASK-007 (cycle Y) — a fresh result set invalidates every cached
-    // declared-type map; resolve new ones in the background (generation-
-    // guarded inside refreshColumnTypes, never awaited — render stays
-    // synchronous).
-    this.columnTypesByStatement.clear();
-    // TASK-006 (cycle Y) — the retained requery source state dies with its
-    // statement set, exactly like distinctCache: a new result set means every
-    // recorded (barWhere, filters) pair describes a query that no longer
-    // exists. The next distinct request falls back to today's where="".
-    this.whereByStatement.clear();
-    void this.refreshColumnTypes(results);
+    // TASK-007 (cycle Y) — resolve only new entries during append renders;
+    // preserved old entries already have valid declared-type maps.
+    const metadataResults = appendAware
+      ? results.filter((r) => r.index >= appendBase)
+      : results;
+    void this.refreshColumnTypes(metadataResults);
     this.show();
     if (this.panel) {
       this.postMessage({

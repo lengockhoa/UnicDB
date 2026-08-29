@@ -971,6 +971,29 @@ describe("TASK-606 — destructive confirm guard", () => {
     expect(ranStatements.some((s) => /\bGO\b/.test(s.text))).toBe(false);
   });
 
+  it("AH-002 editor run threads append mode and pre-run appendBase", async () => {
+    await activateFresh606();
+    const sql = "SELECT 1;\nSELECT 2;";
+    setEditor(sql, { start: 0, end: sql.length });
+    // vi.resetModules() in activateFresh606 creates a fresh ResultsPanel module;
+    // spy on that instance's prototype rather than the file-wide import.
+    const { ResultsPanel: ResultsPanelModule } = await import("./ui/resultsPanel");
+    const renderSpy = vi.spyOn(ResultsPanelModule.prototype, "render");
+    await state.registeredCommands.get("vsdb.runQuery")!();
+
+    expect(runSpy).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.any(Function),
+      { append: true },
+    );
+    expect(renderSpy).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.any(String),
+      { appendBase: 0 },
+    );
+    renderSpy.mockRestore();
+  });
+
   it("B15 — package.json khai báo vsdb.confirmDestructive default true", () => {
     const props = pkgJson.contributes.configuration.properties as Record<
       string,
