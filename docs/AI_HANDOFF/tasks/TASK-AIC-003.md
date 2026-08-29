@@ -63,4 +63,43 @@ No lint script is defined in `package.json`.
 ### 2026-08-29 · planner · unic-smart
 Registration belongs exclusively to AIC-005. The provider must preserve the existing `SqlCompletionProvider` in `src/ui/sqlCompletionProvider.ts`; do not modify it merely to add AI behavior.
 
+## Executor Report
+EXECUTOR_TOOL: omp-direct (unic-code)
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+RED_OUTPUT:
+  ✓ src/ui/aiSqlCompletionProvider.ts (new) — InlineCompletionItemProvider
+    implementing vscode.InlineCompletionItemProvider. Forwards the
+    CancellationToken into an internal AbortController linked into the
+    service's signal. Pre-cancelled token short-circuits without calling
+    the service. Default stale guard: doc.version + cursor.character vs.
+    snapshot captured at request time. Default buildRequest: callerScope =
+    doc.uri, cursorOffset = position.character, full documentText, fingerprint
+    = "v1". Catches any throw from the service and returns []. No second
+    debounce / cache / controller. No vscode calls beyond the constructor
+    parameter type and `new InlineCompletionItem`.
+  ✓ src/ui/__tests__/aiSqlCompletionProvider.test.ts (new) — 7 tests:
+    happy single-item, pre-cancelled token, mid-flight cancellation,
+    loadConfig null, service null, service throw, stale doc version.
+  ✓ src/ai/sqlAutocomplete.ts — added optional `signal?: AbortSignal` to
+    SqlAutocompleteRequest; service now short-circuits on pre-cancelled
+    external signal and links the signal into its internal per-scope
+    AbortController via the new private `linkSignal` helper.
+Verification Output:
+  $ npx vitest run src/ui/__tests__/aiSqlCompletionProvider.test.ts
+  Test Files  1 passed (1)
+       Tests  7 passed (7)
+  Duration  237ms
+  $ npm run typecheck
+  (clean, no diagnostics)
+  $ npx vitest run  (full suite regression)
+  Test Files  147 passed | 1 skipped (148)
+       Tests  2167 passed | 2 skipped (2169)
+Status: PASS
+Note: in-pass correction — first pass left service.suggest with a 2-arg
+signature while the provider wanted to pass a 3rd AbortSignal. Resolved
+by extending SqlAutocompleteRequest with an optional `signal` field and
+wiring it into the existing per-scope AbortController via linkSignal —
+keeps the service's single-ownership promise intact instead of adding
+a second controller.
 ---

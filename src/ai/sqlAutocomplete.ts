@@ -75,6 +75,11 @@ export interface SqlAutocompleteRequest {
    *  refresh / connection change should bump this to invalidate stale
    *  cache entries automatically. */
   schemaFingerprint: string;
+  /** Optional external cancellation signal. When aborted, the in-flight
+   *  request short-circuits to `null` without leaking a late suffix. The
+   *  service still owns its own per-scope AbortController — this signal is
+   *  ADDITIVE: any of them aborting is enough. */
+  signal?: AbortSignal;
 }
 
 /** Logger spy option. */
@@ -242,6 +247,8 @@ export class SqlAutocompleteService {
     // 2. Cursor context must contain non-comment SQL.
     if (isCommentOnlyOrWhitespace(req.documentText)) return null;
 
+    // External signal — pre-cancelled → no work.
+    if (req.signal?.aborted) return null;
     // 3. Sequence + active controller.
     const seq = (this.sequence.get(req.callerScope) ?? 0) + 1;
     this.sequence.set(req.callerScope, seq);
@@ -249,7 +256,7 @@ export class SqlAutocompleteService {
     if (prev) prev.abort();
     const controller = new AbortController();
     this.active.set(req.callerScope, controller);
-
+    linkSignal(controller, req.signal);
     try {
       // 4. Cooldown: same scope requested too recently → null. Prevents
       //    thrash on rapid identical typing. Per spec test #5: a distinct
@@ -406,6 +413,21 @@ function sanitizeSchemaContext(ctx: SchemaContext): SchemaContext {
       })),
     })),
   };
+}
+
+/** Link an external AbortSignal into an internal controller so either
+ *  source aborting rejects the wrapped promise. */
+function linkSignal(
+  internal: AbortController,
+  external: AbortSignal | undefined,
+): void {
+  if (!external) return;
+  if (external.aborted) internal.abort();
+  external.addEventListener(
+    "abort",
+    () => internal.abort(),
+    { once: true, signal: internal.signal },
+  );
 }
 
 /** Race a promise against an AbortSignal. Resolves with the original value
