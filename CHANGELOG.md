@@ -15,6 +15,20 @@ Cycle AH: DataGrip-style accumulating multi-statement results.
 - Multi-statement SELECT runs now close completed cursors before advancing, avoiding cursor/resource hangs.
 - `Load More` on a closed cursor follows the existing visible error path rather than hanging.
 
+## [1.17.0] — 2026-08-30
+
+Cycle DBX-03: Schema & Data Compare (PostgreSQL-only, same connection, preview-only).
+
+### Added
+- **Schema diff** (`vsdb.compareTables`): compares two schema-qualified tables on the active PostgreSQL connection — columns added/dropped, type/nullability/default changes, PK changes — with deterministic ordering and a compatibility flag gating the data phase.
+- **Keyed data diff**: rows only-in-source / only-in-target / changed with per-cell diffs, ordered by key tuple. Works with the primary key or a single-column unique NOT NULL key; tables without a usable key skip the data phase safely (zero data queries issued).
+- **Directional sync plan**: grouped, ordered statements (DDL: ADD → ALTER → DROP; data: INSERT → UPDATE → DELETE) with one-line summaries, `dangerous` labeling on destructive statements, `$N` placeholders with parallel bound-values arrays (no literal row values in SQL), and a non-executable flag with human reasons when the plan cannot converge safely.
+- **Compare panel** (preview-only): CSP-clean webview rendering the three sections; the panel never executes — clipboard "Copy SQL" hands off to the SQL Console, where the existing dangerous-statement confirm applies.
+- **Rows capped at 10,000/side** with an explicit `truncated` notice; oversized diffs are computed on the fetched prefix, never silently truncated.
+
+### Review
+- Independent review (unic-smart) issued CHANGES-REQUESTED; two fix rounds (source-side ALTER semantics, keyless short-circuit before any fetch, unique-key support, WHERE keys derived from the diff's actual keys, activation wiring assertions) — superseding APPROVED verdicts recorded in the task files.
+
 ## [1.16.0] — 2026-08-30
 
 Cycle DBX-01: Data Workbench Completion (PostgreSQL-only import path).
@@ -463,4 +477,5 @@ Cycle G: set-filter, toolbar icons, `run-sh` fix.
 [1.14.0]: https://github.com/lengockhoa/VSDB/compare/v1.13.0...v1.14.0
 [1.15.0]: https://github.com/lengockhoa/VSDB/compare/v1.14.0...v1.15.0
 [1.16.0]: https://github.com/lengockhoa/VSDB/compare/v1.15.0...v1.16.0
+[1.17.0]: https://github.com/lengockhoa/VSDB/compare/v1.16.0...v1.17.0
 [1.13.0]: https://github.com/lengockhoa/VSDB/compare/v1.12.0...v1.13.0
