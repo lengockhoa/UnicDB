@@ -15,19 +15,19 @@ Cycle AH: DataGrip-style accumulating multi-statement results.
 - Multi-statement SELECT runs now close completed cursors before advancing, avoiding cursor/resource hangs.
 - `Load More` on a closed cursor follows the existing visible error path rather than hanging.
 
-## [1.14.0] — 2026-08-29
+## [1.14.0] — 2026-08-30
 
-AI Chat slash commands and local session controls.
+Cycle AIC: SQL autocomplete (AI-powered, schema-only, debounced ghost text).
 
 ### Added
-- **Local slash commands**: `/clear`, `/resume`, `/engine`, `/context`, `/export`, and `/model` with autocomplete and keyboard navigation.
-- Recognized commands execute locally and are never sent to the model as chat messages.
-- `/model work|smart` selects the active builtin model role for the chat session; `/engine builtin|omp` validates and persists engine selection.
-- Local transcript export and context status output, while `/resume` reuses the existing session picker.
+- **Configurable autocomplete model role**: `vsdb.ai` settings gain a third `autocomplete` model role (free-form model id) alongside `work` and `smart`. Every-load migration normalizes legacy 2-role configs. An empty autocomplete id is treated as disabled rather than invalid; the AI Settings form trims whitespace and exposes a Test button that still targets `work`.
+- **Schema-only autocomplete service** (`SqlAutocompleteService`): the sole debounce/cancellation/sequence/cache/cooldown owner. Bounds: `DEBOUNCE_MS=300`, `SQL_PREFIX_MAX_CHARS=2000`, `SQL_SUFFIX_MAX_CHARS=500`, `SCHEMA_CONTEXT_MAX_CHARS=12000`, `MAX_OUTPUT_TOKENS=64`, `CACHE_TTL_MS=30000`, `CACHE_MAX_ENTRIES=100`, `COOLDOWN_MS=500`. Service prompts carry schema-only context (no rows/history/apiKey/baseUrl) and never log the prompt or response.
+- **Editor ghost-text provider** (`AiSqlCompletionProvider`): VS Code `InlineCompletionItemProvider` for SQL, wired to the service. Service aborts in-flight requests on VS Code `CancellationToken`; distinct cursor inside `COOLDOWN_MS` returns `null` (no stale-cache fallback).
+- **Console ghost-text overlay**: the SQL Console webview shows a positioned escaped overlay (no textarea mutation) with Tab/right-arrow accept at end-of-buffer. Per-tab AbortController and requestId guard prevent stale responses from leaking into a tab the user switched away from.
+- **Extension activation wiring**: `registerSqlAutocomplete` adapts the service into both the editor provider and the Console panel's `onAutocomplete` callback. The service is shared by editor and Console, but their `callerScope` partition their caches.
 
-### Fixed
-- Slash command handling preserves normal chat Enter/Shift+Enter behavior and mention-dropdown precedence.
-
+### Changed
+- The Console panel's `dispose` and per-tab `closeTab` now cancel any in-flight autocomplete request for the affected tab.
 
 ## [Unreleased]
 
