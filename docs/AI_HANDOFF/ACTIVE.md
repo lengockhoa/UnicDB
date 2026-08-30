@@ -1,5 +1,11 @@
 # ACTIVE
 
+Cycle: DBX-01 (re-opened)   Date: 2026-08-30   Base: main @ d9d603b
+Goal: Data Workbench Completion — CSV/JSON import + form view + large-value editor (PostgreSQL only).
+Tasks: 4 total
+Status: in_progress — Plan + 4 task files refreshed (prior cycle's "done" was planning_only, no code landed); executing wave 1.
+
+Previous:
 Cycle: DBX-02   Date: 2026-08-30   Base: main @ 65f8499
 Goal: SQL Intelligence Navigation — catalog completion, hover/definition, parsed find-usages (PostgreSQL only; mysql/mssql degrade gracefully).
 Tasks: 5 total

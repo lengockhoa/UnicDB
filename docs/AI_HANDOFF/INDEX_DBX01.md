@@ -4,10 +4,10 @@ Cycle DBX-01 — **DATA WORKBENCH COMPLETION**: CSV/JSON import + form view + la
 
 | Task | Title | Status | Dependencies | Reviewer |
 |------|-------|--------|--------------|----------|
-| TASK-DBX01-001 | Importer pure modules: CSV + JSON parser | done | none | unic-code (in-session advisory) |
-| TASK-DBX01-002 | Mapping + dry-run pure modules | done | DBX01-001 | unic-code (in-session advisory) |
-| TASK-DBX01-003 | Import execute module (mocked adapter + transaction) | done | DBX01-002 | unic-code (in-session advisory) |
-| TASK-DBX01-004 | Extension wiring + form view + large-value editor + scaffold test | done (approved_minor) | DBX01-003 | unic-code (in-session advisory) |
+| TASK-DBX01-001 | Importer pure modules: CSV + JSON parser | ready | none | independent unic-smart reviewer |
+| TASK-DBX01-002 | Mapping + dry-run pure modules | ready | DBX01-001 | independent unic-smart reviewer |
+| TASK-DBX01-003 | Import execute module (mocked adapter + transaction) | ready | DBX01-002 | independent unic-smart reviewer |
+| TASK-DBX01-004 | Import wizard webview + host wiring + form view + scaffold test | ready | DBX01-003 | independent unic-smart reviewer |
 
 Graph: 001 → 002 → 003 → 004 (linear dependency).
 
