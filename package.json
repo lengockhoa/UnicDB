@@ -63,7 +63,11 @@
     "onCommand:vsdb.openConsole",
     "onCommand:vsdb.consoleNewTab",
     "onCommand:vsdb.refreshAdmin",
-    "onCommand:vsdb.openSessionsPanel"
+    "onCommand:vsdb.openSessionsPanel",
+    "onCommand:vsdb.importCsv",
+    "onCommand:vsdb.importJson",
+    "onCommand:vsdb.openFormView",
+    "onCommand:vsdb.editLargeValue"
   ],
   "contributes": {
     "commands": [
@@ -276,6 +280,30 @@
         "title": "VSDB: Run GRANT/REVOKE SQL",
         "category": "VSDB",
         "icon": "$(shield)"
+      },
+      {
+        "command": "vsdb.importCsv",
+        "title": "VSDB: Import CSV into Table",
+        "category": "VSDB",
+        "icon": "$(arrow-down-to-line)"
+      },
+      {
+        "command": "vsdb.importJson",
+        "title": "VSDB: Import JSON into Table",
+        "category": "VSDB",
+        "icon": "$(arrow-down-to-line)"
+      },
+      {
+        "command": "vsdb.openFormView",
+        "title": "VSDB: Open Form View",
+        "category": "VSDB",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "vsdb.editLargeValue",
+        "title": "VSDB: Edit Large Value",
+        "category": "VSDB",
+        "icon": "$(expand-all)"
       }
     ],
     "keybindings": [
@@ -455,6 +483,13 @@
           "type": "boolean",
           "default": true,
           "description": "Hiển thị CodeLens ▶ Run phía trên mỗi SQL statement trong file .sql."
+        },
+        "vsdb.import.batchSize": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 1,
+          "maximum": 10000,
+          "description": "Rows per INSERT statement during CSV/JSON import (DBX-01)."
         },
         "vsdb.showRunLensSh": {
           "type": "boolean",

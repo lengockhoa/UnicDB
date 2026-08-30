@@ -14,6 +14,12 @@ import {
 } from "./ui/schemaTree";
 import { AdminTreeProvider } from "./ui/adminTree";
 import { AdminSessionsPanel } from "./ui/adminSessionsPanel";
+import { openImportWizard } from "./ui/importWizard";
+import {
+  getLargeValueProvider,
+  LARGE_VALUE_SCHEME,
+  openLargeValueEditor,
+} from "./ui/largeValueEditor";
 import { commandOpenGrantWizard } from "./ui/adminWizard";
 import { registerDdlView } from "./ui/ddlView";
 import { VsdbCodeLensProvider } from "./ui/codeLensProvider";
@@ -648,7 +654,68 @@ export async function activate(
     ),
   );
 
-
+  // ── DBX-01 TASK-DBX01-004 — data workbench: CSV/JSON import wizard,
+  // form view, and large-value editor. PostgreSQL only; the importer
+  // funnel through confirmDangerousStatements (see runImport).
+  const importCtx = {
+    getAdapter: async () => {
+      try {
+        return await mgr.getAdapter();
+      } catch {
+        return undefined;
+      }
+    },
+    getActiveDriver: () => mgr.getActive()?.driver,
+    confirm: async (statements: string[], driver?: string) => {
+      const dialect = driver === "postgres" ? "postgres" : driver === "mysql" ? "mysql" : "mssql";
+      const parsedStatements = statements.map((text) => ({
+        text,
+        start: 0,
+        end: text.length,
+      }));
+      return confirmDangerousStatements(parsedStatements, dialect);
+    },
+    batchSize: vscode.workspace
+      .getConfiguration("vsdb")
+      .get<number>("import.batchSize", 1000),
+  };
+  disposables.push(
+    vscode.commands.registerCommand("vsdb.importCsv", async () => {
+      await openImportWizard("csv", importCtx);
+    }),
+  );
+  disposables.push(
+    vscode.commands.registerCommand("vsdb.importJson", async () => {
+      await openImportWizard("json", importCtx);
+    }),
+  );
+  const largeValueProvider = getLargeValueProvider();
+  disposables.push(largeValueProvider);
+  if (
+    typeof vscode.workspace.registerTextDocumentContentProvider === "function"
+  ) {
+    disposables.push(
+      vscode.workspace.registerTextDocumentContentProvider(
+        LARGE_VALUE_SCHEME,
+        largeValueProvider,
+      ),
+    );
+  }
+  disposables.push(
+    vscode.commands.registerCommand(
+      "vsdb.editLargeValue",
+      async (cell: { label: string; value: string }) => {
+        await openLargeValueEditor(cell);
+      },
+    ),
+  );
+  disposables.push(
+    vscode.commands.registerCommand("vsdb.openFormView", () => {
+      void vscode.window.showInformationMessage(
+        "VSDB Form View: select a cell in a results grid and choose 'Open Form'",
+      );
+    }),
+  );
 
   // Dispose schemaTree + codeLens on deactivate to drop subscriptions + cache.
   context.subscriptions.push({ dispose: () => tree.dispose() });
