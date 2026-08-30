@@ -41,6 +41,9 @@ import { registerBrowseCommands } from "./ui/browseCommands";
 import { SchemaCache } from "./ui/schemaCache";
 import { createCatalogResolver } from "./ui/sqlCatalog";
 import { SqlCompletionProvider } from "./ui/sqlCompletionProvider";
+import { SqlCatalogDocumentProvider } from "./ui/sqlCatalogDocumentProvider";
+import { SqlNavigationProvider } from "./ui/sqlNavigationProvider";
+import { SqlReferenceProvider } from "./ui/sqlReferenceProvider";
 import {
   SQL_SEMANTIC_LEGEND,
   SqlSemanticTokensProvider,
@@ -202,6 +205,55 @@ export async function activate(
         { scheme: "file", language: "sql" },
         sqlCompletion,
         ".",
+      ),
+    );
+  }
+
+  // 15c. Cycle DBX-02 — SQL intelligence navigation: shared catalog
+  // document provider backs hover/definition virtual documents; navigation
+  // (hover + definition) and find-usages (references) reuse the SAME
+  // schemaCache — no second cache/debounce/controller.
+  const catalogDocuments = new SqlCatalogDocumentProvider();
+  disposables.push(catalogDocuments);
+  if (
+    typeof vscode.workspace.registerTextDocumentContentProvider === "function"
+  ) {
+    disposables.push(
+      vscode.workspace.registerTextDocumentContentProvider(
+        "vsdb-sql-catalog",
+        catalogDocuments,
+      ),
+    );
+  }
+  const sqlNavigation = new SqlNavigationProvider({
+    cache: schemaCache,
+    catalog: createCatalogResolver(schemaCache, {
+      isPostgres: () => mgr.getActive()?.driver === "postgres",
+    }),
+    documentProvider: catalogDocuments,
+  });
+  if (typeof vscode.languages.registerHoverProvider === "function") {
+    disposables.push(
+      vscode.languages.registerHoverProvider(
+        { scheme: "file", language: "sql" },
+        sqlNavigation,
+      ),
+    );
+  }
+  if (typeof vscode.languages.registerDefinitionProvider === "function") {
+    disposables.push(
+      vscode.languages.registerDefinitionProvider(
+        { scheme: "file", language: "sql" },
+        sqlNavigation,
+      ),
+    );
+  }
+  const sqlReferences = new SqlReferenceProvider();
+  if (typeof vscode.languages.registerReferenceProvider === "function") {
+    disposables.push(
+      vscode.languages.registerReferenceProvider(
+        { scheme: "file", language: "sql" },
+        sqlReferences,
       ),
     );
   }

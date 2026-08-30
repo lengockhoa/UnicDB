@@ -33,6 +33,7 @@ const state = {
   createdWebviewPanels: [] as unknown[],
   createdTreeViews: [] as unknown[],
   registeredCodeLensProviders: [] as Array<{ language: unknown }>,
+  registeredContentProviders: [] as Array<{ scheme: string; provider: unknown }>,
   onDidChangeConfigSubscribers: [] as Array<(e: { affectsConfiguration: (s: string) => boolean }) => void>,
   workspaceFolders: undefined as unknown,
   // TASK-606: giá trị setting vsdb.confirmDestructive (undefined = default true).
@@ -143,7 +144,10 @@ vi.mock("vscode", () => {
       // `vsdb-ddl:` URI scheme at activate(). The default mock returns a
       // disposable so registration is a no-op (no provider body needed) for
       // the smoke tests; ddlView.test.ts builds its own richer provider mock.
-      registerTextDocumentContentProvider: vi.fn(() => ({ dispose: () => {} })),
+      registerTextDocumentContentProvider: vi.fn((scheme: string, provider: unknown) => {
+        state.registeredContentProviders.push({ scheme, provider });
+        return { dispose: () => {} };
+      }),
     },
     commands: {
       registerCommand: vi.fn((id: string, fn: Function) => {
@@ -272,6 +276,7 @@ describe("extension.activate — wiring smoke", () => {
     state.createdWebviewPanels.length = 0;
     state.createdTreeViews.length = 0;
     state.registeredCodeLensProviders.length = 0;
+    state.registeredContentProviders.length = 0;
     state.onDidChangeConfigSubscribers.length = 0;
     state.workspaceFolders = undefined;
     state.activeEditor = undefined;
@@ -348,6 +353,23 @@ describe("extension.activate — wiring smoke", () => {
   // (chỉ stub registerCodeLensProvider, xem :159-164) thiếu
   // registerDocumentSemanticTokensProvider → activate() KHÔNG throw.
   it("TASK-002 #8 activate() không throw khi registerDocumentSemanticTokensProvider vắng mặt", () => {
+    const ctx = makeCtx();
+    expect(() => activate(ctx as never)).not.toThrow();
+  });
+
+  // TASK-DBX02-005 — SQL intelligence navigation wiring.
+  it("DBX-02: catalog document provider đăng ký cho scheme vsdb-sql-catalog", () => {
+    const ctx = makeCtx();
+    activate(ctx as never);
+    const catalog = state.registeredContentProviders.find(
+      (r) => r.scheme === "vsdb-sql-catalog",
+    );
+    expect(catalog).toBeDefined();
+    const provider = catalog!.provider as { provideTextDocumentContent: unknown };
+    expect(typeof provider.provideTextDocumentContent).toBe("function");
+  });
+
+  it("DBX-02: hover/definition/reference providers không throw với partial languages mock", () => {
     const ctx = makeCtx();
     expect(() => activate(ctx as never)).not.toThrow();
   });

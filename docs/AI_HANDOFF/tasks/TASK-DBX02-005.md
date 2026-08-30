@@ -65,3 +65,11 @@ npm run compile
 Do not modify `package.json`: `onLanguage:sql` already activates the extension. Reuse `src/ui/ddlView.ts` only as the proven registration/disposal test pattern; its `vsdb-ddl` provider cannot serve table/FK metadata.
 
 ---
+
+---
+## Executor Report
+EXECUTOR_TOOL: omp-direct (unic-code)
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+Status: PASS
+Note: extension.ts wires SqlCatalogDocumentProvider (`vsdb-sql-catalog:` scheme via registerTextDocumentContentProvider), SqlNavigationProvider (hover + definition), and SqlReferenceProvider (references), all guarded for partial vscode mocks and reusing the ONE schemaCache + one createCatalogResolver per concern — no second cache/debounce/controller. SqlCatalogDocumentProvider gained dispose() (Disposable contract). 2 scaffold tests added to extension.test.ts (content-provider registration on vsdb-sql-catalog + activation without throw with partial mocks); 71/71 extension tests, full regression 2237 passed | 2 skipped, tsc + esbuild clean.

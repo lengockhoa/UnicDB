@@ -63,9 +63,12 @@ export class SqlCatalogDocumentProvider
   put(uri: vscode.Uri, content: string): void {
     this.entries.set(uri.toString(), content);
   }
-
   clear(uri: vscode.Uri): void {
     this.entries.delete(uri.toString());
+  }
+
+  dispose(): void {
+    this.entries.clear();
   }
 }
 
