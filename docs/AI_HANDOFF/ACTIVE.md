@@ -1,9 +1,13 @@
 # ACTIVE
 
-Cycle: DBX-01 (re-opened)   Date: 2026-08-30   Base: main @ d9d603b
-Goal: Data Workbench Completion — CSV/JSON import + form view + large-value editor (PostgreSQL only).
+Cycle: DBX-03   Date: 2026-08-30   Base: main @ f0581fe
+Goal: Schema & Data Compare — schema diff, keyed data diff, previewed directional sync plan (PostgreSQL only; same connection; preview-only panel).
 Tasks: 4 total
-Status: done — 4/4 tasks committed (2414698, mapping+dry-run, e1ae955, wizard wiring); full suite 2301 passed / 2 skipped; typecheck 0; compile clean. Next candidate: DBX-03 Schema & Data Compare.
+Status: in_progress — PLAN_DBX03 + 4 task files authored; waves: {001,002} → 003 → 004. Previous DBX-01 shipped as v1.16.0.
+
+Previous:
+Cycle: DBX-01 (re-opened)   Date: 2026-08-30   Base: main @ d9d603b
+Status: done — shipped as v1.16.0 (4/4 tasks, 2301 passed / 2 skipped).
 
 Previous:
 Cycle: DBX-02   Date: 2026-08-30   Base: main @ 65f8499
