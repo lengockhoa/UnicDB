@@ -6,15 +6,15 @@
 
 ## Snapshot
 
-- Branch/state: `main` == `origin/main`; **v1.17.0 published** (tag + GitHub Release with `dist/vsdb-1.17.0.vsix`).
+- Branch/state: `main` — **v1.19.0 publishing in progress** (v1.18.0 + v1.19.0 tags + GitHub Releases with vsix assets planned this session); pushes deferred to closure.
 - Durable two-pillar product queue: `docs/AI_HANDOFF/PRODUCT_ROADMAP.md` with its portfolio plan in `PLAN_PRODUCT_VISION.md`; `ROADMAP.md` is the compatibility index.
-- Cycle DBX-03 (Schema & Data Compare) COMPLETE + REVIEWED on `main` (2026-08-30, unic-smart APPROVED after 2 fix rounds). Final: 2344 passed | 2 skipped, typecheck clean, esbuild clean. Delivers `vsdb.compareTables`: schema diff, keyed data diff (PK or unique NOT NULL), and a preview-only directional sync plan (Copy SQL → Console; the panel never executes).
+- Cycle DBX-04 (Relationship Explorer) COMPLETE + REVIEWED (2026-08-30, unic-smart APPROVED after 3 fix rounds). Final: 116/116 er-targeted, 2389 passed | 2 skipped at approval. Delivers `vsdb.relationshipExplorer`: FK graph, deterministic layered layout, SVG export, pan/zoom panel.
+- Cycle AIX-01 (Grounded Workspace Context) COMPLETE + REVIEWED (2026-08-30, unic-smart APPROVED after 2 fix rounds at 6a2b560). Final: 124/124 targeted + 21/21 bundle, 2448 passed | 0 failed. Delivers opt-in grounding: selection + file blocks with line-ranged attribution, workspace_search bounded retrieval, panel toggle chips.
 - Cycle DBX-02 (SQL Intelligence Navigation) COMPLETE on `main` (4 code commits + docs closure). Catalog completion (FK targets + views/routines/sequences), hover/definition over `vsdb-sql-catalog:` virtual documents, and parsed find-usages wired behind partial-mock guards.
 
 ## Active Work
-
-- Handoff ACTIVE is Cycle DBX-03, done + reviewed (4/4, unic-smart APPROVED). DBX-01 shipped as v1.16.0; DBX-02 shipped as v1.15.0.
-- v1.16.0 is the latest published release; DBX-03 commits are local-only until the next push/release.
+- Handoff ACTIVE is Cycle AIX-01, done + reviewed (4/4, unic-smart APPROVED). DBX-04 ships as v1.18.0; AIX-01 ships as v1.19.0; DBX-03 shipped as v1.17.0.
+- v1.17.0 was the latest published release at session start; v1.18.0 + v1.19.0 release commits are local until the closure push.
 - AHL is archived as completed historical work; its artifacts remain preserved under `docs/AI_HANDOFF/`.
 
 ## Decisions Pending
@@ -22,11 +22,15 @@
 - None blocking.
 
 ## Next Candidates
-1. Next portfolio cycle: DBX-04 (Relationship Explorer) or AIX-01 (Grounded Workspace Context).
+1. Next portfolio cycle: DBX-05 (wave 3) or AIX-02 (wave 3) per PRODUCT_ROADMAP.
 
 ## Recently Completed
+## Recently Completed
 
+- v1.19.0: Cycle AIX-01 Grounded Workspace Context — selection/file grounding with line-ranged attribution, bounded workspace_search tool (both engines), panel toggle chips; unic-smart APPROVED after 2 fix rounds.
+- v1.18.0: Cycle DBX-04 Relationship Explorer — FK graph, layered layout, SVG export, pan/zoom panel, vsdb.relationshipExplorer; unic-smart APPROVED after 3 fix rounds.
 - v1.17.0: Cycle DBX-03 Schema & Data Compare — schemaDiff/dataDiff/syncPlan pure modules, compare service + preview panel, vsdb.compareTables; unic-smart APPROVED after 2 fix rounds.
+
 - v1.16.0: Cycle DBX-01 Data Workbench Completion — CSV/JSON import wizard, form view, vsdb-lv large-value editor, parameterized DbTransaction seam.
 - v1.15.0: Cycle DBX-02 SQL Intelligence Navigation — catalog resolver + FK/root completion, hover/definition virtual docs, parsed find-usages, activation wiring.
 - v1.14.0: Cycle AIC SQL autocomplete (settings + form + migration; cancellable schema-only service; editor + Console ghost-text; extension wiring).
