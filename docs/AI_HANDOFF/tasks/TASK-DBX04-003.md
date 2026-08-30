@@ -150,3 +150,19 @@ Driver-gate and zoom fixes accepted by reviewer as correct.
 
 Fresh verification: targeted 116/116 (er+service+panel+scaffold+extension);
 full 2389 passed | 2 skipped; typecheck exit 0; esbuild builds dist/erPanel.js.
+
+## Reviewer Verdict — Fix Round 3 (Superseding)
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic/unic-smart
+
+Supersedes all prior CHANGES-REQUESTED verdicts. The final source resolves every reported issue: serializable layout transport, FK target normalization, degree-first cap selection, driver gating before lazy adapter acquisition, bounded/empty-safe webview zoom, export-write error reporting, standalone panel-test mocking, and truthful `truncated` semantics.
+
+Commands run:
+- `npm run typecheck` — passed.
+- `npx vitest run src/core/er src/ui/__tests__/erService.test.ts src/ui/__tests__/erPanel.test.ts src/__tests__/dbx04Scaffold.test.ts src/extension.test.ts` — passed (7 files, 116 tests).
+- CSP guard search for `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`, `eval`, and `new Function` in `webview/erPanelMain.ts` — no matches.
+- Purity guard search for `from "vscode"` in `src/core/er`, `src/ui/erService.ts`, and `src/ui/erPanelHtml.ts` — no matches.
+
+Findings: none.
+

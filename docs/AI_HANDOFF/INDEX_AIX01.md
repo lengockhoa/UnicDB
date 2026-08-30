@@ -7,10 +7,10 @@ Executor: unic-code
 
 | Task | Scope | Status |
 |---|---|---|
-| TASK-AIX01-001 | src/ai/grounding/{selection,attribution}.ts + tests | pending |
-| TASK-AIX01-002 | src/ai/grounding/fileSearch.ts + tests | pending |
-| TASK-AIX01-003 | groundingService + groundingMessages + aiChatPanel wiring + workspace_search tool | pending |
-| TASK-AIX01-004 | aix01Scaffold.test.ts + full regression | pending |
+| TASK-AIX01-001 | src/ai/grounding/{selection,attribution}.ts + tests | done |
+| TASK-AIX01-002 | src/ai/grounding/fileSearch.ts + tests | done |
+| TASK-AIX01-003 | groundingService + groundingMessages + aiChatPanel wiring + workspace_search tool | done |
+| TASK-AIX01-004 | aix01Scaffold.test.ts + full regression | done |
 
 ## Contract (shared)
 
@@ -21,3 +21,5 @@ Executor: unic-code
   MENTION_RESOLVE_FILE_CAP_BYTES value).
 - Secret/binary exclusions reported in bundle.excluded, never silently
   dropped.
+
+Status (2026-08-30): all 4 tasks executed. 138/138 targeted; full 2440 passed | 2 skipped; typecheck + esbuild clean. Awaiting reviewer verdict.

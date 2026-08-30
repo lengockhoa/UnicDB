@@ -134,3 +134,17 @@ Driver-gate and zoom fixes accepted by reviewer as correct.
 
 Fresh verification: targeted 116/116 (er+service+panel+scaffold+extension);
 full 2389 passed | 2 skipped; typecheck exit 0; esbuild builds dist/erPanel.js.
+
+## Reviewer Verdict — Fix Round 3 (Superseding)
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic/unic-smart
+
+Supersedes all prior CHANGES-REQUESTED verdicts. Required scaffold purity/CSP protections, command registration, standalone panel-test isolation, and the corrected service-cap contract have been re-verified.
+
+Commands run:
+- `npm run typecheck` — passed.
+- `npx vitest run src/core/er src/ui/__tests__/erService.test.ts src/ui/__tests__/erPanel.test.ts src/__tests__/dbx04Scaffold.test.ts src/extension.test.ts` — passed (7 files, 116 tests).
+
+Findings: none.
+

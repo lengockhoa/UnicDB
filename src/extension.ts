@@ -86,6 +86,34 @@ interface ExtensionState {
   statusBar: vscode.StatusBarItem;
 }
 
+// AIX-01: opt-in workspace grounding. Default OFF so the pre-AIX-01
+// turn path is unchanged. Hosts gate on `vsdb.ai.grounding` so a
+// setting change takes effect on the next panel open.
+function isGroundingEnabled(): boolean {
+  return vscode.workspace
+    .getConfiguration("vsdb")
+    .get<boolean>("ai.grounding", false);
+}
+// Host-curated file list (empty for now — the model can request
+// retrieval via the `workspace_search` AgentTool at runtime).
+let groundingFiles: readonly string[] = [];
+function readActiveSelection(): { path: string; text: string; startLine?: number; endLine?: number } | null {
+  const ed = vscode.window.activeTextEditor;
+  if (!ed) return null;
+  const sel = ed.selection;
+  if (sel.isEmpty) return null;
+  return {
+    path: ed.document.uri.fsPath,
+    text: ed.document.getText(sel),
+    startLine: sel.start.line + 1,
+    endLine: sel.end.line + 1,
+  };
+}
+async function readWorkspaceFile(p: string): Promise<string> {
+  const bytes = await vscode.workspace.fs.readFile(vscode.Uri.file(p));
+  return new TextDecoder().decode(bytes);
+}
+
 export async function activate(
   context: vscode.ExtensionContext,
 ): Promise<void> {
@@ -930,6 +958,15 @@ async function commandOpenAiChat(
     onDispose: () => {
       aiChatPanel = null;
     },
+    // AIX-01: opt-in workspace grounding. `vsdb.ai.grounding` defaults
+    // to false so the pre-AIX-01 turn path is unchanged.
+    grounding: isGroundingEnabled()
+      ? {
+          getSelection: readActiveSelection,
+          readFile: readWorkspaceFile,
+          filesToRead: groundingFiles,
+        }
+      : undefined,
   });
   aiChatPanel.show();
 }

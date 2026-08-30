@@ -131,6 +131,17 @@ export interface AiChatPanelAttachError {
   message: string;
 }
 
+/** AIX-01: host-side summary of what was attached to the turn as
+ *  grounded workspace context. Webview shows this as chips. */
+export interface AiChatPanelGroundingState {
+  type: "grounding_state";
+  selectionPath: string | null;
+  fileCount: number;
+  excludedCount: number;
+  turnId: string;
+}
+
+
 export type AiChatPanelHostMessage =
   | AiChatPanelInit
   | AiChatPanelStep
@@ -145,7 +156,8 @@ export type AiChatPanelHostMessage =
   | AiChatPanelHistory
   | AiChatPanelMentionObjects
   | AiChatPanelMentionMiss
-  | AiChatPanelAttachError;
+  | AiChatPanelAttachError
+  | AiChatPanelGroundingState;
 
 /** TASK-005: host answer for `mention_list` (≤30 DB objects + ≤20 files).
  * Each item carries `kind` discriminator (table|view|routine|file), a

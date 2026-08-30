@@ -45,6 +45,7 @@
  } from "../ai/agent";
 import type { ChatMessage, ChatContentPart } from "../ai/provider";
 import type { AdapterFactory } from "../ai/tools/types";
+import type { GroundingDeps } from "./groundingService";
 import {
   MAX_ATTACHMENTS_PER_TURN,
   validateImageAttachment,
@@ -54,6 +55,7 @@ import {
 } from "./aiChatAttachments";
 import { defaultAiSettings, type AiModelRole } from "../ai/settings";
 import { createDbTools } from "../ai/tools/registry";
+import { createWorkspaceSearchTool } from "../ai/tools/workspaceSearchTool";
 import { createSqlTool } from "../ai/tools/sqlTool";
 import { createExportStructureTool } from "../ai/tools/schemaTools";
 import { createDbAwareTools } from "../ai/tools/dbAwareTools";
@@ -65,6 +67,8 @@ import { createMcpBridge, type McpBridge } from "../ai/omp/mcpBridge";
    buildViewStructure,
    type ExportColumn,
  } from "./exportStructure";
+import { collectGrounding } from "./groundingService";
+import { formatSelectionBlock } from "../ai/grounding/selection";
  import type {
    TableInfo,
    ViewInfo,
@@ -536,6 +540,15 @@ export interface AiChatPanelOptions {
    * AB's tests — opt-in by host.
    */
   ompChatEngine?: OmpChatEngine;
+  /**
+   * AIX-01: optional workspace grounding. When set, the host will be
+   * asked for the active editor selection + workspace files BEFORE
+   * each turn, and the bounded result will be appended to the user
+   * message as a `--- Grounded workspace context ---` block. Tests and
+   * hosts that do not implement grounding can omit this and behavior
+   * matches the pre-AIX-01 turn path exactly.
+   */
+  grounding?: Omit<GroundingDeps, "turnId">;
 }
 /**
  * Per-turn input assembly — system prompt + history + user msg.
@@ -1299,6 +1312,46 @@ export class AiChatPanel {
           type: "error",
           message: `Mention resolution failed: ${message}`,
         });
+      }
+    }
+
+    // AIX-01: bounded, attributed workspace grounding (selection + files)
+    // merged AFTER the mention block so the existing per-turn context
+    // order survives. Disabled / no-attached -> no block, no drift.
+    if (this.options.grounding) {
+      try {
+        const turnId = `turn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const bundle = await collectGrounding({
+          ...this.options.grounding,
+          turnId,
+        });
+        if (bundle.selectionBlock || bundle.files.length > 0) {
+          const parts: string[] = [];
+          if (bundle.selection) parts.push(formatSelectionBlock(bundle.selection));
+          for (const f of bundle.files) {
+            parts.push(`--- file ${f.path} ---\n${f.content}`);
+          }
+          const groundedBlock = `--- Grounded workspace context ---\n${parts.join("\n\n")}`;
+          const baseText =
+            typeof userMsg.content === "string"
+              ? userMsg.content
+              : (userMsg.content as Array<{ type: string; text?: string }>)
+                  .filter((p) => p.type === "text")
+                  .map((p) => p.text ?? "")
+                  .join("");
+          const merged = baseText.length > 0 ? `${baseText}\n\n${groundedBlock}` : groundedBlock;
+          userMsg.content =
+            imageParts.length > 0 ? [{ type: "text" as const, text: merged }, ...imageParts] : merged;
+          this.post({
+            type: "grounding_state",
+            selectionPath: bundle.selection?.path ?? null,
+            fileCount: bundle.files.length,
+            excludedCount: bundle.excluded.length,
+            turnId,
+          });
+        }
+      } catch {
+        // Grounding failure must not break the turn — proceed without it.
       }
     }
     if (this.engine === "builtin") {
