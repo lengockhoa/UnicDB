@@ -6,7 +6,7 @@
 
 ## Snapshot
 
-- Branch/state: `main` == `origin/main`; **v1.15.0 published** (tag + GitHub Release with `dist/vsdb-1.15.0.vsix`, commit d24294e).
+- Branch/state: `main` == `origin/main`; **v1.16.0 published** (tag + GitHub Release with `dist/vsdb-1.16.0.vsix`).
 - Durable two-pillar product queue: `docs/AI_HANDOFF/PRODUCT_ROADMAP.md` with its portfolio plan in `PLAN_PRODUCT_VISION.md`; `ROADMAP.md` is the compatibility index.
 - Cycle DBX-01 (Data Workbench Completion) COMPLETE on `main` (2026-08-30, re-opened after audit found the prior "done" claim had no code). Final state: 2301 passed | 2 skipped, typecheck clean, esbuild clean. Delivers CSV/JSON import wizard (pure parse → auto-map → dry-run → dangerous-confirm → single-transaction execute), form view, and the vsdb-lv: large-value editor.
 - Cycle DBX-02 (SQL Intelligence Navigation) COMPLETE on `main` (4 code commits + docs closure). Catalog completion (FK targets + views/routines/sequences), hover/definition over `vsdb-sql-catalog:` virtual documents, and parsed find-usages wired behind partial-mock guards.
@@ -14,7 +14,8 @@
 ## Active Work
 
 - Handoff ACTIVE is Cycle DBX-01, done (4/4 committed). DBX-02 done previously (5/5). Both shipped with executor reports.
-- v1.15.0 (Cycle DBX-02) published on GitHub Releases; DBX-01 commits are local-only, ahead of origin until the next push.
+- v1.16.0 (Cycle DBX-01) is tagged/pushed and published on GitHub Releases; nothing pending on the publication side.
+- Next Candidates updated: DBX-03 selected as the next cycle (user-approved).
 - AHL is archived as completed historical work; its artifacts remain preserved under `docs/AI_HANDOFF/`.
 
 ## Decisions Pending
