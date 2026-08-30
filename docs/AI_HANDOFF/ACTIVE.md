@@ -1,9 +1,13 @@
 # ACTIVE
 
-Cycle: AIX-01   Date: 2026-08-30   Base: main @ 3b30f7c
-Goal: Grounded Workspace Context — selection + file grounding, attributed retrieval, gated workspace_search tool (opt-in via vsdb.ai.grounding).
+Cycle: DBX-05   Date: 2026-08-30   Base: main @ 23e17df
+Goal: Connection Workspace — folders/colors for connection organization, read-only intent enforcement, lifecycle-managed SSH tunnels (PostgreSQL-first).
 Tasks: 4 total
-Status: executed + committed (bd33e11); unic-smart review in progress (Aix01Reviewer).
+Status: planned — plan docs committed; TDD execution next.
+
+Previous:
+Cycle: AIX-01   Date: 2026-08-30   Base: main @ 3b30f7c
+Status: done — shipped as v1.19.0 (4/4 tasks, unic-smart APPROVED after 2 fix rounds at 6a2b560; 2448 passed | 2 skipped final).
 
 Previous:
 Cycle: DBX-04   Date: 2026-08-30   Base: main @ 579b38c
