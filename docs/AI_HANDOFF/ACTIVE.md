@@ -3,7 +3,11 @@
 Cycle: DBX-02   Date: 2026-08-30   Base: main @ 65f8499
 Goal: SQL Intelligence Navigation — catalog completion, hover/definition, parsed find-usages (PostgreSQL only; mysql/mssql degrade gracefully).
 Tasks: 5 total
-Status: planning_done — ready for executor
+Status: done — 5/5 tasks committed (f40ae1f, aa5f36d, 29d065f, a093381 + 001 in f40ae1f); full suite 2237 passed / 2 skipped; typecheck 0; compile clean.
+
+Previous:
+Cycle: DBX-02 (planning)   Date: 2026-08-30   Base: main @ 65f8499
+Status: planning_done — plan PLAN_DBX02.md + 5 task files approved by reviewer before execution.
 
 Previous:
 Cycle: AIC   Date: 2026-08-29   Base: main @ f7a4055

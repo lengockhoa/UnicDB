@@ -6,28 +6,29 @@
 
 ## Snapshot
 
-- Branch/state: `main` at local release-prepared `v1.14.0`; external publication has not occurred for that local release state.
+- Branch/state: `main` ahead of origin by the DBX-02 cycle (f40ae1f..a093381 + docs); v1.14.0 tag + GitHub release already published with `dist/vsdb-1.14.0.vsix`.
 - Durable two-pillar product queue: `docs/AI_HANDOFF/PRODUCT_ROADMAP.md` with its portfolio plan in `PLAN_PRODUCT_VISION.md`; `ROADMAP.md` is the compatibility index.
-- Cycle AIC implementation COMPLETE on `main` (5 commits: AIC-001..AIC-005). Final state: 2188 passed | 2 skipped regression, typecheck clean, esbuild clean. The previously-stated "AIC implementation is intentionally not started" line is stale; the cycle is closed.
+- Cycle DBX-02 (SQL Intelligence Navigation) COMPLETE on `main` (4 code commits + docs closure). Final state: 2237 passed | 2 skipped regression, typecheck clean, esbuild clean. Catalog completion (FK targets + views/routines/sequences), hover/definition over `vsdb-sql-catalog:` virtual documents, and parsed find-usages are wired into activation behind partial-mock guards.
 
 ## Active Work
 
-- Handoff ACTIVE was Cycle AIC, planning done. Task graph: AIC-001 → AIC-002 → {AIC-003, AIC-004} → AIC-005. All five tasks are now done.
-- The plan independently reviewed initial design findings and applied them: explicit request/cost bounds, every-load settings migration, single cancellation/cache owner, Console overlay/acceptance contract, status-bar-only unavailable cue, and logging/privacy tests.
+- Handoff ACTIVE is Cycle DBX-02, done. Task graph: DBX02-001 → {002, 003, 004} → 005; all five tasks committed with executor reports.
+- v1.14.0 (Cycle AIC) is tagged/pushed and published on GitHub Releases; the remaining publication work is only the local DBX-02 commits ahead of origin.
 - AHL is archived as completed historical work; its artifacts remain preserved under `docs/AI_HANDOFF/`.
 
 ## Decisions Pending
 
-- Verify local v1.14.0 release-prepared state before any external release action.
-- Select the next DBX/AIX portfolio cycle to follow AIC.
+- None blocking; next release tag (v1.15.0) awaits the user's go-ahead.
 
 ## Next Candidates
-1. Select the next DBX/AIX portfolio cycle to follow AIC (cycle is closed).
-2. Verify local v1.14.0 release-prepared state before any external release action.
+1. Select the next DBX/AIX portfolio cycle to follow DBX-02 (candidates: DBX-03, AIX-01 per PRODUCT_ROADMAP.md).
+2. Push the DBX-02 commits and cut v1.15.0 when the user asks.
 
 ## Recently Completed
 
+- Cycle DBX-02 (unreleased): SQL Intelligence Navigation — catalog resolver + FK/root completion, hover/definition virtual docs, parsed find-usages, activation wiring.
 - v1.14.0: Cycle AIC SQL autocomplete (settings + form + migration; cancellable schema-only service; editor + Console ghost-text; extension wiring).
+
 - v1.12.0: Cycle AF database catalog/DDL viewer/formatter/Console v2; Cycle AG AI-chat toolbar icons; Cycle AI below-editor results placement.
 - v1.13.0: Cycle AH DataGrip-style accumulating multi-statement results.
 - AE.5 OMP activation shim caveat recorded as resolved in handoff active state.

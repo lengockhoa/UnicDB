@@ -22,6 +22,13 @@ For each significant action, append:
 
 ---
 
+## 2026-08-30 — DBX-02 SQL Intelligence Navigation shipped
+
+- Action: executed the full DBX-02 cycle (tasks 001–005): SchemaCache catalog accessors + vscode-free `createCatalogResolver`; completion extended with FK targets + views/routines/sequences; new SqlNavigationProvider (hover + definition over `vsdb-sql-catalog:` virtual docs); `extractIdentifierReferences` in statementParser + SqlReferenceProvider (find usages); all wired in extension.ts behind partial-mock guards sharing one schemaCache.
+- Files: src/ui/sqlCatalog.ts, sqlCatalogDocumentProvider.ts, sqlNavigationProvider.ts, sqlReferenceProvider.ts, sqlCompletionProvider.ts, schemaCache.ts, src/core/statementParser.ts, src/extension.ts, + tests.
+- Verification: `npx vitest run` 2237 passed | 2 skipped (+49 vs AIC baseline 2188); `npm run typecheck` exit 0; `npm run compile` clean. Commits: f40ae1f, aa5f36d, 29d065f, a093381 (+ docs).
+- Outcome: DBX-02 5/5 tasks done; docs/AI_HANDOFF updated (INDEX_DBX02 all done, ACTIVE.md rotated).
+
 ## 2026-08-30 — Reliability audit and verification baseline
 
 - Action: completed focused reliability fixes/audit covering AI SQL autocomplete safety and PostgreSQL SQL navigation contracts; finalized the navigation test harness so it runs under the standard Node Vitest environment.

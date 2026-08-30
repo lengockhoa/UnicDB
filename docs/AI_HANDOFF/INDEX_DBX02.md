@@ -4,11 +4,11 @@ Cycle DBX-02 — **SQL INTELLIGENCE NAVIGATION**: PostgreSQL catalog completion,
 
 | Task | Title | Status | Dependencies | Reviewer |
 |------|-------|--------|--------------|----------|
-| TASK-DBX02-001 | Cached catalog rows and vscode-free resolver | ready | none | independent unic-smart reviewer |
-| TASK-DBX02-002 | Catalog and FK completion | ready | TASK-DBX02-001 | independent unic-smart reviewer |
-| TASK-DBX02-003 | Catalog hover and virtual definition | ready | TASK-DBX02-001 | independent unic-smart reviewer |
-| TASK-DBX02-004 | Parsed SQL find-usages | ready | TASK-DBX02-001 | independent unic-smart reviewer |
-| TASK-DBX02-005 | Activation provider wiring and scaffold test | ready | TASK-DBX02-002, TASK-DBX02-003, TASK-DBX02-004 | independent unic-smart reviewer |
+| TASK-DBX02-001 | Cached catalog rows and vscode-free resolver | done | none | independent unic-smart reviewer |
+| TASK-DBX02-002 | Catalog and FK completion | done | TASK-DBX02-001 | independent unic-smart reviewer |
+| TASK-DBX02-003 | Catalog hover and virtual definition | done | TASK-DBX02-001 | independent unic-smart reviewer |
+| TASK-DBX02-004 | Parsed SQL find-usages | done | TASK-DBX02-001 | independent unic-smart reviewer |
+| TASK-DBX02-005 | Activation provider wiring and scaffold test | done | TASK-DBX02-002, TASK-DBX02-003, TASK-DBX02-004 | independent unic-smart reviewer |
 
 ## Graph
 
