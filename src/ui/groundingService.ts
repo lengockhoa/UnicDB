@@ -72,13 +72,23 @@ export async function collectGrounding(deps: GroundingDeps): Promise<GroundingBu
         excluded.push(p);
         continue;
       }
-      const trimmed = content.length > MENTION_FILE_BYTES_CAP ? content.slice(0, MENTION_FILE_BYTES_CAP) : content;
+      // Cap by ENCODED BYTES (UTF-8), not UTF-16 chars: a CJK-heavy file
+      // of 60_000 chars is ~180 KB UTF-8 and must be cut to fit the
+      // 100 KB context budget.
+      let capped = content;
+      if (Buffer.byteLength(capped, "utf8") > MENTION_FILE_BYTES_CAP) {
+        capped = capped.slice(0, MENTION_FILE_BYTES_CAP);
+        while (Buffer.byteLength(capped, "utf8") > MENTION_FILE_BYTES_CAP && capped.length > 0) {
+          capped = capped.slice(0, Math.floor(capped.length * 3 / 4));
+        }
+      }
+      const trimmed = capped;
       if (isProbablyBinary(trimmed) || containsSecretHeuristic(trimmed)) {
         excluded.push(p);
         continue;
       }
       files.push({ path: p, content: trimmed });
-      const fileEntries: AttributionEntry[] = [{ kind: "file", ref: p, bytes: trimmed.length }];
+      const fileEntries: AttributionEntry[] = [{ kind: "file", ref: p, bytes: Buffer.byteLength(trimmed, "utf8") }];
       record = recordAttribution(record, fileEntries);
     }
   }

@@ -37,19 +37,26 @@ export function extractSelection(input: SelectionInput): GroundedSelection | nul
   if (trimmed.length === 0) return null;
 
   const total = trimmed.split("\n").length;
-  const requestedStart = typeof input.startLine === "number" ? input.startLine : 1;
-  const requestedEnd = typeof input.endLine === "number" ? input.endLine : total;
-  const startLine = Math.max(1, Math.min(requestedStart, total));
-  const endLine = Math.max(startLine, Math.min(requestedEnd, total));
-
+  // `startLine`/`endLine` from the host (e.g. an editor selection) are
+  // 1-based OFFSETS into the source file — preserve them so the model
+  // is attributed to the real document lines, not relative positions
+  // in the trimmed text. When the host provides no offsets, we
+  // project the trimmed position back through the lead-blank count
+  // (1 + lead) so the rendered reference points at the right line.
+  const hostStart = typeof input.startLine === "number";
+  const hostEnd = typeof input.endLine === "number";
+  const requestedStart = hostStart ? (input.startLine as number) : 1 + lead;
+  const requestedEnd = hostEnd ? (input.endLine as number) : requestedStart + total - 1;
+  const startLine = Math.max(1, requestedStart);
+  // Clamp endLine to NOT exceed the trimmed text's last line offset.
+  const endLine = Math.max(startLine, Math.min(requestedEnd, startLine + total - 1));
   let text = trimmed;
   let truncated = false;
   if (text.length > MAX_SELECTION_CHARS) {
     text = text.slice(0, MAX_SELECTION_CHARS);
     truncated = true;
   }
-
-  return { path: input.path, startLine: startLine + lead, endLine: endLine + lead, text, truncated };
+  return { path: input.path, startLine, endLine, text, truncated };
 }
 
 export function formatSelectionBlock(sel: GroundedSelection): string {

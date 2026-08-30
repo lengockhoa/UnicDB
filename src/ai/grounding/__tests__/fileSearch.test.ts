@@ -31,6 +31,18 @@ describe("containsSecretHeuristic", () => {
   it("matches Anthropic API keys", () => {
     expect(containsSecretHeuristic("sk-ant-api03-1234567890abcdefghij")).toBe(true);
   });
+  it("matches Slack bot + user tokens", () => {
+    expect(containsSecretHeuristic("xoxb-1234567890-abcdef")).toBe(true);
+    expect(containsSecretHeuristic("xoxp-1234567890-abcdefghij")).toBe(true);
+  });
+  it("matches Slack tokens in the exclusion flow", () => {
+    const r = searchWorkspaceFiles(
+      [f("ok.ts", "alpha"), f("creds.txt", "xoxb-1234567890-abcdefghij")],
+      { terms: ["alpha"] },
+    );
+    expect(r.hits.map((h) => h.path)).toEqual(["ok.ts"]);
+    expect(r.excluded).toContain("creds.txt");
+  });
   it("does not match innocuous prose", () => {
     expect(containsSecretHeuristic("import express from 'express';")).toBe(false);
   });

@@ -69,6 +69,7 @@ import { createMcpBridge, type McpBridge } from "../ai/omp/mcpBridge";
  } from "./exportStructure";
 import { collectGrounding } from "./groundingService";
 import { formatSelectionBlock } from "../ai/grounding/selection";
+import { formatAttributionFooter } from "../ai/grounding/attribution";
  import type {
    TableInfo,
    ViewInfo,
@@ -999,6 +1000,11 @@ export class AiChatPanel {
    * single explicit `dispose()` call.
    */
   private torndown = false;
+  /** AIX-01: panel-scoped grounding toggle (webview `grounding_toggle`).
+   * `undefined` = untouched — the host config `vsdb.ai.grounding` decides.
+   * `false` = user disabled in THIS panel instance (no persistence);
+   * `true` re-enables within the same panel session. */
+  private groundingPanelEnabled: boolean | undefined = undefined;
 
   constructor(
     private readonly options: AiChatPanelOptions,
@@ -1112,6 +1118,19 @@ export class AiChatPanel {
         return;
       case "mention_list":
         await this.handleMentionList(msg.query);
+        return;
+      case "grounding_toggle":
+        // AIX-01: panel-scoped opt-in. No persistence — a fresh panel
+        // re-reads `vsdb.ai.grounding`. Re-posting the state lets the
+        // webview render/remove the chips immediately.
+        this.groundingPanelEnabled = msg.enabled;
+        this.post({
+          type: "grounding_state",
+          selectionPath: null,
+          fileCount: 0,
+          excludedCount: 0,
+          turnId: `toggle-${Date.now()}`,
+        });
         return;
     }
   }
@@ -1318,7 +1337,7 @@ export class AiChatPanel {
     // AIX-01: bounded, attributed workspace grounding (selection + files)
     // merged AFTER the mention block so the existing per-turn context
     // order survives. Disabled / no-attached -> no block, no drift.
-    if (this.options.grounding) {
+    if (this.options.grounding && this.groundingPanelEnabled !== false) {
       try {
         const turnId = `turn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const bundle = await collectGrounding({
@@ -1329,9 +1348,12 @@ export class AiChatPanel {
           const parts: string[] = [];
           if (bundle.selection) parts.push(formatSelectionBlock(bundle.selection));
           for (const f of bundle.files) {
-            parts.push(`--- file ${f.path} ---\n${f.content}`);
+            const lines = f.content.split("\n").length;
+            // File refs carry the rendered line range so attribution is
+            // answer-visible and inspectable per fact.
+            parts.push(`--- file ${f.path}:1-${lines} ---\n${f.content}`);
           }
-          const groundedBlock = `--- Grounded workspace context ---\n${parts.join("\n\n")}`;
+          const groundedBlock = `--- Grounded workspace context ---\n${parts.join("\n\n")}\n\n${formatAttributionFooter(bundle.record)}`;
           const baseText =
             typeof userMsg.content === "string"
               ? userMsg.content
@@ -1455,6 +1477,17 @@ export class AiChatPanel {
     const registry = createDbTools(this.options.adapterFactory);
     registry.register(createSqlTool(this.options.adapterFactory));
     registry.register(createExportStructureTool(this.options.adapterFactory));
+    // AIX-01: workspace_search — bounded, attributed retrieval over
+    // host-curated files. Gated by the grounding opt-in; when grounding
+    // is off the tool is absent so the model never sees an unusable tool.
+    if (this.options.grounding) {
+      registry.register(
+        createWorkspaceSearchTool({
+          readFile: this.options.grounding.readFile ?? (async () => ""),
+          files: this.options.grounding.filesToRead ?? [],
+        }),
+      );
+    }
     // Cycle AD: the five DB-aware tools reach real row data, so each one is
     // wrapped in the permission gate — the model may call them, but nothing
     // executes until the user answers the card (default-deny).
@@ -1889,6 +1922,15 @@ export class AiChatPanel {
     const registry = createDbTools(this.options.adapterFactory);
     registry.register(createSqlTool(this.options.adapterFactory));
     registry.register(createExportStructureTool(this.options.adapterFactory));
+    // AIX-01 mirror: same workspace_search tool on the OMP/MCP path.
+    if (this.options.grounding) {
+      registry.register(
+        createWorkspaceSearchTool({
+          readFile: this.options.grounding.readFile ?? (async () => ""),
+          files: this.options.grounding.filesToRead ?? [],
+        }),
+      );
+    }
     // Cycle AD: the five DB-aware tools reach real row data, so each one is
     // wrapped in the permission gate — the model may call them, but nothing
     // executes until the user answers the card (default-deny).

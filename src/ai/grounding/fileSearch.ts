@@ -34,6 +34,7 @@ const SECRET_PATTERNS: ReadonlyArray<{ name: string; rx: RegExp }> = [
   { name: "private-key", rx: /-----BEGIN [A-Z ]*PRIVATE KEY-----/ },
   { name: "github-token", rx: /ghp_[A-Za-z0-9]{20,}/ },
   { name: "anthropic-key", rx: /sk-ant-[A-Za-z0-9_-]{12,}/ },
+  { name: "slack-token", rx: /xox[bp]-[A-Za-z0-9-]{10,}/ },
 ];
 
 export function isProbablyBinary(content: string): boolean {
@@ -44,19 +45,32 @@ export function containsSecretHeuristic(content: string): boolean {
   return SECRET_PATTERNS.some(({ rx }) => rx.test(content));
 }
 
-/** Minimal `*` / `**` / `?` glob matcher. `**` matches any path segments;
- *  `*` matches any chars except `/`. */
+/** Minimal `*` / `**` / `?` glob matcher. `**` matches zero or more path
+ *  segments INCLUDING the empty segment after the prefix, so `src/**`
+ *  matches both `src/a.ts` and `src/sub/a.ts`. `*` matches any chars
+ *  except `/`. */
 export function matchesGlob(path: string, glob: string): boolean {
-  const escaped = glob
-    .split("**")
-    .map((part) =>
-      part
+  // Split the glob on `**` so each side can be built independently and
+  // joined with `.*`; a leading `**` must accept zero segments, so the
+  // left side is rendered as `.*` only when the glob starts with `**`
+  // (not a leading literal).
+  const parts = glob.split("**");
+  const rendered = parts
+    .map((part) => {
+      // Within each part, translate `*` (no slash) and `?` (single char).
+      const partRe = part
         .split("*")
-        .map((p) => p.split("?").map((q) => q.replace(/[.+^$|()\[\]{}\\]/g, "\\$&")).join("[^/]"))
-        .join("[^/]*"),
-    )
+        .map((p) =>
+          p
+            .split("?")
+            .map((q) => q.replace(/[.+^$|()\[\]{}\\]/g, "\\$&"))
+            .join("[^/]"),
+        )
+        .join("[^/]*");
+      return partRe;
+    })
     .join(".*");
-  return new RegExp(`^${escaped}$`).test(path);
+  return new RegExp(`^${rendered}$`).test(path);
 }
 
 function countOccurrences(haystack: string, needle: string): number {

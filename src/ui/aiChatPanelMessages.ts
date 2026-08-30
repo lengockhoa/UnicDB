@@ -299,7 +299,8 @@ export type AiChatPanelWebviewMessage =
   | AiChatPanelResumeCancel
   | AiChatPanelRegenerate
   | AiChatPanelCommand
-  | AiChatPanelMentionList;
+  | AiChatPanelMentionList
+  | { type: "grounding_toggle"; enabled: boolean };
 
 /** TASK-005: webview opened the @-mention dropdown. `query` is the
  * substring after the leading `@` (e.g. "pu" or ""). The host responds
