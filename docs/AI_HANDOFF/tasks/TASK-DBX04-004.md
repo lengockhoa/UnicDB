@@ -67,3 +67,40 @@ Addresses all CHANGES-REQUESTED findings (unic-smart):
 6. **Test isolation (P1)** — erPanel.test.ts mocks the vscode module before importing erPanel.ts; the mandated targeted command now runs standalone.
 
 Fresh verification: targeted (er + service + panel + scaffold + extension) 114/114; full suite 2387 passed | 2 skipped; typecheck exit 0; esbuild builds dist/erPanel.js.
+
+## Reviewer Verdict — Fix Round 1
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic/unic-smart
+
+Supersedes the prior standalone-panel-test finding: `erPanel.test.ts` now mocks `vscode`, and the mandated targeted command plus typecheck pass.
+
+Commands run:
+- `npm run typecheck` — passed.
+- `npx vitest run src/core/er src/ui/__tests__/erService.test.ts src/ui/__tests__/erPanel.test.ts src/__tests__/dbx04Scaffold.test.ts src/extension.test.ts` — passed (7 files).
+
+The new important/minor runtime findings in TASK-DBX04-003 still block approval: driver gating happens after a lazy adapter connection, the fixed zoom protocol reverses direction and produces NaN for empty graphs, and `truncated` can be true when no cap was applied.
+
+## Executor Fix Round 2 (post re-review)
+
+### 2026-08-30 · executor · omp-direct/unic-code
+
+Addresses the round-2 re-review (unic-smart) blockers:
+
+1. **Extension driver gate (P1)** — vsdb.relationshipExplorer now checks
+   `driver === "postgres"` BEFORE awaiting importCtx.getAdapter(), matching
+   the service's own gate ordering. mysql/mssql users see the error
+   message without any adapter acquisition.
+2. **Zoom NaN + reversed ack (P1)** — wheel handler guards on
+   `baseW/baseH > 0` (empty layout), computes currentScale from
+   viewBox.w / baseW before clamping, and er_zoom_set is now a
+   comment-documented no-op: the webview is the visual authority, the
+   host ack is preserved as a hook for future persistence (never
+   reverses the gesture).
+3. **truncated flag (P1)** — recomputed as
+   `tables.length > maxNodes || (post-capping) graph.nodes was capped`.
+   Per-table detail failures that shrink the set below the cap do NOT
+   flag truncated; the user is told what we actually rendered.
+
+Fresh verification: targeted 114/114 (er+service+panel+scaffold+extension);
+full 2387 passed | 2 skipped; typecheck exit 0; esbuild builds dist/erPanel.js.

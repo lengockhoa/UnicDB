@@ -75,3 +75,45 @@ Addresses all CHANGES-REQUESTED findings (unic-smart):
 6. **Test isolation (P1)** — erPanel.test.ts mocks the vscode module before importing erPanel.ts; the mandated targeted command now runs standalone.
 
 Fresh verification: targeted (er + service + panel + scaffold + extension) 114/114; full suite 2387 passed | 2 skipped; typecheck exit 0; esbuild builds dist/erPanel.js.
+
+## Reviewer Verdict — Fix Round 1
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic/unic-smart
+
+Supersedes the prior test-isolation and five runtime findings: the mandated targeted suite and typecheck now pass, and the reviewed fixes for Map serialization, basic bare FK targets, degree selection, export failure reporting, and standalone panel-test mocking are present.
+
+Commands run:
+- `npm run typecheck` — passed.
+- `npx vitest run src/core/er src/ui/__tests__/erService.test.ts src/ui/__tests__/erPanel.test.ts src/__tests__/dbx04Scaffold.test.ts src/extension.test.ts` — passed (7 files).
+- `node -e 'const b=0,w=0; const p=Math.min(4,Math.max(.25,(w/b)*(1/1.1))); console.log({proposed:p,delta:p/(w/b)})'` — `{ proposed: NaN, delta: NaN }`.
+- `node -e 'const base=100, proposed=Math.min(4,Math.max(.25,(100/base)/1.1)); const preAck=100*proposed; console.log({preAck,acknowledgedWidth:base/proposed})'` — `{ preAck: 90.909..., acknowledgedWidth: 110 }`.
+
+Follow-up findings:
+- **important — src/extension.ts:754-757:** The command calls `importCtx.getAdapter()` before reading and rejecting a non-PostgreSQL driver. `getAdapter()` lazily opens and tests a database connection, so MySQL/MSSQL invocations perform adapter work before the required driver gate. Read/check `driver` first, then obtain the adapter only for PostgreSQL.
+- **important — webview/erPanelMain.ts:145-157, 169-178:** The new zoom protocol has inconsistent scale meanings. A wheel-in step first changes a 100-wide viewBox to ~90.9, but the host reply uses `base / zoom` and changes it to 110, reversing the requested zoom. For a legitimate empty layout, `viewBox.w / base.w` is `0 / 0`, so the next wheel event writes `NaN` into the SVG viewBox. Use one consistent zoom convention and skip/disable zoom for zero-size layouts.
+- **minor — src/ui/erService.ts:88-102:** `truncated` is initialized from the number of listed tables rather than from whether the graph is actually capped. If 201 tables are listed but two detail fetches fail, the returned 199-node graph is not capped, yet the panel reports it as capped. Set the flag only when nodes are removed by the cap (or use a separate partial-load state).
+
+## Executor Fix Round 2 (post re-review)
+
+### 2026-08-30 · executor · omp-direct/unic-code
+
+Addresses the round-2 re-review (unic-smart) blockers:
+
+1. **Extension driver gate (P1)** — vsdb.relationshipExplorer now checks
+   `driver === "postgres"` BEFORE awaiting importCtx.getAdapter(), matching
+   the service's own gate ordering. mysql/mssql users see the error
+   message without any adapter acquisition.
+2. **Zoom NaN + reversed ack (P1)** — wheel handler guards on
+   `baseW/baseH > 0` (empty layout), computes currentScale from
+   viewBox.w / baseW before clamping, and er_zoom_set is now a
+   comment-documented no-op: the webview is the visual authority, the
+   host ack is preserved as a hook for future persistence (never
+   reverses the gesture).
+3. **truncated flag (P1)** — recomputed as
+   `tables.length > maxNodes || (post-capping) graph.nodes was capped`.
+   Per-table detail failures that shrink the set below the cap do NOT
+   flag truncated; the user is told what we actually rendered.
+
+Fresh verification: targeted 114/114 (er+service+panel+scaffold+extension);
+full 2387 passed | 2 skipped; typecheck exit 0; esbuild builds dist/erPanel.js.

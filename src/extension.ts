@@ -752,9 +752,17 @@ export async function activate(
   // diagram; export saves a static SVG. PostgreSQL only.
   disposables.push(
     vscode.commands.registerCommand("vsdb.relationshipExplorer", async () => {
-      const adapter = await importCtx.getAdapter();
+      // Driver gate FIRST (no adapter acquisition for mysql/mssql),
+      // matching the service's own gate ordering.
       const driver = importCtx.getActiveDriver();
-      if (!adapter || driver !== "postgres") {
+      if (driver !== "postgres") {
+        void vscode.window.showErrorMessage(
+          "Relationship Explorer requires an active PostgreSQL connection.",
+        );
+        return;
+      }
+      const adapter = await importCtx.getAdapter();
+      if (!adapter) {
         void vscode.window.showErrorMessage(
           "Relationship Explorer requires an active PostgreSQL connection.",
         );
