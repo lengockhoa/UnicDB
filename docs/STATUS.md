@@ -6,7 +6,7 @@
 
 ## Snapshot
 
-- Branch/state: `main` == `origin/main`; **v1.16.0 published** (tag + GitHub Release with `dist/vsdb-1.16.0.vsix`).
+- Branch/state: `main` == `origin/main`; **v1.17.0 published** (tag + GitHub Release with `dist/vsdb-1.17.0.vsix`).
 - Durable two-pillar product queue: `docs/AI_HANDOFF/PRODUCT_ROADMAP.md` with its portfolio plan in `PLAN_PRODUCT_VISION.md`; `ROADMAP.md` is the compatibility index.
 - Cycle DBX-03 (Schema & Data Compare) COMPLETE + REVIEWED on `main` (2026-08-30, unic-smart APPROVED after 2 fix rounds). Final: 2344 passed | 2 skipped, typecheck clean, esbuild clean. Delivers `vsdb.compareTables`: schema diff, keyed data diff (PK or unique NOT NULL), and a preview-only directional sync plan (Copy SQL → Console; the panel never executes).
 - Cycle DBX-02 (SQL Intelligence Navigation) COMPLETE on `main` (4 code commits + docs closure). Catalog completion (FK targets + views/routines/sequences), hover/definition over `vsdb-sql-catalog:` virtual documents, and parsed find-usages wired behind partial-mock guards.
@@ -22,12 +22,11 @@
 - None blocking.
 
 ## Next Candidates
-1. Push DBX-03 and cut v1.17.0 when the user asks.
-2. Next portfolio cycle: DBX-04 (Relationship Explorer) or AIX-01 (Grounded Workspace Context).
+1. Next portfolio cycle: DBX-04 (Relationship Explorer) or AIX-01 (Grounded Workspace Context).
 
 ## Recently Completed
 
-- Cycle DBX-03 (unreleased): Schema & Data Compare — schemaDiff/dataDiff/syncPlan pure modules, compare service + preview panel, vsdb.compareTables; unic-smart APPROVED after 2 fix rounds.
+- v1.17.0: Cycle DBX-03 Schema & Data Compare — schemaDiff/dataDiff/syncPlan pure modules, compare service + preview panel, vsdb.compareTables; unic-smart APPROVED after 2 fix rounds.
 - v1.16.0: Cycle DBX-01 Data Workbench Completion — CSV/JSON import wizard, form view, vsdb-lv large-value editor, parameterized DbTransaction seam.
 - v1.15.0: Cycle DBX-02 SQL Intelligence Navigation — catalog resolver + FK/root completion, hover/definition virtual docs, parsed find-usages, activation wiring.
 - v1.14.0: Cycle AIC SQL autocomplete (settings + form + migration; cancellable schema-only service; editor + Console ghost-text; extension wiring).
