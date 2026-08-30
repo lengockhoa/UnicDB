@@ -11,4 +11,4 @@ Cycle: DBX-03   Base: f0581fe (v1.16.0)   Plan: PLAN_DBX03.md
 
 Graph: {001, 002} → 003 → 004.
 
-Status (2026-08-30): all 4 tasks done. Commits: {001,002,003} = 51f8e6d (waves 1-2, 26/26), 004 = 4ad1982 (39/39 targeted). Full suite 2340 passed | 2 skipped; tsc + esbuild clean. Reviewer phase skipped per .ukit/storage/config.json handoff.reviewer.enabled=false this cycle.
+Status (2026-08-30): all 4 tasks done AND reviewed. Review cycle: unic-smart reviewer issued CHANGES-REQUESTED (directional ALTERs, keyless invalid SQL, unique keys, T18) -> fix round 1 (commit pending at review time) -> re-review flagged unique-key WHERE binding -> fix round 2 -> superseding APPROVED verdicts (003.md:145, 004.md:131). Final: targeted 43/43, full 2344 passed | 2 skipped, typecheck clean.

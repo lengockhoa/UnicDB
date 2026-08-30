@@ -20,6 +20,13 @@ For each significant action, append:
 - Verification run
 - Outcome
 
+## 2026-08-30 — DBX-03 Schema & Data Compare executed + reviewed
+
+- Action: planned (PLAN_DBX03 + 4 task files) then executed all 4 tasks TDD-first: schemaDiff (11), dataDiff (7), syncPlan (8+2), compareService/Panel/webview + wiring (15). Independent unic-smart review issued CHANGES-REQUESTED; two fix rounds followed (directional ALTERs now source-side; keyless compare issues zero data queries; single-column unique NOT NULL keys supported; T18 activation assertions; WHERE keys derive from dataDiff.keys). Superseding APPROVED verdicts recorded.
+- Files: src/core/compare/** (3 modules + tests), src/ui/compareService.ts, comparePanel.ts, comparePanelHtml.ts, webview/comparePanelMain.ts, src/extension.ts (vsdb.compareTables + promptTableRef), package.json, esbuild.js, src/extension.test.ts.
+- Verification: targeted 43/43; extension 71/71; full 2344 passed | 2 skipped; typecheck + esbuild clean.
+- Outcome: DBX-03 4/4 done + reviewed; preview-only panel (Copy SQL hand-off), PostgreSQL-only gate.
+
 ---
 
 ## 2026-08-30 — DBX-01 Data Workbench Completion executed (re-opened cycle)

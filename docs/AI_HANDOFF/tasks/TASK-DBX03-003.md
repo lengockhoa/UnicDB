@@ -126,3 +126,32 @@ Addresses Reviewer findings (CHANGES-REQUESTED, unic-smart):
 5. **RED evidence (process)** — this report quotes the actual failing assertion for fix 2; fix 1's RED is characterized against the pre-fix semantics as noted; reports for 001/002 were authored before tests could run only as module-absent resolution failures, which is the RED state for new-module tasks.
 
 Fresh verification this round: targeted 42/42 (compare+service+panel+scaffold), extension.test.ts 71/71, full suite 2343 passed | 2 skipped, `npm run typecheck` exit 0.
+
+
+## Reviewer Verdict — Fix Round 2
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic/unic-smart (configured handoff reviewer: unic-smart)
+EXECUTOR_MODEL: unic-code (reported as `omp-direct/unic-code`; model isolation passes)
+VERIFICATION_RERUN:
+  - `npm run typecheck` — PASS: `tsc --noEmit` (exit 0).
+  - `npx vitest run src/core/compare src/ui/__tests__/compareService.test.ts src/ui/__tests__/comparePanel.test.ts src/__tests__/dbx03Scaffold.test.ts` — PASS: `Test Files 6 passed (6)`; `Tests 43 passed (43)`.
+  - `npx vitest run src/extension.test.ts` — PASS: `Test Files 1 passed (1)`; `Tests 71 passed (71)`.
+TEST_PLAN_COVERAGE: all-followed — T1–T19 plus targeted regressions for directional ALTER values, no-key no-fetch, single-column unique NOT NULL keys, and unique-key UPDATE/DELETE predicates.
+FINDINGS:
+  critical: []
+  important: []
+  minor: []
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Re-review confirms source→target ALTERs apply `entry.from`; no-key comparison avoids row queries and reports a non-executable plan; and `dataDiff.keys` now supplies valid parameterized WHERE predicates for both unique-key UPDATE and DELETE statements. Preview-only behavior, PostgreSQL gating, `$N` data-value binding, deterministic diff output, no second cache/debounce, and CSP-clean textContent rendering remain intact.
+
+## Executor Fix Round 2 (post re-review)
+
+### 2026-08-30 · executor · omp-direct/unic-code
+
+Addresses the re-review P1 (unique-key WHERE binding):
+
+1. **DataDiffResult.keys** — diffData now emits `keys: string[]` (the key columns actually used; `[]` on the skipped path). syncPlan derives UPDATE/DELETE WHERE clauses AND bound values from `dataDiff.keys`, never from the table's declared PK. Unique-key regression test (no-PK table keyed on `code`): UPDATE `WHERE "code" = $2` values ["t","K1"]; DELETE `WHERE "code" = $1` values ["K2"]; neither SQL contains `WHERE ;`.
+2. **Fixture correction (reviewer catch)** — the first round-2 fixture placed K2 source-only, which yields an INSERT under source→target semantics; corrected so K2 is target-only (DELETE) and K1 changed (UPDATE), exactly as the reviewer specified.
+
+Fresh verification this round: DBX-03 targeted 43/43; extension.test.ts 71/71; full suite 2344 passed | 2 skipped; `npm run typecheck` exit 0. Reviewer (unic-smart) independently verified the corrected predicates/values and appended superseding APPROVED verdicts (TASK-DBX03-003.md:145, TASK-DBX03-004.md:131).

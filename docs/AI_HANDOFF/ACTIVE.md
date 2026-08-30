@@ -3,7 +3,7 @@
 Cycle: DBX-03   Date: 2026-08-30   Base: main @ f0581fe
 Goal: Schema & Data Compare — schema diff, keyed data diff, previewed directional sync plan (PostgreSQL only; same connection; preview-only panel).
 Tasks: 4 total
-Status: in_progress — PLAN_DBX03 + 4 task files authored; waves: {001,002} → 003 → 004. Previous DBX-01 shipped as v1.16.0.
+Status: done — 4/4 tasks implemented + reviewed (unic-smart APPROVED after 2 fix rounds). Final: targeted 43/43, full 2344 passed / 2 skipped, typecheck clean. Shipped unreleased; release next.
 
 Previous:
 Cycle: DBX-01 (re-opened)   Date: 2026-08-30   Base: main @ d9d603b

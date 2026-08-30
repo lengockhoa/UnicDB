@@ -123,7 +123,10 @@ export function buildSyncPlan(opts: {
   const rows: DataRowDiff | null =
     dataDiff.skipped === "no-key" ? null : (dataDiff as DataRowDiff);
   const cols = source.columns.map((c) => c.name);
-  const keyCols: string[] = source.primaryKeys;
+  // WHERE keys come from the diff itself (dataDiff.keys) — the service
+  // may key on a unique NOT NULL column when the table has no PK. On
+  // the skipped (no-key) path there is no data group, so keys unused.
+  const keyCols: string[] = dataDiff.skipped === "no-key" ? [] : dataDiff.keys;
 
   if (schemaDiff.compatible && rows !== null) {
     for (const added of rows.addedRows) {

@@ -163,3 +163,29 @@ describe("buildSyncPlan — reviewer fixes (regression)", () => {
     expect(alter?.sql).not.toMatch(/TYPE text/);
   });
 });
+
+describe("buildSyncPlan — unique-key WHERE binding (reviewer round 2)", () => {
+  it("binds UPDATE/DELETE WHERE against dataDiff.keys (unique key, no PK)", () => {
+    const source: TableShape = {
+      columns: [col("code", "text"), col("val", "text", true)],
+      primaryKeys: [], // no PK — service keyed on unique NOT NULL "code"
+    };
+    // K2 exists ONLY in target -> DELETE; K1 changed -> UPDATE.
+    const dataDiff = diffData(
+      ["code"],
+      [{ code: "K1", val: "s" }],
+      [{ code: "K1", val: "t" }, { code: "K2", val: "gone" }],
+      ["code", "val"],
+    );
+    const plan = buildSyncPlan({ source, target: source, schemaDiff: diffSchema(source, source), dataDiff, ...tables });
+    expect(plan.executable).toBe(true);
+    const update = plan.groups.find((g) => g.id === "data")?.statements.find((s) => /UPDATE /i.test(s.sql));
+    expect(update?.sql).toMatch(/WHERE "code" = \$2;/);
+    expect(update?.sql).not.toMatch(/WHERE ;/);
+    expect(update?.values).toEqual(["t", "K1"]);
+    const del = plan.groups.find((g) => g.id === "data")?.statements.find((s) => /DELETE FROM/i.test(s.sql));
+    expect(del?.sql).toMatch(/WHERE "code" = \$1;/);
+    expect(del?.sql).not.toMatch(/WHERE ;/);
+    expect(del?.values).toEqual(["K2"]);
+  });
+});

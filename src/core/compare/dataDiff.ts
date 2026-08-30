@@ -24,6 +24,9 @@ export interface DataRowDiff {
   removedRows: AddedRow[];
   changedRows: RowChange[];
   duplicateKeyCount: number;
+  /** Column names of the key actually used — syncPlan WHERE clauses
+   *  must bind against THESE, not the table's declared PK. */
+  keys: string[];
 }
 
 export type DataDiffResult =
@@ -127,5 +130,6 @@ export function diffData(
     removedRows: sortKeyed(removedRows),
     changedRows: sortKeyed(changedRows),
     duplicateKeyCount,
+    keys,
   };
 }
