@@ -15,6 +15,21 @@ Cycle AH: DataGrip-style accumulating multi-statement results.
 - Multi-statement SELECT runs now close completed cursors before advancing, avoiding cursor/resource hangs.
 - `Load More` on a closed cursor follows the existing visible error path rather than hanging.
 
+## [1.16.0] — 2026-08-30
+
+Cycle DBX-01: Data Workbench Completion (PostgreSQL-only import path).
+
+### Added
+- **CSV/JSON import wizard** (`vsdb.importCsv` / `vsdb.importJson`): pick a file → pure RFC-4180 CSV parse (quotes/escapes/embedded newlines/BOM/mixed line endings, ragged-row errors with 1-based lines) or JSON parse (array-of-objects or NDJSON; primitive roots, empty arrays, and too-deep object/array columns are rejected loudly) → case-insensitive auto-mapping with per-column type coercion (`text`/`int`/`numeric`/`bool`/`timestamp`/`json`) → batched dry-run INSERT preview → the existing dangerous-statement confirm → single-transaction execute. Values are always bound as `$N` parameters (zero literal cell values in SQL); oversized rows are skipped and reported, never truncated.
+- **Parameterized transactions**: `DbTransaction.runQuery(sql, values?)` now accepts optional bound values (postgres adapter binds via `client.query(text, values)`); additive and backward compatible.
+- **Form view** (`vsdb.openFormView`): single-row labeled form rendering — SQL `NULL` shows `(NULL)`, long/JSON values get an Expand affordance instead of truncation.
+- **Large-value editor** (`vsdb.editLargeValue` + `vsdb-lv:` virtual documents): open any cell in a normal read-only editor; content is served verbatim at any size.
+- **`vsdb.import.batchSize` setting** (number, default 1000, 1–10000).
+- **`vsdb.importData` view container**: import commands exposed in the activity bar.
+
+### Fixed
+- AHL scaffold command-count assertion relaxed to a floor so later cycles can add commands without breaking history tests.
+
 ## [1.15.0] — 2026-08-30
 
 Cycle DBX-02: SQL Intelligence Navigation (PostgreSQL-first; mysql/mssql degrade silently).
@@ -447,4 +462,5 @@ Cycle G: set-filter, toolbar icons, `run-sh` fix.
 [1.9.0]: https://github.com/lengockhoa/VSDB/compare/v1.8.0...v1.9.0
 [1.14.0]: https://github.com/lengockhoa/VSDB/compare/v1.13.0...v1.14.0
 [1.15.0]: https://github.com/lengockhoa/VSDB/compare/v1.14.0...v1.15.0
+[1.16.0]: https://github.com/lengockhoa/VSDB/compare/v1.15.0...v1.16.0
 [1.13.0]: https://github.com/lengockhoa/VSDB/compare/v1.12.0...v1.13.0
