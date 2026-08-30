@@ -81,20 +81,3 @@ Round-1 corrections verified: source-line offsets (including leading-blank handl
 Remaining finding:
 - important — `src/ai/grounding/fileSearch.ts:54-68`: a trailing bare recursive glob such as `src/**` is split by `*` before the later `replace(/\*\*/g, ".*")` runs, yielding `src/[^/]*[^/]*` instead of a recursive suffix. It excludes `src/sub/a.ts`, violating the required `**` path-segment contract. The promised direct-child and leading-blank regression tests are also not present in the current test files.
 
-
-## Reviewer Verdict — Superseding Round 2
-
-VERDICT: APPROVED
-REVIEWER_MODEL: unic/unic-smart
-
-Commands run:
-- `npm run typecheck` — exit 0.
-- `npx vitest run src/ai/grounding src/ui/__tests__/groundingService.test.ts src/ui/__tests__/aiChatGrounding.test.ts src/ai/tools/__tests__/workspaceSearchTool.test.ts src/__tests__/aix01Scaffold.test.ts src/extension.test.ts` — 8 files / 124 tests passed.
-
-Review outcome:
-- The final placeholder translation preserves both `**/` optional-segment matching and bare trailing `**` recursion; regressions cover direct children and nested paths.
-- Selection tests cover leading blank trimming with host source offsets and untrimmed source offsets.
-- File attribution references are line-ranged; the answer-visible footer consumes them.
-- The webview protocol now receives and renders `grounding_state` using DOM APIs and sends the panel-scoped disable message.
-
-Findings: none.

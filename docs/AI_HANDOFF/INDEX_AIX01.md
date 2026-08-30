@@ -22,4 +22,4 @@ Executor: unic-code
 - Secret/binary exclusions reported in bundle.excluded, never silently
   dropped.
 
-Status (2026-08-30): all 4 tasks done AND reviewed. Review cycle: unic-smart reviewer issued CHANGES-REQUESTED (line offsets, Slack tokens, recursive globs, byte cap, tool registration on both engines, attribution footer + line-ranged refs, panel toggle protocol) -> 2 fix rounds (a388cdf, 6a2b560) -> superseding APPROVED verdicts at HEAD 6a2b560. Final: targeted 124/124 + bundle 21/21, full 2448 (0 failed), typecheck + esbuild clean.
+Status (2026-08-30): all 4 tasks executed. 138/138 targeted; full 2440 passed | 2 skipped; typecheck + esbuild clean. Awaiting reviewer verdict.

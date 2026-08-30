@@ -20,4 +20,4 @@ Executor: unic-code · Package: postgres pack (PostgreSQL-only feature)
 - conkey ordinals are 1-based into the detail's columns array.
 - All pure modules: no vscode import. Webview: textContent-only.
 
-Status (2026-08-30): all 4 tasks done AND reviewed. Review cycle: unic-smart reviewer issued CHANGES-REQUESTED (wire Map serialization, FK bare-target normalization, alphabetical pre-slice cap, zoom clamp, export failures, test isolation) -> 3 fix rounds (54e1a15, 579b38c, b2d14a9) -> superseding APPROVED verdicts. Final: targeted 116/116, full 2389 passed | 2 skipped at approval; shipped as v1.18.0.
+Status (2026-08-30): all 4 tasks executed. 32/32 targeted (er), scaffold+extension 75/75, full 2380 passed | 2 skipped, typecheck + esbuild clean (dist/erPanel.js via ctx10). Awaiting reviewer verdict.
