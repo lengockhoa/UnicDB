@@ -15,7 +15,17 @@ Cycle AH: DataGrip-style accumulating multi-statement results.
 - Multi-statement SELECT runs now close completed cursors before advancing, avoiding cursor/resource hangs.
 - `Load More` on a closed cursor follows the existing visible error path rather than hanging.
 
-## [1.14.0] — 2026-08-30
+## [1.15.0] — 2026-08-30
+
+Cycle DBX-02: SQL Intelligence Navigation (PostgreSQL-first; mysql/mssql degrade silently).
+
+### Added
+- **Catalog resolver** (`createCatalogResolver`): vscode-free resolver over `SchemaCache` new typed accessors (`getViews`/`getRoutines`/`getConstraints`/`getSequences`/`getObjectDdl`/`hasCatalog`). Non-PostgreSQL connections degrade to empty results, never throw.
+- **Catalog + FK completion**: `<table>.` trigger now also offers FK target tables; root prefix offers views/routines/sequences; schema-qualified insert text when the object's schema differs from the default.
+- **Hover + Definition** (`SqlNavigationProvider` + `SqlCatalogDocumentProvider`): Markdown hover for tables/columns/views/routines/sequences with FK-target decoration; definition jumps open lazy `vsdb-sql-catalog:` virtual documents carrying identifier/kind/DDL metadata.
+- **Parsed find-usages** (`extractIdentifierReferences` + `SqlReferenceProvider`): direct/quoted identifier references with qualifier spans (strings, dollar-quotes, comments, and SQL keywords skipped); whole-word references across the active document, quoted identifiers exact-matched, cancellation honored.
+- **Activation wiring**: hover/definition/references + the `vsdb-sql-catalog` content provider registered behind partial-mock guards, sharing the single `SchemaCache` — no second cache/debounce/controller.
+
 
 Cycle AIC: SQL autocomplete (AI-powered, schema-only, debounced ghost text).
 
@@ -436,4 +446,5 @@ Cycle G: set-filter, toolbar icons, `run-sh` fix.
 
 [1.9.0]: https://github.com/lengockhoa/VSDB/compare/v1.8.0...v1.9.0
 [1.14.0]: https://github.com/lengockhoa/VSDB/compare/v1.13.0...v1.14.0
+[1.15.0]: https://github.com/lengockhoa/VSDB/compare/v1.14.0...v1.15.0
 [1.13.0]: https://github.com/lengockhoa/VSDB/compare/v1.12.0...v1.13.0
