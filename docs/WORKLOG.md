@@ -22,6 +22,13 @@ For each significant action, append:
 
 ---
 
+## 2026-08-30 — DBX-01 Data Workbench Completion executed (re-opened cycle)
+
+- Action: audited pending work; found PLAN_DBX01 (2026-08-29) claimed done with zero code on main. Archived the stale draft, reset INDEX_DBX01 to ready, refreshed task contracts, then executed all 4 tasks TDD-first: pure CSV/JSON parsers (17 tests), mapping + dry-run (16), transactional importExecute (12), wizard/form-view/large-value wiring + scaffold (19). Seam extension: DbTransaction.runQuery gained optional bound values (postgres.ts binds $N via client.query(text, values)).
+- Files: src/core/importer/** (7 files), src/ui/importWizard.ts, formView.ts, largeValueEditor.ts, src/extension.ts, package.json, ahlScaffold relaxation.
+- Verification: `npx vitest run` 2301 passed | 2 skipped (+64 vs v1.15.0 baseline 2237); `npm run typecheck` exit 0; `npm run compile` clean.
+- Outcome: DBX-01 4/4 done; DBX-03 (Schema & Data Compare) prerequisites now satisfied.
+
 ## 2026-08-30 — DBX-02 SQL Intelligence Navigation shipped
 
 - Action: executed the full DBX-02 cycle (tasks 001–005): SchemaCache catalog accessors + vscode-free `createCatalogResolver`; completion extended with FK targets + views/routines/sequences; new SqlNavigationProvider (hover + definition over `vsdb-sql-catalog:` virtual docs); `extractIdentifierReferences` in statementParser + SqlReferenceProvider (find usages); all wired in extension.ts behind partial-mock guards sharing one schemaCache.

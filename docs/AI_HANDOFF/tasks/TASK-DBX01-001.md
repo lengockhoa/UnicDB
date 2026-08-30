@@ -76,3 +76,8 @@ npm run typecheck
 (no comments yet)
 
 ---
+---
+## Executor Report
+EXECUTOR_TOOL: omp-direct (unic-code)
+Status: PASS
+Note: importTypes.ts (ImportParseResult/ImportRowError), importCsv.ts (RFC-4180 subset: quoted/escaped/embedded-newline/BOM/CRLF/ragged-row errors with 1-based lines), importJson.ts (array-of-objects + NDJSON; loud rejection of primitive roots, empty array, deeply-nested objects with column names, ambiguous array+NDJSON mixes). 10+7=17/17 tests. Commit: 2414698.

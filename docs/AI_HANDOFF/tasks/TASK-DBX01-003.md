@@ -72,3 +72,8 @@ npm run typecheck
 (no comments yet)
 
 ---
+---
+## Executor Report
+EXECUTOR_TOOL: omp-direct (unic-code)
+Status: PASS
+Note: importExecute.ts — the only DB-touching importer module. PostgreSQL driver gate; leading-INSERT gate (analyzeStatement parity); single DbTransaction (BEGIN -> batched runQuery -> COMMIT); rollback on mid-batch/commit failure with phase-named error; per-row maxBatchBytes skip (never truncates); adapter.runQuery never called directly. SEAM EXTENSION: DbTransaction.runQuery gained optional `values` bound via client.query(text, values) in postgres.ts (additive, backward compatible). 12/12 tests. Commit: e1ae955.

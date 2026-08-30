@@ -78,3 +78,8 @@ npm run typecheck
 (no comments yet)
 
 ---
+---
+## Executor Report
+EXECUTOR_TOOL: omp-direct (unic-code)
+Status: PASS
+Note: importMapping.ts — user mapping IS the target column set (unmapped sources dropped); requiredTargets validated pre-coercion; opt-in per-column coercion (text/int/numeric/bool/timestamp/json) with column-named per-row errors; failing rows dropped. importDryRun.ts — batched $N-parameterized INSERTs (zero literal cell values in SQL, asserted), SQL-standard identifier escaping, byte/row summary, provably no DB calls. 10+6=16/16 tests.

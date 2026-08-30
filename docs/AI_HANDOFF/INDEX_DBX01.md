@@ -4,12 +4,14 @@ Cycle DBX-01 — **DATA WORKBENCH COMPLETION**: CSV/JSON import + form view + la
 
 | Task | Title | Status | Dependencies | Reviewer |
 |------|-------|--------|--------------|----------|
-| TASK-DBX01-001 | Importer pure modules: CSV + JSON parser | ready | none | independent unic-smart reviewer |
-| TASK-DBX01-002 | Mapping + dry-run pure modules | ready | DBX01-001 | independent unic-smart reviewer |
-| TASK-DBX01-003 | Import execute module (mocked adapter + transaction) | ready | DBX01-002 | independent unic-smart reviewer |
-| TASK-DBX01-004 | Import wizard webview + host wiring + form view + scaffold test | ready | DBX01-003 | independent unic-smart reviewer |
+| TASK-DBX01-001 | Importer pure modules: CSV + JSON parser | done | none | independent unic-smart reviewer |
+| TASK-DBX01-002 | Mapping + dry-run pure modules | done | DBX01-001 | independent unic-smart reviewer |
+| TASK-DBX01-003 | Import execute module (mocked adapter + transaction) | done | DBX01-002 | independent unic-smart reviewer |
+| TASK-DBX01-004 | Import wizard webview + host wiring + form view + scaffold test | done | DBX01-003 | independent unic-smart reviewer |
 
 Graph: 001 → 002 → 003 → 004 (linear dependency).
+
+Status (2026-08-30): all 4 tasks done. Commits: 001=2414698, 002 (mapping+dry-run), 003=e1ae955 (+ DbTransaction.runQuery values seam), 004 (wizard wiring). Full suite 2301 passed | 2 skipped; tsc + esbuild clean.
 
 Waves:
 - Wave 1: DBX01-001 + DBX01-002 (file-disjoint under `src/core/importer/`)

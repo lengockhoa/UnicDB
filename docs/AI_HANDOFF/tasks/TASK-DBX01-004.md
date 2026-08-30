@@ -86,3 +86,11 @@ npm run compile
 (no comments yet)
 
 ---
+---
+## Executor Report
+EXECUTOR_TOOL: omp-direct (unic-code)
+Status: PASS
+Note: importWizard host (parse -> auto-map case-insensitive -> dry-run -> confirmDangerousStatements -> execute; no-cache/no-timer regression-guarded), formView (pure, null -> (NULL), large-value flag without truncation), largeValueEditor (vsdb-lv: provider, 200 KB verbatim passthrough, Disposable). extension.ts wires 4 commands + provider behind partial-mock guards; package.json gains 4 commands, 2 activation events, vsdb.import.batchSize (default 1000). ahlScaffold command-count assertion relaxed to floor. Verification: DBX-01 targeted 19/19, full 2301 passed | 2 skipped, tsc clean, esbuild clean.
+EXECUTOR_TOOL: omp-direct (unic-code)
+Status: PASS
+Note: importWizard host (parse -> auto-map case-insensitive -> dry-run -> confirmDangerousStatements -> execute; no-cache/no-timer regression-guarded), formView (pure, null -> (NULL), large-value flag without truncation), largeValueEditor (vsdb-lv: provider, 200 KB verbatim passthrough, Disposable). extension.ts wires 4 commands + provider behind partial-mock guards; package.json gains 4 commands, 2 activation events, vsdb.import.batchSize (default 1000). ahlScaffold command-count assertion relaxed to floor. Verification: DBX-01 targeted 19/19, full 2301 passed | 2 skipped, tsc clean, esbuild clean.
