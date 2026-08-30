@@ -22,4 +22,4 @@ Executor: unic-code
 - Secret/binary exclusions reported in bundle.excluded, never silently
   dropped.
 
-Status (2026-08-30): all 4 tasks executed. 138/138 targeted; full 2440 passed | 2 skipped; typecheck + esbuild clean. Awaiting reviewer verdict.
+Status (2026-08-30): all 4 tasks done AND reviewed. unic-smart reviewer issued CHANGES-REQUESTED -> 2 fix rounds (a388cdf, 6a2b560) -> superseding APPROVED verdicts. Final: 124/124 targeted + 21/21 bundle, 2448 passed | 0 failed. Shipped as v1.19.0.

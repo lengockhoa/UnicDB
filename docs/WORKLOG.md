@@ -20,6 +20,15 @@ For each significant action, append:
 - Verification run
 - Outcome
 
+## 2026-08-30 — DBX-04 Relationship Explorer + AIX-01 Grounded Workspace Context executed + reviewed
+
+- Action: executed two wave-2 cycles back-to-back, TDD-first with mandatory unic-smart review gates.
+  DBX-04: fkGraph (closed-world FK graph, conkey ordinals, bare-target normalization), deterministic layered layout, XML-escaped SVG export, erService (driver gate, degree cap), ErPanel + CSP webview (pan/zoom), vsdb.relationshipExplorer. Reviewer CHANGES-REQUESTED x3 rounds (wire Map serialization, FK normalization, cap ordering, zoom clamp, truncated semantics, driver-gate ordering) — superseding APPROVED.
+  AIX-01: selection/attribution/fileSearch pure modules (8 KB selection, 8 hits/40 lines, 100 KB UTF-8 byte cap), secret+binary exclusions (incl. Slack tokens), line-ranged attribution refs, workspace_search tool on builtin + OMP/MCP registries, aiChatPanel grounding block + panel toggle protocol + chips, opt-in vsdb.ai.grounding. Reviewer CHANGES-REQUESTED x2 rounds (doc line offsets, recursive globs, byte cap, tool registration, webview protocol, boot restore) — superseding APPROVED at 6a2b560.
+- Files: src/core/er/**, src/ui/{erService,erPanel,erPanelHtml,groundingService,groundingMessages}.ts, src/ai/grounding/**, src/ai/tools/workspaceSearchTool.ts, webview/{erPanelMain,aiChatPanelMain}.ts, src/{extension,aiChatPanel,aiChatPanelMessages}.ts, package.json, esbuild.js + 10 test files.
+- Verification: final full 2448 passed | 2 skipped (0 failed); typecheck + esbuild clean at every gate; v1.18.0 + v1.19.0 vsix packaged.
+- Outcome: both cycles shipped and released (v1.18.0, v1.19.0).
+
 ## 2026-08-30 — DBX-03 Schema & Data Compare executed + reviewed
 
 - Action: planned (PLAN_DBX03 + 4 task files) then executed all 4 tasks TDD-first: schemaDiff (11), dataDiff (7), syncPlan (8+2), compareService/Panel/webview + wiring (15). Independent unic-smart review issued CHANGES-REQUESTED; two fix rounds followed (directional ALTERs now source-side; keyless compare issues zero data queries; single-column unique NOT NULL keys supported; T18 activation assertions; WHERE keys derive from dataDiff.keys). Superseding APPROVED verdicts recorded.
