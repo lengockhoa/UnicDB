@@ -67,3 +67,11 @@ npm run compile
 Reuse the verified parser/token states instead of adding a regex-only scanner. References are document-local by contract; workspace indexing is out of scope.
 
 ---
+
+---
+## Executor Report
+EXECUTOR_TOOL: omp-direct (unic-code)
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+Status: PASS
+Note: `extractIdentifierReferences` (statementParser.ts) emits direct/quoted identifiers with qualifier spans, skipping strings/dollar-quotes/comments and SQL keywords. `SqlReferenceProvider` provides whole-word find-usages across the document (+optional additionalDocuments) with quoted-identifier exact matching and cancellation support. 4 parser tests + 3 provider tests pass. Committed as part of wave 2.

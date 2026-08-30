@@ -22,6 +22,13 @@ For each significant action, append:
 
 ---
 
+## 2026-08-30 — Reliability audit and verification baseline
+
+- Action: completed focused reliability fixes/audit covering AI SQL autocomplete safety and PostgreSQL SQL navigation contracts; finalized the navigation test harness so it runs under the standard Node Vitest environment.
+- Verified protections: schema-context connection races and bounded hydration, multiline document offsets and stale completion responses, SQL trailing comments/literal lexical handling, and SQL catalog hover/definition behavior.
+- Verification: `npx vitest run` — 151 files passed, 1 skipped; 2232 tests passed, 2 skipped. `npm run typecheck` and `npm run compile` passed.
+- Outcome: no active verified regression remains from this audit. Future reliability work should start with the R1 QueryRunner/Results lifecycle regression-net plan; DBX-02 in-flight ownership boundaries remain respected and no external release/publish action occurred.
+
 ## 2026-08-29 — AI Chat slash commands + session UX
 
 - Action: implemented local slash-command parsing and composer UX for `/clear`, `/resume`, `/engine`, `/context`, `/export`, and `/model`.

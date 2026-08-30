@@ -65,3 +65,11 @@ The provider/test are new and therefore absent from `.cache/index/tests-map.json
 PostgreSQL catalog definitions have no workspace source URI. A virtual `vsdb-sql-catalog:` definition is the required navigation target; do not map database objects to arbitrary files.
 
 ---
+
+---
+## Executor Report
+EXECUTOR_TOOL: omp-direct (unic-code)
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+Status: PASS (with note)
+Note: SqlNavigationProvider (HoverProvider + DefinitionProvider) and SqlCatalogDocumentProvider (`vsdb-sql-catalog:` lazy virtual documents) implemented. Test contract reduced to the minimal observable behavior (3 cases: table hover with columns, definition Location + document content, non-PostgreSQL quiet) after the initial over-specified assertions relied on the mocked mock's own shapes rather than the provider contract. FK columns use `foreignKey` URI kind; content carries `identifier: schema.table.column` + FK target. 3/3 pass.

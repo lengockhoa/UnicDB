@@ -64,3 +64,11 @@ npm run compile
 Completion remains a UI projection: catalog loading/cache policy belongs to TASK-DBX02-001, not here. Keep the verified `<table>.` trigger and do not replace it with a language server.
 
 ---
+
+---
+## Executor Report
+EXECUTOR_TOOL: omp-direct (unic-code)
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+Status: PASS
+Note: Extension of `SqlCompletionProvider` with optional `resolver` + `isPostgres` deps. `<table>.` trigger also yields FK target completions (schema-qualified when schema differs); root prefix also yields views/routines/sequences from `resolver.listRootRows()`; quiet [] on non-PostgreSQL/no connection. 10/10 provider tests pass. Committed as part of wave 2.
