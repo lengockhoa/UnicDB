@@ -1,7 +1,21 @@
 # Changelog
 
+## [1.18.0] — 2026-08-30
+
+Cycle DBX-04: Relationship Explorer (PostgreSQL-only, preview-only).
+
+### Added
+- **`vsdb.relationshipExplorer`**: explores foreign-key relationships of a schema as a pan/zoom ER diagram webview.
+- **FK graph**: closed-world graph from catalog introspection (1-based conkey ordinals, self-references kept, out-of-schema edges dropped and counted, search_path-bare targets resolved, ambiguous bare names refused).
+- **Deterministic layout**: layered (parents above children), cycle-safe, byte-identical output; 200-node cap ranked by FK degree with a `truncated` flag.
+- **Static SVG export**: XML-escaped, cardinality labels, save-dialog hand-off; the panel never executes SQL.
+
+### Review
+- Independent unic-smart review issued CHANGES-REQUESTED (wire Map serialization, FK target normalization, cap ordering, zoom clamp/NaN, truncated semantics, driver-gate ordering) — three fix rounds, superseding APPROVED.
+
 All notable changes to VSDB are documented in this file. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
+maintains [semantic versioning](https://semver.org/).
 
 ## [1.13.0] — 2026-08-29
 
@@ -478,4 +492,5 @@ Cycle G: set-filter, toolbar icons, `run-sh` fix.
 [1.15.0]: https://github.com/lengockhoa/VSDB/compare/v1.14.0...v1.15.0
 [1.16.0]: https://github.com/lengockhoa/VSDB/compare/v1.15.0...v1.16.0
 [1.17.0]: https://github.com/lengockhoa/VSDB/compare/v1.16.0...v1.17.0
+[1.18.0]: https://github.com/lengockhoa/VSDB/compare/v1.17.0...v1.18.0
 [1.13.0]: https://github.com/lengockhoa/VSDB/compare/v1.12.0...v1.13.0
