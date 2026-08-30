@@ -426,23 +426,32 @@ export class PostgresAdapter implements DbAdapter {
     }
 
     return {
-      runQuery: async (sql: string): Promise<RunResult> => {
+      runQuery: async (sql: string, values?: unknown[]): Promise<RunResult> => {
         if (finished) throw new Error("Postgres transaction is already closed");
-        return this.runQueryOnClient(client, sql);
+        return this.runQueryOnClient(client, sql, values);
       },
       commit: () => finish("COMMIT"),
       rollback: () => finish("ROLLBACK"),
     };
   }
 
-  private async runQueryOnClient(client: PoolClient, sql: string): Promise<RunResult> {
+  private async runQueryOnClient(
+    client: PoolClient,
+    sql: string,
+    values?: unknown[],
+  ): Promise<RunResult> {
     const statements = splitStatements(sql, "postgres");
     const results: QueryResult[] = [];
     for (const stmt of statements) {
       const text = stmt.text.trim();
       if (!text) continue;
       const startedAt = Date.now();
-      const result = await client.query(text);
+      // Bind $N parameters when the caller supplied values and this
+      // statement uses placeholders; otherwise execute literally.
+      const result =
+        values !== undefined && /\$\d+/.test(text)
+          ? await client.query(text, values)
+          : await client.query(text);
       const columns = result.fields.map((field) => field.name);
       results.push({
         columns,
@@ -454,6 +463,7 @@ export class PostgresAdapter implements DbAdapter {
     }
     return { results };
   }
+
 
   // ---- Metadata -------------------------------------------------------------
 

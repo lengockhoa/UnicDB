@@ -84,7 +84,12 @@ export interface RunResult {
  * adapter calls.
  */
 export interface DbTransaction {
-  runQuery(sql: string): Promise<RunResult>;
+  /**
+   * Run one SQL statement inside the pinned transaction. `values` are
+   * bound as $N parameters when the adapter supports it (Postgres does
+   * via `client.query(text, values)`); omitted for literal SQL.
+   */
+  runQuery(sql: string, values?: unknown[]): Promise<RunResult>;
   commit(): Promise<void>;
   rollback(): Promise<void>;
 }

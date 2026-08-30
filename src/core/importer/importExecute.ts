@@ -121,7 +121,7 @@ export async function executeImport(
     for (let r = 0; r < slice.length; r++) {
       const row = slice[r];
       if (row === undefined) continue;
-      const bytes = row.reduce((acc, v) => acc + approxBytes(v), 0);
+      const bytes = row.reduce<number>((acc, v) => acc + approxBytes(v), 0);
       if (bytes > maxBatchBytes) {
         errors.push({
           line: start + r + 1,
