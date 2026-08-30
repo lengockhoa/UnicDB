@@ -121,6 +121,19 @@ const comparePanelConfig = {
   minify,
   logLevel: "info",
 };
+/** TASK-DBX04-003 (Relationship Explorer): diagram panel entry. */
+/** @type {import('esbuild').BuildOptions} */
+const erPanelConfig = {
+  entryPoints: ["webview/erPanelMain.ts"],
+  outfile: "dist/erPanel.js",
+  bundle: true,
+  platform: "browser",
+  format: "iife",
+  target: "es2022",
+  sourcemap: !minify,
+  minify,
+  logLevel: "info",
+}
 async function run() {
   if (watch) {
     const ctx1 = await esbuild.context(extensionConfig);
@@ -132,7 +145,8 @@ async function run() {
     const ctx7 = await esbuild.context(schemaFormConfig);
     const ctx8 = await esbuild.context(consolePanelConfig);
     const ctx9 = await esbuild.context(comparePanelConfig);
-    await Promise.all([ctx1.watch(), ctx2.watch(), ctx3.watch(), ctx4.watch(), ctx5.watch(), ctx6.watch(), ctx7.watch(), ctx8.watch(), ctx9.watch()]);
+    const ctx10 = await esbuild.context(erPanelConfig);
+    await Promise.all([ctx1.watch(), ctx2.watch(), ctx3.watch(), ctx4.watch(), ctx5.watch(), ctx6.watch(), ctx7.watch(), ctx8.watch(), ctx9.watch(), ctx10.watch()]);
     console.log("esbuild: watching...");
   } else {
     await Promise.all([
@@ -145,6 +159,7 @@ async function run() {
       esbuild.build(schemaFormConfig),
       esbuild.build(consolePanelConfig),
       esbuild.build(comparePanelConfig),
+      esbuild.build(erPanelConfig),
     ]);
     console.log("esbuild: build complete");
   }

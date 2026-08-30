@@ -17,6 +17,8 @@ import { AdminSessionsPanel } from "./ui/adminSessionsPanel";
 import { openImportWizard } from "./ui/importWizard";
 import { runCompare } from "./ui/compareService";
 import { ComparePanel } from "./ui/comparePanel";
+import { runErExplorer } from "./ui/erService";
+import { ErPanel } from "./ui/erPanel";
 import {
   getLargeValueProvider,
   LARGE_VALUE_SCHEME,
@@ -746,7 +748,31 @@ export async function activate(
     }),
   );
 
-  // Dispose schemaTree + codeLens on deactivate to drop subscriptions + cache.
+  // ── DBX-04 TASK-DBX04-003 — Relationship Explorer. Preview-only FK
+  // diagram; export saves a static SVG. PostgreSQL only.
+  disposables.push(
+    vscode.commands.registerCommand("vsdb.relationshipExplorer", async () => {
+      const adapter = await importCtx.getAdapter();
+      const driver = importCtx.getActiveDriver();
+      if (!adapter || driver !== "postgres") {
+        void vscode.window.showErrorMessage(
+          "Relationship Explorer requires an active PostgreSQL connection.",
+        );
+        return;
+      }
+      const schemas = await adapter.listSchemas(false).catch(() => []);
+      const picks = schemas.map((s) => ({ label: s.name }));
+      const picked = await vscode.window.showQuickPick(picks, {
+        placeHolder: "Schema to explore",
+      });
+      if (!picked) return;
+      const result = await runErExplorer(adapter, driver, picked.label);
+      ErPanel.get({ extensionUri: context.extensionUri }).show(result, {
+        schema: picked.label,
+      });
+    }),
+  );
+
   context.subscriptions.push({ dispose: () => tree.dispose() });
   context.subscriptions.push({ dispose: () => codeLens.dispose() });
   context.subscriptions.push({ dispose: () => aiSettingsForm?.dispose() });

@@ -308,14 +308,16 @@ describe("extension.activate — wiring smoke", () => {
     for (const cmd of expected) {
       expect(state.registeredCommands.has(cmd)).toBe(true);
     }
-    // DBX-01 + DBX-03 wiring contracts (T18): import + compare commands
-    // must all register during activate() without throwing.
+    // DBX-01 + DBX-03 + DBX-04 wiring contracts (T18): import + compare
+    // + relationship explorer commands must all register during
+    // activate() without throwing.
     const laterCycles = [
       "vsdb.importCsv",
       "vsdb.importJson",
       "vsdb.openFormView",
       "vsdb.editLargeValue",
       "vsdb.compareTables",
+      "vsdb.relationshipExplorer",
     ];
     for (const cmd of laterCycles) {
       expect(state.registeredCommands.has(cmd)).toBe(true);

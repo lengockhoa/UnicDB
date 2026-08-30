@@ -310,6 +310,12 @@
         "title": "Compare Tables (Schema & Data)",
         "category": "VSDB",
         "icon": "$(diff)"
+      },
+      {
+        "command": "vsdb.relationshipExplorer",
+        "title": "Relationship Explorer (FK Diagram)",
+        "category": "VSDB",
+        "icon": "$(circuit-board)"
       }
     ],
     "keybindings": [
