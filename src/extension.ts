@@ -681,7 +681,18 @@ export async function activate(
     vscode.commands.registerCommand(
       "vsdb.runGrantSql",
       async (kind: "grant" | "revoke") => {
-        await commandOpenGrantWizard(mgr, kind);
+        await commandOpenGrantWizard(mgr, kind, async (sql: string) => {
+          // Re-review fix: route the wizard SQL through the SAME guarded
+          // pipeline as the editor (admin-red gate + runQuery) instead of
+          // a bare adapter.runQuery that bypassed the admin confirmation.
+          const parsed = [{ text: sql, start: 0, end: sql.length }];
+          const ok = await confirmDangerousStatements(parsed, "postgres");
+          if (!ok) {
+            throw new Error("Cancelled at the admin confirmation gate.");
+          }
+          const adapter = await mgr.getAdapter();
+          await adapter.runQuery(sql);
+        });
       },
     ),
   );
@@ -1205,11 +1216,13 @@ async function confirmDangerousStatements(
   statements: ParsedStatement[],
   dialect?: SqlDialect,
 ): Promise<boolean> {
+  // TASK-AHL-004 re-review fix: classify FIRST. `vsdb.confirmDestructive=false`
+  // may skip the red/amber prompts, but admin DCL is a distinct risk class and
+  // must still reach its own `vsdb.admin.confirmGrant` gate below.
   const enabled =
     vscode.workspace
       .getConfiguration("vsdb")
       .get<boolean>("confirmDestructive") ?? true;
-  if (!enabled) return true;
 
   const red: string[] = [];
   const amber: string[] = [];
@@ -1219,6 +1232,11 @@ async function confirmDangerousStatements(
     if (tier === "red") red.push(stmt.text.trim());
     else if (tier === "amber") amber.push(stmt.text.trim());
     else if (tier === "admin-red") admin.push(stmt.text.trim());
+  }
+  if (!enabled) {
+    // Non-admin prompts suppressed — but admin DCL still gated below.
+    red.length = 0;
+    amber.length = 0;
   }
 
   // TASK-AHL-004 — admin DCL (GRANT/REVOKE/KILL/TERMINATE) always prompts.

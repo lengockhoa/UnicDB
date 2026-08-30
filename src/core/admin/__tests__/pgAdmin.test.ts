@@ -274,3 +274,36 @@ describe("pgAdmin - validateRoleName", () => {
     }
   });
 });
+
+describe("re-review regressions — grant target identifier validation", () => {
+  it("rejects NUL in target table identifier", () => {
+    expect(() =>
+      buildGrantSql({ grantee: "bob", privileges: ["SELECT"], on: { kind: "table", schema: "public", table: "t\u0000x" } }),
+    ).toThrow(AdminError);
+  });
+
+  it("rejects overlong target schema identifier (nameTooLong)", () => {
+    const long = "s".repeat(64);
+    expect(() =>
+      buildGrantSql({ grantee: "bob", privileges: ["SELECT"], on: { kind: "table", schema: long, table: "t" } }),
+    ).toThrow(AdminError);
+  });
+
+  it("rejects NUL in target sequence identifier", () => {
+    expect(() =>
+      buildGrantSql({ grantee: "bob", privileges: ["SELECT"], on: { kind: "sequence", schema: "public", sequence: "s\u0000" } }),
+    ).toThrow(AdminError);
+  });
+
+  it("rejects NUL in target schema identifier", () => {
+    expect(() =>
+      buildGrantSql({ grantee: "bob", privileges: ["USAGE"], on: { kind: "schema", schema: "p\u0000" } }),
+    ).toThrow(AdminError);
+  });
+
+  it("accepts valid 63-char target identifiers", () => {
+    const max = "s".repeat(63);
+    const sql = buildGrantSql({ grantee: "bob", privileges: ["SELECT"], on: { kind: "table", schema: "public", table: max } });
+    expect(sql).toContain(`"public"."${max}"`);
+  });
+});

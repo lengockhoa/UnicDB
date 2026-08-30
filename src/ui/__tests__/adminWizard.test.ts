@@ -14,6 +14,7 @@ import {
   buildRevokePlan,
   runGrantWizard,
   runRevokeWizard,
+  commandOpenGrantWizard,
   type WizardDeps,
 } from "../adminWizard";
 import { buildGrantSql, buildRevokeSql, AdminError } from "../../core/admin/pgAdmin";
@@ -171,5 +172,46 @@ describe("adminWizard.runRevokeWizard", () => {
       deps,
     });
     expect(sql).toBeUndefined();
+  });
+});
+
+describe("commandOpenGrantWizard — gated execution path (re-review)", () => {
+  async function wizardIo(answers: (string | undefined)[]) {
+    // `defaultDeps` captured the vi.fn() refs from the vi.mock factory at
+    // import time — reconfigure THOSE refs instead of replacing properties.
+    const vscode = (await import("vscode")) as unknown as {
+      window: Record<string, ReturnType<typeof vi.fn>>;
+    };
+    vscode.window.showInputBox = vi.fn().mockImplementation(() => Promise.resolve(answers.shift()));
+    vscode.window.showInformationMessage.mockResolvedValue("OK");
+    vscode.window.showErrorMessage = vi.fn().mockResolvedValue(undefined);
+    vscode.window.showWarningMessage = vi.fn().mockResolvedValue(undefined);
+    return vscode;
+  }
+
+  it("routes the confirmed SQL through the execute callback (not bare runQuery)", async () => {
+    await wizardIo(["public", "t1", "app_rw", "SELECT"]);
+    const executed: string[] = [];
+    const runQuery = vi.fn();
+    const mgr = { getActive: () => ({ id: "c1", label: "dev" }), getAdapter: async () => ({ runQuery }) };
+    await commandOpenGrantWizard(mgr, "grant", async (sql) => {
+      executed.push(sql);
+    });
+    expect(executed.length).toBe(1);
+    expect(executed[0]).toContain('GRANT SELECT ON TABLE "public"."t1"');
+    expect(runQuery).not.toHaveBeenCalled();
+  });
+
+  it("propagates gate rejection as an error message and skips runQuery", async () => {
+    const vscode = await wizardIo(["public", "t1", "app_rw", "SELECT"]);
+    const runQuery = vi.fn();
+    const mgr = { getActive: () => ({ id: "c1", label: "dev" }), getAdapter: async () => ({ runQuery }) };
+    await commandOpenGrantWizard(mgr, "grant", async () => {
+      throw new Error("Cancelled at the admin confirmation gate.");
+    });
+    expect(runQuery).not.toHaveBeenCalled();
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining("Cancelled at the admin confirmation gate."),
+    );
   });
 });

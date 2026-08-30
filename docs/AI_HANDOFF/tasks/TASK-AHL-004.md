@@ -106,3 +106,23 @@ npm run compile
     - `vsdb.runGrantSql` is registered with category "VSDB" + icon `$(shield)`. Without a dedicated `menus.view/item/context` entry, it's only reachable via the command palette. Acceptable for the cycle; can be added when the admin tree surfaces a "Grant…" right-click action.
     - `confirmDangerousStatements` extension is additive; the `admin-red` modal copy is a follow-up if the team wants a distinct prompt (currently the tier "red" modal prompt fires for DML too, and admin-red piggybacks on the same `confirmDangerousStatements` path with a different copy).
 - NEXT_STATUS_FOR_INDEX: done
+
+---
+
+## Reviewer Verdict — Strict-mode Re-review (unic-smart)
+
+Anchors TASK-AHL-001 + this file; findings also apply to TASK-AHL-002 (wizard path) and TASK-AHL-003 (same gate family). See TASK-AHL-001.md for the full finding text.
+
+**VERDICT: CHANGES-REQUESTED** — remediation required.
+
+---
+
+## Executor Fix Round — Strict-mode Re-review Remediation
+
+**Date:** 2026-08-30 · **Executor:** unic-code · Addresses all 3 AhlReviewer findings.
+
+1. **Gate order (P1)** — `confirmDangerousStatements` now classifies ALL tiers first; the `vsdb.confirmDestructive=false` switch clears only the red/amber buckets. Admin-red statements always reach the `vsdb.admin.confirmGrant` modal regardless of the non-admin switch.
+2. **Wizard execution path (P1)** — `commandOpenGrantWizard` accepts an `execute` callback; the production wiring in extension.ts routes the confirmed SQL through `confirmDangerousStatements` (admin-red gate) before `adapter.runQuery`. Gate rejection surfaces as an error message and no query runs. Tests: callback receives the built SQL; bare `runQuery` is NOT called when the callback is supplied; gate rejection path covered.
+3. **Target identifier validation (P2)** — new `validateTargetIdentifier` runs before quoting for every grant target (table/sequence/schema): embedded NUL → `AdminError(invalidIdentifier)`; >63 chars → `AdminError(nameTooLong)`. 5 regression tests (NUL on table/sequence/schema, overlong schema, 63-char accept).
+
+Verification: typecheck 0; targeted 146/146 (admin suites + scaffold + postgres adapter + extension); full suite 2453 passed | 2 skipped; esbuild clean.

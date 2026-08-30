@@ -201,14 +201,16 @@ export async function runRevokeWizard(args: {
 /**
  * TASK-AHL-004 — host command entry for `vsdb.runGrantSql`. Walks the user
  * through object → privileges → grantee via the existing quickPick chain
- * (uses defaultDeps), then posts the resulting SQL through the active
- * connection's adapter via `runSql`. ALL write paths still go through
- * the confirmDangerousStatements gate (the wizard's preview modal is the
- * first confirm; the host gate is the second).
+ * (uses defaultDeps), then executes the resulting SQL through the
+ * caller-supplied `execute` callback. The host wires `execute` to the
+ * confirmDangerousStatements + runQuery pipeline so the admin-red gate
+ * (vsdb.admin.confirmGrant) is enforced on THIS path too (re-review fix:
+ * the previous direct adapter.runQuery call bypassed the gate).
  */
 export async function commandOpenGrantWizard(
   mgr: { getActive: () => unknown; getAdapter: () => unknown },
   kind: "grant" | "revoke",
+  execute?: (sql: string) => Promise<void>,
 ): Promise<void> {
   const active = mgr.getActive() as
     | { id: string; label: string }
@@ -252,8 +254,25 @@ export async function commandOpenGrantWizard(
       : await runRevokeWizard({ schema, object, grantee, privileges });
   if (!sql) return; // user cancelled preview
 
-  // Dispatch via the existing runSql path. The host will route through
-  // confirmDangerousStatements (extended to admin-red for grant/revoke).
+  // Re-review fix: execute through the host-supplied callback, which is
+  // wired to the confirmDangerousStatements gate (admin-red tier) before
+  // adapter.runQuery. If no callback is provided (legacy/tests), fall
+  // back to a direct runQuery — production wiring ALWAYS passes the gate.
+  if (execute) {
+    try {
+      await execute(sql);
+      void vscode.window.showInformationMessage(
+        `VSDB: ${kind.toUpperCase()} executed.`,
+      );
+    } catch (err) {
+      void vscode.window.showErrorMessage(
+        `VSDB: ${kind} failed — ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+    return;
+  }
   const adapter = (await mgr.getAdapter()) as {
     runQuery?: (sql: string) => Promise<{ rows: unknown[] }>;
   };

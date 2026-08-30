@@ -237,13 +237,41 @@ export function listLockWaitsSql(): string {
 // Builders
 // -------------------------------------------------------------------
 
+/**
+ * Re-review fix: validate EVERY grant-target identifier (NUL, length)
+ * BEFORE quoting. quoteIdent alone only rejects empty/quote values, so a
+ * NUL or >63-char target used to be emitted and could truncate to a
+ * different existing identifier on the server.
+ */
+function validateTargetIdentifier(kind: "table" | "sequence" | "schema", field: string, value: string): void {
+  if (value.includes("\u0000")) {
+    throw new AdminError(
+      "invalidIdentifier",
+      `grant target ${kind}.${field} must not contain NUL`,
+      { kind, field },
+    );
+  }
+  if (value.length > NAMEDATALEN_MINUS_ONE) {
+    throw new AdminError(
+      "nameTooLong",
+      `grant target ${kind}.${field} exceeds NAMEDATALEN-1 (${NAMEDATALEN_MINUS_ONE})`,
+      { kind, field, length: value.length, max: NAMEDATALEN_MINUS_ONE },
+    );
+  }
+}
+
 function renderOn(req: GrantRequest): string {
   switch (req.on.kind) {
     case "table":
+      validateTargetIdentifier("table", "schema", req.on.schema);
+      validateTargetIdentifier("table", "table", req.on.table);
       return `TABLE ${quoteIdent(req.on.schema)}.${quoteIdent(req.on.table)}`;
     case "sequence":
+      validateTargetIdentifier("sequence", "schema", req.on.schema);
+      validateTargetIdentifier("sequence", "sequence", req.on.sequence);
       return `SEQUENCE ${quoteIdent(req.on.schema)}.${quoteIdent(req.on.sequence)}`;
     case "schema":
+      validateTargetIdentifier("schema", "schema", req.on.schema);
       return `SCHEMA ${quoteIdent(req.on.schema)}`;
     default: {
       const unknown = req.on as { kind: unknown };
