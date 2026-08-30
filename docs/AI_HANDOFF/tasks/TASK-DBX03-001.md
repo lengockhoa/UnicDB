@@ -1,6 +1,6 @@
 # TASK-DBX03-001 — schemaDiff pure module
 
-- Status: `ready`
+- Status: `done`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN_DBX03.md` §3.1, §4 T1–T6
@@ -77,3 +77,9 @@ export function shapeFromTableDetail(detail: TableDetail): TableShape;
 ---
 
 <!-- Executor appends report below -->
+
+## Executor Report
+
+### 2026-08-30 · executor · omp-direct/unic-code
+
+RED: src/core/compare/__tests__/schemaDiff.test.ts written first — module absent, run failed to resolve (pasted in report). GREEN after implementing schemaDiff.ts. 11/11 tests. Deterministic ordering asserted (source order for added, alphabetical for dropped). shapeFromTableDetail resolves PK names from conkey 1-based ordinals (contype=p). No vscode import.

@@ -144,3 +144,22 @@ describe("buildSyncPlan — parameterization safety", () => {
     expect(insert?.sql).toMatch(/INSERT INTO "public"\."users_new"/);
   });
 });
+
+describe("buildSyncPlan — reviewer fixes (regression)", () => {
+  it("applies SOURCE-side values in ALTER statements (directional fix)", () => {
+    const source: TableShape = {
+      columns: [col("id", "integer"), col("name", "varchar", true)],
+      primaryKeys: ["id"],
+    };
+    const target: TableShape = {
+      columns: [col("id", "integer"), col("name", "text", true)],
+      primaryKeys: ["id"],
+    };
+    const shapeDiff = diffSchema(source, target);
+    const dataDiff = diffData(["id"], [], [], ["id", "name"]);
+    const plan = buildSyncPlan({ source, target, schemaDiff: shapeDiff, dataDiff, ...tables });
+    const alter = plan.groups.find((g) => g.id === "ddl")?.statements.find((s) => /ALTER COLUMN/i.test(s.sql));
+    expect(alter?.sql).toContain("varchar"); // source type, not target's text
+    expect(alter?.sql).not.toMatch(/TYPE text/);
+  });
+});

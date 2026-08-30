@@ -97,3 +97,50 @@ describe("runCompare — row cap", () => {
     expect(dd && !dd.skipped && dd.addedRows.length > 0).toBe(true);
   });
 });
+
+describe("runCompare — reviewer fixes (regression)", () => {
+  it("never issues a data query when no usable key exists (no-key safety)", async () => {
+    const tableNoKey = (cols: string[]): TableDetail => ({
+      columns: cols.map((c) => ({
+        column_name: c,
+        format_type: "text",
+        is_nullable: "YES" as const,
+        column_default: null,
+      })),
+      constraints: [],
+    });
+    const fetchSpy: RowFetcher = vi.fn(async () => []);
+    const adapter = makeAdapter({
+      detailA: tableNoKey(["a", "b"]),
+      detailB: tableNoKey(["a", "b"]),
+    });
+    const result = await runCompare(req, adapter, "postgres", {
+      fetchRowsA: fetchSpy,
+      fetchRowsB: fetchSpy,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.dataDiff?.skipped).toBe("no-key");
+    expect(result.plan?.executable).toBe(false);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("uses a single-column unique NOT NULL constraint as key when no PK", async () => {
+    const uniqDetail = (v: string): TableDetail => ({
+      columns: [
+        { column_name: "code", format_type: "text", is_nullable: "NO" as const, column_default: null },
+        { column_name: "val", format_type: "text", is_nullable: "YES" as const, column_default: null },
+      ],
+      constraints: [
+        { conname: "uq", contype: "u", conkey: [1], confrelidname: null, confkeycols: null, consrc: "" },
+      ],
+      marker: v,
+    } as unknown as TableDetail);
+    const fetchA: RowFetcher = async () => [{ code: "K1", val: "s" }];
+    const fetchB: RowFetcher = async () => [{ code: "K1", val: "t" }];
+    const adapter = makeAdapter({ detailA: uniqDetail("a"), detailB: uniqDetail("b") });
+    const result = await runCompare(req, adapter, "postgres", { fetchRowsA: fetchA, fetchRowsB: fetchB });
+    expect(result.ok).toBe(true);
+    expect(result.dataDiff && !result.dataDiff.skipped ? result.dataDiff.changedRows.length : -1).toBe(1);
+    expect(result.plan?.executable).toBe(true);
+  });
+});

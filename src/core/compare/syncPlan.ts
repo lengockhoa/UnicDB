@@ -82,30 +82,31 @@ export function buildSyncPlan(opts: {
   }
   for (const entry of schemaDiff.entries) {
     if (entry.kind !== "changed") continue;
-    const targetCol = targetCols.get(entry.column);
+    // Directional semantics: diff entries carry from=SOURCE, to=TARGET.
+    // The plan converges the TARGET toward the SOURCE, so ALTERs apply
+    // the SOURCE-side value (entry.from).
     if (entry.change === "type") {
       ddl.push({
-        sql: `ALTER TABLE ${targetQ} ALTER COLUMN ${quoteIdent(entry.column)} TYPE ${entry.to};`,
-        summary: `Change type of "${entry.column}": ${entry.from} -> ${entry.to}`,
+        sql: `ALTER TABLE ${targetQ} ALTER COLUMN ${quoteIdent(entry.column)} TYPE ${entry.from};`,
+        summary: `Change type of "${entry.column}": ${entry.to} -> ${entry.from} (align target with source)`,
       });
     } else if (entry.change === "nullable") {
       ddl.push({
         sql:
-          entry.to === true
+          entry.from === true
             ? `ALTER TABLE ${targetQ} ALTER COLUMN ${quoteIdent(entry.column)} DROP NOT NULL;`
             : `ALTER TABLE ${targetQ} ALTER COLUMN ${quoteIdent(entry.column)} SET NOT NULL;`,
-        summary: `Make "${entry.column}" ${entry.to === true ? "nullable" : "NOT NULL"}`,
+        summary: `Make "${entry.column}" ${entry.from === true ? "nullable" : "NOT NULL"} (align target with source)`,
       });
     } else if (entry.change === "default") {
       ddl.push({
         sql:
-          entry.to === null
+          entry.from === null
             ? `ALTER TABLE ${targetQ} ALTER COLUMN ${quoteIdent(entry.column)} DROP DEFAULT;`
-            : `ALTER TABLE ${targetQ} ALTER COLUMN ${quoteIdent(entry.column)} SET DEFAULT ${entry.to};`,
-        summary: `Set default of "${entry.column}" to ${entry.to === null ? "(none)" : String(entry.to)}`,
+            : `ALTER TABLE ${targetQ} ALTER COLUMN ${quoteIdent(entry.column)} SET DEFAULT ${entry.from};`,
+        summary: `Set default of "${entry.column}" to ${entry.from === null ? "(none)" : String(entry.from)} (align target with source)`,
       });
     }
-    void targetCol;
   }
   for (const entry of schemaDiff.entries) {
     if (entry.kind === "dropped") {

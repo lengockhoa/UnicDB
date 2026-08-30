@@ -1,6 +1,6 @@
 # TASK-DBX03-002 — dataDiff pure module
 
-- Status: `ready`
+- Status: `done`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN_DBX03.md` §3.2, §4 T7–T10
@@ -80,3 +80,9 @@ export function diffData(
 ---
 
 <!-- Executor appends report below -->
+
+## Executor Report
+
+### 2026-08-30 · executor · omp-direct/unic-code
+
+RED first (module absent). GREEN: diffData with key-tuple sort (number-aware, null-safe stringify fallback), first-occurrence-wins duplicate handling with duplicateKeyCount, no-key guard returns skipped:"no-key" with empty groups. 7/7 tests.

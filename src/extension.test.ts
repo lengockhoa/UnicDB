@@ -283,7 +283,7 @@ describe("extension.activate — wiring smoke", () => {
     state.createdTerminals.length = 0;
   });
 
-  it("register đủ 17 command theo package.json (11 cũ + 6 TASK-005)", () => {
+  it("register đủ command theo package.json (17 cũ + các cycle sau)", () => {
     const ctx = makeCtx();
     activate(ctx as never);
     const expected = [
@@ -306,6 +306,18 @@ describe("extension.activate — wiring smoke", () => {
       "vsdb.vacuumTable",
     ];
     for (const cmd of expected) {
+      expect(state.registeredCommands.has(cmd)).toBe(true);
+    }
+    // DBX-01 + DBX-03 wiring contracts (T18): import + compare commands
+    // must all register during activate() without throwing.
+    const laterCycles = [
+      "vsdb.importCsv",
+      "vsdb.importJson",
+      "vsdb.openFormView",
+      "vsdb.editLargeValue",
+      "vsdb.compareTables",
+    ];
+    for (const cmd of laterCycles) {
       expect(state.registeredCommands.has(cmd)).toBe(true);
     }
   });

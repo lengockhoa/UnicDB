@@ -4,7 +4,7 @@
 // RowFetcher (default: adapter.runQuery keyset SELECT), then runs the
 // pure modules. One-shot invocation: cache-free, timer-free.
 
-import type { DbAdapter, QueryResult, RunResult } from "../adapters/types";
+import type { DbAdapter, QueryResult, RunResult, TableDetail } from "../adapters/types";
 import { diffSchema, shapeFromTableDetail, type SchemaDiffResult, type TableShape } from "../core/compare/schemaDiff";
 import { diffData, type DataDiffResult } from "../core/compare/dataDiff";
 import { buildSyncPlan, type SyncPlan } from "../core/compare/syncPlan";
@@ -53,6 +53,23 @@ function rowsFromRunResult(rr: RunResult): Array<Record<string, unknown>> {
   });
 }
 
+/**
+ * Usable unique keys beyond the PK: single-column NOT NULL UNIQUE
+ * constraints (contype "u"). Multi-column unique keys are NOT accepted
+ * because individual column nullability does not guarantee tuple
+ * uniqueness for diffing.
+ */
+function extractUniqueNotNullKeys(detail: TableDetail, columnNames: string[]): string[] {
+  const keys: string[] = [];
+  for (const con of detail.constraints) {
+    if (con.contype !== "u" || con.conkey.length !== 1) continue;
+    const col = detail.columns[con.conkey[0]! - 1];
+    if (!col || col.is_nullable !== "NO") continue;
+    if (columnNames.includes(col.column_name)) keys.push(col.column_name);
+  }
+  return keys;
+}
+
 function defaultFetcher(adapter: DbAdapter, t: { schema: string; table: string }, columns: string[]): RowFetcher {
   const colList = columns.map(quoteIdent).join(", ");
   const sql = `SELECT ${colList} FROM ${qualified(t)} ORDER BY ${columns.map(quoteIdent).join(", ")} LIMIT ${COMPARE_ROW_LIMIT + 1}`;
@@ -86,14 +103,34 @@ export async function runCompare(
   const target = shapeFromTableDetail(targetDetail);
   const shapeDiff = diffSchema(source, target);
 
-  // Key columns: PK when present; otherwise the data diff is skipped by
-  // the pure module (no-key safety).
-  const keys = source.primaryKeys.filter((k) => target.columns.some((c) => c.name === k));
-  const keyCols = keys.length > 0 ? keys : [];
+  // Key columns: PK or usable unique-NOT-NULL column set; intersected
+  // with the target's columns. With no usable key the data phase is
+  // skipped BEFORE any row fetch (no query is issued for data).
+  const uniqueNotNull = extractUniqueNotNullKeys(sourceDetail, source.columns.map((c) => c.name));
+  const keys =
+    source.primaryKeys.filter((k) => target.columns.some((c) => c.name === k));
+  const keyCandidates = keys.length > 0 ? keys : uniqueNotNull;
+  const keyCols = keyCandidates.filter((k) => target.columns.some((c) => c.name === k));
   const columnNames = source.columns.map((c) => c.name);
 
-  const fetchA = overrides?.fetchRowsA ?? defaultFetcher(adapter, req.source, keyCols.length > 0 ? columnNames : ["*"] as string[]);
-  const fetchB = overrides?.fetchRowsB ?? defaultFetcher(adapter, req.target, keyCols.length > 0 ? columnNames : ["*"] as string[]);
+  if (keyCols.length === 0) {
+    // No usable key: skip the data phase entirely — no data query is
+    // issued, the pure module reports skipped:"no-key", and the plan
+    // records the blocker.
+    const dataDiff = diffData([], [], [], columnNames);
+    const plan = buildSyncPlan({
+      source,
+      target,
+      schemaDiff: shapeDiff,
+      dataDiff,
+      sourceTable: req.source,
+      targetTable: req.target,
+    });
+    return { ok: true, shapeDiff, dataDiff, plan };
+  }
+
+  const fetchA = overrides?.fetchRowsA ?? defaultFetcher(adapter, req.source, columnNames);
+  const fetchB = overrides?.fetchRowsB ?? defaultFetcher(adapter, req.target, columnNames);
 
   const [rowsA, rowsB] = await Promise.all([fetchA(), fetchB()]);
   const truncated = rowsA.length > COMPARE_ROW_LIMIT || rowsB.length > COMPARE_ROW_LIMIT;
