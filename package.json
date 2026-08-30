@@ -304,6 +304,12 @@
         "title": "VSDB: Edit Large Value",
         "category": "VSDB",
         "icon": "$(expand-all)"
+      },
+      {
+        "command": "vsdb.compareTables",
+        "title": "Compare Tables (Schema & Data)",
+        "category": "VSDB",
+        "icon": "$(diff)"
       }
     ],
     "keybindings": [

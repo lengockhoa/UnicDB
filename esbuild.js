@@ -108,7 +108,19 @@ const consolePanelConfig = {
   minify,
   logLevel: "info",
 };
-
+/** TASK-DBX03-004 (Schema & Data Compare): preview panel entry. */
+/** @type {import('esbuild').BuildOptions} */
+const comparePanelConfig = {
+  entryPoints: ["webview/comparePanelMain.ts"],
+  outfile: "dist/comparePanel.js",
+  bundle: true,
+  platform: "browser",
+  format: "iife",
+  target: "es2022",
+  sourcemap: !minify,
+  minify,
+  logLevel: "info",
+};
 async function run() {
   if (watch) {
     const ctx1 = await esbuild.context(extensionConfig);
@@ -119,7 +131,8 @@ async function run() {
     const ctx6 = await esbuild.context(aiChatPanelConfig);
     const ctx7 = await esbuild.context(schemaFormConfig);
     const ctx8 = await esbuild.context(consolePanelConfig);
-    await Promise.all([ctx1.watch(), ctx2.watch(), ctx3.watch(), ctx4.watch(), ctx5.watch(), ctx6.watch(), ctx7.watch(), ctx8.watch()]);
+    const ctx9 = await esbuild.context(comparePanelConfig);
+    await Promise.all([ctx1.watch(), ctx2.watch(), ctx3.watch(), ctx4.watch(), ctx5.watch(), ctx6.watch(), ctx7.watch(), ctx8.watch(), ctx9.watch()]);
     console.log("esbuild: watching...");
   } else {
     await Promise.all([
@@ -131,6 +144,7 @@ async function run() {
       esbuild.build(aiChatPanelConfig),
       esbuild.build(schemaFormConfig),
       esbuild.build(consolePanelConfig),
+      esbuild.build(comparePanelConfig),
     ]);
     console.log("esbuild: build complete");
   }

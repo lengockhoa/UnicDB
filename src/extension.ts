@@ -15,6 +15,8 @@ import {
 import { AdminTreeProvider } from "./ui/adminTree";
 import { AdminSessionsPanel } from "./ui/adminSessionsPanel";
 import { openImportWizard } from "./ui/importWizard";
+import { runCompare } from "./ui/compareService";
+import { ComparePanel } from "./ui/comparePanel";
 import {
   getLargeValueProvider,
   LARGE_VALUE_SCHEME,
@@ -716,6 +718,33 @@ export async function activate(
       );
     }),
   );
+  // ── DBX-03 TASK-DBX03-004 — Schema & Data Compare. Preview-only:
+  // the panel never executes the sync plan; clipboard copy hands off
+  // to the SQL Console (dangerous-confirm applies there).
+  disposables.push(
+    vscode.commands.registerCommand("vsdb.compareTables", async () => {
+      const adapter = await importCtx.getAdapter();
+      const driver = importCtx.getActiveDriver();
+      if (!adapter) {
+        void vscode.window.showErrorMessage(
+          "Schema & Data Compare requires an active PostgreSQL connection.",
+        );
+        return;
+      }
+      const source = await promptTableRef("Source table");
+      const target = await promptTableRef("Target table");
+      if (!source || !target) return;
+      const result = await runCompare(
+        { source, target },
+        adapter,
+        driver,
+      );
+      ComparePanel.get({ extensionUri: context.extensionUri }).show(
+        result,
+        { source, target },
+      );
+    }),
+  );
 
   // Dispose schemaTree + codeLens on deactivate to drop subscriptions + cache.
   context.subscriptions.push({ dispose: () => tree.dispose() });
@@ -1072,6 +1101,29 @@ async function applyKeywordQualify(
 /** Cap detail modal để dialog không tràn (VS Code không scroll detail). */
 const RED_DETAIL_CAP = 2000;
 const AMBER_DETAIL_CAP = 500;
+
+/**
+ * DBX-03 — prompt for a schema-qualified table reference
+ * ("schema.table" or "table"; schema defaults to "public").
+ * Undefined when the user cancels.
+ */
+async function promptTableRef(
+  label: string,
+): Promise<{ schema: string; table: string } | undefined> {
+  const raw = await vscode.window.showInputBox({
+    prompt: `${label} (schema.table)`,
+    placeHolder: "public.users",
+    validateInput: (v) =>
+      /^[A-Za-z_][\w$]*(\.[A-Za-z_][\w$]*)?$/.test(v)
+        ? undefined
+        : "Expected table or schema.table identifier",
+  });
+  if (!raw) return undefined;
+  const [schemaOrTable, table] = raw.split(".");
+  return table
+    ? { schema: schemaOrTable, table }
+    : { schema: "public", table: schemaOrTable };
+}
 
 /**
  * TASK-606 — Hỏi lại user trước khi chạy statement phá hoại.
