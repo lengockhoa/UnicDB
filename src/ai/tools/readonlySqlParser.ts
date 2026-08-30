@@ -37,27 +37,141 @@ export function containsForbidden(text: string): boolean {
  * Strip every `-- line` and block comment from `sql`, replacing each with a
  * single space so adjacent tokens never fuse. Comment bodies are dropped
  * before any keyword scan, so a comment can neither hide nor fake a token.
+ *
+ * Lexical context rules (conservative — errs on the safe side):
+ *   - Inside a single-quoted string: NO comment stripping. A single quote
+ *     that isn't doubled (`''`) closes the string.
+ *   - Inside a PostgreSQL double-quoted identifier: NO comment stripping.
+ *     Doubled double-quote is an escaped quote.
+ *   - Inside a PostgreSQL dollar-quoted string `$tag$…$tag$`: NO comment
+ *     stripping. The tag body is `[A-Za-z_][A-Za-z0-9_]*` (or empty for
+ *     `$$`). The matching closing tag must be present.
+ *   - Otherwise: `--` until newline and block comments are stripped.
  */
 function stripComments(sql: string): string {
   let out = "";
   let i = 0;
   const n = sql.length;
   while (i < n) {
-    if (sql[i] === "-" && sql[i + 1] === "-") {
+    const ch = sql[i];
+    const next = sql[i + 1];
+    if (ch === "'") {
+      // Single-quoted string literal. Copy verbatim (allow '' as escape).
+      out += ch;
+      i++;
+      while (i < n) {
+        const c = sql[i];
+        if (c === "'") {
+          out += c;
+          i++;
+          // Doubled '' → escaped quote, keep going.
+          if (i < n && sql[i] === "'") {
+            out += sql[i];
+            i++;
+            continue;
+          }
+          break;
+        }
+        out += c;
+        i++;
+      }
+    } else if (ch === '"') {
+      // Double-quoted identifier. Copy verbatim ("" is an escaped quote).
+      out += ch;
+      i++;
+      while (i < n) {
+        const c = sql[i];
+        if (c === '"') {
+          out += c;
+          i++;
+          if (i < n && sql[i] === '"') {
+            out += sql[i];
+            i++;
+            continue;
+          }
+          break;
+        }
+        out += c;
+        i++;
+      }
+    } else if (ch === "$") {
+      // Dollar-quoted string: $tag$…$tag$ or $$…$$.
+      const tag = readDollarTag(sql, i);
+      if (tag !== null) {
+        const start = i;
+        const endIdx = sql.indexOf(tag, start + tag.length);
+        if (endIdx !== -1) {
+          // Copy the entire dollar-quoted region verbatim.
+          out += sql.slice(start, endIdx + tag.length);
+          i = endIdx + tag.length;
+        } else {
+          // Unterminated dollar-quote — copy remainder, no comment strip.
+          out += sql.slice(start);
+          i = n;
+        }
+        continue;
+      }
+      // Not a dollar tag — fall through and treat `$` as ordinary char.
+      out += ch;
+      i++;
+    } else if (ch === "-" && next === "-") {
       i += 2;
       while (i < n && sql[i] !== "\n") i++;
       out += " ";
-    } else if (sql[i] === "/" && sql[i + 1] === "*") {
+    } else if (ch === "/" && next === "*") {
       i += 2;
       while (i < n && !(sql[i] === "*" && sql[i + 1] === "/")) i++;
       i = Math.min(i + 2, n);
       out += " ";
     } else {
-      out += sql[i];
+      out += ch;
       i++;
     }
   }
   return out;
+}
+
+/**
+ * If `sql` starting at `i` begins with a valid dollar-quote delimiter
+ * (`$tag$` or `$$`), return the full delimiter including the leading `$`.
+ * Otherwise return null. The tag body, if any, is `[A-Za-z_][A-Za-z0-9_]*`.
+ */
+function readDollarTag(sql: string, i: number): string | null {
+  if (sql[i] !== "$") return null;
+  const n = sql.length;
+  let j = i + 1;
+  if (j < n && sql[j] === "$") return "$$";
+  // Tag must start with letter or underscore.
+  const c = sql[j];
+  if (j >= n || !((c >= "A" && c <= "Z") || (c >= "a" && c <= "z") || c === "_")) {
+    return null;
+  }
+  j++;
+  while (j < n) {
+    const cc = sql[j];
+    if (
+      (cc >= "A" && cc <= "Z") ||
+      (cc >= "a" && cc <= "z") ||
+      (cc >= "0" && cc <= "9") ||
+      cc === "_"
+    ) {
+      j++;
+    } else {
+      break;
+    }
+  }
+  if (sql[j] !== "$") return null;
+  return sql.slice(i, j + 1);
+}
+
+/**
+ * Exported helper — strip every `-- line` and block comment, preserving
+ * string literals (single-quoted), PostgreSQL double-quoted identifiers,
+ * and PostgreSQL dollar-quoted strings. Used by callers that need the
+ * lexically-safe stripped form for downstream scanning.
+ */
+export function stripTrailingSqlComments(sql: string): string {
+  return stripComments(typeof sql === "string" ? sql : "");
 }
 
 /** Parse `sql` as a single read-only statement. Never throws. */

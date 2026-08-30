@@ -3,14 +3,22 @@
 //
 // Logic trigger (chỉ nhìn text TRƯỚC cursor trên dòng hiện tại):
 //   - `<identifier>.` → nếu identifier trùng tên table (search all tables)
-//     → columns của table đó (Property kind); ngược lại coi identifier là
+//     → columns của table đó (Property kind) + FK-target tables (Class kind,
+//     gated by Postgres + catalog capability); ngược lại coi identifier là
 //     schema → tables trong schema đó (Class kind).
 //   - `<prefix>` (identifier đang gõ) → schemas (Module kind) + tables
-//     (Class kind) + SQL keywords (Keyword kind), lọc theo prefix.
+//     (Class kind) + SQL keywords (Keyword kind) + catalog rows (views
+//     as Class, routines as Function, sequences as Constant, gated by
+//     Postgres + catalog capability), lọc theo prefix.
 //   - Không có active connection, hoặc adapter lỗi → [] (never-crash;
 //     VS Code vẫn có word-based suggestions cơ bản).
 import * as vscode from "vscode";
 import type { SchemaCache } from "./schemaCache";
+import type {
+  CatalogForeignKeyRow,
+  CatalogResolver,
+  CatalogRootRow,
+} from "./sqlCatalog";
 
 /** SQL keywords offering ở root context (filtered by prefix). */
 export const SQL_KEYWORDS: readonly string[] = [
@@ -29,8 +37,23 @@ export const SQL_KEYWORDS: readonly string[] = [
 export interface SqlCompletionProviderDeps {
   /** Cache (TTL) wrapping adapter introspection. */
   cache: SchemaCache;
+  /** Catalog resolver — views/routines/sequences + table-scoped FKs. */
+  catalog: CatalogResolver;
+  /** True iff the active driver is Postgres; defaults to true. */
+  isPostgres?: () => boolean;
   /** False khi không có active connection → provider im lặng ([]). */
   hasConnection?: () => boolean;
+}
+
+/** Schema treated as "default" — single source of truth for unqualified inserts. */
+const DEFAULT_SCHEMA = "public";
+
+/**
+ * `insertText` for a catalog item: schema-qualified when the schema differs
+ * from the active default; bare name otherwise.
+ */
+function catalogInsertText(name: string, schema: string): string {
+  return schema === DEFAULT_SCHEMA ? name : `${schema}.${name}`;
 }
 
 export class SqlCompletionProvider implements vscode.CompletionItemProvider {
@@ -66,7 +89,17 @@ export class SqlCompletionProvider implements vscode.CompletionItemProvider {
 
   // ---- Private ---------------------------------------------------------------
 
-  /** `<word>.` — word là table → columns; ngược lại là schema → tables. */
+  /**
+   * True iff catalog rows should be surfaced. Gated by the active driver
+   * (Postgres only) and the resolver's own capability check — the resolver
+   * silently returns `[]` on non-catalog adapters, but the gate here also
+   * avoids paying the resolver's `await` round-trip on every keystroke.
+   */
+  private get catalogEnabled(): boolean {
+    return this.deps.isPostgres?.() ?? true;
+  }
+
+  /** `<word>.` — word là table → columns + FK-target tables; ngược lại là schema → tables. */
   private async completionsAfterDot(
     word: string,
   ): Promise<vscode.CompletionItem[]> {
@@ -74,15 +107,26 @@ export class SqlCompletionProvider implements vscode.CompletionItemProvider {
     const tables = await this.deps.cache.getTables();
     const hit = tables.find((t) => t.name.toLowerCase() === lower);
     if (hit) {
-      const columns = await this.deps.cache.getColumns(hit.name, hit.schema);
-      return columns.map((c) => {
+      const [columns, fkRows] = await Promise.all([
+        this.deps.cache.getColumns(hit.name, hit.schema),
+        this.catalogEnabled
+          ? this.deps.catalog.listForeignKeys(hit.schema, hit.name)
+          : Promise.resolve<readonly CatalogForeignKeyRow[]>([]),
+      ]);
+      const items: vscode.CompletionItem[] = [];
+      for (const c of columns) {
         const item = new vscode.CompletionItem(
           c.name,
           vscode.CompletionItemKind.Property,
         );
         item.detail = c.dataType;
-        return item;
-      });
+        items.push(item);
+      }
+      for (const fk of fkRows) {
+        const item = this.fkTargetItem(fk);
+        if (item) items.push(item);
+      }
+      return items;
     }
     const schemaTables = await this.deps.cache.getTables(word);
     return schemaTables.map((t) => {
@@ -95,13 +139,28 @@ export class SqlCompletionProvider implements vscode.CompletionItemProvider {
     });
   }
 
-  /** Root context — schemas + tables + keywords, prefix-filtered. */
+  /** FK target-table CompletionItem: schema-qualified insert when needed. */
+  private fkTargetItem(fk: CatalogForeignKeyRow): vscode.CompletionItem | null {
+    const targetSchema = fk.target.schema ?? DEFAULT_SCHEMA;
+    const item = new vscode.CompletionItem(
+      fk.target.table,
+      vscode.CompletionItemKind.Class,
+    );
+    item.detail = targetSchema;
+    item.insertText = catalogInsertText(fk.target.table, targetSchema);
+    return item;
+  }
+
+  /** Root context — schemas + tables + keywords + catalog rows, prefix-filtered. */
   private async rootCompletions(
     prefix: string,
   ): Promise<vscode.CompletionItem[]> {
-    const [schemas, tables] = await Promise.all([
+    const [schemas, tables, rootRows] = await Promise.all([
       this.deps.cache.getSchemas(),
       this.deps.cache.getTables(),
+      this.catalogEnabled
+        ? this.deps.catalog.listRootRows()
+        : Promise.resolve<readonly CatalogRootRow[]>([]),
     ]);
     const lowerPrefix = prefix.toLowerCase();
     const matches = (label: string): boolean =>
@@ -131,6 +190,42 @@ export class SqlCompletionProvider implements vscode.CompletionItemProvider {
         new vscode.CompletionItem(kw, vscode.CompletionItemKind.Keyword),
       );
     }
+    for (const row of rootRows) {
+      const item = this.catalogRootItem(row);
+      if (item && matches(String(item.label))) items.push(item);
+    }
     return items;
+  }
+
+  /** Catalog root-row CompletionItem — kind-aware; never throws. */
+  private catalogRootItem(row: CatalogRootRow): vscode.CompletionItem | null {
+    if (row.kind === "view") {
+      const item = new vscode.CompletionItem(
+        row.name,
+        vscode.CompletionItemKind.Class,
+      );
+      item.detail = `view · ${row.schema}`;
+      item.insertText = catalogInsertText(row.name, row.schema);
+      return item;
+    }
+    if (row.kind === "routine") {
+      const item = new vscode.CompletionItem(
+        row.name,
+        vscode.CompletionItemKind.Function,
+      );
+      item.detail = `${row.routineKind} · ${row.schema}`;
+      item.insertText = catalogInsertText(row.name, row.schema);
+      return item;
+    }
+    if (row.kind === "sequence") {
+      const item = new vscode.CompletionItem(
+        row.name,
+        vscode.CompletionItemKind.Constant,
+      );
+      item.detail = `${row.dataType} · ${row.schema}`;
+      item.insertText = catalogInsertText(row.name, row.schema);
+      return item;
+    }
+    return null;
   }
 }

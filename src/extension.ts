@@ -39,6 +39,7 @@ import { detectOmp, OMP_INSTALL_HINT, OMP_UPDATE_HINT } from "./ai/omp/detect";
 import { resolveEngine } from "./ai/engineChoice";
 import { registerBrowseCommands } from "./ui/browseCommands";
 import { SchemaCache } from "./ui/schemaCache";
+import { createCatalogResolver } from "./ui/sqlCatalog";
 import { SqlCompletionProvider } from "./ui/sqlCompletionProvider";
 import {
   SQL_SEMANTIC_LEGEND,
@@ -48,6 +49,7 @@ import { defaultAiSettings, type AiSettings } from "./ai/settings";
 import type { ConnectionConfig, ParsedStatement } from "./config/types";
 import { writeVsdbAiConfig } from "./extensionConfigExport";
 import { SqlAutocompleteService, type ProviderFn, type SchemaContext } from "./ai/sqlAutocomplete";
+import { createSchemaContextCache, type SchemaContextCache } from "./ai/schemaContextCache";
 import { registerSqlAutocomplete, type AutocompleteRegistration } from "./extensionAutocomplete";
 let disposables: vscode.Disposable[] = [];
 let state: ExtensionState | null = null;
@@ -187,6 +189,9 @@ export async function activate(
   );
   const sqlCompletion = new SqlCompletionProvider({
     cache: schemaCache,
+    catalog: createCatalogResolver(schemaCache, {
+      isPostgres: () => mgr.getActive()?.driver === "postgres",
+    }),
     hasConnection: () => mgr.getActive() !== null,
   });
   // Guard: partial `vscode` test mocks (extension.test.ts) chỉ stub
@@ -438,22 +443,20 @@ export async function activate(
       method: cfg.method,
       timeoutMs: cfg.timeoutMs,
     }).complete(req);
+  // Race-safe + bounded schema context cache for the AIC SQL autocomplete.
+  // The cache is keyed by the active connection identity, so a connection
+  // change triggers re-hydration automatically. explicit invalidate() is
+  // also wired to ConnectionManager.onDidChangeActive below as belt-and-
+  // suspenders for the (rare) case where two callers fire events for the
+  // same active id within the same tick.
+  const acSchemaCache: SchemaContextCache = createSchemaContextCache({
+    getActive: () => mgr.getActive(),
+    getAdapter: () => mgr.getAdapter(),
+  });
   const acResolveSchema = async (_scope: string): Promise<SchemaContext> => {
-    const active = mgr.getActive();
-    if (!active || active.driver !== "postgres") {
-      return { dialect: "postgres", connectionName: "", tables: [] };
-    }
-    try {
-      const adapter = await mgr.getAdapter();
-      const tables = await adapter.listTables();
-      return {
-        dialect: active.driver,
-        connectionName: active.name ?? "",
-        tables: [],
-      };
-    } catch {
-      return { dialect: "postgres", connectionName: "", tables: [] };
-    }
+    // The cache hydrates lazily and re-hydrates on connection identity
+    // change; the service downstream sanitizes the result defensively.
+    return acSchemaCache.resolve(_scope);
   };
   autocompleteService = new SqlAutocompleteService({
     provider: acProvider,
@@ -463,6 +466,16 @@ export async function activate(
     service: autocompleteService,
     loadConfig: () => aiStore.loadConfig(),
   });
+  // Invalidate the AIC schema context + every in-flight autocomplete scope
+  // on connection change. The service is the sole debounce/cache owner per
+  // caller scope; invalidating every known scope makes stale cache keys
+  // and any in-flight request safe to discard.
+  context.subscriptions.push(
+    mgr.onDidChangeActive(() => {
+      acSchemaCache.invalidate();
+      autocompleteService?.invalidateAll();
+    }),
+  );
 
   // 17. vsdb.openConsole — TASK-003 cycle Z: DataGrip-style SQL Console.
   // TASK-AF-004 cycle AF: passes `globalState` Memento so query history

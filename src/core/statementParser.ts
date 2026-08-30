@@ -829,3 +829,437 @@ export function sqlToRun(
   const statements = found ? [found] : [];
   return { statements, mode: "cursor" };
 }
+
+// ---- extractIdentifierReferences (TASK-DBX02-004) --------------------------
+
+/** Internal token state for the reference extractor walker. */
+enum RefTokenKind {
+  Code = "code",
+  String = "string",
+  Identifier = "identifier",
+  DollarQuote = "dollar",
+  LineComment = "lineComment",
+  BlockComment = "blockComment",
+}
+interface RefTokenState {
+  kind: RefTokenKind;
+  /** Dollar-quote tag (e.g. `$$`, `$tag$`) — only meaningful in DollarQuote. */
+  tag: string;
+}
+
+/**
+ * Reference to one code-side SQL identifier. For bare identifiers
+ * (e.g. `users` in `FROM users`) `qualifier` is undefined. For dotted
+ * identifiers (e.g. `orders.user_id`) the right side is emitted as a
+ * reference and the left side's span is recorded as `qualifier`. The
+ * parser does NOT resolve SQL aliases — both sides of `o.user_id` are
+ * emitted with `qualifier.name === "o"`, and the provider filters that
+ * out by checking `qualifier.name` against the catalog's table list.
+ *
+ * `quoted` is true iff the identifier was wrapped in double quotes
+ * (`"SalesOrders"`); mixed-case comparison is the caller's job.
+ *
+ * The walker respects the same String / Quoted-Identifier / DollarQuote /
+ * LineComment / BlockComment boundaries that `splitStatements` already
+ * understands, so references are NEVER emitted from inside a literal,
+ * dollar-quoted body, or comment. SQL keywords (SELECT/FROM/JOIN/...) are
+ * filtered out so the result is purely schema-relevant tokens.
+ */
+export interface IdentifierReference {
+  name: string;
+ start: number;
+ end: number;
+ quoted: boolean;
+ qualifier?: {
+    name: string;
+    start: number;
+    end: number;
+    quoted: boolean;
+  };
+}
+
+/** SQL keywords skipped by the identifier walker (case-insensitive). */
+const SQL_KEYWORD_SKIP: Readonly<Record<string, true>> = {
+  SELECT: true, FROM: true, WHERE: true, AND: true, OR: true, NOT: true,
+  NULL: true, IS: true, IN: true, AS: true, ON: true, JOIN: true,
+  INNER: true, LEFT: true, RIGHT: true, FULL: true, OUTER: true,
+  CROSS: true, GROUP: true, BY: true, ORDER: true, HAVING: true,
+  LIMIT: true, OFFSET: true, INSERT: true, INTO: true, VALUES: true,
+  UPDATE: true, SET: true, DELETE: true, TRUNCATE: true, CREATE: true,
+  TABLE: true, VIEW: true, INDEX: true, ALTER: true, DROP: true,
+  ADD: true, COLUMN: true, PRIMARY: true, KEY: true, FOREIGN: true,
+  REFERENCES: true, DEFAULT: true, DISTINCT: true, UNION: true,
+  ALL: true, EXISTS: true, BETWEEN: true, LIKE: true, ILIKE: true,
+  ASC: true, DESC: true, COUNT: true, SUM: true, AVG: true,
+  MIN: true, MAX: true, CASE: true, WHEN: true, THEN: true,
+  ELSE: true, END: true, BEGIN: true, COMMIT: true, ROLLBACK: true,
+  WITH: true, RETURNING: true, CAST: true, COALESCE: true,
+  EXPLAIN: true, ANALYZE: true, VACUUM: true, GRANT: true,
+  REVOKE: true, TRUE: true, FALSE: true,
+};
+
+function isSkippedKeyword(name: string): boolean {
+  return SQL_KEYWORD_SKIP[name.toUpperCase()] === true;
+}
+function refReadToken(
+  sql: string,
+  i: number,
+  state: RefTokenState,
+  useBackslashEscape: boolean,
+): { nextState: RefTokenState; nextIndex: number } {
+  if (state.kind === RefTokenKind.String) {
+    let j = i;
+    while (j < sql.length) {
+      const ch = sql[j];
+      if (
+        useBackslashEscape &&
+        ch === "\\" &&
+        j + 1 < sql.length
+      ) {
+        j += 2;
+        continue;
+      }
+      if (ch === "'") {
+        if (j + 1 < sql.length && sql[j + 1] === "'") {
+          j += 2;
+          continue;
+        }
+        return { nextState: { kind: RefTokenKind.Code, tag: "" }, nextIndex: j + 1 };
+      }
+      j += 1;
+    }
+    return { nextState: { kind: RefTokenKind.Code, tag: "" }, nextIndex: j };
+  }
+  if (state.kind === RefTokenKind.Identifier) {
+    let j = i;
+    while (j < sql.length) {
+      if (sql[j] === '"') {
+        if (j + 1 < sql.length && sql[j + 1] === '"') {
+          j += 2;
+          continue;
+        }
+        return { nextState: { kind: RefTokenKind.Code, tag: "" }, nextIndex: j + 1 };
+      }
+      j += 1;
+    }
+    return { nextState: { kind: RefTokenKind.Code, tag: "" }, nextIndex: j };
+  }
+  if (state.kind === RefTokenKind.DollarQuote) {
+    const tag = state.tag;
+    let j = i;
+    while (j < sql.length) {
+      if (sql.startsWith(tag, j)) {
+        return {
+          nextState: { kind: RefTokenKind.Code, tag: "" },
+          nextIndex: j + tag.length,
+        };
+      }
+      j += 1;
+    }
+    return { nextState: { kind: RefTokenKind.Code, tag: "" }, nextIndex: j };
+  }
+  if (state.kind === RefTokenKind.LineComment) {
+    let j = i;
+    while (j < sql.length) {
+      if (sql[j] === "\n") {
+        return { nextState: { kind: RefTokenKind.Code, tag: "" }, nextIndex: j };
+      }
+      j += 1;
+    }
+    return { nextState: { kind: RefTokenKind.Code, tag: "" }, nextIndex: j };
+  }
+  if (state.kind === RefTokenKind.BlockComment) {
+    let j = i;
+    while (j < sql.length) {
+      if (sql[j] === "*" && j + 1 < sql.length && sql[j + 1] === "/") {
+        return {
+          nextState: { kind: RefTokenKind.Code, tag: "" },
+          nextIndex: j + 2,
+        };
+      }
+      j += 1;
+    }
+    return { nextState: { kind: RefTokenKind.Code, tag: "" }, nextIndex: j };
+  }
+  // Code — start next token.
+  if (i >= sql.length) {
+    return { nextState: { kind: RefTokenKind.Code, tag: "" }, nextIndex: i };
+  }
+  const ch = sql[i];
+  if (ch === "'") {
+    return { nextState: { kind: RefTokenKind.String, tag: "" }, nextIndex: i + 1 };
+  }
+  if (ch === '"') {
+    return {
+      nextState: { kind: RefTokenKind.Identifier, tag: "" },
+      nextIndex: i + 1,
+    };
+  }
+  if (ch === "-" && i + 1 < sql.length && sql[i + 1] === "-") {
+    return {
+      nextState: { kind: RefTokenKind.LineComment, tag: "" },
+      nextIndex: i + 2,
+    };
+  }
+  if (ch === "/" && i + 1 < sql.length && sql[i + 1] === "*") {
+    return {
+      nextState: { kind: RefTokenKind.BlockComment, tag: "" },
+      nextIndex: i + 2,
+    };
+  }
+  if (ch === "$") {
+    // Reuse the matchDollarTag logic from the splitter above — duplicated
+    // here because the splitter keeps its copies private.
+    if (i + 1 < sql.length && sql[i + 1] === "$") {
+      return {
+        nextState: { kind: RefTokenKind.DollarQuote, tag: "$$" },
+        nextIndex: i + 2,
+      };
+    }
+    let j = i + 1;
+    const first = sql[j];
+    if (j < sql.length && isIdStart(first)) {
+      j += 1;
+      while (j < sql.length && isIdContinue(sql[j])) j += 1;
+      if (j < sql.length && sql[j] === "$") {
+        const tag = sql.substring(i, j + 1);
+        return {
+          nextState: { kind: RefTokenKind.DollarQuote, tag },
+          nextIndex: j + 1,
+        };
+      }
+    }
+  }
+  return { nextState: { kind: RefTokenKind.Code, tag: "" }, nextIndex: i + 1 };
+}
+
+/**
+ * At Code state, scan a single unquoted identifier at position `i` and
+ * return the span [i, end) plus the next `i` after the identifier.
+ */
+function scanCodeIdentifier(
+  sql: string,
+  i: number,
+): { start: number; end: number; nextIndex: number } | null {
+  if (i >= sql.length) return null;
+  if (!isIdStart(sql[i])) return null;
+  let j = i + 1;
+  while (j < sql.length && isIdContinue(sql[j])) j += 1;
+  return { start: i, end: j, nextIndex: j };
+}
+
+/**
+ * Skip whitespace (only — comments are not consumed here because the
+ * tokenizer itself has already skipped them; this is used only for the
+ * small gap between an identifier and a possible `.` separator).
+ */
+function skipWhitespaceLocal(sql: string, i: number): number {
+  let j = i;
+  while (j < sql.length) {
+    const ch = sql[j];
+    if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r") j += 1;
+    else break;
+  }
+  return j;
+}
+
+/**
+ * Walk the SQL once, respecting the same String / Quoted-Identifier /
+ * DollarQuote / LineComment / BlockComment boundaries as `splitStatements`.
+ *
+ * For every code-side identifier it emits one `IdentifierReference`. When
+ * two identifiers are separated by `.` (whitespace optional), the LEFT
+ * side is recorded as `qualifier` on the RIGHT-side reference — the LEFT
+ * side is NOT emitted as its own reference. Bare identifiers (no dot
+ * separator following) come back with no `qualifier`.
+ *
+ * SQL keywords (case-insensitive) are filtered out so the result stream
+ * is purely schema-relevant. Quoted identifiers keep their verbatim text
+ * (no case folding) and `quoted: true`.
+ */
+export function extractIdentifierReferences(
+  sql: string,
+  dialect?: SqlDialect,
+): readonly IdentifierReference[] {
+  const useBackslashEscape = dialect === "mysql";
+  const out: IdentifierReference[] = [];
+  const n = sql.length;
+  let i = 0;
+  let state: RefTokenState = { kind: RefTokenKind.Code, tag: "" };
+
+  while (i < n) {
+    const step = refReadToken(sql, i, state, useBackslashEscape);
+    // We are about to consume `sql[i .. step.nextIndex)` and end up in
+    // `step.nextState`. Two cases:
+    //   (a) state is Code AND the span [i, step.nextIndex) is a single
+    //       unquoted identifier — i.e. i+1 === step.nextIndex AND the
+    //       first char is an identifier start AND step.nextIndex - i > 1
+    //       (the walker only advances by 1 for non-token chars).
+    //   (b) otherwise: skip the span.
+    if (state.kind === RefTokenKind.Code) {
+      const ch = sql[i];
+      // The tokenizer steps one char at a time in Code state, so an
+      // identifier is recognized by its START char (not by span length):
+      // scan the full [start, end) span here and let the outer loop jump
+      // past it via the manual `i` advance below.
+      if (
+        ch !== undefined &&
+        ch !== "'" &&
+        ch !== '"' &&
+        ch !== "-" &&
+        ch !== "/" &&
+        ch !== "$" &&
+        isIdStart(ch)
+      ) {
+        // Code identifier starting at `i`. Now scan it.
+        const ident = scanCodeIdentifier(sql, i);
+        if (ident !== null) {
+          const name = sql.substring(ident.start, ident.end);
+          if (!isSkippedKeyword(name)) {
+            // Look for a `.` separator (with optional whitespace) followed
+            // by ANOTHER identifier. If found, emit the RIGHT-side
+            // reference with `qualifier = leftSpan`. If not, emit the
+            // bare identifier.
+            const after = skipWhitespaceLocal(sql, ident.nextIndex);
+            if (
+              after < n &&
+              sql[after] === "." &&
+              after + 1 < n
+            ) {
+              const afterDot = skipWhitespaceLocal(sql, after + 1);
+              const right = scanCodeIdentifier(sql, afterDot);
+              if (right !== null) {
+                const rightName = sql.substring(right.start, right.end);
+                if (!isSkippedKeyword(rightName)) {
+                  out.push({
+                    name: rightName,
+                    start: right.start,
+                    end: right.end,
+                    quoted: false,
+                    qualifier: {
+                      name,
+                      start: ident.start,
+                      end: ident.end,
+                      quoted: false,
+                    },
+                  });
+                  // Skip past the right identifier so we don't re-emit it
+                  // as a bare reference on the next step.
+                  state = { kind: RefTokenKind.Code, tag: "" };
+                  i = right.nextIndex;
+                  continue;
+                }
+              }
+            }
+            // Bare identifier (no `.identifier` follows).
+            out.push({
+              name,
+              start: ident.start,
+              end: ident.end,
+              quoted: false,
+            });
+          }
+          // Advance past this identifier so its interior chars are not
+          // re-scanned as new identifier starts.
+          state = { kind: RefTokenKind.Code, tag: "" };
+          i = ident.nextIndex;
+          continue;
+        }
+      }
+    } else if (state.kind === RefTokenKind.Identifier) {
+      // Quoted identifier token: the walker consumed the body starting at
+      // `i` (first interior char) and `step.nextIndex` sits just past the
+      // closing `"`. The emitted span INCLUDES both quotes; the name is the
+      // interior text only.
+      const nameStart = i - 1; // opening quote
+      const nameEnd = step.nextIndex; // just past closing quote
+      const name = sql.substring(i, step.nextIndex - 1);
+      // Even quoted keywords like `"SELECT"` get emitted — the caller's
+      // catalog match is case-sensitive / exact for quoted identities
+      // (Postgres stores quoted identifiers verbatim).
+      if (!isSkippedKeyword(name)) {
+        // Look for `.` then ANOTHER quoted identifier or unquoted code
+        // identifier to form a qualifier pair.
+        const after = skipWhitespaceLocal(sql, step.nextIndex);
+        if (after < n && sql[after] === "." && after + 1 < n) {
+          const afterDot = skipWhitespaceLocal(sql, after + 1);
+          // Two flavors of right side: quoted `"X"` or bare `x`.
+          if (afterDot < n && sql[afterDot] === '"') {
+            const closeQuote = findClosingQuote(sql, afterDot + 1);
+            if (closeQuote !== null) {
+              const rightName = sql.substring(afterDot + 1, closeQuote);
+              out.push({
+                name: rightName,
+                start: afterDot,
+                end: closeQuote + 1,
+                quoted: true,
+                qualifier: {
+                  name,
+                  start: nameStart,
+                  end: nameEnd,
+                  quoted: true,
+                },
+              });
+              state = { kind: RefTokenKind.Code, tag: "" };
+              i = closeQuote + 1;
+              continue;
+            }
+          } else {
+            const right = scanCodeIdentifier(sql, afterDot);
+            if (right !== null) {
+              const rightName = sql.substring(right.start, right.end);
+              if (!isSkippedKeyword(rightName)) {
+                out.push({
+                  name: rightName,
+                  start: right.start,
+                  end: right.end,
+                  quoted: false,
+                  qualifier: {
+                    name,
+                    start: nameStart,
+                    end: nameEnd,
+                    quoted: true,
+                  },
+                });
+                state = { kind: RefTokenKind.Code, tag: "" };
+                i = right.nextIndex;
+                continue;
+              }
+            }
+          }
+        }
+        // Bare quoted identifier (no dot follow).
+        out.push({
+          name,
+          start: nameStart,
+          end: nameEnd,
+          quoted: true,
+        });
+      }
+    }
+    state = step.nextState;
+    i = step.nextIndex;
+  }
+
+  return out;
+}
+
+/**
+ * For an opening `"` at position `openIdx`, return the index of the
+ * matching closing `"`, respecting `""` escape. Returns null if the
+ * quoted identifier is unterminated.
+ */
+function findClosingQuote(sql: string, openIdx: number): number | null {
+  let j = openIdx;
+  while (j < sql.length) {
+    if (sql[j] === '"') {
+      if (j + 1 < sql.length && sql[j + 1] === '"') {
+        j += 2;
+        continue;
+      }
+      return j;
+    }
+    j += 1;
+  }
+  return null;
+}

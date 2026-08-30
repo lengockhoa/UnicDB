@@ -132,6 +132,52 @@ describe("sanitizeSuffix", () => {
     expect(sanitizeSuffix("")).toBe("");
     expect(sanitizeSuffix("   \n  ")).toBe("");
   });
+
+  // ---- regression: trailing SQL comments must not be inserted into the
+  // user buffer. They are model noise; without stripping, the user gets
+  // `SELECT * FROM users  -- trailing comment` inserted mid-document.
+  it("strips a trailing SQL `--` line comment", () => {
+    expect(sanitizeSuffix("SELECT * FROM users\n-- trailing comment")).toBe(
+      "SELECT * FROM users",
+    );
+  });
+
+  it("strips a trailing inline `--` comment from the same line", () => {
+    expect(sanitizeSuffix("SELECT 1 -- inline note")).toBe("SELECT 1");
+  });
+
+  it("strips a trailing inline `/* */` block comment", () => {
+    expect(sanitizeSuffix("SELECT 1 /* inline note */")).toBe("SELECT 1");
+  });
+
+  it("preserves valid SQL that happens to mention `--` inside a string literal", () => {
+    // The `--` is inside a string literal, NOT a SQL comment. Naive
+    // stripping must not damage valid SQL.
+    expect(sanitizeSuffix("SELECT '--not-a-comment' AS s")).toBe(
+      "SELECT '--not-a-comment' AS s",
+    );
+  });
+
+  it("preserves `--` inside a double-quoted identifier", () => {
+    expect(sanitizeSuffix('SELECT "weird--col" FROM t')).toBe(
+      'SELECT "weird--col" FROM t',
+    );
+  });
+
+  it("preserves `--` inside a dollar-quoted string", () => {
+    expect(sanitizeSuffix("SELECT $tag$contains -- inside$tag$")).toBe(
+      "SELECT $tag$contains -- inside$tag$",
+    );
+  });
+
+  it("preserves valid SQL that contains a block comment in the middle of the statement", () => {
+    expect(sanitizeSuffix("SELECT /* hint */ 1")).toBe("SELECT /* hint */ 1");
+  });
+
+  it("strips comment-only suffix and returns empty", () => {
+    expect(sanitizeSuffix("-- just a comment")).toBe("");
+    expect(sanitizeSuffix("/* just a block comment */")).toBe("");
+  });
 });
 
 describe("isCommentOnlyOrWhitespace", () => {

@@ -737,3 +737,163 @@ describe("statementParser — review fix round E regressions (root cause: stack-
     expect(debugFinalConstructStackSizeForTest(sql)).toBe(0);
   });
 });
+
+// ---- TASK-DBX02-004 — parsed SQL identifier references ---------------------
+//
+// extractIdentifierReferences(sql, dialect) walks SQL token boundaries
+// (String, Identifier, DollarQuote, LineComment, BlockComment) the same way
+// the parser's splitStatements does and emits one IdentifierReference per
+// direct code-side identifier it finds. For `qualifier.identifier` it emits
+// exactly ONE reference for the RIGHT side, with the LEFT side's span
+// recorded as `qualifier`. Bare identifiers come back with no qualifier.
+// Aliases are NOT resolved at this layer — see the provider for catalog
+// filtering.
+import { extractIdentifierReferences } from "../statementParser";
+import type { IdentifierReference } from "../statementParser";
+
+describe("statementParser — extractIdentifierReferences", () => {
+  it("Test #1 — emits direct table/column/FK-target identifiers across statements with qualifier spans", () => {
+    const sql =
+      "SELECT orders.user_id FROM orders JOIN users ON orders.user_id = users.id;";
+    // Offsets (verified by indexOf on the literal above):
+    //   SELECT          [ 0,  6)
+    //   orders (proj)   [ 7, 13)   ← qualifies user_id
+    //   user_id (proj)  [14, 21)   ← right side of projection
+    //   FROM            [22, 26)
+    //   orders (FROM)   [27, 33)
+    //   JOIN            [34, 38)
+    //   users (JOIN)    [39, 44)
+    //   ON              [45, 47)
+    //   orders (ON)     [48, 54)   ← qualifies user_id
+    //   user_id (ON)    [55, 62)   ← right side
+    //   users (ON rhs)  [65, 70)
+    //   id (ON rhs)     [71, 73)   ← right side of users.id
+    //
+    // For `qualifier.identifier`, extractor emits ONE reference for the
+    // RIGHT side (column) and records the LEFT side as `qualifier`. Bare
+    // identifiers come back with no qualifier. SELECT/FROM/JOIN/ON are SQL
+    // keywords and stay out of the result. Expected sequence (in source
+    // order):
+    //   1. user_id  [14, 21)  qual orders  [ 7, 13)
+    //   2. orders   [27, 33)  (bare, FROM target)
+    //   3. users    [39, 44)  (bare, JOIN target)
+    //   4. user_id  [55, 62)  qual orders  [48, 54)
+    //   5. users    [65, 70)  (bare, ON rhs)
+    //   6. id       [71, 73)  qual users   [65, 70)
+    //
+    // CORRECTION (post-implementation alignment): the contract in
+    // TASK-DBX02-004 §Interfaces says for `qualifier.identifier` the LEFT
+    // side is recorded ONLY as `qualifier` and is NOT emitted as its own
+    // bare reference (matching refs[0]: bare `orders`@[7,13) is absent).
+    // `users`@[65,70) is the LEFT side of `users.id` — the same shape —
+    // so the earlier expectation of a bare users ref there contradicted
+    // refs[0]. The emitted stream is 5 refs, not 6.
+    const refs = extractIdentifierReferences(sql);
+    expect(refs.length).toBe(5);
+    expect(refs[0]).toEqual({
+      name: "user_id",
+      start: 14,
+      end: 21,
+      quoted: false,
+      qualifier: { name: "orders", start: 7, end: 13, quoted: false },
+    });
+    expect(refs[1]).toEqual({
+      name: "orders",
+      start: 27,
+      end: 33,
+      quoted: false,
+    });
+    expect(refs[2]).toEqual({
+      name: "users",
+      start: 39,
+      end: 44,
+      quoted: false,
+    });
+    expect(refs[3]).toEqual({
+      name: "user_id",
+      start: 55,
+      end: 62,
+      quoted: false,
+      qualifier: { name: "orders", start: 48, end: 54, quoted: false },
+    });
+    expect(refs[4]).toEqual({
+      name: "id",
+      start: 71,
+      end: 73,
+      quoted: false,
+      qualifier: { name: "users", start: 65, end: 70, quoted: false },
+    });
+  });
+
+  it("Test #2 — identifier in line/block comments, strings, and dollar-quote is NOT emitted", () => {
+    const sql = [
+      "-- orders in line comment",
+      "/* orders in block comment */",
+      "SELECT 'orders in string', $$orders in dollar quote$$;",
+    ].join("\n");
+    const refs = extractIdentifierReferences(sql);
+    const names = refs.map((r) => r.name);
+    // Only the SELECT keyword left as bare identifier (none expected — SELECT
+    // is a keyword and gets filtered). Nothing else should be emitted because
+    // every occurrence of `orders` lives in a non-code span.
+    expect(names).toEqual([]);
+    expect(refs).toEqual([]);
+  });
+
+  it("Test #3 — quoted mixed-case identifier keeps its quoted flag and exact text", () => {
+    // "SalesOrders" (quoted mixed-case) vs `salesorders` (lowercase, unquoted)
+    // — extractor emits each with the correct `quoted` flag and verbatim
+    // text (NO case folding). Catalog matching uses these exact strings.
+    const sql = 'SELECT "SalesOrders".id FROM "SalesOrders";';
+    const refs = extractIdentifierReferences(sql);
+    // Expected:
+    //   - id with qualifier "SalesOrders" (the SELECT projection)
+    //   - "SalesOrders" (the FROM target, bare, quoted)
+    const projection = refs.find((r) => r.name === "id");
+    expect(projection).toBeDefined();
+    expect(projection?.quoted).toBe(false);
+    expect(projection?.start).toBe(sql.indexOf(".id") + 1);
+    expect(projection?.end).toBe(sql.indexOf(".id") + 1 + "id".length);
+    expect(projection?.qualifier).toEqual({
+      name: "SalesOrders",
+      start: sql.indexOf('"SalesOrders"'),
+      end: sql.indexOf('"SalesOrders"') + '"SalesOrders"'.length,
+      quoted: true,
+    });
+    const fromTarget = refs.find(
+      (r) => r.name === "SalesOrders" && r.qualifier === undefined,
+    );
+    // Unquoted `salesorders` does NOT appear in this SQL — there is no
+    // lowercase occurrence, so nothing else should be emitted.
+    const lower = refs.find((r) => r.name === "salesorders");
+    expect(lower).toBeUndefined();
+  });
+
+  it("Test #4 — alias declaration and alias-qualified columns are emitted as raw tokens (filtering is the provider's job)", () => {
+    // `orders o` declares alias `o`; `o.user_id` references through the alias.
+    // `bare` is an unqualified ambiguous column. The parser emits raw tokens
+    // regardless — `o` appears as a qualifier span and `bare` as a bare
+    // identifier. The provider is responsible for rejecting both, since this
+    // cycle only matches direct unaliased qualified identifiers.
+    const sql = "SELECT o.user_id, bare FROM orders o;";
+    const refs = extractIdentifierReferences(sql);
+    // We expect:
+    //   - user_id with qual { name: "o", start: <o decl position>, ... }
+    //   - bare (no qualifier)
+    const userId = refs.find((r) => r.name === "user_id");
+    expect(userId).toBeDefined();
+    expect(userId?.qualifier?.name).toBe("o");
+    // The qualifier span must point at the alias declaration `o` — the
+    // parser does NOT skip alias declarations, so the LEFT side of
+    // `o.user_id` is recorded for the provider to filter out.
+    expect(userId?.qualifier?.start).toBe(sql.indexOf(".user_id") - 1);
+    expect(userId?.qualifier?.end).toBe(sql.indexOf(".user_id"));
+    const bare = refs.find((r) => r.name === "bare");
+    expect(bare).toBeDefined();
+    expect(bare?.qualifier).toBeUndefined();
+    // `orders` (FROM target) still emitted — provider filter will reject
+    // alias-side references but the raw token stream is complete.
+    const orders = refs.find((r) => r.name === "orders");
+    expect(orders).toBeDefined();
+  });
+});

@@ -2,7 +2,7 @@
 // Pure parser guard. Acceptance criterion 1.
 
 import { describe, it, expect } from "vitest";
-import { parseReadonly, containsForbidden } from "../readonlySqlParser";
+import { parseReadonly, containsForbidden, stripTrailingSqlComments } from "../readonlySqlParser";
 
 describe("parseReadonly — accepts read-only statements", () => {
   it("accepts uppercase SELECT", () => {
@@ -131,5 +131,34 @@ describe("parseReadonly — defense in depth", () => {
   it("containsForbidden is exported and case-insensitive", () => {
     expect(containsForbidden("a = 1")).toBe(false);
     expect(containsForbidden("a = 1 OR TrUnCaTe")).toBe(true);
+  });
+});
+
+describe("stripTrailingSqlComments — lexical safety", () => {
+  it("preserves `--` inside PostgreSQL double-quoted identifiers", () => {
+    // The identifier is `drop--comment` — `--` inside a quoted identifier
+    // must NOT be treated as a line comment. PostgreSQL allows quoted
+    // identifiers to contain any character.
+    const r = stripTrailingSqlComments('SELECT "weird--col" FROM t');
+    expect(r).toContain('"weird--col"');
+  });
+
+  it("preserves `--` inside dollar-quoted strings ($tag$…$tag$)", () => {
+    // Dollar-quoted string body contains `--` — must be preserved verbatim.
+    const r = stripTrailingSqlComments("SELECT $tag$contains -- inside$tag$ FROM t");
+    expect(r).toContain("$tag$contains -- inside$tag$");
+  });
+
+  it("preserves single-quoted string contents (regression — was already safe)", () => {
+    const r = stripTrailingSqlComments("SELECT 'a -- not a comment' FROM t");
+    expect(r).toContain("'a -- not a comment'");
+  });
+
+  it("strips trailing `-- line` comment after a real statement", () => {
+    const r = stripTrailingSqlComments("SELECT 1 -- trailing note\n");
+    // The trailing comment body should be replaced with a space so tokens
+    // never fuse; the trailing newline is preserved.
+    expect(r.startsWith("SELECT 1 ")).toBe(true);
+    expect(r).not.toContain("trailing note");
   });
 });

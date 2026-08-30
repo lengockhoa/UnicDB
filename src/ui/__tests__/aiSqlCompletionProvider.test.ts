@@ -61,17 +61,41 @@ function makeConfig(): AiConfig {
 }
 
 function makeDoc(text: string): vscode.TextDocument {
+  // Compute the character offset for a (line, character) position, matching
+  // vscode.TextDocument.offsetAt's contract: offset = sum of preceding line
+  // lengths (+ newline) + character on the target line. Without this,
+  // aiSqlCompletionProvider's stale guard and cursor slice will silently
+  // miscompute offsets on multiline documents.
+  const lineOffsets: number[] = [0];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "\n") lineOffsets.push(i + 1);
+  }
   return {
     languageId: "sql",
     uri: { toString: () => "file:///tmp/test.sql" },
     getText: () => text,
-    lineAt: (_line: number) => ({ text }),
+    lineAt: (line: number) => ({
+      text: text.split("\n")[line] ?? "",
+    }),
+    offsetAt: (position: vscode.Position) => {
+      const base = lineOffsets[position.line] ?? 0;
+      return base + position.character;
+    },
     version: 1,
   } as unknown as vscode.TextDocument;
 }
 
 function posAtEnd(text: string): vscode.Position {
   return { line: 0, character: text.length } as unknown as vscode.Position;
+}
+
+/** Position at the end of a specific line (multiline cursor). */
+function posAtLineEnd(text: string, line: number): vscode.Position {
+  const lines = text.split("\n");
+  return {
+    line,
+    character: lines[line]?.length ?? 0,
+  } as unknown as vscode.Position;
 }
 
 const liveCtx: vscode.InlineCompletionContext = {
@@ -233,6 +257,75 @@ describe("AiSqlCompletionProvider — stale guard", () => {
       liveCtx,
       new vscode.CancellationTokenSource().token,
     );
+    expect(items).toEqual([]);
+  });
+});
+
+describe("AiSqlCompletionProvider — multiline cursor offset (regression: position.character is a LINE offset, not a doc offset)", () => {
+  // Defect: the default buildRequest used position.character as cursorOffset,
+  // and the default isStale compared pos.character against snapshot.cursorOffset.
+  // For a single-line document both happen to equal doc length, so the bug was
+  // invisible. The moment the cursor is on a non-zero line, character resets to
+  // 0 and the captured cursorOffset is wrong → stale-guard never trips and the
+  // service receives a slice anchored at offset 0 instead of the real cursor.
+  it("captures the FULL-document cursor offset, not a line-relative character count (multiline)", async () => {
+    let capturedOffset = -1;
+    const suggest: SqlAutocompleteService["suggest"] = vi.fn(
+      async (_cfg, req) => {
+        capturedOffset = req.cursorOffset;
+        return "ers";
+      },
+    );
+    const svc = { suggest, cancel: vi.fn() } as unknown as SqlAutocompleteService;
+    const provider = new AiSqlCompletionProvider({
+      service: svc,
+      // Use the production default buildRequest so this test pins the bug.
+      loadConfig: async () => makeConfig(),
+    });
+    // Two-line document; cursor sits at end of line 1.
+    // Line 0 = "SELECT * FROM us" (16 chars) + "\n" → doc offset of line 1 = 17.
+    const text = "SELECT * FROM us\ners";
+    const doc = makeDoc(text);
+    const pos = posAtLineEnd(text, 1);
+    expect(doc.offsetAt(pos)).toBe(20); // sanity: doc-offset at end of line 1.
+    const items = await provider.provideInlineCompletionItems(
+      doc,
+      pos,
+      liveCtx,
+      new vscode.CancellationTokenSource().token,
+    );
+    // MUST be 20 (doc-offset), not 3 (line-relative character at end of "ers").
+    expect(capturedOffset).toBe(20);
+    expect(items).toHaveLength(1);
+    expect(items[0]!.insertText).toBe("ers");
+  });
+
+  it("default isStale compares doc.offsetAt, not position.character (multiline stale guard)", async () => {
+    const suggest = vi.fn(async () => {
+      // Yield so the test can mutate before the suffix lands.
+      await new Promise((r) => setTimeout(r, 5));
+      return "ers";
+    });
+    const svc = { suggest, cancel: vi.fn() } as unknown as SqlAutocompleteService;
+    const provider = new AiSqlCompletionProvider({
+      service: svc,
+      loadConfig: async () => makeConfig(),
+    });
+    // Multiline doc; cursor is on line 1.
+    const text = "SELECT * FROM us\ners";
+    const doc = makeDoc(text);
+    const pos = posAtLineEnd(text, 1);
+    // Bump only the doc VERSION — position is unchanged.
+    setTimeout(() => {
+      (doc as unknown as { version: number }).version = 2;
+    }, 1);
+    const items = await provider.provideInlineCompletionItems(
+      doc,
+      pos,
+      liveCtx,
+      new vscode.CancellationTokenSource().token,
+    );
+    // Default isStale must trip on a version change regardless of line index.
     expect(items).toEqual([]);
   });
 });

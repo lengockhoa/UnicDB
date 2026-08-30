@@ -38,7 +38,8 @@ export interface AiSqlCompletionProviderDeps {
   /** Resolves the current AI config. Null means unconfigured. */
   loadConfig: () => Promise<AiConfig | null>;
   /** Build the AIC-002 request. Default: callerScope = doc.uri, cursor =
-   *  position.character, documentText = full text, fingerprint = "v1". */
+   *  full-document offset (doc.offsetAt), documentText = full text,
+   *  fingerprint = "v1". */
   buildRequest?: BuildRequestFn;
   /** Optional stale-guard override. Default uses version+cursor comparison. */
   isStale?: IsStaleFn;
@@ -46,13 +47,14 @@ export interface AiSqlCompletionProviderDeps {
 
 const defaultBuildRequest: BuildRequestFn = (doc, position) => ({
   callerScope: doc.uri.toString(),
-  cursorOffset: position.character,
+  cursorOffset: doc.offsetAt(position),
   documentText: doc.getText(),
   schemaFingerprint: "v1",
 });
 
 const defaultIsStale: IsStaleFn = ({ doc, pos, snapshot }) =>
-  doc.version !== snapshot.version || pos.character !== snapshot.cursorOffset;
+  doc.version !== snapshot.version ||
+  doc.offsetAt(pos) !== snapshot.cursorOffset;
 
 export class AiSqlCompletionProvider implements vscode.InlineCompletionItemProvider {
   private readonly service: SqlAutocompleteService;
@@ -80,7 +82,7 @@ export class AiSqlCompletionProvider implements vscode.InlineCompletionItemProvi
 
     const req = this.buildRequest(document, position);
     const controller = new AbortController();
-    const snapshot = { version: document.version, cursorOffset: position.character };
+    const snapshot = { version: document.version, cursorOffset: document.offsetAt(position) };
 
     const onCancel = token.onCancellationRequested(() => controller.abort());
     try {

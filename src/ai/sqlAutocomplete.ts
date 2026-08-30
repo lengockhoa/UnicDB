@@ -189,9 +189,133 @@ export function sanitizeSuffix(text: string): string {
   if (/\b(the|please|here|sure|note:|explanation)\b/i.test(firstLine)) return "";
   // Strip leading semicolon (we always insert BEFORE the user's own next chars).
   let cleaned = firstLine.replace(/^\s*;\s*/, "");
+  // Strip trailing SQL comments (`-- …` end-of-line and trailing `/* … */`)
+  // so a provider that appends a comment to its SQL suffix cannot leak the
+  // comment into the user's buffer. Comments INSIDE string literals / quoted
+  // identifiers / dollar-quoted bodies must be preserved — the stripper walks
+  // those lexical contexts instead of regexing blindly.
+  cleaned = stripTrailingSqlComments(cleaned);
   // Drop trailing semicolons + whitespace — never end a continuation with ";".
   cleaned = cleaned.replace(/[\s;]+$/, "").trim();
   return cleaned;
+}
+
+/**
+ * Remove trailing SQL line/block comments that are NOT inside a string
+ * literal, a double-quoted identifier, or a dollar-quoted body.
+ *
+ * The provider occasionally appends a `-- note` or `/* hint *\/` after the
+ * actual SQL. Those comments are model noise — they are not valid SQL to
+ * insert at the cursor — and they bloat the user's buffer. We strip:
+ *   - trailing `-- …` to end-of-line
+ *   - trailing `/* … *\/` (block comment) if it extends to end of input
+ * Lexical contexts that may legitimately contain `--` are copied verbatim:
+ *   - single-quoted string literals (with `''` escapes)
+ *   - PostgreSQL double-quoted identifiers (with `""` escapes)
+ *   - PostgreSQL dollar-quoted strings `$tag$…$tag$`
+ */
+export function stripTrailingSqlComments(text: string): string {
+  // Walk char-by-char so we know which lexical context we are in.
+  let i = 0;
+  let result = "";
+  while (i < text.length) {
+    const ch = text[i]!;
+    if (ch === "'") {
+      // Single-quoted string literal: copy verbatim until the closing
+      // unescaped `'` (a doubled `''` is an escaped quote).
+      const [nextI, copied] = copyQuotedRegion(text, i, "'");
+      result += copied;
+      i = nextI;
+      continue;
+    }
+    if (ch === '"') {
+      const [nextI, copied] = copyQuotedRegion(text, i, '"');
+      result += copied;
+      i = nextI;
+      continue;
+    }
+    if (ch === "$") {
+      const tag = readDollarTag(text, i);
+      if (tag !== null) {
+        const close = text.indexOf(tag, i + tag.length);
+        const end = close < 0 ? text.length : close + tag.length;
+        result += text.slice(i, end);
+        i = end;
+        continue;
+      }
+      result += ch;
+      i++;
+      continue;
+    }
+    if (ch === "-" && text[i + 1] === "-") {
+      // Trailing line comment — drop everything to end of input.
+      break;
+    }
+    if (ch === "/" && text[i + 1] === "*") {
+      const close = text.indexOf("*/", i + 2);
+      if (close < 0) {
+        // Unterminated — strip to end (defensive; shouldn't happen).
+        break;
+      }
+      // Only treat as "trailing" if nothing but whitespace follows the
+      // comment. Otherwise it is a mid-statement hint — keep it verbatim
+      // and continue scanning after it.
+      const restAfter = text.slice(close + 2).trim();
+      if (restAfter.length === 0) {
+        break;
+      }
+      result += text.slice(i, close + 2);
+      i = close + 2;
+      continue;
+    }
+    result += ch;
+    i++;
+  }
+  return result;
+}
+
+/** Copy a `'…'` or `"…"` region (with doubled-quote escapes) verbatim,
+ *  returning `[index just past the closing quote, copied text]`. If
+ *  unterminated, copies the rest of the input. */
+function copyQuotedRegion(
+  text: string,
+  start: number,
+  quote: string,
+): [number, string] {
+  let i = start;
+  let out = quote;
+  i++;
+  while (i < text.length) {
+    const c = text[i]!;
+    out += c;
+    i++;
+    if (c === quote) {
+      if (text[i] === quote) {
+        // Doubled quote — escaped, stay inside the region.
+        out += quote;
+        i++;
+        continue;
+      }
+      break;
+    }
+  }
+  return [i, out];
+}
+
+/** If `text` at `i` starts with a dollar-quote delimiter (`$tag$` or `$$`),
+ *  return the full delimiter; otherwise null. Tag body is
+ *  `[A-Za-z_][A-Za-z0-9_]*`. */
+function readDollarTag(text: string, i: number): string | null {
+  if (text[i] !== "$") return null;
+  const n = text.length;
+  let j = i + 1;
+  if (j < n && text[j] === "$") return "$$";
+  const c = text[j];
+  if (j >= n || !/[A-Za-z_]/.test(c!)) return null;
+  j++;
+  while (j < n && /[A-Za-z0-9_]/.test(text[j]!)) j++;
+  if (text[j] !== "$") return null;
+  return text.slice(i, j + 1);
 }
 
 // ---- service --------------------------------------------------------------
