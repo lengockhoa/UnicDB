@@ -1,9 +1,17 @@
 # ACTIVE
 
-Cycle: DBX-03   Date: 2026-08-30   Base: main @ f0581fe
-Goal: Schema & Data Compare — schema diff, keyed data diff, previewed directional sync plan (PostgreSQL only; same connection; preview-only panel).
+Cycle: AIX-01   Date: 2026-08-30   Base: main @ 3b30f7c
+Goal: Grounded Workspace Context — selection + file grounding, attributed retrieval, gated workspace_search tool (opt-in via vsdb.ai.grounding).
 Tasks: 4 total
-Status: done — 4/4 tasks implemented + reviewed (unic-smart APPROVED after 2 fix rounds). Final: targeted 43/43, full 2344 passed / 2 skipped, typecheck clean. Shipped unreleased; release next.
+Status: executed + committed (bd33e11); unic-smart review in progress (Aix01Reviewer).
+
+Previous:
+Cycle: DBX-04   Date: 2026-08-30   Base: main @ 579b38c
+Status: done — shipped as v1.18.0 (4/4 tasks, unic-smart APPROVED after 3 fix rounds, 2389 passed / 2 skipped).
+
+Previous:
+Cycle: DBX-03   Date: 2026-08-30   Base: main @ f0581fe
+Status: done — shipped as v1.17.0 (4/4 tasks, unic-smart APPROVED after 2 fix rounds, 2344 passed / 2 skipped).
 
 Previous:
 Cycle: DBX-01 (re-opened)   Date: 2026-08-30   Base: main @ d9d603b
