@@ -4,10 +4,10 @@ Cycle AHL — **ADMIN (ROLES / GRANTS / SESSIONS / LOCKS)**: roadmap AH slice (A
 
 | Task | Title | Status | Dependencies | Reviewer |
 |------|-------|--------|--------------|----------|
-| TASK-AHL-001 | pgAdmin pure module + AdminApi contract | done | none | unic-code (in-session advisory) |
-| TASK-AHL-002 | Admin tree provider + roles/grants wizard | done | AHL-001 | unic-code (in-session advisory) |
-| TASK-AHL-003 | Sessions/Locks panel + kill/terminate confirm | done | AHL-001 | unic-code (in-session advisory) |
-| TASK-AHL-004 | Extension wiring + package.json + regression | done (approved_minor) | AHL-002, AHL-003 | unic-code (in-session advisory) |
+| TASK-AHL-001 | pgAdmin pure module + AdminApi contract | done | none | unic-smart strict re-review APPROVED (2026-08-30) |
+| TASK-AHL-002 | Admin tree provider + roles/grants wizard | done | AHL-001 | unic-smart strict re-review APPROVED (2026-08-30) |
+| TASK-AHL-003 | Sessions/Locks panel + kill/terminate confirm | done | AHL-001 | unic-smart strict re-review APPROVED (2026-08-30) |
+| TASK-AHL-004 | Extension wiring + package.json + regression | done (approved_minor) | AHL-002, AHL-003 | unic-smart strict re-review APPROVED (2026-08-30) |
 
 Graph: AHL-001 → AHL-002, AHL-003; AHL-002 + AHL-003 → AHL-004.
 
@@ -18,7 +18,7 @@ Waves:
 
 All 4 tasks done. Final state: full suite 2133 passed | 2 skipped (145 files); typecheck 0; compile clean.
 
-Reviewer note (constraint flag): the handoff spec requires reviewer ≠ executor model. In this unattended one-shot run, the reviewer pass was performed by the same model as the executor (unic-code, in-session). A follow-up cycle can re-review on `unic-smart` to satisfy the strict-mode contract.
+Reviewer note (resolved 2026-08-30): the same-model advisory review debt was cleared by an independent unic-smart strict re-review (AhlReviewer). Verdict history: CHANGES-REQUESTED (3 findings: gate ordering vs confirmDestructive opt-out, wizard bare-runQuery bypass, grant-target NUL/length validation) -> remediation commit 8f03b7b -> superseding APPROVED in TASK-AHL-001.md + TASK-AHL-004.md. Final: targeted 146/146, full 2453 passed | 2 skipped.
 
 File locks (admin cycle owns):
 - AHL-001: `src/core/admin/pgAdmin.ts` (NEW), `src/core/admin/__tests__/pgAdmin.test.ts` (NEW), additive to `src/adapters/types.ts`, additive to `src/adapters/postgres.ts`.

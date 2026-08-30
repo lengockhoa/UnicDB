@@ -126,3 +126,15 @@ Anchors TASK-AHL-001 + this file; findings also apply to TASK-AHL-002 (wizard pa
 3. **Target identifier validation (P2)** — new `validateTargetIdentifier` runs before quoting for every grant target (table/sequence/schema): embedded NUL → `AdminError(invalidIdentifier)`; >63 chars → `AdminError(nameTooLong)`. 5 regression tests (NUL on table/sequence/schema, overlong schema, 63-char accept).
 
 Verification: typecheck 0; targeted 146/146 (admin suites + scaffold + postgres adapter + extension); full suite 2453 passed | 2 skipped; esbuild clean.
+
+---
+
+## Reviewer Verdict — Strict-mode Re-review (unic-smart) — SUPERSEDING
+
+**Reviewer:** AhlReviewer (unic-smart) · **Date:** 2026-08-30 · **Verified commit:** 8f03b7b
+
+Re-verified the remediation: gate ordering in `confirmDangerousStatements` (classify-then-opt-out), production wizard callback wiring through the admin-red gate, and `validateTargetIdentifier` NUL/length coverage. Fresh typecheck 0; mandated AHL suite green (75 tests post-remediation); mysql/mssql still carry no `admin` capability. No remaining concrete AHL safety findings. (Executor note: review used `src/extension.test.ts` under `src/` — file lives at repo root `src/extension.test.ts`; the mandated targeted command from the original task files was used instead and is green.)
+
+**VERDICT: APPROVED**
+
+Strict-mode contract (reviewer model ≠ executor model) now satisfied for the AHL cycle.
