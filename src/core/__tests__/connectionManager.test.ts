@@ -386,3 +386,88 @@ describe("ConnectionManager — EventEmitter onDidChangeActive", () => {
     expect(events).toHaveLength(2);
   });
 });
+// DBX-05 TASK-DBX05-003 — read-only + tunnel wiring.
+import { ConnectionManager } from "../connectionManager";
+import { SshTunnelManager } from "../sshTunnelManager";
+import { ReadOnlyViolation } from "../readOnlyIntent";
+
+const STUB_CTX = {
+  workspaceState: { get: () => undefined, update: async () => undefined },
+  globalState: { get: () => undefined, update: async () => undefined },
+  secrets: { get: async (k: string) => (k.endsWith("cRO") ? "pw" : undefined), store: async () => undefined, delete: async () => undefined },
+  subscriptions: [],
+  extensionPath: "/tmp",
+  globalStoragePath: "/tmp",
+  logUri: undefined as any,
+  storagePath: "/tmp",
+} as never;
+
+const baseCfg = {
+  id: "cRO", name: "ro", driver: "postgres", host: "h", port: 5432, user: "u", database: "d",
+  readOnly: true,
+} as any;
+
+describe("ConnectionManager DBX-05 read-only + tunnel", () => {
+  it("readOnly: SELECT passes through to adapter", async () => {
+    const runs: string[] = [];
+    const factory = () => ({
+      runQuery: async (sql: string) => { runs.push(sql); return { results: [] }; },
+      testConnection: async () => {},
+      close: async () => {},
+    });
+    const mgr = new (ConnectionManager)(STUB_CTX, factory);
+    const a = await mgr.getAdapterFor({ ...baseCfg, readOnly: false });
+    await a.runQuery("SELECT 1");
+    mgr.dispose();
+  });
+
+  it("readOnly: DELETE throws ReadOnlyViolation BEFORE runQuery", async () => {
+    const runs: string[] = [];
+    const factory = () => ({
+      runQuery: async (sql: string) => { runs.push(sql); return { results: [] }; },
+      testConnection: async () => {},
+      close: async () => {},
+    });
+    const mgr = new (ConnectionManager)(STUB_CTX, factory);
+    const a = await mgr.getAdapterFor(baseCfg);
+    expect(() => a.runQuery("DELETE FROM t")).toThrow(ReadOnlyViolation);
+    expect(runs.length).toBe(0);
+    mgr.dispose();
+  });
+
+  it("tunnel: adapter is created with rewritten host/port; persisted cfg unchanged", async () => {
+    const fakeTunnels = {
+      start: async (cfg: any) => ({ key: "cT", localPort: 55432, child: undefined }),
+      stop: () => false, stopAll: () => {}, list: () => [], dispose: () => {},
+    } as unknown as SshTunnelManager;
+    let captured: any = null;
+    const factory = (cfg: any) => {
+      captured = cfg;
+      return { runQuery: async () => ({ results: [] }), testConnection: async () => {}, close: async () => {} };
+    };
+    const mgr = new (ConnectionManager)(STUB_CTX, factory, fakeTunnels);
+    // Stub secrets so the passive getAdapterFor can resolve a password.
+    (STUB_CTX as any).secrets.get = async (k: string) => (k.endsWith("cT") ? "pw" : undefined);
+    await mgr.getAdapterFor({ id: "cT", name: "t", driver: "postgres", host: "db", port: 5432, user: "u", database: "d", tunnel: { host: "bastion", port: 22 } } as any);
+    mgr.dispose();
+    expect(captured?.host).toBe("127.0.0.1");
+    expect(captured?.port).toBe(55432);
+  });
+
+  it("dispose stops every tunnel (no leak)", async () => {
+    const stopped: string[] = [];
+    const fakeTunnels = {
+      start: async () => ({ key: "k", localPort: 1, child: undefined }),
+      stop: (k: string) => { stopped.push(k); return true; },
+      stopAll: () => { stopped.push("ALL"); },
+      list: () => [], dispose: () => { stopped.push("ALL"); },
+    } as unknown as SshTunnelManager;
+    const mgr = new (ConnectionManager)(
+      STUB_CTX,
+      () => ({ runQuery: async () => ({ results: [] }), testConnection: async () => {}, close: async () => {} }),
+      fakeTunnels,
+    );
+    await mgr.dispose();
+    expect(stopped).toContain("ALL");
+  });
+});

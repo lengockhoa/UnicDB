@@ -1328,7 +1328,18 @@ function openConnectionForm(
           sslCertPath: payload.sslCertPath || undefined,
           sslKeyPath: payload.sslKeyPath || undefined,
           manualCommit: payload.manualCommit,
-        };
+          folder: payload.folder || undefined,
+          color: payload.color || undefined,
+          readOnly: payload.readOnly,
+          tunnel: payload.tunnelHost
+            ? {
+                host: payload.tunnelHost,
+                port: payload.tunnelPort || undefined,
+                user: payload.tunnelUser || undefined,
+                identityFile: payload.tunnelIdentityFile || undefined,
+              }
+            : undefined,
+         };
         await mgr.addConnection(cfg, payload.password);
         // Tree hiện connection list ngay (root nodes) — không cần chờ user refresh.
         state?.tree.refresh();
@@ -1346,8 +1357,18 @@ function openConnectionForm(
             sslMode: payload.sslMode,
             sslCaPath: payload.sslCaPath || undefined,
             sslCertPath: payload.sslCertPath || undefined,
-            sslKeyPath: payload.sslKeyPath || undefined,
             manualCommit: payload.manualCommit,
+            folder: payload.folder || undefined,
+            color: payload.color || undefined,
+            readOnly: payload.readOnly,
+            tunnel: payload.tunnelHost
+              ? {
+                  host: payload.tunnelHost,
+                  port: payload.tunnelPort || undefined,
+                  user: payload.tunnelUser || undefined,
+                  identityFile: payload.tunnelIdentityFile || undefined,
+                }
+              : undefined,
           },
           payload.password.length > 0 ? payload.password : undefined,
         );

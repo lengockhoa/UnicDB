@@ -17,6 +17,7 @@
 import * as vscode from "vscode";
 import type { ConnectionConfig } from "../config/types";
 import type { ConnectionManager } from "../core/connectionManager";
+import { assignColor, groupConnections } from "../core/connectionGroups";
 import type { DbAdapter } from "../adapters/types";
 
 
@@ -61,6 +62,8 @@ export interface VsdbNode {
     objectName?: string;
     /** Dùng cho column. */
     column?: { name: string; dataType: string };
+    /** DBX-05 — folder node: ids of the connections inside it. */
+    connectionIds?: string[];
   };
 }
 
@@ -209,6 +212,9 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
       if (node.contextValue === "connection") {
         return this.getSchemaNodesForConnection(node);
       }
+      if (node.contextValue === "folder") {
+        return this.getFolderChildren(node);
+      }
       if (node.contextValue === "schema") {
         return this.getCategoriesForSchema(node);
       }
@@ -240,23 +246,54 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
     // Root: connections LUÔN giữ kể cả khi filter active — connections là
     // ancestor containers, filter áp cho object names (schema/table/view/...),
     // không phải connection names.
-    return this.mgr.listConnections().map((c) => ({
+    // DBX-05 — folder grouping: connections with a folder render under
+    // collapsible folder nodes (icon tinted by assignColor); ungrouped
+    // connections stay at root.
+    const conns = this.mgr.listConnections();
+    const groups = groupConnections(conns);
+    const nodes: VsdbNode[] = [];
+    for (const g of groups) {
+      if (g.folder === undefined) {
+        nodes.push(...g.items.map((c) => this.connectionNode(c)));
+      } else {
+        nodes.push({
+          label: g.folder,
+          icon: assignColor(g.folder),
+          tooltip: `${g.folder} — ${g.items.length} connection(s)`,
+          contextValue: "folder",
+          collapsible: vscode.TreeItemCollapsibleState.Collapsed,
+          meta: { connectionIds: g.items.map((c) => c.id) },
+        });
+      }
+    }
+    return nodes;
+  }
+
+  /** Folder node children: the connections inside it. */
+  private getFolderChildren(node: VsdbNode): VsdbNode[] {
+    const ids = (node.meta?.connectionIds as string[] | undefined) ?? [];
+    return this.mgr
+      .listConnections()
+      .filter((c) => ids.includes(c.id))
+      .map((c) => this.connectionNode(c));
+  }
+
+  // ---- DBX-05 connection node factory --------------------------------------
+
+  private connectionNode(c: ConnectionConfig): VsdbNode {
+    return {
       label: c.name,
       icon: DRIVER_ICONS[c.driver] ?? "database",
       tooltip: `${c.name}\n${c.driver}@${c.host}:${c.port}/${c.database}\nClick để đổi active connection`,
       contextValue: "connection",
-      // TASK-010/D3 — Collapsed (không phải Expanded): tránh VS Code auto-expand
-      // MỌI connection lúc activation → mở socket + listSchemas cho từng DB dù
-      // user chưa từng đụng tới. Click-to-activate command bên dưới không đổi.
       collapsible: vscode.TreeItemCollapsibleState.Collapsed,
-      // Click → switch active (statusBar + icon tint cập nhật qua onDidChangeActive).
       command: {
         command: "vsdb.selectConnectionFromTree",
         title: "Select as Active Connection",
         arguments: [c.id],
       },
       meta: { connection: c },
-    }));
+    };
   }
 
 

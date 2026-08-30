@@ -47,7 +47,7 @@ const DML_KINDS: Record<string, DangerousKind> = {
  * SELECT). Detect the wrapped function instead, case-insensitive, after
  * masking literals/comments (B6 safety).
  */
-function isPgBackendAdminCall(masked: string): DangerousKind | null {
+export function isPgBackendAdminCall(masked: string): DangerousKind | null {
   const fn = /\bpg_(cancel|terminate)_backend\s*\(/i.exec(masked);
   if (!fn) return null;
   return fn[1].toLowerCase() === "terminate" ? "terminate" : "kill";

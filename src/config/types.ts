@@ -42,6 +42,19 @@ export interface ConnectionConfig {
   sslKeyPath?: string;
   /** Keep saves in an explicit transaction until the user commits or rolls back. */
   manualCommit?: boolean;
+  /** DBX-05: folder name for tree grouping (absent = ungrouped, shown at root). */
+  folder?: string;
+  /** DBX-05: palette color override for the folder/connection icon (hex). */
+  color?: string;
+  /** DBX-05: read-only intent — client-side mutation block BEFORE any network I/O. */
+  readOnly?: boolean;
+  /** DBX-05: SSH tunnel settings — when set, the adapter connects via 127.0.0.1:<localPort>. */
+  tunnel?: {
+    host: string;
+    port?: number;
+    user?: string;
+    identityFile?: string;
+  };
 }
 
 export type SslMode = "disable" | "require" | "verify-ca" | "verify-full";

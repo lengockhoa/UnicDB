@@ -1,6 +1,6 @@
 # TASK-DBX05-004 — scaffold hygiene + regression + docs
 
-**Status:** pending
+**Status:** implemented — awaiting reviewer (unic-smart)
 **Owner:** executor (TDD)
 **Reviewer:** unic-smart (cycle reviewer)
 
@@ -38,4 +38,9 @@ npm run compile
 
 ## Executor Report
 
-(to be filled by executor with RED + GREEN evidence)
+### Executor (unic-code)
+
+**RED evidence**: first run of `npx vitest run src/__tests__/dbx05Scaffold.test.ts` → `Tests no tests` (file failed to load: `describe is not defined` — vitest globals are NOT enabled in `vitest.config.ts`, so the file needed an explicit `import { describe, it, expect } from "vitest"`; after that, `ROOT` const was missing after an edit collision — fixed; then `2 failed`: the vscode-import regex matched the *comment* "No vscode import" and the shell regex matched regex-method `.exec(` — tightened both to real-import / `execSync` / `shell:true`-in-spawn patterns).
+
+**GREEN evidence**: `npx vitest run src/__tests__/dbx05Scaffold.test.ts src/extension.test.ts` → 5 + 71 passed. Full `npm test` → 2495 passed | 2 skipped (185 files). `npm run typecheck` → 0 errors. `npm run compile` → esbuild clean. CHANGELOG 1.20.0 section + compare link added; README key-features bullets for read-only connections, SSH tunnels, folder grouping added.
+

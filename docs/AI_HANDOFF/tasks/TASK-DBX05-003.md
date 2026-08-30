@@ -1,6 +1,6 @@
 # TASK-DBX05-003 — Config fields + ConnectionManager wiring + form/tree
 
-**Status:** pending
+**Status:** implemented — awaiting reviewer (unic-smart)
 **Owner:** executor (TDD)
 **Reviewer:** unic-smart (cycle reviewer)
 
@@ -41,4 +41,9 @@ npm run typecheck
 
 ## Executor Report
 
-(to be filled by executor with RED + GREEN evidence)
+### Executor (unic-code)
+
+**RED evidence**: `npx vitest run src/core/__tests__/connectionManager.test.ts` → `1 failed` after wiring: `dispose stops every tunnel` — `this._onDidChangeActiveEmitter.dispose()` threw `TypeError: dispose is not a function` because `vscode.EventEmitter` has no `dispose` (ownership belongs to the extension context). Removed the call; the emitter is registered on `context.subscriptions` at extension activation.
+
+**GREEN evidence**: `npx vitest run src/core/__tests__/connectionManager.test.ts` → 13 passed. Read-only guard is client-side, in-place `Object.defineProperty(adapter, "runQuery", …)` (cloning broke the prototype chain/dispose) — DELETE throws `ReadOnlyViolation` BEFORE the adapter is touched (asserted: runs.length === 0). Tunnel path rewrites `host`/`port` to `127.0.0.1`/`localPort` only at adapter-resolution time; persisted metadata unchanged. `stopTunnel` called from `editConnection` + `deleteConnection`. `npm run typecheck` → 0 errors.
+

@@ -1,6 +1,6 @@
 # TASK-DBX05-002 — sshTunnel argv/parse + SshTunnelManager lifecycle
 
-**Status:** pending
+**Status:** implemented — awaiting reviewer (unic-smart)
 **Owner:** executor (TDD)
 **Reviewer:** unic-smart (cycle reviewer)
 
@@ -42,4 +42,9 @@ npm run typecheck
 
 ## Executor Report
 
-(to be filled by executor with RED + GREEN evidence)
+### Executor (unic-code)
+
+**RED evidence**: first run of `npx vitest run src/core/__tests__/sshTunnel.test.ts src/core/__tests__/sshTunnelManager.test.ts` failed at module load — `sshTunnelManager.ts` referenced `TunnelConfig`/fixtures before they existed (import-time RED, module not found). After wiring the fixture shim (`makeShim()` writes a temp `/bin/sh` wrapper exec'ing `node fixtures/fake-ssh.mjs`) both suites went green.
+
+**GREEN evidence**: `npx vitest run src/core/__tests__/sshTunnel.test.ts src/core/__tests__/sshTunnelManager.test.ts` → all passed (14 total). `spawn` (no shell), validated argv via `buildTunnelArgs`, readiness parsed from `Local forwarding listening on 127.0.0.1 port (\d+)`, 10s timeout, `-o SetEnv=vsdb-tunnel:<key>` marker, `stop`/`stopAll`/`dispose`.
+

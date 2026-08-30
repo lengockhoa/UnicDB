@@ -1,6 +1,6 @@
 # TASK-DBX05-001 — connectionGroups + readOnlyIntent pure modules
 
-**Status:** pending
+**Status:** implemented — awaiting reviewer (unic-smart)
 **Owner:** executor (TDD)
 **Reviewer:** unic-smart (cycle reviewer)
 
@@ -46,4 +46,11 @@ npm run typecheck
 
 ## Executor Report
 
-(to be filled by executor with RED + GREEN evidence)
+### Executor (unic-code)
+
+**RED evidence** (first run before fix): `npx vitest run src/core/__tests__/readOnlyIntent.test.ts` → `2 failed` — INSERT and ALTER were NOT caught by the initial Set-based keyword scan (`Set` membership with plain keyword strings missed the `INSERT`/`ALTER` forms because the Set was keyed on normalized-but-unmapped tokens). Switched to a `Record<string, true>` keyword map and re-scanned.
+
+**GREEN evidence**: `npx vitest run src/core/__tests__/connectionGroups.test.ts src/core/__tests__/readOnlyIntent.test.ts src/core/__tests__/dangerousStatement.test.ts` → 3 files, all passed (connectionGroups 4 + readOnlyIntent 14 incl. regression). Full-suite run at cycle close: 2495 passed | 2 skipped.
+
+Notes: `isMutationSql` reuses `splitStatements` + `analyzeStatement` + tier mapping from `dangerousStatement.ts` (no logic copy); `isPgBackendAdminCall` exported from `dangerousStatement.ts` for admin-DCL coverage. All modules pure (no vscode import) — enforced by TASK-DBX05-004 scaffold test.
+

@@ -27,6 +27,14 @@ export interface ConnectionFormSubmit {
   sslKeyPath: string;
   /** TASK-001 — luôn boolean cụ thể (false = automatic), không bao giờ omitted. */
   manualCommit: boolean;
+  /** DBX-05 — connection workspace fields (all optional, round-tripped). */
+  folder: string;
+  color: string;
+  readOnly: boolean;
+  tunnelHost: string;
+  tunnelPort: number | null;
+  tunnelUser: string;
+  tunnelIdentityFile: string;
 }
 
 export interface ConnectionFormCancel {

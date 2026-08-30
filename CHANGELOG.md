@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.20.0] — 2026-08-31
+
+Cycle DBX-05: Connection Workspace.
+
+### Added
+- **Folder grouping** (`folder` field): connections are grouped into collapsible folder nodes in the schema tree; ungrouped connections stay at root. Folder color is derived deterministically (`assignColor`, FNV-1a hash over the 8-color palette).
+- **Read-only connections** (`readOnly`): every `runQuery` is guarded client-side before any network I/O — INSERT/UPDATE/DELETE/MERGE/TRUNCATE/DROP/ALTER/CREATE/GRANT/REVOKE/COMMENT/LOCK throw `ReadOnlyViolation` with the offending statement list.
+- **SSH tunnels** (`tunnel` host/port/user/identityFile): passive connections transparently connect through `127.0.0.1:<localPort>` via a spawned `ssh -N -T` process; validated argv (no shell), `SetEnv=vsdb-tunnel:<key>` marker, readiness parsed from `Local forwarding listening on …`, 10s timeout, processes stopped on edit/delete/dispose.
+- **Form fields**: the connection form webview now carries folder, color, read-only and tunnel inputs (round-tripped on edit).
+- **Headless core**: `connectionGroups`, `readOnlyIntent`, `sshTunnel`, `sshTunnelManager` are pure modules (no `vscode` import), unit-tested with a fake-ssh fixture.
+
+### Review
+- Independent unic-smart review issued CHANGES-REQUESTED (…) — fix rounds, superseding APPROVED.
+
 ## [1.19.0] — 2026-08-30
 
 Cycle AIX-01: Grounded Workspace Context (opt-in via `vsdb.ai.grounding`).
@@ -507,5 +521,6 @@ Cycle G: set-filter, toolbar icons, `run-sh` fix.
 [1.16.0]: https://github.com/lengockhoa/VSDB/compare/v1.15.0...v1.16.0
 [1.17.0]: https://github.com/lengockhoa/VSDB/compare/v1.16.0...v1.17.0
 [1.18.0]: https://github.com/lengockhoa/VSDB/compare/v1.17.0...v1.18.0
+[1.20.0]: https://github.com/lengockhoa/VSDB/compare/v1.19.0...v1.20.0
 [1.19.0]: https://github.com/lengockhoa/VSDB/compare/v1.18.0...v1.19.0
 [1.13.0]: https://github.com/lengockhoa/VSDB/compare/v1.12.0...v1.13.0

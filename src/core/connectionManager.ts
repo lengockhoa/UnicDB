@@ -19,9 +19,12 @@
 import * as vscode from "vscode";
 import type { ConnectionConfig } from "../config/types";
 import type { DbAdapter } from "../adapters/types";
-
-/** Factory tạo adapter từ cfg + password. Inject để test dễ. */
-export type AdapterFactory = (cfg: ConnectionConfig, password: string) => DbAdapter;
+import {
+  isMutationSql,
+  mutationStatements,
+  ReadOnlyViolation,
+} from "./readOnlyIntent";
+import { SshTunnelManager } from "./sshTunnelManager";
 
 const KEY_CONNECTIONS = "vsdb.connections";
 const KEY_ACTIVE = "vsdb.activeConnection";
@@ -35,9 +38,11 @@ interface InternalState {
   activeId: string | null;
 }
 
+export type AdapterFactory = (cfg: ConnectionConfig, password: string) => DbAdapter;
+
 export class ConnectionManager {
-  private readonly factory: AdapterFactory;
-  private readonly ctx: vscode.ExtensionContext;
+  /** DBX-05: SSH tunnel lifecycle owner (started lazily per connection id). */
+  private readonly tunnels: SshTunnelManager;
   private state: InternalState = { connections: [], activeId: null };
   private currentAdapter: DbAdapter | null = null;
   private currentActiveId: string | null = null;
@@ -54,9 +59,13 @@ export class ConnectionManager {
   /** Fires khi active connection đổi (set/delete). */
   readonly onDidChangeActive: vscode.Event<ConnectionConfig | null>;
 
-  constructor(ctx: vscode.ExtensionContext, factory: AdapterFactory) {
-    this.ctx = ctx;
-    this.factory = factory;
+  constructor(
+    private readonly ctx: vscode.ExtensionContext,
+    private readonly factory: AdapterFactory,
+    /** DBX-05: injectable tunnel manager (tests pass a fake). */
+    tunnels?: SshTunnelManager,
+  ) {
+    this.tunnels = tunnels ?? new SshTunnelManager();
     this._onDidChangeActiveEmitter = new vscode.EventEmitter<ConnectionConfig | null>();
     this.onDidChangeActive = this._onDidChangeActiveEmitter.event;
     // Load state khi khởi tạo.
@@ -137,6 +146,8 @@ export class ConnectionManager {
     }
     // Config changed → drop any cached passive adapter so next getAdapterFor reconnects.
     await this.closePassiveAdapter(id);
+    // DBX-05: config changed → old tunnel (if any) must be replaced on next use.
+    this.stopTunnel(id);
 
     this.fireConnectionsChanged();
     if (this.currentActiveId === id) {
@@ -164,7 +175,8 @@ export class ConnectionManager {
     }
     // Drop any cached passive adapter to free the socket.
     await this.closePassiveAdapter(id);
-
+    // DBX-05: no connection, no tunnel.
+    this.stopTunnel(id);
     this.fireConnectionsChanged();
   }
 
@@ -236,7 +248,7 @@ export class ConnectionManager {
         `Không tìm được password cho connection "${cfg.name}". Vui lòng nhập lại password (edit connection).`,
       );
     }
-    const adapter = this.factory(cfg, password);
+    const adapter = this.guardAdapter(await this.resolveAdapter(cfg, password), cfg);
     try {
       await adapter.testConnection();
     } catch (err) {
@@ -289,7 +301,7 @@ export class ConnectionManager {
           `Không tìm được password cho connection "${active.name}". Vui lòng nhập lại password (edit connection).`,
         );
       }
-      const adapter = this.factory(active, password);
+      const adapter = this.guardAdapter(await this.resolveAdapter(active, password), active);
       try {
         await adapter.testConnection();
       } catch (err) {
@@ -320,7 +332,62 @@ export class ConnectionManager {
       clearTimeout(this.idleTimer);
       this.idleTimer = null;
     }
-    this._onDidChangeActiveEmitter.dispose();
+    // DBX-05: never leak ssh processes on extension reload/dispose.
+    this.tunnels.stopAll();
+    // _onDidChangeActiveEmitter is owned by the extension context (subscribed
+    // to context.subscriptions); do NOT dispose it here — doing so would
+    // also drop listeners that are still active on a reloaded window.
+  }
+
+  /**
+   * DBX-05 — tunnel + read-only helpers.
+   * `resolveAdapter` builds the EFFECTIVE adapter config: when a tunnel is
+   * configured, the adapter connects to 127.0.0.1:<bound local port> while
+   * the persisted metadata keeps the original host/port.
+   * `guardAdapter` enforces read-only intent BEFORE any statement leaves the
+   * extension (mutation → ReadOnlyViolation, no network I/O).
+   */
+  private async resolveAdapter(
+    cfg: ConnectionConfig,
+    password: string,
+  ): Promise<DbAdapter> {
+    let effective = cfg;
+    if (cfg.tunnel) {
+      const handle = await this.tunnels.start(
+        { ...cfg.tunnel, port: cfg.tunnel.port ?? cfg.port },
+        cfg.id,
+      );
+      effective = {
+        ...cfg,
+        host: "127.0.0.1",
+        port: handle.localPort,
+      };
+    }
+    return this.factory(effective, password);
+  }
+
+  private guardAdapter(adapter: DbAdapter, cfg: ConnectionConfig): DbAdapter {
+    if (!cfg.readOnly) return adapter;
+    const original = adapter.runQuery.bind(adapter);
+    // Replace the runQuery property on the same object — preserves the
+    // prototype chain (matters for close/testConnection called by dispose).
+    Object.defineProperty(adapter, "runQuery", {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: (sql: string) => {
+        if (isMutationSql(sql)) {
+          throw new ReadOnlyViolation(mutationStatements(sql));
+        }
+        return original(sql);
+      },
+    });
+    return adapter;
+  }
+
+  /** Expose tunnel mutation for edit/delete (stop the old tunnel). */
+  stopTunnel(id: string): void {
+    this.tunnels.stop(id);
   }
 
   // ---- Private -------------------------------------------------------------

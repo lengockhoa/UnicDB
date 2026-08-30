@@ -27,6 +27,11 @@ interface FormConfig {
   sslKeyPath?: string;
   /** TASK-001 — legacy records omit this; omitted renders unchecked. */
   manualCommit?: boolean;
+  /** DBX-05 — connection workspace fields (optional). */
+  folder?: string;
+  color?: string;
+  readOnly?: boolean;
+  tunnel?: { host: string; port?: number; user?: string; identityFile?: string };
 }
 
 const root = document.getElementById("vsdb-root") as HTMLDivElement;
@@ -57,13 +62,15 @@ function readForm() {
     port: parseInt(input("port").value, 10) || 0,
     user: input("user").value.trim(),
     database: input("database").value.trim(),
-    password: input("password").value,
-    sslMode: (useSsl() ? select("sslMode").value : "disable") as SslMode,
-    sslCaPath: input("sslCaPath").value.trim(),
-    sslCertPath: input("sslCertPath").value.trim(),
-    sslKeyPath: input("sslKeyPath").value.trim(),
     manualCommit: manualCommit(),
-  };
+    folder: input("folder").value.trim(),
+    color: input("color").value.trim(),
+    readOnly: (document.getElementById("readOnly") as HTMLInputElement).checked,
+    tunnelHost: input("tunnelHost").value.trim(),
+    tunnelPort: parseInt(input("tunnelPort").value, 10) || 0,
+    tunnelUser: input("tunnelUser").value.trim(),
+    tunnelIdentityFile: input("tunnelIdentityFile").value.trim(),
+   };
 }
 
 /** TASK-001 — per-connection manual transaction mode (luôn boolean cụ thể). */
@@ -175,6 +182,44 @@ function render(): void {
     <input id="manualCommit" type="checkbox" /> Manual commit (giữ save trong
     transaction đến khi Commit/Rollback)
   </label>
+  <h3 class="vsdb-form-section">Workspace</h3>
+  <div class="vsdb-row">
+    <div class="vsdb-field grow">
+      <label for="folder">Folder</label>
+      <input id="folder" type="text" placeholder="prod / staging / dev" />
+    </div>
+    <div class="vsdb-field">
+      <label for="color">Color (hex)</label>
+      <input id="color" type="text" placeholder="#4fc1ff" />
+    </div>
+  </div>
+  <label class="vsdb-form-check">
+    <input id="readOnly" type="checkbox" /> Read-only — chặn mọi câu lệnh
+    thay đổi (INSERT/UPDATE/DELETE/DDL/GRANT) trước khi gửi tới server
+  </label>
+  <details id="tunnelPanel" class="vsdb-form-tunnel">
+    <summary>SSH tunnel</summary>
+    <div class="vsdb-row">
+      <div class="vsdb-field grow">
+        <label for="tunnelHost">Bastion host</label>
+        <input id="tunnelHost" type="text" placeholder="jump.example.com" />
+      </div>
+      <div class="vsdb-field">
+        <label for="tunnelPort">Bastion port</label>
+        <input id="tunnelPort" type="number" placeholder="22" />
+      </div>
+    </div>
+    <div class="vsdb-row">
+      <div class="vsdb-field grow">
+        <label for="tunnelUser">SSH user</label>
+        <input id="tunnelUser" type="text" placeholder="devops" />
+      </div>
+      <div class="vsdb-field grow">
+        <label for="tunnelIdentityFile">Identity file</label>
+        <input id="tunnelIdentityFile" type="text" placeholder="/Users/me/.ssh/id_ed25519" />
+      </div>
+    </div>
+  </details>
   <div id="status" class="vsdb-form-status"></div>
   <div class="vsdb-form-actions">
     <button id="cancelBtn">Cancel</button>
@@ -234,6 +279,15 @@ function applyInit(existing: FormConfig | null): void {
   (document.getElementById("manualCommit") as HTMLInputElement).checked =
     existing.manualCommit === true;
   updateSslVisibility();
+  // DBX-05 — workspace fields.
+  input("folder").value = existing.folder ?? "";
+  input("color").value = existing.color ?? "";
+  (document.getElementById("readOnly") as HTMLInputElement).checked =
+    existing.readOnly === true;
+  input("tunnelHost").value = existing.tunnel?.host ?? "";
+  input("tunnelPort").value = existing.tunnel?.port ? String(existing.tunnel.port) : "";
+  input("tunnelUser").value = existing.tunnel?.user ?? "";
+  input("tunnelIdentityFile").value = existing.tunnel?.identityFile ?? "";
 }
 
 window.addEventListener("message", (ev: MessageEvent) => {
