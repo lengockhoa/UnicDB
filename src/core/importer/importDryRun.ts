@@ -77,7 +77,7 @@ export function buildDryRunPlan(
   return { sqlStatements, parameterSets, batches, rowCount: rows.length, totalBytes };
 }
 
-function quoteIdent(name: string): string {
+export function quoteIdent(name: string): string {
   // SQL standard: `"` in an identifier becomes `""`.
   return `"${name.replace(/"/g, '""')}"`;
 }
