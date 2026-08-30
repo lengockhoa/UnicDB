@@ -117,3 +117,36 @@ Addresses the round-2 re-review (unic-smart) blockers:
 
 Fresh verification: targeted 114/114 (er+service+panel+scaffold+extension);
 full 2387 passed | 2 skipped; typecheck exit 0; esbuild builds dist/erPanel.js.
+
+## Reviewer Verdict — Fix Round 2
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic/unic-smart
+
+Commands run:
+- `npm run typecheck` — passed.
+- `npx vitest run src/core/er src/ui/__tests__/erService.test.ts src/ui/__tests__/erPanel.test.ts src/__tests__/dbx04Scaffold.test.ts src/extension.test.ts` — passed (7 files).
+
+Superseded findings: the extension driver now gates before lazy adapter acquisition; the webview now guards empty layouts and does not reverse its visual viewBox from the host acknowledgment.
+
+Remaining finding:
+- **important — src/ui/erService.ts:88-103:** `truncated` still initializes from `tables.length > maxNodes`, before per-table detail failures are reflected in `graph.nodes`. For example, 201 listed tables with two failed detail calls yields 199 rendered nodes and does not enter the cap branch, but returns `truncated: true`. This directly contradicts the claimed fix-round behavior and shows a false “capped” UI warning. Initialize `truncated` to false and set it only when the graph-node cap actually removes nodes (or expose a separate partial-load indicator).
+
+## Executor Fix Round 3 (post re-review)
+
+### 2026-08-30 · executor · omp-direct/unic-code
+
+Addresses the round-3 re-review (unic-smart) remaining blocker:
+
+1. **truncated (P1)** — erService now initializes `truncated = false` and
+   sets it to true ONLY in the `graph.nodes.length > maxNodes` cap
+   branch. Listing more tables than the cap no longer flips the flag —
+   if all details succeed and the graph stays under the cap, truncated
+   stays false. Two regression tests added:
+   - listed > cap but graph capped below: truncated = false
+   - graph itself capped: truncated = true
+
+Driver-gate and zoom fixes accepted by reviewer as correct.
+
+Fresh verification: targeted 116/116 (er+service+panel+scaffold+extension);
+full 2389 passed | 2 skipped; typecheck exit 0; esbuild builds dist/erPanel.js.

@@ -121,3 +121,44 @@ describe("runErExplorer", () => {
     if (r.ok) expect(r.graph.nodes.map((n) => n.table)).toEqual(["aa", "mm"]);
   });
 });
+
+describe("runErExplorer — truncated flag (reviewer round 3)", () => {
+  it("stays false when listed exceeds cap but graph did not actually cap", async () => {
+    // 3 listed, 2 details fail, 1 graph node — graph.nodes(1) < maxNodes(2),
+    // so truncated must be false even though the listing itself exceeded.
+    const adapter = makeAdapter({
+      driver: "postgres",
+      tables: [table("public", "a"), table("public", "b"), table("public", "c")],
+      details: {
+        "public.a": detail(["id"], []),
+        "public.b": new Error("gone"),
+        "public.c": new Error("gone"),
+      },
+    });
+    const r = await runErExplorer(adapter as DbAdapter & { driver?: string }, "postgres", "public", { maxNodes: 2 });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.graph.nodes).toHaveLength(1);
+      expect(r.truncated).toBe(false);
+    }
+  });
+
+  it("flips to true only when graph.nodes actually exceeds maxNodes", async () => {
+    // Same shape, but maxNodes=1 forces a real cap of graph nodes 3->1.
+    const adapter = makeAdapter({
+      driver: "postgres",
+      tables: [table("public", "a"), table("public", "b"), table("public", "c")],
+      details: {
+        "public.a": detail(["id"], []),
+        "public.b": detail(["id"], []),
+        "public.c": detail(["id"], []),
+      },
+    });
+    const r = await runErExplorer(adapter as DbAdapter & { driver?: string }, "postgres", "public", { maxNodes: 1 });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.graph.nodes).toHaveLength(1);
+      expect(r.truncated).toBe(true);
+    }
+  });
+});

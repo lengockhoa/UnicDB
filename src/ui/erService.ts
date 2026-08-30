@@ -77,8 +77,11 @@ export async function runErExplorer(
 
   // Degree cap: keep the top `maxNodes` tables by FK edge count
   // (in + out), tie-break by schema-qualified id. Deterministic.
-  const listedExceedsCap = tables.length > maxNodes;
-  let truncated = listedExceedsCap;
+  // `truncated` reflects USER-FACING truncation: ONLY set when the
+  // graph itself was capped. Listing more tables than the cap does
+  // NOT flag truncation — a query may exceed the cap, all details
+  // succeed, and nothing visible is dropped. The cap branch below is
+  let truncated = false;
   if (graph.nodes.length > maxNodes) {
     const deg = degreeMap(graph);
     const keep = new Set(
