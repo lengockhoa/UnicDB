@@ -14,8 +14,12 @@
 import type {
   ColumnInfo,
   DbAdapter,
+  RoutineInfo,
   SchemaInfo,
+  SequenceInfo,
+  TableConstraintInfo,
   TableInfo,
+  ViewInfo,
 } from "../adapters/types";
 
 /** Provider adapter (lazy) — trả null khi không có active connection. */
@@ -39,6 +43,18 @@ interface CacheEntry<D> {
 
 const DEFAULT_TTL_MS = 60_000;
 
+/**
+ * SchemaCache wraps adapter introspection with TTL caching. DBX-02 adds:
+ * - `hasCatalog()` — capability gate (Postgres-only `adapter.catalog`).
+ * - `getViews/getRoutines` — schema-scoped lists.
+ * - `getConstraints(schema, table)` — table-scoped FK / constraint rows.
+ * - `getSequences(schema)` — schema-scoped sequences.
+ * - `getObjectDdl(kind, schema, name)` — DDL text for view/routine.
+ *
+ * Stale-on-error contract: if a refresh rejects, return the previous cached
+ * value (or undefined/[] for first call). No adapter call propagates a throw
+ * to the caller; completion must never-crash.
+ */
 export class SchemaCache {
   private readonly ttlMs: number;
   private readonly now: () => number;
@@ -46,6 +62,11 @@ export class SchemaCache {
   private tablesAllEntry: CacheEntry<TableInfo[]> | null = null;
   private readonly tablesBySchema = new Map<string, CacheEntry<TableInfo[]>>();
   private readonly columnsByKey = new Map<string, CacheEntry<ColumnInfo[]>>();
+  private readonly viewsBySchema = new Map<string, CacheEntry<ViewInfo[]>>();
+  private readonly routinesBySchema = new Map<string, CacheEntry<RoutineInfo[]>>();
+  private readonly sequencesBySchema = new Map<string, CacheEntry<SequenceInfo[]>>();
+  private readonly constraintsByKey = new Map<string, CacheEntry<TableConstraintInfo[]>>();
+  private readonly ddlByKey = new Map<string, CacheEntry<string | null>>();
 
   constructor(
     private readonly adapterProvider: SchemaAdapterProvider,
@@ -117,12 +138,125 @@ export class SchemaCache {
     );
   }
 
+  /** True iff the resolved adapter exposes the optional catalog capability. */
+  async hasCatalog(): Promise<boolean> {
+    const adapter = await this.resolveAdapter();
+    return adapter?.catalog !== undefined;
+  }
+
+  /** Views for one schema (cached). `undefined` schema → no catalog data. */
+  async getViews(schema?: string): Promise<ViewInfo[]> {
+    if (schema === undefined) return [];
+    const existing = this.viewsBySchema.get(schema) ?? null;
+    const adapter = await this.resolveAdapter();
+    if (!adapter) return this.stale(existing) ?? [];
+    return (
+      (await this.fetchEntry(
+        () => adapter.listViews(schema),
+        (entry) => {
+          this.viewsBySchema.set(schema, entry);
+        },
+        existing,
+      )) ?? []
+    );
+  }
+
+  /** Routines for one schema (cached). `undefined` schema → no catalog data. */
+  async getRoutines(schema?: string): Promise<RoutineInfo[]> {
+    if (schema === undefined) return [];
+    const existing = this.routinesBySchema.get(schema) ?? null;
+    const adapter = await this.resolveAdapter();
+    if (!adapter) return this.stale(existing) ?? [];
+    return (
+      (await this.fetchEntry(
+        () => adapter.listRoutines(schema),
+        (entry) => {
+          this.routinesBySchema.set(schema, entry);
+        },
+        existing,
+      )) ?? []
+    );
+  }
+
+  /**
+   * Constraints for one (schema, table) — TABLE-SCOPED. Only the requested
+   * (schema, table) tuple is ever queried; never an eager whole-database
+   * scan. Returns [] if no catalog capability.
+   */
+  async getConstraints(
+    schema: string,
+    table: string,
+  ): Promise<TableConstraintInfo[]> {
+    const key = `${schema}.${table}`;
+    const existing = this.constraintsByKey.get(key) ?? null;
+    const adapter = await this.resolveAdapter();
+    if (!adapter || !adapter.catalog) return this.stale(existing) ?? [];
+    const catalog = adapter.catalog;
+    return (
+      (await this.fetchEntry(
+        () => catalog.listConstraints(schema, table),
+        (entry) => {
+          this.constraintsByKey.set(key, entry);
+        },
+        existing,
+      )) ?? []
+    );
+  }
+
+  /** Sequences for one schema (cached). Returns [] if no catalog capability. */
+  async getSequences(schema: string): Promise<SequenceInfo[]> {
+    const existing = this.sequencesBySchema.get(schema) ?? null;
+    const adapter = await this.resolveAdapter();
+    if (!adapter || !adapter.catalog) return this.stale(existing) ?? [];
+    const catalog = adapter.catalog;
+    return (
+      (await this.fetchEntry(
+        () => catalog.listSequences(schema),
+        (entry) => {
+          this.sequencesBySchema.set(schema, entry);
+        },
+        existing,
+      )) ?? []
+    );
+  }
+
+  /**
+   * DDL text for one (kind, schema, name) object — view or routine.
+   * Returns undefined when not found / no catalog capability / adapter throws.
+   * Cached null = "tried and got nothing" — must not be confused with stale.
+   */
+  async getObjectDdl(
+    kind: "view" | "routine",
+    schema: string,
+    name: string,
+  ): Promise<string | undefined> {
+    const key = `${kind}:${schema}.${name}`;
+    const existing = this.ddlByKey.get(key) ?? null;
+    const adapter = await this.resolveAdapter();
+    if (!adapter || !adapter.catalog) {
+      return existing ? (existing.data ?? undefined) : undefined;
+    }
+    const catalog = adapter.catalog;
+    return await this.fetchEntryDdl(
+      () => catalog.objectDdl(kind, name, schema),
+      (entry) => {
+        this.ddlByKey.set(key, entry);
+      },
+      existing,
+    );
+  }
+
   /** Xoá toàn bộ cached entries — lần gọi kế tiếp fetch fresh. */
   invalidate(): void {
     this.schemasEntry = null;
     this.tablesAllEntry = null;
     this.tablesBySchema.clear();
     this.columnsByKey.clear();
+    this.viewsBySchema.clear();
+    this.routinesBySchema.clear();
+    this.sequencesBySchema.clear();
+    this.constraintsByKey.clear();
+    this.ddlByKey.clear();
   }
 
   // ---- Private ---------------------------------------------------------------
@@ -164,6 +298,26 @@ export class SchemaCache {
     } catch {
       // Adapter lỗi mid-refresh → stale tốt hơn empty.
       return this.stale(existing);
+    }
+  }
+
+  /**
+   * DDL variant: `null` (object not found) is a valid cached state and must
+   * be preserved across refresh failures so we don't repeatedly probe a
+   * missing object. Inline stale fallback returns undefined when no cache.
+   */
+  private async fetchEntryDdl(
+    fetch: () => Promise<string>,
+    commit: (entry: CacheEntry<string | null>) => void,
+    existing: CacheEntry<string | null> | null,
+  ): Promise<string | undefined> {
+    if (this.isFresh(existing)) return existing!.data ?? undefined;
+    try {
+      const data = await fetch();
+      commit({ data, fetchedAt: this.now() });
+      return data;
+    } catch {
+      return existing ? (existing.data ?? undefined) : undefined;
     }
   }
 }

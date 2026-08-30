@@ -68,3 +68,23 @@ npm run compile
 `src/core/schemaIntrospect.ts` does not exist. The verified PostgreSQL catalog source is `src/core/ddl/pgCatalog.ts`; do not add a parallel introspector or modify `DbAdapter`.
 
 ---
+
+---
+## Executor Report
+EXECUTOR_TOOL: omp-direct (unic-code)
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+RED_OUTPUT:
+  ✓ src/ui/__tests__/schemaCache.test.ts (3 new cases) — hasCatalog false on no-catalog adapter; getViews caches; getConstraints per-table call.
+  ✓ src/ui/__tests__/sqlCatalog.test.ts (4 new cases) — Test Cases #1..#4.
+GREEN_OUTPUT:
+  ✓ New src/ui/sqlCatalog.ts — vscode-free row types + createCatalogResolver with listRootRows / listForeignKeys / getDefinition, all gated on isPostgres() && cache.hasCatalog().
+  ✓ src/ui/schemaCache.ts — 6 new methods (hasCatalog, getViews, getRoutines, getConstraints, getSequences, getObjectDdl); new private CacheEntry slots; invalidate() clears all; stale-on-error preserved.
+Verification Output:
+  $ npm run typecheck → clean.
+  $ npm run compile → clean.
+  $ npx vitest run src/ui/__tests__/schemaCache.test.ts src/ui/__tests__/sqlCatalog.test.ts
+    Test Files  2 passed (2)
+    Tests       10 passed (10)
+  $ npx vitest run → 2195 passed | 2 skipped (+7 over AIC baseline 2188)
+Status: PASS

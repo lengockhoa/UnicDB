@@ -2,8 +2,13 @@
 // TASK-008 §Test Cases #7-#9 — SchemaCache TTL unit tests.
 // SchemaCache is vscode-free (pure adapter wrapper) → no vscode mock needed.
 import { describe, it, expect, vi } from "vitest";
-import type { DbAdapter, TableInfo } from "../../adapters/types";
-
+import type {
+  CatalogApi,
+  DbAdapter,
+  TableConstraintInfo,
+  TableInfo,
+  ViewInfo,
+} from "../../adapters/types";
 import { SchemaCache } from "../schemaCache";
 
 function adapterWith(listTables: ReturnType<typeof vi.fn>): DbAdapter {
@@ -44,7 +49,65 @@ describe("SchemaCache — TASK-008 §Test Cases", () => {
     const cache = new SchemaCache(() => adapterWith(listTables), { ttlMs: 0 });
     expect(await cache.getTables()).toBe(stale);
     listTables.mockRejectedValue(new Error("connection lost"));
-    // Refresh fails → stale data returned, no error thrown.
     await expect(cache.getTables()).resolves.toBe(stale);
+  });
+});
+
+describe("SchemaCache — DBX-02 catalog capability", () => {
+  it("hasCatalog returns false on adapter without catalog", async () => {
+    const listTables = vi.fn(async () => []);
+    const cache = new SchemaCache(() => adapterWith(listTables));
+    expect(await cache.hasCatalog()).toBe(false);
+  });
+
+  it("getViews returns cached list (adapter called once within TTL)", async () => {
+    const views: ViewInfo[] = [
+      { name: "user_summary", schema: "public" },
+      { name: "active_orders", schema: "public" },
+    ];
+    const listViews = vi.fn(async () => views);
+    const adapter: DbAdapter = {
+      listTables: vi.fn(async () => []),
+      listViews,
+    } as unknown as DbAdapter;
+    const cache = new SchemaCache(() => adapter);
+    const first = await cache.getViews("public");
+    const second = await cache.getViews("public");
+    expect(second).toBe(first);
+    expect(first).toEqual(views);
+    expect(listViews).toHaveBeenCalledTimes(1);
+  });
+
+  it("getConstraints for public.orders calls constraints only once across repeats", async () => {
+    const constraints: TableConstraintInfo[] = [
+      {
+        name: "orders_user_id_fkey",
+        type: "fk",
+        columns: ["user_id"],
+        fkTarget: { schema: "public", table: "users", columns: ["id"] },
+      },
+    ];
+    const listConstraints = vi.fn(async () => constraints);
+    const catalog: CatalogApi = {
+      listIndexes: vi.fn(async () => []),
+      listConstraints,
+      listTriggers: vi.fn(async () => []),
+      listSequences: vi.fn(async () => []),
+      rowCount: vi.fn(async () => 0),
+      objectDdl: vi.fn(async () => ""),
+    };
+    const adapter: DbAdapter = {
+      listTables: vi.fn(async () => []),
+      listViews: vi.fn(async () => []),
+      listRoutines: vi.fn(async () => []),
+      catalog,
+    } as unknown as DbAdapter;
+    const cache = new SchemaCache(() => adapter);
+    const first = await cache.getConstraints("public", "orders");
+    const second = await cache.getConstraints("public", "orders");
+    expect(second).toBe(first);
+    expect(first).toEqual(constraints);
+    expect(listConstraints).toHaveBeenCalledTimes(1);
+    expect(listConstraints).toHaveBeenCalledWith("public", "orders");
   });
 });
