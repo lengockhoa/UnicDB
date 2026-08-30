@@ -59,17 +59,12 @@ export async function runErExplorer(
 
   const maxNodes = options.maxNodes ?? MAX_ER_NODES;
 
-  // Cap order is deterministic: sort by schema-qualified id BEFORE the
-  // slice so the same table set always yields the same subset. Degree
-  // ranking happens post-graph if a caller forces a smaller cap.
-  const truncatedByCap = tables.length > maxNodes;
-  const sortedTables = [...tables].sort((a, b) => {
-    const ia = `${a.schema}.${a.name}`;
-    const ib = `${b.schema}.${b.name}`;
-    return ia < ib ? -1 : ia > ib ? 1 : 0;
-  });
+  // Fetch details for ALL listed tables (per-table catch), THEN rank by
+  // FK degree and cap — the reviewer's point: an alphabetical pre-slice
+  // can never consider a high-degree table beyond the slice, so the
+  // top-by-degree contract would be dead code.
   const collected: Array<{ schema: string; table: string; detail: Awaited<ReturnType<DbAdapter["listTableDetail"]>> }> = [];
-  for (const t of sortedTables.slice(0, maxNodes)) {
+  for (const t of tables) {
     try {
       const detail = await adapter.listTableDetail(t.schema, t.name);
       collected.push({ schema: t.schema, table: t.name, detail });
@@ -78,11 +73,11 @@ export async function runErExplorer(
     }
   }
 
-  const graph = buildErGraph(collected);
+  let graph = buildErGraph(collected);
 
-  // Cap pass: if the built graph still exceeds the cap (a caller passed a
-  // custom smaller maxNodes), keep highest-degree nodes, tie-break by id.
-  let truncated = truncatedByCap;
+  // Degree cap: keep the top `maxNodes` tables by FK edge count
+  // (in + out), tie-break by schema-qualified id. Deterministic.
+  let truncated = tables.length > maxNodes;
   if (graph.nodes.length > maxNodes) {
     const deg = degreeMap(graph);
     const keep = new Set(
@@ -94,8 +89,11 @@ export async function runErExplorer(
         })
         .slice(0, maxNodes),
     );
-    graph.nodes = graph.nodes.filter((n) => keep.has(n.id));
-    graph.edges = graph.edges.filter((e) => keep.has(e.source) && keep.has(e.target));
+    graph = {
+      nodes: graph.nodes.filter((n) => keep.has(n.id)),
+      edges: graph.edges.filter((e) => keep.has(e.source) && keep.has(e.target)),
+      droppedEdges: graph.droppedEdges,
+    };
     truncated = true;
   }
 

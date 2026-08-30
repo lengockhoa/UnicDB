@@ -141,10 +141,16 @@ function render(msg: ModelMessage): void {
     dragging = null;
   });
 
-  // Zoom: wheel scales the viewBox about its center; the host clamps.
+  // Zoom: wheel scales the viewBox about its center. The webview applies
+  // the same 0.25..4 clamp locally (base = the model's natural viewBox)
+  // so rapid scrolling can never exceed the range; the host re-acknowledges
+  // via er_zoom_set (its zoom accumulator), which we also honor.
   svg.addEventListener("wheel", (ev) => {
     ev.preventDefault();
-    const delta = ev.deltaY < 0 ? 1 / 1.1 : 1.1;
+    if (!current) return;
+    const base = { w: current.layout.width, h: current.layout.height };
+    const proposed = Math.min(4, Math.max(0.25, (viewBox.w / base.w) * (ev.deltaY < 0 ? 1 / 1.1 : 1.1)));
+    const delta = proposed / (viewBox.w / base.w);
     const w0 = viewBox.w;
     const h0 = viewBox.h;
     viewBox.w *= delta;
@@ -160,6 +166,21 @@ window.addEventListener("message", (event: MessageEvent) => {
   const msg = event.data as ModelMessage | { type: "er_zoom_set"; zoom: number } | { type?: unknown };
   if (msg && typeof msg === "object" && (msg as { type?: unknown }).type === "er_model") {
     render(msg as ModelMessage);
+    return;
+  }
+  // Host zoom acknowledgment: reconcile the accumulator so the next
+  // wheel step resumes from the clamped base.
+  if (msg && typeof msg === "object" && (msg as { type?: unknown }).type === "er_zoom_set") {
+    const z = (msg as { zoom: number }).zoom;
+    if (current && Number.isFinite(z) && z > 0) {
+      const targetW = current.layout.width / z;
+      const targetH = current.layout.height / z;
+      viewBox.x += (viewBox.w - targetW) / 2;
+      viewBox.y += (viewBox.h - targetH) / 2;
+      viewBox.w = targetW;
+      viewBox.h = targetH;
+      applyViewBox();
+    }
   }
 });
 

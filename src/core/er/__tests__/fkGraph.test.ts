@@ -129,3 +129,33 @@ describe("buildErGraph", () => {
     expect(g.edges.map((e) => e.id)).toEqual(["aa_fk", "zz_fk"]);
   });
 });
+
+describe("buildErGraph — bare FK target normalization (reviewer fix round)", () => {
+  it("resolves search_path-bare targets (regclass prints unqualified)", () => {
+    const g = buildErGraph([
+      { schema: "public", table: "users", detail: d(["id"], []) },
+      {
+        schema: "public",
+        table: "orders",
+        detail: d(["id", "uid"], [{ conname: "fk_bare", contype: "f", conkey: [2], confrelidname: "users", confkeycols: ["id"] }]),
+      },
+    ]);
+    expect(g.edges).toHaveLength(1);
+    expect(g.edges[0].target).toBe("public.users");
+    expect(g.droppedEdges).toBe(0);
+  });
+
+  it("does NOT guess a bare name matching multiple schemas", () => {
+    const g = buildErGraph([
+      { schema: "public", table: "users", detail: d(["id"], []) },
+      { schema: "app", table: "users", detail: d(["id"], []) },
+      {
+        schema: "public",
+        table: "orders",
+        detail: d(["id", "uid"], [{ conname: "fk_amb", contype: "f", conkey: [2], confrelidname: "users", confkeycols: ["id"] }]),
+      },
+    ]);
+    expect(g.edges).toHaveLength(0);
+    expect(g.droppedEdges).toBe(1);
+  });
+});

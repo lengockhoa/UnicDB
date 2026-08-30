@@ -36,3 +36,34 @@ TDD RED→GREEN evidence:
 Verification: targeted 32/32 (er core+service+panel) then scaffold+extension 75/75; full suite 2380 passed | 2 skipped; typecheck exit 0; esbuild builds dist/erPanel.js (ctx10).
 
 Files: src/core/er/{fkGraph,layout,svgExport}.ts + 3 test files, src/ui/{erService,erPanel,erPanelHtml}.ts, webview/erPanelMain.ts, src/extension.ts, package.json, esbuild.js, src/__tests__/dbx04Scaffold.test.ts, src/extension.test.ts.
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic/unic-smart
+
+Commands run:
+- `npm run typecheck` — passed.
+- `npx vitest run src/core/er src/ui/__tests__/erService.test.ts src/ui/__tests__/erPanel.test.ts src/__tests__/dbx04Scaffold.test.ts src/extension.test.ts` — failed: `src/ui/__tests__/erPanel.test.ts` collected zero tests because `src/ui/erPanel.ts` cannot resolve the runtime `vscode` module.
+- `npx vitest run src/core/er src/ui/__tests__/erService.test.ts src/__tests__/dbx04Scaffold.test.ts` — passed (36 tests).
+- `npx vitest run src/ui/__tests__/erPanel.test.ts` — failed (same unresolved module).
+
+Findings:
+- **important — src/ui/__tests__/erPanel.test.ts:2:** The new panel test imports `erPanel.ts`, which imports the VS Code runtime module, but this test file provides no `vi.mock("vscode", ...)` or test alias. It fails standalone and makes the mandated targeted DBX-04 command fail. Add the appropriate module mock/setup before importing the panel.
+
+The runtime defects recorded in TASK-DBX04-003 also prevent approval of this regression task.
+
+## Executor Fix Round 1 (post-review)
+
+### 2026-08-30 · executor · omp-direct/unic-code
+
+Addresses all CHANGES-REQUESTED findings (unic-smart):
+
+1. **Map serialization (P1)** — host now posts `layout.nodes` as `Object.fromEntries(map)`; webview `layoutNodes` already accepts a record. Regression test drives `post()` against a fake panel and JSON-round-trips the message asserting nodes is a non-array object.
+2. **FK target normalization (P1)** — buildErGraph resolves search_path-bare `confrelidname` ("users") to the unique captured table with that bare name; ambiguity (bare name matching 2+ schemas) is NOT guessed and counts as dropped. Tests: bare-name resolution + ambiguity refusal.
+3. **Cap selection (P1)** — service now fetches details for ALL listed tables (per-table catch), builds the full graph, then ranks top-`maxNodes` by FK degree (tie-break by id). Alphabetical pre-slice removed; the degree contract is live code. Existing cap tests updated to the corrected call shape.
+4. **Zoom clamp (P1)** — webview applies the 0.25..4 clamp locally against the model's natural viewBox before each wheel step, and honors the host `er_zoom_set` acknowledgment by reconciling its viewBox accumulator.
+5. **Export failure reporting (P2)** — writeFile rejection is caught and surfaced via showErrorMessage; success path unchanged.
+6. **Test isolation (P1)** — erPanel.test.ts mocks the vscode module before importing erPanel.ts; the mandated targeted command now runs standalone.
+
+Fresh verification: targeted (er + service + panel + scaffold + extension) 114/114; full suite 2387 passed | 2 skipped; typecheck exit 0; esbuild builds dist/erPanel.js.

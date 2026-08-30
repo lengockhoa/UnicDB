@@ -104,17 +104,29 @@ export class ErPanel {
       });
       if (!target) return;
       const bytes = Buffer.from(msg.svg, "utf8");
-      await vscode.workspace.fs.writeFile(target, bytes);
+      try {
+        await vscode.workspace.fs.writeFile(target, bytes);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        void vscode.window.showErrorMessage(`ER export failed: ${message}`);
+        return;
+      }
       void vscode.window.showInformationMessage(`ER diagram saved: ${target.fsPath}`);
     }
   }
 
   private post(): void {
     if (this.panel && this.lastMessage) {
+      const layout = this.lastMessage.result.layout;
       void this.panel.webview.postMessage({
         type: "er_model",
         graph: this.lastMessage.result.graph,
-        layout: this.lastMessage.result.layout,
+        // JSON serialization drops Map contents — post a record instead.
+        layout: {
+          width: layout.width,
+          height: layout.height,
+          nodes: Object.fromEntries(layout.nodes),
+        },
         truncated: this.lastMessage.result.truncated,
         schema: this.lastMessage.schema,
       });

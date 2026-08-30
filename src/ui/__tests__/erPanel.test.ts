@@ -1,4 +1,14 @@
-import { describe, expect, it } from "vitest";
+// erPanel.ts imports the runtime vscode module; mock it BEFORE the
+// import so the test runs standalone (reviewer finding 6).
+vi.mock("vscode", () => ({
+  window: {},
+  workspace: {},
+  env: {},
+  Uri: { file: (p: string) => ({ fsPath: p }) },
+  ViewColumn: { Active: 1 },
+}));
+
+import { describe, expect, it, vi } from "vitest";
 import { isErPanelMessage, ZOOM_MIN, ZOOM_MAX, clampZoom } from "../erPanel";
 import { buildErHtml } from "../erPanelHtml";
 
@@ -39,5 +49,42 @@ describe("erPanelHtml CSP shell", () => {
     expect(html).toContain("style-src mock-csp: 'unsafe-inline'");
     expect(html).toContain("script-src mock-csp:");
     expect(html).not.toContain("nonce");
+  });
+});
+
+describe("erPanel host (mocked vscode)", () => {
+  it("posts layout as a serializable record, not a Map", async () => {
+    const { ErPanel } = await import("../erPanel");
+    const posted: unknown[] = [];
+    const { buildErGraph } = await import("../../core/er/fkGraph");
+    const { layoutErGraph } = await import("../../core/er/layout");
+    const graph = buildErGraph([]);
+    const layout = layoutErGraph(graph);
+    const panel = ErPanel.get({ extensionUri: {} as never });
+    // Drive post() through show() with a fake panel that captures messages.
+    const fakeWebview = {
+      postMessage: (m: unknown) => {
+        posted.push(m);
+        return Promise.resolve(true);
+      },
+      onDidReceiveMessage: () => undefined,
+      asWebviewUri: (u: unknown) => String(u),
+      cspSource: "test:",
+    };
+    const fakePanel = {
+      webview: fakeWebview,
+      reveal: () => undefined,
+      onDidDispose: () => undefined,
+    };
+    (panel as unknown as { panel: unknown }).panel = fakePanel;
+    (panel as unknown as { lastMessage: unknown }).lastMessage = {
+      result: { ok: true, graph, layout, truncated: false },
+      schema: "public",
+    };
+    // @ts-expect-error private method access for the wire-format test
+    panel.post();
+    const msg = JSON.parse(JSON.stringify(posted[0])) as { layout: { nodes: Record<string, unknown> } };
+    expect(msg.layout.nodes).toBeTypeOf("object");
+    expect(Array.isArray(msg.layout.nodes)).toBe(false);
   });
 });

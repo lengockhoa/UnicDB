@@ -80,7 +80,22 @@ export function buildErGraph(input: ErGraphInput): ErGraph {
     const sourceId = `${e.schema}.${e.table}`;
     for (const con of e.detail.constraints) {
       if (con.contype !== "f") continue;
-      const targetId = con.confrelidname;
+      const raw = con.confrelidname;
+      if (raw === null) {
+        dropped += 1;
+        continue;
+      }
+      // pg regclass text output is search_path-qualified: a relation
+      // visible in the path prints WITHOUT the schema prefix. Accept both
+      // "schema.table" and bare "table" (resolvable when unambiguous —
+      // i.e. exactly one captured table bears that bare name).
+      let targetId: string | null = ids.has(raw) ? raw : null;
+      if (targetId === null && !raw.includes(".")) {
+        const matches = input.filter((e) => e.table === raw);
+        if (matches.length === 1) {
+          targetId = `${matches[0].schema}.${matches[0].table}`;
+        }
+      }
       if (targetId === null || !ids.has(targetId)) {
         dropped += 1;
         continue;
