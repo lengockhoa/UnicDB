@@ -66,3 +66,18 @@ Addresses all seven CHANGES-REQUESTED findings (unic-smart):
 7. **Panel toggle protocol (P2)** — `grounding_toggle` added to the webview message union; handleMessage dispatches it into a panel-scoped `groundingPanelEnabled` field (no persistence — fresh panel re-reads vsdb.ai.grounding), and re-posts grounding_state so chips update immediately. handleSend honors `!== false`.
 
 Fresh verification: targeted (grounding + service + chat + tool + scaffold + erService) 63/63; extension 71/71; full 2442 passed | 2 skipped; typecheck exit 0; esbuild clean.
+
+## Reviewer Verdict — Superseding Round 1
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic/unic-smart
+
+Commands run:
+- `npm run typecheck` — exit 0.
+- `npx vitest run src/ai/grounding src/ui/__tests__/groundingService.test.ts src/ui/__tests__/aiChatGrounding.test.ts src/ai/tools/__tests__/workspaceSearchTool.test.ts src/__tests__/aix01Scaffold.test.ts src/extension.test.ts` — 8 files / 124 tests passed.
+
+Round-1 corrections verified: source-line offsets (including leading-blank handling), Slack token exclusion, UTF-8 file cap and byte attribution, tool registration in both registries, line-ranged file attribution/footer, and webview state/toggle wiring.
+
+Remaining finding:
+- important — `src/ai/grounding/fileSearch.ts:54-68`: a trailing bare recursive glob such as `src/**` is split by `*` before the later `replace(/\*\*/g, ".*")` runs, yielding `src/[^/]*[^/]*` instead of a recursive suffix. It excludes `src/sub/a.ts`, violating the required `**` path-segment contract. The promised direct-child and leading-blank regression tests are also not present in the current test files.
+

@@ -121,3 +121,16 @@ describe("searchWorkspaceFiles", () => {
     expect(r.hits[0].endLine).toBe(4);
   });
 });
+
+describe("matchesGlob — reviewer regressions", () => {
+  it("src/**/*.ts matches BOTH direct children and deep paths", () => {
+    expect(matchesGlob("src/a.ts", "src/**/*.ts")).toBe(true);
+    expect(matchesGlob("src/sub/a.ts", "src/**/*.ts")).toBe(true);
+  });
+
+  it("bare trailing ** matches anything below the prefix", () => {
+    expect(matchesGlob("src/a.ts", "src/**")).toBe(true);
+    expect(matchesGlob("src/sub/a.ts", "src/**")).toBe(true);
+    expect(matchesGlob("lib/a.ts", "src/**")).toBe(false);
+  });
+});

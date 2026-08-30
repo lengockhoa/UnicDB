@@ -145,7 +145,8 @@ type HostMsg =
   | ThoughtMsg
   | MentionObjectsMsg
   | MentionMissMsg
-  | AttachErrorMsg;
+  | AttachErrorMsg
+  | { type: "grounding_state"; selectionPath: string | null; fileCount: number; excludedCount: number; turnId: string };
 // ---- State -----------------------------------------------------------------
 interface State {
   busy: boolean;
@@ -1601,6 +1602,9 @@ function renderHistory(msg: HistoryMsg): void {
     case "attach_error":
       renderAttachWarning(msg.message);
       return;
+    case "grounding_state":
+      renderGroundingChips(msg);
+      return;
   }
 });
 
@@ -1754,6 +1758,45 @@ function approximateBytesFromBase64(b64: string): number {
   if (b64[len - 1] === "=") padding = 1;
   if (len > 1 && b64[len - 2] === "=") padding = 2;
   return Math.floor((len * 3) / 4) - padding;
+}
+
+// ---- AIX-01 — grounding chips + panel toggle -------------------------------
+
+/** Render (or clear) the grounding chips strip under the composer. Pure
+ * DOM via textContent (CSP-clean). Clicking the strip posts a
+ * `grounding_toggle` to the host, which flips its panel-scoped flag and
+ * re-posts `grounding_state`. */
+function renderGroundingChips(msg: {
+  selectionPath: string | null;
+  fileCount: number;
+  excludedCount: number;
+  turnId: string;
+}): void {
+  let strip = document.getElementById("vsdb-grounding-strip");
+  if (!strip) {
+    strip = document.createElement("div");
+    strip.id = "vsdb-grounding-strip";
+    strip.className = "vsdb-grounding-strip";
+    const composer = document.getElementById("composer") ?? document.body;
+    composer.appendChild(strip);
+    strip.addEventListener("click", () => {
+      vscodeApi.postMessage({ type: "grounding_toggle", enabled: false });
+    });
+  }
+  strip.replaceChildren();
+  if (msg.selectionPath === null && msg.fileCount === 0 && msg.excludedCount === 0) {
+    // Nothing attached — leave the strip empty (hidden via CSS :empty).
+    return;
+  }
+  const bits: string[] = [];
+  if (msg.selectionPath) bits.push(`selection: ${msg.selectionPath}`);
+  if (msg.fileCount > 0) bits.push(`${msg.fileCount} file(s)`);
+  if (msg.excludedCount > 0) bits.push(`${msg.excludedCount} excluded`);
+  const chip = document.createElement("span");
+  chip.className = "vsdb-grounding-chip";
+  chip.textContent = `Grounded in ${bits.join(" · ")} — click to disable`;
+  chip.title = "Click to disable workspace grounding for this panel";
+  strip.appendChild(chip);
 }
 
 // ---- Boot ------------------------------------------------------------------

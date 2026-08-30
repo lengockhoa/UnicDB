@@ -38,15 +38,18 @@ export function extractSelection(input: SelectionInput): GroundedSelection | nul
 
   const total = trimmed.split("\n").length;
   // `startLine`/`endLine` from the host (e.g. an editor selection) are
-  // 1-based OFFSETS into the source file — preserve them so the model
-  // is attributed to the real document lines, not relative positions
-  // in the trimmed text. When the host provides no offsets, we
-  // project the trimmed position back through the lead-blank count
-  // (1 + lead) so the rendered reference points at the right line.
+  // 1-based offsets into the RAW source text. When leading blanks were
+  // trimmed, the kept content begins after the blanks — shift by
+  // `lead` so attribution points at the real content lines
+  // (host line 100 + 2 blank lines -> content starts at 102).
   const hostStart = typeof input.startLine === "number";
   const hostEnd = typeof input.endLine === "number";
-  const requestedStart = hostStart ? (input.startLine as number) : 1 + lead;
-  const requestedEnd = hostEnd ? (input.endLine as number) : requestedStart + total - 1;
+  const requestedStart = hostStart
+    ? (input.startLine as number) + lead
+    : 1 + lead;
+  const requestedEnd = hostEnd
+    ? Math.max(requestedStart, (input.endLine as number))
+    : requestedStart + total - 1;
   const startLine = Math.max(1, requestedStart);
   // Clamp endLine to NOT exceed the trimmed text's last line offset.
   const endLine = Math.max(startLine, Math.min(requestedEnd, startLine + total - 1));

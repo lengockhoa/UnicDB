@@ -71,3 +71,31 @@ describe("extractSelection", () => {
     expect(extractSelection({ path: "a.ts" })).toBeNull();
   });
 });
+
+describe("extractSelection — leading-blank offsets (reviewer regression)", () => {
+  it("shifts host offsets past trimmed leading blanks", () => {
+    // Host selection begins at document line 100; the first two lines
+    // are blank, so the kept content starts at line 102.
+    const sel = extractSelection({
+      path: "a.ts",
+      text: "\n\ncontent line A\ncontent line B",
+      startLine: 100,
+      endLine: 103,
+    });
+    expect(sel).not.toBeNull();
+    expect(sel!.text).toBe("content line A\ncontent line B");
+    expect(sel!.startLine).toBe(102);
+    expect(sel!.endLine).toBe(103);
+  });
+
+  it("keeps verbatim host offsets when no blanks are trimmed", () => {
+    const sel = extractSelection({
+      path: "a.ts",
+      text: "alpha\nbeta",
+      startLine: 100,
+      endLine: 101,
+    });
+    expect(sel!.startLine).toBe(100);
+    expect(sel!.endLine).toBe(101);
+  });
+});

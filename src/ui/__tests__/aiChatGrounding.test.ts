@@ -29,7 +29,8 @@ describe("grounding bundle → per-turn block assembly", () => {
     });
     expect(r.files.map((f) => f.path)).toEqual(["ok.ts"]);
     expect(r.excluded).toContain("creds.txt");
-    expect(r.record.entries.map((e) => e.ref)).toEqual(["ok.ts"]);
+    // File refs are line-ranged (path:1-N) per the attribution contract.
+    expect(r.record.entries.map((e) => e.ref)).toEqual(["ok.ts:1-1"]);
   });
 
   it("selection + files together produce both blocks", async () => {

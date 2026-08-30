@@ -88,7 +88,10 @@ export async function collectGrounding(deps: GroundingDeps): Promise<GroundingBu
         continue;
       }
       files.push({ path: p, content: trimmed });
-      const fileEntries: AttributionEntry[] = [{ kind: "file", ref: p, bytes: Buffer.byteLength(trimmed, "utf8") }];
+      const fileLines = trimmed.split("\n").length;
+      const fileEntries: AttributionEntry[] = [
+        { kind: "file", ref: `${p}:1-${fileLines}`, bytes: Buffer.byteLength(trimmed, "utf8") },
+      ];
       record = recordAttribution(record, fileEntries);
     }
   }

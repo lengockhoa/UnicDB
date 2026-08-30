@@ -50,15 +50,22 @@ export function containsSecretHeuristic(content: string): boolean {
  *  matches both `src/a.ts` and `src/sub/a.ts`. `*` matches any chars
  *  except `/`. */
 export function matchesGlob(path: string, glob: string): boolean {
-  // Split the glob on `**` so each side can be built independently and
-  // joined with `.*`; a leading `**` must accept zero segments, so the
-  // left side is rendered as `.*` only when the glob starts with `**`
-  // (not a leading literal).
-  const parts = glob.split("**");
-  const rendered = parts
-    .map((part) => {
-      // Within each part, translate `*` (no slash) and `?` (single char).
-      const partRe = part
+  // Translate `**/` into an optional-segments group FIRST so the
+  // direct-child case is preserved (`src/**/*.ts` matches `src/a.ts`
+  // AND `src/sub/a.ts`), then `*`/`?` inside the remainder. A bare
+  // `**` (not followed by `/`) collapses to `.*`.
+  // Use a placeholder for `**` so the single-`*` translator never sees
+  // it: `**/` becomes an optional-segments group (direct children still
+  // match), a bare trailing `**` becomes `.*` (any depth, including
+  // nested paths like src/sub/a.ts).
+  const GLOBSTAR = "\u0000GLOBSTAR\u0000";
+  const GLOBSTAR_SLASH = "\u0000GLOBSTARSLASH\u0000";
+  const rendered = glob
+    .replaceAll("**/", GLOBSTAR_SLASH)
+    .replaceAll("**", GLOBSTAR)
+    .split(GLOBSTAR_SLASH)
+    .map((part) =>
+      part
         .split("*")
         .map((p) =>
           p
@@ -66,9 +73,10 @@ export function matchesGlob(path: string, glob: string): boolean {
             .map((q) => q.replace(/[.+^$|()\[\]{}\\]/g, "\\$&"))
             .join("[^/]"),
         )
-        .join("[^/]*");
-      return partRe;
-    })
+        .join("[^/]*"),
+    )
+    .join("(?:.*/)?")
+    .split(GLOBSTAR)
     .join(".*");
   return new RegExp(`^${rendered}$`).test(path);
 }
