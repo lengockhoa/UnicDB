@@ -371,6 +371,28 @@ describe("dispatchNotification (AIX-05 protocol robustness)", () => {
     expect(fakeHostMcp.call).not.toHaveBeenCalled();
     expect(toolStarts).toHaveLength(0);
   });
+
+  it("tool_call_update without toolCallId is dropped (no orphan onToolEnd)", async () => {
+    fakeAcp.sessionNew.mockResolvedValue({ sessionId: "sess-robust-3" });
+    fakeAcp.sessionPrompt.mockResolvedValue({ stopReason: "end_turn" });
+    const engine = createOmpChatEngine({
+      acp: fakeAcp,
+      hostMcp: fakeHostMcp,
+      cwd: "/workspace",
+    });
+    const toolEnds: Array<{ name: string; result: string; isError: boolean }> = [];
+    await engine.send("hi", {
+      onToolEnd: (n, r, e) => toolEnds.push({ name: n, result: r, isError: e }),
+    });
+    const handler = registeredNotificationHandler();
+    handler({
+      method: "session/update",
+      params: {
+        update: { sessionUpdate: "tool_call_update", name: "orphan", result: "x" },
+      },
+    });
+    expect(toolEnds).toHaveLength(0);
+  });
 });
 
 describe("OmpChatEngine.cancel (AIX-05)", () => {
@@ -484,5 +506,32 @@ describe("OmpChatEngine.cancel (AIX-05)", () => {
     await engine.send("second", {});
     expect(fakeAcp.sessionNew).toHaveBeenCalledTimes(2);
     expect(fakeAcp.sessionNew.mock.calls[1]?.[0]?.cwd).toBe("/workspace");
+  });
+
+  it("cancel() called while session/new is pending fires notify with the sessionId returned by session/new", async () => {
+    let resolveNew: (v: { sessionId: string }) => void = () => undefined;
+    fakeAcp.sessionNew.mockImplementation(
+      () => new Promise<{ sessionId: string }>((res) => {
+        resolveNew = res;
+      }),
+    );
+    const engine = createOmpChatEngine({
+      acp: fakeAcp,
+      hostMcp: fakeHostMcp,
+      cwd: "/workspace",
+    });
+    const errors: string[] = [];
+    const sendPromise = engine.send("hi", { onError: (m) => errors.push(m) });
+    // cancel BEFORE session/new resolves.
+    engine.cancel();
+    expect(fakeAcp.notify).not.toHaveBeenCalled();
+    // Now resolve session/new — pending cancel drains as a notify.
+    resolveNew({ sessionId: "sess-pending-1" });
+    await flushMicrotasks();
+    expect(fakeAcp.notify).toHaveBeenCalledTimes(1);
+    expect(fakeAcp.notify).toHaveBeenCalledWith("session/cancel", {
+      sessionId: "sess-pending-1",
+    });
+    await sendPromise;
   });
 });

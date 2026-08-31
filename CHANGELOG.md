@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.25.0] — 2026-08-31
+
+Cycle AIX-05: OMP Agent Workbench (session visibility, cancellation, protocol hardening, tool permission parity).
+
+### Added
+- **`session_state` wire kind** (`AiChatPanelSessionState` in `src/ui/aiChatPanelMessages.ts`): live OMP turn-lifecycle transitions (`connecting` → `running` → `done`/`error`). The webview renders a `#sessionChip` next to the engine banner (textContent-only). The `running` state posts exactly once per turn, on the first non-aborted stream event — crashed turns end on `error` and never on a misleading `done`.
+- **`OmpChatEngine.cancel()`** (`src/ai/omp/ompChatEngine.ts`): engine tracks the active `sessionId` (set after `session/new`; cleared on settle) and sends a fire-and-forget `session/cancel` notify. Idempotent across a single turn. A `cancel()` that lands while `session/new` is still pending sets a `pendingCancel` flag and the notify fires the instant the sessionId is assigned. Restart safety pinned: send → cancel → send creates a fresh session; crash mid-turn clears the active id so the next send opens a new one.
+- **Panel Stop parity** (`handleStop` in `src/ui/aiChatPanel.ts`): the omp+ompChatEngine branch now calls `engine.cancel()` so the child stops generating. Previously the legacy `acpSession`-guarded branch was dead in this path (acpSession is only set by the legacy `runAcpTurn`).
+- **Detection reason → hint pinning** (`src/ai/engineChoice.ts` + `src/ai/__tests__/engineChoice.test.ts`): `resolveEngine` keys the hint off the precise `detection.reason` (not just `detection.available`), so `version-unknown` and `spawn-failed` correctly map to `OMP_INSTALL_HINT` while `version-too-old` keeps `OMP_UPDATE_HINT`.
+- **Protocol robustness** (`dispatchNotification` in `src/ai/omp/ompChatEngine.ts`): top-level `isParamsRecord(n)` guard so a malformed frame can never kill a turn; `tool_call_update` frames missing a `toolCallId` are dropped (avoids orphan result cards). Unknown methods and `tool_call` frames without a name are also dropped silently.
+- **Tool permission parity** (`registerStandardToolset` in `src/ui/aiChatPanel.ts`): the OMP/MCP path and the builtin path now share a single helper that registers `createDbAwareTools` + `createAnalysisTools` + `createChangePlanTools` (all gate-wrapped, AIX-04 live fingerprint preserved). Both registries expose the same tool set — including `plan_change`. Pinned by `aiChatPanelToolParity.test.ts`.
+
+### Review
+- Independent unic-smart cycle review — pending.
+
 ## [1.24.0] — 2026-08-31
 
 Cycle AIX-04: AI Change Plans (reviewed migration plans + consent).
@@ -579,6 +594,7 @@ Cycle G: set-filter, toolbar icons, `run-sh` fix.
 [1.17.0]: https://github.com/lengockhoa/VSDB/compare/v1.16.0...v1.17.0
 [1.18.0]: https://github.com/lengockhoa/VSDB/compare/v1.17.0...v1.18.0
 [1.24.0]: https://github.com/lengockhoa/VSDB/compare/v1.23.0...v1.24.0
+[1.25.0]: https://github.com/lengockhoa/VSDB/compare/v1.24.0...v1.25.0
 [1.23.0]: https://github.com/lengockhoa/VSDB/compare/v1.22.0...v1.23.0
 [1.22.0]: https://github.com/lengockhoa/VSDB/compare/v1.21.0...v1.22.0
 [1.21.0]: https://github.com/lengockhoa/VSDB/compare/v1.20.0...v1.21.0

@@ -247,6 +247,11 @@ async function dispatchNotification(
   }
 
   if (sessionUpdate === "tool_call_update") {
+    // AIX-05: an update without a toolCallId cannot be correlated to a
+    // prior tool_call, so firing onToolEnd would surface an orphan
+    // result card. Drop the frame.
+    const toolCallId = stringField(update, "toolCallId");
+    if (toolCallId === undefined) return;
     const name = stringField(update, "name");
     if (name === undefined) return;
     const result = update["result"];
@@ -273,6 +278,10 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
   // double-cancel across a single turn.
   let currentSessionId: string | null = null;
   let cancelSent = false;
+  // AIX-05: cancel() called while session/new is still pending — we can't
+  // address `session/cancel` without a sessionId, so we remember the
+  // intent and emit the notify the instant sessionNew resolves.
+  let pendingCancel = false;
   // AIX-05: `acp.notify` is optional on AcpSession — the cancel()
   // helper uses optional chaining so fakes without notify stay compiling.
   const notify: (m: string, p: unknown) => void =
@@ -286,11 +295,28 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
         sessionId = newResult.sessionId;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        events.onError?.(`session/new failed: ${message}`);
+        // AIX-05: a cancel() called while session/new was pending fires
+        // onError so the panel can settle the turn instead of hanging.
+        if (pendingCancel) {
+          pendingCancel = false;
+          events.onError?.(`session/new cancelled: ${message}`);
+        } else {
+          events.onError?.(`session/new failed: ${message}`);
+        }
         return;
       }
       currentSessionId = sessionId;
       cancelSent = false;
+      // AIX-05: drain a pending cancel from before session/new settled.
+      if (pendingCancel) {
+        pendingCancel = false;
+        try {
+          notify("session/cancel", { sessionId });
+        } catch {
+          /* best-effort */
+        }
+        return;
+      }
 
       // Register notification dispatcher for the lifetime of this turn. The
       // acp session dedupes handlers (one per AcpClient instance) so this
@@ -357,7 +383,12 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
 
     cancel(): void {
       const id = currentSessionId;
-      if (id === null) return;
+      if (id === null) {
+        // session/new is still pending — remember the intent so the
+        // notify fires the instant a sessionId is assigned.
+        pendingCancel = true;
+        return;
+      }
       if (cancelSent) return;
       cancelSent = true;
       try {
@@ -381,6 +412,7 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
       }
       currentSessionId = null;
       cancelSent = false;
+      pendingCancel = false;
     },
   };
 }

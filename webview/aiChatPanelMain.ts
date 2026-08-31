@@ -140,6 +140,7 @@ type HostMsg =
   | DoneMsg
   | DeltaMsg
   | EngineMsg
+  | { type: "session_state"; state: "connecting" | "running" | "done" | "error"; turnId: string }
   | PermissionRequestMsg
   | ResumeSessionsMsg
   | HistoryMsg
