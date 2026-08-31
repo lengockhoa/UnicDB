@@ -186,3 +186,29 @@ Note: none — implementation details: (1) registry is pure (no vscode/fs/net/
   timeoutError(ms), formatError(error), isErrorResult(text) exactly as the
   Interfaces section declares for TASK-AIX08-002 host integration; (5) git
   state left untracked (no add/commit/push).
+
+
+## Review — Round 1
+
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERDICT: CHANGES-REQUESTED
+VERIFICATION:
+- `npx vitest run src/ai/omp/__tests__/mcpExtensionRegistry.test.ts` — PASS (1 file, 7 tests)
+- `npm run typecheck` — PASS (exit 0)
+FINDINGS:
+- important:
+  - `src/ai/omp/mcpExtensionRegistry.ts:377-382` — declaration validation accepts descriptions with leading or trailing whitespace (for example, `" catalog probe "`) because it only checks `description.trim().length`. The pinned v1 grammar requires a non-empty **trimmed** string; reject values where `description !== description.trim()` with `MCP extension contract rejected: description must be a non-empty trimmed string`, and add the exact-literal boundary assertion.
+  - `src/ai/omp/mcpExtensionRegistry.ts:460-464` — `dbReadAdmitted()` and `workspaceReadAdmitted()` dereference `policy.tools`/`policy.context` without runtime validation. A missing or malformed `EffectivePolicy` therefore makes `register()` throw rather than fail closed, violating the global missing/malformed-policy constraint and the registry's documented never-throw result contract. Validate the policy decision shape before dereferencing and reject the relevant declared capability with its existing policy-denied literal; add a malformed-policy registration test.
+REQUIRED FIXES:
+- Enforce `description === description.trim()` in the declaration validator and cover leading/trailing whitespace with the pinned D1 literal.
+- Make malformed or absent policy decisions default-deny without throwing; verify malformed database and workspace policy inputs leave declarations unlisted and handlers uncalled.
+NOTES: Model isolation is satisfied: configured/active reviewer `unic-smart` differs from executor `unic-code`. The focused contract suite asserts the enumerated pinned literals verbatim and the checked-adapter factory-race test preserves adapter identity.
+
+## Fix — Round 1 (orchestrator, findings applied)
+
+FIXER_MODEL: unic-code
+- `src/ai/omp/mcpExtensionRegistry.ts` — declaration validator now rejects descriptions where `description !== description.trim()` with the pinned D1 literal (whitespace-padded values like `" catalog probe "` are no longer admitted).
+- `src/ai/omp/mcpExtensionRegistry.ts` — `dbReadAdmitted()`/`workspaceReadAdmitted()` use optional-chained strict checks so a missing/malformed `EffectivePolicy` default-denies instead of throwing out of `register()` (never-throw result contract preserved).
+- `src/ai/omp/__tests__/mcpExtensionRegistry.test.ts` — new boundary `D1-padded` asserts the exact literal for a whitespace-padded description; new test `malformed or absent policy decisions default-deny without throwing (review round 1)` covers undefined/null/empty/null-decisions/wrong-type policy fixtures — each yields the exact db-read policy-denied literal with zero list entries and zero handler calls.
+- Verification: registry 8/8 GREEN; focused MCP net 41/41 across hostMcp/registry/aix03/aix04/capabilities; typecheck + compile clean.

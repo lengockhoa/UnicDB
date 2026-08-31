@@ -822,4 +822,123 @@ describe("createHostMcp — curated extension containment (TASK-AIX08-002)", () 
       isError: true,
     });
   });
+
+  it("curated name colliding with a standard tool loses to the standard tool (review round 1)", async () => {
+    const curatedCalls: number[] = [];
+    const standardCalls: Array<Record<string, unknown>> = [];
+    fixture = await buildFixture({
+      tools: [
+        {
+          name: "catalog-probe",
+          description: "standard tool that wins the name collision",
+          parameters: { type: "object", properties: {} },
+          execute: async (input: Record<string, unknown>) => {
+            standardCalls.push(input);
+            return "standard-wins";
+          },
+        } as unknown as FakeTool,
+      ],
+      extensions: [
+        curatedTool({
+          name: "catalog-probe",
+          handler: async () => {
+            curatedCalls.push(1);
+            return "curated-loses";
+          },
+        }),
+      ],
+      postPermission: (m) => {
+        queueMicrotask(() => fixture!.host.respond(m.requestId, "allow-once"));
+      },
+    });
+
+    // tools/list: exactly ONE descriptor, and it is the standard tool's.
+    const listRes = await probeJson(fixture.host.url, {
+      method: "POST",
+      body: { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} },
+    });
+    const listed = (listRes.body as {
+      result?: { tools?: Array<{ name: string; description?: string }> };
+    }).result?.tools ?? [];
+    expect(listed.filter((t) => t.name === "catalog-probe")).toHaveLength(1);
+    expect(
+      listed.find((t) => t.name === "catalog-probe")?.description,
+    ).toBe("standard tool that wins the name collision");
+
+    // tools/call: routed to the standard tool (its gate path), curated handler never runs.
+    const out = await fixture.host.call("catalog-probe", {});
+    expect(standardCalls).toHaveLength(1);
+    expect(curatedCalls).toHaveLength(0);
+    expect(out).toEqual({ result: "standard-wins", isError: false });
+
+    await fixture.host.stop();
+    fixture = undefined;
+  });
+
+  it("late-settling curated handler after timeout is observed, never unhandled, result applied once (review round 1)", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+
+    let settleHandler!: (value: string) => void;
+    const handlerPromise = new Promise<string>((resolve) => {
+      settleHandler = resolve;
+    });
+    let handlerSettled = false;
+    void handlerPromise.then(
+      () => {
+        handlerSettled = true;
+      },
+      () => {
+        handlerSettled = true;
+      },
+    );
+
+    try {
+      fixture = await buildFixture({
+        tools: fiveDbTools(),
+        extensions: [
+          curatedTool({
+            timeoutMs: 100,
+            handler: () => handlerPromise,
+          }),
+        ],
+        postPermission: (m) => {
+          queueMicrotask(() => fixture!.host.respond(m.requestId, "allow-once"));
+        },
+      });
+      await probeJson(fixture.host.url, {
+        method: "POST",
+        body: { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+      });
+
+      const out = await fixture.host.call("catalog-probe", { schema: "public" });
+      expect(out).toEqual({
+        result: "MCP extension tool timed out after 100ms",
+        isError: true,
+      });
+      // Handler has NOT settled yet — the timeout won the race.
+      expect(handlerSettled).toBe(false);
+
+      // Late settlement AFTER the response: first a rejection, then a
+      // resolution. Both must be observed (no unhandledRejection) and must
+      // NOT mutate the already-returned MCP result.
+      settleHandler!("LATE-RESULT-MUST-NOT-APPLY");
+      await new Promise((r) => setTimeout(r, 20));
+      expect(handlerSettled).toBe(true);
+      expect(unhandled).toHaveLength(0);
+
+      // The second call reflects the host is still healthy; the late
+      // settlement never leaked into it.
+      const after = await fixture.host.call("run_readonly_query", { sql: "SELECT 1" });
+      expect(after).toEqual({ result: "OUT-run_readonly_query", isError: false });
+
+      await fixture.host.stop();
+      fixture = undefined;
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
 });

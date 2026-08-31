@@ -158,3 +158,29 @@ esbuild: build complete
 
 Status: PASS
 Note: none. Standard-tool semantics untouched (permission gate, `DB_TOOL_DENIED_MESSAGE`, `Tool failed: <msg>`, wire/lifecycle all covered by the 13 pre-existing assertions, still green). Curated lane is containment-only: `setTimeout` budget always cleared in `finally`, single-settle race promise so a late handler settlement is observed, never unhandled; curated outcomes classified via the registry's explicit `isErrorResult`/`timeoutError`/`formatError` metadata (no string-prefix guessing); a curated name colliding with a standard tool loses (fail closed). No git add/commit/push; no package.json/INDEX.md/RUN.md/STATUS.md/WORKLOG.md/CHANGELOG.md changes.
+
+
+## Review — Round 1
+
+REVIEWER_MODEL: unic-smart (configured and running)
+EXECUTOR_MODEL: unic-code
+VERDICT: CHANGES-REQUESTED
+
+VERIFICATION:
+- `npx vitest run src/ai/omp/__tests__/hostMcp.test.ts src/ai/omp/__tests__/mcpExtensionRegistry.test.ts` — PASS (2 files, 24 tests)
+- `npm run typecheck` — PASS
+
+FINDINGS:
+- important — `src/ai/omp/__tests__/hostMcp.test.ts:645` — The curated integration suite never covers the required standard-name collision. `hostMcp.ts:241-250` is the only protection that removes a colliding curated entry; without a regression assertion, a precedence regression can route a standard-tool name through the curated path and bypass its existing permission gate. Add a standard tool and a same-name curated fixture, assert `tools/list` contains one standard descriptor, its `tools/call` invokes only the standard handler/gate, and the curated handler is never called.
+- important — `src/ai/omp/__tests__/hostMcp.test.ts:753-787` — The timeout test uses a handler that never settles, so it does not exercise the acceptance requirement that a handler which settles after the timeout is observed and cannot cause an unhandled rejection or a second applied result. Add a controlled handler promise, let the 100ms timeout win, then reject (and separately resolve if practical) it after the response; assert no `unhandledRejection`, the MCP response remains the one timeout result, and a subsequent standard call still succeeds.
+
+REQUIRED FIXES:
+1. Add the standard-versus-curated name-collision regression test described above.
+2. Add the late-settlement containment regression test described above, then rerun the focused tests and typecheck.
+
+## Fix — Round 1 (orchestrator, findings applied)
+
+FIXER_MODEL: unic-code
+- `src/ai/omp/__tests__/hostMcp.test.ts` — new test `curated name colliding with a standard tool loses to the standard tool (review round 1)`: same-name standard + curated fixtures → `tools/list` shows exactly ONE descriptor with the standard tool's description; `tools/call` routes through the standard execute path (gate answered via postPermission), standard handler called exactly once, curated handler never called.
+- `src/ai/omp/__tests__/hostMcp.test.ts` — new test `late-settling curated handler after timeout is observed, never unhandled, result applied once (review round 1)`: controlled handler promise, 100ms timeout wins and returns the pinned timeout literal; handler settles AFTER the response (resolve) with a sentinel that must not apply; `unhandledRejection` listener asserts zero unhandled rejections; subsequent standard call still succeeds.
+- Verification: MCP focused net 27/27 (hostMcp 19 + registry 8); full regression net 41/41; typecheck + compile clean.

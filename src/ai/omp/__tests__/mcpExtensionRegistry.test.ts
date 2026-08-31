@@ -374,6 +374,12 @@ describe("TASK-AIX08-001 — curated MCP extension registry", () => {
           "MCP extension contract rejected: description must be a non-empty trimmed string",
       },
       {
+        id: "D1-padded",
+        declaration: { ...base, description: " catalog probe " },
+        literal:
+          "MCP extension contract rejected: description must be a non-empty trimmed string",
+      },
+      {
         id: "T1-missing",
         declaration: omit("timeoutMs"),
         literal:
@@ -784,6 +790,34 @@ describe("TASK-AIX08-001 — curated MCP extension registry", () => {
     expect(out).toBe("MCP extension capability denied: adapter lacks catalog.");
     expect(legacyCalls.calls).toHaveLength(0);
     expect(legacy.runQueryCalls).toHaveLength(0);
+  });
+
+  it("malformed or absent policy decisions default-deny without throwing (review round 1)", async () => {
+    const calls = handlerSpy();
+    const malformedPolicies: unknown[] = [
+      undefined,
+      null,
+      {},
+      { tools: null, context: null, provider: null, auditExportAllowed: false, notice: "" },
+      { tools: { database: "yes", workspace: true }, context: { rows: 1, workspace: true } },
+    ];
+    const adapter = fakeAdapter({ capabilities: { catalog: true } }).adapter;
+    for (const policy of malformedPolicies) {
+      // Direct construction — makeRegistry's `??` would silently substitute
+      // a valid policy for undefined/null fixtures.
+      const registry = createMcpExtensionRegistry({
+        policy: policy as EffectivePolicy,
+        adapterFactory: async () => adapter,
+      });
+      const result = registry.register(baseDeclaration(calls.handler));
+      expect(result).toEqual({
+        ok: false,
+        error:
+          "MCP extension contract rejected: capability db-read is not permitted by effective policy",
+      });
+      expect(registry.list()).toHaveLength(0);
+    }
+    expect(calls.calls).toHaveLength(0);
   });
 
   it("capability check and read-only query use the same adapter instance", async () => {

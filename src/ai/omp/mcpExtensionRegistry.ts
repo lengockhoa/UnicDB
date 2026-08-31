@@ -379,7 +379,7 @@ function validateDeclaration(
   if (
     typeof description !== "string" ||
     description.length === 0 ||
-    description.trim().length === 0
+    description !== description.trim()
   ) {
     return { error: DESCRIPTION_LITERAL };
   }
@@ -458,11 +458,20 @@ export function createMcpExtensionRegistry(
   const names = new Set<string>();
   const { policy, adapterFactory, readWorkspaceFile } = options;
 
+  // Fail-closed policy admission (review round 1): a missing or malformed
+  // EffectivePolicy must deny the relevant capability instead of throwing
+  // out of register() — the registry's contract is a never-throw result.
   function dbReadAdmitted(): boolean {
-    return policy.tools.database === true && policy.context.rows === true;
+    return (
+      policy?.tools?.database === true &&
+      policy?.context?.rows === true
+    );
   }
   function workspaceReadAdmitted(): boolean {
-    return policy.tools.workspace === true && policy.context.workspace === true;
+    return (
+      policy?.tools?.workspace === true &&
+      policy?.context?.workspace === true
+    );
   }
 
   return {
