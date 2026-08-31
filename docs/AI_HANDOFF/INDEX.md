@@ -6,7 +6,7 @@ Cycle RLX-01 — **Operational Reliability Foundation**. Active, executable scop
 |---|---|---|---|---|
 | TASK-RLX-001 | Cancel active PostgreSQL non-cursor queries | ready | none | - |
 | TASK-RLX-002 | Coalesce SchemaCache stale refreshes | ready | none | - |
-| TASK-RLX-003 | Fail closed on malformed import execution plans | ready | none | - |
+| TASK-RLX-003 | Fail closed on malformed import execution plans | pending_review | none | - |
 | TASK-DBX07-001 | AIX-06 Trace r3 review fixes | done | none | unic-smart |
 | PORT-RLX-02 | Cross-dialect query lifecycle completion | queued — NOT READY | RLX-01 | - |
 | PORT-RLX-03 | Connection, tunnel, and schema-refresh recovery | queued — NOT READY | RLX-01, PORT-RLX-02 | - |

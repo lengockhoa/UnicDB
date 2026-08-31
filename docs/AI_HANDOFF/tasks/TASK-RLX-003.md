@@ -1,6 +1,6 @@
 # TASK-RLX-003 — Fail closed on malformed import execution plans
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §3
@@ -62,7 +62,89 @@ Validate only structural executable-plan invariants. Do not repair plans, reorde
 
 ## Executor Report
 
-(pending)
+### 2026-08-31 · executor · claude-code · unic-code · feature-implementer
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  npx vitest run src/core/importer/__tests__/importExecute.test.ts (before implementation):
+
+   RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-rlx-003
+
+   ❯ src/core/importer/__tests__/importExecute.test.ts  (15 tests | 2 failed) 9ms
+     ❯ executeImport — structural plan gate > declared batch lacks SQL statement → gate error, no transaction
+       → expected 2 to be +0 // Object.is equality
+     ❯ executeImport — structural plan gate > executable plan with no parameter sets → gate error, no transaction
+       → expected undefined to be 'gate' // Object.is equality
+
+   FAIL  executeImport — structural plan gate > declared batch lacks SQL statement → gate error, no transaction
+   AssertionError: expected 2 to be +0 // Object.is equality
+    ❯ src/core/importer/__tests__/importExecute.test.ts:251:29
+        249|     };
+        250|     const result = await executeImport(malformed, adapter);
+        251|     expect(result.rowCount).toBe(0);
+        |                             ^
+
+   FAIL  executeImport — structural plan gate > executable plan with no parameter sets → gate error, no transaction
+   AssertionError: expected undefined to be 'gate' // Object.is equality
+    ❯ src/core/importer/__tests__/importExecute.test.ts:271:33
+        269|     const result = await executeImport(malformed, adapter);
+        270|     expect(result.rowCount).toBe(0);
+        271|     expect(result.error?.phase).toBe("gate");
+
+    Test Files  1 failed (1)
+         Tests  2 failed | 13 passed (15)
+
+  RED analysis: both failures are exactly the malformed-plan contract gap — the old code
+  executed partial work (rowCount 2, began a transaction) for the mismatched
+  statement/batch plan, and silently no-opped (no error at all) for the
+  batches>0/parameterSets=[] plan. Test 1 (valid aligned 2/2) and Test 4 (regression:
+  mid-batch failOnBatch=2 rollback) already existed in the test file and passed both
+  before and after — kept as regressions, not duplicated.
+Verification Output: |
+  Command 1 — npx vitest run src/core/importer/__tests__/importExecute.test.ts (after implementation):
+
+   RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-rlx-003
+
+   ✓ src/core/importer/__tests__/importExecute.test.ts  (15 tests) 5ms
+
+   Test Files  1 passed (1)
+        Tests  15 passed (15)
+   Start at  20:48:36
+   Duration  172ms
+
+  Command 2 — npm run typecheck:
+
+   > vsdb@1.26.0 typecheck
+   > tsc --noEmit
+
+   TYPECHECK_EXIT=0
+
+  Extra shared-scope regression (same lane, 1 caller in src/ui/importWizard.ts):
+  npx vitest run src/core/importer
+
+   ✓ src/core/importer/__tests__/importCsv.test.ts      (10 tests) 2ms
+   ✓ src/core/importer/__tests__/importDryRun.test.ts    (6 tests) 3ms
+   ✓ src/core/importer/__tests__/importMapping.test.ts  (10 tests) 3ms
+   ✓ src/core/importer/__tests__/importExecute.test.ts  (15 tests) 5ms
+   ✓ src/core/importer/__tests__/importJson.test.ts      (7 tests) 2ms
+
+   Test Files  5 passed (5)
+        Tests  48 passed (48)
+
+  Implementation note: the structural gate was added AFTER the driver gate and the
+  INSERT-only statement gate, BEFORE adapter.beginTransaction(). A truly empty plan
+  (batches=0 AND statements=0 AND values=0) keeps the successful no-op; every
+  non-empty plan must satisfy Number.isSafeInteger(batches) && batches >= 1 &&
+  sqlStatements.length === batches && parameterSets.length > 0, else it returns
+  { rowCount: 0, errors: [], error: { phase: "gate", message } } with no transaction
+  and no adapter.runQuery. Valid plans are untouched: same values order, same
+  chunking, same BEGIN/COMMIT/ROLLBACK flow. Verified importDryRun's
+  buildDryRunPlan always emits batches === sqlStatements.length, so no legitimately
+  built plan can be rejected by the new gate.
+Status: PASS
+Note: none
 
 ## Reviewer Verdict
 

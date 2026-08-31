@@ -214,3 +214,61 @@ describe("executeImport — guards", () => {
     expect(result.errors[0]?.message).toMatch(/byte|size/i);
   });
 });
+
+describe("executeImport — structural plan gate", () => {
+  it("valid aligned plan (2 statements / 2 batches) commits once with ordered values", async () => {
+    const spy = makeTx();
+    const seen: unknown[][] = [];
+    spy.tx.runQuery = vi.fn(async (_sql: string, values?: unknown[]) => {
+      if (values) seen.push(values);
+      return { results: [] };
+    }) as DbTransaction["runQuery"];
+    const { adapter } = makeAdapter(spy);
+    const result = await executeImport(plan(2, 2), adapter);
+    // BEGIN exactly once, one tx.runQuery per batch, values in order.
+    expect(vi.mocked(adapter.beginTransaction).mock.calls.length).toBe(1);
+    expect(seen.length).toBe(2);
+    expect(seen[0]).toEqual([0, 1]);
+    expect(seen[1]).toEqual([2, 3]);
+    expect(result.rowCount).toBe(4);
+    expect(result.errors).toEqual([]);
+    expect(result.error).toBeUndefined();
+    expect(spy.commitCalls).toBe(1);
+    expect(spy.rollbackCalls).toBe(0);
+  });
+
+  it("declared batch lacks SQL statement → gate error, no transaction", async () => {
+    const spy = makeTx();
+    const { adapter } = makeAdapter(spy);
+    const malformed: DryRunPlan = {
+      sqlStatements: ['INSERT INTO "public"."t" VALUES ($1)'], // 1 statement…
+      parameterSets: [[1], [2]], // …but values for 2 declared batches
+      batches: 2,
+      rowCount: 2,
+      totalBytes: 16,
+    };
+    const result = await executeImport(malformed, adapter);
+    expect(result.rowCount).toBe(0);
+    expect(result.errors).toEqual([]);
+    expect(result.error?.phase).toBe("gate");
+    expect(vi.mocked(adapter.beginTransaction).mock.calls.length).toBe(0);
+    expect(vi.mocked(adapter.runQuery)).not.toHaveBeenCalled();
+    expect(spy.runQueryCalls.length).toBe(0);
+  });
+
+  it("executable plan with no parameter sets → gate error, no transaction", async () => {
+    const spy = makeTx();
+    const { adapter } = makeAdapter(spy);
+    const malformed: DryRunPlan = {
+      sqlStatements: ['INSERT INTO "public"."t" VALUES ($1)'],
+      parameterSets: [],
+      batches: 1,
+      rowCount: 0,
+      totalBytes: 0,
+    };
+    const result = await executeImport(malformed, adapter);
+    expect(result.rowCount).toBe(0);
+    expect(result.error?.phase).toBe("gate");
+    expect(vi.mocked(adapter.beginTransaction).mock.calls.length).toBe(0);
+  });
+});

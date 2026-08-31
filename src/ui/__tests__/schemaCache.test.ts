@@ -15,6 +15,25 @@ function adapterWith(listTables: ReturnType<typeof vi.fn>): DbAdapter {
   return { listTables } as unknown as DbAdapter;
 }
 
+/** Deferred promise — lets the test hold an adapter response in flight. */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+/**
+ * Drain pending microtasks so a just-started getTables call has actually
+ * reached adapter.listTables before the test counts calls.
+ */
+async function flushMicrotasks(times = 8): Promise<void> {
+  for (let i = 0; i < times; i++) await Promise.resolve();
+}
+
 describe("SchemaCache — TASK-008 §Test Cases", () => {
   it("#7 SchemaCache returns cached data within TTL", async () => {
     const data: TableInfo[] = [{ name: "users", schema: "public" }];
@@ -109,5 +128,84 @@ describe("SchemaCache — DBX-02 catalog capability", () => {
     expect(first).toEqual(constraints);
     expect(listConstraints).toHaveBeenCalledTimes(1);
     expect(listConstraints).toHaveBeenCalledWith("public", "orders");
+  });
+});
+
+describe("SchemaCache — TASK-RLX-002 single-flight coalescing", () => {
+  it("#1 concurrent stale getTables(schema) coalesce into one adapter call", async () => {
+    const refreshed: TableInfo[] = [{ name: "orders", schema: "public" }];
+    const first = deferred<TableInfo[]>();
+    const listTables = vi.fn(() => first.promise);
+    // ttlMs 0 → entry always expired → every call attempts a refresh.
+    const cache = new SchemaCache(() => adapterWith(listTables), { ttlMs: 0 });
+
+    const p1 = cache.getTables("public");
+    const p2 = cache.getTables("public");
+    await flushMicrotasks();
+    // Both callers must be sharing ONE in-flight adapter introspection.
+    expect(listTables).toHaveBeenCalledTimes(1);
+    expect(listTables).toHaveBeenCalledWith("public");
+    first.resolve(refreshed);
+
+    await expect(p1).resolves.toBe(refreshed);
+    await expect(p2).resolves.toBe(refreshed);
+    expect(listTables).toHaveBeenCalledTimes(1);
+  });
+
+  it("#2 shared refresh rejection returns stale value to every caller", async () => {
+    const stale: TableInfo[] = [{ name: "users", schema: "public" }];
+    const listTables = vi.fn(async () => stale);
+    // ttlMs 0 → entry always expired → every call attempts a refresh.
+    const cache = new SchemaCache(() => adapterWith(listTables), { ttlMs: 0 });
+    await expect(cache.getTables("public")).resolves.toBe(stale);
+    expect(listTables).toHaveBeenCalledTimes(1);
+
+    const failure = deferred<TableInfo[]>();
+    listTables.mockImplementation(() => failure.promise);
+    const p1 = cache.getTables("public");
+    const p2 = cache.getTables("public");
+    await flushMicrotasks();
+    // Both concurrent callers must share ONE refresh attempt.
+    expect(listTables).toHaveBeenCalledTimes(2);
+    failure.reject(new Error("connection lost"));
+
+    // Neither caller rejects — both receive the prior cached value.
+    await expect(p1).resolves.toBe(stale);
+    await expect(p2).resolves.toBe(stale);
+    expect(listTables).toHaveBeenCalledTimes(2);
+  });
+
+  it("#3 invalidate defeats a refresh that started before it", async () => {
+    const oldData: TableInfo[] = [{ name: "orders", schema: "public" }];
+    const newData: TableInfo[] = [{ name: "invoices", schema: "public" }];
+    let clock = 1_000;
+    const first = deferred<TableInfo[]>();
+    const listTables = vi.fn(() => first.promise);
+    // Fixed clock + default TTL → a successful commit must keep entries fresh.
+    const cache = new SchemaCache(() => adapterWith(listTables), {
+      now: () => clock,
+    });
+
+    const inflight = cache.getTables("public");
+    await flushMicrotasks();
+    cache.invalidate(); // response was already started → must not repopulate
+    first.resolve(oldData);
+    await expect(inflight).resolves.toBe(oldData);
+
+    // Cache stayed empty → the next read must fetch and return the NEW data.
+    clock = 2_000;
+    const second = deferred<TableInfo[]>();
+    listTables.mockImplementation(() => second.promise);
+    const next = cache.getTables("public");
+    await flushMicrotasks();
+    expect(listTables).toHaveBeenCalledTimes(2);
+    second.resolve(newData);
+    await expect(next).resolves.toBe(newData);
+
+    // Third read within TTL is served from the cache holding newData —
+    // proof that the pre-invalidate response never became cache state.
+    const third = await cache.getTables("public");
+    expect(third).toBe(newData);
+    expect(listTables).toHaveBeenCalledTimes(2);
   });
 });

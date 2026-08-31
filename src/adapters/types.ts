@@ -106,6 +106,20 @@ export interface DbAdapter {
   connect(): Promise<void>;
   close(): Promise<void>;
   runQuery(sql: string): Promise<RunResult>;
+  /**
+   * TASK-RLX-001 — best-effort cancel của operation non-cursor đang chạy
+   * (statement mà QueryRunner.run() đang chờ qua runQuery). Optional:
+   * adapter không có cancel server-side cứ bỏ qua — QueryRunner.cancel()
+   * khi đó giữ hành vi cũ (chỉ set flag).
+   *
+   * Contract:
+   *  - KHÔNG được close adapter/pool (chỉ cancel statement hiện tại).
+   *  - KHÔNG đụng vào BatchedQuery cursor — cursor cancel qua
+   *    BatchedQuery.cancel() (QueryRunner đảm bảo seam chỉ gọi khi KHÔNG có
+   *    currentBatched).
+   *  - Idempotent: không có operation active → resolve không làm gì.
+   */
+  cancelActiveQuery?(): Promise<void>;
   beginTransaction?(): Promise<DbTransaction>;
   listSchemas(includeSystem: boolean): Promise<SchemaInfo[]>;
   listTables(schema?: string): Promise<TableInfo[]>;

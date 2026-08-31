@@ -244,6 +244,13 @@ export class PostgresAdapter implements DbAdapter {
    * clients forever (CRITICAL #3).
    */
   private openCursors: Set<OpenCursorRecord> = new Set();
+  /**
+   * TASK-RLX-001 — backend PID của operation non-cursor đang chạy qua
+   * runQuery(). Chỉ record trong lúc client đang checked out (PID window);
+   * clear ngay khi runQuery settle (success/error). cancelActiveQuery()
+   * target PID này qua dedicated Client — KHÔNG bao giờ close pool/adapter.
+   */
+  private activeNonCursorPid: number | null = null;
 
   constructor(
     private readonly cfg: ConnectionConfig,
@@ -380,6 +387,10 @@ export class PostgresAdapter implements DbAdapter {
     // safe: concurrent metadata queries get their OWN session.)
     const client = await this.pool.connect();
     try {
+      // TASK-RLX-001 — record backend PID của client đang checked out để
+      // cancelActiveQuery() có thể pg_cancel_backend đúng backend.
+      const pid = (client as unknown as { processID?: number }).processID;
+      this.activeNonCursorPid = typeof pid === "number" ? pid : null;
       const results: QueryResult[] = [];
       for (const stmt of statements) {
         const text = stmt.text.trim();
@@ -399,6 +410,9 @@ export class PostgresAdapter implements DbAdapter {
       }
       return { results };
     } finally {
+      // TASK-RLX-001 — PID window đóng: tracking clear cả trên success lẫn
+      // error. Không late cancel nào bắn nhầm vào query sau.
+      this.activeNonCursorPid = null;
       client.release();
     }
   }
@@ -440,6 +454,28 @@ export class PostgresAdapter implements DbAdapter {
       commit: () => finish("COMMIT"),
       rollback: () => finish("ROLLBACK"),
     };
+  }
+
+  /**
+   * TASK-RLX-001 — DbAdapter.cancelActiveQuery seam (optional). Cancel
+   * operation non-cursor đang chạy (statement mà QueryRunner đang chờ qua
+   * runQuery) qua pg_cancel_backend trên backend PID đã record.
+   *
+   *  - Dùng cơ chế DEDICATED one-off Client có sẵn (CRITICAL #2 fix) —
+   *    KHÔNG qua pool: các slot pool có thể đang bị giữ, pool.query sẽ xếp
+   *    hàng 10s rồi timeout.
+   *  - KHÔNG bao giờ close pool/adapter — chỉ cancel statement hiện tại.
+   *  - KHÔNG đụng cursor: BatchedQuery có cancel path riêng
+   *    (BatchedQuery.cancel), QueryRunner đảm bảo seam chỉ gọi khi không có
+   *    cursor in-flight.
+   *  - Không có PID active (window đóng / chưa từng run) → no-op.
+   *  - Best-effort: dedicated client fail → swallow (giống cancel của
+   *    BatchedQuery); việc release client vẫn là trách nhiệm của runQuery.
+   */
+  async cancelActiveQuery(): Promise<void> {
+    const pid = this.activeNonCursorPid;
+    if (pid === null) return;
+    await this.cancelBackendViaDedicatedClient(pid);
   }
 
   private async runQueryOnClient(

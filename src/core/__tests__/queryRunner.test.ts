@@ -600,3 +600,179 @@ describe("Cycle AH — append runs", () => {
     expect(oldBatched.fetchBatch).toHaveBeenCalledTimes(1);
   });
 });
+
+// =============================================================================
+// TASK-RLX-001 — cancel active non-batched query through adapter seam.
+//
+// Contract:
+//  - DbAdapter gains an optional `cancelActiveQuery?(): Promise<void>`.
+//  - QueryRunner.cancel() retains the resolved adapter only during the active
+//    `run()` and invokes the seam ONLY when no currentBatched exists.
+//  - After a non-batched statement settles and the PID window closes,
+//    `cancel()` is a no-op (no seam call, no false error / cancelled status).
+//  - Batched cursor path remains exclusive: BatchedQuery.cancel() is called
+//    once and `cancelActiveQuery` is never invoked.
+// =============================================================================
+describe("QueryRunner — non-batched cancellation seam (TASK-RLX-001)", () => {
+  it("Test #1 — happy/contract: cancel active non-batched run → seam called once, status cancelled", async () => {
+    // Deferred adapter.runQuery so we can call cancel() while the statement
+    // is still in flight. No BatchedQuery in the result (non-SELECT / multi).
+    let resolveRun: ((v: RunResult) => void) | null = null;
+    const runQuerySpy = vi.fn(
+      () => new Promise<RunResult>((resolve) => { resolveRun = resolve; }),
+    );
+    const cancelActiveSpy = vi.fn(async () => {});
+    const adapter = {
+      connect: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      runQuery: runQuerySpy,
+      cancelActiveQuery: cancelActiveSpy,
+      listSchemas: vi.fn(async () => []),
+      listTables: vi.fn(async () => []),
+      listViews: vi.fn(async () => []),
+      listRoutines: vi.fn(async () => []),
+      listColumns: vi.fn(async () => []),
+      testConnection: vi.fn(async () => {}),
+    } as unknown as DbAdapter & {
+      runQuery: ReturnType<typeof vi.fn>;
+      cancelActiveQuery: ReturnType<typeof vi.fn>;
+    };
+    const runner = new QueryRunner(async () => adapter);
+
+    const runPromise = runner.run([stmt("SELECT pg_sleep(10)", 0, 18)], () => {});
+
+    // Wait for run() to have entered adapter.runQuery (statement in flight).
+    await new Promise((r) => setTimeout(r, 5));
+    expect(runQuerySpy).toHaveBeenCalledTimes(1);
+
+    // Cancel — seam must be called once against the in-flight run.
+    const cancelPromise = runner.cancel();
+    // Now resolve the run; since cancel was requested, status must be cancelled.
+    if (resolveRun) {
+      resolveRun({ results: [{ columns: ["x"], rows: [], rowCount: 0, durationMs: 0 }] });
+    }
+    await cancelPromise;
+    const result = await runPromise;
+
+    expect(cancelActiveSpy).toHaveBeenCalledTimes(1);
+    expect(result[0].status).toBe("cancelled");
+  });
+
+  it("Test #2 — edge / race: cancel before adapter resolves; seam NOT re-invoked after the late resolution", async () => {
+    // Deferred adapter-PROVIDER promise (task fixture): the adapter itself
+    // resolves late relative to run()'s start, and its runQuery is deferred
+    // too. Cancel lands while the runner holds the resolved adapter and an
+    // in-flight statement: seam fires exactly ONCE at cancel time, and the
+    // late runQuery resolution must NOT trigger another seam call. Result
+    // is 'cancelled' when the run settles.
+    let resolveAdapter: ((a: DbAdapter) => void) | null = null;
+    let resolveRun: ((v: RunResult) => void) | null = null;
+    const cancelActiveSpy = vi.fn(async () => {});
+    const runQuerySpy = vi.fn(
+      () => new Promise<RunResult>((resolve) => { resolveRun = resolve; }),
+    );
+    const adapter = {
+      connect: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      runQuery: runQuerySpy,
+      cancelActiveQuery: cancelActiveSpy,
+      listSchemas: vi.fn(async () => []),
+      listTables: vi.fn(async () => []),
+      listViews: vi.fn(async () => []),
+      listRoutines: vi.fn(async () => []),
+      listColumns: vi.fn(async () => []),
+      testConnection: vi.fn(async () => {}),
+    } as unknown as DbAdapter & {
+      runQuery: ReturnType<typeof vi.fn>;
+      cancelActiveQuery: ReturnType<typeof vi.fn>;
+    };
+    const runner = new QueryRunner(
+      () => new Promise<DbAdapter>((resolve) => { resolveAdapter = resolve; }),
+    );
+
+    const runPromise = runner.run([stmt("UPDATE t SET x=1", 0, 16)], () => {});
+    // Provider resolves late; the statement starts and hangs in runQuery.
+    if (resolveAdapter) resolveAdapter(adapter);
+    await new Promise((r) => setTimeout(r, 5));
+    expect(runQuerySpy).toHaveBeenCalledTimes(1);
+
+    // Cancel mid-runQuery — exactly one seam call.
+    await runner.cancel();
+    expect(cancelActiveSpy).toHaveBeenCalledTimes(1);
+
+    // runQuery resolves late; no second seam call may fire.
+    if (resolveRun) {
+      resolveRun({ results: [{ columns: [], rows: [], rowCount: 1, commandTag: "UPDATE 1", durationMs: 0 }] });
+    }
+    const result = await runPromise;
+
+    expect(cancelActiveSpy).toHaveBeenCalledTimes(1);
+    expect(result[0].status).toBe("cancelled");
+  });
+
+  it("Test #3 — edge / ordering: cancel AFTER statement settles and PID window closes → seam never called, status done", async () => {
+    // Adapter resolves immediately. After run() completes, the PID/active
+    // window is closed. cancel() in this window must be a no-op (no seam
+    // call, no false cancelled / error status).
+    const cancelActiveSpy = vi.fn(async () => {});
+    const adapter = makeAdapter(async () =>
+      okResult(["n"], [[1]]),
+    ) as DbAdapter;
+    (adapter as unknown as { cancelActiveQuery: ReturnType<typeof vi.fn> }).cancelActiveQuery = cancelActiveSpy;
+
+    const runner = new QueryRunner(async () => adapter);
+    const result = await runner.run([stmt("SELECT 1", 0, 8)], () => {});
+    expect(result[0].status).toBe("done");
+
+    await runner.cancel();
+    expect(cancelActiveSpy).not.toHaveBeenCalled();
+    // The settled entry must remain done with no false cancelled / error.
+    const final = runner.getResults();
+    expect(final[0].status).toBe("done");
+    expect(final[0].error).toBeUndefined();
+  });
+
+  it("Test #5 — regression: batched cursor uses BatchedQuery.cancel() only, seam never called", async () => {
+    // The seam is for the NON-cursor branch. If a BatchedQuery is in flight
+    // (currentBatched set), cancel() must call batched.cancel() once and must
+    // NOT invoke the adapter-level seam.
+    const batched = makeBatched(["n"], [null]);
+    // fetchBatch hangs so the cursor remains in flight.
+    let resolveFetch: ((v: any[][] | null) => void) | null = null;
+    batched.fetchBatch.mockImplementation(
+      () => new Promise<any[][] | null>((resolve) => { resolveFetch = resolve; }),
+    );
+    const cancelActiveSpy = vi.fn(async () => {});
+    const adapter = {
+      connect: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      runQuery: vi.fn(async () => ({ results: [], batched })),
+      cancelActiveQuery: cancelActiveSpy,
+      listSchemas: vi.fn(async () => []),
+      listTables: vi.fn(async () => []),
+      listViews: vi.fn(async () => []),
+      listRoutines: vi.fn(async () => []),
+      listColumns: vi.fn(async () => []),
+      testConnection: vi.fn(async () => {}),
+    } as unknown as DbAdapter & {
+      runQuery: ReturnType<typeof vi.fn>;
+      cancelActiveQuery: ReturnType<typeof vi.fn>;
+    };
+    const runner = new QueryRunner(async () => adapter);
+
+    const runPromise = runner.run([stmt("SELECT pg_sleep(10)", 0, 18)], () => {});
+    // Wait for adapter.runQuery to have returned + fetchBatch(initial) called.
+    await new Promise((r) => setTimeout(r, 5));
+    expect(batched.fetchBatch).toHaveBeenCalledTimes(1);
+
+    const cancelPromise = runner.cancel();
+    // Resolve the in-flight fetchBatch (EOF) so the runner can settle.
+    if (resolveFetch) resolveFetch(null);
+    await cancelPromise;
+    const result = await runPromise;
+
+    expect(batched.cancel).toHaveBeenCalledTimes(1);
+    expect(cancelActiveSpy).not.toHaveBeenCalled();
+    expect(result[0].status).toBe("cancelled");
+  });
+});

@@ -66,6 +66,14 @@ export class QueryRunner {
   private cancelRequested = false;
   /** Batched handle của statement đang in-flight (cancel target). */
   private currentBatched: BatchedQuery | null = null;
+  /**
+   * TASK-RLX-001 — adapter đã resolve, giữ CHỈ trong lúc một statement
+   * non-batched đang in-flight qua runQuery (PID window). Cancel() khi đó
+   * gọi seam `cancelActiveQuery()` (nếu adapter hỗ trợ). Sau khi statement
+   * settle, window đóng → cancel() là no-op (không seam, không false
+   * cancelled). Batched cursor vẫn đi qua BatchedQuery.cancel() độc quyền.
+   */
+  private activeAdapter: DbAdapter | null = null;
   private currentIndex = -1;
   private running: Promise<void> | null = null;
   /** Per-index in-flight promise — serializes concurrent loadMore cho cùng index. */
@@ -151,6 +159,8 @@ export class QueryRunner {
     } finally {
       this.running = null;
       this.currentBatched = null;
+      // TASK-RLX-001 — đóng PID window khi run kết thúc (dù success/error).
+      this.activeAdapter = null;
     }
     return this.results.slice();
   }
@@ -176,7 +186,13 @@ export class QueryRunner {
 
       const start = Date.now();
       try {
+        // TASK-RLX-001 — PID window MỞ: giữ adapter reference chỉ trong lúc
+        // runQuery in-flight để cancel() có thể gọi cancelActiveQuery().
+        this.activeAdapter = adapter;
         const runResult: RunResult = await adapter.runQuery(statements[i].text);
+        // PID window ĐÓNG: statement đã settle (kể cả khi cancel đã được
+        // yêu cầu trong lúc chờ) — cancel() sau điểm này là no-op.
+        this.activeAdapter = null;
         // Clear currentBatched assignment từ lần trước trước khi re-assign.
         // (nếu statement trước cancel xong, currentBatched có thể stale.)
         this.currentBatched = null;
@@ -239,6 +255,8 @@ export class QueryRunner {
         }
         onUpdate(this.results.slice());
       } catch (err) {
+        // PID window đóng cả ở error path — không cho late cancel bắn seam.
+        this.activeAdapter = null;
         if (this.cancelRequested) {
           this.results[index].status = "cancelled";
         } else {
@@ -349,6 +367,11 @@ export class QueryRunner {
    * resolve.
    *
    * Sau khi cancel xong, attempt close batched cursor (idempotent).
+   *
+   * TASK-RLX-001 — non-batched branch: nếu KHÔNG có currentBatched mà runner
+   * đang giữ một adapter cho statement in-flight (PID window mở), gọi seam
+   * `adapter.cancelActiveQuery()` (best-effort). Window đóng (statement đã
+   * settle) → cancel là no-op: không seam, không false cancelled.
    */
   async cancel(): Promise<void> {
     this.cancelRequested = true;
@@ -364,6 +387,17 @@ export class QueryRunner {
         // ignore
       }
       this.currentBatched = null;
+      return;
+    }
+    // TASK-RLX-001 — non-batched in-flight cancellation. Chỉ bắn seam khi
+    // runner đang thực sự giữ adapter cho một runQuery đang chờ.
+    const adapter = this.activeAdapter;
+    if (adapter?.cancelActiveQuery) {
+      try {
+        await adapter.cancelActiveQuery();
+      } catch {
+        // best-effort — seam failure không được làm hỏng cancel flow.
+      }
     }
   }
 

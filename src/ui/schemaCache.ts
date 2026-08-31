@@ -67,6 +67,10 @@ export class SchemaCache {
   private readonly sequencesBySchema = new Map<string, CacheEntry<SequenceInfo[]>>();
   private readonly constraintsByKey = new Map<string, CacheEntry<TableConstraintInfo[]>>();
   private readonly ddlByKey = new Map<string, CacheEntry<string | null>>();
+  /** Single-flight registry: key → shared in-flight adapter refresh. */
+  private readonly inflight = new Map<string, Promise<unknown>>();
+  /** Bumped on invalidate — pre-invalidate responses must not commit. */
+  private generation = 0;
 
   constructor(
     private readonly adapterProvider: SchemaAdapterProvider,
@@ -83,6 +87,7 @@ export class SchemaCache {
     if (!adapter) return this.stale(existing) ?? [];
     return (
       (await this.fetchEntry(
+        "schemas",
         () => adapter.listSchemas(false),
         (entry) => {
           this.schemasEntry = entry;
@@ -100,6 +105,7 @@ export class SchemaCache {
       if (!adapter) return this.stale(existing) ?? [];
       return (
         (await this.fetchEntry(
+          "tables:all",
           () => adapter.listTables(),
           (entry) => {
             this.tablesAllEntry = entry;
@@ -112,6 +118,7 @@ export class SchemaCache {
     if (!adapter) return this.stale(existing) ?? [];
     return (
       (await this.fetchEntry(
+        `tables:${schema}`,
         () => adapter.listTables(schema),
         (entry) => {
           this.tablesBySchema.set(schema, entry);
@@ -129,6 +136,7 @@ export class SchemaCache {
     if (!adapter) return this.stale(existing) ?? [];
     return (
       (await this.fetchEntry(
+        `columns:${key}`,
         () => adapter.listColumns(table, schema),
         (entry) => {
           this.columnsByKey.set(key, entry);
@@ -152,6 +160,7 @@ export class SchemaCache {
     if (!adapter) return this.stale(existing) ?? [];
     return (
       (await this.fetchEntry(
+        `views:${schema}`,
         () => adapter.listViews(schema),
         (entry) => {
           this.viewsBySchema.set(schema, entry);
@@ -169,6 +178,7 @@ export class SchemaCache {
     if (!adapter) return this.stale(existing) ?? [];
     return (
       (await this.fetchEntry(
+        `routines:${schema}`,
         () => adapter.listRoutines(schema),
         (entry) => {
           this.routinesBySchema.set(schema, entry);
@@ -194,6 +204,7 @@ export class SchemaCache {
     const catalog = adapter.catalog;
     return (
       (await this.fetchEntry(
+        `constraints:${key}`,
         () => catalog.listConstraints(schema, table),
         (entry) => {
           this.constraintsByKey.set(key, entry);
@@ -211,6 +222,7 @@ export class SchemaCache {
     const catalog = adapter.catalog;
     return (
       (await this.fetchEntry(
+        `sequences:${schema}`,
         () => catalog.listSequences(schema),
         (entry) => {
           this.sequencesBySchema.set(schema, entry);
@@ -238,6 +250,7 @@ export class SchemaCache {
     }
     const catalog = adapter.catalog;
     return await this.fetchEntryDdl(
+      `ddl:${key}`,
       () => catalog.objectDdl(kind, name, schema),
       (entry) => {
         this.ddlByKey.set(key, entry);
@@ -248,6 +261,9 @@ export class SchemaCache {
 
   /** Xoá toàn bộ cached entries — lần gọi kế tiếp fetch fresh. */
   invalidate(): void {
+    // TASK-RLX-002: bump generation — response in-flight bắt đầu trước đây
+    // sẽ KHÔNG commit được. Adapter I/O không bị hủy (chỉ bỏ qua commit).
+    this.generation += 1;
     this.schemasEntry = null;
     this.tablesAllEntry = null;
     this.tablesBySchema.clear();
@@ -284,21 +300,40 @@ export class SchemaCache {
    * Core fetch-or-cached: fresh → cached; expired → refresh, lỗi → stale
    * (hoặc null nếu chưa từng cache — caller map sang []). `commit` lưu entry
    * mới vào đúng slot.
+   *
+   * TASK-RLX-002: các caller trùng key refresh cùng một slot hết hạn sẽ share
+   * đúng một in-flight promise (single-flight theo key). Registry được dọn
+   * trong `finally`. Guard `generation` chặn response bắt đầu trước
+   * `invalidate()` ghi đè cache: response cũ vẫn trả cho caller đang chờ,
+   * chỉ không commit — invalidate không hủy adapter I/O.
    */
-  private async fetchEntry<D>(
+  private fetchEntry<D>(
+    key: string,
     fetch: () => Promise<D>,
     commit: (entry: CacheEntry<D>) => void,
     existing: CacheEntry<D> | null,
   ): Promise<D | null> {
-    if (this.isFresh(existing)) return existing!.data;
-    try {
-      const data = await fetch();
-      commit({ data, fetchedAt: this.now() });
-      return data;
-    } catch {
-      // Adapter lỗi mid-refresh → stale tốt hơn empty.
-      return this.stale(existing);
-    }
+    if (this.isFresh(existing)) return Promise.resolve(existing!.data);
+    const inflight = this.inflight.get(key);
+    if (inflight) return inflight as Promise<D | null>;
+    const startGen = this.generation;
+    let work!: Promise<D | null>;
+    work = (async () => {
+      try {
+        const data = await fetch();
+        if (this.generation === startGen) {
+          commit({ data, fetchedAt: this.now() });
+        }
+        return data;
+      } catch {
+        // Adapter lỗi mid-refresh → stale tốt hơn empty.
+        return this.stale(existing);
+      } finally {
+        if (this.inflight.get(key) === work) this.inflight.delete(key);
+      }
+    })();
+    this.inflight.set(key, work);
+    return work;
   }
 
   /**
@@ -306,18 +341,33 @@ export class SchemaCache {
    * be preserved across refresh failures so we don't repeatedly probe a
    * missing object. Inline stale fallback returns undefined when no cache.
    */
-  private async fetchEntryDdl(
+  private fetchEntryDdl(
+    key: string,
     fetch: () => Promise<string>,
     commit: (entry: CacheEntry<string | null>) => void,
     existing: CacheEntry<string | null> | null,
   ): Promise<string | undefined> {
-    if (this.isFresh(existing)) return existing!.data ?? undefined;
-    try {
-      const data = await fetch();
-      commit({ data, fetchedAt: this.now() });
-      return data;
-    } catch {
-      return existing ? (existing.data ?? undefined) : undefined;
+    if (this.isFresh(existing)) {
+      return Promise.resolve(existing!.data ?? undefined);
     }
+    const inflight = this.inflight.get(key);
+    if (inflight) return inflight as Promise<string | undefined>;
+    const startGen = this.generation;
+    let work!: Promise<string | undefined>;
+    work = (async () => {
+      try {
+        const data = await fetch();
+        if (this.generation === startGen) {
+          commit({ data, fetchedAt: this.now() });
+        }
+        return data;
+      } catch {
+        return existing ? (existing.data ?? undefined) : undefined;
+      } finally {
+        if (this.inflight.get(key) === work) this.inflight.delete(key);
+      }
+    })();
+    this.inflight.set(key, work);
+    return work;
   }
 }

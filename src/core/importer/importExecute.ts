@@ -83,7 +83,32 @@ export async function executeImport(
     }
   }
 
-  if (plan.parameterSets.length === 0 || plan.batches === 0) {
+  // Structural plan gate (fail closed BEFORE transaction acquisition):
+  // a truly empty plan (no batches, no statements, no values) keeps its
+  // successful no-op result; any non-empty plan must declare a positive
+  // safe-integer batch count with exactly one SQL statement per batch
+  // and at least one bound value. Anything else would force
+  // executeImport to guess statement/batch/value alignment and risk
+  // partial database work — refuse instead.
+  const isEmptyPlan =
+    plan.batches === 0 && plan.sqlStatements.length === 0 && plan.parameterSets.length === 0;
+  if (
+    !isEmptyPlan &&
+    (!Number.isSafeInteger(plan.batches) ||
+      plan.batches < 1 ||
+      plan.sqlStatements.length !== plan.batches ||
+      plan.parameterSets.length === 0)
+  ) {
+    return {
+      rowCount: 0,
+      errors,
+      error: {
+        phase: "gate",
+        message: `Malformed executable plan: batches=${plan.batches}, statements=${plan.sqlStatements.length}, parameterSets=${plan.parameterSets.length} (expected batches ≥ 1, one INSERT statement per batch, and at least one parameter set)`,
+      },
+    };
+  }
+  if (isEmptyPlan) {
     return { rowCount: 0, errors };
   }
 

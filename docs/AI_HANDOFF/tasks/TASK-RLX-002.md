@@ -1,6 +1,6 @@
 # TASK-RLX-002 — Coalesce SchemaCache stale refreshes
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §3
@@ -62,7 +62,43 @@ Keep this VS Code-free and test with deferred promises. Do not debounce callers,
 
 ## Executor Report
 
-(pending)
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  RUN v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-rlx-002
+   ❯ src/ui/__tests__/schemaCache.test.ts  (9 tests | 3 failed) 208ms
+     ❯ ... TASK-RLX-002 single-flight coalescing > #1 concurrent stale getTables(schema) coalesce into one adapter call
+       → expected "spy" to be called 1 times, but got 2 times
+     ❯ ... #2 shared refresh rejection returns stale value to every caller
+       → expected "spy" to be called 2 times, but got 3 times
+     ❯ ... #3 invalidate defeats a refresh that started before it
+       → expected "spy" to be called 2 times, but got 1 times
+   Test Files  1 failed (1)
+   Tests  3 failed | 6 passed (9)
+  Note: a first RED run failed for the wrong reason (sync call-count assertions
+  ran before the cache reached adapter.listTables → "got 0 times"). Tests were
+  corrected with a microtask flush before mid-flight assertions; the RED above
+  is the corrected, wrong-reason-free run. #1 shows duplicate adapter calls (no
+  coalescing), #2 shows 3 calls (each caller refreshed alone), #3 shows the
+  pre-invalidate response populating cache (next read served without fetch).
+Verification Output: |
+  $ npx vitest run src/ui/__tests__/schemaCache.test.ts
+   ✓ src/ui/__tests__/schemaCache.test.ts  (9 tests) 4ms
+   Test Files  1 passed (1)
+   Tests  9 passed (9)
+   Start at  21:09:30
+   Duration  208ms
+  $ npm run typecheck
+  > vsdb@1.26.0 typecheck
+  > tsc --noEmit
+  (exit 0, no errors)
+  Regression net (7 dependent files): 44 passed (44) — schemaCache, sqlCatalog,
+  sqlCompletionProvider, sqlNavigationProvider, sqlSemanticTokens, dbx01/03 scaffold.
+Status: PASS
+Note: none — public signatures and default ttlMs 60_000 unchanged; invalidate()
+stays synchronous, does not cancel adapter I/O; different keys use distinct
+in-flight slots (`tables:public` vs `tables:all` vs `columns:<s>.<t>` etc.).
 
 ## Reviewer Verdict
 
