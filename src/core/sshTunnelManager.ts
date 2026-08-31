@@ -41,15 +41,27 @@ function pickFreeLocalPort(): Promise<number> {
 /**
  * Identity proof for the local forward: the LISTEN socket on 127.0.0.1:port
  * must be owned by the ssh child we spawned. Checked with the platform's
- * socket table (lsof on macOS/BSD, ss on Linux) — spawn only, no shell.
- * Undeterminable owner => fail closed.
+ * socket table — spawn only, no shell. Undeterminable owner => fail closed.
+ *
+ * Supported platforms:
+ * - macOS/BSD: lsof -t -iTCP:<port> -sTCP:LISTEN -n -P (PID per line)
+ * - Linux:     ss -ltnp 'sport = :<port>' (users:(("ssh",pid=N,...)))
+ * - Windows:   netstat -ano -p tcp (LISTENING rows; -ano works without admin)
  */
 function listeningPids(port: number): Promise<Set<number>> {
-  const isMac = process.platform === "darwin";
-  const cmd = isMac ? "lsof" : "ss";
-  const args = isMac
-    ? ["-t", `-iTCP:${port}`, "-sTCP:LISTEN", "-n", "-P"]
-    : ["-ltnp", `sport = :${port}`];
+  const platform = process.platform;
+  const cmd =
+    platform === "darwin" || platform === "freebsd" || platform === "openbsd"
+      ? "lsof"
+      : platform === "win32"
+        ? "netstat"
+        : "ss";
+  const args =
+    cmd === "lsof"
+      ? ["-t", `-iTCP:${port}`, "-sTCP:LISTEN", "-n", "-P"]
+      : cmd === "netstat"
+        ? ["-ano", "-p", "tcp"]
+        : ["-ltnp", `sport = :${port}`];
   return new Promise((resolve) => {
     const out: Buffer[] = [];
     const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "ignore"] });
@@ -66,15 +78,27 @@ function listeningPids(port: number): Promise<Set<number>> {
     child.on("exit", () => {
       clearTimeout(timer);
       const pids = new Set<number>();
-      if (isMac) {
-        // lsof -t prints one PID per line.
-        for (const line of Buffer.concat(out).toString().split("\n")) {
+      const text = Buffer.concat(out).toString();
+      if (cmd === "lsof") {
+        // One PID per line.
+        for (const line of text.split("\n")) {
           const pid = Number.parseInt(line.trim(), 10);
+          if (Number.isInteger(pid)) pids.add(pid);
+        }
+      } else if (cmd === "netstat") {
+        // TCP    127.0.0.1:5432    0.0.0.0:0    LISTENING    12345
+        const listenPort = `:${port}`;
+        for (const line of text.split("\n")) {
+          const cols = line.trim().split(/\s+/);
+          if (cols.length < 5) continue;
+          if (!cols[3].toUpperCase().startsWith("LISTENING")) continue;
+          const local = cols[1];
+          if (!local.endsWith(listenPort)) continue;
+          const pid = Number.parseInt(cols[4], 10);
           if (Number.isInteger(pid)) pids.add(pid);
         }
       } else {
         // ss -ltnp: users:(("ssh",pid=1234,fd=3))
-        const text = Buffer.concat(out).toString();
         for (const m of text.matchAll(/pid=(\d+)/g)) pids.add(Number(m[1]));
       }
       done(pids);
@@ -95,11 +119,9 @@ export class SshTunnelManager {
    * timeout/early-exit/spawn-error. Idempotent per key — a running tunnel is
    * reused.
    *
-   * Readiness is NOT derived from ssh debug output: OpenSSH prints
-   * "Local forwarding listening on … port N" from the REQUESTED port before
-   * bind, so with an ephemeral -L port it would report 0. Instead the manager
-   * pre-allocates a free local port, passes it explicitly, and polls the
-   * bound socket until it accepts.
+   * Readiness = ssh's forward line + listener PID identity proof (see
+   * listeningPids): the pre-allocated local port's LISTEN socket must be
+   * owned by this ssh child before any DB traffic is allowed through.
    */
   async start(cfg: TunnelConfig, key: string): Promise<TunnelHandle> {
     const existing = this.tunnels.get(key);
