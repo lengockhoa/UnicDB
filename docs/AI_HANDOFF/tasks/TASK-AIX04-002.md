@@ -1,7 +1,7 @@
 # TASK-AIX04-002 — plan_change agent tool
 
 Cycle: AIX-04 · Wave 4 · Priority: P1
-Status: pending
+Status: done
 Depends on: AIX04-001
 Reviewer: unic-smart (cycle reviewer)
 
@@ -39,7 +39,18 @@ Create `src/ai/tools/changePlanTool.ts`:
 
 ## Executor
 
-(to be filled by executor with RED + GREEN evidence)
+**RED**: `Failed to load url ../tools/changePlanTool ... Does the file exist?` —
+Tests no tests.
+
+**GREEN**: `npx vitest run src/ai/__tests__/changePlanTool.test.ts` →
+Tests 5 passed (5).
+
+Notes:
+- Tool NEVER executes: regression pins runCalls === 0 on the plan path.
+- targetSchema/targetTable guarded (plain-identifier + containsForbidden)
+  BEFORE adapter acquisition.
+- claimedColumns heuristic extracts identifier tokens from statement SQL
+  for the advisory drift comparison; host re-checks drift at approve time.
 
 ## Reviewer
 

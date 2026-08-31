@@ -1,7 +1,7 @@
 # TASK-AIX04-004 — scaffold hygiene + CHANGELOG/README
 
 Cycle: AIX-04 · Wave 4 · Priority: P2
-Status: pending
+Status: done
 Depends on: AIX04-003
 Reviewer: unic-smart (cycle reviewer)
 
@@ -24,7 +24,17 @@ Reviewer: unic-smart (cycle reviewer)
 
 ## Executor
 
-(to be filled by executor with RED + GREEN evidence)
+**RED**: file absent — no scaffold coverage for AIX-04 pure modules / wire
+kinds / dual registry / shared consent gate.
+
+**GREEN**: `npx vitest run src/__tests__/aix04Scaffold.test.ts` → Tests 6
+passed (6): no vscode import in changePlan/changePlanTool; no shell/fs/
+child_process; exports present; createChangePlanTools registered twice
+(builtin + OMP); change_plan/plan_approve/plan_reject wire kinds;
+extension.ts re-exports consent (no local TASK-606 modal copy).
+
+Docs: CHANGELOG 1.24.0 section + compare link (and restored missing
+1.10/1.11/1.12/1.13/1.19 links); README bullet after 1.23.0.
 
 ## Reviewer
 

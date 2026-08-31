@@ -59,10 +59,16 @@ import { createWorkspaceSearchTool } from "../ai/tools/workspaceSearchTool";
 import { createFileOpsTool, createFileOpsPreview, fileOpsDeniedEnvelope } from "../ai/tools/fileOpsTool";
 import { diffStats } from "../ai/fileDiff";
 import { summarizeToolOutcome, capTokens } from "../ai/analysisReport";
+import { confirmDangerousStatements } from "./confirmDangerous";
+import { runRenameStatements } from "../core/ddl/renameRunner";
+import { splitStatements } from "../core/statementParser";
+import { detectDrift } from "../ai/changePlan";
+import { claimedColumns } from "../ai/tools/changePlanTool";
 import { createSqlTool } from "../ai/tools/sqlTool";
 import { createExportStructureTool } from "../ai/tools/schemaTools";
 import { createDbAwareTools } from "../ai/tools/dbAwareTools";
 import { createAnalysisTools } from "../ai/tools/analysisTools";
+import { createChangePlanTools } from "../ai/tools/changePlanTool";
 import type { AcpProcessHandle } from "../ai/omp/acpProcess";
 import { createMcpBridge, type McpBridge } from "../ai/omp/mcpBridge";
  import {
@@ -1118,6 +1124,20 @@ export class AiChatPanel {
    * `false` = user disabled in THIS panel instance (no persistence);
    * `true` re-enables within the same panel session. */
   private groundingPanelEnabled: boolean | undefined = undefined;
+  /** AIX-04: the plan awaiting user consent (set on plan_change tool
+   * result, cleared on approve/reject/teardown). Statements are stored
+   * verbatim — the approve path funnels them through
+   * confirmDangerousStatements before anything runs. */
+  private pendingPlan: {
+    tool: string;
+    intent: string;
+    statements: string[];
+    tierBySql: Map<string, string>;
+    drift: string[];
+    drifted: boolean;
+    targetSchema?: string;
+    targetTable?: string;
+  } | null = null;
 
   constructor(
     private readonly options: AiChatPanelOptions,
@@ -1231,6 +1251,12 @@ export class AiChatPanel {
         return;
       case "mention_list":
         await this.handleMentionList(msg.query);
+        return;
+      case "plan_approve":
+        await this.handlePlanApprove();
+        return;
+      case "plan_reject":
+        this.pendingPlan = null;
         return;
       case "grounding_toggle":
         // AIX-01: panel-scoped opt-in. No persistence — a fresh panel
@@ -1639,6 +1665,11 @@ export class AiChatPanel {
     for (const tool of createAnalysisTools(this.options.adapterFactory)) {
       registry.register(this.dbToolGate.wrap(tool));
     }
+    // AIX-04: plan_change (reviewed change plans) — READ-ONLY by
+    // construction, but gate-wrapped for parity with the analysis tools.
+    for (const tool of createChangePlanTools(this.options.adapterFactory)) {
+      registry.register(this.dbToolGate.wrap(tool));
+    }
 
     const messages = await buildMessages(
       this.options.adapterFactory,
@@ -1676,6 +1707,64 @@ export class AiChatPanel {
       onToolResult: (call, outcome) => {
         if (token?.aborted) return;
         const name = call.name || "tool";
+        // AIX-04: a plan_change ok envelope is a REVIEWED PLAN — render the
+        // consent card instead of a plain outcome line.
+        if (
+          name === "plan_change" &&
+          outcome.status === "ok" &&
+          outcome.resultText.trim().startsWith("{")
+        ) {
+          try {
+            const parsed = JSON.parse(outcome.resultText) as {
+              ok?: boolean;
+              plan?: {
+                intent?: string;
+                statements?: Array<{ sql: string; tier: string; dangerNote?: string }>;
+                drift?: string[];
+                drifted?: boolean;
+                targetSchema?: string;
+                targetTable?: string;
+              };
+            };
+            if (parsed.ok && parsed.plan) {
+              const plan = parsed.plan;
+              const statements = Array.isArray(plan.statements)
+                ? plan.statements
+                : [];
+              if (statements.length > 0) {
+                const tierBySql = new Map<string, string>();
+                for (const st of statements) tierBySql.set(st.sql, st.tier);
+                this.pendingPlan = {
+                  tool: name,
+                  intent: plan.intent ?? "",
+                  statements: statements.map((st) => st.sql),
+                  tierBySql,
+                  drift: plan.drift ?? [],
+                  drifted: plan.drifted ?? false,
+                  targetSchema: plan.targetSchema,
+                  targetTable: plan.targetTable,
+                };
+                this.post({
+                  type: "change_plan",
+                  tool: name,
+                  plan: {
+                    intent: plan.intent ?? "",
+                    statements: statements.map((st) => ({
+                      sql: st.sql,
+                      tier: st.tier,
+                      dangerNote: st.dangerNote ?? "",
+                    })),
+                    drift: plan.drift ?? [],
+                    drifted: plan.drifted ?? false,
+                  },
+                });
+                return;
+              }
+            }
+          } catch {
+            /* fall through to the plain card */
+          }
+        }
         this.post({
           type: "tool_result",
           tool: name,
@@ -2126,6 +2215,10 @@ export class AiChatPanel {
     }
     // AIX-03 mirror: composite analysis tools on the OMP/MCP path too.
     for (const tool of createAnalysisTools(this.options.adapterFactory)) {
+      registry.register(this.dbToolGate.wrap(tool));
+    }
+    // AIX-04 mirror: plan_change on the OMP/MCP path too.
+    for (const tool of createChangePlanTools(this.options.adapterFactory)) {
       registry.register(this.dbToolGate.wrap(tool));
     }
     const bridge: McpBridge = await createMcpBridge(registry);
@@ -2879,6 +2972,128 @@ export class AiChatPanel {
     }
 
     this.post({ type: "mention_objects", items });
+  }
+  /**
+   * AIX-04: user approved the plan card. Consent funnel: re-check drift
+   * against the live schema, then confirmDangerousStatements, then a
+   * sequential per-statement apply reporting progress + partial failure.
+   * NEVER executes anything before the consent gate.
+   */
+  private async handlePlanApprove(): Promise<void> {
+    const plan = this.pendingPlan;
+    if (!plan || plan.statements.length === 0) {
+      this.post({
+        type: "tool_result",
+        tool: "plan_change",
+        status: "denied",
+        summary: "No pending plan to approve.",
+      });
+      return;
+    }
+
+    // (a) Drift re-check — stale plan guard at consent time.
+    if (plan.targetSchema !== undefined && plan.targetTable !== undefined) {
+      let current: string[] = [];
+      try {
+        const adapter = await this.options.adapterFactory();
+        if (adapter !== null) {
+          current = (await adapter.listColumns(plan.targetTable, plan.targetSchema)).map(
+            (c) => c.name,
+          );
+        }
+      } catch {
+        current = [];
+      }
+      // Table-name tokens in statements pollute the column comparison —
+      // drop the target table (and schema) identifier from the claimed set.
+      const claimed = claimedColumns(plan.statements).filter(
+        (c) => c !== plan.targetTable && c !== plan.targetSchema,
+      );
+      const drift = detectDrift(current, claimed);
+      if (drift.length > 0) {
+        this.pendingPlan = { ...plan, drift, drifted: true };
+        this.post({
+          type: "change_plan",
+          tool: plan.tool,
+          plan: {
+            intent: plan.intent,
+            statements: plan.statements.map((sql) => ({
+              sql,
+              tier: plan.tierBySql.get(sql) ?? "none",
+              dangerNote: "",
+            })),
+            drift,
+            drifted: true,
+          },
+        });
+        this.post({
+          type: "error",
+          message: "Plan is stale — schema drift detected. Review the updated plan before approving.",
+        });
+        return;
+      }
+    }
+
+    // (b) Consent gate — the ONE and only path SQL runs through.
+    const parsed = splitStatements(plan.statements.join("\n"));
+    const ok = await confirmDangerousStatements(parsed, "postgres");
+    if (!ok) {
+      this.pendingPlan = null;
+      this.post({
+        type: "tool_result",
+        tool: "plan_change",
+        status: "denied",
+        summary: "rejected by user",
+      });
+      return;
+    }
+
+    // (c) Sequential apply with per-statement progress.
+    this.pendingPlan = null;
+    const total = plan.statements.length;
+    try {
+      const outcome = await runRenameStatements(
+        plan.statements,
+        async (sql: string) => {
+          const adapter = await this.options.adapterFactory();
+          if (!adapter) {
+            throw new Error("No active database connection.");
+          }
+          await adapter.runQuery(sql);
+        },
+        (i, n, sql) => {
+          this.post({
+            type: "step",
+            label: `plan apply ${i}/${n}: ${sql.slice(0, 80)}`,
+          });
+        },
+        () => this.token?.aborted ?? false,
+      );
+      if ("error" in outcome) {
+        this.post({
+          type: "assistant",
+          text: `Plan apply stopped: applied ${outcome.applied}/${total}, failed at statement ${outcome.failedStatement ?? "?"}: ${outcome.error}`,
+          markdown: false,
+        });
+      } else if ("cancelledAfter" in outcome) {
+        this.post({
+          type: "assistant",
+          text: `Plan apply cancelled: ${outcome.applied}/${total} applied (${outcome.remaining} remaining).`,
+          markdown: false,
+        });
+      } else {
+        this.post({
+          type: "assistant",
+          text: `Plan applied: ${outcome.applied}/${total} statements executed.`,
+          markdown: false,
+        });
+      }
+    } catch (err) {
+      this.post({
+        type: "error",
+        message: `Plan apply failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
   }
 
   private post(msg: AiChatPanelHostMessage): void {

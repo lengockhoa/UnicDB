@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.24.0] — 2026-08-31
+
+Cycle AIX-04: AI Change Plans (reviewed migration plans + consent).
+
+### Added
+- **`plan_change` agent tool** (`src/ai/tools/changePlanTool.ts`): turns an AI suggestion into a REVIEWED change plan — candidate SQL is classified into danger tiers (red / amber / admin-red / none) by the existing `dangerousStatement` analyzer, and when a target table is named, the plan is checked against the live schema for drift (stale-plan guard). READ-ONLY by construction: the tool NEVER executes statements.
+- **Consent card in the AI chat** (`change_plan` wire kind): the plan renders in the thread with per-statement SQL + tier badge + danger note + drift lines, plus Approve & run / Reject buttons. Approve is disabled while the plan is drifted.
+- **One shared consent gate** (`src/ui/confirmDangerous.ts`): the panel's apply path funnels every statement through the SAME `confirmDangerousStatements` modal as the direct query runner — no plan statement executes before explicit user approval.
+- **Drift re-check at consent time**: approving re-compares claimed columns against `adapter.listColumns` before running; a stale plan aborts with an updated card instead of applying.
+- **Sequential apply with partial-failure reporting**: statements run in order with per-statement progress; a mid-run failure reports `applied` / `failedAt` / error, cancellation reports `applied` / `remaining` (reuses the DBX-06 `runRenameStatements` runner).
+- Registered gate-wrapped on BOTH builtin and OMP/MCP registries (AIX-03 parity).
+
+### Review
+- Independent unic-smart cycle review — pending.
+
 ## [1.23.0] — 2026-08-31
 
 Cycle DBX-06: Safe Rename Refactor.
@@ -563,7 +578,13 @@ Cycle G: set-filter, toolbar icons, `run-sh` fix.
 [1.16.0]: https://github.com/lengockhoa/VSDB/compare/v1.15.0...v1.16.0
 [1.17.0]: https://github.com/lengockhoa/VSDB/compare/v1.16.0...v1.17.0
 [1.18.0]: https://github.com/lengockhoa/VSDB/compare/v1.17.0...v1.18.0
+[1.24.0]: https://github.com/lengockhoa/VSDB/compare/v1.23.0...v1.24.0
 [1.23.0]: https://github.com/lengockhoa/VSDB/compare/v1.22.0...v1.23.0
 [1.22.0]: https://github.com/lengockhoa/VSDB/compare/v1.21.0...v1.22.0
 [1.21.0]: https://github.com/lengockhoa/VSDB/compare/v1.20.0...v1.21.0
 [1.20.0]: https://github.com/lengockhoa/VSDB/compare/v1.19.0...v1.20.0
+[1.19.0]: https://github.com/lengockhoa/VSDB/compare/v1.18.0...v1.19.0
+[1.13.0]: https://github.com/lengockhoa/VSDB/compare/v1.12.0...v1.13.0
+[1.12.0]: https://github.com/lengockhoa/VSDB/compare/v1.11.0...v1.12.0
+[1.11.0]: https://github.com/lengockhoa/VSDB/compare/v1.10.0...v1.11.0
+[1.10.0]: https://github.com/lengockhoa/VSDB/compare/v1.9.0...v1.10.0

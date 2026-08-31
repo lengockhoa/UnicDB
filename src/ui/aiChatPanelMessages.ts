@@ -150,8 +150,33 @@ export interface AiChatPanelGroundingState {
 }
 
 
+/** AIX-04: a reviewed change plan card (plan_change tool result). The
+ * webview renders statements + danger tiers + drift and shows Approve/
+ * Reject; the host funnels approve through confirmDangerousStatements. */
+export interface AiChatPanelChangePlan {
+  type: "change_plan";
+  tool: string;
+  plan: {
+    intent: string;
+    statements: Array<{ sql: string; tier: string; dangerNote: string }>;
+    drift: string[];
+    drifted: boolean;
+  };
+}
+
+/** AIX-04: webview → host — user approved the plan (run the statements). */
+export interface AiChatPanelPlanApprove {
+  type: "plan_approve";
+}
+
+/** AIX-04: webview → host — user rejected the plan. */
+export interface AiChatPanelPlanReject {
+  type: "plan_reject";
+}
+
 export type AiChatPanelHostMessage =
   | AiChatPanelInit
+  | AiChatPanelChangePlan
   | AiChatPanelStep
   | AiChatPanelToolResult
   | AiChatPanelDelta
@@ -309,6 +334,8 @@ export type AiChatPanelWebviewMessage =
   | AiChatPanelRegenerate
   | AiChatPanelCommand
   | AiChatPanelMentionList
+  | AiChatPanelPlanApprove
+  | AiChatPanelPlanReject
   | { type: "grounding_toggle"; enabled: boolean };
 
 /** TASK-005: webview opened the @-mention dropdown. `query` is the

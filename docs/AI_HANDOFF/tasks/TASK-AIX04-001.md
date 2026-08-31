@@ -1,7 +1,7 @@
 # TASK-AIX04-001 — changePlan pure module
 
 Cycle: AIX-04 · Wave 4 · Priority: P1
-Status: pending
+Status: done
 Depends on: —
 Reviewer: unic-smart (cycle reviewer)
 
@@ -36,7 +36,16 @@ Create `src/ai/changePlan.ts` — PURE (no vscode, no fs, no net):
 
 ## Executor
 
-(to be filled by executor with RED + GREEN evidence)
+**RED**: `Failed to load url ../changePlan ... Does the file exist?` —
+Tests no tests.
+
+**GREEN**: `npx vitest run src/ai/__tests__/changePlan.test.ts` →
+Tests 11 passed (11).
+
+Notes:
+- classifyStatements reuses analyzeStatement + guardTier verbatim — the
+  plan carries the SAME danger semantics as the confirm path.
+- validatePlanStatements uses splitStatements(sql, dialect).
 
 ## Reviewer
 

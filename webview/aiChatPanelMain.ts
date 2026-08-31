@@ -147,7 +147,21 @@ type HostMsg =
   | MentionObjectsMsg
   | MentionMissMsg
   | AttachErrorMsg
+  | ChangePlanMsg
   | { type: "grounding_state"; selectionPath: string | null; fileCount: number; excludedCount: number; turnId: string };
+/** AIX-04: reviewed change plan card with Approve/Reject consent
+ * buttons. `drifted` disables Approve — a stale plan must not apply. */
+interface ChangePlanMsg {
+  type: "change_plan";
+  tool: string;
+  plan: {
+    intent: string;
+    statements: Array<{ sql: string; tier: string; dangerNote: string }>;
+    drift: string[];
+    drifted: boolean;
+  };
+}
+
 // ---- State -----------------------------------------------------------------
 interface State {
   busy: boolean;
@@ -988,6 +1002,74 @@ function appendToolResult(tool: string, status: string, summary: string): void {
   autoScroll(div);
 }
 
+/** AIX-04: consent card for a reviewed change plan. DOM text only —
+ * SQL/tier/drift rendered via textContent (never innerHTML). Buttons post
+ * plan_approve / plan_reject; Approve disabled while drifted. */
+function appendChangePlan(msg: ChangePlanMsg): void {
+  const thread = document.getElementById("thread");
+  if (!thread) return;
+  const card = document.createElement("div");
+  card.className = "vsdb-chat-plan";
+  card.setAttribute("role", "region");
+  card.setAttribute("aria-label", "reviewed change plan");
+
+  const head = document.createElement("div");
+  head.className = "vsdb-chat-plan-head";
+  head.textContent = `Change plan — ${msg.plan.intent || "no intent"}`;
+  card.appendChild(head);
+
+  for (const st of msg.plan.statements) {
+    const row = document.createElement("div");
+    row.className = `vsdb-chat-plan-stmt vsdb-chat-plan-tier-${st.tier}`;
+    const code = document.createElement("code");
+    code.textContent = st.sql;
+    row.appendChild(code);
+    if (st.dangerNote) {
+      const note = document.createElement("span");
+      note.className = "vsdb-chat-plan-note";
+      note.textContent = st.dangerNote;
+      row.appendChild(note);
+    }
+    card.appendChild(row);
+  }
+
+  if (msg.plan.drift.length > 0) {
+    const driftBox = document.createElement("div");
+    driftBox.className = "vsdb-chat-plan-drift";
+    const title = document.createElement("div");
+    title.textContent = msg.plan.drifted
+      ? "Schema drift detected — plan is stale. Re-run the suggestion before approving."
+      : "Drift notes:";
+    driftBox.appendChild(title);
+    for (const line of msg.plan.drift) {
+      const d = document.createElement("div");
+      d.textContent = line;
+      driftBox.appendChild(d);
+    }
+    card.appendChild(driftBox);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "vsdb-chat-plan-actions";
+  const approve = document.createElement("button");
+  approve.type = "button";
+  approve.className = "vsdb-chat-plan-approve";
+  approve.textContent = "Approve & run";
+  approve.disabled = msg.plan.drifted;
+  approve.addEventListener("click", () => post({ type: "plan_approve" }));
+  const reject = document.createElement("button");
+  reject.type = "button";
+  reject.className = "vsdb-chat-plan-reject";
+  reject.textContent = "Reject";
+  reject.addEventListener("click", () => post({ type: "plan_reject" }));
+  actions.appendChild(approve);
+  actions.appendChild(reject);
+  card.appendChild(actions);
+
+  thread.appendChild(card);
+  autoScroll(card);
+}
+
 function appendAssistant(text: string, markdown: boolean): void {
   const thread = document.getElementById("thread");
   if (!thread) return;
@@ -1555,6 +1637,9 @@ function renderHistory(msg: HistoryMsg): void {
       return;
     case "tool_result":
       appendToolResult(msg.tool, msg.status, msg.summary);
+      return;
+    case "change_plan":
+      appendChangePlan(msg);
       return;
     case "delta":
       appendDelta(msg.text);

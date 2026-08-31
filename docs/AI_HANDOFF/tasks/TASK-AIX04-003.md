@@ -1,7 +1,7 @@
 # TASK-AIX04-003 — panel consent + apply flow
 
 Cycle: AIX-04 · Wave 4 · Priority: P1
-Status: pending
+Status: done
 Depends on: AIX04-002
 Reviewer: unic-smart (cycle reviewer)
 
@@ -49,7 +49,27 @@ Wire plan_change into the chat panel consent flow:
 
 ## Executor
 
-(to be filled by executor with RED + GREEN evidence)
+**RED**: typecheck failed — `AiChatPanelPlanApprove`/`AiChatPanelPlanReject` not in
+`AiChatPanelWebviewMessage` union; consent-flow tests initially failed (drift
+re-check compared SQL strings against column names → always drifted).
+
+**GREEN**:
+- `npm run typecheck` → 0 errors.
+- `npx vitest run src/ui/__tests__/aiChatPanelPlan.test.ts` → Tests 6 passed (6):
+  card post from ok envelope; approve→consent→apply 2/2; denied→0 runQuery;
+  drift at approve→stale card+error+0 runQuery; mid-run failure→1/2+boom at 2;
+  reject→0 runQuery.
+- `npx vitest run src/ui/__tests__/aiChatPanelPlanWebview.test.ts` → 4 passed (4):
+  render intent/statements/tier/dangerNote/buttons; drifted→Approve disabled;
+  buttons post plan_approve/plan_reject; hostile SQL stays text (no live nodes).
+
+Notes:
+- `confirmDangerousStatements` extracted to `src/ui/confirmDangerous.ts`
+  (shared with extension.ts via re-export) — ONE consent implementation.
+- Approve path: host re-checks drift (`adapter.listColumns` names vs
+  `claimedColumns` minus target table/schema), then consent gate, then
+  `runRenameStatements` sequential apply with per-statement `step` posts.
+- `plan_change` registered gate-wrapped in BOTH builtin and OMP/MCP registries.
 
 ## Reviewer
 
