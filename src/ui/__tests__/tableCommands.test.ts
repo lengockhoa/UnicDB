@@ -23,7 +23,9 @@ import {
   type PgColumnRow,
   type PgConstraintRow,
 } from "../../core/ddl/pgIntrospect";
-import { registerTableCommands } from "../tableCommands";
+import {
+  resolveTableNode, registerTableCommands 
+} from "../tableCommands";
 import {
   SchemaTreeProvider,
   type VsdbNode,
@@ -310,6 +312,39 @@ describe("tableCommands — guards", () => {
     expect(treeView.reveal).not.toHaveBeenCalled();
   });
 
+  it("#8b renameColumn on dotted quoted table name resolves exact table (no objectKey parse)", async () => {
+    const mgr = makeFakeMgr();
+    const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
+    registerSchemaTreeProvider(provider);
+    registerTableCommands({
+      mgr: mgr.stub as unknown as ConnectionManager,
+      tree: provider,
+      treeView: treeView as unknown as TreeView<unknown>,
+      context: { subscriptions: [] } as unknown as ExtensionContext,
+    });
+    // objectKey is lossy ("c1.public.foo.bar" → "bar" by naive split);
+    // the column node must carry objectName = "foo.bar" and resolve it
+    // exactly.
+    const columnNode: VsdbNode = {
+      label: "id",
+      contextValue: "column",
+      collapsible: 0,
+      meta: {
+        connection: mgr.cfg,
+        schema: "public",
+        objectKey: "c1.public.foo.bar",
+        objectName: "foo.bar",
+        column: { name: "id", dataType: "int" },
+      },
+    };
+    const resolved = resolveTableNode(columnNode);
+    expect(resolved?.table).toBe("foo.bar");
+    expect(resolved?.column).toBe("id");
+    await state.registeredCommands.get("vsdb.renameColumn")!(columnNode);
+    expect(mgr.adapter.listTableDetailCalls).toHaveLength(0);
+    expect(state.createdPanels.length).toBeGreaterThan(0);
+  });
+
   it("#8a renameColumn on column node opens form WITHOUT introspectTable or QuickPick", async () => {
     const mgr = makeFakeMgr();
     const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
@@ -328,6 +363,7 @@ describe("tableCommands — guards", () => {
         connection: mgr.cfg,
         schema: "public",
         objectKey: "public.t",
+        objectName: "t",
         column: { name: "id", dataType: "int" },
       },
     };

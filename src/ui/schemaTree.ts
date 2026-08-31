@@ -1071,6 +1071,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
         connection: conn,
         schema,
         objectKey,
+        objectName: tableName,
         column: { name: c.name, dataType: c.dataType },
       },
     }));

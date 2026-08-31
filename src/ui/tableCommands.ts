@@ -55,7 +55,7 @@ interface ResolvedTableNode {
   column?: string;
 }
 
-function resolveTableNode(arg: unknown): ResolvedTableNode | null {
+export function resolveTableNode(arg: unknown): ResolvedTableNode | null {
   if (!arg || typeof arg !== "object") return null;
   const meta = (arg as {
     meta?: {
@@ -71,15 +71,13 @@ function resolveTableNode(arg: unknown): ResolvedTableNode | null {
   // Table nodes carry objectName; column nodes carry objectKey
   // ("connId.schema.table") instead. Fall back so renameColumn works from
   // a column context-menu item.
-  let table = meta.objectName ?? "";
-  if (table === "" && meta.objectKey) {
-    const parts = meta.objectKey.split(".");
-    if (parts.length >= 2) table = parts[parts.length - 1]!;
-  }
+  // Column nodes carry the parent table name in meta.objectName (set by
+  // schemaTree.getColumnChildren) — never parse objectKey, which is lossy
+  // for quoted table identifiers containing dots.
   return {
     conn: meta.connection,
     schema: meta.schema,
-    table,
+    table: meta.objectName ?? "",
     category: meta.category,
     column: meta.column?.name ?? "",
   };
