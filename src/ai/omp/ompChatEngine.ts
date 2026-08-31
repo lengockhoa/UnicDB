@@ -101,6 +101,8 @@ export interface HostMcp {
   ): Promise<{ result: string; isError: boolean }>;
 }
 
+import { TraceRecorder, type TraceEvent } from "../trace";
+
 /** Event surface the chat panel subscribes to per turn. */
 export interface OmpChatEvents {
   onDelta?(delta: string): void;
@@ -109,6 +111,8 @@ export interface OmpChatEvents {
   onToolEnd?(toolName: string, result: string, isError: boolean): void;
   onError?(message: string): void;
   onDone?(): void;
+  /** AIX-06: optional per-turn trace event sink (default-deny). */
+  onTrace?(event: TraceEvent): void;
 }
 
 /** Chat-level engine — what the panel talks to. */
@@ -132,6 +136,9 @@ export interface OmpChatEngineOptions {
   acp: AcpSession;
   hostMcp: HostMcp;
   cwd: string;
+  /** AIX-06: optional trace recorder; when present every turn is
+   *  recorded into it (payload redacted before storage). */
+  trace?: TraceRecorder;
   /** Reserved for cycle AB image-attach parity (default false). */
   enablePromptImage?: boolean;
 }
@@ -198,6 +205,8 @@ async function dispatchNotification(
   n: { method: string; params: unknown },
   events: OmpChatEvents,
   hostMcp: HostMcp,
+  trace?: TraceRecorder,
+  turnId?: string,
 ): Promise<void> {
   // AIX-05: a malformed frame MUST NOT kill a turn. Drop unknown methods
   // and malformed params silently — the next valid frame still streams.
@@ -235,12 +244,19 @@ async function dispatchNotification(
     if (name === undefined) return;
     const rawArgs = update["args"];
     const args: Record<string, unknown> = isParamsRecord(rawArgs) ? rawArgs : {};
+    if (trace && turnId) trace.record(turnId, "tool_start", { name, args });
     events.onToolStart?.(name);
     try {
       const out = await hostMcp.call(name, args);
+      if (trace && turnId) {
+        trace.record(turnId, "tool_end", { name, isError: out.isError });
+      }
       events.onToolEnd?.(name, out.result, out.isError);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      if (trace && turnId) {
+        trace.record(turnId, "tool_end", { name, isError: true });
+      }
       events.onToolEnd?.(name, `Tool failed: ${message}`, true);
     }
     return;
@@ -272,6 +288,7 @@ async function dispatchNotification(
 
 export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
   const { acp, hostMcp, cwd } = opts;
+  const trace = opts.trace;
   const mcpServers = mcpServersDescriptor(hostMcp);
   // AIX-05: track the active sessionId so cancel() can address the right
   // `session/cancel` notify. Cleared on turn settle. `cancelSent` dedupes
@@ -286,6 +303,8 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
   // window so an idle cancel() with no turn remains a no-op.
   let sessionNewInFlight = false;
   let pendingCancel = false;
+  // AIX-06: monotonically increasing per-engine turn counter for trace ids.
+  let sendSeq = 0;
   // AIX-05: `acp.notify` is optional on AcpSession — the cancel()
   // helper uses optional chaining so fakes without notify stay compiling.
   const notify: (m: string, p: unknown) => void =
@@ -293,6 +312,12 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
 
   return {
     async send(text, events): Promise<void> {
+      // AIX-06: turnId for this turn. Recorder presence decides whether
+      // trace events flow; every payload is redacted inside record().
+      const turnId = trace !== undefined ? `turn-${(sendSeq += 1)}` : "";
+      if (trace !== undefined) {
+        trace.record(turnId, "prompt", { text });
+      }
       let sessionId: string;
       sessionNewInFlight = true;
       try {
@@ -303,6 +328,7 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
         const message = err instanceof Error ? err.message : String(err);
         // AIX-05: a cancel() called while session/new was pending fires
         // onError so the panel can settle the turn instead of hanging.
+        if (trace) trace.record(turnId, "error", { message });
         if (pendingCancel) {
           pendingCancel = false;
           events.onError?.(`session/new cancelled: ${message}`);
@@ -332,11 +358,12 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
       // acp session dedupes handlers (one per AcpClient instance) so this
       // is safe across repeated send() calls.
       acp.onNotification((n) => {
-        void dispatchNotification(n, events, hostMcp);
+        void dispatchNotification(n, events, hostMcp, trace, turnId);
       });
 
       try {
         await acp.sessionPrompt(sessionId, text);
+        if (trace) trace.record(turnId, "done", {});
         events.onDone?.();
       } catch (err) {
         // Crash mid-turn (process exit / connection lost / session/prompt
@@ -344,6 +371,7 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
         // and continues with builtin on subsequent turns — fire onError
         // ONCE, do not throw.
         const message = err instanceof Error ? err.message : String(err);
+        if (trace) trace.record(turnId, "error", { message });
         events.onError?.(message);
       } finally {
         // AIX-05: turn settled (success OR crash) — clear active session so
@@ -357,6 +385,8 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
     },
 
     async resume(sessionId, events): Promise<void> {
+      // AIX-06: resume replays into the same trace channel.
+      const turnId = trace !== undefined ? `resume-${sessionId}` : "";
       let loadedSessionId: string;
       try {
         const loadResult = await acp.sessionLoad(sessionId, cwd, mcpServers);
@@ -381,7 +411,7 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
       // turn will stream as usual. resume() itself resolves once replay is
       // flushed — the next send() drives the turn.
       acp.onNotification((n) => {
-        void dispatchNotification(n, events, hostMcp);
+        void dispatchNotification(n, events, hostMcp, trace, turnId);
       });
 
       // Touch loadedSessionId so unused-locals don't trip strict-mode — it

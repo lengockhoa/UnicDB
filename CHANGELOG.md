@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.26.0] — 2026-08-31
+
+Cycle AIX-06: Agent Trace & Replay (ordered, redacted, bounded in-memory turn trace on both engines).
+
+### Added
+- **`TraceRecorder`** (`src/ai/trace.ts`): pure, in-memory, redaction-first trace store. Every payload passes `redact()` (apiKey/secret/password/token keys, Authorization/Bearer/Basic headers, long opaque runs) BEFORE storage. Bounded: 50 turns x 1000 entries, FIFO turn eviction + per-turn ring with a `truncated` flag on the dump envelope.
+- **OmpChatEngine trace hook**: optional `trace` recorder on `OmpChatEngineOptions` + optional `onTrace` on `OmpChatEvents`. Engine records prompt / tool_start (args redacted) / tool_end / error / done per turn. AIX-05 cancel/restart/robustness contracts unchanged.
+- **Builtin path bridge**: `runAgent` accepts an optional `trace` param; tool calls record `tool_start` with redacted `argumentsJson`, `tool_end` with the isError flag, `prompt`/`done` wrap the run.
+- **Panel wiring**: one `TraceRecorder` per AI chat panel, threaded into both engines; `dumpTrace(turnId)` + `clearTrace()` (wired to panel Clear) for AIX-07 audit export and debug support.
+
+### Review
+- Independent unic-smart cycle review — pending.
+
 ## [1.25.0] — 2026-08-31
 
 Cycle AIX-05: OMP Agent Workbench (session visibility, cancellation, protocol hardening, tool permission parity).
@@ -595,6 +608,7 @@ Cycle G: set-filter, toolbar icons, `run-sh` fix.
 [1.18.0]: https://github.com/lengockhoa/VSDB/compare/v1.17.0...v1.18.0
 [1.24.0]: https://github.com/lengockhoa/VSDB/compare/v1.23.0...v1.24.0
 [1.25.0]: https://github.com/lengockhoa/VSDB/compare/v1.24.0...v1.25.0
+[1.26.0]: https://github.com/lengockhoa/VSDB/compare/v1.25.0...v1.26.0
 [1.23.0]: https://github.com/lengockhoa/VSDB/compare/v1.22.0...v1.23.0
 [1.22.0]: https://github.com/lengockhoa/VSDB/compare/v1.21.0...v1.22.0
 [1.21.0]: https://github.com/lengockhoa/VSDB/compare/v1.20.0...v1.21.0

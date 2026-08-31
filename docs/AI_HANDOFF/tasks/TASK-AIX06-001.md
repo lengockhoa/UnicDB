@@ -45,7 +45,19 @@ Create `src/ai/trace.ts` — PURE (no vscode, no fs, no net):
 
 ## Executor
 
-(to be filled by executor with RED + GREEN evidence)
+**RED**: `npx vitest run src/ai/__tests__/trace.test.ts` → 13 failed
+(module missing).
+
+**GREEN**: same command → 13 passed (13). Typecheck 0.
+
+Notes:
+- `redact()` handles secret keys (apiKey/secret/password/token), auth
+  headers (Authorization/Bearer/Basic/Cookie), and long opaque runs
+  (>=24 chars). Recursion with a WeakSet prevents cycles.
+- Storage: Map<turnId, TurnBuffer> + FIFO order[]; per-turn ring
+  bumps `startSeq` on overflow and sets `truncated`.
+
+**Status: done**
 
 ## Reviewer
 

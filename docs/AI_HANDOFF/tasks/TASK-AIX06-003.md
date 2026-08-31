@@ -39,7 +39,20 @@ inspection works without OMP:
 
 ## Executor
 
-(to be filled by executor with RED + GREEN evidence)
+**RED**: `npx vitest run src/ai/__tests__/agent.test.ts` → 2 failed
+(no trace param).
+
+**GREEN**: same command → 23 passed (23). Typecheck 0.
+
+Notes:
+- `runAgent` signature: `(input, deps, callbacks?, signal?, trace?)` —
+  5th positional param, back-compat.
+- `prompt` records joined user text; `tool_start` carries
+  `argumentsJson` redacted via `redact()`; `tool_end` carries
+  `isError`; `done` recorded on the final-return and
+  budget-exhausted paths.
+
+**Status: done**
 
 ## Reviewer
 

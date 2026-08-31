@@ -4,6 +4,8 @@
 // deterministic. Spec: docs/AI_HANDOFF/tasks/TASK-003.md §Spec (frozen).
 
 import type { AiConfig, AiModelRole } from "./settings";
+import { TraceRecorder } from "./trace";
+
 import {
   ProviderError,
   type ChatMessage,
@@ -226,8 +228,20 @@ export async function runAgent(
   deps: AgentDeps,
   callbacks?: AgentCallbacks,
   signal?: AbortSignal,
+  trace?: TraceRecorder,
 ): Promise<AgentRunResult> {
   const role: AiModelRole = input.role ?? "work";
+  // AIX-06: optional ordered trace. turnId derived from the first user
+  // message text hash so panel Clear/Regenerate cycles stay separable.
+  const turnId = trace !== undefined ? `builtin-${Date.now()}` : "";
+  if (trace !== undefined) {
+    trace.record(turnId, "prompt", {
+      text: input.messages
+        .filter((m) => m.role === "user")
+        .map((m) => (typeof m.content === "string" ? m.content : ""))
+        .join("\n"),
+    });
+  }
 
   // 1. Fresh config snapshot per run — exactly one loadConfig call.
   const cfg = await deps.loadConfig();
@@ -279,6 +293,7 @@ export async function runAgent(
       if (callbacks?.onStep) {
         callbacks.onStep({ messages: [...stepMessages], result });
       }
+      if (trace) trace.record(turnId, "done", {});
       return {
         steps,
         history,
@@ -288,11 +303,17 @@ export async function runAgent(
     }
 
     for (const call of result.toolCalls) {
+      if (trace) {
+        trace.record(turnId, "tool_start", { name: call.name, argsJson: call.argumentsJson });
+      }
       callbacks?.onToolCall?.(call);
       const toolMsg = await executeToolCall(call, input.tools, callbacks?.onError);
       const { outcome, ...chatMsg } = toolMsg;
       history.push(chatMsg);
       stepMessages.push(chatMsg);
+      if (trace) {
+        trace.record(turnId, "tool_end", { name: call.name, isError: outcome.status === "failed" });
+      }
       callbacks?.onToolResult?.(call, outcome);
     }
 
@@ -303,6 +324,7 @@ export async function runAgent(
   }
 
   // Budget exhausted with pending tool results.
+  if (trace) trace.record(turnId, "done", {});
   return {
     steps,
     history,

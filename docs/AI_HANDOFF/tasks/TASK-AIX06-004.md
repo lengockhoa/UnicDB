@@ -42,7 +42,21 @@ Wire `TraceRecorder` into the chat panel and close the cycle docs:
 
 ## Executor
 
-(to be filled by executor with RED + GREEN evidence)
+**RED**: `npx vitest run src/__tests__/aix06Scaffold.test.ts` →
+7 failed.
+
+**GREEN**: same command → 7 passed (7). Full cycle: `npm test` →
+2702 passed | 2 skipped; typecheck 0; compile clean.
+
+Notes:
+- Panel owns ONE `TraceRecorder`; `runBuiltinTurn` passes `this.trace`
+  into `runAgent`; OMP path unchanged (engine options own the trace —
+  panel-level wiring lands with AIX-07 config surface if needed).
+- `dumpTrace(turnId)` / `clearTrace()` public on the panel; Clear
+  empties the recorder.
+- CHANGELOG 1.26.0 + README bullet added; link block verified.
+
+**Status: done**
 
 ## Reviewer
 

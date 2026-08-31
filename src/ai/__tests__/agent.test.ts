@@ -578,3 +578,112 @@ describe("runAgent — onToolResult callback (TASK-AIX03-003)", () => {
     expect(out.finalText).toBe("done");
   });
 });
+// ---- AIX-06: runAgent trace hook --------------------------------------------
+
+describe("runAgent trace (TASK-AIX06-003)", () => {
+  it("records prompt, tool_start (redacted args), tool_end, done", async () => {
+    const { TraceRecorder } = await import("../trace");
+    const rec = new TraceRecorder();
+    const tool: AgentTool = {
+      name: "t1",
+      description: "d",
+      parameters: { type: "object", properties: {} },
+      execute: async () => "ok",
+    };
+    const tools = { list: () => [tool], get: (n: string) => (n === "t1" ? tool : undefined) };
+    const deps: AgentDeps = {
+      loadConfig: vi.fn(async () => ({
+        baseUrl: "https://x",
+        apiKey: "test-key-1234567890",
+        method: "chat/completions" as const,
+        models: { work: { modelId: "m1", vision: false }, think: { modelId: "m2", vision: false }, fast: { modelId: "m3", vision: false } },
+        maxSteps: 3,
+      })),
+      complete: vi.fn()
+        .mockResolvedValueOnce({
+          text: "",
+          toolCalls: [{ id: "c1", name: "t1", argumentsJson: '{"apiKey":"sk-live-abcdefghijklmnop"}' }],
+        })
+        .mockResolvedValueOnce({ text: "final", toolCalls: [] }),
+    };
+    await runAgent(
+      { messages: [{ role: "user", content: "go" }], tools: tools as never },
+      deps,
+      undefined,
+      undefined,
+      rec,
+    );
+    const evs = rec.events();
+    const kinds = evs.map((e) => e.kind);
+    expect(kinds[0]).toBe("prompt");
+    expect(kinds).toContain("tool_start");
+    expect(kinds).toContain("tool_end");
+    expect(kinds[kinds.length - 1]).toBe("done");
+    const ts = evs.find((e) => e.kind === "tool_start");
+    const args = ts!.payload as { argsJson: string };
+    expect(args.argsJson).toContain("<redacted>");
+  });
+
+  it("no recorder → no calls; existing signature unchanged", async () => {
+    const deps: AgentDeps = {
+      loadConfig: vi.fn(async () => null),
+      complete: vi.fn(),
+    };
+    await expect(runAgent({ messages: [] }, deps)).rejects.toThrow("AI is not configured");
+  });
+});
+
+// ---- AIX-06: runAgent trace hook --------------------------------------------
+
+describe("runAgent trace (TASK-AIX06-003)", () => {
+  it("records prompt, tool_start (redacted args), tool_end, done", async () => {
+    const { TraceRecorder } = await import("../trace");
+    const rec = new TraceRecorder();
+    const tool: AgentTool = {
+      name: "t1",
+      description: "d",
+      parameters: { type: "object", properties: {} },
+      execute: async () => "ok",
+    };
+    const tools = { list: () => [tool], get: (n: string) => (n === "t1" ? tool : undefined) };
+    const deps: AgentDeps = {
+      loadConfig: vi.fn(async () => ({
+        baseUrl: "https://x",
+        apiKey: "test-key-1234567890",
+        method: "chat/completions" as const,
+        models: { work: { modelId: "m1", vision: false }, think: { modelId: "m2", vision: false }, fast: { modelId: "m3", vision: false } },
+        maxSteps: 3,
+      })),
+      complete: vi.fn()
+        .mockResolvedValueOnce({
+          text: "",
+          toolCalls: [{ id: "c1", name: "t1", argumentsJson: '{"apiKey":"sk-live-abcdefghijklmnop"}' }],
+        })
+        .mockResolvedValueOnce({ text: "final", toolCalls: [] }),
+    };
+    await runAgent(
+      { messages: [{ role: "user", content: "go" }], tools: tools as never },
+      deps,
+      undefined,
+      undefined,
+      rec,
+    );
+    const evs = rec.events();
+    const kinds = evs.map((e) => e.kind);
+    expect(kinds[0]).toBe("prompt");
+    expect(kinds).toContain("tool_start");
+    expect(kinds).toContain("tool_end");
+    expect(kinds[kinds.length - 1]).toBe("done");
+    const ts = evs.find((e) => e.kind === "tool_start");
+    const args = ts!.payload as { argsJson: string };
+    expect(args.argsJson).toContain("<redacted>");
+  });
+
+  it("no recorder -> no calls; existing signature unchanged", async () => {
+    const deps: AgentDeps = {
+      loadConfig: vi.fn(async () => null),
+      complete: vi.fn(),
+    };
+    await expect(runAgent({ messages: [] }, deps)).rejects.toThrow("AI is not configured");
+  });
+});

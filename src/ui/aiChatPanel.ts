@@ -101,6 +101,8 @@ import { formatAttributionFooter } from "../ai/grounding/attribution";
    type AiChatPanelWebviewMessage,
 } from "./aiChatPanelMessages";
 import type { OmpChatEngine } from "../ai/omp/ompChatEngine";
+import { TraceRecorder } from "../ai/trace";
+
  import { buildPermissionToolInfo } from "./permissionDetail";
  
  const PANEL_ID = "vsdb.aiChatPanel";
@@ -1088,6 +1090,9 @@ export class AiChatPanel {
    * `session_state.turnId` (stable across the connecting/running/done
    * trio of posts for one turn). */
   private sessionTurnSeq = 0;
+  /** AIX-06: host-internal, redacted, in-memory turn trace. Populated
+   *  on both engines; never exported to the webview in this cycle. */
+  private readonly trace = new TraceRecorder();
   /** Resolvers for in-flight ACP turns — fired by settle path. */
   private acpTurnResolvers: Array<() => void> = [];
   /** Per-turn AbortController for the built-in engine. Created in
@@ -1783,6 +1788,7 @@ export class AiChatPanel {
         this.options.deps,
         callbacks,
         signal,
+        this.trace,
       );
       if (!token?.aborted) {
         this.post({
@@ -1958,6 +1964,16 @@ export class AiChatPanel {
       this.turnSettled = true;
       void userMsg;
     }
+  }
+
+  /** AIX-06: redacted JSON envelope of one turn (debug/AIX-07 hook). */
+  dumpTrace(turnId: string): unknown {
+    return this.trace.dump(turnId);
+  }
+
+  /** AIX-06: drop all recorded turns (Clear + dispose). */
+  clearTrace(): void {
+    this.trace.clear();
   }
 
   /** AIX-05: post one session-state transition for the current turn. */
@@ -2628,6 +2644,7 @@ export class AiChatPanel {
   }
 
   private handleClear(): void {
+    this.trace.clear();
     // Full turn reset: Clear giữa turn đang stream phải hủy turn + trả UI
     // về idle. Không reset token/currentAbort → webview busy mãi (D2).
     // Review Finding 2 (fix round 2): mark the LIVE token aborted before

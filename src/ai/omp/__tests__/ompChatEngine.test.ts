@@ -577,3 +577,81 @@ describe("OmpChatEngine.cancel (AIX-05)", () => {
     await sendPromise;
   });
 });
+// ---- AIX-06: trace hook ------------------------------------------------------
+
+describe("OmpChatEngine trace (TASK-AIX06-002)", () => {
+  it("clean turn records prompt + done in order; deltas recorded too", async () => {
+    fakeAcp.sessionNew.mockResolvedValue({ sessionId: "sess-trace-1" });
+    fakeAcp.sessionPrompt.mockImplementation(async (_id: string, _t: string) => {
+      return { stopReason: "end_turn" };
+    });
+    const { TraceRecorder } = await import("../../trace");
+    const rec = new TraceRecorder();
+    const engine = createOmpChatEngine({
+      acp: fakeAcp,
+      hostMcp: fakeHostMcp,
+      cwd: "/workspace",
+      trace: rec,
+    });
+    await engine.send("hello", { onDelta: (d) => d });
+    const kinds = rec.events().map((e) => e.kind);
+    expect(kinds[0]).toBe("prompt");
+    expect(kinds).toContain("done");
+  });
+
+  it("tool round-trip records tool_start + tool_end with redacted args", async () => {
+    fakeAcp.sessionNew.mockResolvedValue({ sessionId: "sess-trace-2" });
+    fakeAcp.sessionPrompt.mockResolvedValue({ stopReason: "end_turn" });
+    (fakeHostMcp.call as ReturnType<typeof vi.fn>).mockResolvedValue({
+      result: "rows...",
+      isError: false,
+    });
+    const { TraceRecorder } = await import("../../trace");
+    const rec = new TraceRecorder();
+    const engine = createOmpChatEngine({
+      acp: fakeAcp,
+      hostMcp: fakeHostMcp,
+      cwd: "/workspace",
+      trace: rec,
+    });
+    await engine.send("run tool", {});
+    const handler = registeredNotificationHandler();
+    handler({
+      method: "session/update",
+      params: {
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "tc-9",
+          name: "list_tables",
+          args: { apiKey: "sk-live-abcdefghijklmnop" },
+        },
+      },
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    const evs = rec.events();
+    const toolStart = evs.find((e) => e.kind === "tool_start");
+    expect(toolStart).toBeTruthy();
+    const payload = toolStart!.payload as { name: string; args: Record<string, string> };
+    expect(payload.name).toBe("list_tables");
+    expect(payload.args.apiKey).toBe("<redacted>");
+    const toolEnd = evs.find((e) => e.kind === "tool_end");
+    expect(toolEnd).toBeTruthy();
+  });
+
+  it("crash mid-turn records error but not done", async () => {
+    fakeAcp.sessionNew.mockResolvedValue({ sessionId: "sess-trace-3" });
+    fakeAcp.sessionPrompt.mockRejectedValue(new Error("boom"));
+    const { TraceRecorder } = await import("../../trace");
+    const rec = new TraceRecorder();
+    const engine = createOmpChatEngine({
+      acp: fakeAcp,
+      hostMcp: fakeHostMcp,
+      cwd: "/workspace",
+      trace: rec,
+    });
+    await engine.send("x", { onError: () => undefined });
+    const kinds = rec.events().map((e) => e.kind);
+    expect(kinds).toContain("prompt");
+    expect(kinds).not.toContain("done");
+  });
+});

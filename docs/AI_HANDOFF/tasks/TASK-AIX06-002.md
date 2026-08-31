@@ -51,7 +51,19 @@ event surface, without regressing AIX-05's cancel/restart/robustness:
 
 ## Executor
 
-(to be filled by executor with RED + GREEN evidence)
+**RED**: `npx vitest run src/ai/omp/__tests__/ompChatEngine.test.ts` →
+3 failed (no trace flow).
+
+**GREEN**: same command → 21 passed (21). Typecheck 0.
+
+Notes:
+- `OmpChatEvents` gains optional `onTrace`; `OmpChatEngineOptions`
+  gains optional `trace`. `send()` allocates `turn-N` ids; `resume()`
+  allocates `resume-<sessionId>`. `dispatchNotification` grows an
+  optional `trace,turnId` tail — tool_start args are redacted inside
+  `record()`. `done`/`error` recorded at settle paths.
+
+**Status: done**
 
 ## Reviewer
 
