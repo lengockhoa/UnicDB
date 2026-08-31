@@ -105,6 +105,21 @@ export interface CatalogResolverOptions {
  */
 const PUBLIC_SCHEMA = "public";
 
+/**
+ * Fail-closed capability admission (DBX-08 review round 1): a rejected async
+ * `declaresCatalog()` predicate must gate the resolver like any unsupported
+ * declaration — callers (e.g. `SqlNavigationProvider` hover/definition)
+ * await resolver methods without a catch, so an escape here would surface
+ * as a rejected navigation request instead of the contract's empty result.
+ */
+async function admitted(options: CatalogResolverOptions): Promise<boolean> {
+  try {
+    return (await options.declaresCatalog()) && true;
+  } catch {
+    return false;
+  }
+}
+
 // ---- Factory ---------------------------------------------------------------
 
 /**
@@ -118,7 +133,7 @@ export function createCatalogResolver(
 ): CatalogResolver {
   return {
     async listRootRows(): Promise<readonly CatalogRootRow[]> {
-      if (!(await options.declaresCatalog()) || !(await cache.hasCatalog())) return [];
+      if (!(await admitted(options)) || !(await cache.hasCatalog())) return [];
       const [views, routines, sequences] = await Promise.all([
         cache.getViews(PUBLIC_SCHEMA),
         cache.getRoutines(PUBLIC_SCHEMA),
@@ -152,7 +167,7 @@ export function createCatalogResolver(
       schema: string,
       table: string,
     ): Promise<readonly CatalogForeignKeyRow[]> {
-      if (!(await options.declaresCatalog()) || !(await cache.hasCatalog())) return [];
+      if (!(await admitted(options)) || !(await cache.hasCatalog())) return [];
       const constraints = await cache.getConstraints(schema, table);
       const rows: CatalogForeignKeyRow[] = [];
       for (const c of constraints) {
@@ -178,7 +193,7 @@ export function createCatalogResolver(
       schema: string,
       name: string,
     ): Promise<string | undefined> {
-      if (!(await options.declaresCatalog()) || !(await cache.hasCatalog())) {
+      if (!(await admitted(options)) || !(await cache.hasCatalog())) {
         return undefined;
       }
       return await cache.getObjectDdl(kind, schema, name);

@@ -165,3 +165,31 @@ Note:
 - No `lint` script exists in package.json (per task/plan); typecheck+compile cover static checks.
 - Full-suite skip (1 file / 2 tests) is pre-existing on main @ b174ec9, not introduced here.
 - No git add/commit/push performed; files left in the worktree.
+
+
+---
+
+## Review — Round 1
+
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERDICT: CHANGES-REQUESTED
+
+FINDINGS:
+- important — `src/ui/sqlCatalog.ts:121` — `declaresCatalog` is explicitly allowed to return a `Promise<boolean>`, but a rejected predicate escapes each resolver method instead of failing closed. `SqlNavigationProvider` awaits `listRootRows()` without a catch (`src/ui/sqlNavigationProvider.ts:256`), so a rejected async predicate rejects the hover/definition request rather than returning the contract's `[]`/`undefined`; the extension wiring catches its own predicate today, but the exported resolver accepts any caller and is not safe by contract.
+
+REQUIRED FIXES:
+- Add one fail-closed predicate helper in `src/ui/sqlCatalog.ts` that catches a rejected `declaresCatalog()` and returns `false`; use it for all three resolver methods. Add a focused rejected-async-predicate test proving `listRootRows()`/`listForeignKeys()` return `[]`, `getDefinition()` returns `undefined`, and neither `cache.hasCatalog()` nor any cache catalog method is called.
+
+VERIFICATION:
+- `npx vitest run src/ui/__tests__/schemaCache.test.ts src/ui/__tests__/schemaTreeCatalog.test.ts src/ui/__tests__/sqlCatalog.test.ts src/ui/__tests__/ddlView.test.ts src/ui/__tests__/sqlNavigationProvider.test.ts` — PASS (5 files, 42 tests).
+- `npm run typecheck` — PASS (exit 0).
+
+NOTES: Capability admission is otherwise declaration-driven at every inspected catalog/object-DDL seam; MySQL/MSSQL generic navigation and estimate batching remain intact. The extension predicates catch their own adapter-resolution errors and the two lookups resolve the manager independently but do not duplicate a connection once it is cached.
+
+## Fix — Round 1 (orchestrator, findings applied)
+
+FIXER_MODEL: unic-code
+- `src/ui/sqlCatalog.ts` — added fail-closed `admitted(options)` helper wrapping the awaited `declaresCatalog()` predicate (catch → false); all three resolver methods (`listRootRows`, `listForeignKeys`, `getDefinition`) now gate through it, so a rejected async predicate yields the contract's `[]`/`undefined` instead of escaping to `SqlNavigationProvider` callers.
+- `src/ui/__tests__/sqlCatalog.test.ts` — new test `rejected async declaresCatalog predicate fails closed (review round 1)`: all three methods return empty/undefined AND zero cache calls (`hasCatalog` + every catalog method).
+- Verification: focused sqlCatalog 7/7 GREEN; full DBX-08 net 204/204 across 11 files; typecheck + compile clean.

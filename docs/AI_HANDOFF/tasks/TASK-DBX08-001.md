@@ -108,3 +108,17 @@ Command: `npm run compile` → esbuild build complete.
 
 Status: PASS
 Note: Full original executor log was lost in an orchestrator copy-back mistake (git checkout of docs/); RED evidence re-derived exactly as described above against the executor's own test file with the implementation stashed, then popped. No git add/commit/push.
+
+
+## Review — Round 1
+
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERDICT: APPROVED
+FINDINGS:
+- none.
+TEST_PLAN_COVERAGE: all-followed — real unconnected PostgreSQL/MySQL/MSSQL instances cover the declared matrix and API presence/absence; fail-closed legacy/partial/false/structural/truthy-junk cases and frozen-declaration mutation are asserted.
+VERIFIED:
+- `npx vitest run src/adapters/__tests__/capabilities.test.ts src/adapters/__tests__/postgresCatalog.test.ts` — PASS (2 files, 9 tests)
+- `npm run typecheck` — PASS
+NOTES: Model isolation passed (configured reviewer `unic-smart` differs from executor `unic-code`). Commit `d63bd82` is limited to the declared adapter contract/matrices and tests; no package metadata or dependency changes were included.

@@ -301,4 +301,30 @@ describe("createCatalogResolver — TASK-DBX08-002 declared capability", () => {
     expect(cacheFalse.getSequences).not.toHaveBeenCalled();
     expect(cacheFalse.getObjectDdl).not.toHaveBeenCalled();
   });
+
+  it("rejected async declaresCatalog predicate fails closed (review round 1)", async () => {
+    // DBX-08 review round 1: a rejected predicate must gate like any
+    // unsupported declaration — resolver callers (SqlNavigationProvider
+    // hover/definition) await these methods without a catch.
+    const cache = makeCacheMock({ hasCatalog: true });
+    const resolver = createCatalogResolver(cache, {
+      declaresCatalog: async () => {
+        throw new Error("adapter resolution failed");
+      },
+    });
+
+    expect(await resolver.listRootRows()).toEqual([]);
+    expect(await resolver.listForeignKeys("public", "orders")).toEqual([]);
+    expect(
+      await resolver.getDefinition("view", "public", "user_summary"),
+    ).toBeUndefined();
+
+    // The gate failed before the cache was ever consulted.
+    expect(cache.hasCatalog).not.toHaveBeenCalled();
+    expect(cache.getViews).not.toHaveBeenCalled();
+    expect(cache.getRoutines).not.toHaveBeenCalled();
+    expect(cache.getConstraints).not.toHaveBeenCalled();
+    expect(cache.getSequences).not.toHaveBeenCalled();
+    expect(cache.getObjectDdl).not.toHaveBeenCalled();
+  });
 });

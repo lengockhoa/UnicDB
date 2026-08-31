@@ -143,3 +143,16 @@ Verification Output:
 Status: PASS
 
 Note: implementation details — (a) `guardPostgres` in `src/ui/tableCommands.ts` became async and now resolves the exact target adapter via `mgr.getAdapterFor(conn)` then checks `hasAdapterCapability(adapter, "tableDdl")` (fail-closed; unresolvable adapter → capability message, zero side effects); `createSchema`/`exportAllStructures` driver checks were replaced the same way. (b) `AdminTreeProvider.getRootChildren` renders exactly one verbatim `ADMIN_UNSUPPORTED_LABEL` node for false/missing `admin` declaration and never touches `adapter.admin`; `ADMIN_UNSUPPORTED_LABEL` re-exports the single pinned constant owned by `adminSessionsPanel.ts`. (c) `AdminSessionsPanel.refresh` checks `hasAdapterCapability(adapter, "admin")` BEFORE `pg_backend_pid()` and any AdminApi call; new `renderUnsupportedAdminHtml` renders the precise unsupported banner. (d) `extension.ts`: `vsdb.openSessionsPanel` keeps the no-connection warning first, then capability-gates before `AdminSessionsPanel.show`; `vsdb.runGrantSql` capability-gates before `commandOpenGrantWizard` (no-connection still gets the wizard's own select-connection warning — distinct case per PLAN §4); the GRANT execute seam still routes through `confirmDangerousStatements(parsed, "postgres")` before `adapter.runQuery(sql)`. (e) Pre-existing tests asserting the removed "PostgreSQL connections only" wording were updated to the new pinned `VSDB:` message (Test Case #6 contract: safeguards unchanged, message text now capability-based). package.json untouched; version 1.28.0; no new deps; no git add/commit.
+
+
+## Review — Round 1
+
+REVIEWER_MODEL: unic-smart (configured `handoff.reviewer.model`; running model: unic-smart)
+EXECUTOR_MODEL: unic-code
+VERDICT: APPROVED
+FINDINGS: none
+VERIFICATION_RERUN:
+- `npx vitest run src/ui/__tests__/tableCommands.test.ts src/ui/__tests__/adminTree.test.ts src/ui/__tests__/adminSessionsPanel.test.ts src/ui/__tests__/adminWizard.test.ts src/extension.test.ts` — PASS (5 files, 158 tests)
+- `npm run typecheck` — PASS (`tsc --noEmit`, exit 0)
+TEST_PLAN_COVERAGE: all-followed — PostgreSQL admission/confirmation, false and legacy capability denials, Admin-tree verbatim single-node/no-AdminApi behavior, sessions self-PID gate, and no-active-connection warning are covered.
+NOTES: Commit `08fc0c9` uses declared capability gates at the required table/admin funnels, preserves the PostgreSQL GRANT confirmation-before-query ordering, wires both catalog resolvers with `declaresCatalog`, and leaves package metadata/dependencies/contributions unchanged.
