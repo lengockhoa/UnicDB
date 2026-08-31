@@ -136,30 +136,40 @@ export function buildUnifiedDiff(
   const oldTail = hunks.find((h) => h.aStart + h.aCount >= a.length);
   const newTail = hunks.find((h) => h.bStart + h.bCount >= b.length);
 
+  /** Last line index in the hunk showing the OLD side's final content. */
+  const lastOldOf = (h: Hunk): number => {
+    let last = -1;
+    for (let i = 0; i < h.lines.length; i++) {
+      if (h.lines[i].startsWith("-") || h.lines[i].startsWith(" ")) last = i;
+    }
+    return last;
+  };
+  /** Last line index in the hunk showing the NEW side's final content. */
+  const lastNewOf = (h: Hunk): number => {
+    let last = -1;
+    for (let i = 0; i < h.lines.length; i++) {
+      if (h.lines[i].startsWith("+") || h.lines[i].startsWith(" ")) last = i;
+    }
+    return last;
+  };
+  /** Sentinel for `line i` of hunk h when rendering (either branch). */
+  const sentinelFor = (h: Hunk, i: number): string[] => {
+    const s: string[] = [];
+    if (oldNoNl && h === oldTail && i === lastOldOf(h)) s.push("\\ No newline at end of file");
+    if (newNoNl && h === newTail && i === lastNewOf(h)) s.push("\\ No newline at end of file");
+    return s;
+  };
+
   const out: string[] = [];
   let truncated = 0;
   let stopped = false;
   const pushHunk = (h: Hunk): void => {
     out.push(`@@ -${h.aStart + 1},${h.aCount} +${h.bStart + 1},${h.bCount} @@`);
-    // Last line in this hunk that SHOWS the old/new side's final content.
-    let lastOld = -1;
-    let lastNew = -1;
     for (let i = 0; i < h.lines.length; i++) {
-      const l = h.lines[i];
-      if (l.startsWith("-") || l.startsWith(" ")) lastOld = i;
-      if (l.startsWith("+") || l.startsWith(" ")) lastNew = i;
-    }
-    for (let i = 0; i < h.lines.length; i++) {
-      const line = h.lines[i];
-      out.push(line);
+      out.push(h.lines[i]);
       // Sentinel immediately after the line it describes — the last
       // line of the side lacking the final newline (git semantics).
-      if (oldNoNl && h === oldTail && i === lastOld) {
-        out.push("\\ No newline at end of file");
-      }
-      if (newNoNl && h === newTail && i === lastNew) {
-        out.push("\\ No newline at end of file");
-      }
+      out.push(...sentinelFor(h, i));
     }
   };
 
@@ -183,7 +193,8 @@ export function buildUnifiedDiff(
     if (projected > maxLines) {
       // This hunk cannot fit whole: render the header + a fitting prefix,
       // then stop (tail truncation). Room >= 1 guarantees at least the
-      // header shows; the prefix gives the user a real glimpse.
+      // header shows; the prefix gives the user a real glimpse. Sentinels
+      // still follow their line whenever that line is rendered.
       out.push(`@@ -${h.aStart + 1},${h.aCount} +${h.bStart + 1},${h.bCount} @@`);
       for (let i = 0; i < h.lines.length; i++) {
         const line = h.lines[i];
@@ -192,6 +203,7 @@ export function buildUnifiedDiff(
           continue;
         }
         out.push(line);
+        out.push(...sentinelFor(h, i));
       }
       stopped = true;
       continue;

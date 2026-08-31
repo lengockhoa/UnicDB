@@ -60,6 +60,40 @@ describe("buildUnifiedDiff", () => {
     expect(lines[at[1] - 1]).toBe("+b"); // new-side sentinel
   });
 
+  // AIX-02 review round 4: overflow truncation must not drop the sentinel
+  // when the terminal line IS rendered.
+  it("overflow branch still renders sentinels next to terminal lines", () => {
+    const d = buildUnifiedDiff("a\n", "b", { maxLines: 3 }); // old has NL, new lacks
+    const lines = d.split("\n");
+    const at = lines.indexOf("\\ No newline at end of file");
+    expect(at).toBeGreaterThan(0);
+    expect(lines[at - 1]).toBe("+b");
+  });
+
+  it("overflow branch renders BOTH sentinels when both sides lack newline", () => {
+    // maxLines 4: header + (-a + sentinel) + (+b + sentinel) — every
+    // rendered terminal line keeps its sentinel; 3 lines would cut +b.
+    const d = buildUnifiedDiff("a", "b", { maxLines: 4 });
+    const lines = d.split("\n");
+    const at = lines
+      .map((l, i) => (l === "\\ No newline at end of file" ? i : -1))
+      .filter((i) => i >= 0);
+    expect(at.length).toBe(2);
+    expect(lines[at[0] - 1]).toBe("-a");
+    expect(lines[at[1] - 1]).toBe("+b");
+  });
+
+  it("uncapped both-sides sentinel pairs stay adjacent", () => {
+    const d = buildUnifiedDiff("a", "b");
+    const lines = d.split("\n");
+    const at = lines
+      .map((l, i) => (l === "\\ No newline at end of file" ? i : -1))
+      .filter((i) => i >= 0);
+    expect(at.length).toBe(2);
+    expect(lines[at[0] - 1]).toBe("-a");
+    expect(lines[at[1] - 1]).toBe("+b");
+  });
+
   it("sentinel placement: old side lacks newline → after last - line", () => {
     const d = buildUnifiedDiff("a\nb", "a\n");
     const lines = d.split("\n");
