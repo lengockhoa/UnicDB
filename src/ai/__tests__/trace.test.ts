@@ -111,3 +111,40 @@ describe("TraceRecorder (TASK-AIX06-001)", () => {
     expect(MAX_ENTRIES_PER_TURN).toBeGreaterThan(0);
   });
 });
+
+describe("redact r1 negative-leak (AIX-06 review)", () => {
+  it("scrubs clientSecret-style suffixed keys", () => {
+    const out = redact({ clientSecret: "short-value" }) as Record<string, string>;
+    expect(out.clientSecret).toBe("<redacted>");
+  });
+  it("scrubs refreshToken-style keys", () => {
+    const out = redact({ refreshToken: "abc" }) as Record<string, string>;
+    expect(out.refreshToken).toBe("<redacted>");
+  });
+  it("scrubs key=value inside plain strings (short value)", () => {
+    const out = redact({ s: "apiKey=short-value" }) as Record<string, string>;
+    expect(out.s).not.toContain("short-value");
+    expect(out.s).toContain("<redacted>");
+  });
+  it("scrubs 24-char base64 run containing / and +", () => {
+    const token = "abc/def+ghi=jklmnopqrstu=";
+    const out = redact({ s: token });
+    expect(JSON.stringify(out)).not.toContain(token);
+  });
+  it("case-insensitive bearer in plain string", () => {
+    const out = redact({ s: "bearer abcdefghijklmnop" }) as Record<string, string>;
+    expect(out.s).toContain("<redacted>");
+  });
+});
+
+describe("events() global insertion order (AIX-06 review F2)", () => {
+  it("returns cross-turn events in true insertion order", () => {
+    const r = new TraceRecorder();
+    r.record("a", "prompt", { x: 1 });
+    r.record("b", "prompt", { x: 2 });
+    r.record("a", "delta", { x: 3 });
+    const evs = r.events();
+    expect(evs.map((e) => e.turnId)).toEqual(["a", "b", "a"]);
+    expect(evs.map((e) => e.payload)).toEqual([{ x: 1 }, { x: 2 }, { x: 3 }]);
+  });
+});

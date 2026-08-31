@@ -1212,6 +1212,7 @@ export class AiChatPanel {
    * so cancelAllPending/disposeAcpSession/onDispose each run exactly once
    * per panel lifetime regardless of which path triggers it first. */
   private teardown(): void {
+    this.trace.clear();
     if (this.torndown) return;
     this.torndown = true;
     // Cancel every pending permission request with one cancelled ACP
@@ -1874,6 +1875,9 @@ export class AiChatPanel {
       this.token = null;
       return;
     }
+    // AIX-06 r1: the panel owns ONE recorder for both engines — attach
+    // it so this turn's OMP events land in dumpTrace too.
+    engine.attachTrace(this.trace);
     const token = this.token;
     let postedError = false;
     // AIX-05: `running` posts exactly once per turn, on the FIRST

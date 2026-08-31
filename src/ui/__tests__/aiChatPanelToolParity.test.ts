@@ -123,6 +123,7 @@ describe("AiChatPanel — toolset parity (TASK-AIX05-004)", () => {
       resume: vi.fn(async () => undefined),
       shutdown: vi.fn(async () => undefined),
       cancel: vi.fn(() => undefined),
+      attachTrace: vi.fn(() => undefined),
     };
     const regBuiltin = createDbTools(vi.fn(async () => null));
     const regOmp = createDbTools(vi.fn(async () => null));

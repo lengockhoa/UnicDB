@@ -35,13 +35,15 @@ export const MAX_TURNS = 50;
 export const MAX_ENTRIES_PER_TURN = 1000;
 
 const SECRET_KEY_RE =
-  /^(api[_-]?key|secret|password|access[_-]?token|auth[_-]?token|token)$/i;
+  /(?:api[_-]?key|secret|password|passphrase|credential|access[_-]?token|auth[_-]?token|refresh[_-]?token|session[_-]?token|token)$/i;
 const HEADER_RE =
   /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key)$/i;
-const BEARER_RE = /Bearer\s+[A-Za-z0-9._\-+/=]+/g;
-const BASIC_RE = /Basic\s+[A-Za-z0-9._\-+/=]+/g;
-/** Long opaque run — ≥ 24 hex/base64 chars, no spaces. */
-const LONG_RUN_RE = /\b[A-Za-z0-9_\-]{24,}\b/g;
+const BEARER_RE = /Bearer\s+[A-Za-z0-9._\-+/=]+/gi;
+const BASIC_RE = /Basic\s+[A-Za-z0-9._\-+/=]+/gi;
+/** Key=value / key: value / key value forms inside plain strings. */
+const KV_RE = /\b(api[_-]?key|secret|password|passphrase|token)\b\s*[=:]\s*["']?[A-Za-z0-9._\-+/=]{4,}["']?/gi;
+/** Long opaque run — ≥ 24 hex/base64 chars incl. + / = padding. */
+const LONG_RUN_RE = /[A-Za-z0-9_+/=-]{24,}/g;
 
 /** Recursively scrub secret-shaped strings. Never throws. */
 export function redact(value: unknown): unknown {
@@ -81,19 +83,18 @@ function redactInner(value: unknown, seen: WeakSet<object>): unknown {
 function scrubString(s: string): string {
   let out = s.replace(BEARER_RE, "Bearer <redacted>");
   out = out.replace(BASIC_RE, "Basic <redacted>");
-  // Opaque long runs (>= 24 chars, no spaces) look like secrets —
-  // normal English words and SQL identifiers are shorter.
+  // key=value / key: value forms inside plain strings —
+  // 'apiKey=short-value', 'token: abc', 'PASSWORD="x"' etc.
+  out = out.replace(KV_RE, (_m, k) => `${k}<redacted>`);
+  // Opaque long runs (>= 24 chars incl. base64 + / =) look like
+  // secrets — normal English words and SQL identifiers are shorter.
   out = out.replace(LONG_RUN_RE, () => "<redacted>");
-  out = out.replace(LONG_RUN_RE, (m) => {
-    // Only scrub if the run looks opaque (mix of cases or hex) and
-    // is NOT a normal English / SQL word. Match: ≥ 24 chars with
-    // both upper & lower or all-digit.
-    if (/[a-z]/.test(m) && /[A-Z]/.test(m)) return "<redacted>";
-    if (/^[0-9]+$/.test(m)) return "<redacted>";
-    if (/^[a-f0-9]+$/i.test(m) && m.length >= 32) return "<redacted>";
-    return m;
-  });
   return out;
+}
+
+/** Hidden global-sequence accessor for events() ordering. */
+function gseq(e: TraceEvent): number {
+  return (e as TraceEvent & { __g?: number }).__g ?? 0;
 }
 
 /** Per-turn entry ring with a `truncated` flag. */
@@ -106,6 +107,9 @@ interface TurnBuffer {
 
 export class TraceRecorder {
   private readonly turns = new Map<string, TurnBuffer>();
+  /** AIX-06 r1: global insertion sequence so events() across turns
+   *  can be returned in true insertion order. */
+  private globalSeq = 0;
   /** FIFO order of turnIds (oldest first). */
   private readonly order: string[] = [];
   private readonly maxTurns: number;
@@ -125,6 +129,13 @@ export class TraceRecorder {
       ts: Date.now(),
       payload: safePayload,
     };
+    // Non-enumerable stamp keeps the wire shape clean while enabling
+    // a stable global sort for events().
+    Object.defineProperty(ev, "__g", {
+      value: this.globalSeq += 1,
+      enumerable: false,
+      writable: true,
+    });
     let buf = this.turns.get(turnId);
     if (buf === undefined) {
       buf = { events: [], startSeq: 1, truncated: false };
@@ -153,6 +164,7 @@ export class TraceRecorder {
       const buf = this.turns.get(id);
       if (buf) all.push(...buf.events);
     }
+    all.sort((a, b) => gseq(a) - gseq(b));
     return Object.freeze(all);
   }
 

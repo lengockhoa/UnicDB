@@ -158,6 +158,7 @@ function makeFakeEngine(
     resume: vi.fn(async () => undefined),
     shutdown: vi.fn(async () => undefined),
     cancel: vi.fn(() => undefined),
+    attachTrace: vi.fn(() => undefined),
   };
 }
 
@@ -230,6 +231,7 @@ describe("AiChatPanel — session_state (TASK-AIX05-001)", () => {
       resume: vi.fn(async () => undefined),
       shutdown: vi.fn(async () => undefined),
       cancel: vi.fn(() => undefined),
+      attachTrace: vi.fn(() => undefined),
     };
     const { panel: p, handler } = makeOmpPanel(engine);
     handler({ type: "send", text: "crash" });

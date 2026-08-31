@@ -194,6 +194,8 @@ function makeFakeEngine(
     send,
     resume: vi.fn(async () => undefined),
     shutdown: vi.fn(async () => undefined),
+    cancel: vi.fn(() => undefined),
+    attachTrace: vi.fn(() => undefined),
   };
 }
 
@@ -331,6 +333,8 @@ describe("AiChatPanel — engine routing (cycle AE TASK-003)", () => {
       }),
       resume: vi.fn(async () => undefined),
       shutdown: vi.fn(async () => undefined),
+      cancel: vi.fn(() => undefined),
+      attachTrace: vi.fn(() => undefined),
     };
     state.fakeEngine = engine;
 

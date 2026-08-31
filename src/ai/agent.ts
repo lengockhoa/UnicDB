@@ -184,6 +184,7 @@ async function runStep(
   signal: AbortSignal | undefined,
   cfg: AiConfig,
   role: AiModelRole,
+  traceEmit?: (kind: "delta" | "error", payload: unknown) => void,
 ): Promise<ProviderResult> {
   if (!deps.streamComplete || cfg.method !== "chat/completions") {
     return deps.complete(cfg, role, req);
@@ -199,6 +200,7 @@ async function runStep(
     emitted++;
     try {
       userOnText?.(ev.text);
+      traceEmit?.("delta", { text: ev.text });
     } catch {
       // user's onText must never break the stream path.
     }
@@ -246,7 +248,9 @@ export async function runAgent(
   // 1. Fresh config snapshot per run — exactly one loadConfig call.
   const cfg = await deps.loadConfig();
   if (!cfg) {
-    throw new Error("AI is not configured");
+    const err = new Error("AI is not configured");
+    if (trace) trace.record(turnId, "error", { message: err.message });
+    throw err;
   }
 
   // 2. Vision guard BEFORE any provider call.
@@ -278,7 +282,10 @@ export async function runAgent(
       messages: history.map((m) => ({ ...m })),
       tools: toolDefs,
     };
-    const result = await runStep(req, deps, callbacks, signal, cfg, role);
+    const result = await runStep(req, deps, callbacks, signal, cfg, role, (kind, payload) => {
+      if (!trace) return;
+      if (kind === "delta") trace.record(turnId, "delta", payload);
+    });
     const hasToolCalls = result.toolCalls.length > 0;
     const assistantMsg: ChatMessage = hasToolCalls
       ? { role: "assistant", content: "", toolCalls: result.toolCalls }
@@ -313,6 +320,9 @@ export async function runAgent(
       stepMessages.push(chatMsg);
       if (trace) {
         trace.record(turnId, "tool_end", { name: call.name, isError: outcome.status === "failed" });
+        if (outcome.status === "failed") {
+          trace.record(turnId, "error", { message: outcome.resultText, tool: call.name });
+        }
       }
       callbacks?.onToolResult?.(call, outcome);
     }

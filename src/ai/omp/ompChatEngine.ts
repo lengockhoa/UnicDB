@@ -130,6 +130,10 @@ export interface OmpChatEngine {
    * turn sends exactly ONE notify. No-op without a turn.
    */
   cancel(): void;
+  /** AIX-06 r1: attach a trace recorder at runtime (panel owns one
+   *  recorder for both engines). Safe to call repeatedly — the latest
+   *  recorder wins. Pass undefined to detach. */
+  attachTrace(recorder: TraceRecorder | undefined): void;
 }
 
 export interface OmpChatEngineOptions {
@@ -226,6 +230,14 @@ async function dispatchNotification(
     if (!isParamsRecord(content)) return;
     const text = content["text"];
     if (typeof text === "string" && text.length > 0) {
+      if (trace && turnId) trace.record(turnId, "delta", { text });
+      events.onTrace?.({
+        turnId: turnId ?? "",
+        seq: 0,
+        kind: "delta",
+        ts: Date.now(),
+        payload: { text },
+      });
       events.onDelta?.(text);
     }
     return;
@@ -234,6 +246,14 @@ async function dispatchNotification(
   if (sessionUpdate === "agent_thought_chunk") {
     const chunk = update["chunk"];
     if (typeof chunk === "string" && chunk.length > 0) {
+      if (trace && turnId) trace.record(turnId, "thought", { text: chunk });
+      events.onTrace?.({
+        turnId: turnId ?? "",
+        seq: 0,
+        kind: "thought",
+        ts: Date.now(),
+        payload: { text: chunk },
+      });
       events.onThought?.(chunk);
     }
     return;
@@ -288,7 +308,7 @@ async function dispatchNotification(
 
 export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
   const { acp, hostMcp, cwd } = opts;
-  const trace = opts.trace;
+  let trace = opts.trace;
   const mcpServers = mcpServersDescriptor(hostMcp);
   // AIX-05: track the active sessionId so cancel() can address the right
   // `session/cancel` notify. Cleared on turn settle. `cancelSent` dedupes
@@ -318,6 +338,13 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
       if (trace !== undefined) {
         trace.record(turnId, "prompt", { text });
       }
+      events.onTrace?.({
+        turnId,
+        seq: 0,
+        kind: "prompt",
+        ts: Date.now(),
+        payload: { text },
+      });
       let sessionId: string;
       sessionNewInFlight = true;
       try {
@@ -419,6 +446,10 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
       // for subsequent sessionPrompt calls.
       void loadedSessionId;
       events.onDone?.();
+    },
+
+    attachTrace(recorder: TraceRecorder | undefined): void {
+      trace = recorder;
     },
 
     cancel(): void {
