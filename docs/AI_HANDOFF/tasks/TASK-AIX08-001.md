@@ -127,4 +127,62 @@ The new contract deliberately supports only a small object-schema subset. Do not
 
 ## Executor Report
 
-(not started)
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+RED_OUTPUT: |
+  $ npx vitest run src/ai/omp/__tests__/mcpExtensionRegistry.test.ts
+   ❯ src/ai/omp/__tests__/mcpExtensionRegistry.test.ts  (0 test)
+
+  ⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+   FAIL  src/ai/omp/__tests__/mcpExtensionRegistry.test.ts [ src/ai/omp/__tests__/mcpExtensionRegistry.test.ts ]
+  Error: Failed to load url ../mcpExtensionRegistry (resolved id: ../mcpExtensionRegistry) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-aix08-001/src/ai/omp/__tests__/mcpExtensionRegistry.test.ts. Does the file exist?
+   ❯ loadAndTransform ../../node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17
+
+  ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+
+   Test Files  1 failed (1)
+        Tests  no tests
+
+  (Canonical RED for a new module: the test file existed and failed because
+  src/ai/omp/mcpExtensionRegistry.ts did not exist yet. No fixture produced a
+  passing run before implementation.)
+Verification Output: |
+  $ npm test -- src/ai/omp/__tests__/mcpExtensionRegistry.test.ts
+   ✓ src/ai/omp/__tests__/mcpExtensionRegistry.test.ts  (7 tests) 5ms
+   Test Files  1 passed (1)
+        Tests  7 passed (7)
+
+  $ npm run typecheck
+  > tsc --noEmit   (clean, exit 0)
+
+  $ npm run compile
+    dist/extension.js.map  9.0mb
+  ⚡ Done in 174ms
+  esbuild: build complete
+
+  Regression net:
+  $ npx vitest run src/__tests__/aix03Scaffold.test.ts src/__tests__/aix04Scaffold.test.ts src/adapters/__tests__/capabilities.test.ts
+   Test Files  3 passed (3) | Tests  14 passed (14)
+  $ npx vitest run src/ai/omp/__tests__/hostMcp.test.ts src/ai/omp/__tests__/mcpBridge.test.ts
+   Test Files  2 passed (2) | Tests  24 passed (24)
+  $ npx vitest run src/ai/__tests__/policy.test.ts — 10 passed
+  $ npx vitest run src/ui/__tests__/aiChatPanelToolParity.test.ts — 1 passed
+
+  $ npm test  (full suite)
+   Test Files  214 passed | 1 skipped (215)
+        Tests  2818 passed | 2 skipped (2820)
+Status: PASS
+Note: none — implementation details: (1) registry is pure (no vscode/fs/net/
+  child-process/dynamic-loader imports); (2) db-read admission requires
+  policy.tools.database && policy.context.rows; workspace-read requires
+  policy.tools.workspace && policy.context.workspace; (3) per invocation one
+  adapter is resolved, every declared DBX-08 capability is checked on that
+  exact instance, and the handler's runReadOnlyQuery closes over
+  createSqlTool(async () => checkedAdapter) — the original factory is never
+  re-resolved, so a later non-capable factory result cannot reach runQuery
+  (pinned by Test Case #6); (4) CuratedMcpTool exposes timeoutMs,
+  timeoutError(ms), formatError(error), isErrorResult(text) exactly as the
+  Interfaces section declares for TASK-AIX08-002 host integration; (5) git
+  state left untracked (no add/commit/push).
