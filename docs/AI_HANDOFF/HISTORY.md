@@ -1,5 +1,6 @@
 # Handoff History
 
+| 2026-08-31-F | 2026-08-31 | DBX-07 — AIX-06 Trace r3 review fixes: TurnState { turnId, seq } + buildEv() so onTrace works with monotonic seq without a recorder; KV_RE += authorization/auth (bare Authorization=ab forms scrub); agent.ts double-record removed; 11 emit() callsites migrated to state; 70 focused tests + full suite 2715 passed; awaiting unic-smart cycle-review verdict (main @ e1cb41a) |
 | 2026-08-31-E | 2026-08-31 | AIX-05 OMP Agent Workbench — session_state wire (turn lifecycle chip), OmpChatEngine.cancel (no-op/idempotent/restart-safe), panel Stop parity, dispatchNotification crash-proof, detection reason→hint pinned, builtin↔OMP/MCP tool parity via registerStandardToolset; unic-smart APPROVED after 2 fix rounds; released v1.25.0 |
 | Cycle | Date | Summary |
 |-------|------|---------|

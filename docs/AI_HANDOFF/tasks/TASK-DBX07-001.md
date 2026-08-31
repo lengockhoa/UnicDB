@@ -1,7 +1,7 @@
 # TASK-DBX07-001 — AIX-06 Trace r3 review fixes
 
 Cycle: DBX-07 · Wave 5 cycle 1/3 · Priority: P1
-Status: done (working tree green; awaiting commit + reviewer verdict)
+Status: done (committed @ e1cb41a; awaiting reviewer verdict)
 Depends on: —
 Reviewer: unic-smart (cycle reviewer)
 
@@ -134,35 +134,39 @@ emission point.
 
 ## Executor Report
 
-**Status: done** (working tree green, awaiting commit).
+**Status: done** (committed @ e1cb41a on main).
 
 Steps performed:
 
 1. Read `src/ai/trace.ts`, `src/ai/agent.ts`, `src/ai/omp/ompChatEngine.ts`,
    `src/ai/__tests__/trace.test.ts`, and AIX-06 task contracts 001–003
    to baseline the r2 surface.
-2. Verified the r3 draft in the working tree:
+2. Verified the r3 draft in the working tree (drafted by the omp
+   session, stalled mid-migration):
    - `src/ai/trace.ts:44` — `KV_RE` now includes `authorization|auth`.
-   - `src/ai/agent.ts:249-253` — `throw new Error("AI is not configured")`
+   - `src/ai/agent.ts` — `throw new Error("AI is not configured")`
      replaces the previous in-band `trace.record` + throw pattern; the
      outer `try/catch` records the error once.
-   - `src/ai/omp/ompChatEngine.ts:104,208-244,246-327,353-460` —
-     `TurnState` interface, `buildEv` factory, new `emit(trace, state,
-     events, kind, payload)` signature, and the per-turn `state`
-     allocation in `send()` / `resume()`.
-3. Migrated 11 callsite that still passed the bare `turnId` string
-   to the new `state` parameter:
-   - `dispatchNotification` parameter (1 site).
-   - `emit(trace, state, events, ...)` (11 sites via `replace_all`).
-   - `send()` and `resume()` allocate `state` once at entry; the
-     `acp.onNotification` forwarder passes `state` to
-     `dispatchNotification` (2 sites via `replace_all`).
-4. Ran `npm run typecheck` → clean.
-5. Ran `npx vitest run src/ai/__tests__/trace.test.ts
-   src/ai/omp/__tests__/ompChatEngine.test.ts
-   src/ai/__tests__/agent.test.ts` → **66/66 passed** (22 trace + 23
-   agent + 21 ompChatEngine). The r3 Authorization test (line 27-35)
-   confirms `<redacted>` present and `eyJhbGciOi` absent.
+   - `src/ai/omp/ompChatEngine.ts` — `TurnState` interface, `buildEv`
+     factory, new `emit(trace, state, events, kind, payload)` signature.
+3. Completed the stalled migration:
+   - `dispatchNotification` param: `turnId?: string` → `state?: TurnState`.
+   - All 11 `emit(trace, turnId, …)` callsites → `emit(trace, state, …)`.
+   - `send()` / `resume()` allocate `state` once at entry with the gate
+     `trace !== undefined || events.onTrace !== undefined` (a new r3
+     finding — the onTrace-only path needs a state to get a monotonic
+     seq; the omp draft gated on recorder presence only and would
+     silently drop onTrace-only events).
+   - Both `acp.onNotification` forwarders pass `state`.
+4. Added r3 tests: `Authorization=ab` + `auth=tk` scrub cases
+   (trace.test.ts); `onTrace` monotonic-seq-without-recorder and
+   recorder+onTrace co-existence (ompChatEngine.test.ts). The
+   without-recorder test initially failed RED — proving the gate bug —
+   then GREEN after the state-allocation fix.
+5. Verification: focused 70/70 (24 trace + 23 ompChatEngine + 23
+   agent), full suite **2715 passed | 2 skipped** (209 files),
+   typecheck clean. Committed as e1cb41a with plan/index/task
+   artifacts.
 
 No release bump (DBX-07 ships as `fix(AIX-06 r3)` on v1.25.0). The
 release target is the AIX-06 cycle-review close (separate Wave 5
@@ -171,3 +175,4 @@ task).
 ## Reviewer Verdict
 
 (pending)
+

@@ -6,16 +6,15 @@
 
 ## Snapshot
 
-- Branch/state: `main` — **v1.25.0 about to release** (AIX-05). Parallel session queued RLX-01 (Operational Reliability Foundation) in ACTIVE.md.
+- Branch/state: `main` — **HEAD @ e1cb41a**, v1.25.0 released. Cycles AIX-05 and AIX-06 shipped on main; **DBX-07 (AIX-06 r3 review fixes) landed at e1cb41a** with plan/index/task artifacts + 70 focused tests green + full suite 2715 passed.
+- Active handoff cycle (per ACTIVE.md): **RLX-01 Operational Reliability Foundation** — planning_done, 3 tasks ready (TASK-RLX-001 cancel active non-cursor PG queries; TASK-RLX-002 coalesce SchemaCache stale refreshes; TASK-RLX-003 fail closed on malformed import plans).
+- Wave roadmap: Wave 5 = DBX-07 ✅ → AIX-06 cycle-review close → AIX-07; Wave 6 = DBX-08, AIX-08.
 - Durable two-pillar product queue: `docs/AI_HANDOFF/PRODUCT_ROADMAP.md` with its portfolio plan in `PLAN_PRODUCT_VISION.md`; `ROADMAP.md` is the compatibility index.
-- Cycle DBX-04 (Relationship Explorer) COMPLETE + REVIEWED (2026-08-30, unic-smart APPROVED after 3 fix rounds). Delivers `vsdb.relationshipExplorer`: FK graph, deterministic layered layout, SVG export, pan/zoom panel.
-- Cycle AIX-01 (Grounded Workspace Context) COMPLETE + REVIEWED (2026-08-30, unic-smart APPROVED after 2 fix rounds at 6a2b560). Delivers opt-in grounding: selection + file blocks with line-ranged attribution, workspace_search bounded retrieval, panel toggle chips.
-- Cycle DBX-02 (SQL Intelligence Navigation) COMPLETE on `main` (4 code commits + docs closure). Catalog completion (FK targets + views/routines/sequences), hover/definition over `vsdb-sql-catalog:` virtual documents, and parsed find-usages wired behind partial-mock guards.
+- omp approval prompts stem from `.omp/config.yml`: `tools.approval.bash` matches ENTIRE non-compound commands only; compound `&&`/`;`/`|` falls through to `approvalMode: write` and prompts. `tools.approval.eval: prompt` always prompts. Normal pattern, not a defect.
 
 ## Active Work
-- AIX-05 done + reviewed (4/4, unic-smart APPROVED after 2 fix rounds). Releasing v1.25.0.
-- NEXT per roadmap: DBX-07 Database Reliability Controls (wave 5), then AIX-06, AIX-07, DBX-08, AIX-08 (wave 6) — release v1.26.0…v1.28.0.
-- A parallel session rotated ACTIVE.md to Cycle RLX-01 (Operational Reliability Foundation, planning_done) — coordinate before executing RLX tasks to avoid conflicts with the roadmap wave order.
+- **DBX-07 done** (commit e1cb41a, awaiting reviewer verdict). Next: unic-smart cycle review → close AIX-06 (ship v1.26.0).
+- **RLX-01** planning_done; 3 tasks ready in `docs/AI_HANDOFF/tasks/TASK-RLX-{001,002,003}.md`. Order: 001 (PG cancel) → 002 (schema cache coalesce) → 003 (import plan gate). Coordinate with omp before executing to avoid conflicts.
 - AHL is archived as completed historical work; its artifacts remain preserved under `docs/AI_HANDOFF/`.
 
 ## Decisions Pending
@@ -23,11 +22,13 @@
 - None blocking.
 
 ## Next Candidates
-1. DBX-07 Database Reliability Controls (roadmap wave 5), then AIX-06, AIX-07 (wave 5), DBX-08, AIX-08 (wave 6). RLX-01 is queued by a parallel session — reconcile ordering first.
-2. AIX-05 v1.25.0 release follow-up (bump + vsix + tag + push + GitHub Release).
-
+1. unic-smart cycle review for DBX-07 (TASK-DBX07-001 verdict) → then close AIX-06 (ship v1.26.0).
+2. Execute RLX-01 (TASK-RLX-001 → 002 → 003) for v1.27.0.
+3. Resume roadmap waves (AIX-07, DBX-08, AIX-08 → v1.28.0+) after RLX-01 ships.
 
 ## Recently Completed
+- **DBX-07 (AIX-06 r3)** at e1cb41a: `TurnState { turnId, seq }` + `buildEv()` in ompChatEngine so `onTrace` works with a real monotonic seq even without a recorder (state allocated when recorder OR onTrace subscriber exists); KV_RE extended with `authorization|auth` so bare `Authorization=ab` forms scrub; agent.ts "AI is not configured" no longer double-records (outer catch is the single error emission point). New r3 tests: Authorization=ab, auth=tk alias, onTrace-monotonic-seq-without-recorder, recorder+onTrace co-existence. 70 focused tests + full suite 2715 passed + typecheck clean. Plan: PLAN_DBX07.md, Index: INDEX_DBX07.md, Task: TASK-DBX07-001.md.
+- AIX-06 implementation: TraceRecorder pure module (redaction, bounded storage, global insertion order), OmpChatEngine trace hook (onTrace event with records-before-emit ordering, KV_RE whitespace+no-min), builtin path bridge via `runAgent` accepting trace, AiChatPanel wiring + scaffold + CHANGELOG/README; r1 fixed redaction false negatives, ordering, delta/thought/onTrace emission; r2 fixed outer error catch. Awaiting cycle-review verdict.
 - v1.25.0: Cycle AIX-05 OMP Agent Workbench — `session_state` wire + webview chip, `OmpChatEngine.cancel` (no-op/idempotent/restart-safe with `sessionNewInFlight` gate + `pendingCancel` drain), panel Stop parity in omp+ompChatEngine mode, `dispatchNotification` crash-proof (top-level `isParamsRecord` + toolCallId guard), `resolveEngine` reason→hint pinned, builtin↔OMP/MCP tool permission parity via `registerStandardToolset`; unic-smart APPROVED after 2 fix rounds.
 
 - v1.24.0: Cycle AIX-04 Database Change Workflow — plan_change reviewed change plans (danger tiers + live-schema drift, READ-ONLY), ONE shared confirmDangerousStatements consent gate, change_plan consent card (Approve/Reject, disabled when drifted, drift re-check at approve), per-statement sequential apply with partial-failure + cancel reporting, builtin + OMP/MCP registry parity; unic-smart APPROVED after 2 fix rounds.

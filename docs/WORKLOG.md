@@ -20,7 +20,13 @@ For each significant action, append:
 - Verification run
 - Outcome
 
-## 2026-08-31 — Cycle AIX-05 OMP Agent Workbench → v1.25.0 (unic-code executor + unic-smart reviewer)
+## 2026-08-31 — Cycle DBX-07 AIX-06 Trace r3 fixes (main @ e1cb41a)
+- omp (OpenCode Mobile) drafted the r3 helpers (`TurnState`, `buildEv`, new `emit(trace, state, …)` signature) but stalled mid-migration: the 11 `emit()` callsites still passed the bare `turnId` string. This session completed the migration (dispatchNotification param, send()/resume() state allocation with `trace !== undefined || events.onTrace !== undefined` gate, both `acp.onNotification` forwarders), extended trace.test.ts (Authorization r3 assertions, `Authorization=ab` + `auth=tk` scrub cases) and ompChatEngine.test.ts (`onTrace` monotonic-seq WITHOUT a recorder — caught a real gap: state must be allocated for onTrace-only consumers; recorder+onTrace co-existence with no double-seq).
+- Files: src/ai/trace.ts (KV_RE += authorization|auth), src/ai/agent.ts (drop double-record on "AI is not configured"), src/ai/omp/ompChatEngine.ts (TurnState + buildEv + emit migration), 2 test files, PLAN_DBX07.md + INDEX_DBX07.md + TASK-DBX07-001.md (new).
+- Verification: 70/70 focused (24 trace + 23 ompChatEngine + 23 agent), full suite 2715 passed | 2 skipped (209 files), typecheck 0. Commit e1cb41a on main. Release deferred to AIX-06 cycle-review close (v1.26.0).
+- Note: test expectation initially wrong about event ordering (prompt/done land before post-send handler deltas) — corrected after observing actual emission order, not by weakening the contract.
+
+
 Plan + 4 task contracts (PLAN_AIX05, INDEX_AIX05, 4 tasks). Feature commit 0fe4437 (session_state wire, OmpChatEngine.cancel, dispatchNotification robustness, reason→hint, registerStandardToolset parity). Reviewer r1: CHANGES-REQUESTED (cancel-during-session/new lost, tool_call_update w/o toolCallId forwarded, HostMsg session_state missing, release docs missing). r1 commit bba8a62 (pendingCancel flag + toolCallId guard + webview HostMsg + CHANGELOG/README). Reviewer r2: CHANGES-REQUESTED (idle cancel violated no-op contract, drain left currentSessionId so second cancel duplicated). r2 commit 8cc49a0 (sessionNewInFlight gate + drain clears currentSessionId). Reviewer r3: APPROVED. Tests 2675 passed | 2 skipped; typecheck 0; compile clean. Release v1.25.0 follow-up.
 ## 2026-08-31 — Cycle AIX-04 Database Change Workflow → v1.24.0 (unic-code executor + unic-smart reviewer)
 
