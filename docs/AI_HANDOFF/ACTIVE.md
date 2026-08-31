@@ -1,9 +1,15 @@
 # ACTIVE
 
+Cycle: AIX-02   Date: 2026-08-31   Base: main @ 5b0e3f3
+Goal: Safe File Operations — gated workspace_write tool (exact allowlist scope), unified diff preview on the approval card, atomic CAS writes, workspace-trust enforcement.
+Tasks: 4 total
+Status: done — 4/4 tasks APPROVED by unic-smart reviewer after 4 fix rounds (final 0b5d6b8: request-scoped snapshots, host CAS, trust gate, URI-preserving allowlist, two-sided sentinel); 2539 passed | 2 skipped; typecheck 0. Ship as v1.21.0.
+
+Previous:
 Cycle: DBX-05   Date: 2026-08-31   Base: main @ 23e17df
 Goal: Connection Workspace — folders/colors for connection organization, read-only intent enforcement, lifecycle-managed SSH tunnels (PostgreSQL-first).
 Tasks: 4 total
-Status: done — 4/4 tasks APPROVED by unic-smart reviewer after 6 rounds (final 65b53a7: listener PID identity proof, SetEnv validity, probe temp-key, Windows netstat); 2499 passed | 2 skipped; typecheck 0. Ship as v1.20.0.
+Status: done — shipped as v1.20.0 (4/4 tasks APPROVED by unic-smart reviewer after 6 rounds; 2499 passed | 2 skipped).
 
 Previous:
 Cycle: AIX-01   Date: 2026-08-30   Base: main @ 3b30f7c

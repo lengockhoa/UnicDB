@@ -20,6 +20,12 @@ For each significant action, append:
 - Verification run
 - Outcome
 
+## 2026-08-31 — Cycle AIX-02 Safe File Operations → v1.21.0 (unic-code executor + unic-smart reviewer)
+- Delivered: fileDiff (pure LCS unified diff, capped, git-faithful sentinels incl. both-sides + overflow cases), fileOpsTool (workspace_write: exact URI allowlist, JSON envelopes, request-scoped expected-content binding, host CAS temp+rename), aiChatPanel (registration gated on grounding.writeFile + workspace trust, builtin + omp/MCP mirror; permission card shows REAL computed diff pre-approval via gate describe/bindArgs; JSON deny envelope), extension (refreshGroundingFiles from findFiles cap 200, isWorkspaceTrusted wiring, atomic CAS writer), scaffold tests, CHANGELOG/README.
+- Review: unic-smart 5 rounds (e028910→0b5d6b8). Key catches: empty allowlist; diff not shown before approval; non-JSON denial; sentinel placement (per-side, both-sides, overflow); trust gate absent; shared-Map snapshot race (→ request-scoped); TOCTOU (→ host CAS); fsPath scheme coercion (→ URI strings); multi-hunk truncation. Final VERDICT: APPROVED.
+- Files: src/ai/{fileDiff.ts,tools/fileOpsTool.ts}, src/ui/{aiChatPanel.ts,groundingService.ts}, src/extension.ts + 4 test files (fileDiff 17, fileOpsTool 7, registration 12, scaffold 3).
+- Verification: 2539 passed | 2 skipped (190 files); typecheck 0; esbuild clean; v1.21.0 vsix packaged.
+
 ## 2026-08-31 — Cycle DBX-05 Connection Workspace → v1.20.0 (unic-code executor + unic-smart reviewer)
 - Delivered: folder grouping (palette/assignColor/groupConnections), read-only guard (ReadOnlyViolation, depth-aware scanner, EXPLAIN+CTE regressions), SSH tunnels (validated argv, explicit local port + PID identity proof via lsof/ss/netstat, SetEnv marker, fail-closed), connection form workspace fields (DOM-API render), tree folder nodes, scaffold tests.
 - Review: unic-smart 6 rounds (2de43e2→65b53a7). Key catches: dropped form fields (user/password), bastion vs target port, invalid SetEnv (ssh -G verified), pre-bind debug line not ownership proof, Windows ss-only gap. Final VERDICT: APPROVED.
