@@ -56,7 +56,7 @@ import {
 import { defaultAiSettings, type AiModelRole } from "../ai/settings";
 import { createDbTools } from "../ai/tools/registry";
 import { createWorkspaceSearchTool } from "../ai/tools/workspaceSearchTool";
-import { createFileOpsTool, createFileOpsPreview, fileOpsDeniedEnvelope } from "../ai/tools/fileOpsTool";
+import { createFileOpsTool, createFileOpsPreview, createFileOpsLedger, fileOpsDeniedEnvelope } from "../ai/tools/fileOpsTool";
 import { diffStats } from "../ai/fileDiff";
 import { createSqlTool } from "../ai/tools/sqlTool";
 import { createExportStructureTool } from "../ai/tools/schemaTools";
@@ -552,7 +552,15 @@ export interface AiChatPanelOptions {
    * matches the pre-AIX-01 turn path exactly.
    */
   grounding?: Omit<GroundingDeps, "turnId">;
+  /**
+   * AIX-02 — workspace-trust probe, consulted before ANY grounding read
+   * and before workspace_write registration. Host maps it to
+   * `vscode.workspace.isTrusted`. Absent → trusted (tests/hosts without
+   * a trust concept keep the pre-AIX-02 behavior).
+   */
+  isWorkspaceTrusted?: () => Promise<boolean> | boolean;
 }
+
 /**
  * Per-turn input assembly — system prompt + history + user msg.
  *
@@ -1365,9 +1373,13 @@ export class AiChatPanel {
     // AIX-01: bounded, attributed workspace grounding (selection + files)
     // merged AFTER the mention block so the existing per-turn context
     // order survives. Disabled / no-attached -> no block, no drift.
-    if (this.options.grounding && this.groundingPanelEnabled !== false) {
+    // AIX-02: workspace TRUST gate — grounding (reads AND the gated
+    // workspace_write tool's writes) never runs in an untrusted workspace.
+    // Omitting writeFile from the deps also unregisters workspace_write.
+    const trusted = await this.options.isWorkspaceTrusted?.() ?? true;
+    if (this.options.grounding && this.groundingPanelEnabled !== false && trusted) {
       try {
-        const turnId = `turn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const turnId = `turn-${Date.now().toString(36).slice(2, 8)}`;
         const bundle = await collectGrounding({
           ...this.options.grounding,
           turnId,
@@ -1519,19 +1531,20 @@ export class AiChatPanel {
       // gate fronts EVERY execute with an explicit allow card showing the
       // REAL computed diff (describe runs before the card), and scope is
       // the same host-curated allowlist. Registered ONLY when the host
-      // provides an atomic writeFile; grounding off/absent → tool absent.
-      if (this.options.grounding.writeFile) {
-        const fileOps = createFileOpsTool({
+      // provides an atomic writeFile AND the workspace is trusted;
+      // grounding off/absent/untrusted → tool absent.
+      const trusted = (await this.options.isWorkspaceTrusted?.()) ?? true;
+      if (this.options.grounding.writeFile && trusted) {
+        const fileOpsDeps = {
           readFile: this.options.grounding.readFile ?? (async () => ""),
           writeFile: this.options.grounding.writeFile,
           files: this.options.grounding.filesToRead ?? [],
-        });
+        };
+        const ledger = createFileOpsLedger();
+        const fileOps = createFileOpsTool(fileOpsDeps, ledger);
         registry.register(
           this.dbToolGate.wrap(fileOps, {
-            describe: createFileOpsPreview({
-              readFile: this.options.grounding.readFile ?? (async () => ""),
-              files: this.options.grounding.filesToRead ?? [],
-            }),
+            describe: createFileOpsPreview(fileOpsDeps, ledger),
             deniedResult: fileOpsDeniedEnvelope,
           }),
         );
@@ -1980,18 +1993,18 @@ export class AiChatPanel {
         }),
       );
       // AIX-02 mirror: same gated workspace_write on the OMP/MCP path.
-      if (this.options.grounding.writeFile) {
-        const fileOps = createFileOpsTool({
+      const trusted = (await this.options.isWorkspaceTrusted?.()) ?? true;
+      if (this.options.grounding.writeFile && trusted) {
+        const fileOpsDeps = {
           readFile: this.options.grounding.readFile ?? (async () => ""),
           writeFile: this.options.grounding.writeFile,
           files: this.options.grounding.filesToRead ?? [],
-        });
+        };
+        const ledger = createFileOpsLedger();
+        const fileOps = createFileOpsTool(fileOpsDeps, ledger);
         registry.register(
           this.dbToolGate.wrap(fileOps, {
-            describe: createFileOpsPreview({
-              readFile: this.options.grounding.readFile ?? (async () => ""),
-              files: this.options.grounding.filesToRead ?? [],
-            }),
+            describe: createFileOpsPreview(fileOpsDeps, ledger),
             deniedResult: fileOpsDeniedEnvelope,
           }),
         );

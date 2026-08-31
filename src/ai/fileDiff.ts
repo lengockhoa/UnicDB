@@ -120,12 +120,16 @@ function lastTouchedIndex(out: string[], oldNoNl: boolean, newNoNl: boolean): nu
   let idx = -1;
   for (let i = 0; i < out.length; i++) {
     const line = out[i];
+    const isDel = line.startsWith("-");
+    const isAdd = line.startsWith("+");
     if (oldNoNl && newNoNl) {
       // Both sides missing: sentinel after the very last -/+ line.
-      if (line.startsWith("-") || line.startsWith("+")) idx = i;
-    } else if (oldNoNl && line.startsWith("-")) {
+      if (isDel || isAdd) idx = i;
+    } else if (oldNoNl && (isDel || line.startsWith(" "))) {
+      // Old side unchanged-tail case: a ` ` context line still SHOWS the
+      // old final line, so the sentinel belongs after it too.
       idx = i;
-    } else if (newNoNl && line.startsWith("+")) {
+    } else if (newNoNl && (isAdd || line.startsWith(" "))) {
       idx = i;
     }
   }
@@ -159,23 +163,29 @@ export function buildUnifiedDiff(
       continue;
     }
     const header = `@@ -${h.aStart + 1},${h.aCount} +${h.bStart + 1},${h.bCount} @@`;
-    const room = maxLines - out.length;
-    if (room <= 0 || (out.length + h.lines.length + 1 > maxLines && room < 4)) {
-      // Not even a header + glimpse fits — skip the rest entirely.
+    if (out.length >= maxLines) {
+      // No capacity left at all — the rest goes into the marker.
       truncated += h.lines.length + 1;
       stopped = true;
       continue;
     }
-    out.push(header);
-    // Render as much of this hunk as fits, then stop (tail truncation).
-    for (const line of h.lines) {
-      if (out.length >= maxLines) {
-        truncated++;
-        continue;
+    if (out.length + h.lines.length + 1 > maxLines) {
+      // This hunk cannot fit whole: render the header + a fitting prefix,
+      // then stop (tail truncation). Room >= 1 guarantees at least the
+      // header shows; the prefix gives the user a real glimpse.
+      out.push(header);
+      for (const line of h.lines) {
+        if (out.length >= maxLines) {
+          truncated++;
+          continue;
+        }
+        out.push(line);
       }
-      out.push(line);
+      stopped = true;
+      continue;
     }
-    stopped = true;
+    out.push(header);
+    out.push(...h.lines);
   }
   // Sentinel placement: emit `\ No newline at end of file` IMMEDIATELY
   // after the last diff line that touched the side lacking the final

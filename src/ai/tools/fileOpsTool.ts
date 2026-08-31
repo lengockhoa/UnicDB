@@ -30,7 +30,13 @@ const SCHEMA: Record<string, unknown> = {
   additionalProperties: false,
 };
 
-type Reason = "outside-workspace" | "permission-denied" | "not-found" | "write-failed" | "bad-args";
+type Reason =
+  | "outside-workspace"
+  | "permission-denied"
+  | "not-found"
+  | "write-failed"
+  | "stale-preview"
+  | "bad-args";
 
 function envelope(reason: Reason, detail?: string): string {
   return JSON.stringify(detail === undefined ? { applied: false, reason } : { applied: false, reason, detail });
@@ -42,14 +48,38 @@ export function fileOpsDeniedEnvelope(): string {
 }
 
 /**
+ * Freshness ledger shared by the preview and execute halves of ONE
+ * workspace_write registration: the preview records the snapshot the user
+ * approved; execute refuses to write if the file changed since that
+ * snapshot (stale-approval protection).
+ */
+export function createFileOpsLedger(): {
+  record: (path: string, seen: string) => void;
+  check: (path: string, current: string) => boolean;
+} {
+  const seen = new Map<string, string>();
+  return {
+    record: (path, snapshot) => {
+      seen.set(path, snapshot);
+    },
+    check: (path, current) => {
+      const snapshot = seen.get(path);
+      return snapshot === undefined || snapshot === current;
+    },
+  };
+}
+
+/**
  * Build the permission-card preview BEFORE the user decides: reads the
  * current file and renders the same capped unified diff the write would
- * apply. Returns undefined for bad-args/outside-workspace/not-found so the
- * card falls back to the plain args summary (the tool's own execute will
- * still produce the precise envelope).
+ * apply. Also records the read snapshot for execute-time freshness.
+ * Returns undefined for bad-args/outside-workspace/not-found so the card
+ * falls back to the plain args summary (the tool's own execute will still
+ * produce the precise envelope).
  */
 export function createFileOpsPreview(
   deps: Pick<FileOpsDeps, "readFile" | "files">,
+  ledger = createFileOpsLedger(),
 ): (args: Record<string, unknown>) => Promise<string | undefined> {
   return async (args) => {
     const path = typeof args["path"] === "string" ? args["path"] : undefined;
@@ -62,6 +92,7 @@ export function createFileOpsPreview(
     } catch {
       return undefined;
     }
+    ledger.record(path, old);
     const stats = diffStats(old, newContent);
     const diff = buildUnifiedDiff(old, newContent);
     const head = `proposed ${path} (+${stats.added} -${stats.removed})`;
@@ -69,13 +100,15 @@ export function createFileOpsPreview(
   };
 }
 
-export function createFileOpsTool(deps: FileOpsDeps): AgentTool {
+export function createFileOpsTool(deps: FileOpsDeps, ledger = createFileOpsLedger()): AgentTool {
   return {
     name: "workspace_write",
     description:
       "Propose an edit to ONE workspace file (exact allowlist paths only). " +
       "Returns a unified diff preview; the user must explicitly approve before " +
-      "anything is written. Writes are atomic (temp+rename by the host).",
+      "anything is written. Writes are atomic (temp+rename by the host). " +
+      "Refuses with reason=stale-preview if the file changed after the " +
+      "previewed snapshot.",
     parameters: SCHEMA,
     execute: async (args: Record<string, unknown>): Promise<string> => {
       const path = typeof args["path"] === "string" ? args["path"] : undefined;
@@ -92,6 +125,11 @@ export function createFileOpsTool(deps: FileOpsDeps): AgentTool {
         old = await deps.readFile(path);
       } catch {
         return envelope("not-found", path);
+      }
+      // Freshness: refuse when the file no longer matches the previewed
+      // snapshot the approval was based on.
+      if (!ledger.check(path, old)) {
+        return envelope("stale-preview", path);
       }
       const diff = buildUnifiedDiff(old, newContent);
       if (diff === "") {

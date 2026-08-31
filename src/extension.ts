@@ -112,7 +112,10 @@ async function refreshGroundingFiles(): Promise<void> {
       GROUNDING_EXCLUDE_GLOBS,
       GROUNDING_MAX_FILES,
     );
-    groundingFiles = uris.map((u) => u.fsPath).sort();
+    // Keep the full URI STRING (scheme preserved — file:, vscode-remote:,
+    // untitled:) so scope keys round-trip through Uri.parse losslessly.
+    // fsPath reconstruction would silently coerce remote/virtual schemes.
+    groundingFiles = uris.map((u) => u.toString()).sort();
   } catch {
     groundingFiles = [];
   }
@@ -130,7 +133,8 @@ function readActiveSelection(): { path: string; text: string; startLine?: number
   };
 }
 async function readWorkspaceFile(p: string): Promise<string> {
-  const bytes = await vscode.workspace.fs.readFile(vscode.Uri.file(p));
+  // p is a full URI string from the allowlist (scheme preserved).
+  const bytes = await vscode.workspace.fs.readFile(vscode.Uri.parse(p));
   return new TextDecoder().decode(bytes);
 }
 /**
@@ -139,7 +143,7 @@ async function readWorkspaceFile(p: string): Promise<string> {
  * the original stays intact when anything throws before the rename.
  */
 async function writeWorkspaceFileAtomic(p: string, content: string): Promise<void> {
-  const target = vscode.Uri.file(p);
+  const target = vscode.Uri.parse(p);
   const tmp = target.with({
     path: `${target.path}.vsdb-tmp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
   });
@@ -1039,6 +1043,9 @@ async function commandOpenAiChat(
           filesToRead: groundingFiles,
         }
       : undefined,
+    // AIX-02: workspace trust gates grounding reads AND workspace_write
+    // registration — untrusted workspaces get neither.
+    isWorkspaceTrusted: () => vscode.workspace.isTrusted,
     acp: choice.engine === "omp" ? buildAcpDeps() : undefined,
     engineVersion: choice.version,
     engineHint: choice.hint,

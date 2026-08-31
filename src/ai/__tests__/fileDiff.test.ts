@@ -59,6 +59,15 @@ describe("buildUnifiedDiff", () => {
     expect(lines[sentinel - 1]).toBe("-b");
   });
 
+  it("sentinel placement: old side no-newline preserved as context", () => {
+    // old='a' (no trailing \n) → new adds a line but keeps 'a' as context.
+    const d = buildUnifiedDiff("a", "a\nb\n");
+    const lines = d.split("\n");
+    const sentinel = lines.indexOf("\\ No newline at end of file");
+    expect(sentinel).toBeGreaterThan(0);
+    expect(lines[sentinel - 1]).toBe(" a"); // right after the context line
+  });
+
   it("overflowing single hunk still renders a prefix before truncation", () => {
     const old = Array.from({ length: 50 }, (_, i) => `l${i}`).join("\n") + "\n";
     const neu = Array.from({ length: 50 }, (_, i) => `m${i}`).join("\n") + "\n";
@@ -66,6 +75,17 @@ describe("buildUnifiedDiff", () => {
     expect(d).toContain("@@");
     expect(d).toContain("-l0");
     expect(d.split("\n").length).toBeLessThanOrEqual(11); // cap + marker
+  });
+
+  it("multi-hunk diff renders ALL hunks when under the cap", () => {
+    const lines: string[] = [];
+    for (let i = 0; i < 20; i++) lines.push(`l${i}`);
+    const neu = [...lines]; // clone BEFORE mutating
+    lines[2] = "x2";
+    lines[17] = "x17";
+    const d = buildUnifiedDiff(lines.join("\n") + "\n", neu.join("\n") + "\n", { maxLines: 200 });
+    expect(d.split("\n").filter((l) => l.startsWith("@@")).length).toBe(2);
+    expect(d).not.toContain("more lines");
   });
 });
 

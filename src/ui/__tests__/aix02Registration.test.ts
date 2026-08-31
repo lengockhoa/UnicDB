@@ -1,7 +1,7 @@
 // src/ui/__tests__/aix02Registration.test.ts
 // TASK-AIX02-003 — workspace_write registration policy + gate + card detail.
 import { describe, it, expect } from "vitest";
-import { createFileOpsTool, createFileOpsPreview, fileOpsDeniedEnvelope } from "../../ai/tools/fileOpsTool";
+import { createFileOpsTool, createFileOpsPreview, createFileOpsLedger, fileOpsDeniedEnvelope } from "../../ai/tools/fileOpsTool";
 import { diffStats } from "../../ai/fileDiff";
 
 // The registration logic under test mirrors runBuiltinTurn + the omp mirror:
@@ -97,6 +97,49 @@ describe("workspace_write gating + card detail", () => {
     });
     expect(await preview({ path: "other.txt", newContent: "x" })).toBeUndefined();
     expect(await preview({ path: "a.txt", newContent: "x" })).toBeUndefined();
+  });
+
+  // AIX-02 review round 2: stale-preview protection — a file changed after
+  // the preview snapshot must NOT be written.
+  it("execute refuses when file changed since the previewed snapshot", async () => {
+    let current = "old\n";
+    let writes = 0;
+    const deps = {
+      files: ["a.txt"],
+      readFile: async () => current,
+      writeFile: async () => {
+        writes++;
+      },
+    };
+    const ledger = createFileOpsLedger();
+    const preview = createFileOpsPreview(deps, ledger);
+    const tool = createFileOpsTool(deps, ledger);
+    await preview({ path: "a.txt", newContent: "new\n" }); // user sees old→new
+    current = "changed elsewhere\n"; // file mutated after the card opened
+    const res = JSON.parse(await tool.execute({ path: "a.txt", newContent: "new\n" }));
+    expect(res.applied).toBe(false);
+    expect(res.reason).toBe("stale-preview");
+    expect(writes).toBe(0);
+    // Fresh snapshot → after a new preview the write succeeds.
+    await preview({ path: "a.txt", newContent: "new\n" });
+    const ok = JSON.parse(await tool.execute({ path: "a.txt", newContent: "new\n" }));
+    expect(ok.applied).toBe(true);
+    expect(writes).toBe(1);
+  });
+
+  it("execute without any preview still works (no snapshot recorded)", async () => {
+    let writes = 0;
+    const deps = {
+      files: ["a.txt"],
+      readFile: async () => "old\n",
+      writeFile: async () => {
+        writes++;
+      },
+    };
+    const tool = createFileOpsTool(deps, createFileOpsLedger());
+    const res = JSON.parse(await tool.execute({ path: "a.txt", newContent: "new\n" }));
+    expect(res.applied).toBe(true);
+    expect(writes).toBe(1);
   });
 
   it("denied execute returns the permission-denied envelope", async () => {
