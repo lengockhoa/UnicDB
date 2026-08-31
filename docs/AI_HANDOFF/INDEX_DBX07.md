@@ -7,7 +7,7 @@ Reviewer: unic-smart (cycle reviewer) — MUST differ from executor (unic-code)
 
 | Task | Summary | Status | Depends on | Reviewer |
 |---|---|---|---|---|
-| TASK-DBX07-001 | r3 review fixes (KV_RE `authorization`, TurnState-backed emit, agent duplicate-error removal) | done (working tree, awaiting commit) | — | unic-smart (cycle reviewer) |
+| TASK-DBX07-001 | r3 review fixes (KV_RE `authorization`, TurnState-backed emit, agent duplicate-error removal) | changes_requested | — | unic-smart |
 
 Graph: single task.
 Release target: deferred to the AIX-06 cycle-review close (separate Wave 5 task).

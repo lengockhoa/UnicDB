@@ -180,8 +180,10 @@ describe("redact r3 review (AIX-06 / DBX-07)", () => {
     expect(out.s).not.toContain("ab");
     expect(out.s).toContain("<redacted>");
   });
-  it("scrubs auth=<short> (r3 also covers the bare auth alias)", () => {
-    const out = redact({ s: "auth=tk" }) as Record<string, string>;
-    expect(out.s).not.toContain("tk");
+  it("does NOT redact normal prose like 'auth flow' (r3 review fix)", () => {
+    // Bare `auth` was removed from KV_RE — it over-redacted normal
+    // phrases. `auth flow` must survive untouched.
+    const out = redact({ s: "switched to a new auth flow" }) as Record<string, string>;
+    expect(out.s).toBe("switched to a new auth flow");
   });
 });

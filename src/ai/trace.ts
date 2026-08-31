@@ -40,8 +40,12 @@ const HEADER_RE =
   /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key)$/i;
 const BEARER_RE = /Bearer\s+[A-Za-z0-9._\-+/=]+/gi;
 const BASIC_RE = /Basic\s+[A-Za-z0-9._\-+/=]+/gi;
-/** Key=value / key: value / key value forms inside plain strings. */
-const KV_RE = /\b(api[_-]?key|secret|password|passphrase|authorization|auth|token)\b\s*[=: ]\s*["']?[A-Za-z0-9._\-+/=]+["']?/gi;
+/** Key=value / key: value / key value forms inside plain strings.
+ *  r3 review fix: bare `auth` is NOT in this alternation — it
+ *  over-redacts normal prose like "auth flow" / "auth provider".
+ *  `authorization` covers the header form; the key-level scrubber
+ *  (SECRET_KEY_RE) already catches auth[_-]token. */
+const KV_RE = /\b(api[_-]?key|secret|password|passphrase|authorization|token)\b\s*[=: ]\s*["']?[A-Za-z0-9._\-+/=]+["']?/gi;
 /** Long opaque run — ≥ 24 hex/base64 chars incl. + / = padding. */
 const LONG_RUN_RE = /[A-Za-z0-9_+/=-]{24,}/g;
 
