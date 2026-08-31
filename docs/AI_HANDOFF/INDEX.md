@@ -31,8 +31,8 @@ No same-wave target-file overlap. Portfolio rows require a new source-grounded p
 
 | Task / Portfolio | Title | Status | Dependencies | Reviewer |
 |---|---|---|---|---|
-| TASK-AIX08-001 | Curated MCP extension registry and least-privilege contract | pending_review | none | unic-smart |
-| TASK-AIX08-002 | Contain curated extensions in host MCP calls | pending_review | TASK-AIX08-001 | unic-smart |
+| TASK-AIX08-001 | Curated MCP extension registry and least-privilege contract | approved | fix round 1 verified | unic-smart |
+| TASK-AIX08-002 | Contain curated extensions in host MCP calls | approved | fix round 1 verified | unic-smart |
 
 Graph: TASK-AIX08-001 → TASK-AIX08-002.
 
