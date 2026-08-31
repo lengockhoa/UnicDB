@@ -20,6 +20,14 @@ For each significant action, append:
 - Verification run
 - Outcome
 
+## 2026-09-01 — Wave 6 shipped: DBX-08 (v1.29.0) + AIX-08 (v1.30.0) (main @ d9d30e3)
+- Two complete handoff-fullstack cycles run back-to-back per the standing autonomy directive.
+- **DBX-08 Dialect Parity Contract**: waves 1-3 via feature-implementer agents in worktrees (capability matrix + fail-closed helper; catalog/object-DDL gating with `isPostgres`→`declaresCatalog`; table-DDL/admin gating with pinned admin-tree node). unic-smart review ×3 parallel: 001/003 APPROVED, 002 CHANGES-REQUESTED → fixed rejected-async-predicate fail-closed hole in sqlCatalog. Release v1.29.0 (tag pushed, VSIX).
+- **AIX-08 Extensible MCP Tool Contracts**: plan went 2 review rounds (grammar/literals unpinned → pinned; capped round-2 application); wave 1 registry + wave 2 host-MCP integration. Review round 1: both CHANGES-REQUESTED → fixed 4 findings (trim-strict description, fail-closed malformed policy, collision + late-settlement regression tests). Release v1.30.0 (tag pushed, VSIX).
+- Files: src/adapters/types.ts+postgres/mysql/mssql+capabilities.test, src/ui/{schemaCache,schemaTree,sqlCatalog,ddlView,tableCommands,adminTree,adminSessionsPanel}.ts + 6 test files, src/extension.ts(+test), src/ai/omp/{mcpExtensionRegistry,hostMcp}.ts + 2 test files, PLAN_DBX08/PLAN_AIX08 + tasks/INDEX docs, CHANGELOG, STATUS.
+- Verification: full suite 2825 passed | 2 skipped, typecheck 0, compile clean at v1.30.0.
+- Lessons: copy-back must never blanket `git checkout -- docs/AI_HANDOFF/` (wipes executor reports); `makeRegistry`-style `??` helpers silently substitute valid fixtures for undefined/null in malformed-input tests.
+
 ## 2026-08-31 — Cycle DBX-07 AIX-06 Trace r3 fixes (main @ e1cb41a)
 - omp (OpenCode Mobile) drafted the r3 helpers (`TurnState`, `buildEv`, new `emit(trace, state, …)` signature) but stalled mid-migration: the 11 `emit()` callsites still passed the bare `turnId` string. This session completed the migration (dispatchNotification param, send()/resume() state allocation with `trace !== undefined || events.onTrace !== undefined` gate, both `acp.onNotification` forwarders), extended trace.test.ts (Authorization r3 assertions, `Authorization=ab` + `auth=tk` scrub cases) and ompChatEngine.test.ts (`onTrace` monotonic-seq WITHOUT a recorder — caught a real gap: state must be allocated for onTrace-only consumers; recorder+onTrace co-existence with no double-seq).
 - Files: src/ai/trace.ts (KV_RE += authorization|auth), src/ai/agent.ts (drop double-record on "AI is not configured"), src/ai/omp/ompChatEngine.ts (TurnState + buildEv + emit migration), 2 test files, PLAN_DBX07.md + INDEX_DBX07.md + TASK-DBX07-001.md (new).

@@ -1,6 +1,6 @@
 Command: handoff-fullstack
 Goal: Ship DBX-08 Dialect Parity Contract, then AIX-08 Extensible MCP Tool Contracts
-Base: main @ 3667e64 (AIX-08 reviews + fix round 1 done)
-Phase: R4
-Cursor: AIX-08 review round 1 — both CHANGES-REQUESTED, all 4 findings fixed and verified (41/41 net); tasks marked approved
-Next: R5 single push → release (bump 1.30.0, CHANGELOG, tag) → final report to user
+Base: main @ d9d30e3 — v1.30.0 released (AIX-08 shipped)
+Phase: done
+Cursor: ALL PLANNED WORK COMPLETE — Wave 6 (DBX-08 v1.29.0 + AIX-08 v1.30.0) shipped end-to-end; STATUS/WORKLOG updated; only queued-NOT-READY portfolio rows remain (need a new plan + user scope decision)
+Next: idle — awaiting new tasks/scope from the user
