@@ -55,3 +55,5 @@ Notes:
 ## Reviewer
 
 (verdict appended by reviewer)
+
+Reviewer: done (reviewer APPROVED — see full verdict block in TASK-AIX04-001.md).

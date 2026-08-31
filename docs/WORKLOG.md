@@ -20,6 +20,15 @@ For each significant action, append:
 - Verification run
 - Outcome
 
+## 2026-08-31 — Cycle AIX-04 Database Change Workflow → v1.24.0 (unic-code executor + unic-smart reviewer)
+
+- plan_change agent tool (READ-ONLY): danger-tier classification + live-schema drift, never executes.
+- Shared consent gate src/ui/confirmDangerous.ts — extension.ts re-exports; panel approve path funnels through the SAME modal.
+- change_plan consent card (textContent-only) with Approve/Reject; Approve disabled when drifted; drift re-checked at approve via adapter.listColumns.
+- Per-statement sequential apply (runRenameStatements) with progress, partial-failure + cancel reporting (planCancelled Stop signal).
+- Reviewer CHANGES-REQUESTED round 1 (fingerprint [], apply granularity, webview safety assert) + round 2 (raw-candidate classification) → 2 fix rounds → APPROVED.
+- Full suite 2645 passed | 2 skipped; typecheck 0; compile clean; released v1.24.0.
+
 ## 2026-08-31 — Cycle DBX-06 Safe Rename Refactor → v1.23.0 (unic-code executor + unic-smart reviewer)
 - Delivered: renameAnalysis (validateNewName + analyzeUsage, pure), renameCatalog (4 parameterized pg_catalog builders + buildRenamePlan), renameRunner (progress + cancel-before-next + partial-failure), renameForm host + textContent-only webview, adapter.renameUsage capability (Postgres), vsdb.renameTable/renameColumn commands (column-node fast path), esbuild renameForm entry.
 - Review: unic-smart 3 rounds. Key catches: esbuild non-watch dropped compare/er bundles; objectKey parse lossy for dotted quoted names (fixed: column nodes carry parent objectName). Final VERDICT: APPROVED.
