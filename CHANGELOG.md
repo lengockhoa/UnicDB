@@ -11,7 +11,7 @@ Cycle AIX-06: Agent Trace & Replay (ordered, redacted, bounded in-memory turn tr
 - **Panel wiring**: one `TraceRecorder` per AI chat panel, threaded into both engines; `dumpTrace(turnId)` + `clearTrace()` (wired to panel Clear) for AIX-07 audit export and debug support.
 
 ### Review
-- Independent unic-smart cycle review — pending.
+- Independent unic-smart cycle review — approved after the r3 fix pass (cycle DBX-07): onTrace now emits a real monotonic seq even without an attached recorder (`TurnState` + `buildEv` in `ompChatEngine.ts`, single `emit` emission point, 11 callsites migrated); the redaction scrubber covers the bare `Authorization=<value>` header form while keeping normal prose like "auth flow" intact (bare `auth` is delimiter-gated `:`/`=` only, and literal `auth` object keys scrub at key level); the builtin agent path no longer double-records the "AI is not configured" error. 73 focused tests + full suite green.
 
 ## [1.25.0] — 2026-08-31
 
