@@ -1,7 +1,7 @@
 // src/ui/__tests__/aix02Registration.test.ts
 // TASK-AIX02-003 — workspace_write registration policy + gate + card detail.
 import { describe, it, expect } from "vitest";
-import { createFileOpsTool } from "../../ai/tools/fileOpsTool";
+import { createFileOpsTool, createFileOpsPreview, fileOpsDeniedEnvelope } from "../../ai/tools/fileOpsTool";
 import { diffStats } from "../../ai/fileDiff";
 
 // The registration logic under test mirrors runBuiltinTurn + the omp mirror:
@@ -71,5 +71,51 @@ describe("workspace_write gating + card detail", () => {
 
   it("diffStats on proposed content counts additions", () => {
     expect(diffStats("", "a\nb\n")).toEqual({ added: 2, removed: 0 });
+  });
+
+  // AIX-02 review: the card must show the REAL diff before approval, and a
+  // denial must return the file-ops JSON envelope (not the generic message).
+  it("preview renders the computed diff BEFORE the write", async () => {
+    const preview = createFileOpsPreview({
+      files: ["a.txt"],
+      readFile: async () => "old\n",
+    });
+    const card = await preview({ path: "a.txt", newContent: "new\n" });
+    expect(card).toBeDefined();
+    expect(card).toContain("a.txt (+1 -1)");
+    expect(card).toContain("-old");
+    expect(card).toContain("+new");
+    expect(card).toContain("@@");
+  });
+
+  it("preview falls back to undefined outside scope / missing file", async () => {
+    const preview = createFileOpsPreview({
+      files: ["a.txt"],
+      readFile: async () => {
+        throw new Error("gone");
+      },
+    });
+    expect(await preview({ path: "other.txt", newContent: "x" })).toBeUndefined();
+    expect(await preview({ path: "a.txt", newContent: "x" })).toBeUndefined();
+  });
+
+  it("denied execute returns the permission-denied envelope", async () => {
+    const tool = createFileOpsTool({
+      files: ["a.txt"],
+      readFile: async () => "old\n",
+      writeFile: async () => {
+        throw new Error("MUST NOT run");
+      },
+    });
+    const wrapped = {
+      ...tool,
+      execute: async (args: Record<string, unknown>): Promise<string> => {
+        const granted = false; // gate denies
+        if (!granted) return fileOpsDeniedEnvelope();
+        return tool.execute(args);
+      },
+    };
+    const res = JSON.parse(await wrapped.execute({ path: "a.txt", newContent: "x" }));
+    expect(res).toEqual({ applied: false, reason: "permission-denied" });
   });
 });

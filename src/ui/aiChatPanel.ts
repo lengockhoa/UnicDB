@@ -56,7 +56,7 @@ import {
 import { defaultAiSettings, type AiModelRole } from "../ai/settings";
 import { createDbTools } from "../ai/tools/registry";
 import { createWorkspaceSearchTool } from "../ai/tools/workspaceSearchTool";
-import { createFileOpsTool } from "../ai/tools/fileOpsTool";
+import { createFileOpsTool, createFileOpsPreview, fileOpsDeniedEnvelope } from "../ai/tools/fileOpsTool";
 import { diffStats } from "../ai/fileDiff";
 import { createSqlTool } from "../ai/tools/sqlTool";
 import { createExportStructureTool } from "../ai/tools/schemaTools";
@@ -632,12 +632,29 @@ export class DbToolPermissionGate {
     this.timeoutMs = options.timeoutMs ?? DEFAULT_PERMISSION_TIMEOUT_MS;
   }
 
-  wrap(tool: AgentTool): AgentTool {
+  /**
+   * Gate a tool behind the explicit approval card.
+   * @param opts.describe optional async detail builder — runs BEFORE the
+   *   card is posted so the user sees a real preview (AIX-02: the computed
+   *   unified diff), not just an args summary.
+   * @param opts.deniedResult optional deny envelope — lets a tool keep its
+   *   JSON contract on denial (default: generic DB_TOOL_DENIED_MESSAGE).
+   */
+  wrap(
+    tool: AgentTool,
+    opts?: {
+      describe?: (args: Record<string, unknown>) => Promise<string | undefined> | string | undefined;
+      deniedResult?: () => string;
+    },
+  ): AgentTool {
     return {
       ...tool,
       execute: async (args: Record<string, unknown>): Promise<string> => {
-        const granted = await this.request(tool.name, args);
-        if (!granted) return DB_TOOL_DENIED_MESSAGE;
+        const detail = opts?.describe ? await opts.describe(args) : undefined;
+        const granted = await this.request(tool.name, args, detail);
+        if (!granted) {
+          return opts?.deniedResult ? opts.deniedResult() : DB_TOOL_DENIED_MESSAGE;
+        }
         return tool.execute(args);
       },
     };
@@ -664,6 +681,7 @@ export class DbToolPermissionGate {
   private request(
     toolName: string,
     args: Record<string, unknown>,
+    detail?: string,
   ): Promise<boolean> {
     if (this.sessionAllowed.has(toolName)) return Promise.resolve(true);
     const requestId = `dbtool-${Date.now().toString(36)}-${(this.seq++).toString(36)}`;
@@ -691,7 +709,7 @@ export class DbToolPermissionGate {
         tool: {
           id: requestId,
           name: toolName,
-          detail: summarizeDbToolArgs(args),
+          detail: detail ?? summarizeDbToolArgs(args),
         },
         options: DB_TOOL_PERMISSION_OPTIONS.map((o) => ({
           optionId: o.optionId,
@@ -1498,18 +1516,24 @@ export class AiChatPanel {
         }),
       );
       // AIX-02: workspace_write — AI proposes a file edit; the permission
-      // gate fronts EVERY execute with an explicit allow card, and scope is
+      // gate fronts EVERY execute with an explicit allow card showing the
+      // REAL computed diff (describe runs before the card), and scope is
       // the same host-curated allowlist. Registered ONLY when the host
       // provides an atomic writeFile; grounding off/absent → tool absent.
       if (this.options.grounding.writeFile) {
+        const fileOps = createFileOpsTool({
+          readFile: this.options.grounding.readFile ?? (async () => ""),
+          writeFile: this.options.grounding.writeFile,
+          files: this.options.grounding.filesToRead ?? [],
+        });
         registry.register(
-          this.dbToolGate.wrap(
-            createFileOpsTool({
+          this.dbToolGate.wrap(fileOps, {
+            describe: createFileOpsPreview({
               readFile: this.options.grounding.readFile ?? (async () => ""),
-              writeFile: this.options.grounding.writeFile,
               files: this.options.grounding.filesToRead ?? [],
             }),
-          ),
+            deniedResult: fileOpsDeniedEnvelope,
+          }),
         );
       }
     }
@@ -1957,14 +1981,19 @@ export class AiChatPanel {
       );
       // AIX-02 mirror: same gated workspace_write on the OMP/MCP path.
       if (this.options.grounding.writeFile) {
+        const fileOps = createFileOpsTool({
+          readFile: this.options.grounding.readFile ?? (async () => ""),
+          writeFile: this.options.grounding.writeFile,
+          files: this.options.grounding.filesToRead ?? [],
+        });
         registry.register(
-          this.dbToolGate.wrap(
-            createFileOpsTool({
+          this.dbToolGate.wrap(fileOps, {
+            describe: createFileOpsPreview({
               readFile: this.options.grounding.readFile ?? (async () => ""),
-              writeFile: this.options.grounding.writeFile,
               files: this.options.grounding.filesToRead ?? [],
             }),
-          ),
+            deniedResult: fileOpsDeniedEnvelope,
+          }),
         );
       }
     }

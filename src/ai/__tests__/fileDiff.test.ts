@@ -37,6 +37,36 @@ describe("buildUnifiedDiff", () => {
     expect(d).toContain("more lines");
     expect(d.split("\n").length).toBeLessThan(30);
   });
+  it("missing trailing newline emits sentinel", () => {
+    const d = buildUnifiedDiff("a", "a\nb");
+    expect(d).toContain("\\ No newline at end of file");
+  });
+
+  // AIX-02 review: the sentinel must sit next to the line it describes.
+  it("sentinel placement: new side lacks newline → after last + line", () => {
+    const d = buildUnifiedDiff("a", "a\nb");
+    const lines = d.split("\n");
+    const sentinel = lines.indexOf("\\ No newline at end of file");
+    expect(sentinel).toBeGreaterThan(0);
+    expect(lines[sentinel - 1]).toBe("+b"); // directly after the added line
+  });
+
+  it("sentinel placement: old side lacks newline → after last - line", () => {
+    const d = buildUnifiedDiff("a\nb", "a\n");
+    const lines = d.split("\n");
+    const sentinel = lines.indexOf("\\ No newline at end of file");
+    expect(sentinel).toBeGreaterThan(0);
+    expect(lines[sentinel - 1]).toBe("-b");
+  });
+
+  it("overflowing single hunk still renders a prefix before truncation", () => {
+    const old = Array.from({ length: 50 }, (_, i) => `l${i}`).join("\n") + "\n";
+    const neu = Array.from({ length: 50 }, (_, i) => `m${i}`).join("\n") + "\n";
+    const d = buildUnifiedDiff(old, neu, { maxLines: 10 });
+    expect(d).toContain("@@");
+    expect(d).toContain("-l0");
+    expect(d.split("\n").length).toBeLessThanOrEqual(11); // cap + marker
+  });
 });
 
 describe("diffStats", () => {

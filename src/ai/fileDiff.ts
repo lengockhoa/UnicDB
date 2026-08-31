@@ -109,6 +109,29 @@ function missingFinalNewline(text: string): boolean {
   return text.length > 0 && !text.endsWith("\n");
 }
 
+
+/**
+ * Index in `out` AFTER which the no-newline sentinel belongs: the last
+ * `-` line when the OLD side lacks a final newline (and the new side's
+ * matching state), else the last `+` line when the NEW side does. -1 when
+ * neither applies or no matching line exists.
+ */
+function lastTouchedIndex(out: string[], oldNoNl: boolean, newNoNl: boolean): number {
+  let idx = -1;
+  for (let i = 0; i < out.length; i++) {
+    const line = out[i];
+    if (oldNoNl && newNoNl) {
+      // Both sides missing: sentinel after the very last -/+ line.
+      if (line.startsWith("-") || line.startsWith("+")) idx = i;
+    } else if (oldNoNl && line.startsWith("-")) {
+      idx = i;
+    } else if (newNoNl && line.startsWith("+")) {
+      idx = i;
+    }
+  }
+  return idx;
+}
+
 /**
  * Unified diff (git-style) between oldText and newText.
  * Returns "" when identical. Truncates to maxLines rendered lines with a
@@ -129,18 +152,41 @@ export function buildUnifiedDiff(
 
   const out: string[] = [];
   let truncated = 0;
+  let stopped = false;
   for (const h of hunks) {
-    if (out.length + h.lines.length + 1 > maxLines) {
+    if (stopped) {
       truncated += h.lines.length + 1;
       continue;
     }
-    out.push(`@@ -${h.aStart + 1},${h.aCount} +${h.bStart + 1},${h.bCount} @@`);
-    out.push(...h.lines);
+    const header = `@@ -${h.aStart + 1},${h.aCount} +${h.bStart + 1},${h.bCount} @@`;
+    const room = maxLines - out.length;
+    if (room <= 0 || (out.length + h.lines.length + 1 > maxLines && room < 4)) {
+      // Not even a header + glimpse fits — skip the rest entirely.
+      truncated += h.lines.length + 1;
+      stopped = true;
+      continue;
+    }
+    out.push(header);
+    // Render as much of this hunk as fits, then stop (tail truncation).
+    for (const line of h.lines) {
+      if (out.length >= maxLines) {
+        truncated++;
+        continue;
+      }
+      out.push(line);
+    }
+    stopped = true;
   }
-  if (missingFinalNewline(oldText) || missingFinalNewline(newText)) {
-    if (out.length < maxLines) {
-      out.push("\\ No newline at end of file");
-    } else {
+  // Sentinel placement: emit `\ No newline at end of file` IMMEDIATELY
+  // after the last diff line that touched the side lacking the final
+  // newline — matching git so readers attribute it to the right line.
+  const oldNoNl = missingFinalNewline(oldText);
+  const newNoNl = missingFinalNewline(newText);
+  if (oldNoNl || newNoNl) {
+    const insertAt = lastTouchedIndex(out, oldNoNl, newNoNl);
+    if (insertAt !== -1 && insertAt < maxLines) {
+      out.splice(insertAt + 1, 0, "\\ No newline at end of file");
+    } else if (insertAt >= maxLines) {
       truncated++;
     }
   }

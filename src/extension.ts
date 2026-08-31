@@ -94,9 +94,29 @@ function isGroundingEnabled(): boolean {
     .getConfiguration("vsdb")
     .get<boolean>("ai.grounding", false);
 }
-// Host-curated file list (empty for now — the model can request
-// retrieval via the `workspace_search` AgentTool at runtime).
+// AIX-02 — host-curated workspace allowlist for grounding + file ops.
+// Refreshed when grounding is enabled and on workspace/config changes.
+// Text-like files only, capped at 200 entries; exact relative-ish fsPaths
+// (the same strings grounding readFile/workspace_write use as keys).
+const GROUNDING_MAX_FILES = 200;
+const GROUNDING_EXCLUDE_GLOBS = "{**/node_modules/**,**/.git/**,**/dist/**,**/out/**,**/build/**,**/.vsdb/**,**/*.min.*,**/*.lock,**/*.png,**/*.jpg,**/*.jpeg,**/*.gif,**/*.ico,**/*.webp,**/*.pdf,**/*.zip,**/*.gz,**/*.exe,**/*.dll,**/*.so,**/*.dylib,**/*.woff,**/*.woff2,**/*.ttf,**/*.mp3,**/*.mp4,**/*.sqlite,**/*.db}";
 let groundingFiles: readonly string[] = [];
+async function refreshGroundingFiles(): Promise<void> {
+  try {
+    if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
+      groundingFiles = [];
+      return;
+    }
+    const uris = await vscode.workspace.findFiles(
+      "**/*",
+      GROUNDING_EXCLUDE_GLOBS,
+      GROUNDING_MAX_FILES,
+    );
+    groundingFiles = uris.map((u) => u.fsPath).sort();
+  } catch {
+    groundingFiles = [];
+  }
+}
 function readActiveSelection(): { path: string; text: string; startLine?: number; endLine?: number } | null {
   const ed = vscode.window.activeTextEditor;
   if (!ed) return null;
@@ -142,6 +162,23 @@ export async function activate(
 ): Promise<void> {
   disposables = [];
   extensionUriForForm = context.extensionUri;
+
+  // AIX-02: keep the grounding allowlist fresh on workspace structure
+  // changes (best-effort — panel open re-checks anyway).
+  if (isGroundingEnabled()) {
+    void refreshGroundingFiles();
+  }
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      if (isGroundingEnabled()) void refreshGroundingFiles();
+    }),
+    vscode.workspace.onDidCreateFiles(() => {
+      if (isGroundingEnabled()) void refreshGroundingFiles();
+    }),
+    vscode.workspace.onDidDeleteFiles(() => {
+      if (isGroundingEnabled()) void refreshGroundingFiles();
+    }),
+  );
 
   // ---- ConnectionManager ----
   const mgr = new ConnectionManager(context, createAdapter);
@@ -980,6 +1017,12 @@ async function commandOpenAiChat(
     );
     await vscode.commands.executeCommand("vsdb.openAiSettings");
     return;
+  }
+  // AIX-02: refresh the workspace allowlist right before opening the panel
+  // so workspace_write's exact-string scope is fresh and non-empty for real
+  // workspaces. Registration stays gated on grounding + writeFile.
+  if (isGroundingEnabled()) {
+    await refreshGroundingFiles();
   }
   aiChatPanel = new AiChatPanel({
     extensionUri: extensionUriForForm,

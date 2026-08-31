@@ -8,7 +8,7 @@
 // upstream by DbToolPermissionGate; `permissionDenied` mirrors that deny for
 // defense-in-depth and tests.
 import type { AgentTool } from "../agent";
-import { buildUnifiedDiff } from "../fileDiff";
+import { buildUnifiedDiff, diffStats } from "../fileDiff";
 
 export interface FileOpsDeps {
   readFile: (path: string) => Promise<string>;
@@ -34,6 +34,39 @@ type Reason = "outside-workspace" | "permission-denied" | "not-found" | "write-f
 
 function envelope(reason: Reason, detail?: string): string {
   return JSON.stringify(detail === undefined ? { applied: false, reason } : { applied: false, reason, detail });
+}
+
+/** JSON envelope the permission gate returns when the user denies. */
+export function fileOpsDeniedEnvelope(): string {
+  return envelope("permission-denied");
+}
+
+/**
+ * Build the permission-card preview BEFORE the user decides: reads the
+ * current file and renders the same capped unified diff the write would
+ * apply. Returns undefined for bad-args/outside-workspace/not-found so the
+ * card falls back to the plain args summary (the tool's own execute will
+ * still produce the precise envelope).
+ */
+export function createFileOpsPreview(
+  deps: Pick<FileOpsDeps, "readFile" | "files">,
+): (args: Record<string, unknown>) => Promise<string | undefined> {
+  return async (args) => {
+    const path = typeof args["path"] === "string" ? args["path"] : undefined;
+    const newContent = typeof args["newContent"] === "string" ? args["newContent"] : undefined;
+    if (path === undefined || newContent === undefined) return undefined;
+    if (!deps.files.includes(path)) return undefined;
+    let old: string;
+    try {
+      old = await deps.readFile(path);
+    } catch {
+      return undefined;
+    }
+    const stats = diffStats(old, newContent);
+    const diff = buildUnifiedDiff(old, newContent);
+    const head = `proposed ${path} (+${stats.added} -${stats.removed})`;
+    return diff === "" ? `${head} — no changes` : `${head}\n${diff}`;
+  };
 }
 
 export function createFileOpsTool(deps: FileOpsDeps): AgentTool {

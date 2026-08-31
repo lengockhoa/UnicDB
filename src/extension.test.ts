@@ -137,6 +137,11 @@ vi.mock("vscode", () => {
         state.onDidChangeConfigSubscribers.push(cb);
         return { dispose: () => {} };
       }),
+      // AIX-02 allowlist refresh hooks — no-op disposables in the smoke mock.
+      onDidChangeWorkspaceFolders: vi.fn(() => ({ dispose: () => {} })),
+      onDidCreateFiles: vi.fn(() => ({ dispose: () => {} })),
+      onDidDeleteFiles: vi.fn(() => ({ dispose: () => {} })),
+      findFiles: vi.fn(async () => []),
       get workspaceFolders() {
         return state.workspaceFolders;
       },
