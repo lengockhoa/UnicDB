@@ -397,6 +397,34 @@ describe("AiChatPanel — plan_change consent flow", () => {
     expect(report.text).toContain("boom at 2");
   });
 
+  it("cancel mid-apply: cancelledAfter report, remaining counted", async () => {
+    const runCalls = { current: 0 };
+    const factory: AdapterFactory = vi.fn(async () => makeAdapter({ runCalls }));
+    const panel = new AiChatPanel({ extensionUri: extUri, deps: makeDeps(), adapterFactory: factory });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some((m) => (m as { type?: string }).type === "init"));
+    runTurnWithPlan(p, planEnvelope());
+    handler({ type: "send", text: "plan the migration" });
+    await until(() => postedMessages(p).some(isPlan));
+
+    consentState.confirmMock.mockResolvedValue(true);
+    handler({ type: "plan_approve" });
+    // Stop flips the in-turn abort token → the runner stops BEFORE the
+    // next statement and reports applied/cancelledAfter/remaining.
+    handler({ type: "stop" });
+    await until(() =>
+      postedMessages(p).some(
+        (m) => isAssistant(m) && m.text.includes("Plan apply cancelled"),
+      ),
+    );
+
+    const report = postedMessages(p).filter(isAssistant).pop()!;
+    expect(report.text).toContain("cancelled");
+    expect(report.text).toContain("remaining");
+  });
+
   it("plan_reject: no apply, no consent call, zero runQuery", async () => {
     const runCalls = { current: 0 };
     const factory: AdapterFactory = vi.fn(async () => makeAdapter({ runCalls }));

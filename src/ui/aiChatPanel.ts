@@ -1128,6 +1128,10 @@ export class AiChatPanel {
    * result, cleared on approve/reject/teardown). Statements are stored
    * verbatim — the approve path funnels them through
    * confirmDangerousStatements before anything runs. */
+  /** AIX-04: stop-during-plan-apply signal. The in-turn token is nulled
+   * at turn settle, so the plan runner polls THIS flag instead; handleStop
+   * flips it, handleSend/handlePlanApprove reset it. */
+  private planCancelled = false;
   private pendingPlan: {
     tool: string;
     intent: string;
@@ -1401,6 +1405,7 @@ export class AiChatPanel {
     // start the new one. Default-deny is mandatory.
     this.cancelAllPending();
     this.token = { aborted: false };
+    this.planCancelled = false;
     this.turnDonePosted = false;
     this.turnSettled = false;
     // Per-turn AbortController for the builtin engine — `signal` flows
@@ -1667,7 +1672,16 @@ export class AiChatPanel {
     }
     // AIX-04: plan_change (reviewed change plans) — READ-ONLY by
     // construction, but gate-wrapped for parity with the analysis tools.
-    for (const tool of createChangePlanTools(this.options.adapterFactory)) {
+    // Live fingerprint: drift is computed against the ACTUAL schema columns
+    // (a default empty fingerprint would flag every plan as stale).
+    for (const tool of createChangePlanTools(
+      this.options.adapterFactory,
+      async (schema: string, table: string) => {
+        const adapter = await this.options.adapterFactory();
+        if (!adapter) return [];
+        return (await adapter.listColumns(table, schema)).map((c) => c.name);
+      },
+    )) {
       registry.register(this.dbToolGate.wrap(tool));
     }
 
@@ -2217,8 +2231,15 @@ export class AiChatPanel {
     for (const tool of createAnalysisTools(this.options.adapterFactory)) {
       registry.register(this.dbToolGate.wrap(tool));
     }
-    // AIX-04 mirror: plan_change on the OMP/MCP path too.
-    for (const tool of createChangePlanTools(this.options.adapterFactory)) {
+    // AIX-04 mirror: plan_change on the OMP/MCP path too (live fingerprint).
+    for (const tool of createChangePlanTools(
+      this.options.adapterFactory,
+      async (schema: string, table: string) => {
+        const adapter = await this.options.adapterFactory();
+        if (!adapter) return [];
+        return (await adapter.listColumns(table, schema)).map((c) => c.name);
+      },
+    )) {
       registry.register(this.dbToolGate.wrap(tool));
     }
     const bridge: McpBridge = await createMcpBridge(registry);
@@ -2497,6 +2518,7 @@ export class AiChatPanel {
   }
 
   private handleStop(): void {
+    this.planCancelled = true;
     if (this.token) this.token.aborted = true;
     // Stop is an abnormal exit for any card still on screen: default-deny
     // every outstanding DB-tool request so its execute() unblocks.
@@ -2980,6 +3002,7 @@ export class AiChatPanel {
    * NEVER executes anything before the consent gate.
    */
   private async handlePlanApprove(): Promise<void> {
+    this.planCancelled = false;
     const plan = this.pendingPlan;
     if (!plan || plan.statements.length === 0) {
       this.post({
@@ -3048,12 +3071,20 @@ export class AiChatPanel {
       return;
     }
 
-    // (c) Sequential apply with per-statement progress.
+    // (c) Sequential apply with per-statement progress. Apply granularity
+    // equals consent granularity: a candidate string may contain multiple
+    // SQL statements, so run the SPLIT statements — progress/cancel/failure
+    // are reported per actual statement, matching what was confirmed.
     this.pendingPlan = null;
-    const total = plan.statements.length;
+    // Split EACH candidate independently (newline-joined candidates can
+    // merge into one parse); flatten preserves candidate order.
+    const toRun = plan.statements.flatMap((s) =>
+      splitStatements(s).map((st) => st.text),
+    );
+    const total = toRun.length;
     try {
       const outcome = await runRenameStatements(
-        plan.statements,
+        toRun,
         async (sql: string) => {
           const adapter = await this.options.adapterFactory();
           if (!adapter) {
@@ -3067,7 +3098,7 @@ export class AiChatPanel {
             label: `plan apply ${i}/${n}: ${sql.slice(0, 80)}`,
           });
         },
-        () => this.token?.aborted ?? false,
+        () => this.planCancelled || (this.token?.aborted ?? false),
       );
       if ("error" in outcome) {
         this.post({

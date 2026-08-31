@@ -69,6 +69,23 @@ describe("AIX-04 scaffold", () => {
     expect(src).toMatch(/type:\s*"plan_reject"/);
   });
 
+  it("appendChangePlan is textContent-only (no innerHTML/outerHTML/insertAdjacentHTML/eval/new Function)", () => {
+    const src = readFileSync(join(ROOT, "webview/aiChatPanelMain.ts"), "utf8");
+    const start = src.indexOf("function appendChangePlan");
+    expect(start).toBeGreaterThan(-1);
+    // Function body = from the opening brace after the signature to its
+    // closing brace. The next top-level function is appendAssistant.
+    const nextFn = src.indexOf("function appendAssistant", start);
+    const body = src.slice(start, nextFn > -1 ? nextFn : start + 4000);
+    expect(body).not.toMatch(/innerHTML/);
+    expect(body).not.toMatch(/outerHTML/);
+    expect(body).not.toMatch(/insertAdjacentHTML/);
+    expect(body).not.toMatch(/\beval\s*\(/);
+    expect(body).not.toMatch(/new\s+Function/);
+    // The card must render SQL via textContent.
+    expect(body).toMatch(/textContent/);
+  });
+
   it("consent gate is ONE implementation (extension re-exports, no local modal copy)", () => {
     const ext = readFileSync(join(ROOT, "src/extension.ts"), "utf8");
     expect(ext).toMatch(/from "\.\/ui\/confirmDangerous"/);
