@@ -47,6 +47,8 @@ import { ConsolePanel } from "./ui/consolePanel";
 import { AcpProcess } from "./ai/omp/acpProcess";
 import { detectOmp, OMP_INSTALL_HINT, OMP_UPDATE_HINT } from "./ai/omp/detect";
 import { resolveEngine } from "./ai/engineChoice";
+import { resolvePolicy, type EffectivePolicy } from "./ai/policy";
+import { serializeAuditExport } from "./ai/auditExport";
 import { registerBrowseCommands } from "./ui/browseCommands";
 import { SchemaCache } from "./ui/schemaCache";
 import { createCatalogResolver } from "./ui/sqlCatalog";
@@ -600,6 +602,26 @@ export async function activate(
     ),
   );
 
+  // AIX-07 — governance command surface: show effective policy, export the
+  // redacted trace (policy-gated, user-selected destination), clear the
+  // trace. All three derive/consume the central policy; no new policy rule
+  // lives here.
+  disposables.push(
+    vscode.commands.registerCommand("vsdb.ai.showPolicy", () =>
+      commandShowPolicy(aiStore),
+    ),
+  );
+  disposables.push(
+    vscode.commands.registerCommand("vsdb.ai.exportTrace", () =>
+      commandExportTrace(aiStore),
+    ),
+  );
+  disposables.push(
+    vscode.commands.registerCommand("vsdb.ai.clearTrace", () =>
+      commandClearTrace(),
+    ),
+  );
+
   // 16b. Cycle AIC TASK-AIC-005 — register the SQL InlineCompletionItemProvider
   // AND the Console panel's onAutocomplete adapter. Both share the AIC-002
   // service singleton; the service is the sole debounce/cancel/cache owner.
@@ -1045,6 +1067,12 @@ async function commandOpenAiChat(
     extensionUri: extensionUriForForm,
     deps,
     adapterFactory,
+    // AIX-07: feed the RAW configured engine preference into the panel so
+    // its funnels consume the central policy — migrated/invalid values
+    // fail closed inside resolvePolicy (never re-derived here).
+    configuredEngine: vscode.workspace
+      .getConfiguration("vsdb")
+      .get<unknown>("ai.engine", "builtin"),
     // AIX-01/AIX-02: opt-in workspace grounding + gated file writes.
     // `vsdb.ai.grounding` defaults to false so the pre-AIX-01 turn path is
     // unchanged; writeFile absent → workspace_write is never registered.
@@ -1068,6 +1096,121 @@ async function commandOpenAiChat(
     },
   });
   aiChatPanel.show();
+}
+
+// ============================================================================
+// TASK-AIX07-003 — vsdb.ai.showPolicy / vsdb.ai.exportTrace / vsdb.ai.clearTrace
+// ============================================================================
+
+/**
+ * Derive the ONE effective AI policy from live host state:
+ *   - `vscode.workspace.isTrusted` (AIX-02 seam),
+ *   - the RAW configured `vsdb.ai.engine` preference (un-validated; migrated
+ *     values must reach resolvePolicy un-trusted and fail closed there),
+ *   - the existing `resolveEngine()` choice — its valid
+ *     `EngineChoice.engine` IS the effective route (locked decision #2:
+ *     configured `builtin` + resolver-selected omp stays ADMITTED).
+ * No policy rule is duplicated here — every decision comes from
+ * `src/ai/policy.ts`.
+ */
+async function deriveEffectivePolicy(aiStore: AiConfigStore): Promise<EffectivePolicy> {
+  const configuredEngine = vscode.workspace
+    .getConfiguration("vsdb")
+    .get<unknown>("ai.engine", "builtin");
+  const [detection, cfg] = await Promise.all([
+    detectOmp(),
+    aiStore.loadConfig(),
+  ]);
+  const choice = resolveEngine({ detection, config: cfg });
+  return resolvePolicy({
+    workspaceTrusted: vscode.workspace.isTrusted,
+    configuredEngine,
+    resolvedEngine: choice,
+  });
+}
+
+/** Format the policy posture for `vsdb.ai.showPolicy` — concise, one line
+ * per capability class, no secret-shaped content (policy text only). */
+function formatPolicySummary(policy: EffectivePolicy): string {
+  const on = "allowed";
+  const off = "blocked";
+  return [
+    `VSDB AI policy — provider: ${policy.provider ?? "unavailable"}`,
+    `context: schema ${policy.context.schema ? on : off}, rows ${policy.context.rows ? on : off}, workspace ${policy.context.workspace ? on : off}`,
+    `tools: database ${policy.tools.database ? on : off}, workspace ${policy.tools.workspace ? on : off}`,
+    `audit export: ${policy.auditExportAllowed ? on : off}`,
+    ...(policy.notice ? [policy.notice] : []),
+  ].join(" | ");
+}
+
+/**
+ * TASK-AIX07-003 — vsdb.ai.showPolicy: report the effective provider,
+ * context/tool class admission, and audit-export permission. Read-only —
+ * no side effects, no picks, no writes.
+ */
+async function commandShowPolicy(aiStore: AiConfigStore): Promise<void> {
+  const policy = await deriveEffectivePolicy(aiStore);
+  void vscode.window.showInformationMessage(formatPolicySummary(policy));
+}
+
+/**
+ * TASK-AIX07-003 — vsdb.ai.exportTrace: write the active AI panel's
+ * redacted in-memory trace to a USER-SELECTED file. Order is load-bearing:
+ * policy admission is checked BEFORE the save dialog and any bytes touch
+ * the filesystem, and an absent active panel is a safe no-op with a
+ * concrete notice. The written envelope is `serializeAuditExport()`'s
+ * final-redacted JSON — no other trace persistence exists.
+ */
+async function commandExportTrace(aiStore: AiConfigStore): Promise<void> {
+  const policy = await deriveEffectivePolicy(aiStore);
+  if (!policy.auditExportAllowed) {
+    // Denial BEFORE the picker and BEFORE any write — default deny.
+    void vscode.window.showInformationMessage(
+      policy.notice || "VSDB AI policy: audit trace export is unavailable.",
+    );
+    return;
+  }
+  const panel = aiChatPanel;
+  if (!panel) {
+    void vscode.window.showInformationMessage(
+      "VSDB: no active AI Chat panel — open one with 'VSDB: Open AI Chat' first.",
+    );
+    return;
+  }
+  const uri = await vscode.window.showSaveDialog({
+    title: "Export VSDB AI audit trace",
+    defaultUri: vscode.Uri.file("vsdb-ai-audit.json"),
+    filters: { "JSON trace": ["json"] },
+  });
+  if (!uri) {
+    return; // user cancelled — nothing written
+  }
+  const envelope = serializeAuditExport(panel.dumpAll());
+  await vscode.workspace.fs.writeFile(
+    uri,
+    new TextEncoder().encode(envelope),
+  );
+  void vscode.window.showInformationMessage(
+    "VSDB: AI audit trace exported (redacted).",
+  );
+}
+
+/**
+ * TASK-AIX07-003 — vsdb.ai.clearTrace: drop the active AI panel's recorded
+ * turns. Absent panel ⇒ safe no-op with a concrete notice; nothing throws.
+ */
+async function commandClearTrace(): Promise<void> {
+  const panel = aiChatPanel;
+  if (!panel) {
+    void vscode.window.showInformationMessage(
+      "VSDB: no active AI Chat panel — open one with 'VSDB: Open AI Chat' first.",
+    );
+    return;
+  }
+  panel.clearTrace();
+  void vscode.window.showInformationMessage(
+    "VSDB: AI chat trace cleared.",
+  );
 }
 /**
  * TASK-003 cycle Z — vsdb.openConsole: open the SQL Console (single instance).

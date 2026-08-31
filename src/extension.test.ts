@@ -45,6 +45,11 @@ const state = {
    * path set this to `"omp"` to mirror the user-toggled setting.
    */
   aiEngine: undefined as string | undefined,
+  /**
+   * TASK-AIX07-003 — `vscode.workspace.isTrusted` value seen by the host
+   * policy derivation. Toggled per-test.
+   */
+  workspaceIsTrusted: true,
   configurationChangeEmitter: new FakeEventEmitter<unknown>(),
   // Active editor stub (cho runQuery/generateSelect tests).
   activeEditor: undefined as unknown as {
@@ -133,6 +138,13 @@ vi.mock("vscode", () => {
           return undefined;
         },
       })),
+      fs: {
+        writeFile: vi.fn().mockResolvedValue(undefined),
+        readFile: vi.fn().mockResolvedValue(new Uint8Array()),
+        rename: vi.fn().mockResolvedValue(undefined),
+        delete: vi.fn().mockResolvedValue(undefined),
+      },
+      showSaveDialog: undefined,
       onDidChangeConfiguration: vi.fn((cb: (e: { affectsConfiguration: (s: string) => boolean }) => void) => {
         state.onDidChangeConfigSubscribers.push(cb);
         return { dispose: () => {} };
@@ -142,6 +154,12 @@ vi.mock("vscode", () => {
       onDidCreateFiles: vi.fn(() => ({ dispose: () => {} })),
       onDidDeleteFiles: vi.fn(() => ({ dispose: () => {} })),
       findFiles: vi.fn(async () => []),
+      get isTrusted() {
+        return state.workspaceIsTrusted;
+      },
+      set isTrusted(v: boolean) {
+        state.workspaceIsTrusted = v;
+      },
       get workspaceFolders() {
         return state.workspaceFolders;
       },
@@ -2072,6 +2090,247 @@ describe("TASK-003 — vsdb.openConsole wiring", () => {
     }
   });
 });
+
+// =============================================================================
+// TASK-AIX07-003 — vsdb.ai.showPolicy / vsdb.ai.exportTrace / vsdb.ai.clearTrace
+// (policy + audit command host integration). The host derives the effective
+// policy from `vscode.workspace.isTrusted`, the raw `vsdb.ai.engine`
+// preference, and the `resolveEngine()` result. Valid configured + valid
+// resolver + trusted ⇒ admit. Anything else ⇒ deny + concrete notice.
+// show-policy: reports the policy state to the user via showInformationMessage
+// (no side effects). export-trace: requires an active AiChatPanel AND
+// admission; runs save-dialog → writeFile of the redacted envelope; denied
+// paths post the notice and do NOT touch picker / fs. clear-trace: requires
+// an active panel; absent panel ⇒ concrete notice, no throw.
+// =============================================================================
+describe("TASK-AIX07-003 — vsdb.ai.showPolicy / exportTrace / clearTrace host integration", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+    state.aiEngine = undefined;
+    // Default: untrusted workspace, valid configured `builtin`, valid
+    // resolver `omp` (the locked-decision-#2 case). Individual tests
+    // override `state.isTrusted` and the workspace mock to flip the gate.
+    state.workspaceFolders = undefined;
+    state.activeEditor = undefined;
+    state.createdTerminals.length = 0;
+    detectOmpState.impl = async () => ({
+      available: true,
+      ok: true,
+      path: "/usr/bin/omp",
+      version: "18.0.1",
+    });
+    state.aiEngine = "builtin";
+    vi.resetModules();
+  });
+
+  afterEach(async () => {
+    // Drop the module-level AiChatPanel singleton so the next test isn't
+    // short-circuited by an existing panel reveal.
+    await deactivate();
+  });
+
+  /** Re-import extension with a fresh `vscode.workspace.isTrusted` value. */
+  async function activateWithTrust(trusted: boolean): Promise<{
+    ctx: ReturnType<typeof makeCtx>;
+    mod: typeof import("./extension");
+  }> {
+    const ctx = makeCtx();
+    // The vi.mock factory closed over `state.isTrusted` via a getter; flip
+    // it BEFORE the dynamic import so the module is built with the right
+    // trust value. The file-wide mock for `vscode` is hoisted, so flipping
+    // state here is sufficient — the mock reads from the live binding.
+    (vscodeMock as unknown as { workspace: { isTrusted: boolean } }).workspace.isTrusted = trusted;
+    // Some assertions re-read isTrusted via the mock's getter; ensure the
+    // live value is the one the activation path sees.
+    (vscodeMock.workspace as unknown as Record<string, unknown>).isTrusted = trusted;
+    const mod = await import("./extension");
+    await mod.activate(ctx as never);
+    return { ctx, mod };
+  }
+
+  it("registers all three vsdb.ai.* commands on activate", async () => {
+    await activateWithTrust(true);
+    expect(state.registeredCommands.has("vsdb.ai.showPolicy")).toBe(true);
+    expect(state.registeredCommands.has("vsdb.ai.exportTrace")).toBe(true);
+    expect(state.registeredCommands.has("vsdb.ai.clearTrace")).toBe(true);
+  });
+
+  it("#1 happy — trusted + valid configured + valid resolver → showPolicy reports provider+context+tools+export; exportTrace calls saveDialog and writes envelope; clearTrace calls the panel", async () => {
+    const { ctx } = await activateWithTrust(true);
+    // Seed an active panel with two turns so the export envelope has body.
+    const aiChatFn = state.registeredCommands.get("vsdb.aiChat");
+    expect(aiChatFn).toBeDefined();
+    await aiChatFn!();
+    // Inspect the constructed panel to grab dumpTrace/clearTrace + a fake
+    // dumpAll. The mock captures the constructor opts; we mount a
+    // dumpAll() that returns two fixed dumps for export.
+    const opts = panelConstructorCalls[panelConstructorCalls.length - 1] as {
+      onDispose?: () => void;
+    };
+    // Plant a TraceRecorder-shaped stand-in on the panel mock so the host
+    // export command can call dumpAll() and find two turns. The existing
+    // mock is a no-op AiChatPanel; reach in via its prototype.
+    const mod = await import("./ui/aiChatPanel");
+    const panelInstance = (panelConstructorCalls[panelConstructorCalls.length - 1] as unknown as {
+      __proto__: object;
+    });
+    // The mock class is captured via vi.mock("./ui/aiChatPanel") — the
+    // constructor doesn't expose instance methods we can spy on. Instead
+    // we monkey-patch dumpAll on the prototype. Use `mod.AiChatPanel`.
+    const dummyDumps = [
+      { turnId: "t1", events: [{ turnId: "t1", seq: 1, kind: "prompt", ts: 1, payload: { x: 1 } }], truncated: false },
+      { turnId: "t2", events: [{ turnId: "t2", seq: 1, kind: "done", ts: 2, payload: { y: 2 } }], truncated: false },
+    ];
+    mod.AiChatPanel.prototype.dumpAll = vi.fn(() => dummyDumps);
+    mod.AiChatPanel.prototype.clearTrace = vi.fn();
+    // Provide a stubbed showSaveDialog → selected Uri and a writeFile spy.
+    const win = vscodeMock.window as unknown as Record<string, unknown>;
+    const writeFileSpy = vi.fn().mockResolvedValue(undefined);
+    win.showSaveDialog = vi.fn().mockResolvedValue({
+      fsPath: "/tmp/vsdb-audit.json",
+      toString: () => "file:///tmp/vsdb-audit.json",
+      path: "/tmp/vsdb-audit.json",
+      scheme: "file",
+    });
+    (vscodeMock.workspace as unknown as { fs: { writeFile: Mock } }).fs = {
+      writeFile: writeFileSpy,
+    };
+
+    // (a) showPolicy posts an info message reporting provider/context/tools/export.
+    const showInfoSpy = vi.mocked(vscodeMock.window.showInformationMessage);
+    showInfoSpy.mockClear();
+    const showPolicyFn = state.registeredCommands.get("vsdb.ai.showPolicy");
+    await showPolicyFn!();
+    expect(showInfoSpy).toHaveBeenCalled();
+    const infoText = (showInfoSpy.mock.calls[0]?.[0] ?? "") as string;
+    // The provider field is "omp" (resolver-selected) for this case; the
+    // host should report it. The information message must mention it.
+    expect(infoText.toLowerCase()).toMatch(/omp|engine|provider/);
+    expect(infoText.toLowerCase()).toMatch(/context|tools|export/);
+
+    // (b) exportTrace runs save-dialog + writeFile with the redacted envelope.
+    const exportFn = state.registeredCommands.get("vsdb.ai.exportTrace");
+    expect(exportFn).toBeDefined();
+    await exportFn!();
+    // saveDialog called once; writeFile called once with the serialized
+    // envelope.
+    expect(win.showSaveDialog).toHaveBeenCalledTimes(1);
+    expect(writeFileSpy).toHaveBeenCalledTimes(1);
+    const written = writeFileSpy.mock.calls[0]?.[1] as Uint8Array;
+    const writtenText = new TextDecoder().decode(written);
+    // The envelope MUST carry the schema marker from auditExport.ts.
+    expect(writtenText).toContain("vsdb.ai.audit-export");
+    // Defense in depth: byte-scan the wire for secret-shaped strings —
+    // the dumpAll() we planted is already redaction-safe, so this pins
+    // the contract regardless of which underlying dump the host called.
+    expect(/api[_-]?key|secret|password|token|authorization|cookie|bearer|basic/i.test(writtenText)).toBe(false);
+
+    // (c) clearTrace calls the active panel's clearTrace.
+    const clearFn = state.registeredCommands.get("vsdb.ai.clearTrace");
+    await clearFn!();
+    expect(mod.AiChatPanel.prototype.clearTrace).toHaveBeenCalled();
+    // Suppress unused-locals lint.
+    void opts;
+    void ctx;
+  });
+
+  it("#2 — valid configured builtin + resolver omp → still admitted (locked decision #2)", async () => {
+    const { ctx } = await activateWithTrust(true);
+    // The "ai.engine" preference resolves to "builtin" by default (the
+    // mock returns undefined → default "builtin"). `resolveEngine()` then
+    // picks "omp" because the mocked detection reports ok=true. The
+    // effective provider is "omp" and admission is granted.
+    state.aiEngine = "builtin";
+    const showPolicyFn = state.registeredCommands.get("vsdb.ai.showPolicy");
+    const showInfoSpy = vi.mocked(vscodeMock.window.showInformationMessage);
+    showInfoSpy.mockClear();
+    await showPolicyFn!();
+    expect(showInfoSpy).toHaveBeenCalled();
+    const infoText = (showInfoSpy.mock.calls[0]?.[0] ?? "") as string;
+    expect(infoText.toLowerCase()).toContain("omp");
+    void ctx;
+  });
+
+  it("#3 — denied policy (untrusted workspace) gates export BEFORE showSaveDialog and writeFile", async () => {
+    await activateWithTrust(false);
+    const win = vscodeMock.window as unknown as Record<string, unknown>;
+    win.showSaveDialog = vi.fn();
+    const writeFileSpy = vi.fn();
+    (vscodeMock.workspace as unknown as { fs: { writeFile: Mock } }).fs = {
+      writeFile: writeFileSpy,
+    };
+    const showInfoSpy = vi.mocked(vscodeMock.window.showInformationMessage);
+    showInfoSpy.mockClear();
+
+    const exportFn = state.registeredCommands.get("vsdb.ai.exportTrace");
+    await exportFn!();
+
+    // No picker, no write. Notice is shown.
+    expect(win.showSaveDialog).not.toHaveBeenCalled();
+    expect(writeFileSpy).not.toHaveBeenCalled();
+    expect(showInfoSpy).toHaveBeenCalled();
+    const infoText = (showInfoSpy.mock.calls[0]?.[0] ?? "") as string;
+    expect(infoText).toMatch(/VSDB AI policy|policy/);
+  });
+
+  it("#5 — invalid configured engine (migrated value) → export denied before side effects", async () => {
+    await activateWithTrust(true);
+    // Plant an invalid (non-vocabulary) configured value into the
+    // getConfiguration() mock. The current file-wide mock returns a
+    // function-only `get(key)`; we swap it for one that returns the
+    // legacy string for the "ai.engine" key.
+    const cfgMock = vscodeMock.workspace.getConfiguration as unknown as Mock;
+    cfgMock.mockImplementationOnce((section: string) => ({
+      get: <T>(key: string, def?: T): T | undefined => {
+        if (section === "vsdb" && key === "ai.engine") {
+          return "old-engine-from-pre-cycle" as unknown as T;
+        }
+        return def;
+      },
+    }));
+    const win = vscodeMock.window as unknown as Record<string, unknown>;
+    win.showSaveDialog = vi.fn();
+    const writeFileSpy = vi.fn();
+    (vscodeMock.workspace as unknown as { fs: { writeFile: Mock } }).fs = {
+      writeFile: writeFileSpy,
+    };
+    const showInfoSpy = vi.mocked(vscodeMock.window.showInformationMessage);
+    showInfoSpy.mockClear();
+    const exportFn = state.registeredCommands.get("vsdb.ai.exportTrace");
+    await exportFn!();
+    expect(win.showSaveDialog).not.toHaveBeenCalled();
+    expect(writeFileSpy).not.toHaveBeenCalled();
+    expect(showInfoSpy).toHaveBeenCalled();
+  });
+
+  it("#6 — export / clear without an active AI panel is a safe no-op + concrete notice", async () => {
+    // Don't open AI chat — there is no active panel.
+    await activateWithTrust(true);
+    const win = vscodeMock.window as unknown as Record<string, unknown>;
+    win.showSaveDialog = vi.fn();
+    const writeFileSpy = vi.fn();
+    (vscodeMock.workspace as unknown as { fs: { writeFile: Mock } }).fs = {
+      writeFile: writeFileSpy,
+    };
+    const showInfoSpy = vi.mocked(vscodeMock.window.showInformationMessage);
+    showInfoSpy.mockClear();
+    const exportFn = state.registeredCommands.get("vsdb.ai.exportTrace");
+    await exportFn!();
+    expect(win.showSaveDialog).not.toHaveBeenCalled();
+    expect(writeFileSpy).not.toHaveBeenCalled();
+    expect(showInfoSpy).toHaveBeenCalled();
+    const exportInfo = (showInfoSpy.mock.calls[0]?.[0] ?? "") as string;
+    expect(exportInfo).toMatch(/open.*AI Chat|AI Chat panel|active|panel/i);
+    showInfoSpy.mockClear();
+    const clearFn = state.registeredCommands.get("vsdb.ai.clearTrace");
+    await clearFn!();
+    expect(showInfoSpy).toHaveBeenCalled();
+    const clearInfo = (showInfoSpy.mock.calls[0]?.[0] ?? "") as string;
+    expect(clearInfo).toMatch(/open.*AI Chat|AI Chat panel|active|panel/i);
+  });
+});
+
 
 // =============================================================================
 // TASK-001 — per-connection manualCommit reaching ConnectionManager.

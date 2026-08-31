@@ -2,7 +2,7 @@
 	"name": "vsdb",
 	"displayName": "VSDB — Run SQL from VS Code",
 	"description": "Run SQL against PostgreSQL, MySQL/MariaDB and SQL Server directly from VS Code. Cmd+Enter (macOS) / Ctrl+Enter (Win/Linux) executes the selected statement.",
-	"version": "1.27.0",
+	"version": "1.28.0",
 	"publisher": "lengockhoa",
 	"engines": {
 		"vscode": "^1.75.0"
@@ -56,6 +56,9 @@
 		"onCommand:vsdb.aiChat",
 		"onCommand:vsdb.ai.useWithOmp",
 		"onCommand:vsdb.ai.refreshDbContext",
+		"onCommand:vsdb.ai.showPolicy",
+		"onCommand:vsdb.ai.exportTrace",
+		"onCommand:vsdb.ai.clearTrace",
 		"onCommand:vsdb.browseTableData",
 		"onCommand:vsdb.renameTable",
 		"onCommand:vsdb.renameColumn",
@@ -222,6 +225,24 @@
 				"title": "VSDB: Refresh AI DB Context",
 				"category": "VSDB",
 				"icon": "$(refresh)"
+			},
+			{
+				"command": "vsdb.ai.showPolicy",
+				"title": "VSDB: Show AI Policy",
+				"category": "VSDB",
+				"icon": "$(shield)"
+			},
+			{
+				"command": "vsdb.ai.exportTrace",
+				"title": "VSDB: Export AI Audit Trace",
+				"category": "VSDB",
+				"icon": "$(export)"
+			},
+			{
+				"command": "vsdb.ai.clearTrace",
+				"title": "VSDB: Clear AI Audit Trace",
+				"category": "VSDB",
+				"icon": "$(clear-all)"
 			},
 			{
 				"command": "vsdb.browseTableData",

@@ -101,15 +101,25 @@ import { formatAttributionFooter } from "../ai/grounding/attribution";
    type AiChatPanelWebviewMessage,
 } from "./aiChatPanelMessages";
 import type { OmpChatEngine } from "../ai/omp/ompChatEngine";
-import { TraceRecorder } from "../ai/trace";
+import { TraceRecorder, type TraceDump, redact } from "../ai/trace";
+import {
+  resolvePolicy,
+  type EffectivePolicy,
+} from "../ai/policy";
 
  import { buildPermissionToolInfo } from "./permissionDetail";
  
  const PANEL_ID = "vsdb.aiChatPanel";
- 
+
  const SCHEMA_CONTEXT_BUDGET = 12_000; // chars (tăng từ 8000)
  const SCHEMA_CONTEXT_TABLE_LIMIT = 200; // objects (tăng từ 30)
  const DEFAULT_PERMISSION_TIMEOUT_MS = 60_000;
+
+/** AIX-07: system prompt used when the effective policy denies
+ * `context.schema` — identical base text to formatSystemPrompt's
+ * no-context branch, but NO adapter introspection ever runs. */
+const GENERIC_SYSTEM_PROMPT =
+  "You are VSDB's AI assistant. Help the user explore and query their database.";
 
 // ============================================================================
 // TASK-005 — @-mention references (DB objects + workspace files)
@@ -569,6 +579,19 @@ export interface AiChatPanelOptions {
    * a trust concept keep the pre-AIX-02 behavior).
    */
   isWorkspaceTrusted?: () => Promise<boolean> | boolean;
+  /**
+   * AIX-07 — raw `vsdb.ai.engine` preference value, un-validated. Fed to
+   * `resolvePolicy` as the `configuredEngine` input. Absent → "builtin"
+   * (the manifest default), which keeps hosts/tests without a config
+   * concept on the pre-AIX-07 admitted path.
+   */
+  configuredEngine?: unknown;
+  /**
+   * AIX-07 — policy override seam for hosts that already derived the
+   * effective policy (extension.ts). When supplied, the panel consumes it
+   * verbatim instead of deriving one from the probes above.
+   */
+  policy?: EffectivePolicy;
 }
 
 /**
@@ -1163,6 +1186,47 @@ export class AiChatPanel {
     });
   }
 
+  /**
+   * AIX-07 — resolve the effective policy for THIS panel, once per turn
+   * setup, from the single default-deny source of truth (src/ai/policy.ts).
+   *
+   * Inputs: the host-supplied policy override (when the extension host
+   * already derived one), else the workspace-trust probe + the raw
+   * `vsdb.ai.engine` preference. The resolver route is carried by the
+   * panel's own construction: `options.acp` present ⇒ the host resolved
+   * the omp route (valid `EngineChoice.engine`), absent ⇒ builtin. This
+   * mirrors — never re-derives — `resolveEngine()`'s decision.
+   *
+   * Default-allow ONLY for hosts that predate the trust probe entirely
+   * (no `isWorkspaceTrusted`, no `configuredEngine`, no `policy`): those
+   * callers (existing tests / bare hosts) keep the pre-AIX-07 behavior.
+   * Any present probe participates in the policy decision.
+   */
+  private async resolveEffectivePolicy(): Promise<EffectivePolicy> {
+    if (this.options.policy) return this.options.policy;
+    const hasTrustProbe = this.options.isWorkspaceTrusted !== undefined;
+    const hasConfigured = this.options.configuredEngine !== undefined;
+    if (!hasTrustProbe && !hasConfigured) {
+      // Legacy/bare host: no governance probes wired — pre-AIX-07 shape.
+      return resolvePolicy({
+        workspaceTrusted: true,
+        configuredEngine: "builtin",
+        resolvedEngine: { engine: "builtin", requiresConfig: false },
+      });
+    }
+    const trusted = hasTrustProbe
+      ? ((await this.options.isWorkspaceTrusted?.()) ?? true)
+      : true;
+    const configured = hasConfigured ? this.options.configuredEngine : "builtin";
+    const route: "omp" | "builtin" =
+      this.options.acp !== undefined ? "omp" : "builtin";
+    return resolvePolicy({
+      workspaceTrusted: trusted,
+      configuredEngine: configured,
+      resolvedEngine: { engine: route, requiresConfig: false },
+    });
+  }
+
   show(): void {
     if (this.panel) {
       this.panel.reveal();
@@ -1463,8 +1527,16 @@ export class AiChatPanel {
     // sees a silent drop instead of a silent ignore. Mention block is
     // concatenated into the TEXT part so image parts stay siblings and
     // never get re-encoded into the schema context.
+    //
+    // AIX-07 POLICY GATE (default deny): mention expansion introspects DB
+    // objects and reads workspace files — both are sensitive context
+    // classes. The effective policy is resolved BEFORE
+    // `resolveMentionsForTurn` can touch the adapter or `fs.readFile`, so
+    // a denied policy is the boundary: no reads happen, no resolved block
+    // can reach the outbound message. The turn still completes generically.
+    const policy = await this.resolveEffectivePolicy();
     const tokens = parseMentionTokens(trimmed);
-    if (tokens.length > 0) {
+    if (tokens.length > 0 && policy.context.workspace && policy.context.schema) {
       try {
         const resolved = await resolveMentionsForTurn(
           this.options.adapterFactory,
@@ -1494,7 +1566,11 @@ export class AiChatPanel {
     // AIX-02: workspace TRUST gate — grounding (reads AND the gated
     // workspace_write tool's writes) never runs in an untrusted workspace.
     // Omitting writeFile from the deps also unregisters workspace_write.
-    const trusted = await this.options.isWorkspaceTrusted?.() ?? true;
+    // AIX-07: the policy's `context.workspace` decision subsumes the bare
+    // trust probe — a denied policy reads no workspace bytes.
+    const trusted =
+      policy.context.workspace &&
+      ((await this.options.isWorkspaceTrusted?.()) ?? true);
     if (this.options.grounding && this.groundingPanelEnabled !== false && trusted) {
       try {
         const turnId = `turn-${Date.now().toString(36).slice(2, 8)}`;
@@ -1632,13 +1708,19 @@ export class AiChatPanel {
    * wasn't used (provider offline / model doesn't support SSE).
    */
   private async runBuiltinTurn(userMsg: ChatMessage): Promise<void> {
+    // AIX-07: one effective policy per turn gates BOTH tool registration
+    // and the schema-context funnel below. Resolved before any registry
+    // build or adapter introspection.
+    const policy = await this.resolveEffectivePolicy();
     const registry = createDbTools(this.options.adapterFactory);
     registry.register(createSqlTool(this.options.adapterFactory));
     registry.register(createExportStructureTool(this.options.adapterFactory));
     // AIX-01: workspace_search — bounded, attributed retrieval over
     // host-curated files. Gated by the grounding opt-in; when grounding
     // is off the tool is absent so the model never sees an unusable tool.
-    if (this.options.grounding) {
+    // AIX-07: additionally gated on `tools.workspace` — a denied policy
+    // registers no workspace tool at all.
+    if (this.options.grounding && policy.tools.workspace) {
       registry.register(
         createWorkspaceSearchTool({
           readFile: this.options.grounding.readFile ?? (async () => ""),
@@ -1674,14 +1756,22 @@ export class AiChatPanel {
     // wrapped in the permission gate — the model may call them, but nothing
     // executes until the user answers the card (default-deny).
     // AIX-05: shared registration call. See registerStandardToolset.
-    this.registerStandardToolset(registry);
+    // AIX-07: the policy decides admission — denied ⇒ none of the sensitive
+    // groups (analyze/diagnose/plan/rows) are registered.
+    this.registerStandardToolset(registry, policy);
 
-    const messages = await buildMessages(
-      this.options.adapterFactory,
-      this.history,
-      userMsg,
-      { cache: this.schemaCacheRef },
-    );
+    // AIX-07: the schema-context funnel is a sensitive context class.
+    // Under a denied policy (`context.schema` false) the system prompt is
+    // built WITHOUT adapter introspection — generic chat still completes.
+    const messages = policy.context.schema
+      ? await buildMessages(
+          this.options.adapterFactory,
+          this.history,
+          userMsg,
+          { cache: this.schemaCacheRef },
+        )
+      : [{ role: "system" as const, content: GENERIC_SYSTEM_PROMPT }, ...this.history, userMsg];
+
     const token = this.token;
     const signal = this.currentAbort?.signal;
     const callbacks: AgentCallbacks = {
@@ -1893,7 +1983,10 @@ export class AiChatPanel {
             runningPosted = true;
             this.postSessionState("running");
           }
-          this.post({ type: "delta", text: delta });
+          // AIX-07: redact is the LAST pass before the webview wire — a
+          // secret-shaped string streamed by the engine must not cross
+          // the panel boundary (no-op for clean text).
+          this.post({ type: "delta", text: String(redact(delta)) });
         },
         onThought: (chunk) => {
           if (token?.aborted) return;
@@ -1901,7 +1994,8 @@ export class AiChatPanel {
             runningPosted = true;
             this.postSessionState("running");
           }
-          this.post({ type: "step", label: chunk });
+          // AIX-07: same wire-hygiene pass as onDelta.
+          this.post({ type: "step", label: String(redact(chunk)) });
         },
         onToolStart: (toolName) => {
           if (token?.aborted) return;
@@ -1973,6 +2067,17 @@ export class AiChatPanel {
   /** AIX-06: redacted JSON envelope of one turn (debug/AIX-07 hook). */
   dumpTrace(turnId: string): unknown {
     return this.trace.dump(turnId);
+  }
+
+  /**
+   * AIX-07: copy-safe snapshot of EVERY retained turn, oldest first.
+   * Read-only for the caller — mutating the returned dumps cannot reach
+   * recorder internals (each dump's events array is a copy). Consumed by
+   * the host's `vsdb.ai.exportTrace` command to build the redacted audit
+   * envelope; nothing else reads it and nothing is persisted here.
+   */
+  dumpAll(): readonly TraceDump[] {
+    return this.trace.dumpAll();
   }
 
   /** AIX-06: drop all recorded turns (Clear + dispose). */
@@ -2068,12 +2173,16 @@ export class AiChatPanel {
       // B9: the ACP prompt previously carried only the raw user text,
       // discarding schema context entirely. Build (or reuse the cached)
       // schema context the same way the builtin engine does and prepend it.
-      const contextMessages = await buildMessages(
-        this.options.adapterFactory,
-        [],
-        userMsg,
-        { cache: this.schemaCacheRef },
-      );
+      // AIX-07: a denied policy (`context.schema` false) skips adapter
+      // introspection entirely — the prompt carries only the user text.
+      const contextMessages = (await this.resolveEffectivePolicy()).context.schema
+        ? await buildMessages(
+            this.options.adapterFactory,
+            [],
+            userMsg,
+            { cache: this.schemaCacheRef },
+          )
+        : [];
       const systemMsg = contextMessages.find((m) => m.role === "system");
       const promptText =
         systemMsg && systemMsg.content.length > 0
@@ -2223,11 +2332,15 @@ export class AiChatPanel {
     // describe_table, run_sql, export_structure) and expose it to the omp
     // engine over an in-process MCP bridge — same adapterFactory, same
     // read-only guard on run_sql, no second execution path to the database.
+    // AIX-07: the SAME effective-policy gate applies here — the resolver-
+    // selected omp route is no exception to default deny.
+    const policy = await this.resolveEffectivePolicy();
     const registry = createDbTools(this.options.adapterFactory);
     registry.register(createSqlTool(this.options.adapterFactory));
     registry.register(createExportStructureTool(this.options.adapterFactory));
     // AIX-01 mirror: same workspace_search tool on the OMP/MCP path.
-    if (this.options.grounding) {
+    // AIX-07: gated on `tools.workspace` exactly like the builtin path.
+    if (this.options.grounding && policy.tools.workspace) {
       registry.register(
         createWorkspaceSearchTool({
           readFile: this.options.grounding.readFile ?? (async () => ""),
@@ -2259,7 +2372,9 @@ export class AiChatPanel {
     // executes until the user answers the card (default-deny).
     // AIX-05: same shared registration call as the builtin path so
     // the two registries stay in parity by construction.
-    this.registerStandardToolset(registry);
+    // AIX-07: parity holds under the policy too — the same resolved policy
+    // decides admission on both engine paths.
+    this.registerStandardToolset(registry, policy);
     const bridge: McpBridge = await createMcpBridge(registry);
     const mcpServers: ReadonlyArray<Record<string, unknown>> = [bridge.descriptor];
 
@@ -3177,10 +3292,26 @@ export class AiChatPanel {
 
   /** AIX-05: register the three tool groups (DB-aware + analysis +
    * plan_change) on a registry. Called identically on the builtin and
-   * OMP/MCP paths so the two registries stay in parity by construction. */
+   * OMP/MCP paths so the two registries stay in parity by construction.
+   *
+   * AIX-07: `policy` defaults to a fully-admitted policy so direct calls
+   * (aiChatPanelToolParity parity harness) keep the pre-AIX-07 toolset.
+   * Turn-time call sites pass the resolved effective policy — when
+   * `tools.database` is denied, the sensitive groups are NOT registered
+   * at all (the model never sees them), per the default-deny contract. */
   private registerStandardToolset(
     registry: ReturnType<typeof createDbTools>,
+    policy: EffectivePolicy = {
+      provider: "builtin",
+      context: { schema: true, workspace: true, rows: true },
+      tools: { database: true, workspace: true },
+      auditExportAllowed: true,
+      notice: "",
+    },
   ): void {
+    if (!policy.tools.database) {
+      return;
+    }
     for (const tool of createDbAwareTools(this.options.adapterFactory)) {
       registry.register(this.dbToolGate.wrap(tool));
     }

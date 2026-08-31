@@ -170,6 +170,11 @@ async function run() {
       esbuild.build(aiSettingsFormConfig),
       esbuild.build(aiChatPanelConfig),
       esbuild.build(schemaFormConfig),
+      // TASK-AIX07-003: consolePanel was wired for watch mode (ctx8) but
+      // omitted from this non-watch build array, so `npm run compile`
+      // never emitted dist/consolePanel.js and consolePanelBundle.test.ts
+      // failed on every fresh clone/worktree. Align build with watch.
+      esbuild.build(consolePanelConfig),
       esbuild.build(comparePanelConfig),
       esbuild.build(erPanelConfig),
       esbuild.build(renameFormConfig),

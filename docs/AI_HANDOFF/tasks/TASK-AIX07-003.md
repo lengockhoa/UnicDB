@@ -88,3 +88,124 @@ npm run compile
 Do not alter `src/ai/provider.ts`, existing provider request headers, or `resolveEngine()` fallback behavior. Policy must derive effective provider from valid `EngineChoice.engine`, not require equality with the valid configured preference: resolver-selected OMP remains admitted when configuration is the default `builtin`. Invalid/migrated configuration and absent/invalid resolver choices deny sensitive admission and export; generic chat retains established fallback behavior with its governance notice.
 
 ---
+
+## Executor Report
+
+- EXECUTOR_TOOL: claude-code
+- EXECUTOR_MODEL: unic-code
+- EXECUTOR_SUBAGENT: feature-implementer
+- Status: PASS
+- Date: 2026-09-01
+
+### RED_OUTPUT (actual, captured before implementation)
+
+`npx vitest run src/ui/__tests__/aiChatPanelPolicy.test.ts src/extension.test.ts`:
+
+```
+ FAIL  src/extension.test.ts > TASK-003 — vsdb.createSchema extension wiring > npm run compile emits dist/schemaForm.js (esbuild config wired)
+ FAIL  src/extension.test.ts > TASK-AIX07-003 — vsdb.ai.showPolicy / exportTrace / clearTrace host integration > registers all three vsdb.ai.* commands on activate
+ FAIL  src/extension.test.ts > TASK-AIX07-003 — ... > #1 happy — trusted + valid configured + valid resolver → ...
+ FAIL  src/extension.test.ts > TASK-AIX07-003 — ... > #2 — valid configured builtin + resolver omp → still admitted (locked decision #2)
+ FAIL  src/extension.test.ts > TASK-AIX07-003 — ... > #3 — denied policy (untrusted workspace) gates export BEFORE showSaveDialog and writeFile
+ FAIL  src/extension.test.ts > TASK-AIX07-003 — ... > #5 — invalid configured engine (migrated value) → export denied before side effects
+ FAIL  src/extension.test.ts > TASK-AIX07-003 — ... > #6 — export / clear without an active AI panel is a safe no-op + concrete notice
+ FAIL  src/ui/__tests__/aiChatPanelPolicy.test.ts > ... > #1a denied policy (untrusted workspace) → builtin turn registry omits sensitive tools, generic chat still completes
+ FAIL  src/ui/__tests__/aiChatPanelPolicy.test.ts > ... > #2 denied policy: object + file mention tokens do NOT call adapterFactory/listColumns, and fs.readFile is never invoked
+ FAIL  src/ui/__tests__/aiChatPanelPolicy.test.ts > ... > #3 builtin path: aggregate posted webview frames + trace dump + system prompt are free of apiKey/password/token/Authorization/Cookie/bearer/basic
+ FAIL  src/ui/__tests__/aiChatPanelPolicy.test.ts > ... > #3b OMP path: same byte-scan holds under the engine funnel (no apiKey/SECRET/Authorization leak)
+ FAIL  src/ui/__tests__/aiChatPanelPolicy.test.ts > ... > #7 redact() scrubs secret-shaped strings the trace recorder stores
+
+ Test Files  2 failed (2)
+      Tests  12 failed | 78 passed (90)
+```
+
+Notes on the RED run: all 11 new-task tests failed for the expected reason
+(unregistered commands; denied policy still registering sensitive tools;
+mention expansion not gated; secret-shaped strings crossing the wire;
+redact boundary). One of the 12 (#7 initial form) was a test-fixture bug of
+my own that I corrected before implementation (redact() is value-scrubbing:
+it preserves the literal key words "Bearer"/"apiKey", so the correct pin is
+sentinel VALUES absent + `<redacted>` present — same pin as
+`src/ai/__tests__/trace.test.ts`). The `dist/schemaForm.js` failure is
+pre-existing in a fresh worktree (no dist bundle until `npm run compile`)
+and is resolved by the verification sequence, not by task code. #3/#3b RED
+also exposed two of my fixture bugs (a table literally named "secrets" and
+a `@public.secrets` prompt token — my own fixtures, not leaks), fixed by
+renaming the fixture table to `vault_items` before implementation.
+
+### Implementation summary
+
+- `src/ui/aiChatPanel.ts`: new `resolveEffectivePolicy()` consumes
+  `resolvePolicy` (single source of truth) with the host policy override
+  seam (`options.policy`), the trust probe, raw `configuredEngine`, and the
+  route implied by `acp !== undefined` (mirrors — never re-derives —
+  `resolveEngine()`). Gates: mention expansion BEFORE
+  `resolveMentionsForTurn` (denied ⇒ adapterFactory/readFile never called);
+  grounding reads (`context.workspace`); `registerStandardToolset(registry,
+  policy)` omits dbAware/analysis/changePlan groups when `tools.database`
+  is denied on BOTH builtin and OMP/MCP paths (signature stays
+  parity-test-compatible with a default-admitted policy); schema context
+  skipped when `context.schema` denied on builtin (`GENERIC_SYSTEM_PROMPT`)
+  and raw ACP prompt paths; OMP `onDelta`/`onThought` pass through
+  `redact()` as the final wire pass. New `dumpAll(): readonly TraceDump[]`
+  copy-safe snapshot delegates to `TraceRecorder.dumpAll()`;
+  `dumpTrace(turnId)` and `clearTrace()` retained.
+- `src/extension.ts`: `deriveEffectivePolicy()` = live
+  `vscode.workspace.isTrusted` + raw `vsdb.ai.engine` +
+  `detectOmp()`/`loadConfig()`/`resolveEngine()` → `resolvePolicy`.
+  `vsdb.ai.showPolicy` (info summary, no side effects), `vsdb.ai.exportTrace`
+  (denied → notice BEFORE `showSaveDialog`/`fs.writeFile`; no panel →
+  concrete notice; else save dialog + `workspace.fs.writeFile` of
+  `serializeAuditExport(panel.dumpAll())` only), `vsdb.ai.clearTrace`
+  (panel `clearTrace()` or concrete notice). `commandOpenAiChat` now also
+  feeds the raw configured engine into the panel. provider.ts, request
+  headers, and `resolveEngine()` fallback behavior untouched.
+- `package.json`: three `vsdb.ai.*` commands contributed with icons
+  (`$(shield)`/`$(export)`/`$(clear-all)` — scaffold test pins every
+  command icon), activationEvents added, version 1.28.0, engines.vscode
+  unchanged `^1.75.0`. `package-lock.json` root + packages[""] version
+  synced to 1.28.0 via `npm install --package-lock-only` (only the two
+  version lines changed; releaseHygiene requires the match).
+- `esbuild.js`: one-line pre-existing fix — `consolePanelConfig` was wired
+  for watch mode (ctx8) but missing from the non-watch build array, so
+  `npm run compile` never emitted `dist/consolePanel.js` and the wave-2 net
+  (`consolePanelBundle.test.ts`, ~9 tests) failed on any fresh worktree.
+  Confirmed identical omission at base commit ebe8720 and in the main
+  checkout; aligned build with watch-mode intent.
+- Worktree environment repair (not repo code): fresh worktree
+  `node_modules/.bin/` lacked the `esbuild` binary the webview-bundle
+  tests spawn; symlinked to the main checkout's binary. Both bundle
+  failures verified pre-existing at base before repairing.
+
+### Verification Output
+
+Focused block:
+
+```
+npx vitest run src/ui/__tests__/aiChatPanelPolicy.test.ts src/extension.test.ts src/__tests__/extensionConfigExport.test.ts src/ai/__tests__/config.test.ts
+ Test Files  4 passed (4)
+      Tests  103 passed (103)
+```
+
+Wave-2 net (in this order):
+
+```
+npm run compile  → esbuild: build complete (dist/consolePanel.js now emitted)
+npm test         → Test Files  212 passed | 1 skipped (213)
+                   Tests  2770 passed | 2 skipped (2772)
+npm run typecheck→ exit 0
+npm run compile  → esbuild: build complete
+```
+
+### Status: PASS
+
+### Note
+
+- No `git add`/`commit`/`push` run — changes left as-is in worktree
+  `handoff/task-aix07-003`.
+- The panel consumes `resolvePolicy` at its funnels and mirrors the host
+  route; the host remains the only `resolveEngine()` caller, so locked
+  decision #2 (configured `builtin` + resolver-selected omp admitted) is
+  pinned by both the pure policy tests (#4) and the host test (#2).
+- Generic chat completes under a denied policy (asserted by #1a/#2: runAgent
+  invoked, final text posted, zero sensitive registrations, zero reads).
