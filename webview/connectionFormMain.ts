@@ -62,6 +62,10 @@ function readForm() {
     port: parseInt(input("port").value, 10) || 0,
     user: input("user").value.trim(),
     database: input("database").value.trim(),
+    sslMode: (useSsl() ? select("sslMode").value : "disable") as SslMode,
+    sslCaPath: input("sslCaPath").value.trim(),
+    sslCertPath: input("sslCertPath").value.trim(),
+    sslKeyPath: input("sslKeyPath").value.trim(),
     manualCommit: manualCommit(),
     folder: input("folder").value.trim(),
     color: input("color").value.trim(),
@@ -111,132 +115,228 @@ function updateSslVisibility(): void {
   if (caRow) caRow.style.display = mode === "verify-ca" || mode === "verify-full" ? "" : "none";
 }
 
-function fileRow(id: SslField, label: string, placeholder: string): string {
-  return `
-    <div class="vsdb-file-row" id="row-${id}">
-      <label for="${id}">${label}</label>
-      <input id="${id}" type="text" placeholder="${placeholder}" />
-      <button id="pick-${id}" class="vsdb-form-pick" title="Chọn file…">Choose File</button>
-    </div>`;
+function el<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  attrs: Record<string, string> = {},
+  ...children: Array<Node | string>
+): HTMLElementTagNameMap[K] {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v === "") continue;
+    node.setAttribute(k, v);
+  }
+  for (const c of children) {
+    node.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
+  }
+  return node;
 }
 
-function render(): void {
-  root.innerHTML = `
-  <h2 id="formTitle">Add Connection</h2>
-  <div class="vsdb-row">
-    <div class="vsdb-field grow">
-      <label for="name">Label <span class="req">*</span></label>
-      <input id="name" type="text" placeholder="Local Dev" />
-    </div>
-    <div class="vsdb-field">
-      <label for="driver">Driver</label>
-      <select id="driver">
-        <option value="postgres">PostgreSQL</option>
-        <option value="mysql">MySQL / MariaDB</option>
-        <option value="mssql">SQL Server</option>
-      </select>
-    </div>
-  </div>
-  <div class="vsdb-row">
-    <div class="vsdb-field grow">
-      <label for="host">Host <span class="req">*</span></label>
-      <input id="host" type="text" value="localhost" />
-    </div>
-    <div class="vsdb-field">
-      <label for="port">Port <span class="req">*</span></label>
-      <input id="port" type="text" value="5432" />
-    </div>
-  </div>
-  <div class="vsdb-row">
-    <div class="vsdb-field grow">
-      <label for="user">Username <span class="req">*</span></label>
-      <input id="user" type="text" />
-    </div>
-    <div class="vsdb-field grow">
-      <label for="password">Password</label>
-      <input id="password" type="password" autocomplete="off" />
-    </div>
-  </div>
-  <div class="vsdb-row">
-    <div class="vsdb-field grow">
-      <label for="database">Database <span class="req">*</span></label>
-      <input id="database" type="text" />
-    </div>
-  </div>
-  <label class="vsdb-form-check">
-    <input id="useSsl" type="checkbox" /> Use SSL
-  </label>
-  <div id="sslPanel" class="vsdb-form-ssl" style="display:none">
-    <label class="vsdb-form-mode">Mode
-      <select id="sslMode">
-        <option value="require">Require — TLS, không verify cert</option>
-        <option value="verify-ca">Verify-CA — verify cert, bỏ qua hostname</option>
-        <option value="verify-full">Verify-Full — verify cert + hostname</option>
-      </select>
-    </label>
-    ${fileRow("sslCaPath", "CA certificate:", "/path/to/server-ca.pem")}
-    ${fileRow("sslCertPath", "Client certificate:", "/path/to/client-cert.pem")}
-    ${fileRow("sslKeyPath", "Client key:", "/path/to/client-key.pem")}
-  </div>
-  <label class="vsdb-form-check">
-    <input id="manualCommit" type="checkbox" /> Manual commit (giữ save trong
-    transaction đến khi Commit/Rollback)
-  </label>
-  <h3 class="vsdb-form-section">Workspace</h3>
-  <div class="vsdb-row">
-    <div class="vsdb-field grow">
-      <label for="folder">Folder</label>
-      <input id="folder" type="text" placeholder="prod / staging / dev" />
-    </div>
-    <div class="vsdb-field">
-      <label for="color">Color (hex)</label>
-      <input id="color" type="text" placeholder="#4fc1ff" />
-    </div>
-  </div>
-  <label class="vsdb-form-check">
-    <input id="readOnly" type="checkbox" /> Read-only — chặn mọi câu lệnh
-    thay đổi (INSERT/UPDATE/DELETE/DDL/GRANT) trước khi gửi tới server
-  </label>
-  <details id="tunnelPanel" class="vsdb-form-tunnel">
-    <summary>SSH tunnel</summary>
-    <div class="vsdb-row">
-      <div class="vsdb-field grow">
-        <label for="tunnelHost">Bastion host</label>
-        <input id="tunnelHost" type="text" placeholder="jump.example.com" />
-      </div>
-      <div class="vsdb-field">
-        <label for="tunnelPort">Bastion port</label>
-        <input id="tunnelPort" type="number" placeholder="22" />
-      </div>
-    </div>
-    <div class="vsdb-row">
-      <div class="vsdb-field grow">
-        <label for="tunnelUser">SSH user</label>
-        <input id="tunnelUser" type="text" placeholder="devops" />
-      </div>
-      <div class="vsdb-field grow">
-        <label for="tunnelIdentityFile">Identity file</label>
-        <input id="tunnelIdentityFile" type="text" placeholder="/Users/me/.ssh/id_ed25519" />
-      </div>
-    </div>
-  </details>
-  <div id="status" class="vsdb-form-status"></div>
-  <div class="vsdb-form-actions">
-    <button id="cancelBtn">Cancel</button>
-    <button id="testBtn">Test</button>
-    <button id="saveBtn" class="vsdb-form-primary">Save</button>
-  </div>`;
+function fieldLabel(text: string, htmlFor: string, required = false): HTMLElement {
+  const l = el("label", { for: htmlFor }, text);
+  if (required) l.appendChild(el("span", { class: "req" }, "*"));
+  return l;
+}
 
-  select("driver").addEventListener("change", () => {
-    input("port").value = String(DRIVER_PORTS[select("driver").value as Driver]);
+function fileRow(id: SslField, text: string, placeholder: string): HTMLElement {
+  const inputEl = el("input", { id, type: "text", placeholder });
+  const pick = el(
+    "button",
+    { id: `pick-${id}`, class: "vsdb-form-pick", title: "Chọn file…" },
+    "Choose File",
+  );
+  pick.addEventListener("click", () => {
+    post({ type: "pickFile", field: id });
   });
-  document.getElementById("useSsl")?.addEventListener("change", updateSslVisibility);
-  select("sslMode").addEventListener("change", updateSslVisibility);
-  for (const f of ["sslCaPath", "sslCertPath", "sslKeyPath"] as SslField[]) {
-    document.getElementById(`pick-${f}`)?.addEventListener("click", () => {
-      post({ type: "pickFile", field: f });
-    });
-  }
+  return el(
+    "div",
+    { class: "vsdb-file-row", id: `row-${id}` },
+    fieldLabel(text, id),
+    inputEl,
+    pick,
+  );
+}
+
+  /** Render the form with DOM APIs only — no HTML-string sinks (CSP + XSS hygiene). */
+function render(): void {
+  root.textContent = "";
+
+  const driver = el(
+    "select",
+    { id: "driver" },
+    el("option", { value: "postgres" }, "PostgreSQL"),
+    el("option", { value: "mysql" }, "MySQL / MariaDB"),
+    el("option", { value: "mssql" }, "SQL Server"),
+  );
+
+  const sslMode = el(
+    "select",
+    { id: "sslMode" },
+    el("option", { value: "require" }, "Require — TLS, kh\u00f4ng verify cert"),
+    el("option", { value: "verify-ca" }, "Verify-CA — verify cert, b\u1ecf qua hostname"),
+    el("option", { value: "verify-full" }, "Verify-Full — verify cert + hostname"),
+  );
+
+  const sslPanel = el(
+    "div",
+    { id: "sslPanel", class: "vsdb-form-ssl", style: "display:none" },
+    el("label", { class: "vsdb-form-mode" }, "Mode", sslMode),
+    fileRow("sslCaPath", "CA certificate:", "/path/to/server-ca.pem"),
+    fileRow("sslCertPath", "Client certificate:", "/path/to/client-cert.pem"),
+    fileRow("sslKeyPath", "Client key:", "/path/to/client-key.pem"),
+  );
+
+  const tunnel = el(
+    "details",
+    { id: "tunnelPanel", class: "vsdb-form-tunnel" },
+    el("summary", {}, "SSH tunnel"),
+    el(
+      "div",
+      { class: "vsdb-row" },
+      el(
+        "div",
+        { class: "vsdb-field grow" },
+        fieldLabel("Bastion host", "tunnelHost"),
+        el("input", { id: "tunnelHost", type: "text", placeholder: "jump.example.com" }),
+      ),
+      el(
+        "div",
+        { class: "vsdb-field" },
+        fieldLabel("Bastion port", "tunnelPort"),
+        el("input", { id: "tunnelPort", type: "number", placeholder: "22" }),
+      ),
+    ),
+    el(
+      "div",
+      { class: "vsdb-row" },
+      el(
+        "div",
+        { class: "vsdb-field grow" },
+        fieldLabel("SSH user", "tunnelUser"),
+        el("input", { id: "tunnelUser", type: "text", placeholder: "devops" }),
+      ),
+      el(
+        "div",
+        { class: "vsdb-field grow" },
+        fieldLabel("Identity file", "tunnelIdentityFile"),
+        el("input", {
+          id: "tunnelIdentityFile",
+          type: "text",
+          placeholder: "/Users/me/.ssh/id_ed25519",
+        }),
+      ),
+    ),
+  );
+
+  root.append(
+    el("h2", { id: "formTitle" }, "Add Connection"),
+    el(
+      "div",
+      { class: "vsdb-row" },
+      el(
+        "div",
+        { class: "vsdb-field grow" },
+        fieldLabel("Label", "name", true),
+        el("input", { id: "name", type: "text", placeholder: "Local Dev" }),
+      ),
+      el("div", { class: "vsdb-field" }, fieldLabel("Driver", "driver"), driver),
+    ),
+    el(
+      "div",
+      { class: "vsdb-row" },
+      el(
+        "div",
+        { class: "vsdb-field grow" },
+        fieldLabel("Host", "host", true),
+        el("input", { id: "host", type: "text", value: "localhost" }),
+      ),
+      el(
+        "div",
+        { class: "vsdb-field" },
+        fieldLabel("Port", "port", true),
+        el("input", { id: "port", type: "text", value: "5432" }),
+      ),
+    ),
+    el(
+      "div",
+      { class: "vsdb-row" },
+      el(
+        "div",
+        { class: "vsdb-field grow" },
+        fieldLabel("Username", "user", true),
+        el("input", { id: "user", type: "text" }),
+      ),
+      el(
+        "div",
+        { class: "vsdb-field grow" },
+        fieldLabel("Password", "password"),
+        el("input", { id: "password", type: "password", autocomplete: "off" }),
+      ),
+    ),
+    el(
+      "div",
+      { class: "vsdb-row" },
+      el(
+        "div",
+        { class: "vsdb-field grow" },
+        fieldLabel("Database", "database", true),
+        el("input", { id: "database", type: "text" }),
+      ),
+    ),
+    el(
+      "label",
+      { class: "vsdb-form-check" },
+      el("input", { id: "useSsl", type: "checkbox" }),
+      " Use SSL",
+    ),
+    sslPanel,
+    el(
+      "label",
+      { class: "vsdb-form-check" },
+      el("input", { id: "manualCommit", type: "checkbox" }),
+      " Manual commit (gi\u1eef save trong transaction \u0111\u1ebfn khi Commit/Rollback)",
+    ),
+    el("h3", { class: "vsdb-form-section" }, "Workspace"),
+    el(
+      "div",
+      { class: "vsdb-row" },
+      el(
+        "div",
+        { class: "vsdb-field grow" },
+        fieldLabel("Folder", "folder"),
+        el("input", { id: "folder", type: "text", placeholder: "prod / staging / dev" }),
+      ),
+      el(
+        "div",
+        { class: "vsdb-field" },
+        fieldLabel("Color (hex)", "color"),
+        el("input", { id: "color", type: "text", placeholder: "#4fc1ff" }),
+      ),
+    ),
+    el(
+      "label",
+      { class: "vsdb-form-check" },
+      el("input", { id: "readOnly", type: "checkbox" }),
+      " Read-only — ch\u1eb7n m\u1ecdi c\u00e2u l\u1ec7nh thay \u0111\u1ed5i (INSERT/UPDATE/DELETE/DDL/GRANT) tr\u01b0\u1edbc khi g\u1eedi t\u1edbi server",
+    ),
+    tunnel,
+    el("div", { id: "status", class: "vsdb-form-status" }),
+    el(
+      "div",
+      { class: "vsdb-form-actions" },
+      el("button", { id: "cancelBtn" }, "Cancel"),
+      el("button", { id: "testBtn" }, "Test"),
+      el("button", { id: "saveBtn", class: "vsdb-form-primary" }, "Save"),
+    ),
+  );
+
+  driver.addEventListener("change", () => {
+    input("port").value = String(DRIVER_PORTS[driver.value as Driver]);
+  });
+  (document.getElementById("useSsl") as HTMLInputElement).addEventListener(
+    "change",
+    updateSslVisibility,
+  );
+  sslMode.addEventListener("change", updateSslVisibility);
   document.getElementById("cancelBtn")?.addEventListener("click", () => {
     post({ type: "cancel" });
   });
@@ -247,7 +347,7 @@ function render(): void {
   document.getElementById("saveBtn")?.addEventListener("click", () => {
     const f = readForm();
     if (!f.name || !f.host || !f.user || !f.database || !f.port) {
-      setStatus(false, "Điền đủ các ô có *.");
+      setStatus(false, "\u0110i\u1ec1n \u0111\u1ee7 c\u00e1c \u00f4 c\u00f3 *.");
       return;
     }
     post({ type: "submit", ...f });

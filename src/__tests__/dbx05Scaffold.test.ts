@@ -48,10 +48,13 @@ describe("DBX-05 scaffold", () => {
     // The spawn call must exist and pass explicit argv, not a command string.
     expect(src).toMatch(/spawn\s*\(/);
   });
-
-  it("connection form webview is CSP-clean (no inline handlers, no innerHTML with script)", () => {
+  it("connection form webview is CSP-clean (no DOM sinks, no inline handlers)", () => {
     const file = join(ROOT, "webview/connectionFormMain.ts");
     const src = readFileSync(file, "utf8");
+    // Prohibited DOM sinks: any of these would let untrusted text become HTML.
+    expect(src).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML/);
+    expect(src).not.toMatch(/\beval\s*\(/);
+    expect(src).not.toMatch(/new\s+Function\s*\(/);
     // Inline JS event handlers (onclick=...) would violate the CSP header.
     expect(src).not.toMatch(/\bon\w+\s*=\s*["']/);
     // No <script> tag ever rendered from the webview bundle itself.

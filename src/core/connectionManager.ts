@@ -79,10 +79,13 @@ export class ConnectionManager {
    * Lưu metadata + password; KHÔNG active ngay (user phải gọi setActive riêng).
    */
   async addConnection(cfg: ConnectionConfig, password: string): Promise<void> {
-    // Test-connect với adapter tạm. Nếu fail → không lưu.
-    const probe = this.factory(cfg, password);
+    // Test-connect qua resolver (DBX-05: tunnel-aware — probe đi qua
+    // 127.0.0.1:<localPort> như adapter thật). Nếu fail → không lưu.
+    const probe = await this.resolveAdapter(cfg, password);
+    let probeOk = false;
     try {
       await probe.testConnection();
+      probeOk = true;
     } finally {
       // Đóng probe để tránh leak socket.
       try {
@@ -90,7 +93,10 @@ export class ConnectionManager {
       } catch {
         // ignore
       }
+      // Probe tunnel (nếu có) không được rò rỉ khi add thất bại.
+      if (!probeOk) this.stopTunnel(cfg.id);
     }
+
 
     // Lưu metadata vào state Memento đã chọn.
     this.state.connections.push({ ...cfg });
@@ -119,17 +125,22 @@ export class ConnectionManager {
     const next: ConnectionConfig = { ...old, ...patch, id: old.id };
 
     // Test-connect lại nếu có đổi password HOẶC đổi bất kỳ trường nào khác (driver/host/...).
-    // An toàn nhất: luôn test-connect.
+    // An toàn nhất: luôn test-connect. DBX-05: probe đi qua resolver để tunnel
+    // config mới được dùng ngay trong lúc test.
     const testPassword = password ?? (await this.tryGetPassword(id)) ?? "";
-    const probe = this.factory(next, testPassword);
+    const probe = await this.resolveAdapter(next, testPassword);
+    let probeOk = false;
     try {
       await probe.testConnection();
+      probeOk = true;
     } finally {
       try {
         await probe.close();
       } catch {
         // ignore
       }
+      // Nếu edit thất bại, đừng để tunnel mới của probe treo.
+      if (!probeOk) this.stopTunnel(id);
     }
 
     // Commit changes.
@@ -353,8 +364,14 @@ export class ConnectionManager {
   ): Promise<DbAdapter> {
     let effective = cfg;
     if (cfg.tunnel) {
+      // `port` = bastion SSH port (default 22); `targetPort` = the DATABASE
+      // port to forward to from the bastion — they are different by design.
       const handle = await this.tunnels.start(
-        { ...cfg.tunnel, port: cfg.tunnel.port ?? cfg.port },
+        {
+          ...cfg.tunnel,
+          port: cfg.tunnel.port ?? 22,
+          targetPort: cfg.port,
+        },
         cfg.id,
       );
       effective = {

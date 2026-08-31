@@ -26,22 +26,23 @@ export class SshTunnelManager {
     private readonly sshPath: string = "ssh",
   ) {}
 
-  /** Resolve once the tunnel reports its listening line; kill + throw on timeout/early-exit. */
+  /**
+   * Resolve once the tunnel reports its listening line; kill + throw on
+   * timeout/early-exit. Idempotent per key — a running tunnel is reused.
+   */
   async start(cfg: TunnelConfig, key: string): Promise<TunnelHandle> {
     const existing = this.tunnels.get(key);
     if (existing) return existing;
+    if (!/^[A-Za-z0-9._-]+$/.test(key)) {
+      throw new Error(`invalid tunnel key: ${key}`);
+    }
 
-    const requestedLocal = cfg.localPort;
     const baseArgs = buildTunnelArgs({ ...cfg, localPort: 0 });
-    // Marker goes FIRST-ish (before -N) purely for ps readability; ssh ignores
-    // unknown non-flag tokens? No — it does not. Carry the marker as a comment
-    // via the -o SendEnv? Simplest safe carrier: append after `--`? ssh treats
-    // the first non-option token as host. So instead we tag via env-injected
-    // argv: reuse `-o` with a harmless option value.
-    const args = [...baseArgs, "-o", `SetEnv=${MARKER}:${key}`];
-    // `SetEnv` requires the server to accept it; it never breaks forwarding
-    // setup and identifies the process for `ps`. The REAL readiness signal is
-    // the listening line below.
+    // Marker via a VALID OpenSSH SetEnv assignment (NAME=VALUE — a bare
+    // `SetEnv=vsdb-tunnel:key` makes ssh exit 255 with "Invalid SetEnv").
+    // The value appears in `ps` output so parseTunnelProcLine can identify
+    // our processes; the server only sees it when it accepts SetEnv.
+    const args = [...baseArgs, "-o", `SetEnv=VSDB_TUNNEL=vsdb-tunnel:${key}`];
 
     const child = spawn(this.sshPath, args, {
       stdio: ["ignore", "pipe", "pipe"],
@@ -53,22 +54,26 @@ export class SshTunnelManager {
         reject(new Error(`SSH tunnel did not report ready within ${READY_TIMEOUT_MS}ms`));
       }, READY_TIMEOUT_MS);
 
-      let exited = false;
+      let settled = false;
       const onExit = (code: number | null) => {
-        if (exited) return;
-        exited = true;
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
         reject(new Error(`ssh exited before becoming ready (code ${code})`));
       };
-      child.on("exit", (code) => onExit(code));
+      child.on("exit", onExit);
 
+      // Buffer across chunk boundaries — the verbose listening line can be
+      // split arbitrarily by the stream.
+      let buffer = "";
       const scan = (chunk: Buffer | string) => {
-        const text = chunk.toString();
-        // Line: `Local forwarding listening on 127.0.0.1 port 54321.` (OpenSSL
-        // wording varies by version) — extract the bound port after "port".
-        const m = /Local forwarding listening on 127\.0\.0\.1 port (\d+)/.exec(text);
+        if (settled) return;
+        buffer += chunk.toString();
+        // `ssh -v` emits `Local forwarding listening on 127.0.0.1 port N.`
+        // on stderr at the moment the local forward binds.
+        const m = /Local forwarding listening on 127\.0\.0\.1 port (\d+)/.exec(buffer);
         if (m) {
-          exited = true;
+          settled = true;
           clearTimeout(timer);
           const localPort = Number.parseInt(m[1], 10);
           child.removeListener("exit", onExit);
@@ -83,14 +88,6 @@ export class SshTunnelManager {
       };
       child.stdout?.on("data", scan);
       child.stderr?.on("data", scan);
-      // Silence downstream data after resolution — nothing consumes it.
-      child.stdout?.on("data", () => {});
-      child.stderr?.on("data", () => {});
-      if (requestedLocal !== undefined) {
-        // Deterministic port: accept it immediately once ssh is alive (no
-        // line needed); still bounded by the ready timeout.
-        // Not used by default path (localPort 0) — kept for explicit configs.
-      }
     });
     return handle;
   }

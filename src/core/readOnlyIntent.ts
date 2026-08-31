@@ -43,34 +43,44 @@ const MUTATION_KEYWORDS: Record<string, true> = {
   lock: true,
 };
 
-/** Keyword scan mirroring dangerousStatement.analyzeStatement's depth-0 walk. */
+/**
+ * Depth-aware top-level keyword scan. Tokens inside balanced parentheses are
+ * ignored at top level — but a mutation keyword inside a WITH body (a
+ * data-modifying CTE, `WITH x AS (INSERT …)`) still counts.
+ * `EXPLAIN (ANALYZE, BUFFERS) DELETE FROM t` reaches the DELETE at depth 0,
+ * so `EXPLAIN ANALYZE DELETE` is correctly blocked on a read-only connection.
+ */
 function statementIsMutation(masked: string): boolean {
-  const wordRe = /[a-zA-Z_]+/g;
-  wordRe.lastIndex = 0;
-  let m: RegExpExecArray | null;
+  const re = /[a-zA-Z_]+|[()]/g;
+  re.lastIndex = 0;
+  let depth = 0;
   let sawWith = false;
-  let sawExplain = false;
-  while ((m = wordRe.exec(masked)) !== null) {
-    const lower = m[0].toLowerCase();
-    if (!sawWith && !sawExplain) {
-      if (lower === "explain") {
-        sawExplain = true;
-        continue;
-      }
-    } else if (sawExplain) {
-      if (lower === "analyze" || lower === "analyse" || lower === "verbose") {
-        continue;
-      }
-      sawExplain = false;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(masked)) !== null) {
+    const tok = m[0];
+    if (tok === "(") {
+      depth++;
+      continue;
+    }
+    if (tok === ")") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+    const lower = tok.toLowerCase();
+    if (depth > 0) {
+      // Data-modifying CTE body: the mutation keyword lives inside parens.
+      if (sawWith && MUTATION_KEYWORDS[lower] === true) return true;
+      continue;
     }
     if (!sawWith) {
       if (lower === "with") {
         sawWith = true;
         continue;
       }
-      return MUTATION_KEYWORDS[lower] === true;
+      if (MUTATION_KEYWORDS[lower] === true) return true;
+      continue;
     }
-    // withMode: only a real statement starter decides.
+    // withMode at depth 0: only a real statement starter decides.
     if (MUTATION_KEYWORDS[lower] === true) return true;
     if (lower === "select" || lower === "show") return false;
   }

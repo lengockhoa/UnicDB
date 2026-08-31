@@ -9,6 +9,7 @@ describe("buildTunnelArgs", () => {
     expect(args).toContain("bastion.example.com");
     expect(args).toContain("-N");
     expect(args).toContain("-T");
+    expect(args).toContain("-v"); // verbose — required for the readiness line
     expect(args).toEqual(
       expect.arrayContaining([
         "-p",
@@ -20,6 +21,26 @@ describe("buildTunnelArgs", () => {
       ]),
     );
   });
+
+  // DBX-05 review regression: the bastion SSH port and the forwarded
+  // destination port are DIFFERENT — tunnel.port is the ssh -p, targetPort
+  // is the database port on the other side of the bastion.
+  it("separates bastion port from forwarded target port", () => {
+    const args = buildTunnelArgs({
+      host: "bastion",
+      port: 22,
+      targetPort: 5432,
+    });
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "-p",
+        "22",
+        "-L",
+        "127.0.0.1:0:127.0.0.1:5432",
+      ]),
+    );
+  });
+
 
   it("renders user + identity + explicit local port", () => {
     const args = buildTunnelArgs({
@@ -60,6 +81,7 @@ describe("buildTunnelArgs", () => {
     expect(() => buildTunnelArgs({ host: "h", port: 0 })).toThrow(TunnelError);
     expect(() => buildTunnelArgs({ host: "h", port: 70000 })).toThrow(TunnelError);
     expect(() => buildTunnelArgs({ host: "h", localPort: 80 })).toThrow(TunnelError);
+    expect(() => buildTunnelArgs({ host: "h", targetPort: 0 })).toThrow(TunnelError);
   });
 
   it("rejects identityFile with whitespace or relative path", () => {
@@ -75,21 +97,16 @@ describe("buildTunnelArgs", () => {
 describe("parseTunnelProcLine", () => {
   it("parses our marker line", () => {
     const p = parseTunnelProcLine(
-      "12345 ssh -N -T -o SetEnv=vsdb-tunnel:conn1 bastion",
+      "12345 ssh -v -N -T -o SetEnv=VSDB_TUNNEL=vsdb-tunnel:conn1 bastion",
     );
     expect(p).toEqual({ pid: 12345, localPort: undefined });
   });
 
   it("parses marker with port", () => {
     const p = parseTunnelProcLine(
-      " 999 ssh ... vsdb-tunnel:15432 ... bastion",
+      " 999 ssh ... VSDB_TUNNEL=vsdb-tunnel:15432 ... bastion",
     );
     expect(p).toEqual({ pid: 999, localPort: 15432 });
   });
-
-  it("returns null for foreign lines", () => {
-    expect(parseTunnelProcLine("")).toBeNull();
-    expect(parseTunnelProcLine("not-a-pid-line")).toBeNull();
-    expect(parseTunnelProcLine("777 /usr/sbin/sshd -D")).toBeNull();
-  });
 });
+

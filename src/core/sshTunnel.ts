@@ -6,8 +6,12 @@
 
 /** Connection-level tunnel settings (subset of ConnectionConfig.tunnel). */
 export interface TunnelConfig {
+  /** Bastion host ssh connects to. */
   host: string;
+  /** Bastion SSH port (the `-p` value); default 22. */
   port?: number;
+  /** Database port to forward to from the bastion (`-L …:<targetPort>`). */
+  targetPort?: number;
   user?: string;
   identityFile?: string;
   /** Requested local port; default 0 → ssh picks an ephemeral one. */
@@ -63,6 +67,18 @@ function validate(cfg: TunnelConfig): void {
     });
   }
   if (
+    cfg.targetPort !== undefined &&
+    (!Number.isInteger(cfg.targetPort) ||
+      cfg.targetPort < 1 ||
+      cfg.targetPort > 65535)
+  ) {
+    throw new TunnelError(
+      "badPort",
+      "tunnel targetPort must be an integer 1..65535",
+      { targetPort: cfg.targetPort },
+    );
+  }
+  if (
     cfg.localPort !== undefined &&
     (!Number.isInteger(cfg.localPort) ||
       (cfg.localPort !== 0 && (cfg.localPort < 1024 || cfg.localPort > 65535)))
@@ -91,8 +107,11 @@ function validate(cfg: TunnelConfig): void {
 
 /**
  * Render the ssh argv for a local port-forward:
- *   ssh [-i identity] [-p remotePort] [user@]host -N -L 127.0.0.1:<local>:127.0.0.1:<remote>
+ *   ssh [-i identity] [-p bastionPort] [user@]host -v -N -L 127.0.0.1:<local>:127.0.0.1:<targetPort>
  * The manager appends nothing else; `localPort` 0 lets ssh choose ephemeral.
+ * `-v` is required: `Local forwarding listening on …` is an OpenSSH debug
+ * message that only appears at verbose log level — the manager's readiness
+ * signal depends on it.
  */
 export function buildTunnelArgs(cfg: TunnelConfig): string[] {
   validate(cfg);
@@ -101,12 +120,14 @@ export function buildTunnelArgs(cfg: TunnelConfig): string[] {
   if (cfg.user !== undefined) args.push("-l", cfg.user);
   if (cfg.port !== undefined) args.push("-p", String(cfg.port));
   args.push(cfg.host);
+  args.push("-v");
   args.push("-N");
   args.push("-T");
   args.push("-o", "ExitOnForwardFailure=yes");
   args.push("-o", "BatchMode=yes");
   const local = cfg.localPort !== undefined ? cfg.localPort : 0;
-  args.push("-L", `127.0.0.1:${local}:127.0.0.1:${cfg.port ?? 5432}`);
+  const target = cfg.targetPort ?? cfg.port ?? 5432;
+  args.push("-L", `127.0.0.1:${local}:127.0.0.1:${target}`);
   return args;
 }
 

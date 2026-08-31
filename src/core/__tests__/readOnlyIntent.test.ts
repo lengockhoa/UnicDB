@@ -55,4 +55,21 @@ describe("readOnlyIntent", () => {
     expect(err.statements).toEqual(["DROP TABLE x"]);
     expect(err.name).toBe("ReadOnlyViolation");
   });
+
+  // DBX-05 review regression: EXPLAIN's option group must not terminate the
+  // scan before the real statement — EXPLAIN ANALYZE executes its target.
+  it("EXPLAIN (ANALYZE, BUFFERS) DELETE is a mutation", () => {
+    expect(isMutationSql("EXPLAIN (ANALYZE, BUFFERS) DELETE FROM t")).toBe(true);
+    expect(isMutationSql("EXPLAIN ANALYZE DELETE FROM t")).toBe(true);
+    expect(isMutationSql("EXPLAIN ANALYZE SELECT * FROM t")).toBe(false);
+    expect(isMutationSql("EXPLAIN (VERBOSE, FORMAT JSON) SELECT 1")).toBe(false);
+  });
+
+  it("data-modifying CTE is a mutation even inside parens", () => {
+    expect(
+      isMutationSql("WITH x AS (INSERT INTO t VALUES (1)) SELECT * FROM x"),
+    ).toBe(true);
+    expect(isMutationSql("WITH x AS (SELECT 1) DELETE FROM t")).toBe(true);
+    expect(isMutationSql("WITH x AS (SELECT 1) SELECT * FROM x")).toBe(false);
+  });
 });
