@@ -1,6 +1,6 @@
 Command: handoff-fullstack
 Goal: Ship DBX-08 Dialect Parity Contract, then AIX-08 Extensible MCP Tool Contracts
-Base: main @ ba775d4 + wave 1
+Base: main @ 0425a1b (wave 1 + wave 2)
 Phase: I3
-Cursor: DBX-08 wave 1 done — TASK-DBX08-001 PASS (capability matrix + fail-closed helper, 3 tests, RED re-derived after copy-back mishap)
-Next: wave 2 (TASK-DBX08-002 catalog/object-DDL gating) → wave 3 (003) → I4 → R1-R5 → release
+Cursor: DBX-08 wave 2 done — TASK-DBX08-002 PASS (catalog/object-DDL gating; resolver option isPostgres→declaresCatalog; 174/174 net, typecheck+compile clean)
+Next: wave 3 (TASK-DBX08-003 table-DDL/admin host gating) → I4 → R1-R5 → release
