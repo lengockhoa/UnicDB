@@ -114,6 +114,14 @@ interface FakeCatalogOpts {
   rowCountReject?: boolean;
 }
 
+/** Full DBX-08 capability matrix literal — matches AdapterCapabilities. */
+interface FakeCapabilities {
+  catalog: boolean;
+  objectDdl: boolean;
+  tableDdl: boolean;
+  admin: boolean;
+}
+
 function makeFakeAdapter(opts: {
   schemas?: Array<{ name: string }>;
   tables?: Array<{ name: string; schema: string }>;
@@ -121,6 +129,8 @@ function makeFakeAdapter(opts: {
   routines?: Array<{ name: string; kind: "function" | "procedure"; schema: string }>;
   columns?: ColumnInfo[];
   catalog?: FakeCatalogOpts;
+  /** DBX-08 — explicit capability declaration; undefined = legacy adapter. */
+  capabilities?: FakeCapabilities;
   estimateTableRowsBatchImpl?: (
     schema: string,
     tables: readonly string[],
@@ -185,6 +195,9 @@ function makeFakeAdapter(opts: {
       objectDdl: vi.fn().mockResolvedValue("CREATE VIEW ..."),
     };
   }
+  if (opts.capabilities) {
+    adapter.capabilities = opts.capabilities;
+  }
   return adapter;
 }
 
@@ -214,6 +227,7 @@ function setupTree(opts: {
   routines?: Array<{ name: string; kind: "function" | "procedure"; schema: string }>;
   columns?: ColumnInfo[];
   catalog?: FakeCatalogOpts;
+  capabilities?: FakeCapabilities;
   estimateTableRowsBatchImpl?: (
     schema: string,
     tables: readonly string[],
@@ -279,6 +293,7 @@ describe("SchemaTreeProvider — TASK-AF-002 catalog nodes + row count", () => {
           { name: "trg_u", event: "INSERT", timing: "BEFORE", statement: "RAISE EXCEPTION" },
         ],
       },
+      capabilities: { catalog: true, objectDdl: true, tableDdl: true, admin: true },
     });
     await mgr.addConnection(makeCfg({ id: "af2t1" }), "p");
     await mgr.setActive("af2t1");
@@ -314,6 +329,7 @@ describe("SchemaTreeProvider — TASK-AF-002 catalog nodes + row count", () => {
       schemas: [{ name: "public" }],
       tables: [{ name: "users", schema: "public" }],
       catalog: { rowCount: 1234 },
+      capabilities: { catalog: true, objectDdl: true, tableDdl: true, admin: true },
     });
     await mgr.addConnection(makeCfg({ id: "af2t2" }), "p");
     await mgr.setActive("af2t2");
@@ -366,6 +382,7 @@ describe("SchemaTreeProvider — TASK-AF-002 catalog nodes + row count", () => {
       schemas: [{ name: "public" }],
       tables: [{ name: "users", schema: "public" }],
       catalog: { rowCountReject: true },
+      capabilities: { catalog: true, objectDdl: true, tableDdl: true, admin: true },
     });
     await mgr.addConnection(makeCfg({ id: "af2t4" }), "p");
     await mgr.setActive("af2t4");
@@ -395,6 +412,7 @@ describe("SchemaTreeProvider — TASK-AF-002 catalog nodes + row count", () => {
       catalog: {
         // explicit: no sequences, no indexes/constraints/triggers either
       },
+      capabilities: { catalog: true, objectDdl: true, tableDdl: true, admin: true },
     });
     await mgr.addConnection(makeCfg({ id: "af2t5" }), "p");
     await mgr.setActive("af2t5");
@@ -419,6 +437,7 @@ describe("SchemaTreeProvider — TASK-AF-002 catalog nodes + row count", () => {
           { name: "seq_users", schema: "public", dataType: "bigint", lastValue: "1" },
         ],
       },
+      capabilities: { catalog: true, objectDdl: true, tableDdl: true, admin: true },
     });
     void adapter2;
     await mgr2.addConnection(makeCfg({ id: "af2t5b" }), "p");
@@ -455,6 +474,7 @@ describe("SchemaTreeProvider — TASK-AF-002 catalog nodes + row count", () => {
         ],
         triggers: [],
       },
+      capabilities: { catalog: true, objectDdl: true, tableDdl: true, admin: true },
     });
     await mgr.addConnection(makeCfg({ id: "af2t6" }), "p");
     await mgr.setActive("af2t6");
@@ -549,5 +569,182 @@ describe("SchemaTreeProvider — TASK-AF-002 catalog nodes + row count", () => {
     // Expanding a table → only column children (none here).
     const cols = await provider.getChildren(tables[0]);
     expect(cols.map((c) => c.label)).toEqual([]);
+  });
+});
+
+// =============================================================================
+// TASK-DBX08-002 — catalog tree admission by declared capability.
+// =============================================================================
+
+const PG_CAPS = { catalog: true, objectDdl: true, tableDdl: true, admin: true };
+const NO_CAPS = { catalog: false, objectDdl: false, tableDdl: false, admin: false };
+
+describe("SchemaTreeProvider — TASK-DBX08-002 declared catalog capability", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.emitters = [];
+    state.treeItemCalls = [];
+    state.errorMessages = [];
+  });
+
+  it("declared PostgreSQL catalog support preserves tree rows", async () => {
+    const { mgr, adapter } = setupTree({
+      schemas: [{ name: "public" }],
+      tables: [{ name: "users", schema: "public" }],
+      columns: [{ name: "id", dataType: "int", nullable: false, isPrimaryKey: true }],
+      catalog: {
+        indexes: [
+          { name: "idx_a", schema: "public", table: "users", isUnique: false, method: "btree", columns: ["a"] },
+        ],
+        constraints: [
+          { name: "users_pkey", type: "pk", columns: ["id"] },
+        ],
+        triggers: [
+          { name: "trg_u", event: "INSERT", timing: "BEFORE", statement: "RAISE" },
+        ],
+        sequences: [
+          { name: "users_id_seq", schema: "public", dataType: "integer", lastValue: "7" },
+        ],
+      },
+      capabilities: PG_CAPS,
+    });
+    await mgr.addConnection(makeCfg({ id: "dbx08t1" }), "p");
+    await mgr.setActive("dbx08t1");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    const cats = await provider.getChildren(schemas[0]);
+    // Declared catalog → Sequences category appears alongside the generic 3.
+    expect(cats.map((c) => c.label)).toContain("Sequences");
+
+    const tables = await provider.getChildren(cats[0]);
+    const tableChildren = await provider.getChildren(tables[0]);
+    const labels = tableChildren.map((c) => c.label);
+    expect(labels).toContain("Indexes");
+    expect(labels).toContain("Constraints");
+    expect(labels).toContain("Triggers");
+    expect(labels).toContain("id");
+
+    const indexesCat = tableChildren.find((c) => c.label === "Indexes")!;
+    const indexes = await provider.getChildren(indexesCat);
+    expect(indexes.map((n) => n.label)).toEqual(["idx_a"]);
+
+    expect(adapter.catalog?.listIndexes).toHaveBeenCalledWith("public", "users");
+    expect(adapter.catalog?.listConstraints).toHaveBeenCalledWith("public", "users");
+    expect(adapter.catalog?.listTriggers).toHaveBeenCalledWith("public", "users");
+    expect(adapter.catalog?.listSequences).toHaveBeenCalledWith("public");
+  });
+
+  it("catalog consumers fail closed without catalog calls (false/missing declaration)", async () => {
+    // (a) Catalog structurally present but DECLARED false — mysql-shaped.
+    const { mgr, adapter } = setupTree({
+      schemas: [{ name: "public" }],
+      tables: [{ name: "users", schema: "public" }],
+      columns: [{ name: "id", dataType: "int", nullable: false }],
+      catalog: {},
+      capabilities: NO_CAPS,
+    });
+    await mgr.addConnection(
+      makeCfg({ id: "dbx08t2a", driver: "mysql" }),
+      "p",
+    );
+    await mgr.setActive("dbx08t2a");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    const cats = await provider.getChildren(schemas[0]);
+    expect(cats.map((c) => c.label)).toEqual(["Tables", "Views", "Routines"]);
+
+    const tables = await provider.getChildren(cats[0]);
+    const tableChildren = await provider.getChildren(tables[0]);
+    expect(tableChildren.map((c) => c.label)).toEqual(["id"]);
+
+    expect(adapter.catalog?.listIndexes).not.toHaveBeenCalled();
+    expect(adapter.catalog?.listConstraints).not.toHaveBeenCalled();
+    expect(adapter.catalog?.listTriggers).not.toHaveBeenCalled();
+    expect(adapter.catalog?.listSequences).not.toHaveBeenCalled();
+    expect(adapter.catalog?.rowCount).not.toHaveBeenCalled();
+
+    // (b) Catalog structurally present with NO declaration at all.
+    const legacy = setupTree({
+      schemas: [{ name: "public" }],
+      tables: [{ name: "users", schema: "public" }],
+      catalog: {},
+    });
+    await legacy.mgr.addConnection(makeCfg({ id: "dbx08t2b" }), "p");
+    await legacy.mgr.setActive("dbx08t2b");
+    const providerB = new SchemaTreeProvider(legacy.mgr);
+
+    const rootB = await providerB.getChildren(undefined);
+    const schemasB = await providerB.getChildren(rootB[0]);
+    const catsB = await providerB.getChildren(schemasB[0]);
+    expect(catsB.map((c) => c.label)).toEqual(["Tables", "Views", "Routines"]);
+
+    const tablesB = await providerB.getChildren(catsB[0]);
+    const childrenB = await providerB.getChildren(tablesB[0]);
+    expect(childrenB.map((c) => c.label)).toEqual([]);
+    expect(legacy.adapter.catalog?.listIndexes).not.toHaveBeenCalled();
+    expect(legacy.adapter.catalog?.listSequences).not.toHaveBeenCalled();
+  });
+
+  it("generic navigation and estimate batching remain available without catalog", async () => {
+    const estimateTableRowsBatchImpl = vi.fn(
+      async (schema: string, tables: readonly string[]) => {
+        const m = new Map<string, number | null>();
+        for (const t of tables) m.set(t, 250);
+        void schema;
+        return m;
+      },
+    );
+    const { mgr, adapter } = setupTree({
+      schemas: [{ name: "public" }],
+      tables: [
+        { name: "users", schema: "public" },
+        { name: "orders", schema: "public" },
+      ],
+      views: [{ name: "v_active", schema: "public" }],
+      routines: [{ name: "do_thing", kind: "procedure", schema: "public" }],
+      columns: [{ name: "id", dataType: "int", nullable: false }],
+      capabilities: NO_CAPS,
+      estimateTableRowsBatchImpl: estimateTableRowsBatchImpl as unknown as (
+        schema: string,
+        tables: readonly string[],
+      ) => Promise<Map<string, number | null>>,
+    });
+    await mgr.addConnection(
+      makeCfg({ id: "dbx08t3", driver: "mysql" }),
+      "p",
+    );
+    await mgr.setActive("dbx08t3");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    const cats = await provider.getChildren(schemas[0]);
+    expect(cats.map((c) => c.label)).toEqual(["Tables", "Views", "Routines"]);
+
+    const tables = await provider.getChildren(cats[0]);
+    expect(tables.map((t) => t.label)).toEqual(["users", "orders"]);
+
+    // Views and routines keep generic navigation.
+    const views = await provider.getChildren(cats[1]);
+    expect(views.map((v) => v.label)).toEqual(["v_active"]);
+    const routines = await provider.getChildren(cats[2]);
+    expect(routines.map((r) => r.label)).toEqual(["do_thing"]);
+
+    // Table columns render.
+    const tableChildren = await provider.getChildren(tables[0]);
+    expect(tableChildren.map((c) => c.label)).toEqual(["id"]);
+
+    await waitMicrotasks();
+    await waitMicrotasks();
+    // Estimate batching fired for the schema's tables; exact rowCount never.
+    expect(adapter.estimateTableRowsBatch).toHaveBeenCalledWith(
+      "public",
+      expect.arrayContaining(["users", "orders"]),
+    );
+    expect(tables[0].description).toBe(formatRows(250));
   });
 });

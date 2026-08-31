@@ -50,7 +50,9 @@ function makeDoc(text: string): vscode.TextDocument {
 
 function makeProvider(tables: TableInfo[], columns: ColumnInfo[], isPostgres = true) {
   const cache = makeCacheMock(tables, columns);
-  const resolver = createCatalogResolver(cache, { isPostgres: () => isPostgres });
+  const resolver = createCatalogResolver(cache, {
+    declaresCatalog: () => isPostgres,
+  });
   const document = new SqlCatalogDocumentProvider();
   const provider = new SqlNavigationProvider({ cache, catalog: resolver, documentProvider: document });
   return { provider, document };

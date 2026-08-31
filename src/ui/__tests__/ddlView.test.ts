@@ -68,6 +68,14 @@ vi.mock("vscode", () => ({
 
 import * as vscode from "vscode";
 import { DdlViewProviderImpl, openDdl, registerDdlView } from "../ddlView";
+import type { AdapterCapabilities } from "../../adapters/types";
+
+const PG_CAPS: AdapterCapabilities = {
+  catalog: true,
+  objectDdl: true,
+  tableDdl: true,
+  admin: true,
+};
 
 function makeCfg(overrides: Partial<ConnectionConfig> = {}): ConnectionConfig {
   return {
@@ -90,14 +98,22 @@ interface AdapterLookup {
 function makeAdapter(opts: {
   ddlImpl?: (kind: "view" | "routine" | "trigger", name: string, schema?: string) => Promise<string>;
   catalog?: boolean;
+  /** DBX-08 — explicit capability declaration; undefined = legacy adapter. */
+  capabilities?: Partial<AdapterCapabilities>;
+  /** DBX-08 — declare objectDdl true but omit the callable objectDdl API. */
+  missingDdlApi?: boolean;
 } = {}) {
+  const catalog = opts.catalog === false ? undefined : {
+    objectDdl: opts.missingDdlApi
+      ? undefined
+      : vi.fn().mockImplementation(
+          opts.ddlImpl ?? ((kind: "string", name: string) =>
+            Promise.resolve(`CREATE ${kind.toUpperCase()} ${name};`)),
+        ),
+  };
   return {
-    catalog: opts.catalog === false ? undefined : {
-      objectDdl: vi.fn().mockImplementation(
-        opts.ddlImpl ?? ((kind: "string", name: string) =>
-          Promise.resolve(`CREATE ${kind.toUpperCase()} ${name};`)),
-      ),
-    },
+    catalog,
+    capabilities: opts.capabilities,
   };
 }
 
@@ -127,6 +143,7 @@ describe("DdlViewProvider — TASK-AF-002 vsdb-ddl virtual document", () => {
   it("Test #7 — openDdl(view) caches DDL from catalog.objectDdl; provideTextDocumentContent returns it", async () => {
     const adapter = makeAdapter({
       ddlImpl: async (_kind, name) => `CREATE VIEW ${name} AS SELECT 1;`,
+      capabilities: PG_CAPS,
     });
     const mgr = makeMgr(adapter);
     const provider = new DdlViewProviderImpl({ mgr, showDocument: (async (uri: vscode.Uri) => { state.shownDocuments.push({ uri }); return {}; }) as never });
@@ -151,6 +168,7 @@ describe("DdlViewProvider — TASK-AF-002 vsdb-ddl virtual document", () => {
       ddlImpl: async () => {
         throw new Error("permission denied");
       },
+      capabilities: PG_CAPS,
     });
     const mgr = makeMgr(adapter);
     const provider = new DdlViewProviderImpl({ mgr, showDocument: vi.fn().mockResolvedValue({}) as never });
@@ -168,8 +186,16 @@ describe("DdlViewProvider — TASK-AF-002 vsdb-ddl virtual document", () => {
     expect(cached.toLowerCase()).toContain("error");
   });
 
-  it("Test #9 — adapter without catalog → cached document explains Postgres-only limitation", async () => {
-    const adapter = makeAdapter({ catalog: false });
+  it("Test #9 — objectDdl not declared → cached document explains unsupported object DDL", async () => {
+    const adapter = makeAdapter({
+      catalog: false,
+      capabilities: {
+        catalog: false,
+        objectDdl: false,
+        tableDdl: false,
+        admin: false,
+      },
+    });
     const mgr = makeMgr(adapter);
     const provider = new DdlViewProviderImpl({ mgr, showDocument: vi.fn().mockResolvedValue({}) as never });
 
@@ -182,7 +208,112 @@ describe("DdlViewProvider — TASK-AF-002 vsdb-ddl virtual document", () => {
     await openDdl(provider, node as never);
 
     const cached = Array.from(provider.cache.values())[0];
-    expect(cached.toLowerCase()).toContain("postgres");
+    expect(cached.toLowerCase()).toContain("object ddl");
+    expect(cached).not.toMatch(/postgres-only/i);
+  });
+});
+
+// =============================================================================
+// TASK-DBX08-002 — object-DDL retrieval gated by declared capability.
+// =============================================================================
+
+describe("DdlViewProvider — TASK-DBX08-002 objectDdl capability gate", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.providers.clear();
+    state.registeredCommands.clear();
+    state.openedDocuments = [];
+    state.shownDocuments = [];
+    state.infoMessages = [];
+    state.errorMessages = [];
+    state.workspaceEdits = [];
+  });
+
+  function makeNode(label = "v_active") {
+    return {
+      label,
+      contextValue: "view",
+      meta: { connection: makeCfg({ id: "ddlcap" }), schema: "public", objectName: label },
+    };
+  }
+
+  it("supported retrieval: declared objectDdl plus real-shaped catalog resolves DDL", async () => {
+    const adapter = makeAdapter({
+      ddlImpl: async (kind, name) => `CREATE ${kind.toUpperCase()} ${name};`,
+      capabilities: PG_CAPS,
+    });
+    const mgr = makeMgr(adapter);
+    const provider = new DdlViewProviderImpl({ mgr, showDocument: vi.fn().mockResolvedValue({}) as never });
+
+    await openDdl(provider, makeNode() as never);
+
+    const cached = Array.from(provider.cache.values())[0];
+    expect(cached).toContain("CREATE VIEW v_active");
+  });
+
+  it("Open DDL reports unsupported object DDL without throwing (false declaration)", async () => {
+    const adapter = makeAdapter({
+      capabilities: {
+        catalog: false,
+        objectDdl: false,
+        tableDdl: false,
+        admin: false,
+      },
+    });
+    const mgr = makeMgr(adapter);
+    const showDocument = vi.fn().mockResolvedValue({});
+    const provider = new DdlViewProviderImpl({
+      mgr,
+      showDocument: showDocument as never,
+    });
+
+    await openDdl(provider, makeNode("v_mysql") as never);
+
+    const cached = Array.from(provider.cache.values())[0];
+    expect(typeof cached).toBe("string");
+    expect(cached.length).toBeGreaterThan(0);
+    expect(cached.toLowerCase()).toContain("object ddl");
+    expect(cached.toLowerCase()).not.toContain("postgres-only");
+    // Stable: a second open of the same node yields the identical document.
+    provider.refreshUri({ toString: () => Array.from(provider.cache.keys())[0] } as never);
+    await openDdl(provider, makeNode("v_mysql") as never);
+    expect(Array.from(provider.cache.values())[0]).toBe(cached);
+    // No retrieval side effect happened.
+    const objectDdlSpy = (adapter.catalog as { objectDdl?: unknown } | undefined)?.objectDdl;
+    expect(objectDdlSpy === undefined || (objectDdlSpy as ReturnType<typeof vi.fn>).mock.calls.length === 0).toBe(true);
+  });
+
+  it("Open DDL reports unsupported object DDL without throwing (missing declaration)", async () => {
+    // Legacy adapter shape: catalog object present but NO capabilities at all.
+    const adapter = {
+      catalog: {
+        objectDdl: vi.fn(async () => "CREATE VIEW v AS SELECT 1;"),
+      },
+    };
+    const mgr = makeMgr(adapter);
+    const provider = new DdlViewProviderImpl({ mgr, showDocument: vi.fn().mockResolvedValue({}) as never });
+
+    await openDdl(provider, makeNode("v_legacy") as never);
+
+    const cached = Array.from(provider.cache.values())[0];
+    expect(cached.toLowerCase()).toContain("object ddl");
+    expect(adapter.catalog.objectDdl).not.toHaveBeenCalled();
+  });
+
+  it("declared objectDdl with missing callable API caches an unavailable document, no throw", async () => {
+    const adapter = makeAdapter({
+      capabilities: PG_CAPS,
+      missingDdlApi: true,
+    });
+    const mgr = makeMgr(adapter);
+    const provider = new DdlViewProviderImpl({ mgr, showDocument: vi.fn().mockResolvedValue({}) as never });
+
+    await openDdl(provider, makeNode("v_broken") as never);
+
+    const cached = Array.from(provider.cache.values())[0];
+    expect(typeof cached).toBe("string");
+    expect(cached.length).toBeGreaterThan(0);
+    expect(cached.toLowerCase()).toContain("unavailable");
   });
 });
 

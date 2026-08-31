@@ -73,3 +73,95 @@ No `lint` script exists in `package.json`.
 Use the explicit declaration as the authorization decision and the optional `catalog` object only as a defensive execution check. Do not delete the generic `listViews`, `listRoutines`, `listColumns`, or `estimateTableRowsBatch` paths: MySQL/MSSQL implement them and their current navigation must remain useful.
 
 ---
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT:
+
+```
+# npx vitest run (4 focused files) against pre-task implementation:
+ Test Files  4 failed (4)
+      Tests  13 failed | 26 passed (39)
+
+schemaCache.test.ts (2 failed):
+  FAIL ... > false/absent declaration admits nothing and makes no catalog calls
+    AssertionError: expected true to be false // Object.is equality
+    (hasCatalog() returned true for a structural catalog object with no/false declaration)
+  FAIL ... > objectDdl declaration false skips catalog.objectDdl even when catalog is declared
+    AssertionError: expected 'CREATE OBJECT ...' to be undefined
+    (getObjectDdl ran catalog.objectDdl with objectDdl declared false)
+
+schemaTreeCatalog.test.ts (1 failed):
+  FAIL ... > catalog consumers fail closed without catalog calls (false/missing declaration)
+    AssertionError: expected "spy" to not be called at all, but actually been called 1 times
+    1st spy call: Array ["public", "users"]
+    (getCategoriesForSchema/getTableChildren probed catalog.listSequences/listIndexes
+     despite capabilities.catalog === false / absent)
+
+sqlCatalog.test.ts (6 failed — all tests):
+  TypeError: options.isPostgres is not a function
+  (resolver option renamed to declaresCatalog in tests; production still required isPostgres)
+
+ddlView.test.ts (4 failed):
+  FAIL Test #9 — objectDdl not declared → ...
+    AssertionError: expected 'Postgres-only feature\n\n"Open DDL" r…' to contain 'object DDL'
+  FAIL false declaration →
+    AssertionError: expected 'create view v_mysql;' to contain 'object ddl'
+    (openDdl RETRIEVED DDL with objectDdl declared false)
+  FAIL missing declaration →
+    AssertionError: expected 'CREATE VIEW v AS SELECT 1;' to contain 'object DDL'
+    (legacy adapter with structural catalog but no capabilities retrieved DDL)
+  FAIL declared objectDdl with missing callable API →
+    AssertionError: expected '-- vsdb-ddl: failed to load ddl\n-- c…' to contain 'unavailable'
+    (defensive path routed into the generic catalog error document instead of an
+     accurate unavailable document)
+```
+
+Verification Output:
+
+```
+# 1. npx vitest run src/ui/__tests__/schemaCache.test.ts src/ui/__tests__/schemaTreeCatalog.test.ts src/ui/__tests__/sqlCatalog.test.ts src/ui/__tests__/ddlView.test.ts
+ ✓ src/ui/__tests__/sqlCatalog.test.ts  (6 tests) 4ms
+ ✓ src/ui/__tests__/ddlView.test.ts  (9 tests) 3ms
+ ✓ src/ui/__tests__/schemaCache.test.ts  (14 tests) 7ms
+ ✓ src/ui/__tests__/schemaTreeCatalog.test.ts  (10 tests) 18ms
+ Test Files  4 passed (4)
+      Tests  39 passed (39)
+ Start at  03:56:35    Duration  319ms
+
+# 2. npm run typecheck
+ > vsdb@1.28.0 typecheck
+ > tsc --noEmit
+ (exit 0, no output)
+
+# 3. npm run compile
+ ⚡ Done in 142ms
+ esbuild: build complete
+
+# 4. npx vitest run src/adapters/__tests__/capabilities.test.ts  (regression net)
+ ✓ src/adapters/__tests__/capabilities.test.ts  (3 tests) 1ms
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+
+# 5. Wider regression net (beyond required minimum):
+ npx vitest run src/ui/__tests__/sqlCompletionProvider.test.ts src/ui/__tests__/sqlNavigationProvider.test.ts src/ui/__tests__/schemaTree.test.ts src/extension.test.ts
+ ✓ 4 files, 152 passed (152)
+
+ npm test  (full suite)
+ Test Files  213 passed | 1 skipped (214)
+      Tests  2793 passed | 2 skipped (2795)
+ (skip count is pre-existing on main)
+```
+
+Status: PASS
+
+Note:
+- Implementation: schemaCache gates `hasCatalog`/`getConstraints`/`getSequences` on declared `catalog` and `getObjectDdl` on declared `objectDdl` (with defensive missing-API fallback), never `adapter.catalog !== undefined`. schemaTree gates the Sequences category, table catalog categories, all four leaf loaders, and the exact `catalog.rowCount` path on `hasAdapterCapability(adapter, "catalog")`; MySQL/MSSQL keep Tables/Views/Routines/Columns and `estimateTableRowsBatch`. ddlView's `resolveDdl` admits `catalog.objectDdl(kind, name, schema)` only on declared `objectDdl`; false/missing → stable "Object DDL is not supported by this connection's database" document; declared-but-missing API → "Object DDL is unavailable" document. sqlCatalog option renamed `isPostgres` → `declaresCatalog: () => boolean | Promise<boolean>` (awaited); both extension.ts call sites now resolve the active adapter and use `hasAdapterCapability(..., "catalog")` — that is the only extension.ts change (plus the one-line import).
+- `sqlNavigationProvider.test.ts` was minimally amended (resolver option key in its fixture) because it constructs a real `createCatalogResolver` and would otherwise throw TypeError; it is not in the task's four mapped test files.
+- No `lint` script exists in package.json (per task/plan); typecheck+compile cover static checks.
+- Full-suite skip (1 file / 2 tests) is pre-existing on main @ b174ec9, not introduced here.
+- No git add/commit/push performed; files left in the worktree.

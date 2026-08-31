@@ -19,6 +19,7 @@ import type { ConnectionConfig } from "../config/types";
 import type { ConnectionManager } from "../core/connectionManager";
 import { assignColor, groupConnections } from "../core/connectionGroups";
 import type { DbAdapter } from "../adapters/types";
+import { hasAdapterCapability } from "../adapters/types";
 
 
 /** Icon theo driver — giống DataGrip: mỗi DB type có icon riêng. */
@@ -417,12 +418,12 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
         meta: { connection: conn, schema, category: "routines" },
       },
     ];
-    // TASK-AF-002 — Sequences category chỉ xuất hiện khi adapter có catalog
-    // (Postgres) AND listSequences trả về non-empty. Catalog thiếu / query
-    // lỗi → omit Sequences, không throw (try/catch nuốt).
+    // TASK-AF-002 — Sequences category chỉ xuất hiện khi adapter DECLARE
+    // catalog capability (DBX-08) AND listSequences trả về non-empty.
+    // Declaration thiếu/false / query lỗi → omit Sequences, không throw.
     try {
       const adapter = await this.getAdapterFor(conn);
-      if (adapter.catalog) {
+      if (hasAdapterCapability(adapter, "catalog") && adapter.catalog) {
         const seqs = await adapter.catalog.listSequences(schema);
         if (seqs.length > 0) {
           out.push({
@@ -646,12 +647,14 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
 
     this.getAdapterFor(conn)
       .then((adapter) => {
-        // TASK-AF-002 — Khi adapter có `catalog` (Postgres), dùng
+        // TASK-AF-002 — Khi adapter DECLARE `catalog` (DBX-08: Postgres), dùng
         // `catalog.rowCount` (exact count từ pg_class.reltuples) thay vì
         // `estimateTableRowsBatch` (planner estimate, có thể stale cho
         // tables chưa VACUUM/ANALYZE). Mỗi table vẫn cache qua cùng
         // `rowCountCache` namespace nên các lần load sau đều cache-hit.
-        if (adapter.catalog) {
+        // DBX-08 — admission là declared capability, không phải optional
+        // object presence; non-catalog adapters giữ estimate batching.
+        if (hasAdapterCapability(adapter, "catalog") && adapter.catalog) {
           return this.fetchRowCountsViaCatalog(
             adapter.catalog,
             pendingNodes,
@@ -743,7 +746,10 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
     let catalog: DbAdapter["catalog"] | undefined;
     try {
       const adapter = await this.getAdapterFor(conn);
-      catalog = adapter.catalog;
+      // DBX-08 — catalog categories chỉ khi adapter DECLARE catalog.
+      catalog = hasAdapterCapability(adapter, "catalog")
+        ? adapter.catalog
+        : undefined;
     } catch {
       return columns;
     }
@@ -851,7 +857,8 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
     }
     try {
       const adapter = await this.getAdapterFor(conn);
-      if (!adapter.catalog) return [];
+      // DBX-08 — admission by declared capability, never optional-object presence.
+      if (!hasAdapterCapability(adapter, "catalog") || !adapter.catalog) return [];
       const raw = await adapter.catalog.listIndexes(schema, tableName);
       const data: VsdbNode[] = raw.map((info) => ({
         label: info.name,
@@ -889,7 +896,8 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
     }
     try {
       const adapter = await this.getAdapterFor(conn);
-      if (!adapter.catalog) return [];
+      // DBX-08 — admission by declared capability, never optional-object presence.
+      if (!hasAdapterCapability(adapter, "catalog") || !adapter.catalog) return [];
       const raw = await adapter.catalog.listConstraints(schema, tableName);
       const data: VsdbNode[] = raw.map((info) => ({
         label: info.name,
@@ -929,7 +937,8 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
     }
     try {
       const adapter = await this.getAdapterFor(conn);
-      if (!adapter.catalog) return [];
+      // DBX-08 — admission by declared capability, never optional-object presence.
+      if (!hasAdapterCapability(adapter, "catalog") || !adapter.catalog) return [];
       const raw = await adapter.catalog.listTriggers(schema, tableName);
       const data: VsdbNode[] = raw.map((info) => ({
         label: info.name,
@@ -966,7 +975,8 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
     }
     try {
       const adapter = await this.getAdapterFor(conn);
-      if (!adapter.catalog) return [];
+      // DBX-08 — admission by declared capability, never optional-object presence.
+      if (!hasAdapterCapability(adapter, "catalog") || !adapter.catalog) return [];
       const raw = await adapter.catalog.listSequences(schema);
       const data: VsdbNode[] = raw.map((info) => ({
         label: info.name,

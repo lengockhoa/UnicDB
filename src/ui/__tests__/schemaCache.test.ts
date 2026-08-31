@@ -9,6 +9,7 @@ import type {
   TableInfo,
   ViewInfo,
 } from "../../adapters/types";
+import { hasAdapterCapability } from "../../adapters/types";
 import { SchemaCache } from "../schemaCache";
 
 function adapterWith(listTables: ReturnType<typeof vi.fn>): DbAdapter {
@@ -120,6 +121,13 @@ describe("SchemaCache — DBX-02 catalog capability", () => {
       listViews: vi.fn(async () => []),
       listRoutines: vi.fn(async () => []),
       catalog,
+      // DBX-08 — the declared capability matrix is the admission decision.
+      capabilities: {
+        catalog: true,
+        objectDdl: true,
+        tableDdl: true,
+        admin: true,
+      },
     } as unknown as DbAdapter;
     const cache = new SchemaCache(() => adapter);
     const first = await cache.getConstraints("public", "orders");
@@ -228,5 +236,135 @@ describe("SchemaCache — TASK-RLX-002 single-flight coalescing", () => {
     listTables.mockImplementation(async () => fresh);
     await expect(cache.getTables("public")).resolves.toBe(fresh);
     expect(listTables).toHaveBeenCalledTimes(2);
+  });
+});
+
+// =============================================================================
+// TASK-DBX08-002 — catalog/cache admission by declared capability.
+// =============================================================================
+
+function makeCatalog(viFns = true): CatalogApi {
+  const fns = {
+    listIndexes: vi.fn(async () => []),
+    listConstraints: vi.fn(async () => []),
+    listTriggers: vi.fn(async () => []),
+    listSequences: vi.fn(async () => []),
+    rowCount: vi.fn(async () => 0),
+    objectDdl: vi.fn(async () => "CREATE OBJECT ..."),
+  };
+  if (!viFns) {
+    // Non-tracked structural shape (plain async fns) to prove the gate is
+    // not merely absence of the methods.
+    for (const key of Object.keys(fns) as Array<keyof CatalogApi>) {
+      (fns as Record<string, unknown>)[key] = async () => [];
+    }
+  }
+  return fns;
+}
+
+describe("SchemaCache — TASK-DBX08-002 declared-capability admission", () => {
+  it("declared catalog capability keeps cache catalog results", async () => {
+    const sequences = [{ name: "orders_id_seq", schema: "public", dataType: "bigint" }];
+    const constraints: TableConstraintInfo[] = [
+      {
+        name: "orders_user_id_fkey",
+        type: "fk",
+        columns: ["user_id"],
+        fkTarget: { schema: "public", table: "users", columns: ["id"] },
+      },
+    ];
+    const catalog = makeCatalog();
+    catalog.listSequences = vi.fn(async () => sequences);
+    catalog.listConstraints = vi.fn(async () => constraints);
+    catalog.objectDdl = vi.fn(async () => "CREATE VIEW public.v AS SELECT 1;");
+    const adapter: DbAdapter = {
+      catalog,
+      capabilities: {
+        catalog: true,
+        objectDdl: true,
+        tableDdl: true,
+        admin: true,
+      },
+    } as unknown as DbAdapter;
+    const cache = new SchemaCache(() => adapter);
+
+    expect(await cache.hasCatalog()).toBe(true);
+    expect(await cache.getSequences("public")).toEqual(sequences);
+    expect(await cache.getConstraints("public", "orders")).toEqual(constraints);
+    expect(
+      await cache.getObjectDdl("view", "public", "v_active"),
+    ).toBe("CREATE VIEW public.v AS SELECT 1;");
+    expect(catalog.listSequences).toHaveBeenCalledWith("public");
+    expect(catalog.listConstraints).toHaveBeenCalledWith("public", "orders");
+    expect(catalog.objectDdl).toHaveBeenCalledWith("view", "v_active", "public");
+  });
+
+  it("false/absent declaration admits nothing and makes no catalog calls", async () => {
+    // (a) Explicit false declarations with a structurally present catalog.
+    const catalogFalse = makeCatalog();
+    const adapterFalse: DbAdapter = {
+      catalog: catalogFalse,
+      capabilities: {
+        catalog: false,
+        objectDdl: false,
+        tableDdl: false,
+        admin: false,
+      },
+    } as unknown as DbAdapter;
+    const cacheFalse = new SchemaCache(() => adapterFalse);
+
+    // (b) Structural catalog object with NO capabilities at all (legacy).
+    const catalogLegacy = makeCatalog();
+    const adapterLegacy = { catalog: catalogLegacy } as unknown as DbAdapter;
+    const cacheLegacy = new SchemaCache(() => adapterLegacy);
+
+    for (const cache of [cacheFalse, cacheLegacy]) {
+      expect(await cache.hasCatalog()).toBe(false);
+      expect(await cache.getConstraints("public", "orders")).toEqual([]);
+      expect(await cache.getSequences("public")).toEqual([]);
+      expect(await cache.getObjectDdl("view", "public", "v")).toBeUndefined();
+    }
+    for (const catalog of [catalogFalse, catalogLegacy]) {
+      expect(catalog.listIndexes).not.toHaveBeenCalled();
+      expect(catalog.listConstraints).not.toHaveBeenCalled();
+      expect(catalog.listTriggers).not.toHaveBeenCalled();
+      expect(catalog.listSequences).not.toHaveBeenCalled();
+      expect(catalog.rowCount).not.toHaveBeenCalled();
+      expect(catalog.objectDdl).not.toHaveBeenCalled();
+    }
+    expect(hasAdapterCapability(adapterLegacy, "catalog")).toBe(false);
+  });
+
+  it("objectDdl declaration false skips catalog.objectDdl even when catalog is declared", async () => {
+    // Catalog capability true but objectDdl false: constraints/sequences still
+    // work, but DDL retrieval is gated by its OWN declaration.
+    const catalog = makeCatalog();
+    const adapter: DbAdapter = {
+      catalog,
+      capabilities: {
+        catalog: true,
+        objectDdl: false,
+        tableDdl: false,
+        admin: false,
+      },
+    } as unknown as DbAdapter;
+    const cache = new SchemaCache(() => adapter);
+    expect(await cache.getObjectDdl("routine", "public", "do_thing")).toBeUndefined();
+    expect(catalog.objectDdl).not.toHaveBeenCalled();
+  });
+
+  it("declared objectDdl with missing callable API returns undefined defensively", async () => {
+    // Malformed adapter: declares objectDdl true but has no catalog at all —
+    // a contract violation in production, but the cache must not throw.
+    const adapter = {
+      capabilities: {
+        catalog: true,
+        objectDdl: true,
+        tableDdl: false,
+        admin: false,
+      },
+    } as unknown as DbAdapter;
+    const cache = new SchemaCache(() => adapter);
+    expect(await cache.getObjectDdl("view", "public", "v")).toBeUndefined();
   });
 });

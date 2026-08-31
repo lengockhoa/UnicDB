@@ -21,6 +21,7 @@ import type {
   TableInfo,
   ViewInfo,
 } from "../adapters/types";
+import { hasAdapterCapability } from "../adapters/types";
 
 /** Provider adapter (lazy) — trả null khi không có active connection. */
 export type SchemaAdapterProvider = () =>
@@ -146,10 +147,10 @@ export class SchemaCache {
     );
   }
 
-  /** True iff the resolved adapter exposes the optional catalog capability. */
+  /** True iff the resolved adapter DECLARES the catalog capability (DBX-08). */
   async hasCatalog(): Promise<boolean> {
     const adapter = await this.resolveAdapter();
-    return adapter?.catalog !== undefined;
+    return hasAdapterCapability(adapter, "catalog");
   }
 
   /** Views for one schema (cached). `undefined` schema → no catalog data. */
@@ -200,8 +201,13 @@ export class SchemaCache {
     const key = `${schema}.${table}`;
     const existing = this.constraintsByKey.get(key) ?? null;
     const adapter = await this.resolveAdapter();
-    if (!adapter || !adapter.catalog) return this.stale(existing) ?? [];
-    const catalog = adapter.catalog;
+    if (!hasAdapterCapability(adapter, "catalog")) {
+      return this.stale(existing) ?? [];
+    }
+    // Declaration is the admission decision; the optional object is only a
+    // defensive execution seam (DBX-08).
+    const catalog = adapter!.catalog;
+    if (!catalog) return this.stale(existing) ?? [];
     return (
       (await this.fetchEntry(
         `constraints:${key}`,
@@ -218,8 +224,11 @@ export class SchemaCache {
   async getSequences(schema: string): Promise<SequenceInfo[]> {
     const existing = this.sequencesBySchema.get(schema) ?? null;
     const adapter = await this.resolveAdapter();
-    if (!adapter || !adapter.catalog) return this.stale(existing) ?? [];
-    const catalog = adapter.catalog;
+    if (!hasAdapterCapability(adapter, "catalog")) {
+      return this.stale(existing) ?? [];
+    }
+    const catalog = adapter!.catalog;
+    if (!catalog) return this.stale(existing) ?? [];
     return (
       (await this.fetchEntry(
         `sequences:${schema}`,
@@ -245,10 +254,17 @@ export class SchemaCache {
     const key = `${kind}:${schema}.${name}`;
     const existing = this.ddlByKey.get(key) ?? null;
     const adapter = await this.resolveAdapter();
-    if (!adapter || !adapter.catalog) {
+    // Object DDL is gated by its OWN declaration (DBX-08) — catalog presence
+    // alone never admits DDL retrieval.
+    if (!hasAdapterCapability(adapter, "objectDdl")) {
       return existing ? (existing.data ?? undefined) : undefined;
     }
-    const catalog = adapter.catalog;
+    const catalog = adapter!.catalog;
+    if (!catalog || typeof catalog.objectDdl !== "function") {
+      // Defensive: declared but the matching API is missing (contract
+      // violation in production) → unavailable, never a TypeError.
+      return existing ? (existing.data ?? undefined) : undefined;
+    }
     return await this.fetchEntryDdl(
       `ddl:${key}`,
       () => catalog.objectDdl(kind, name, schema),

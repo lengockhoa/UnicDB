@@ -4,9 +4,11 @@
 // around SchemaCache. NO vscode / NO adapter imports. All DBX-02 catalog
 // rows are produced from values the cache already holds.
 //
-// Capability gate: every method early-returns `[]` / `undefined` when
-//   1. `options.isPostgres()` returns false (MySQL/MSSQL), or
-//   2. `cache.hasCatalog()` returns false (Postgres adapter without catalog).
+// Capability gate (DBX-08): every method early-returns `[]` / `undefined` when
+//   1. `options.declaresCatalog()` returns false (no declared catalog
+//      capability for the active adapter), or
+//   2. `cache.hasCatalog()` returns false (adapter without the declared
+//      capability — defensive re-check at the cache boundary).
 // The resolver is the sole FK input for TASK-DBX02-002/003/004. Foreign-key
 // rows are TABLE-SCOPED — `listForeignKeys(schema, table)` is never invoked
 // for tables the caller did not ask about.
@@ -84,8 +86,14 @@ export interface CatalogResolver {
 }
 
 export interface CatalogResolverOptions {
-  /** True iff the active driver is Postgres. */
-  isPostgres: () => boolean;
+  /**
+   * DBX-08 — declared-capability predicate. True only when the active
+   * adapter DECLARES the `catalog` capability (checked via
+   * `hasAdapterCapability` at the wiring site). Never a driver-identity
+   * check; false/missing declarations keep every catalog method silent.
+   * Async allowed: resolving the active adapter may require I/O.
+   */
+  declaresCatalog: () => boolean | Promise<boolean>;
 }
 
 // ---- Default schema for non-scoped lookups ---------------------------------
@@ -101,7 +109,7 @@ const PUBLIC_SCHEMA = "public";
 
 /**
  * Build a CatalogResolver. Each method early-returns empty/undefined when
- * `isPostgres()` is false OR `cache.hasCatalog()` is false — no adapter
+ * `declaresCatalog()` is false OR `cache.hasCatalog()` is false — no adapter
  * calls are made in that case. Foreign-key lookup is always table-scoped.
  */
 export function createCatalogResolver(
@@ -110,7 +118,7 @@ export function createCatalogResolver(
 ): CatalogResolver {
   return {
     async listRootRows(): Promise<readonly CatalogRootRow[]> {
-      if (!options.isPostgres() || !(await cache.hasCatalog())) return [];
+      if (!(await options.declaresCatalog()) || !(await cache.hasCatalog())) return [];
       const [views, routines, sequences] = await Promise.all([
         cache.getViews(PUBLIC_SCHEMA),
         cache.getRoutines(PUBLIC_SCHEMA),
@@ -144,7 +152,7 @@ export function createCatalogResolver(
       schema: string,
       table: string,
     ): Promise<readonly CatalogForeignKeyRow[]> {
-      if (!options.isPostgres() || !(await cache.hasCatalog())) return [];
+      if (!(await options.declaresCatalog()) || !(await cache.hasCatalog())) return [];
       const constraints = await cache.getConstraints(schema, table);
       const rows: CatalogForeignKeyRow[] = [];
       for (const c of constraints) {
@@ -170,7 +178,7 @@ export function createCatalogResolver(
       schema: string,
       name: string,
     ): Promise<string | undefined> {
-      if (!options.isPostgres() || !(await cache.hasCatalog())) {
+      if (!(await options.declaresCatalog()) || !(await cache.hasCatalog())) {
         return undefined;
       }
       return await cache.getObjectDdl(kind, schema, name);

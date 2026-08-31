@@ -1,5 +1,7 @@
 // src/ui/__tests__/sqlCatalog.test.ts
 // TASK-DBX02-001 §Test Cases #1-#4 — pure vscode-free resolver contract.
+// TASK-DBX08-002 — resolver option is a declared-capability predicate
+// (`declaresCatalog`), no driver-identity gate.
 import { describe, it, expect, vi } from "vitest";
 import type {
   RoutineInfo,
@@ -101,7 +103,9 @@ describe("createCatalogResolver — TASK-DBX02-001 §Test Cases", () => {
       sequences,
       objectDdl,
     });
-    const resolver = createCatalogResolver(cache, { isPostgres: () => true });
+    const resolver = createCatalogResolver(cache, {
+      declaresCatalog: () => true,
+    });
 
     const fks = await resolver.listForeignKeys("public", "orders");
     const rootRows = await resolver.listRootRows();
@@ -147,20 +151,20 @@ describe("createCatalogResolver — TASK-DBX02-001 §Test Cases", () => {
     expect(viewDef).toBe(objectDdl);
   });
 
-  it("#2 returns empty/undefined when isPostgres false OR adapter has no catalog (no catalog calls)", async () => {
-    const cacheNonPg = makeCacheMock({ hasCatalog: false });
-    const nonPgResolver = createCatalogResolver(cacheNonPg, {
-      isPostgres: () => false,
+  it("#2 returns empty/undefined when declaration false OR adapter has no catalog (no catalog calls)", async () => {
+    const cacheUndeclared = makeCacheMock({ hasCatalog: true });
+    const undeclaredResolver = createCatalogResolver(cacheUndeclared, {
+      declaresCatalog: () => false,
     });
-    expect(await nonPgResolver.listForeignKeys("public", "orders")).toEqual([]);
-    expect(await nonPgResolver.listRootRows()).toEqual([]);
+    expect(await undeclaredResolver.listForeignKeys("public", "orders")).toEqual([]);
+    expect(await undeclaredResolver.listRootRows()).toEqual([]);
     expect(
-      await nonPgResolver.getDefinition("view", "public", "user_summary"),
+      await undeclaredResolver.getDefinition("view", "public", "user_summary"),
     ).toBeUndefined();
 
     const cacheNoCatalog = makeCacheMock({ hasCatalog: false });
     const noCatResolver = createCatalogResolver(cacheNoCatalog, {
-      isPostgres: () => true,
+      declaresCatalog: () => true,
     });
     expect(await noCatResolver.listForeignKeys("public", "orders")).toEqual([]);
     expect(await noCatResolver.listRootRows()).toEqual([]);
@@ -168,11 +172,11 @@ describe("createCatalogResolver — TASK-DBX02-001 §Test Cases", () => {
       await noCatResolver.getDefinition("routine", "public", "do_thing"),
     ).toBeUndefined();
 
-    expect(cacheNonPg.getViews).not.toHaveBeenCalled();
-    expect(cacheNonPg.getRoutines).not.toHaveBeenCalled();
-    expect(cacheNonPg.getConstraints).not.toHaveBeenCalled();
-    expect(cacheNonPg.getSequences).not.toHaveBeenCalled();
-    expect(cacheNonPg.getObjectDdl).not.toHaveBeenCalled();
+    expect(cacheUndeclared.getViews).not.toHaveBeenCalled();
+    expect(cacheUndeclared.getRoutines).not.toHaveBeenCalled();
+    expect(cacheUndeclared.getConstraints).not.toHaveBeenCalled();
+    expect(cacheUndeclared.getSequences).not.toHaveBeenCalled();
+    expect(cacheUndeclared.getObjectDdl).not.toHaveBeenCalled();
     expect(cacheNoCatalog.getViews).not.toHaveBeenCalled();
     expect(cacheNoCatalog.getRoutines).not.toHaveBeenCalled();
     expect(cacheNoCatalog.getConstraints).not.toHaveBeenCalled();
@@ -186,7 +190,9 @@ describe("createCatalogResolver — TASK-DBX02-001 §Test Cases", () => {
       objectDdl: originalDdl,
       rejectDdl: true,
     });
-    const resolver = createCatalogResolver(cache, { isPostgres: () => true });
+    const resolver = createCatalogResolver(cache, {
+      declaresCatalog: () => true,
+    });
 
     const first = await resolver.getDefinition(
       "routine",
@@ -233,10 +239,66 @@ describe("createCatalogResolver — TASK-DBX02-001 §Test Cases", () => {
       getObjectDdl: vi.fn(async () => ""),
       invalidate: vi.fn(),
     } as unknown as SchemaCache;
-    const resolver = createCatalogResolver(cache, { isPostgres: () => true });
+    const resolver = createCatalogResolver(cache, {
+      declaresCatalog: () => true,
+    });
 
     await resolver.listForeignKeys("public", "orders");
     expect(requestedKeys).toEqual(["public.orders"]);
     expect(requestedKeys).not.toContain("public.audit_log");
+  });
+});
+
+// =============================================================================
+// TASK-DBX08-002 — declared-capability resolver option.
+// =============================================================================
+
+describe("createCatalogResolver — TASK-DBX08-002 declared capability", () => {
+  it("declared PostgreSQL catalog support preserves resolver results", async () => {
+    const cache = makeCacheMock({
+      views: [{ name: "user_summary", schema: "public" }],
+      routines: [
+        { name: "current_month_revenue", kind: "function", schema: "public" },
+      ],
+      constraints: [
+        {
+          name: "orders_user_id_fkey",
+          type: "fk",
+          columns: ["user_id"],
+          fkTarget: { schema: "public", table: "users", columns: ["id"] },
+        },
+      ],
+      sequences: [
+        { name: "orders_id_seq", schema: "public", dataType: "bigint", lastValue: "42" },
+      ],
+      objectDdl: "CREATE VIEW public.user_summary AS SELECT 1;",
+    });
+    const resolver = createCatalogResolver(cache, {
+      declaresCatalog: () => true,
+    });
+    expect(await resolver.listRootRows()).toHaveLength(3);
+    expect(await resolver.listForeignKeys("public", "orders")).toHaveLength(1);
+    expect(
+      await resolver.getDefinition("view", "public", "user_summary"),
+    ).toBe("CREATE VIEW public.user_summary AS SELECT 1;");
+  });
+
+  it("false/missing declared capability makes no cache catalog calls", async () => {
+    // (a) False declaration.
+    const cacheFalse = makeCacheMock({ hasCatalog: true });
+    const falseResolver = createCatalogResolver(cacheFalse, {
+      declaresCatalog: () => false,
+    });
+    expect(await falseResolver.listRootRows()).toEqual([]);
+    expect(await falseResolver.listForeignKeys("public", "orders")).toEqual([]);
+    expect(
+      await falseResolver.getDefinition("routine", "public", "do_thing"),
+    ).toBeUndefined();
+
+    expect(cacheFalse.getViews).not.toHaveBeenCalled();
+    expect(cacheFalse.getRoutines).not.toHaveBeenCalled();
+    expect(cacheFalse.getConstraints).not.toHaveBeenCalled();
+    expect(cacheFalse.getSequences).not.toHaveBeenCalled();
+    expect(cacheFalse.getObjectDdl).not.toHaveBeenCalled();
   });
 });

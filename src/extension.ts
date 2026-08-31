@@ -3,6 +3,7 @@
 import * as vscode from "vscode";
 import { ConnectionManager } from "./core/connectionManager";
 import { createAdapter } from "./adapters/factory";
+import { hasAdapterCapability } from "./adapters/types";
 import { QueryRunner } from "./core/queryRunner";
 import { ResultsPanel, type SaveContext } from "./ui/resultsPanel";
 import { createStatusBar } from "./ui/statusBar";
@@ -310,7 +311,16 @@ export async function activate(
   const sqlCompletion = new SqlCompletionProvider({
     cache: schemaCache,
     catalog: createCatalogResolver(schemaCache, {
-      isPostgres: () => mgr.getActive()?.driver === "postgres",
+      // DBX-08 — admission is the DECLARED catalog capability of the active
+      // adapter, never `driver === "postgres"`. No active adapter → false.
+      declaresCatalog: async () => {
+        if (!mgr.getActive()) return false;
+        try {
+          return hasAdapterCapability(await mgr.getAdapter(), "catalog");
+        } catch {
+          return false;
+        }
+      },
     }),
     hasConnection: () => mgr.getActive() !== null,
   });
@@ -345,7 +355,16 @@ export async function activate(
   const sqlNavigation = new SqlNavigationProvider({
     cache: schemaCache,
     catalog: createCatalogResolver(schemaCache, {
-      isPostgres: () => mgr.getActive()?.driver === "postgres",
+      // DBX-08 — declared catalog capability of the active adapter (same
+      // predicate as the completion resolver above).
+      declaresCatalog: async () => {
+        if (!mgr.getActive()) return false;
+        try {
+          return hasAdapterCapability(await mgr.getAdapter(), "catalog");
+        } catch {
+          return false;
+        }
+      },
     }),
     documentProvider: catalogDocuments,
   });

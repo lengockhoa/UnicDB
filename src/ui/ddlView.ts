@@ -3,11 +3,13 @@
 //
 // DataGrip parity: a user can right-click a view / routine / trigger in the
 // Schema Explorer and ask "Open DDL". We resolve the DDL via the active
-// connection's `adapter.catalog.objectDdl` (Postgres only; mysql/mssql return
-// a fallback document explaining the limitation), cache it per URI, and
-// expose it through a `vscode.TextDocumentContentProvider` on the URI scheme
-// `vsdb-ddl:`. Documents are read-only by construction (URI scheme is not a
-// filesystem path) and refreshable via `vsdb.refreshDdl`.
+// connection's `adapter.catalog.objectDdl` — admitted ONLY when the adapter
+// DECLARES the `objectDdl` capability (DBX-08); adapters without that
+// declaration receive a fallback document explaining that object DDL is not
+// supported. DDL text is cached per URI and exposed through a
+// `vscode.TextDocumentContentProvider` on the URI scheme `vsdb-ddl:`.
+// Documents are read-only by construction (URI scheme is not a filesystem
+// path) and refreshable via `vsdb.refreshDdl`.
 //
 // Surfaces:
 //   - `DdlViewProvider` — owns the per-URI cache + the `provideTextDocumentContent` impl.
@@ -18,17 +20,24 @@
 //      VsdbNode) + `vsdb.refreshDdl` (no arg).
 import * as vscode from "vscode";
 import type { ConnectionManager } from "../core/connectionManager";
+import type { DbAdapter } from "../adapters/types";
+import { hasAdapterCapability } from "../adapters/types";
 import type { VsdbNode } from "./schemaTree";
 
 const SCHEME = "vsdb-ddl";
-const POSTGRES_ONLY_DOC = `Postgres-only feature
+const UNSUPPORTED_DDL_DOC = `Object DDL is not supported by this connection's database
 
-"Open DDL" requires the \`catalog\` introspection capability, which is only
-implemented for the Postgres driver in this build. Your active driver
-(mysql/mssql) does not provide real-time DDL retrieval.
+"Open DDL" requires the active adapter to declare the \`objectDdl\`
+capability, and this connection's database does not provide real-time
+DDL retrieval for views, routines, or triggers in this build.
 
-If you need DDL diffs for non-Postgres connections, paste the view/routine
+If you need DDL diffs for this connection, paste the view/routine
 definition into a new SQL file manually.`;
+const UNAVAILABLE_DDL_DOC = `Object DDL is unavailable
+
+The active adapter declares the \`objectDdl\` capability but does not
+expose a working DDL retrieval implementation. This is an internal
+contract violation — no DDL can be shown for this object.`;
 const ERROR_DOC_PREFIX = `-- vsdb-ddl: failed to load DDL\n-- `;
 const ERROR_DOC_SUFFIX = `\n\n(The above error was reported by the catalog
 introspection. The view, routine, or trigger may have been dropped, or you
@@ -105,28 +114,35 @@ export class DdlViewProviderImpl implements DdlViewProvider {
   }
 
   /**
-   * Fetch real DDL via the connection's `catalog.objectDdl`. Driver without
-   * catalog → fallback doc explaining Postgres-only limitation. Rejection →
-   * friendly error document, no exception escapes.
+   * Fetch real DDL via the connection's `catalog.objectDdl`, admitted ONLY
+   * by the declared `objectDdl` capability (DBX-08). Adapter without the
+   * declaration → fallback doc explaining unsupported object DDL (never a
+   * driver-identity claim). Declared but the callable API is missing →
+   * defensive unavailable document, no TypeError. Rejection → friendly
+   * error document, no exception escapes.
    */
   private async resolveDdl(node: VsdbNode, kind: DdlKind): Promise<string> {
     const conn = node.meta?.connection;
     if (!conn) {
       return `${ERROR_DOC_PREFIX}no active connection bound to this node.\n`;
     }
-    let adapter: { catalog?: { objectDdl(kind: DdlKind, name: string, schema?: string): Promise<string> } } | undefined;
+    let adapter: DbAdapter | undefined;
     try {
       adapter = await this.mgr.getAdapterFor(conn);
     } catch (err) {
       return errorDocument("could not resolve adapter", err);
     }
-    if (!adapter?.catalog) {
-      return POSTGRES_ONLY_DOC;
+    if (!hasAdapterCapability(adapter, "objectDdl")) {
+      return UNSUPPORTED_DDL_DOC;
+    }
+    const objectDdl = adapter?.catalog?.objectDdl;
+    if (typeof objectDdl !== "function") {
+      return UNAVAILABLE_DDL_DOC;
     }
     const name = node.meta?.objectName ?? node.label;
     const schema = node.meta?.schema;
     try {
-      return await adapter.catalog.objectDdl(kind, name, schema);
+      return await objectDdl.call(adapter!.catalog, kind, name, schema);
     } catch (err) {
       return errorDocument(`catalog.objectDdl(${kind}, ${schema ?? ""}.${name})`, err);
     }
