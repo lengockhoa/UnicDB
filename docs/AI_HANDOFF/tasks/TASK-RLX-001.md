@@ -1,6 +1,6 @@
 # TASK-RLX-001 — Cancel active PostgreSQL non-cursor queries
 
-- Status: `pending_review`
+- Status: `done` (round 2 approved, unic-smart)
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §3
@@ -238,3 +238,14 @@ exit=0
 Scope: only `src/adapters/postgres.ts`, `src/adapters/__tests__/postgres.test.ts`, `src/core/__tests__/queryRunner.test.ts` touched + this report appended. schemaCache / importExecute untouched (parallel fix rounds). No git add/commit/push. INDEX.md untouched.
 
 Status: PASS
+
+### Review round 2 · TASK-RLX-001 · unic-smart
+VERDICT: approved
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN: npx vitest run src/core/__tests__/queryRunner.test.ts src/adapters/__tests__/postgres.test.ts — Test Files 2 passed (2); Tests 49 passed (49); Duration 377ms. npm run typecheck — > vsdb@1.26.0 typecheck; > tsc --noEmit; exit=0.
+FINDINGS:
+  critical: none
+  important: none
+  minor: none
+NEXT_STATUS_FOR_INDEX: done

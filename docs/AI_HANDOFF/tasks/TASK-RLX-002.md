@@ -1,6 +1,6 @@
 # TASK-RLX-002 — Coalesce SchemaCache stale refreshes
 
-- Status: `pending_review`
+- Status: `done` (round 2 approved, unic-smart)
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §3
@@ -154,3 +154,14 @@ Verification: `npx vitest run src/ui/__tests__/schemaCache.test.ts` → 10 passe
 sqlCompletionProvider, sqlNavigationProvider, sqlSemanticTokens → 26 passed (26).
 
 Status: PASS
+
+### Review round 2 · TASK-RLX-002 · unic-smart
+VERDICT: approved
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN: `npx vitest run src/ui/__tests__/schemaCache.test.ts` — 1 file passed, 10 tests passed; `npm run typecheck` — exit 0, no errors
+FINDINGS:
+  critical: none
+  important: none
+  minor: none
+NEXT_STATUS_FOR_INDEX: done | changes_requested
