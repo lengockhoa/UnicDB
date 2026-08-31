@@ -40,6 +40,14 @@ export interface AiChatPanelStep {
   /** Short human label for the step (tool name or action). */
   label: string;
 }
+/** AIX-03: a visible tool-call outcome card. `summary` is SHAPE ONLY
+ * (never row bytes): built by the host from the result text's shape. */
+export interface AiChatPanelToolResult {
+  type: "tool_result";
+  tool: string;
+  status: "ok" | "failed" | "denied";
+  summary: string;
+}
 
 /** Final assistant reply for the current turn. */
 export interface AiChatPanelAssistant {
@@ -145,6 +153,7 @@ export interface AiChatPanelGroundingState {
 export type AiChatPanelHostMessage =
   | AiChatPanelInit
   | AiChatPanelStep
+  | AiChatPanelToolResult
   | AiChatPanelDelta
   | AiChatPanelThought
   | AiChatPanelAssistant

@@ -91,6 +91,16 @@ export interface AgentCallbacks {
    * Fires regardless of abort state — abort gating is the consumer's job
    * (e.g. panel token gate). See docs/AI_HANDOFF/tasks/TASK-002.md. */
   onToolCall?(call: ToolCall): void;
+  /** AIX-03: fires once per executed tool call, in order, AFTER
+   * executeToolCall resolves. status "ok" for any non-throwing execute,
+   * "failed" when execute threw (resultText carries the error message). */
+  onToolResult?(call: ToolCall, outcome: ToolOutcome): void;
+}
+
+/** AIX-03 — outcome of one executed tool call (shape-only for panels). */
+export interface ToolOutcome {
+  status: "ok" | "failed";
+  resultText: string;
 }
 
 /** Build a tool error result message. Used in three error paths → lockstep shape. */
@@ -111,22 +121,34 @@ async function executeToolCall(
   call: ToolCall,
   registry: ToolRegistry | undefined,
   onError?: (e: Error) => void,
-): Promise<ChatMessage> {
+): Promise<ChatMessage & { outcome: ToolOutcome }> {
   const tool = registry?.get(call.name);
   if (!tool) {
-    return toolErrorMessage(call.id, `Unknown tool: ${call.name}`);
+    const errorText = `Unknown tool: ${call.name}`;
+    return {
+      ...toolErrorMessage(call.id, errorText),
+      outcome: { status: "failed", resultText: errorText },
+    };
   }
 
   let args: Record<string, unknown>;
   try {
     args = JSON.parse(call.argumentsJson) as Record<string, unknown>;
   } catch {
-    return toolErrorMessage(call.id, "Invalid tool arguments");
+    return {
+      ...toolErrorMessage(call.id, "Invalid tool arguments"),
+      outcome: { status: "failed", resultText: "Invalid tool arguments" },
+    };
   }
 
   try {
     const out = await tool.execute(args);
-    return { role: "tool", toolCallId: call.id, content: out };
+    return {
+      role: "tool",
+      toolCallId: call.id,
+      content: out,
+      outcome: { status: "ok", resultText: out },
+    };
   } catch (e) {
     const err = e instanceof Error ? e : new Error(String(e));
     if (onError) {
@@ -136,7 +158,11 @@ async function executeToolCall(
         // onError must never throw — swallow.
       }
     }
-    return toolErrorMessage(call.id, `Tool failed: ${err.message}`);
+    const failedText = `Tool failed: ${err.message}`;
+    return {
+      ...toolErrorMessage(call.id, failedText),
+      outcome: { status: "failed", resultText: failedText },
+    };
   }
 }
 
@@ -264,8 +290,10 @@ export async function runAgent(
     for (const call of result.toolCalls) {
       callbacks?.onToolCall?.(call);
       const toolMsg = await executeToolCall(call, input.tools, callbacks?.onError);
-      history.push(toolMsg);
-      stepMessages.push(toolMsg);
+      const { outcome, ...chatMsg } = toolMsg;
+      history.push(chatMsg);
+      stepMessages.push(chatMsg);
+      callbacks?.onToolResult?.(call, outcome);
     }
 
     steps.push({ messages: stepMessages, result });

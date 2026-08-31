@@ -30,7 +30,12 @@ Create `src/ai/analysisReport.ts` — PURE module (no vscode, no fs, no net):
 
 ## Executor
 
-(to be filled by executor with RED + GREEN evidence)
+### Executor (unic-code)
+
+**RED evidence**: first `npx vitest run src/ai/__tests__/analysisReport.test.ts` → `Failed to load url ../analysisReport ... Tests no tests` (module absent — import-time RED).
+
+**GREEN evidence**: 10/10 — parseExplainPlan (4-line plan → nodes 3 + deepest trimmed; empty; single line), summarizeToolOutcome all 3 statuses, capTokens exact/truncated/non-positive/whitespace-collapse. Pure module: no vscode/fs/net imports.
+
 
 ## Reviewer
 

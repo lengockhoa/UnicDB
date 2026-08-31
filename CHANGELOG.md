@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.22.0] — 2026-08-31
+
+Cycle AIX-03: Database Analysis Copilot.
+
+### Added
+- **Visible tool-call cards**: every DB-aware agent tool call now renders in the chat thread as a compact outcome line — `✓ tool — 3 cols × N rows (capped)` on success, `✗ tool — denied by user` when a permission card is denied, `✗ tool — failed: …` on error. Shape-only by contract: never row bytes.
+- **`analyze_table` composite tool**: one call returns column shape, exact row count, a capped data sample, and foreign keys — with per-part degradation so a failing COUNT doesn't hide the schema.
+- **`diagnose_query` tool**: runs a guarded read-only SELECT/WITH and classifies database errors (syntax / permission / connection / unknown) so the copilot can explain WHY a query fails. EXPLAIN ANALYZE and non-SELECT stay rejected.
+
+### Review
+- Independent unic-smart cycle review — fix rounds, then APPROVED.
+
 ## [1.21.0] — 2026-08-31
 
 Cycle AIX-02: Safe File Operations.
@@ -534,6 +546,7 @@ Cycle G: set-filter, toolbar icons, `run-sh` fix.
 [1.16.0]: https://github.com/lengockhoa/VSDB/compare/v1.15.0...v1.16.0
 [1.17.0]: https://github.com/lengockhoa/VSDB/compare/v1.16.0...v1.17.0
 [1.18.0]: https://github.com/lengockhoa/VSDB/compare/v1.17.0...v1.18.0
+[1.22.0]: https://github.com/lengockhoa/VSDB/compare/v1.21.0...v1.22.0
 [1.21.0]: https://github.com/lengockhoa/VSDB/compare/v1.20.0...v1.21.0
 [1.20.0]: https://github.com/lengockhoa/VSDB/compare/v1.19.0...v1.20.0
 [1.19.0]: https://github.com/lengockhoa/VSDB/compare/v1.18.0...v1.19.0

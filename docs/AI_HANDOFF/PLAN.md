@@ -1,98 +1,112 @@
-# Cycle AIC Plan — AI SQL Autocomplete
+# Cycle RLX-01 Plan — Operational Reliability Foundation
 
-Base: `main` @ `f7a4055` (v1.14.0). Planning-only cycle; no source, package, or test file is changed by this cycle.
+Base: `main` @ `97cf058` (release v1.21.0). Planning only: this cycle changes no product source, package, or test files.
 
 ## §1 Intent
 
-User request (verbatim):
+User planning answers (verbatim):
 
-> "Tôi có một ý tưởng và vẫn muốn implement vô hệ thống này.Chỗ cài đặt AI setting, hãy cho tôi thêm một model nữa, đó là model auto-complete. Model này sẽ dùng để suggest những câu query dựa trên data của mình.Tôi sẽ tự setting model riêng, và model này chạy cực kỳ nhanh, yên tâm là nó sẽ có tính năng auto-complete, nhưng mà vẫn dùng theo tính năng bình thường giống như AI, OpenAI Compatible. Những model này, thường tôi sẽ dùng những model free, ít tốn phí chứ chi phí nó cao nên là tôi sẽ thay đổi liên tục, không sử dụng cố định một model nào cả.Bên cạnh đó, hãy viết cho tôi tính năng autocomplete nữa. Nó sẽ tự success khi tôi gõ vào những câu query, để cho nó có thể autocomplete dựa trên database structure có sẵn của tôi."
+> scope='Roadmap toàn hệ thống (Recommended)'
+>
+> plan granularity='Theo phases triển khai (Recommended)'
 
-Recorded planning answers (verbatim):
+**Success definition:** VSDB progresses through small reviewed releases toward a safe, reliable PostgreSQL-first database extension and AI workspace. The active release removes three concrete integrity gaps: cancel a PostgreSQL non-cursor query through the existing command, coalesce duplicate schema-cache refreshes, and reject malformed import execution plans before database work. Later portfolio plans are queued only, not authorized or ready.
 
-1. Completion surface: "SQL editor + Console (Recommended)"
-2. Context: "Schema only (Recommended)"
-3. Trigger: "Debounced automatic (Recommended)"
+Scope complexity: HIGH
+Detected systems: [query execution/adapters, schema metadata/cache, CSV/JSON import transactions, connections/SSH tunnels, results UI, SQL intelligence, PostgreSQL administration, AI tools/permissions, OMP, multi-dialect adapters]
+Decomposition: 9 modules — module 1 (RLX-01) planned now; modules 2..9 queued in INDEX.md and §3.
 
-**Success definition:** Users can configure a third, free-form OpenAI-compatible `autocomplete` model ID in AI Settings and receive debounced ghost-text SQL suggestions in both `.sql` editors and the VSDB Console. Suggestions are derived only from bounded SQL cursor context and the active connection's schema metadata, respect the active dialect and connection, can be accepted through each surface's native inline-completion interaction, and never replace deterministic schema completion, query execution/results, or AI Chat.
+### Source-evidence inventory
 
-Scope complexity: LOW
-
-Detected systems: [AI settings and credential persistence, OpenAI-compatible provider transport, SQL editor completion, VSDB Console]
-
-Decomposition: 1 module — AIC planned now; no modules queued.
+| Area | Finding | Evidence |
+|---|---|---|
+| Cancel path | `vsdb.cancelQuery` calls `runner.cancel()`, but the runner only cancels `currentBatched`; ordinary adapter work has no cancellation seam. | `src/extension.ts:440-446`; `src/core/queryRunner.ts:352-367`; `src/adapters/types.ts:104-112` |
+| PostgreSQL | Non-cursor work holds a `PoolClient`; cursor cancellation already calls `pg_cancel_backend($1)` through a dedicated `Client`. | `src/adapters/postgres.ts:340-395, 1020-1095` |
+| Schema cache | Stale reads call `fetchEntry()` independently; cache has no in-flight coalescing registry. | `src/ui/schemaCache.ts:57-76, 287-301` |
+| Import boundary | `executeImport()` divides parameter sets by `batches` before validating statement/batch cardinality. | `src/core/importer/importExecute.ts:39-115` |
+| Tests | Focused tests already cover runner, PostgreSQL adapter, cache, and importer. | `.cache/index/tests-map.json:30-36, 318-321, 346-350, 714-717` |
+| Tooling | Defined npm scripts are test, test:integration, typecheck, compile, package; lint is absent. | `package.json:563-571` |
 
 ## §2 Scope
 
-**In scope**
+### In scope — active RLX-01
 
-- Add required `autocomplete` to the existing `AiModelRole`/`AiSettings.models` record, migrate saved two-role settings to a disabled-by-empty autocomplete ID, and preserve arbitrary user-entered model IDs without a fixed allowlist.
-- Reuse the existing single `baseUrl`, `method`, `timeoutMs`, and `vsdb.ai.apiKey` SecretStorage value. This is deliberately one OpenAI-compatible provider configuration with three model roles, not a second provider or API key surface.
-- Create a cancellable AI SQL suggestion service that sends schema only: dialect, active connection identity, schema/table/column metadata, and bounded prefix/suffix around the cursor. It must send no query results, table rows, values, passwords, API keys, or logs of request content.
-- Add a VS Code `InlineCompletionItemProvider` for `.sql` files, alongside—not instead of—`SqlCompletionProvider`'s deterministic schema/keyword popup completion.
-- Add equivalent ghost-text suggestion/accept behavior to the Console textarea while preserving its tabs, history, formatting, run/selection/run-statement flow, QueryRunner/results integration, and AI Chat coexistence.
-- Debounce automatic requests; cancel superseded requests; suppress stale results; keep at most one active request per document/tab; add bounded cache, short cooldown/rate guard, low output-token limit, and silent cancellation/error behavior. Missing config has an unobtrusive, actionable status only; it must not repeatedly notify while typing.
-- Wire lifecycle cleanup and active-connection changes so suggestions/caches cannot cross connections.
+- Add an optional adapter cancellation seam and invoke it only for a QueryRunner-owned active non-batched run.
+- Implement the seam in PostgreSQL by reusing the dedicated backend-cancel mechanism; retain cursor cancellation and release semantics.
+- Coalesce simultaneous stale SchemaCache reads for one cache key while preserving TTL, stale-on-error, and invalidate semantics.
+- Validate DryRunPlan structural cardinality before transaction or SQL effects, preserving the existing driver gate.
+- Add deterministic TDD unit/contract tests and perform focused plus release-boundary verification.
 
-**Out of scope for this cycle**
+### Out of scope
 
-- A separate autocomplete endpoint, method, timeout, or API key: rejected because the current architecture has one `AiConfigStore` and one `createProviderClient` transport; duplicate secrets/provider semantics are unjustified.
-- Row/value sampling, query-result context, data export, embeddings/RAG, telemetry, prompt logging, model discovery, a fixed model allowlist, or automatic model switching.
-- Replacing `SqlCompletionProvider`, changing SQL execution, AI Chat prompts/engines, package contribution changes, or adding dependencies.
-- Inline suggestions for non-SQL documents or third-party editor surfaces.
+- MySQL/MariaDB or SQL Server cancellation, new commands/UI, telemetry, automatic retry, dashboards, migrations, driver rewrites, and dependencies.
+- Import mapping/dry-run generation, row-size policy, connection secrets, SSH argument construction, and behavior for valid plans.
+- Every portfolio plan below: all are non-active and **NOT READY** until separately re-grounded.
 
-**Wave constraint:** No two tasks in the same wave modify a shared file. Task AIC-001 owns the settings files; AIC-002 owns the new service; AIC-003 owns the new VS Code provider; AIC-004 owns Console files; AIC-005 alone owns extension wiring and its test.
+**Same-wave file exclusion:** Wave 1 contains three tasks. TASK-RLX-001 exclusively owns query-runner/PostgreSQL adapter files and tests; TASK-RLX-002 exclusively owns SchemaCache and its test; TASK-RLX-003 exclusively owns importer execution and its test. No same-wave target path overlaps.
 
 ## §3 Approach
 
-0. **Shared service contract and hard bounds.** AIC-002 owns the single `SqlAutocompleteService` and exports/injects these tested constants: `DEBOUNCE_MS = 300`, `SQL_PREFIX_MAX_CHARS = 2_000`, `SQL_SUFFIX_MAX_CHARS = 500`, `SCHEMA_CONTEXT_MAX_CHARS = 12_000`, `MAX_OUTPUT_TOKENS = 64`, `CACHE_TTL_MS = 30_000`, `CACHE_MAX_ENTRIES = 100`, and `COOLDOWN_MS = 500`. The service—not either UI—performs the only debounce, owns one `AbortController` plus monotonic request sequence per caller scope, and owns an LRU cache keyed by `(connectionId, dialect, schemaFingerprint, cursorSqlPrefix, cursorSqlSuffix)`. A schema refresh or connection change invalidates relevant keys. Editor and Console share this service only; their rendering and caller scopes remain separate. The editor scope is document URI; Console scope is tab ID.
+### RLX-01 active implementation strategy
 
-1. **Settings and migration.** `AiSettings` currently declares `models: Record<AiModelRole, AiModelConfig>` where `AiModelRole = "work" | "smart"`; `AiConfigStore` persists settings in globalState and `KEY_AI_API_KEY = "vsdb.ai.apiKey"` in SecretStorage. Extend the role union to include `"autocomplete"`, use `{ modelId: "", vision: false }` as its default, and normalize a missing autocomplete role on every `loadConfig()` before validation (no schema-version flag). This normalization never repairs or relaxes invalid work/smart settings. Model IDs are trimmed; empty-after-trim autocomplete means disabled, while work/smart remain required. The webview uses a plain text input so the model ID remains free-form and changeable.
-2. **Transport and privacy boundary.** Add `src/ai/sqlAutocomplete.ts` (new), a VS Code-free orchestration service consuming `AiConfigStore.loadConfig()`, schema access through the existing `SchemaCache`/adapter methods, and an injected OpenAI-compatible completion function. It uses the existing chat/completions-shaped `createProviderClient(...).complete()` semantic with the free-form autocomplete role ID and current endpoint/key/method/timeout. It constructs a narrowly specified schema-only request and sanitizes the returned suffix into a single safe SQL insertion. No logger or helper may receive prompt text or a response suffix; API keys never appear in errors, status text, or host/webview messages.
-3. **Editor integration.** Add `AiSqlInlineCompletionProvider` (new) implementing the real VS Code signature `provideInlineCompletionItems(document: vscode.TextDocument, position: vscode.Position, context: vscode.InlineCompletionContext, token: vscode.CancellationToken): vscode.ProviderResult<vscode.InlineCompletionItem[] | vscode.InlineCompletionList>`. It forwards that `CancellationToken` as the AIC-002 service signal and returns one `vscode.InlineCompletionItem` at the cursor only when the returned suffix is current and non-empty; it owns neither another debounce nor another cache/controller. Existing `SqlCompletionProvider.provideCompletionItems(...)` remains registered and untouched.
-4. **Console integration.** Editor and Console share AIC-002 only, not rendering. Extend the current Console host/webview message protocol and `ConsolePanelOptions` with an injected autocomplete seam. The webview fires input changes to the host without its own debounce, displays an escaped positioned overlay/span rather than changing textarea `value`, and accepts one suffix through one atomic postMessage. Tab or right-arrow accepts only when the caret is at the end of an empty selection; otherwise existing textarea/browser behavior wins. The host keeps per-tab request sequence/cancellation state and obtains only the active connection's dialect/schema context via the shared service. It never sends a Console history item or SQL result as prompt context.
-5. **Final wiring.** AIC-005 creates one schema cache/service per extension activation, invalidates/cancels it on `mgr.onDidChangeActive`, posts a Console clear-ghost outcome for every open panel/tab, registers the existing `registerInlineCompletionItemProvider({ scheme: "file", language: "sql" }, provider)`, and passes a Console callback. It owns one passive status-bar affordance for missing autocomplete configuration (opens AI Settings; never a modal/notification or per-keystroke prompt). It must add clean disposals and retain current editor completion, semantic tokens, console runner, results panel, and AI Chat behavior.
+1. **Scoped cancellation rather than connection teardown.** Add `cancelActiveQuery?(): Promise<void>` to `DbAdapter`. During `QueryRunner.run()` retain the resolved adapter only for that operation. `cancel()` sets the current flag and invokes the seam only when no `currentBatched` exists. Postgres records the active non-cursor backend PID only while its `runQuery()` client is checked out, calls its existing dedicated `pg_cancel_backend($1)` route, and lets the existing `finally` release the original client. The optional seam preserves other drivers unchanged.
+2. **Single-flight cache fetch.** Add a private keyed in-flight registry. Concurrent expired/missing reads share one promise; successful work commits once; rejected work preserves the existing stale fallback for all callers. An invalidate generation guard prevents a pre-invalidation response from repopulating cache. `invalidate()` does not cancel adapter I/O and remains synchronous.
+3. **Import plan validation.** After the existing driver gate but before transaction acquisition, validate that non-empty executable work has a positive safe-integer `batches`, `sqlStatements.length === batches`, and non-empty `parameterSets`. A malformed PostgreSQL plan returns `{ rowCount: 0, errors: [], error: { phase: "gate", message } }`, with no `beginTransaction()` or SQL call. Valid plans retain values/order/transaction behavior.
+4. **TDD.** Write the focused regression/contract test first, observe its failure against current source, use deferred promises/fake adapters/injected clock instead of a live database, then make the smallest green implementation. PostgreSQL integration is supplemental only when its environment is provisioned.
 
-**Alternatives rejected**
+### Trade-offs / rejected alternatives
 
-- A dedicated provider config and secret for autocomplete: increases secret leakage/configuration failure surface; reuse is coherent with `AiConfigStore.loadConfig(): Promise<AiConfig | null>` and `createProviderClient({ baseUrl, apiKey, method, timeoutMs })`.
-- Reusing popup completion for AI text: rejected because user selected automatic autocomplete and VS Code has native ghost-text support; deterministic popup completion is retained as an additive fallback.
-- Sending rows/results to improve relevance: rejected by the schema-only answer and privacy contract.
-- Streaming suggestions: rejected for the first version; bounded, non-streaming completion simplifies cancellation/stale suppression and is appropriate for the stated fast model.
+- Reject closing the adapter to cancel: that destroys reusable state and may disrupt metadata work; PostgreSQL already has targeted backend cancellation.
+- Reject an `AbortSignal` migration for every driver: it forces an unproven cross-driver signature rewrite. The optional seam is compatible and bounded.
+- Reject indefinite caching/UI debounce: TTL and stale-on-error are intentional; single-flight only removes duplicate in-flight work.
+- Reject repairing malformed plans: guessing batch/value alignment can issue wrong writes; fail closed before BEGIN.
+
+### Portfolio plans — queued, non-active, NOT READY
+
+| Portfolio ID | Objective, source anchors, tentative boundary/dependency | Risks and future acceptance/test/verification strategy |
+|---|---|---|
+| PORT-RLX-02 Cross-dialect lifecycle | Extend the RLX-01 operation identity/cancel contract to MySQL streaming/non-streaming (`src/adapters/mysql.ts:189-280,561-763`) and SQL Server Requests (`src/adapters/mssql.ts:83-91,623-835`), then integrate runner/panel state. Depends on RLX-01. | Target wrong/finished request or leak client. Fake deferred requests prove one targeted cancel/cleanup/no late UI error; existing adapter unit+integration layouts, focused Vitest, typecheck, release full test/compile. |
+| PORT-RLX-03 Recovery controls | Bounded recovery/status for lazy adapters (`src/core/connectionManager.ts:299-355`), tunnel child exits (`src/core/sshTunnelManager.ts:108-257`), and stale cache (`src/ui/schemaCache.ts:248-320`). Depends on RLX-01 and RLX-02 decisions. | Reconnect loops, port races, stale cross-connection data. Fake SSH/injected clock/network tests prove bounded retries and disposal; focused Vitest/typecheck/full release gate. |
+| PORT-DBX-06 Reviewed PG rename | Catalog usage analysis, rename-plan builder, and preview/confirmation integration based on `src/core/ddl/pgCatalog.ts`, `src/core/dangerousStatement.ts`, and `src/extension.ts:1231-1368`. Depends on stable metadata/recovery. | Quoting, dependencies, collision, partial failure. Pure plan tests plus rollback integration fixtures; focused Vitest/typecheck/full release gate. |
+| PORT-DBX-08 Capability parity | Add tested, explicit adapter capability declarations and command gating around `DbAdapter.catalog/admin` (`src/adapters/types.ts:104-153,226-285`); PostgreSQL proof first, MySQL/MSSQL only where verified. Depends on RLX-02. | Empty data mistaken for support, dialect differences. Every surfaced feature has adapter proof or actionable unavailable outcome; adapter tests/typecheck/full release gate. |
+| PORT-AIX-03 Read-only analysis copilot | Bounded attributable schema/error/result analysis through `src/ai/tools/readonlySqlParser.ts`, `sqlTool.ts`, `dbAwareTools.ts`, `src/ui/aiChatPanel.ts`. Depends on RLX-03 failure/cancel propagation. | Parser bypass, rows/secrets leakage, connection loss. Adversarial SQL, permission deny, row/token-cap and sentinel-redaction tests; focused tool/panel Vitest/typecheck/full release gate. |
+| PORT-AIX-05 OMP resilience | Explicit OMP start/cancel/crash/fallback state around `src/ai/omp/acpProcess.ts`, `mcpBridge.ts`, `ompChatEngine.ts`, and `src/extension.ts:532-558,997-1070`. Depends on AIX-03 permission semantics. | Orphan processes, protocol drift, duplicate tools/context loss. Fake ACP tests for missing binary, handshake, cancellation/restart; focused Vitest/typecheck/full release gate. |
+| PORT-AIX-06/07 Trace and governance | Redacted trace schema/panel plus centralized default-deny policy across `src/ai/agent.ts`, `provider.ts`, `tools/fileOpsTool.ts`, and workspace-trust wiring. Depends on AIX-03/AIX-05. | Credential/row persistence, ordering/retention, policy bypass. Sentinel redaction, corrupt/oversize, ordered concurrency, policy matrix tests; focused Vitest/typecheck/full release gate. |
+| PORT-DX-01 Release confidence | Build deterministic activation/command contract and manual smoke coverage from existing extension wiring and scripts, without runtime feature scope. Depends on each relevant shipped contract. | Flaky service tests and mock-only confidence. Unit/contract default, environment-gated integration explicit; `npm test`, `npm run typecheck`, `npm run compile` gate. |
 
 ## §4 Test Plan
 
 | Type | Test Name | Expected | Task |
 |---|---|---|---|
-| happy | settings save/load includes free-form autocomplete ID | `"vendor/free-fast-sql"` round-trips in globalState; `apiKey` remains only in SecretStorage | AIC-001 |
-| edge — migration | two-role legacy settings load | missing `models.autocomplete` is normalized to `{ modelId: "", vision: false }`, while work/smart stay usable | AIC-001 |
-| edge — validation | trimmed/blank autocomplete vs blank work | free-form ID is trimmed; empty-after-trim autocomplete is valid/disabled, while blank work still returns `Model is required for role: work` | AIC-001 |
-| happy | schema-only service request | configured active PostgreSQL connection produces one bounded request with autocomplete model ID, dialect and table/column names; result suffix is returned | AIC-002 |
-| edge — privacy | rows/secrets/logging excluded | sent JSON excludes sentinel row values, API key, and query-history text; no row-reading method is called; mocked logger/helper receives neither prompt text nor response suffix | AIC-002 |
-| edge — concurrency | superseded request cancellation | second request aborts first; late first response produces no completion; only current sequence returns suffix | AIC-002 |
-| edge — boundary | prompt/cache/rate bounds | prefix/suffix and schema budget are capped; equivalent request is cache-hit; cooldown prevents another provider call | AIC-002 |
-| happy | SQL editor inline ghost text | provider returns one `InlineCompletionItem` with exact suffix at cursor after service resolution | AIC-003 |
-| edge — cancellation | VS Code token cancellation | cancelled token returns `[]` and aborts/does not publish an in-flight result | AIC-003 |
-| edge — unavailable | no autocomplete model/no connection | provider returns `[]`, leaves deterministic `SqlCompletionProvider` behavior unchanged, and does not throw | AIC-003 |
-| happy | Console ghost suggestion acceptance | textarea input obtains ghost suffix; Tab accepts it into only active tab's buffer and posts one buffer update | AIC-004 |
-| edge — stale lifecycle | Console tab switch/edit | late response after a newer input or tab switch is ignored; ghost text is cleared and not inserted | AIC-004 |
-| edge — error path | Console unavailable/failed request | no ghost text or intrusive error; Run/Format/History controls keep their existing behavior | AIC-004 |
-| regression | extension registers both completion kinds | activation keeps `registerCompletionItemProvider` and also registers one SQL inline provider; dispose unregisters both | AIC-005 |
-| regression — multi-connection | connection change isolates context | `mgr.onDidChangeActive` cancels/invalidate old request/cache; new suggestion uses only new connection schema/dialect | AIC-005 |
-| edge — configuration lifecycle | model disabled mid-session clears state | saving an empty-after-trim autocomplete ID cancels pending service work, clears editor/Console ghosts and caches, and makes no provider call until re-enabled | AIC-005 |
-| edge — coexistence | Console run and AI Chat unchanged | autocomplete wiring does not invoke QueryRunner/AI Chat while merely typing and existing command registration remains intact | AIC-005 |
+| happy / contract | cancel PostgreSQL non-cursor query | `QueryRunner.cancel()` calls active adapter seam once and statement ends `cancelled`, never `done`. | TASK-RLX-001 |
+| edge — race | cancel before adapter acquisition | cancellation makes no late call against a subsequently completed/new operation. | TASK-RLX-001 |
+| edge — ordering | cancel after statement settles and the PID window closes | cancellation is a no-op: no adapter seam call and no false error/cancelled result. | TASK-RLX-001 |
+| edge — lifecycle | cancel failure and release | best-effort backend cancel failure does not mask query termination; client releases exactly once. | TASK-RLX-001 |
+| regression | cursor cancellation remains exclusive | batched work calls `BatchedQuery.cancel()` and no duplicate adapter seam. | TASK-RLX-001 |
+| happy / unit | stale table reads coalesce | two concurrent `getTables("public")` calls cause one adapter call and both return refreshed rows. | TASK-RLX-002 |
+| edge — failure | coalesced failure keeps stale | concurrent callers both receive prior cache and no rejection escapes. | TASK-RLX-002 |
+| edge — invalidation race | invalidate during deferred refresh | old response does not commit; next read returns post-invalidation data. | TASK-RLX-002 |
+| happy / unit | valid import plan | matching batches/statements/values begins once, binds ordered values, commits. | TASK-RLX-003 |
+| edge — malformed structure | missing statement for declared batch | gate result has rowCount 0; no transaction or SQL call. | TASK-RLX-003 |
+| edge — malformed values | executable batch without parameter sets | gate result occurs before transaction, never an empty/misaligned commit. | TASK-RLX-003 |
+| regression | valid mid-batch failure | rollback occurs once and later batches do not execute. | TASK-RLX-003 |
+| manual / smoke | cancel and cache behavior in VS Code | Cancel a deliberately slow PostgreSQL ordinary statement, then refresh schema while completion/tree consumers are active; UI remains responsive and the next query/schema refresh works. | Cycle boundary |
+| manual / safety | malformed importer plan is not user-executable | Normal CSV/JSON import still shows its dry-run/confirmation and a valid small fixture imports once; no new bypass or automatic repair path appears. | Cycle boundary |
+
+Fixtures are deterministic fake adapters, deferred promises, and injected clocks. Live PostgreSQL integration is supplemental only where configured services are available.
 
 ## §5 Verification
 
-Per task, run its exact focused `npx vitest run ...` command from the task file, then:
+Per task, run the exact focused command in its task file plus static checking:
 
 ```bash
+npx vitest run src/core/__tests__/queryRunner.test.ts src/adapters/__tests__/postgres.test.ts
+npx vitest run src/ui/__tests__/schemaCache.test.ts
+npx vitest run src/core/importer/__tests__/importExecute.test.ts
 npm run typecheck
 ```
 
-`package.json` defines `compile`, `test`, `test:integration`, `typecheck`, and `package`; it defines **no lint script**, so `npm run typecheck` is the mandatory static check. The test-map at `.cache/index/tests-map.json` supplies the existing target test paths; new production files receive named new test files. This npm repository has no `test:release-core` command, so no unavailable yarn fallback is listed.
-
-At each completed wave and at cycle end:
+Wave/cycle boundary:
 
 ```bash
 npm test
@@ -100,66 +114,52 @@ npm run typecheck
 npm run compile
 ```
 
-Manual smoke after the final wave:
-
-1. Configure a free-form autocomplete model ID, retain a stored key, and save/reopen settings; verify the third field persists and work/smart values are unchanged.
-2. With PostgreSQL connection A active, type `SELECT * FROM us` in a `.sql` editor; verify ghost text appears after the 300ms service debounce, accept it using VS Code inline-completion acceptance, and deterministic popup suggestions still appear when invoked.
-3. Open Console, type equivalent SQL, visually confirm the escaped ghost suffix is correctly aligned without changing textarea content, then accept it. Switch to connection B/tab before a response returns and verify no A suggestion appears in B/tab.
-4. Run a Console query and open AI Chat; verify normal results and chat remain independent from autocomplete.
+`package.json` has no lint script, so `npm run typecheck` is the required static check. `npm run test:integration` exists but is not a default gate because its services are external; run it only in a provisioned environment and record the result. There is no `test:release-core` npm script.
 
 ## §6 Acceptance
 
-- [ ] A third `autocomplete` model role is separately editable as a free-form OpenAI-compatible model ID, legacy settings migrate safely, and user keys remain exclusively in SecretStorage. (AIC-001)
-- [ ] Autocomplete reuses current endpoint/key/method/timeout provider semantics; it adds no second secret or fixed model allowlist. (AIC-001, AIC-002)
-- [ ] Each request contains schema-only context plus bounded cursor prefix/suffix, dialect, and connection/schema identity—never rows, results, values, secrets, or logs. (AIC-002)
-- [ ] Debounce, cancellation, stale suppression, one-request-per-surface concurrency, cache/cooldown, and bounded output protect responsiveness and cost. (AIC-002, AIC-003, AIC-004)
-- [ ] SQL editor offers native inline ghost text without replacing existing deterministic completion. (AIC-003, AIC-005)
-- [ ] Console offers matching ghost-text acceptance without changing tab, runner, results, history, or format behavior. (AIC-004, AIC-005)
-- [ ] Connection changes and surface disposal cannot leak old connection suggestions. (AIC-002, AIC-004, AIC-005)
-- [ ] Missing model/config and cancelled/failed calls are quiet, actionable through one status-bar AI Settings affordance where appropriate, and never disruptive while typing. (AIC-002, AIC-003, AIC-004, AIC-005)
-- [ ] No telemetry or logger receives autocomplete prompt text or response suffix; no API key appears in persistence, errors, status text, or webview messages. (AIC-001, AIC-002, AIC-005)
-- [ ] All task reports have fresh focused tests plus `npm run typecheck`; every wave/cycle boundary passes `npm test`, `npm run typecheck`, and `npm run compile`. (AIC-001–005)
+- [ ] Existing `vsdb.cancelQuery` cancels a PostgreSQL ordinary QueryRunner operation without closing the adapter or changing valid results. (TASK-RLX-001)
+- [ ] Cursor cancellation stays on `BatchedQuery.cancel()` and PostgreSQL client release is correct after success, cancellation, and error. (TASK-RLX-001)
+- [ ] After a non-cursor statement settles and its PID-recording window closes, `cancel()` is a no-op: it does not invoke the adapter cancellation seam or produce a false error/cancelled result. (TASK-RLX-001)
+- [ ] Same-key stale SchemaCache reads share one introspection; failed refresh retains stale data; invalidation defeats an old response. (TASK-RLX-002)
+- [ ] Invalid import-plan structure has no transaction/SQL effect; valid ordering, commit, and rollback behavior stays unchanged. (TASK-RLX-003)
+- [ ] Each task records deterministic RED→GREEN happy plus distinct edge tests and passes focused Vitest plus `npm run typecheck`. (TASK-RLX-001–003)
+- [ ] Release boundary passes `npm test`, `npm run typecheck`, and `npm run compile`; all portfolio plans remain non-ready. (TASK-RLX-001–003)
 
-## §7 Task Split and Global Constraints
+## §7 Global Constraints
 
-| Task | Slice | Verified target ownership | Dependencies | Wave |
-|---|---|---|---|---|
-| TASK-AIC-001 | AI settings role, persistence migration, and settings form | `src/ai/settings.ts`, `src/ai/config.ts`, `src/ui/aiSettingsForm.ts`, `webview/aiSettingsFormMain.ts`, their existing tests | none | 1 |
-| TASK-AIC-002 | Schema-only cancellable autocomplete service | `src/ai/sqlAutocomplete.ts` (new), `src/ai/__tests__/sqlAutocomplete.test.ts` (new) | TASK-AIC-001 | 2 |
-| TASK-AIC-003 | Native SQL editor inline provider | `src/ui/aiSqlCompletionProvider.ts` (new), `src/ui/__tests__/aiSqlCompletionProvider.test.ts` (new) | TASK-AIC-002 | 3 |
-| TASK-AIC-004 | Console ghost-text protocol and UX | `src/ui/consolePanel.ts`, `src/ui/consolePanelMessages.ts`, `webview/consolePanelMain.ts`, Console tests | TASK-AIC-002 | 3 |
-| TASK-AIC-005 | Extension lifecycle and dual-surface wiring | `src/extension.ts`, `src/extension.test.ts` | TASK-AIC-003, TASK-AIC-004 | 4 |
-
-**Global Constraints (inherited by every task)**
-
-- Keep `engines.vscode` at `^1.75.0`; use the verified VS Code `InlineCompletionItemProvider` and `registerInlineCompletionItemProvider` APIs only.
-- Add no npm dependency, configuration contribution, endpoint, secret key, telemetry, or prompt logger.
-- Preserve `SqlCompletionProvider` deterministic completion, Console QueryRunner/results/history/format behavior, and AI Chat behavior; AI autocomplete is additive only.
-- `AiConfigStore` retains `KEY_AI_API_KEY = "vsdb.ai.apiKey"`; API keys never enter settings persistence, host-to-webview messages, completion prompt text, status/error text, tests outside sentinel assertions, or logs.
-- Prompt content is schema metadata only: no row/result values, credentials, SQL history, or arbitrary whole document. AIC-002's shared constants bind cursor prefix/suffix, schema text, output tokens, cache TTL/size, and request rate; it is the only debounce/cache/cancellation authority.
-- No inline handlers in webviews; use existing CSP-safe DOM event listeners and escape untrusted suggestion text before HTML rendering. Console uses a ghost overlay, never a pre-acceptance textarea-value mutation.
-- The only user-facing unavailable-model cue is the AIC-005 status-bar affordance; no per-keystroke notification, modal, or QuickPick is allowed.
-- User-facing text follows existing VSDB bilingual/localized copy style; errors/cancellation must be silent or a single actionable status, never per-keystroke modal/toast spam.
-- Every executor follows TDD RED→GREEN, records actual output, and runs exact verification commands; no task changes any file owned by a same-wave task.
+- Keep `engines.vscode` at `^1.75.0`; add no dependency or package contribution.
+- PostgreSQL is first-class; do not claim new MySQL/MariaDB/SQL Server cancellation in RLX-01.
+- Preserve `DbAdapter.runQuery(sql: string): Promise<RunResult>`, `BatchedQuery.cancel(): Promise<void>`, parameterized imports, and destructive-SQL confirmation.
+- Never log/serialize/expose passwords, API keys, SQL parameter values, query rows, or SSH identities in lifecycle diagnostics/tests.
+- Cancellation must be operation-scoped: do not close a shared adapter, destroy unrelated work, or turn a completed result into a false error.
+- Preserve SchemaCache TTL and stale-on-error API; invalidation prevents an old response becoming fresh cache state.
+- Import validation fails closed before `beginTransaction()` and never repairs/reorders values.
+- Follow TDD RED→GREEN, existing test layout/import style, focused tests plus typecheck, and the same-wave file exclusion.
 
 ## Planner Self-Audit
 Checklist: 12/12 pass
-Fixed during audit: Moved Console implementation behind the shared service and isolated final extension edits into AIC-005, eliminating same-wave file collisions; recorded the verified absence of a lint and `test:release-core` script rather than inventing either.
-Known gaps: Console is a `<textarea>`, not a VS Code text editor, so its ghost rendering and Tab/right-arrow acceptance require a custom DOM implementation rather than VS Code `InlineCompletionItem`. Visual ghost-text placement requires manual smoke in addition to jsdom tests; that check is required by AIC-004 and the cycle-end smoke list.
-
-## Plan Review Log
-
-### Round 1 — Issues Found (reviewer model: unic-code)
-- Required shared explicit service bounds, every-load migration semantics, cancellation ownership, Console overlay/acceptance behavior, privacy logging assertions, concrete unavailable-model status, and lifecycle tests for disabling a model during a session.
-
-### Round 2 — findings applied without re-review
-- Added AIC-002-owned constants, caller scopes, schema-fingerprinted cache key, and single debounce/cancellation authority.
-- Defined every-load legacy normalization without relaxing work/smart validation; model IDs trim and empty autocomplete disables.
-- Pinned existing chat/completions `complete()` semantics and API-key/logging exclusions.
-- Defined editor token forwarding, Console per-tab sequence/overlay/atomic acceptance, connection-change clearing, and status-bar ownership.
-- Added tests for logging privacy, trimmed IDs, and disabling autocomplete mid-session; elevated visual Console smoke.
-- Review cap reached after this revision; all Round-1 findings were applied directly.
+Fixed during audit: narrowed the first release to three independent source-backed domains; added invalidation-race coverage to prevent cache coalescing from reintroducing stale data; specified malformed import validation as pre-transaction.
+Known gaps: real PostgreSQL cancellation is not a default mandatory test because integration services are external. RLX-001 contract/unit tests prove order and cleanup; record a provisioned integration run when available.
 
 ## Planner Report
 PLANNER_MODEL: unic-smart
-PLAN_REVIEW: Findings applied after independent unic-code Round 1
+PLAN_REVIEW: Approved by unic-code
+
+## Plan Review Log
+
+### Round 1 — 2026-08-31 · unic-code
+Status: Approved
+
+COMPLETENESS:
+  - none — all sections present (intent, scope, approach, test plan, verification, acceptance, constraints, self-audit); no TODO/placeholder; each active task carries happy plus ≥2 distinct edge tests and a RED→GREEN requirement; the one known gap (live PostgreSQL integration not a default gate) is explicitly disclosed with a mitigation, not silently dropped.
+CONSISTENCY:
+  - none material. Fact-checked §5 against the repo: `package.json` scripts block (actual lines 563-571) contains test/test:integration/typecheck/compile/package with no `lint` and no `test:release-core` script, so `npm run typecheck` as the required static check and that disclosure are factually correct. Test-plan rows map 1:1 onto the three tasks' focused vitest commands, the same-wave file exclusion, and the acceptance checklist. Nit: evidence anchor cites `package.json:562-570`; actual block is 563-571 (off-by-one, cosmetic).
+CLARITY:
+  - Minor: §3.1 and §4 cover cancel-before-acquisition but do not spell out the narrow window where cancel arrives after the backend PID is recorded yet the statement has already finished. §7's operation-scoped invariant ("never turn a completed result into a false error") implies the correct behavior — make TASK-RLX-001 state the ordering explicitly (once the PID window is closed, cancel is a no-op: no seam call, no false error).
+SCOPE:
+  - none — single cycle, three independent file-disjoint tasks; the requested whole-system roadmap is present but correctly quarantined as queued NOT-READY portfolio plans, honoring the roadmap request without authorizing un-grounded work.
+YAGNI:
+  - none — no new dependencies/commands/UI/telemetry; rejected alternatives (adapter teardown, AbortSignal rewrite, plan auto-repair) are documented with reasons.
+
+NOTES: Approved. The plan satisfies the user's explicit request for a comprehensive detailed VSDB roadmap with rigorous testing/review planning: source-anchored evidence inventory, deterministic TDD plan with race/invalidation/failure edges, verified verification commands, fail-closed import semantics, and explicit out-of-scope boundaries. Findings are minor, non-blocking refinements to carry into the task files, not plan defects.

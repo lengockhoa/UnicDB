@@ -58,9 +58,11 @@ import { createDbTools } from "../ai/tools/registry";
 import { createWorkspaceSearchTool } from "../ai/tools/workspaceSearchTool";
 import { createFileOpsTool, createFileOpsPreview, fileOpsDeniedEnvelope } from "../ai/tools/fileOpsTool";
 import { diffStats } from "../ai/fileDiff";
+import { summarizeToolOutcome, capTokens } from "../ai/analysisReport";
 import { createSqlTool } from "../ai/tools/sqlTool";
 import { createExportStructureTool } from "../ai/tools/schemaTools";
 import { createDbAwareTools } from "../ai/tools/dbAwareTools";
+import { createAnalysisTools } from "../ai/tools/analysisTools";
 import type { AcpProcessHandle } from "../ai/omp/acpProcess";
 import { createMcpBridge, type McpBridge } from "../ai/omp/mcpBridge";
  import {
@@ -672,6 +674,18 @@ export class DbToolPermissionGate {
         const callArgs = bindArgs ? { ...args, ...bindArgs } : args;
         const granted = await this.request(tool.name, args, detail);
         if (!granted) {
+          // AIX-03: the denial is a visible outcome too — the user sees
+          // the card decision reflected in the thread, not just silence.
+          try {
+            this.post({
+              type: "tool_result",
+              tool: tool.name,
+              status: "denied",
+              summary: "denied by user",
+            });
+          } catch {
+            /* posting must never break the deny path */
+          }
           return opts?.deniedResult ? opts.deniedResult() : DB_TOOL_DENIED_MESSAGE;
         }
         return tool.execute(callArgs);
@@ -1524,6 +1538,22 @@ export class AiChatPanel {
    * the literal "stream fallback" label so the UI surfaces why streaming
    * wasn't used (provider offline / model doesn't support SSE).
    */
+  /**
+   * AIX-03: SHAPE-ONLY summary of a tool result for the visible card.
+   * Multi-line results (tables/plans) → "N lines" + cap marker; one-line
+   * results → first line capped to 30 tokens. NEVER row bytes.
+   */
+  private static toolShapeSummary(resultText: string): string {
+    const text = resultText ?? "";
+    const lines = text.split("\n").filter((l) => l.trim().length > 0);
+    const capped = /more lines|\(\d+ of \d+ rows\)|truncated/.test(text);
+    if (lines.length > 1) {
+      const base = `${lines.length} lines`;
+      return capped ? `${base} (capped)` : base;
+    }
+    return capTokens(lines[0] ?? "", 30);
+  }
+
   private async runBuiltinTurn(userMsg: ChatMessage): Promise<void> {
     const registry = createDbTools(this.options.adapterFactory);
     registry.register(createSqlTool(this.options.adapterFactory));
@@ -1569,6 +1599,10 @@ export class AiChatPanel {
     for (const tool of createDbAwareTools(this.options.adapterFactory)) {
       registry.register(this.dbToolGate.wrap(tool));
     }
+    // AIX-03: composite analysis tools share the DB-aware gate treatment.
+    for (const tool of createAnalysisTools(this.options.adapterFactory)) {
+      registry.register(this.dbToolGate.wrap(tool));
+    }
 
     const messages = await buildMessages(
       this.options.adapterFactory,
@@ -1601,6 +1635,16 @@ export class AiChatPanel {
         // abort state; gating belongs to the consumer.
         if (token?.aborted) return;
         this.post({ type: "step", label: call.name || "tool" });
+      },
+      // AIX-03: visible tool-call outcome card — shape only, never rows.
+      onToolResult: (call, outcome) => {
+        if (token?.aborted) return;
+        this.post({
+          type: "tool_result",
+          tool: call.name || "tool",
+          status: outcome.status,
+          summary: AiChatPanel.toolShapeSummary(outcome.resultText),
+        });
       },
     };
 

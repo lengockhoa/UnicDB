@@ -1,19 +1,23 @@
 # INDEX
 
-Cycle AIC — **AI SQL AUTOCOMPLETE**: separately configurable free-form OpenAI-compatible autocomplete model; schema-only, debounced, cancellable ghost-text suggestions in SQL editor and Console while preserving deterministic completion, query execution/results, and AI Chat.
+Cycle RLX-01 — **Operational Reliability Foundation**. Active, executable scope is narrowly limited to targeted PostgreSQL cancellation, SchemaCache single-flight refresh, and fail-closed import-plan validation. Portfolio rows are planning queue only and are not task contracts.
 
-| Task | Title | Status | Dependencies | Reviewer |
+| Task / Portfolio | Title | Status | Dependencies | Reviewer |
 |---|---|---|---|---|
-| TASK-AIC-001 | Add configurable autocomplete model role | done | none | unic-code |
-| TASK-AIC-002 | Build schema-only cancellable autocomplete service | done | TASK-AIC-001 | - |
-| TASK-AIC-003 | Add native SQL editor ghost-text provider | done | TASK-AIC-002 | - |
-| TASK-AIC-004 | Add Console ghost-text autocomplete | done | TASK-AIC-002 | - |
-| TASK-AIC-005 | Wire AI autocomplete lifecycle into extension | done | TASK-AIC-003, TASK-AIC-004 | - |
-Graph: TASK-AIC-001 → TASK-AIC-002 → TASK-AIC-003 → TASK-AIC-005; TASK-AIC-002 → TASK-AIC-004 → TASK-AIC-005.
+| TASK-RLX-001 | Cancel active PostgreSQL non-cursor queries | ready | none | - |
+| TASK-RLX-002 | Coalesce SchemaCache stale refreshes | ready | none | - |
+| TASK-RLX-003 | Fail closed on malformed import execution plans | ready | none | - |
+| PORT-RLX-02 | Cross-dialect query lifecycle completion | queued — NOT READY | RLX-01 | - |
+| PORT-RLX-03 | Connection, tunnel, and schema-refresh recovery | queued — NOT READY | RLX-01, PORT-RLX-02 | - |
+| PORT-DBX-06 | Reviewed PostgreSQL rename workflow | queued — NOT READY | PORT-RLX-03 | - |
+| PORT-DBX-08 | Explicit adapter capability parity | queued — NOT READY | PORT-RLX-02 | - |
+| PORT-AIX-03 | Read-only database analysis copilot hardening | queued — NOT READY | PORT-RLX-03 | - |
+| PORT-AIX-05 | Optional OMP engine resilience | queued — NOT READY | PORT-AIX-03 | - |
+| PORT-AIX-06/07 | Redacted agent trace and centralized governance | queued — NOT READY | PORT-AIX-03, PORT-AIX-05 | - |
+| PORT-DX-01 | Regression and release confidence lane | queued — NOT READY | shipped contracts | - |
 
-- Wave 1 (1): TASK-AIC-001
-- Wave 2 (1): TASK-AIC-002
-- Wave 3 (2): TASK-AIC-003, TASK-AIC-004
-- Wave 4 (1): TASK-AIC-005
+Graph: TASK-RLX-001 independent; TASK-RLX-002 independent; TASK-RLX-003 independent.
 
-No same-wave target-file overlap. Historical AHL artifacts remain preserved in `PLAN_AHL.md`, `INDEX_AHL.md`, `tasks/TASK-AHL-001.md` through `TASK-AHL-004.md`, and `archive/cycle-AHL.md`.
+- Wave 1 (3): TASK-RLX-001, TASK-RLX-002, TASK-RLX-003
+
+No same-wave target-file overlap. Portfolio rows require a new source-grounded plan and task batch before becoming active.

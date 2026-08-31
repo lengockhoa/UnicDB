@@ -43,7 +43,12 @@ adapter injected via AdapterFactory like dbAwareTools):
 
 ## Executor
 
-(to be filled by executor with RED + GREEN evidence)
+### Executor (unic-code)
+
+**RED evidence**: first run of `src/ai/tools/__tests__/analysisTools.test.ts` → `Failed to load url ../analysisTools ... Tests no tests` (module absent). One GREEN-stage fixture correction: test used an ad-hoc column shape; fixed to the real `TableDetail` contract (column_name/format_type/is_nullable/column_default + conkey/consrc) after reading `src/adapters/types.ts`.
+
+**GREEN evidence**: 8/8 after implementation; 1 real fix: classifier order — "connection terminated unexpectedly" contains "unexpected" (syntax token), so connection is checked first. Verified: composite report (schema shape/count/sample/relationships), per-part failure isolation (runQuery throw → count+sample error, schema+FK intact), no-connection envelope, bad_identifier, diagnose success + 4 error classes, re-guard (DELETE + EXPLAIN ANALYZE rejected with adapter never called, called===0), detail capped at 200 chars.
+
 
 ## Reviewer
 

@@ -164,6 +164,49 @@ describe("AiChatPanelWebview — DB-aware tool permission_request card (cycle AD
 });
 
 // ============================================================================
+// AIX-03: tool_result renders a textContent-only outcome card
+// ============================================================================
+describe("AiChatPanelWebview — tool_result outcome card (AIX-03)", () => {
+  it("renders ok/failed/denied cards with the summary as textContent", () => {
+    const h = makeHarness();
+    h.dispatch({
+      type: "init",
+      engine: { name: "builtin" },
+      busy: false,
+      attachmentsCapable: false,
+      visionCapable: false,
+      cwdLabel: "/workspace",
+    });
+    // The thread element is created by applyInit? — dispatch a step first
+    // to ensure the thread exists in the bundle's DOM flow; else create it.
+    if (!document.getElementById("thread")) {
+      const thread = document.createElement("div");
+      thread.id = "thread";
+      h.root.appendChild(thread);
+    }
+    h.dispatch({
+      type: "tool_result",
+      tool: "run_readonly_query",
+      status: "ok",
+      summary: "✓ run_readonly_query — 3 lines (capped)",
+    });
+    const card = h.root.querySelector(".vsdb-chat-tool-result-ok");
+    expect(card).not.toBeNull();
+    expect(card?.textContent).toBe("✓ run_readonly_query — 3 lines (capped)");
+    h.dispatch({
+      type: "tool_result",
+      tool: "count_rows",
+      status: "denied",
+      summary: "✗ count_rows — denied by user",
+    });
+    const denied = h.root.querySelector(".vsdb-chat-tool-result-denied");
+    expect(denied?.textContent).toBe("✗ count_rows — denied by user");
+    // No innerHTML sink usage: summary survives as text (no live nodes).
+    expect(h.root.querySelector(".vsdb-chat-tool-result-failed")).toBeNull();
+  });
+});
+
+// ============================================================================
 // #2 Clicking Deny posts permission_response with matching requestId,
 //    no optionId field (deny is the implicit default on the wire)
 // ============================================================================

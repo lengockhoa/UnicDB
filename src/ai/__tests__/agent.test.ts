@@ -497,3 +497,84 @@ describe("runAgent — onToolCall callback (TASK-002)", () => {
     expect(out2.finalText).toBe("done2");
   });
 });
+
+// ============================================================================
+// TASK-AIX03-003 — onToolResult callback contract.
+//   #1 fires once per call AFTER execute, in order, with resultText
+//   #2 thrown execute → status "failed"
+//   #3 missing onToolResult stays backward-compatible
+// ============================================================================
+describe("runAgent — onToolResult callback (TASK-AIX03-003)", () => {
+  it("case #1 fires ok once per call after execute, in order", async () => {
+    const order: string[] = [];
+    const toolA: AgentTool = {
+      name: "a",
+      description: "a",
+      parameters: { type: "object", properties: {} },
+      execute: async () => {
+        order.push("execA");
+        return "A-out";
+      },
+    };
+    const reg: ToolRegistry = { list: () => [toolA], get: () => toolA };
+    const deps = makeDeps({
+      results: [
+        resultOk("", [{ id: "c1", name: "a", argumentsJson: "{}" }]),
+        resultOk("done"),
+      ],
+    });
+    const onToolCall = vi.fn(() => order.push("hook"));
+    const onToolResult = vi.fn((_call: ToolCall, outcome: { status: string; resultText: string }) => {
+      order.push(`result:${outcome.status}`);
+    });
+    await runAgent({ messages: [textMsg("user", "u")], tools: reg }, deps, {
+      onToolCall,
+      onToolResult,
+    });
+    expect(onToolResult).toHaveBeenCalledTimes(1);
+    expect(onToolResult.mock.calls[0]?.[0]).toEqual({ id: "c1", name: "a", argumentsJson: "{}" });
+    expect(onToolResult.mock.calls[0]?.[1]).toEqual({ status: "ok", resultText: "A-out" });
+    expect(order).toEqual(["hook", "execA", "result:ok"]);
+  });
+
+  it("case #2 thrown execute → failed with error text", async () => {
+    const toolBad: AgentTool = {
+      name: "bad",
+      description: "bad",
+      parameters: { type: "object", properties: {} },
+      execute: async () => {
+        throw new Error("exploded");
+      },
+    };
+    const reg: ToolRegistry = { list: () => [toolBad], get: () => toolBad };
+    const deps = makeDeps({
+      results: [
+        resultOk("", [{ id: "c2", name: "bad", argumentsJson: "{}" }]),
+        resultOk("done"),
+      ],
+    });
+    const onToolResult = vi.fn();
+    await runAgent({ messages: [textMsg("user", "u")], tools: reg }, deps, { onToolResult });
+    expect(onToolResult).toHaveBeenCalledTimes(1);
+    expect(onToolResult.mock.calls[0]?.[1]?.status).toBe("failed");
+    expect(String(onToolResult.mock.calls[0]?.[1]?.resultText)).toContain("exploded");
+  });
+
+  it("case #3 missing onToolResult stays backward-compatible", async () => {
+    const toolDef: AgentTool = {
+      name: "ok",
+      description: "ok",
+      parameters: { type: "object", properties: {} },
+      execute: async () => "ok-out",
+    };
+    const reg: ToolRegistry = { list: () => [toolDef], get: () => toolDef };
+    const deps = makeDeps({
+      results: [
+        resultOk("", [{ id: "t", name: "ok", argumentsJson: "{}" }]),
+        resultOk("done"),
+      ],
+    });
+    const out = await runAgent({ messages: [textMsg("user", "u")], tools: reg }, deps, {});
+    expect(out.finalText).toBe("done");
+  });
+});

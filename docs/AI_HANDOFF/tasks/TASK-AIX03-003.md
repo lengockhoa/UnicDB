@@ -42,7 +42,12 @@ decision, and a SHAPE-ONLY outcome (never row bytes).
 
 ## Executor
 
-(to be filled by executor with RED + GREEN evidence)
+### Executor (unic-code)
+
+**RED evidence**: added 3 onToolResult cases to `src/ai/__tests__/agent.test.ts` → 2 failed (callback not implemented: case #1 order assertion + case #2 status assertion) before implementing the agent change.
+
+**GREEN evidence**: agent 19/19 (executeToolCall now returns ChatMessage & {outcome}; loop fires onToolResult AFTER execute, in order; unknown-tool/bad-args paths → failed). Panel: static toolShapeSummary (multi-line → "N lines (capped)"; one-line → capTokens 30; regex cap markers incl. "(N of M rows)"), onToolResult posts tool_result host message in builtin turn; DbToolPermissionGate denied branch posts tool_result denied before returning the envelope (gate tests 14/14 incl. 2 new); webview HostMsg union + appendToolResult (textContent only) + case branch (webview tests 5/5 incl. new card test). analysis tools registered gate-wrapped in runBuiltinTurn via createAnalysisTools. omp/MCP mirror keeps the existing visible permission bridge; its denial path shares the same gate → denial cards appear on both engines.
+
 
 ## Reviewer
 

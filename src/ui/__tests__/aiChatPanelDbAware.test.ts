@@ -109,6 +109,37 @@ describe("DbToolPermissionGate", () => {
     expect(calls).toHaveLength(2);
   });
 
+  it("AIX-03: deny also posts a visible tool_result card", async () => {
+    const posted: any[] = [];
+    const gate = new DbToolPermissionGate((m) => posted.push(m));
+    const { tool, calls } = fakeTool();
+    const p = gate.wrap(tool).execute({ sql: "SELECT 1" });
+    await Promise.resolve();
+    gate.respond(posted[0].requestId, "deny");
+    const res = await p;
+    expect(res).toBe(DB_TOOL_DENIED_MESSAGE);
+    expect(calls).toHaveLength(0);
+    const card = posted.find((m) => m.type === "tool_result");
+    expect(card).toBeDefined();
+    expect(card.tool).toBe("run_readonly_query");
+    expect(card.status).toBe("denied");
+    expect(card.summary).toContain("denied");
+  });
+
+  it("AIX-03: allow posts ok outcome after run via describe/onToolResult flow", async () => {
+    // The gate itself doesn't post ok — the agent loop does. Here we just
+    // verify allow-only flow posts NO tool_result (card comes from
+    // onToolResult in the panel during a real turn).
+    const posted: any[] = [];
+    const gate = new DbToolPermissionGate((m) => posted.push(m));
+    const { tool } = fakeTool();
+    const p = gate.wrap(tool).execute({ sql: "SELECT 1" });
+    await Promise.resolve();
+    gate.respond(posted[0].requestId, "allow-once");
+    await p;
+    expect(posted.find((m) => m.type === "tool_result")).toBeUndefined();
+  });
+
   it("Deny returns the denial message and never runs the tool", async () => {
     const posted: any[] = [];
     const gate = new DbToolPermissionGate((m) => posted.push(m));

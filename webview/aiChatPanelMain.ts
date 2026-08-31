@@ -134,6 +134,7 @@ interface AttachErrorMsg {
 type HostMsg =
   | InitMsg
   | StepMsg
+  | { type: "tool_result"; tool: string; status: "ok" | "failed" | "denied"; summary: string }
   | AssistantMsg
   | ErrorMsg
   | DoneMsg
@@ -975,6 +976,18 @@ function appendStep(label: string): void {
   thread.appendChild(step);
 }
 
+/** AIX-03: visible tool-call outcome card. DOM text only — the summary is
+ * host-authored shape text, rendered via textContent (never innerHTML). */
+function appendToolResult(tool: string, status: string, summary: string): void {
+  const thread = document.getElementById("thread");
+  if (!thread) return;
+  const div = document.createElement("div");
+  div.className = `vsdb-chat-tool-result vsdb-chat-tool-result-${status}`;
+  div.textContent = summary; // host already formats "✓ tool — shape"
+  thread.appendChild(div);
+  autoScroll(div);
+}
+
 function appendAssistant(text: string, markdown: boolean): void {
   const thread = document.getElementById("thread");
   if (!thread) return;
@@ -1539,6 +1552,9 @@ function renderHistory(msg: HistoryMsg): void {
       return;
     case "step":
       appendStep(msg.label);
+      return;
+    case "tool_result":
+      appendToolResult(msg.tool, msg.status, msg.summary);
       return;
     case "delta":
       appendDelta(msg.text);
