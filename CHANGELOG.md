@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.28.0] — 2026-08-31
+
+Cycle AIX-07: Trust, Privacy & Governance (central default-deny AI policy + redacted all-turn audit export + host integration).
+
+### Added
+- **Central effective AI policy** (`src/ai/policy.ts`): pure `resolvePolicy({workspaceTrusted, configuredEngine, resolvedEngine})` returning an `EffectivePolicy` (provider, context{schema,workspace,rows}, tools{database,workspace}, auditExportAllowed, notice). Default-deny for untrusted workspaces, unknown configured vocabulary (only `"builtin"`/`"omp"` admitted), or invalid resolved engine choices; a configured `"builtin"` with a resolver-selected OMP engine stays ADMITTED (locked decision #2). Decision objects are frozen so default-deny cannot be globally mutated; the credential-path exclusion rejects `.env` AND `.env.*` variants.
+- **Redacted all-turn audit export** (`src/ai/auditExport.ts`): `TraceRecorder.dumpAll()` snapshot + `buildAuditEnvelope`/`serializeAuditExport` (schema `vsdb.ai.audit-export`, version 1). Payloads are converted through a hook-free `toPlainJson()` (callable `toJSON()` can never execute or inject content), then a final `redact()` pass runs BEFORE serialization — secret VALUES never reach the exported string; envelope own-keys exclude credential keys.
+- **Host commands** (`src/extension.ts`): `vsdb.ai.showPolicy` (user-readable effective-policy notice), `vsdb.ai.exportTrace` (policy check → panel check → save dialog → serialize → fs write; denied/no-panel paths have zero side effects), `vsdb.ai.clearTrace` (no-op + notice without a panel). Registered commands + activation events in `package.json`.
+- **Panel policy gating** (`src/ui/aiChatPanel.ts`): `resolveEffectivePolicy()` per turn; denied policy skips mention resolution and grounding reads (zero adapter/file calls), omits sensitive tool registrations (dbAware/analysis/changePlan/sql/export_structure/workspace tools) while generic chat still completes, and blocks schema/workspace enumeration from `mention_list`. Fail-safe defaults: trust probe defaults true, config reads are try/catch-guarded with `undefined`→`"builtin"`.
+- **Full wire redaction**: OMP-engine deltas/thoughts, raw-ACP deltas/thoughts/final buffer, AND resumed-session history all pass `redact()` before any webview post or history append — no engine path can stream credential-shaped text unredacted.
+- **`dumpTrace`/`clearTrace` parity**: panel exposes `dumpAll()` for the export command; `clearTrace` resets the recorder.
+
+### Review
+- Independent unic-smart review, 3 parallel reviewers + 2 auto-fix rounds: 001 returned frozen policy constants + `.env` variant rejection; 002's critical `toJSON` bypass got a hook-free plain-JSON conversion with a sentinel regression test; 003's critical unredacted raw-ACP/resumed-history wire posts got uniform `redact()` at every boundary plus a `mention_list` policy gate and sentinel regression tests on each path. Focused net 182/182, full suite 2777 passed | 2 skipped, typecheck clean.
+
 ## [1.27.0] — 2026-08-31
 
 Cycle RLX-01: Operational Reliability Foundation (targeted PG cancellation, single-flight schema refresh, fail-closed import validation).
