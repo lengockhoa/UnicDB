@@ -20,6 +20,8 @@ For each significant action, append:
 - Verification run
 - Outcome
 
+## 2026-08-31 — Cycle AIX-05 OMP Agent Workbench → v1.25.0 (unic-code executor + unic-smart reviewer)
+Plan + 4 task contracts (PLAN_AIX05, INDEX_AIX05, 4 tasks). Feature commit 0fe4437 (session_state wire, OmpChatEngine.cancel, dispatchNotification robustness, reason→hint, registerStandardToolset parity). Reviewer r1: CHANGES-REQUESTED (cancel-during-session/new lost, tool_call_update w/o toolCallId forwarded, HostMsg session_state missing, release docs missing). r1 commit bba8a62 (pendingCancel flag + toolCallId guard + webview HostMsg + CHANGELOG/README). Reviewer r2: CHANGES-REQUESTED (idle cancel violated no-op contract, drain left currentSessionId so second cancel duplicated). r2 commit 8cc49a0 (sessionNewInFlight gate + drain clears currentSessionId). Reviewer r3: APPROVED. Tests 2675 passed | 2 skipped; typecheck 0; compile clean. Release v1.25.0 follow-up.
 ## 2026-08-31 — Cycle AIX-04 Database Change Workflow → v1.24.0 (unic-code executor + unic-smart reviewer)
 
 - plan_change agent tool (READ-ONLY): danger-tier classification + live-schema drift, never executes.

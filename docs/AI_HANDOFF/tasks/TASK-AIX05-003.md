@@ -69,3 +69,4 @@ Notes:
 ## Reviewer
 
 (verdict appended by reviewer)
+**Status: done (reviewer APPROVED — see verdict block in TASK-AIX05-001.md)**

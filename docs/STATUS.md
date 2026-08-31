@@ -6,15 +6,15 @@
 
 ## Snapshot
 
-- Branch/state: `main` — **v1.24.0 released** (AIX-04). Parallel session queued RLX-01 (Operational Reliability Foundation) in ACTIVE.md.
+- Branch/state: `main` — **v1.25.0 about to release** (AIX-05). Parallel session queued RLX-01 (Operational Reliability Foundation) in ACTIVE.md.
 - Durable two-pillar product queue: `docs/AI_HANDOFF/PRODUCT_ROADMAP.md` with its portfolio plan in `PLAN_PRODUCT_VISION.md`; `ROADMAP.md` is the compatibility index.
 - Cycle DBX-04 (Relationship Explorer) COMPLETE + REVIEWED (2026-08-30, unic-smart APPROVED after 3 fix rounds). Delivers `vsdb.relationshipExplorer`: FK graph, deterministic layered layout, SVG export, pan/zoom panel.
 - Cycle AIX-01 (Grounded Workspace Context) COMPLETE + REVIEWED (2026-08-30, unic-smart APPROVED after 2 fix rounds at 6a2b560). Delivers opt-in grounding: selection + file blocks with line-ranged attribution, workspace_search bounded retrieval, panel toggle chips.
 - Cycle DBX-02 (SQL Intelligence Navigation) COMPLETE on `main` (4 code commits + docs closure). Catalog completion (FK targets + views/routines/sequences), hover/definition over `vsdb-sql-catalog:` virtual documents, and parsed find-usages wired behind partial-mock guards.
 
 ## Active Work
-- AIX-04 done + reviewed (4/4, unic-smart APPROVED after 2 fix rounds). Released v1.24.0.
-- NEXT per roadmap: AIX-05 OMP Agent Workbench (wave 4) → release v1.25.0, then DBX-07, AIX-06, AIX-07 (wave 5), DBX-08, AIX-08 (wave 6).
+- AIX-05 done + reviewed (4/4, unic-smart APPROVED after 2 fix rounds). Releasing v1.25.0.
+- NEXT per roadmap: DBX-07 Database Reliability Controls (wave 5), then AIX-06, AIX-07, DBX-08, AIX-08 (wave 6) — release v1.26.0…v1.28.0.
 - A parallel session rotated ACTIVE.md to Cycle RLX-01 (Operational Reliability Foundation, planning_done) — coordinate before executing RLX tasks to avoid conflicts with the roadmap wave order.
 - AHL is archived as completed historical work; its artifacts remain preserved under `docs/AI_HANDOFF/`.
 
@@ -23,10 +23,12 @@
 - None blocking.
 
 ## Next Candidates
-1. AIX-05 OMP Agent Workbench (roadmap wave 4), then DBX-07, AIX-06, AIX-07 (wave 5), DBX-08, AIX-08 (wave 6). RLX-01 is queued by a parallel session — reconcile ordering first.
+1. DBX-07 Database Reliability Controls (roadmap wave 5), then AIX-06, AIX-07 (wave 5), DBX-08, AIX-08 (wave 6). RLX-01 is queued by a parallel session — reconcile ordering first.
+2. AIX-05 v1.25.0 release follow-up (bump + vsix + tag + push + GitHub Release).
 
 
 ## Recently Completed
+- v1.25.0: Cycle AIX-05 OMP Agent Workbench — `session_state` wire + webview chip, `OmpChatEngine.cancel` (no-op/idempotent/restart-safe with `sessionNewInFlight` gate + `pendingCancel` drain), panel Stop parity in omp+ompChatEngine mode, `dispatchNotification` crash-proof (top-level `isParamsRecord` + toolCallId guard), `resolveEngine` reason→hint pinned, builtin↔OMP/MCP tool permission parity via `registerStandardToolset`; unic-smart APPROVED after 2 fix rounds.
 
 - v1.24.0: Cycle AIX-04 Database Change Workflow — plan_change reviewed change plans (danger tiers + live-schema drift, READ-ONLY), ONE shared confirmDangerousStatements consent gate, change_plan consent card (Approve/Reject, disabled when drifted, drift re-check at approve), per-statement sequential apply with partial-failure + cancel reporting, builtin + OMP/MCP registry parity; unic-smart APPROVED after 2 fix rounds.
 - v1.23.0: Cycle DBX-06 Safe Rename Refactor — catalog usage analysis, reviewable ALTER plan, rename dialog with per-statement progress/cancel; unic-smart APPROVED after 2 fix rounds.

@@ -1,5 +1,6 @@
 # Handoff History
 
+| 2026-08-31-E | 2026-08-31 | AIX-05 OMP Agent Workbench — session_state wire (turn lifecycle chip), OmpChatEngine.cancel (no-op/idempotent/restart-safe), panel Stop parity, dispatchNotification crash-proof, detection reason→hint pinned, builtin↔OMP/MCP tool parity via registerStandardToolset; unic-smart APPROVED after 2 fix rounds; released v1.25.0 |
 | Cycle | Date | Summary |
 |-------|------|---------|
 | 2026-08-31-D | 2026-08-31 | AIX-04 Database Change Workflow — plan_change reviewed change plans (danger tiers + live-schema drift), one shared confirmDangerousStatements consent gate, consent card with Approve/Reject, per-statement apply with partial-failure + cancel reporting; unic-smart APPROVED after 2 fix rounds; released v1.24.0 |
