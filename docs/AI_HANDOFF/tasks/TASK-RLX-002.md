@@ -103,3 +103,54 @@ in-flight slots (`tables:public` vs `tables:all` vs `columns:<s>.<t>` etc.).
 ## Reviewer Verdict
 
 (pending)
+
+---
+
+## Executor Report (fix round 1)
+
+EXECUTOR_TOOL: claude-code (main session)
+EXECUTOR_MODEL: unic-code
+
+Fix applied: When `fetch()` threw SYNCHRONOUSLY, the async IIFE body settled during its
+sync phase — before `this.inflight.set(key, work)` on the following line had run — so the
+inner `finally`'s identity check compared `undefined === undefined` (deleted nothing) and
+the already-settled dead promise was then registered permanently. Every later caller
+coalesced onto that dead entry and could never retry fresh; even `invalidate()` never
+cleared the inflight map. Fix: both `fetchEntry` and `fetchEntryDdl` now create the work
+promise as `Promise.resolve().then(async () => { ...same body... })`, deferring the body
+one microtask so registration always completes first; the existing `finally` cleanup then
+runs normally on every throw path (sync throw and async rejection alike). Callers still
+receive the stale-on-error fallback (`[]` / prior cache), never a hang.
+
+RED_OUTPUT (regression test "sync-throwing provider leaves no stuck in-flight entry" against the round-1 implementation):
+```
+ FAIL  src/ui/__tests__/schemaCache.test.ts > SchemaCache — TASK-RLX-002 single-flight coalescing > sync-throwing provider leaves no stuck in-flight entry
+AssertionError: expected [] to be [ Array(1) ] // Object.is equality
+
+- Expected
++ Received
+
+- Array [
+-   Object {
+-     "name": "orders",
+-     "schema": "public",
+-   },
+- ]
++ Array []
+
+ ❯ src/ui/__tests__/schemaCache.test.ts:229:5
+    229|     await expect(cache.getTables("public")).resolves.toBe(fresh);
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 9 passed (10)
+```
+Part (a) passed — first caller got the stale-on-error `[]` fallback without hanging;
+part (b) failed for exactly the reported reason — the second load coalesced onto the
+dead registry entry and returned `[]` instead of calling the recovered provider
+(call count stayed 1, expected 2).
+
+Verification: `npx vitest run src/ui/__tests__/schemaCache.test.ts` → 10 passed (10),
+1 file passed. `npm run typecheck` → exit 0, no errors. Regression net: sqlCatalog,
+sqlCompletionProvider, sqlNavigationProvider, sqlSemanticTokens → 26 passed (26).
+
+Status: PASS

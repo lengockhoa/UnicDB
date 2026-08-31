@@ -658,18 +658,19 @@ describe("QueryRunner — non-batched cancellation seam (TASK-RLX-001)", () => {
     expect(result[0].status).toBe("cancelled");
   });
 
-  it("Test #2 — edge / race: cancel before adapter resolves; seam NOT re-invoked after the late resolution", async () => {
-    // Deferred adapter-PROVIDER promise (task fixture): the adapter itself
-    // resolves late relative to run()'s start, and its runQuery is deferred
-    // too. Cancel lands while the runner holds the resolved adapter and an
-    // in-flight statement: seam fires exactly ONCE at cancel time, and the
-    // late runQuery resolution must NOT trigger another seam call. Result
-    // is 'cancelled' when the run settles.
+  it("Test #2 — edge / race: cancel BEFORE the adapter provider resolves; no seam, no runQuery against the late adapter", async () => {
+    // Review fix round 1 Finding A: the provider promise stays DEFERRED
+    // through runner.cancel(). The cancel therefore lands BEFORE the runner
+    // ever obtains an adapter (executeAll is still awaiting the provider, no
+    // statement has started, PID window never opened). Afterwards the
+    // provider resolves with a normal adapter whose runQuery is a spy — the
+    // runner must skip straight past the statement (pre-loop cancelRequested
+    // check): runQuery NEVER called, the seam NEVER fired against the
+    // late-resolving adapter, and the settled result is 'cancelled'.
     let resolveAdapter: ((a: DbAdapter) => void) | null = null;
-    let resolveRun: ((v: RunResult) => void) | null = null;
     const cancelActiveSpy = vi.fn(async () => {});
-    const runQuerySpy = vi.fn(
-      () => new Promise<RunResult>((resolve) => { resolveRun = resolve; }),
+    const runQuerySpy = vi.fn(async () =>
+      okResult(["n"], [[1]]),
     );
     const adapter = {
       connect: vi.fn(async () => {}),
@@ -691,22 +692,23 @@ describe("QueryRunner — non-batched cancellation seam (TASK-RLX-001)", () => {
     );
 
     const runPromise = runner.run([stmt("UPDATE t SET x=1", 0, 16)], () => {});
-    // Provider resolves late; the statement starts and hangs in runQuery.
-    if (resolveAdapter) resolveAdapter(adapter);
+    // Let run() enter executeAll and park on the pending provider — the
+    // adapter is NOT resolved yet.
     await new Promise((r) => setTimeout(r, 5));
-    expect(runQuerySpy).toHaveBeenCalledTimes(1);
+    expect(runQuerySpy).not.toHaveBeenCalled();
 
-    // Cancel mid-runQuery — exactly one seam call.
+    // Cancel while the provider is STILL pending — the runner holds no
+    // adapter, so no seam may fire here.
     await runner.cancel();
-    expect(cancelActiveSpy).toHaveBeenCalledTimes(1);
+    expect(cancelActiveSpy).not.toHaveBeenCalled();
 
-    // runQuery resolves late; no second seam call may fire.
-    if (resolveRun) {
-      resolveRun({ results: [{ columns: [], rows: [], rowCount: 1, commandTag: "UPDATE 1", durationMs: 0 }] });
-    }
+    // Only now does the provider resolve with the late adapter.
+    if (resolveAdapter) resolveAdapter(adapter);
     const result = await runPromise;
 
-    expect(cancelActiveSpy).toHaveBeenCalledTimes(1);
+    // The late adapter must never be touched: no query, no seam.
+    expect(runQuerySpy).not.toHaveBeenCalled();
+    expect(cancelActiveSpy).not.toHaveBeenCalled();
     expect(result[0].status).toBe("cancelled");
   });
 

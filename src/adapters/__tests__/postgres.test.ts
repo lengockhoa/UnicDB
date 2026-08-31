@@ -466,3 +466,203 @@ describe("PostgresAdapter — cancelActiveQuery (TASK-RLX-001)", () => {
   });
 });
 });
+
+// =============================================================================
+// TASK-RLX-001 fix round 1 — Finding B (review, blocking): the adapter-wide
+// scalar `activeNonCursorPid` is overwritten by concurrent runQuery() calls
+// and unconditionally cleared by each call's finally, so (1) a concurrent
+// direct run (e.g. the grant wizard at src/extension.ts:770, or background
+// metadata traffic) makes the runner's query un-cancellable, and (2) the
+// earlier call's finally closes the PID window while the later call is still
+// in flight (cancel becomes a no-op against a live backend).
+//
+// These overlap tests use TWO mock pool clients with distinct processIDs
+// (11 and 22) checked out concurrently through the non-cursor branch
+// (multi-statement scripts), with per-client deferred gates so each run can
+// settle independently while the other is still in flight.
+// =============================================================================
+describe("PostgresAdapter — cancelActiveQuery overlap race (TASK-RLX-001 fix round 1)", () => {
+  /**
+   * A checked-out pool client whose FIRST statement hangs on a deferred gate
+   * — the run stays in flight (client checked out, PID window open) until
+   * the test releases the gate. Same trick as wirePoolClient above, but one
+   * independent client per call so two runs can overlap.
+   */
+  function hangableClient(pid: number) {
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let statements = 0;
+    const client: FakeClient = {
+      query: vi.fn(() => {
+        statements += 1;
+        if (statements === 1) return firstGate.then(() => popNext());
+        return popNext();
+      }),
+      release: vi.fn(),
+      processID: pid,
+    };
+    return { client, releaseFirst };
+  }
+
+  function dedicatedClientForOverlap() {
+    return {
+      connect: vi.fn(() => Promise.resolve()),
+      query: vi.fn(() => Promise.resolve({ rows: [] })),
+      end: vi.fn(() => Promise.resolve()),
+      release: vi.fn(),
+    };
+  }
+
+  /**
+   * Rewire the (module-scoped singleton) fake pool so run-time connect()
+   * hands out client A first, then client B, and a fresh fallback client
+   * after that. Must be called AFTER `adapter.connect()` — connect()'s probe
+   * runs on the original pool.connect mock, so the handout queue is never
+   * consumed by the probe and each test is self-sufficient (works under
+   * `vitest -t` filtering too).
+   */
+  function wireTwoClients(a: FakeClient, b: FakeClient): FakePool {
+    const pool = lastPool();
+    const handouts: FakeClient[] = [a, b];
+    pool.connect = vi.fn((): Promise<FakeClient> => {
+      const next = handouts.shift();
+      if (next) return Promise.resolve(next);
+      return Promise.resolve({
+        query: vi.fn(() => popNext()),
+        release: vi.fn(),
+      });
+    });
+    return pool;
+  }
+
+  it("Test O1 — earlier run settling must NOT clear the later run's PID window; cancel targets the survivor", async () => {
+    queue.push({ rows: [{ "?column?": 1 }] }); // connect probe
+    queue.push({ rows: [] }); // A statement #1 (released by gate)
+    queue.push({ rows: [] }); // A statement #2
+    queue.push({ rows: [] }); // B statement #1
+    queue.push({ rows: [] }); // B statement #2
+    const dedicated = dedicatedClientForOverlap();
+    const adapter = new PostgresAdapter(cfg(), "pw");
+    await adapter.connect();
+
+    const a = hangableClient(11);
+    const b = hangableClient(22);
+    const pool = wireTwoClients(a.client, b.client);
+    clientCtor().mockImplementation(() => dedicated);
+
+    // A (pid 11) checks out first, then B (pid 22) — both in flight.
+    const runA = adapter.runQuery("SELECT 1; SELECT 2");
+    const runB = adapter.runQuery("SELECT 3; SELECT 4");
+    await new Promise((r) => setTimeout(r, 5));
+    expect(a.client.query).toHaveBeenCalledTimes(1);
+    expect(b.client.query).toHaveBeenCalledTimes(1);
+
+    // A settles FIRST while B is still in flight. A's cleanup must not close
+    // B's PID window.
+    a.releaseFirst();
+    await runA;
+    expect(a.client.release).toHaveBeenCalledTimes(1);
+    expect(b.client.release).not.toHaveBeenCalled(); // B still checked out
+
+    // Cancel must reach the SURVIVOR (pid 22) via the DEDICATED client.
+    const poolEndCallsBefore = pool.end.mock.calls.length;
+    await adapter.cancelActiveQuery!();
+    expect(dedicated.connect).toHaveBeenCalledTimes(1);
+    expect(dedicated.query).toHaveBeenCalledTimes(1);
+    const [sql, params] = dedicated.query.mock.calls[0] as [string, number[]];
+    expect(sql).toMatch(/pg_cancel_backend/i);
+    expect(params).toEqual([22]);
+    expect(dedicated.end).toHaveBeenCalledTimes(1);
+    expect(pool.end.mock.calls.length).toBe(poolEndCallsBefore);
+    expect(b.client.release).not.toHaveBeenCalled();
+
+    // Drain B — release stays exactly-once per client.
+    b.releaseFirst();
+    await runB;
+    expect(b.client.release).toHaveBeenCalledTimes(1);
+
+    await adapter.close();
+  });
+
+  it("Test O2 — drain: once every overlapping run has settled, cancelActiveQuery is a no-op (no dedicated client)", async () => {
+    queue.push({ rows: [{ "?column?": 1 }] }); // connect probe
+    queue.push({ rows: [] }); // A statement #1
+    queue.push({ rows: [] }); // A statement #2
+    queue.push({ rows: [] }); // B statement #1
+    queue.push({ rows: [] }); // B statement #2
+    const dedicated = dedicatedClientForOverlap();
+    const adapter = new PostgresAdapter(cfg(), "pw");
+    await adapter.connect();
+
+    const a = hangableClient(11);
+    const b = hangableClient(22);
+    wireTwoClients(a.client, b.client);
+    clientCtor().mockImplementation(() => dedicated);
+
+    const runA = adapter.runQuery("SELECT 1; SELECT 2");
+    const runB = adapter.runQuery("SELECT 3; SELECT 4");
+    await new Promise((r) => setTimeout(r, 5));
+
+    // Both runs settle → the tracked-PID state must be fully empty.
+    a.releaseFirst();
+    await runA;
+    b.releaseFirst();
+    await runB;
+    expect(a.client.release).toHaveBeenCalledTimes(1);
+    expect(b.client.release).toHaveBeenCalledTimes(1);
+
+    const ctorCallsBefore = clientCtor().mock.calls.length;
+    await adapter.cancelActiveQuery!();
+    expect(clientCtor().mock.calls.length).toBe(ctorCallsBefore);
+    expect(dedicated.connect).not.toHaveBeenCalled();
+    expect(dedicated.query).not.toHaveBeenCalled();
+
+    await adapter.close();
+  });
+
+  it("Test O3 — window correctness: cancel while BOTH runs are in flight targets BOTH pids via ONE dedicated client, never the pool", async () => {
+    queue.push({ rows: [{ "?column?": 1 }] }); // connect probe
+    queue.push({ rows: [] }); // A statement #1
+    queue.push({ rows: [] }); // A statement #2
+    queue.push({ rows: [] }); // B statement #1
+    queue.push({ rows: [] }); // B statement #2
+    const dedicated = dedicatedClientForOverlap();
+    const adapter = new PostgresAdapter(cfg(), "pw");
+    await adapter.connect();
+
+    const a = hangableClient(11);
+    const b = hangableClient(22);
+    const pool = wireTwoClients(a.client, b.client);
+    clientCtor().mockImplementation(() => dedicated);
+
+    const runA = adapter.runQuery("SELECT 1; SELECT 2");
+    const runB = adapter.runQuery("SELECT 3; SELECT 4");
+    await new Promise((r) => setTimeout(r, 5));
+    expect(a.client.query).toHaveBeenCalledTimes(1);
+    expect(b.client.query).toHaveBeenCalledTimes(1);
+
+    const poolEndCallsBefore = pool.end.mock.calls.length;
+    await adapter.cancelActiveQuery!();
+    // ONE dedicated client; a pg_cancel_backend for EACH tracked backend.
+    expect(dedicated.connect).toHaveBeenCalledTimes(1);
+    expect(dedicated.query).toHaveBeenCalledTimes(2);
+    const pids = dedicated.query.mock.calls
+      .map((c) => (c as unknown as [string, number[]])[1][0])
+      .sort((x, y) => x - y);
+    expect(pids).toEqual([11, 22]);
+    expect(dedicated.end).toHaveBeenCalledTimes(1);
+    expect(pool.end.mock.calls.length).toBe(poolEndCallsBefore);
+    // Cancelling must not release either checked-out client.
+    expect(a.client.release).not.toHaveBeenCalled();
+    expect(b.client.release).not.toHaveBeenCalled();
+
+    // Drain both — release exactly once each.
+    a.releaseFirst();
+    b.releaseFirst();
+    await Promise.all([runA, runB]);
+    expect(a.client.release).toHaveBeenCalledTimes(1);
+    expect(b.client.release).toHaveBeenCalledTimes(1);
+
+    await adapter.close();
+  });
+});

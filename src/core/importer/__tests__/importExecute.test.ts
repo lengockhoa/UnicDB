@@ -251,6 +251,12 @@ describe("executeImport — structural plan gate", () => {
     expect(result.rowCount).toBe(0);
     expect(result.errors).toEqual([]);
     expect(result.error?.phase).toBe("gate");
+    // Fail-closed diagnostics: the message must name WHICH plan entry is
+    // affected (0-based index into plan.sqlStatements, i.e. the second
+    // declared batch = index 1) and the concrete reason ("missing").
+    expect(result.error?.message).toContain("statement 1 is missing");
+    expect(result.error?.message).toContain("batches=2");
+    expect(result.error?.message).toContain("statements=1");
     expect(vi.mocked(adapter.beginTransaction).mock.calls.length).toBe(0);
     expect(vi.mocked(adapter.runQuery)).not.toHaveBeenCalled();
     expect(spy.runQueryCalls.length).toBe(0);
@@ -269,6 +275,10 @@ describe("executeImport — structural plan gate", () => {
     const result = await executeImport(malformed, adapter);
     expect(result.rowCount).toBe(0);
     expect(result.error?.phase).toBe("gate");
+    // Fail-closed diagnostics: the parameterSets reason must be pinned to
+    // the first affected statement index (0-based: statement 0).
+    expect(result.error?.message).toContain("statement 0 has empty parameterSets");
+    expect(result.error?.message).toContain("parameterSets=0");
     expect(vi.mocked(adapter.beginTransaction).mock.calls.length).toBe(0);
   });
 });

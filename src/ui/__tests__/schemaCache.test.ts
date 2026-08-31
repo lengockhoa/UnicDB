@@ -208,4 +208,25 @@ describe("SchemaCache — TASK-RLX-002 single-flight coalescing", () => {
     expect(third).toBe(newData);
     expect(listTables).toHaveBeenCalledTimes(2);
   });
+
+  it("sync-throwing provider leaves no stuck in-flight entry", async () => {
+    // Regression (review round 1): a provider that THROWS synchronously —
+    // before/outside promise construction — must not leave a permanently
+    // settled entry in the in-flight registry. Stale-on-error contract still
+    // applies to the first caller: no prior cache → [] fallback, never a hang.
+    const listTables = vi.fn((_schema?: string) => {
+      throw new Error("boom");
+    });
+    const cache = new SchemaCache(() => adapterWith(listTables), { ttlMs: 0 });
+
+    // (a) First caller settles with the error-handled fallback.
+    await expect(cache.getTables("public")).resolves.toEqual([]);
+    expect(listTables).toHaveBeenCalledTimes(1);
+
+    // (b) Provider recovers → the NEXT load must be a FRESH provider call.
+    const fresh: TableInfo[] = [{ name: "orders", schema: "public" }];
+    listTables.mockImplementation(async () => fresh);
+    await expect(cache.getTables("public")).resolves.toBe(fresh);
+    expect(listTables).toHaveBeenCalledTimes(2);
+  });
 });

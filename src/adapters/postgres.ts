@@ -245,12 +245,18 @@ export class PostgresAdapter implements DbAdapter {
    */
   private openCursors: Set<OpenCursorRecord> = new Set();
   /**
-   * TASK-RLX-001 — backend PID của operation non-cursor đang chạy qua
-   * runQuery(). Chỉ record trong lúc client đang checked out (PID window);
-   * clear ngay khi runQuery settle (success/error). cancelActiveQuery()
-   * target PID này qua dedicated Client — KHÔNG bao giờ close pool/adapter.
+   * TASK-RLX-001 — backend PIDs của các operation non-cursor đang chạy qua
+   * runQuery(). Mỗi lần runQuery check out client thì record `processID` của
+   * client đó vào Set; `finally` của LẦN GỌI ĐÓ chỉ delete ĐÚNG PID nó đã
+   * record (không bao giờ clear-all) — nên các runQuery chạy chồng nhau
+   * không giết window của nhau (review fix round 1, Finding B: scalar
+   * `activeNonCursorPid` cũ bị lần sau ghi đè và lần trước's finally xoá
+   * window của lần sau còn đang bay). cancelActiveQuery() cancel TẤT CẢ
+   * PID trong Set qua dedicated Client — KHÔNG bao giờ close pool/adapter.
+   * Client không expose processID (typeof !== "number") → không track
+   * (không có gì để cancel).
    */
-  private activeNonCursorPid: number | null = null;
+  private readonly activeNonCursorPids = new Set<number>();
 
   constructor(
     private readonly cfg: ConnectionConfig,
@@ -386,11 +392,16 @@ export class PostgresAdapter implements DbAdapter {
     // (This single-client discipline is also what makes PG_POOL_MAX > 1
     // safe: concurrent metadata queries get their OWN session.)
     const client = await this.pool.connect();
+    // TASK-RLX-001 — record backend PID của client ĐANG ĐƯỢC CHECK OUT bởi
+    // LẦN GỌI NÀY vào Set (Finding B fix round 1). `pid` là const của lần
+    // gọi — finally dưới đây chỉ delete đúng PID này, không đụng PID của
+    // lần runQuery khác đang chạy chồng. processID thiếu → không track.
+    const pid = (client as unknown as { processID?: number }).processID;
+    const trackedPid = typeof pid === "number" ? pid : null;
+    if (trackedPid !== null) {
+      this.activeNonCursorPids.add(trackedPid);
+    }
     try {
-      // TASK-RLX-001 — record backend PID của client đang checked out để
-      // cancelActiveQuery() có thể pg_cancel_backend đúng backend.
-      const pid = (client as unknown as { processID?: number }).processID;
-      this.activeNonCursorPid = typeof pid === "number" ? pid : null;
       const results: QueryResult[] = [];
       for (const stmt of statements) {
         const text = stmt.text.trim();
@@ -410,9 +421,13 @@ export class PostgresAdapter implements DbAdapter {
       }
       return { results };
     } finally {
-      // TASK-RLX-001 — PID window đóng: tracking clear cả trên success lẫn
-      // error. Không late cancel nào bắn nhầm vào query sau.
-      this.activeNonCursorPid = null;
+      // TASK-RLX-001 — PID window của CHÍNH LẦN GỌI NÀY đóng: delete ĐÚNG
+      // PID đã record (cả success lẫn error), KHÔNG clear-all — nếu một
+      // runQuery khác vẫn đang bay với PID của nó, PID đó phải còn trong
+      // Set để cancelActiveQuery() vẫn chạm tới được backend đó.
+      if (trackedPid !== null) {
+        this.activeNonCursorPids.delete(trackedPid);
+      }
       client.release();
     }
   }
@@ -473,9 +488,40 @@ export class PostgresAdapter implements DbAdapter {
    *    BatchedQuery); việc release client vẫn là trách nhiệm của runQuery.
    */
   async cancelActiveQuery(): Promise<void> {
-    const pid = this.activeNonCursorPid;
-    if (pid === null) return;
-    await this.cancelBackendViaDedicatedClient(pid);
+    // Finding B fix round 1 — Set có thể chứa NHIỀU PID (các runQuery chạy
+    // chồng: runner run + background metadata / grant-wizard runQuery). Rỗng
+    // → no-op (không mở dedicated client). Không rỗng → MỘT dedicated client,
+    // pg_cancel_backend TỪNG PID. Vẫn best-effort: lỗi cancel từng PID bị
+    // swallow (giống cancelBackendViaDedicatedClient); client `end()` trong
+    // finally; KHÔNG bao giờ đụng pool/adapter.
+    if (this.activeNonCursorPids.size === 0) return;
+    const dedicated = new Client({
+      host: this.cfg.host,
+      port: this.cfg.port,
+      user: this.cfg.user,
+      password: this.password,
+      database: this.cfg.database,
+      ssl: pgSslOptions(this.cfg),
+      connectionTimeoutMillis: 5_000,
+    });
+    try {
+      await dedicated.connect();
+      for (const pid of this.activeNonCursorPids) {
+        try {
+          await dedicated.query("SELECT pg_cancel_backend($1)", [pid]);
+        } catch {
+          // ignore — best-effort cho từng PID.
+        }
+      }
+    } catch {
+      // ignore — dedicated client fail (server down, network) → best-effort.
+    } finally {
+      try {
+        await dedicated.end();
+      } catch {
+        // ignore
+      }
+    }
   }
 
   private async runQueryOnClient(

@@ -99,12 +99,24 @@ export async function executeImport(
       plan.sqlStatements.length !== plan.batches ||
       plan.parameterSets.length === 0)
   ) {
+    // Pin the offending plan entry (0-based index, matching the plan array
+    // order the user sees) and the concrete reason per case.
+    let reason: string;
+    if (!Number.isSafeInteger(plan.batches) || plan.batches < 1) {
+      reason = `invalid batch count batches=${plan.batches}`;
+    } else if (plan.sqlStatements.length < plan.batches) {
+      reason = `statement ${plan.sqlStatements.length} is missing (declared batches=${plan.batches}, statements=${plan.sqlStatements.length})`;
+    } else if (plan.sqlStatements.length > plan.batches) {
+      reason = `statement ${plan.batches} is unexpected (declared batches=${plan.batches}, statements=${plan.sqlStatements.length})`;
+    } else {
+      reason = `statement 0 has empty parameterSets (parameterSets=${plan.parameterSets.length})`;
+    }
     return {
       rowCount: 0,
       errors,
       error: {
         phase: "gate",
-        message: `Malformed executable plan: batches=${plan.batches}, statements=${plan.sqlStatements.length}, parameterSets=${plan.parameterSets.length} (expected batches ≥ 1, one INSERT statement per batch, and at least one parameter set)`,
+        message: `Malformed executable plan: ${reason} (expected batches ≥ 1, one INSERT statement per batch, and at least one parameter set)`,
       },
     };
   }

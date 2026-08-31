@@ -149,3 +149,45 @@ Note: none
 ## Reviewer Verdict
 
 (pending)
+
+## Executor Report (fix round 1)
+
+### 2026-08-31 · executor · claude-code · unic-code (main session)
+
+EXECUTOR_TOOL: claude-code (main session)
+EXECUTOR_MODEL: unic-code
+
+Fix applied: The structural gate in `src/core/importer/importExecute.ts` now reports the offending plan entry index (0-based, matching plan array order) plus the concrete per-case reason instead of counts only. Reasons: `invalid batch count batches=N` for non-safe-integer/`<1`; `statement <idx> is missing` when `sqlStatements.length < batches`; `statement <idx> is unexpected` when `> batches`; `statement 0 has empty parameterSets (parameterSets=N)` for the empty-parameterSets case. Gate stays fail-closed before `beginTransaction()`, empty-plan no-op and valid-plan behavior untouched.
+
+RED_OUTPUT (index/reason assertions against the round-1 implementation):
+|
+  npx vitest run src/core/importer/__tests__/importExecute.test.ts (before fix):
+
+   ❯ src/core/importer/__tests__/importExecute.test.ts  (15 tests | 2 failed) 9ms
+     ❯ executeImport — structural plan gate > declared batch lacks SQL statement → gate error, no transaction
+       → expected 'Malformed executable plan: batches=2, statements=1, parameterSets=2 (…)' to contain 'statement 1 is missing'
+     ❯ executeImport — structural plan gate > executable plan with no parameter sets → gate error, no transaction
+       → expected 'Malformed executable plan: batches=1, statements=1, parameterSets=0 (…)' to contain 'statement 0 has empty parameterSets'
+
+   FAIL src/core/importer/__tests__/importExecute.test.ts > … > declared batch lacks SQL statement → gate error, no transaction
+   AssertionError: expected 'Malformed executable plan: batches=2,…' to contain 'statement 1 is missing'
+
+    - Expected
+    + Received
+
+    - statement 1 is missing
+    + Malformed executable plan: batches=2, statements=1, parameterSets=2 (expected batches ≥ 1, one INSERT statement per batch, and at least one parameter set)
+
+    ❯ src/core/importer/__tests__/importExecute.test.ts:257:35
+
+   FAIL src/core/importer/__tests__/importExecute.test.ts > … > executable plan with no parameter sets → gate error, no transaction
+   AssertionError: expected 'Malformed executable plan: batches=1,…' to contain 'statement 0 has empty parameterSets'
+
+    ❯ src/core/importer/__tests__/importExecute.test.ts:280:35
+
+    Test Files  1 failed (1)
+         Tests  2 failed | 13 passed (15)
+
+Verification: npx vitest run src/core/importer/__tests__/importExecute.test.ts → 15 passed (15), 1 file passed. npm run typecheck → tsc --noEmit, exit 0.
+
+Status: PASS

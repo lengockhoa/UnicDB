@@ -317,8 +317,12 @@ export class SchemaCache {
     const inflight = this.inflight.get(key);
     if (inflight) return inflight as Promise<D | null>;
     const startGen = this.generation;
-    let work!: Promise<D | null>;
-    work = (async () => {
+    // Register BEFORE the body runs: a provider that THROWS SYNCHRONOUSLY
+    // would otherwise settle the promise during the sync phase of the async
+    // body — before `inflight.set` below — leaving a permanently dead entry
+    // in the registry (next caller coalesces onto it and can never retry).
+    // `Promise.resolve().then(...)` guarantees set-first ordering.
+    const work: Promise<D | null> = Promise.resolve().then(async () => {
       try {
         const data = await fetch();
         if (this.generation === startGen) {
@@ -331,7 +335,7 @@ export class SchemaCache {
       } finally {
         if (this.inflight.get(key) === work) this.inflight.delete(key);
       }
-    })();
+    });
     this.inflight.set(key, work);
     return work;
   }
@@ -353,20 +357,23 @@ export class SchemaCache {
     const inflight = this.inflight.get(key);
     if (inflight) return inflight as Promise<string | undefined>;
     const startGen = this.generation;
-    let work!: Promise<string | undefined>;
-    work = (async () => {
-      try {
-        const data = await fetch();
-        if (this.generation === startGen) {
-          commit({ data, fetchedAt: this.now() });
+    // Same sync-throw protection as fetchEntry: register the in-flight
+    // promise BEFORE the body can settle on a synchronous provider throw.
+    const work: Promise<string | undefined> = Promise.resolve().then(
+      async () => {
+        try {
+          const data = await fetch();
+          if (this.generation === startGen) {
+            commit({ data, fetchedAt: this.now() });
+          }
+          return data;
+        } catch {
+          return existing ? (existing.data ?? undefined) : undefined;
+        } finally {
+          if (this.inflight.get(key) === work) this.inflight.delete(key);
         }
-        return data;
-      } catch {
-        return existing ? (existing.data ?? undefined) : undefined;
-      } finally {
-        if (this.inflight.get(key) === work) this.inflight.delete(key);
-      }
-    })();
+      },
+    );
     this.inflight.set(key, work);
     return work;
   }

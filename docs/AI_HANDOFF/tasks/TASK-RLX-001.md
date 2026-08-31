@@ -147,3 +147,94 @@ Note: Test Cases 3 & 5 are absence-guards that pass pre-implementation by design
 ## Reviewer Verdict
 
 (pending)
+
+### Review · TASK-RLX-001 · unic-smart
+VERDICT: changes_requested
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  npx vitest run src/core/__tests__/queryRunner.test.ts src/adapters/__tests__/postgres.test.ts: PASS — Test Files 2 passed (2); Tests 46 passed (46); Duration 389ms
+  npm run typecheck: PASS — > vsdb@1.26.0 typecheck; > tsc --noEmit
+FINDINGS:
+  critical: none
+  important:
+    - src/core/__tests__/queryRunner.test.ts:693-701 — Test #2 resolves the adapter provider before calling `runner.cancel()`, so it does not exercise the required cancellation-before-provider-resolution race. Keep the provider deferred through `cancel()`, then resolve it and assert `runQuery`/the seam were never called and the result is cancelled.
+    - src/adapters/postgres.ts:252,387-415 — A single adapter-wide `activeNonCursorPid` is overwritten and unconditionally cleared by concurrent `runQuery()` calls. A concurrent direct run (for example src/extension.ts:770) can therefore cause `vsdb.cancelQuery` to cancel that unrelated backend or make the runner query un-cancellable; associate cancellation state with the owning runner operation or prevent overlapping non-cursor runs before exposing this seam.
+  minor: none
+NEXT_STATUS_FOR_INDEX: changes_requested
+
+---
+
+## Executor Report (fix round 1)
+
+EXECUTOR_TOOL: claude-code (main session)
+EXECUTOR_MODEL: unic-code
+
+### Fixes applied
+
+- **Finding A** (src/core/__tests__/queryRunner.test.ts Test #2): rewritten. The adapter-PROVIDER promise now stays deferred through `runner.cancel()` — the test awaits a tick with the provider still pending, asserts `runQuerySpy` not yet called, calls `await runner.cancel()` and asserts `cancelActiveSpy` NOT called (runner holds no adapter yet). Only THEN does it resolve the provider with a normal adapter whose `runQuery` is a spy, awaits the run, and asserts `runQuery` NEVER called, `cancelActiveSpy` NEVER called (no seam against the late-resolving adapter), and `result[0].status === "cancelled"`.
+- **Finding B** (src/adapters/postgres.ts): replaced the scalar `activeNonCursorPid: number | null` with `private readonly activeNonCursorPids = new Set<number>()`. In the non-cursor checked-out-client branch of `runQuery()`, the call records its own client's `processID` into the Set as a per-call `const trackedPid` (missing `processID` → not tracked — nothing to cancel); the `finally` deletes ONLY that exact recorded value (guarded on `typeof pid === "number"`), never clear-all — a concurrent run's PID stays in the Set. `cancelActiveQuery()`: empty Set → early-return no-op (no dedicated client constructed); otherwise opens ONE dedicated Client, loops `SELECT pg_cancel_backend($1)` per tracked pid (individual failures swallowed — best-effort), `dedicated.end()` in `finally`, never touches the shared pool/adapter. The batched-cursor path (`openCursorForStatement`) keeps its own local `backendPid` + `cancelBackendViaDedicatedClient` and never touches `activeNonCursorPids` (verified in source). `cancelBackendViaDedicatedClient` remains for the cursor path only.
+
+### RED_OUTPUT (overlap regression tests O1-O3 against the scalar implementation)
+
+Ran first against the pre-fix scalar implementation:
+`npx vitest run src/adapters/__tests__/postgres.test.ts -t "overlap race"`
+
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+
+ ❯ src/adapters/__tests__/postgres.test.ts  (18 tests | 2 failed | 15 skipped) 23ms
+   ❯ ... > Test O1 — earlier run settling must NOT clear the later run's PID window; cancel targets the survivor
+     → expected "spy" to be called 1 times, but got 0 times
+   ❯ ... > Test O3 — window correctness: cancel while BOTH runs are in flight targets BOTH pids via ONE dedicated client, never the pool
+     → expected "spy" to be called 2 times, but got 1 times
+
+ FAIL  ... > Test O1 — earlier run settling must NOT clear the later run's PID window; cancel targets the survivor
+AssertionError: expected "spy" to be called 1 times, but got 0 times
+ ❯ src/adapters/__tests__/postgres.test.ts:570:31
+    568|     const poolEndCallsBefore = pool.end.mock.calls.length;
+    569|     await adapter.cancelActiveQuery!();
+    570|     expect(dedicated.connect).toHaveBeenCalledTimes(1);
+
+ FAIL  ... > Test O3 — window correctness: cancel while BOTH runs are in flight targets BOTH pids via ONE dedicated client, never the pool
+AssertionError: expected "spy" to be called 2 times, but got 1 times
+ ❯ src/adapters/__tests__/postgres.test.ts:648:29
+    646|     expect(dedicated.connect).toHaveBeenCalledTimes(1);
+    647|     expect(dedicated.query).toHaveBeenCalledTimes(2);
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 1 passed | 15 skipped (18)
+```
+
+RED fidelity notes:
+- O1 fails exactly on review Finding B case (2): A's `finally` nulls the scalar after B overwrote it → cancel is a NO-OP (0 dedicated connects) against B's live backend. O3 fails exactly on case (1): scalar holds only the LAST pid → only 1 of 2 backends cancelled. Both observed RED for the race itself.
+- O2 passed pre-fix and is documented as a guard, not a RED carrier: under a scalar, "everything drained ⇒ nothing tracked" is trivially also true; it pins the no-leak/drain contract of the Set fix.
+- Finding A rewritten Test #2: NO new RED observed — against the current implementation the pre-loop `cancelRequested` check already skips the statement, so it passes immediately. It is a regression guard pinning the cancellation-before-provider-resolution race; the RED signal for the original Test #2 is the pre-rewrite failure already recorded in this file's first Executor Report (`expected "spy" to be called 1 times, but got 0 times` at queryRunner.test.ts:701). Not fabricated.
+
+### Verification
+
+Command 1: `npx vitest run src/core/__tests__/queryRunner.test.ts src/adapters/__tests__/postgres.test.ts`
+
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+
+ ✓ src/adapters/__tests__/postgres.test.ts  (18 tests) 33ms
+ ✓ src/core/__tests__/queryRunner.test.ts  (31 tests) 131ms
+
+ Test Files  2 passed (2)
+      Tests  49 passed (49)
+   Duration  355ms (transform 120ms, setup 0ms, collect 159ms, tests 164ms, environment 0ms, prepare 75ms)
+```
+
+Command 2: `npm run typecheck`
+
+```
+> vsdb@1.26.0 typecheck
+> tsc --noEmit
+
+exit=0
+```
+
+Scope: only `src/adapters/postgres.ts`, `src/adapters/__tests__/postgres.test.ts`, `src/core/__tests__/queryRunner.test.ts` touched + this report appended. schemaCache / importExecute untouched (parallel fix rounds). No git add/commit/push. INDEX.md untouched.
+
+Status: PASS

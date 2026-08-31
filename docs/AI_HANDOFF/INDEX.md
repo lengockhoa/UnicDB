@@ -4,7 +4,7 @@ Cycle RLX-01 — **Operational Reliability Foundation**. Active, executable scop
 
 | Task / Portfolio | Title | Status | Dependencies | Reviewer |
 |---|---|---|---|---|
-| TASK-RLX-001 | Cancel active PostgreSQL non-cursor queries | ready | none | - |
+| TASK-RLX-001 | Cancel active PostgreSQL non-cursor queries | changes_requested | none | unic-smart |
 | TASK-RLX-002 | Coalesce SchemaCache stale refreshes | ready | none | - |
 | TASK-RLX-003 | Fail closed on malformed import execution plans | pending_review | none | - |
 | TASK-DBX07-001 | AIX-06 Trace r3 review fixes | done | none | unic-smart |
