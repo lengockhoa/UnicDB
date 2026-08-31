@@ -4,7 +4,6 @@
 // (`spawn("ssh", args)`, shell: false by default, no exec/execSync).
 // No vscode import. Handles are in-memory only; dispose() drains everything.
 import { spawn, type ChildProcess } from "node:child_process";
-import { createServer, connect as tcpConnect } from "node:net";
 import { buildTunnelArgs, type TunnelConfig } from "./sshTunnel";
 
 const READY_TIMEOUT_MS = 10_000;
@@ -20,35 +19,26 @@ export interface TunnelHandle {
 const MARKER = "vsdb-tunnel";
 
 /**
- * Bind an ephemeral port, read it, and release it. ssh then re-binds it in
- * the -L forward. Racy in theory (TOCTOU), but the window is milliseconds
- * and the manager verifies actual liveness with a TCP probe below.
+ * Bind an ephemeral port, read it, and release it for ssh to re-bind.
+ * TOCTOU note: between release and ssh's bind another process could claim
+ * the port. That attempt is SAFE BY CONSTRUCTION: ssh then fails with
+ * EADDRINUSE and, because ExitOnForwardFailure=yes, exits — start() rejects.
+ * Ownership is proven below by requiring ssh's own verbose forward line for
+ * OUR explicit port (an impostor listener cannot make ssh print it), never
+ * by a blind TCP connect (which any local process could satisfy).
  */
 function pickFreeLocalPort(): Promise<number> {
   return new Promise((resolve, reject) => {
+    // Lazy import kept inline to avoid a top-level net import in consumers.
+    const { createServer } = require("node:net") as typeof import("node:net");
     const srv = createServer();
     srv.unref();
     srv.on("error", reject);
     srv.listen(0, "127.0.0.1", () => {
       const addr = srv.address();
-      const port =
-        typeof addr === "object" && addr !== null ? addr.port : 0;
+      const port = typeof addr === "object" && addr !== null ? addr.port : 0;
       srv.close(() => (port > 0 ? resolve(port) : reject(new Error("no free port"))));
     });
-  });
-}
-
-/** True when something accepts TCP connections on 127.0.0.1:port. */
-function portAlive(port: number, timeoutMs = 500): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = tcpConnect({ host: "127.0.0.1", port });
-    const done = (ok: boolean) => {
-      socket.destroy();
-      resolve(ok);
-    };
-    socket.setTimeout(timeoutMs, () => done(false));
-    socket.once("connect", () => done(true));
-    socket.once("error", () => done(false));
   });
 }
 
@@ -91,6 +81,7 @@ export class SshTunnelManager {
 
     await new Promise<void>((resolve, reject) => {
       let settled = false;
+      let buffer = "";
       const finish = (err?: Error) => {
         if (settled) return;
         settled = true;
@@ -113,22 +104,35 @@ export class SshTunnelManager {
         exited = true;
         finish(
           new Error(
-            `ssh exited before becoming ready (code ${code ?? "signal"})`,
+            `ssh exited before becoming ready (code ${code ?? "signal"}) — ` +
+              `port ${localPort} may be taken or unreachable`,
           ),
         );
       });
 
-      const deadline = Date.now() + READY_TIMEOUT_MS;
-      const poll = async () => {
-        while (!exited && !settled && Date.now() < deadline) {
-          if (await portAlive(localPort)) {
-            finish();
-            return;
-          }
-          await new Promise((r) => setTimeout(r, 150));
+      const scan = (chunk: Buffer | string) => {
+        if (settled) {
+          drain(chunk);
+          return;
+        }
+        buffer += chunk.toString();
+        // With an EXPLICIT local port, OpenSSH's verbose line reports that
+        // exact port after a successful bind. Matching our port proves ssh —
+        // not an impostor local listener — owns the socket.
+        const re = new RegExp(
+          `Local forwarding listening on 127\\.0\\.0\\.1 port ${localPort}\\b`,
+        );
+        if (re.test(buffer) && !exited) {
+          finish();
+          // From here on just drain the verbose pipes so they never fill
+          // and block the long-lived ssh process.
+          child.stdout?.resume();
+          child.stderr?.resume();
         }
       };
-      void poll();
+      const drain = (_chunk: Buffer | string) => {};
+      child.stdout?.on("data", scan);
+      child.stderr?.on("data", scan);
     });
 
     const h: TunnelHandle = { key, localPort, child };
