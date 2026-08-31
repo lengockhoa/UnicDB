@@ -8,9 +8,6 @@ import { createServer } from "node:net";
 import { buildTunnelArgs, type TunnelConfig } from "./sshTunnel";
 
 const READY_TIMEOUT_MS = 10_000;
-/** Grace after ssh's forward line: bind failures (port stolen) exit fast —
- * waiting this long past the line means ssh's bind actually succeeded. */
-const READY_QUIET_MS = 400;
 
 export interface TunnelHandle {
   readonly key: string;
@@ -25,16 +22,8 @@ const MARKER = "vsdb-tunnel";
 /**
  * Bind an ephemeral port, read it, and release it for ssh to re-bind.
  *
- * Race (a local process binding the port between our release and ssh's
- * bind) is handled FAIL-CLOSED, not assumed away: OpenSSH binds AFTER it
- * prints the verbose forward line, and if the port is taken its bind fails
- * and (ExitOnForwardFailure=yes) the process exits immediately. The manager
- * therefore only accepts readiness after a quiet period in which ssh stays
- * alive past the bind step — see READY_QUIET_MS in start(). An impostor
- * listener can never pass: either ssh's bind succeeds (the impostor cannot
- * also bind — the kernel rejects a second listener) or ssh exits and the
- * start is rejected. No window remains in which DB traffic can reach a
- * foreign listener through a "ready" handle.
+ * A local process could race for the released port. That is not trusted:
+ * readiness additionally requires IDENTITY PROOF — see verifyListener below.
  */
 function pickFreeLocalPort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -45,6 +34,50 @@ function pickFreeLocalPort(): Promise<number> {
       const addr = srv.address();
       const port = typeof addr === "object" && addr !== null ? addr.port : 0;
       srv.close(() => (port > 0 ? resolve(port) : reject(new Error("no free port"))));
+    });
+  });
+}
+
+/**
+ * Identity proof for the local forward: the LISTEN socket on 127.0.0.1:port
+ * must be owned by the ssh child we spawned. Checked with the platform's
+ * socket table (lsof on macOS/BSD, ss on Linux) — spawn only, no shell.
+ * Undeterminable owner => fail closed.
+ */
+function listeningPids(port: number): Promise<Set<number>> {
+  const isMac = process.platform === "darwin";
+  const cmd = isMac ? "lsof" : "ss";
+  const args = isMac
+    ? ["-t", `-iTCP:${port}`, "-sTCP:LISTEN", "-n", "-P"]
+    : ["-ltnp", `sport = :${port}`];
+  return new Promise((resolve) => {
+    const out: Buffer[] = [];
+    const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "ignore"] });
+    child.stdout.on("data", (c: Buffer) => out.push(c));
+    const done = (pids: Set<number>) => {
+      child.kill("SIGKILL");
+      resolve(pids);
+    };
+    const timer = setTimeout(() => done(new Set()), 2_000);
+    child.on("error", () => {
+      clearTimeout(timer);
+      done(new Set()); // tool unavailable -> fail closed
+    });
+    child.on("exit", () => {
+      clearTimeout(timer);
+      const pids = new Set<number>();
+      if (isMac) {
+        // lsof -t prints one PID per line.
+        for (const line of Buffer.concat(out).toString().split("\n")) {
+          const pid = Number.parseInt(line.trim(), 10);
+          if (Number.isInteger(pid)) pids.add(pid);
+        }
+      } else {
+        // ss -ltnp: users:(("ssh",pid=1234,fd=3))
+        const text = Buffer.concat(out).toString();
+        for (const m of text.matchAll(/pid=(\d+)/g)) pids.add(Number(m[1]));
+      }
+      done(pids);
     });
   });
 }
@@ -90,11 +123,11 @@ export class SshTunnelManager {
       let settled = false;
       let buffer = "";
       let sawLine = false;
+      let checking = false;
       const finish = (err?: Error) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        clearTimeout(quiet);
         child.removeAllListeners("error");
         err ? reject(err) : resolve();
       };
@@ -119,15 +152,36 @@ export class SshTunnelManager {
         );
       });
 
-      // OpenSSH prints the forward line BEFORE bind(); a port thief makes
-      // ssh exit right after the line. Only trust readiness once ssh has
-      // stayed alive past the bind step.
-      let quiet: ReturnType<typeof setTimeout> | undefined;
-      const armQuiet = () => {
-        quiet = setTimeout(() => {
-          if (!exited && sawLine) finish();
-          // If the child died in the meantime the exit handler rejects.
-        }, READY_QUIET_MS);
+      /**
+       * After ssh's forward line: prove the LISTEN socket on our port is
+       * owned by THIS ssh child. Defeats a local impostor that won the
+       * pickFreeLocalPort race — its PID will not match. Fail closed when
+       * ownership cannot be determined.
+       */
+      const proveOwnership = async () => {
+        if (checking || settled) return;
+        checking = true;
+        const pids = await listeningPids(localPort);
+        if (settled) return;
+        if (pids.size === 0) {
+          // ssh may not have completed bind yet — retry after a beat.
+          checking = false;
+          setTimeout(proveOwnership, 200);
+          return;
+        }
+        if (pids.has(child.pid ?? -1)) {
+          finish();
+          // Drain the verbose pipes so they never fill and block ssh.
+          child.stdout?.resume();
+          child.stderr?.resume();
+        } else {
+          child.kill("SIGKILL");
+          finish(
+            new Error(
+              `port ${localPort} is held by another process (pids ${[...pids].join(",")}) — refusing to route DB traffic`,
+            ),
+          );
+        }
       };
 
       const scan = (chunk: Buffer | string) => {
@@ -141,10 +195,7 @@ export class SshTunnelManager {
         );
         if (!sawLine && re.test(buffer)) {
           sawLine = true;
-          armQuiet();
-          // Drain the verbose pipes from here on so they never fill.
-          child.stdout?.resume();
-          child.stderr?.resume();
+          void proveOwnership();
         }
       };
       const drain = (_chunk: Buffer | string) => {};
