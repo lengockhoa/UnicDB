@@ -82,6 +82,36 @@ describe("analyze_table", () => {
     const tool = createAnalyzeTableTool(factory(fakeAdapter()));
     expect(await tool.execute({ schema: "public", table: "" })).toContain("bad_identifier");
   });
+
+  // AIX-03 review round 1: identifier injection must be refused BEFORE any
+  // adapter call — plain-identifier + forbidden-keyword guard.
+  it("injection identifiers rejected without adapter call", async () => {
+    let called = 0;
+    const adapter = fakeAdapter({
+      runQuery: async () => {
+        called++;
+        return { batched: false, results: [{ columns: ["x"], rows: [[1]] }] };
+      },
+      listTableDetail: async () => {
+        called++;
+        throw new Error("should not be reached");
+      },
+    });
+    const tool = createAnalyzeTableTool(factory(adapter));
+    const evil = 'public"; DELETE FROM users; --';
+    const res = JSON.parse(await tool.execute({ schema: evil, table: "users" }));
+    expect(res.error).toBe("bad_identifier");
+    expect(called).toBe(0);
+    expect(await tool.execute({ schema: "public", table: "users; DROP" })).toContain(
+      "not a plain identifier",
+    );
+    // A plain identifier containing a forbidden keyword substring is also
+    // refused (inserted_at contains insert).
+    expect(await tool.execute({ schema: "public", table: "inserted_at" })).toContain(
+      "forbidden SQL keyword",
+    );
+    expect(called).toBe(0);
+  });
 });
 
 describe("diagnose_query", () => {

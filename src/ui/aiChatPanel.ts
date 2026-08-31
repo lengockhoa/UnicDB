@@ -681,7 +681,7 @@ export class DbToolPermissionGate {
               type: "tool_result",
               tool: tool.name,
               status: "denied",
-              summary: "denied by user",
+              summary: summarizeToolOutcome(tool.name, "denied", ""),
             });
           } catch {
             /* posting must never break the deny path */
@@ -992,6 +992,50 @@ interface AcpSession {
   /** Disposal teardown — cancels timers, drops references, closes the
    * McpBridge listener (TASK-012). */
   dispose(): void;
+}
+
+/**
+ * AIX-03: SHAPE-ONLY summary of a tool result for the visible card.
+ * NEVER row bytes: JSON envelopes (analyze_table, diagnose_query, …) are
+ * reduced to structural counts/cap state; multi-line text (tables/plans)
+ * → "N lines (capped)"; ONLY genuinely short opaque one-liners fall
+ * through to a token-capped peek.
+ */
+/** Re-export for host-side tests — the card formatter used on the wire. */
+export const summarizeToolOutcomeCard = summarizeToolOutcome;
+
+export function toolShapeSummary(resultText: string): string {
+  const text = resultText ?? "";
+  const capped = /more lines|\(\d+ of \d+ rows\)|truncated/.test(text);
+  // JSON envelope → structural summary only.
+  const trimmed = text.trim();
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      const keys =
+        parsed !== null && typeof parsed === "object"
+          ? Object.keys(parsed as Record<string, unknown>)
+          : [];
+      const obj = parsed as Record<string, unknown>;
+      const okPart = typeof obj["ok"] === "boolean" ? ` ok=${String(obj["ok"])}` : "";
+      const errCount = keys.filter((k) => {
+        const v = obj[k];
+        return typeof v === "object" && v !== null && "error" in (v as object);
+      }).length;
+      return capTokens(
+        `JSON report:${okPart} ${keys.length} fields, ${keys.length - errCount}/${keys.length} parts ok`,
+        30,
+      );
+    } catch {
+      return "JSON result";
+    }
+  }
+  const lines = text.split("\n").filter((l) => l.trim().length > 0);
+  if (lines.length > 1) {
+    const base = `${lines.length} lines`;
+    return capped ? `${base} (capped)` : base;
+  }
+  return capTokens(lines[0] ?? "", 30);
 }
 
 export class AiChatPanel {
@@ -1538,22 +1582,6 @@ export class AiChatPanel {
    * the literal "stream fallback" label so the UI surfaces why streaming
    * wasn't used (provider offline / model doesn't support SSE).
    */
-  /**
-   * AIX-03: SHAPE-ONLY summary of a tool result for the visible card.
-   * Multi-line results (tables/plans) → "N lines" + cap marker; one-line
-   * results → first line capped to 30 tokens. NEVER row bytes.
-   */
-  private static toolShapeSummary(resultText: string): string {
-    const text = resultText ?? "";
-    const lines = text.split("\n").filter((l) => l.trim().length > 0);
-    const capped = /more lines|\(\d+ of \d+ rows\)|truncated/.test(text);
-    if (lines.length > 1) {
-      const base = `${lines.length} lines`;
-      return capped ? `${base} (capped)` : base;
-    }
-    return capTokens(lines[0] ?? "", 30);
-  }
-
   private async runBuiltinTurn(userMsg: ChatMessage): Promise<void> {
     const registry = createDbTools(this.options.adapterFactory);
     registry.register(createSqlTool(this.options.adapterFactory));
@@ -1639,11 +1667,16 @@ export class AiChatPanel {
       // AIX-03: visible tool-call outcome card — shape only, never rows.
       onToolResult: (call, outcome) => {
         if (token?.aborted) return;
+        const name = call.name || "tool";
         this.post({
           type: "tool_result",
-          tool: call.name || "tool",
+          tool: name,
           status: outcome.status,
-          summary: AiChatPanel.toolShapeSummary(outcome.resultText),
+          summary: summarizeToolOutcome(
+            name,
+            outcome.status,
+            toolShapeSummary(outcome.resultText),
+          ),
         });
       },
     };
@@ -1757,11 +1790,19 @@ export class AiChatPanel {
         },
         onToolEnd: (toolName, result, isError) => {
           if (token?.aborted) return;
+          // AIX-03: same visible outcome card as the builtin path —
+          // sanitized shape summary, never row bytes.
+          const status = isError ? "failed" : "ok";
           this.post({
-            type: "step",
-            label: isError ? `${toolName}: error` : toolName,
+            type: "tool_result",
+            tool: toolName,
+            status,
+            summary: summarizeToolOutcome(
+              toolName,
+              status,
+              toolShapeSummary(typeof result === "string" ? result : ""),
+            ),
           });
-          void result;
         },
         onError: (message) => {
           // Mid-turn crash. Post ONE error bubble, flip engine back to
@@ -2073,6 +2114,10 @@ export class AiChatPanel {
     // wrapped in the permission gate — the model may call them, but nothing
     // executes until the user answers the card (default-deny).
     for (const tool of createDbAwareTools(this.options.adapterFactory)) {
+      registry.register(this.dbToolGate.wrap(tool));
+    }
+    // AIX-03 mirror: composite analysis tools on the OMP/MCP path too.
+    for (const tool of createAnalysisTools(this.options.adapterFactory)) {
       registry.register(this.dbToolGate.wrap(tool));
     }
     const bridge: McpBridge = await createMcpBridge(registry);

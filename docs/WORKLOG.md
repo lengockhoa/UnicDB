@@ -372,3 +372,10 @@ For each significant action, append:
 - Files: `src/ai/settings.ts`, `src/ai/sqlAutocomplete.ts`, `src/ui/aiSettingsForm.ts`, `src/ui/aiSqlCompletionProvider.ts`, `src/ui/consolePanel.ts`, `src/ui/consolePanelMessages.ts`, `webview/consolePanelMain.ts`, new `src/extensionAutocomplete.ts`, `src/extension.ts`, plus unit/bundle tests for each task.
 - Behavior: every prompt contains schema-only context (no rows/history/apiKey/baseUrl); no logging of prompt/response; service is the sole debounce/cancel/cache owner (no second controller in callers); Console callerScope = `tabId` so editor/console caches partition cleanly; unconfigured/cancelled/stale/malformed resolve to `null` or `[]` silently.
 - Verification: 2188 passed | 2 skipped (+121 over v1.13.0 baseline of 2066); `npm run typecheck` exit 0; `npm run compile` clean; 5 handoff commits on `main` (AIC-001..AIC-005). Manual VS Code smoke test for the Console overlay alignment is logged in `docs/AI_HANDOFF/tasks/TASK-AIC-004.md`.
+
+## 2026-08-31 — RLX-01 whole-system roadmap planning
+
+- Action: created an evidence-grounded, phased VSDB delivery roadmap and made the first operational-reliability cycle executable: PostgreSQL non-cursor cancellation, SchemaCache single-flight refresh, and fail-closed import-plan validation.
+- Files: `docs/AI_HANDOFF/PLAN.md`, `docs/AI_HANDOFF/INDEX.md`, `docs/AI_HANDOFF/ACTIVE.md`, and `docs/AI_HANDOFF/tasks/TASK-RLX-001.md` through `TASK-RLX-003.md`.
+- Quality gate: independent plan review approved the roadmap; the PID-window cancel no-op edge case and package-script evidence anchor were incorporated before finalizing.
+- Verification: handoff structural and task-size checks plus `git diff --check` passed; planning-only work, with no product code, tests, commits, or releases changed.

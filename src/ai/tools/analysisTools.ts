@@ -6,7 +6,7 @@
 // explicitly-labeled sample surface.
 import type { AgentTool } from "../agent";
 import type { AdapterFactory } from "./types";
-import { parseReadonly } from "./readonlySqlParser";
+import { parseReadonly, containsForbidden } from "./readonlySqlParser";
 
 const NO_CONNECTION_MSG =
   "No active database connection. Connect to a database first, then retry.";
@@ -14,9 +14,22 @@ const SAMPLE_DEFAULT_LIMIT = 20;
 const SAMPLE_MAX_LIMIT = 100;
 const DIAGNOSE_DETAIL_CAP = 200;
 
+/**
+ * Identifier guard for interpolated SQL (same contract as dbAwareTools):
+ * identifiers are interpolated into runQuery strings, so anything but a
+ * plain identifier is refused outright — no quotes, no dots, no whitespace,
+ * no semicolons, no forbidden keyword substring. Blocks
+ * `public"; DELETE FROM users; --` style injection.
+ */
 function badIdentifier(value: unknown): string | null {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    return "schema and table are required identifiers";
+  if (typeof value !== "string" || value.length === 0) {
+    return "schema and table must be non-empty strings";
+  }
+  if (!/^[A-Za-z_][A-Za-z0-9_$]*$/.test(value)) {
+    return `"${value}" is not a plain identifier`;
+  }
+  if (containsForbidden(value)) {
+    return `"${value}" contains a forbidden SQL keyword`;
   }
   return null;
 }

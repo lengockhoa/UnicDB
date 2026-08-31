@@ -24,6 +24,8 @@ import {
   DbToolPermissionGate,
   DB_TOOL_DENIED_MESSAGE,
   buildMessages,
+  toolShapeSummary,
+  summarizeToolOutcomeCard,
 } from "../aiChatPanel";
 import { createDbAwareTools } from "../../ai/tools/dbAwareTools";
 import type { AgentTool } from "../../ai/agent";
@@ -124,6 +126,37 @@ describe("DbToolPermissionGate", () => {
     expect(card.tool).toBe("run_readonly_query");
     expect(card.status).toBe("denied");
     expect(card.summary).toContain("denied");
+  });
+
+  it("AIX-03: toolShapeSummary never leaks serialized sample row bytes", () => {
+    const leaked = JSON.stringify({
+      schema: { columns: [{ name: "email", type: "text" }] },
+      count: 42,
+      sample: "id | email\n---\n1 | secret@corp.example\n(1 of 3 rows)",
+      relationships: [],
+    });
+    const card = toolShapeSummary(leaked);
+    expect(card).not.toContain("secret@corp.example");
+    expect(card).not.toContain("email");
+    expect(card).toMatch(/JSON report/);
+    // Table (multi-line) → line count only.
+    expect(toolShapeSummary("id | email\n1 | a@b.c\n2 | d@e.f\n(2 of 9 rows)")).toBe(
+      "4 lines (capped)",
+    );
+    // Opaque one-liner → token-capped.
+    expect(toolShapeSummary("ok")).toBe("ok");
+  });
+
+  it("AIX-03: summarizeToolOutcomeCard formats tool + status + shape", () => {
+    expect(summarizeToolOutcomeCard("count_rows", "ok", "JSON report: 4 fields")).toBe(
+      "✓ count_rows — JSON report: 4 fields",
+    );
+    expect(summarizeToolOutcomeCard("run_readonly_query", "failed", "boom")).toBe(
+      "✗ run_readonly_query — failed: boom",
+    );
+    expect(summarizeToolOutcomeCard("count_rows", "denied", "")).toBe(
+      "✗ count_rows — denied by user",
+    );
   });
 
   it("AIX-03: allow posts ok outcome after run via describe/onToolResult flow", async () => {
