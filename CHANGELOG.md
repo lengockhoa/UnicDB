@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.30.0] — 2026-09-01
+
+Cycle AIX-08: Extensible MCP Tool Contracts (curated, policy-governed MCP tool contributions with fail-closed validation, least-privilege context, and contained execution).
+
+### Added
+- **Curated MCP extension registry** (`src/ai/omp/mcpExtensionRegistry.ts`): contributions declare a validated v1 contract (`contractVersion: 1`, strict name grammar `/^[a-z][a-z0-9-]{0,63}$/`, non-empty trimmed description, integer `timeoutMs` in [100, 60000], closed scalar input schema with `additionalProperties: false`, capability list with `db-read.requiredCapabilities` drawn from the DBX-08 `AdapterCapability` union). Every boundary returns an exact pinned `MCP extension contract rejected: ...` literal — unknown keys, unsupported scalar types, duplicate/unknown capabilities, and whitespace-padded descriptions all fail closed BEFORE any listing or invocation. Capability admission consults the AIX-07 `EffectivePolicy` (`db-read` needs `tools.database && context.rows`; `workspace-read` needs `tools.workspace && context.workspace`) and a missing/malformed policy default-denies instead of throwing.
+- **Least-privilege execution**: handlers receive only what they declared — a `db-read` handler gets `runReadOnlyQuery` bound to the ONE adapter instance whose DBX-08 capabilities were checked immediately before the call (a factory returning a second, non-capable adapter can never reach `adapter.runQuery` — pinned by a two-result factory test); a `workspace-read` handler gets only `readWorkspaceFile`. Arguments are validated against the declared schema before anything privileged runs, with exact `MCP extension invalid arguments: ...` literals for missing required / unexpected / scalar-mismatch properties.
+- **Host-MCP integration** (`src/ai/omp/hostMcp.ts`): admitted curated tools appear in `tools/list` beside the standard toolset and route through a contained call lane — timeout yields `MCP extension tool timed out after <N>ms`, a crash yields `MCP extension tool failed: <message>`, late settlement after the timeout is observed but never produces an unhandled rejection or a second applied result, and the timer is always cleared so the host never wedges. A curated name colliding with a standard tool loses — the standard tool and its permission gate always win.
+
+### Review
+- Independent unic-smart review, 2 parallel reviewers: both CHANGES-REQUESTED in round 1; all 4 findings fixed in auto-fix round 1 (trim-strict description validation, fail-closed malformed-policy admission, standard-name-collision regression test, late-settlement containment regression test with an `unhandledRejection` listener). Focused net 41/41, full suite 2825 passed | 2 skipped, typecheck + compile clean.
+
 ## [1.29.0] — 2026-09-01
 
 Cycle DBX-08: Dialect Parity Contract (explicit, fail-closed adapter capability declarations consumed by every catalog/DDL/admin entry point).
