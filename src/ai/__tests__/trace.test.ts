@@ -186,4 +186,25 @@ describe("redact r3 review (AIX-06 / DBX-07)", () => {
     const out = redact({ s: "switched to a new auth flow" }) as Record<string, string>;
     expect(out.s).toBe("switched to a new auth flow");
   });
+  it("scrubs auth=<value> with an explicit delimiter (r3 round 2)", () => {
+    // Round 2 finding: after removing bare `auth` from KV_RE, the
+    // form `auth=tk` escaped entirely. The dedicated AUTH_KV_RE
+    // (colon/equals delimiters only) closes that gap.
+    const out = redact({ s: "auth=tk" }) as Record<string, string>;
+    expect(out.s).not.toContain("tk");
+    expect(out.s).toContain("<redacted>");
+  });
+  it("scrubs literal key `auth` at object level (r3 round 2)", () => {
+    // Round 2 finding: key `auth` alone was not in SECRET_KEY_RE, so
+    // { auth: "short-secret" } escaped. Adding `auth` to the key-level
+    // scrubber closes it.
+    const out = redact({ auth: "short-secret" }) as Record<string, string>;
+    expect(out.auth).toBe("<redacted>");
+  });
+  it("keeps 'auth:flow'-style prose after the new delimiter rule", () => {
+    // Sanity: prose mentioning auth followed by a colon-free context
+    // (e.g. discussion text) is untouched when there is no delimiter.
+    const out = redact({ s: "we discuss auth in the next section" }) as Record<string, string>;
+    expect(out.s).toBe("we discuss auth in the next section");
+  });
 });

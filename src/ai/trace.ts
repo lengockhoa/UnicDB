@@ -35,17 +35,21 @@ export const MAX_TURNS = 50;
 export const MAX_ENTRIES_PER_TURN = 1000;
 
 const SECRET_KEY_RE =
-  /(?:api[_-]?key|secret|password|passphrase|credential|access[_-]?token|auth[_-]?token|refresh[_-]?token|session[_-]?token|token)$/i;
+  /(?:api[_-]?key|secret|password|passphrase|credential|auth|access[_-]?token|auth[_-]?token|refresh[_-]?token|session[_-]?token|token)$/i;
 const HEADER_RE =
   /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key)$/i;
 const BEARER_RE = /Bearer\s+[A-Za-z0-9._\-+/=]+/gi;
 const BASIC_RE = /Basic\s+[A-Za-z0-9._\-+/=]+/gi;
 /** Key=value / key: value / key value forms inside plain strings.
- *  r3 review fix: bare `auth` is NOT in this alternation — it
- *  over-redacts normal prose like "auth flow" / "auth provider".
- *  `authorization` covers the header form; the key-level scrubber
- *  (SECRET_KEY_RE) already catches auth[_-]token. */
+ *  r3 review round 2: bare `auth` uses `:`/`=` delimiters ONLY —
+ *  `Authorization: x` / `auth=tk` scrub, while normal prose like
+ *  "auth flow" (space delimiter) survives untouched. Other keys keep
+ *  the r2 no-min space-delimiter rule. */
 const KV_RE = /\b(api[_-]?key|secret|password|passphrase|authorization|token)\b\s*[=: ]\s*["']?[A-Za-z0-9._\-+/=]+["']?/gi;
+/** r3 round 2: bare `auth` with an explicit delimiter (`auth: x`,
+ *  `auth=x`) — never space-delimited, so prose like "auth flow" is
+ *  safe while `auth=tk` still scrubs. */
+const AUTH_KV_RE = /\bauth\b\s*[=:]\s*["']?[A-Za-z0-9._\-+/=]+["']?/gi;
 /** Long opaque run — ≥ 24 hex/base64 chars incl. + / = padding. */
 const LONG_RUN_RE = /[A-Za-z0-9_+/=-]{24,}/g;
 
@@ -90,6 +94,8 @@ function scrubString(s: string): string {
   // key=value / key: value forms inside plain strings —
   // 'apiKey=short-value', 'token: abc', 'PASSWORD="x"' etc.
   out = out.replace(KV_RE, (_m, k) => `${k}<redacted>`);
+  // r3 round 2: bare `auth` with an explicit delimiter only.
+  out = out.replace(AUTH_KV_RE, "auth<redacted>");
   // Opaque long runs (>= 24 chars incl. base64 + / =) look like
   // secrets — normal English words and SQL identifiers are shorter.
   out = out.replace(LONG_RUN_RE, () => "<redacted>");

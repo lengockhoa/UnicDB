@@ -236,3 +236,39 @@ Verification: focused 70/70 green (24 trace + 23 ompChatEngine +
 23 agent), typecheck clean.
 
 Status: PASS
+
+### Review round 2 · unic-smart
+Verdict: changes_requested
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN: PASS
+FINDINGS:
+  critical: none
+  important: src/ai/trace.ts:48 — removing `auth` from `KV_RE` makes `redact({ auth: "short-secret" })` and `redact({ s: "auth=tk" })` retain short credential values: `SECRET_KEY_RE` only matches `auth-token` variants and `LONG_RUN_RE` only catches 24+ characters. Restore short `auth` value protection without the space-delimited prose match (for example, handle bare `auth` only with `:`/`=` and retain a regression test; scrub an object key named `auth` if it is a supported trace payload shape).
+  minor: none
+NEXT_STATUS_FOR_INDEX: changes_requested
+
+---
+
+## Executor Report (fix round 2)
+
+EXECUTOR_TOOL: claude-code (main session)
+EXECUTOR_MODEL: unic-code
+
+Fix applied for the round-2 finding (short secrets escaping via
+literal `auth` key / `auth=<value>` string form):
+
+1. `src/ai/trace.ts` — added `auth` to SECRET_KEY_RE (object-level
+   key scrubbing for literal `auth` keys) and a dedicated AUTH_KV_RE
+   that matches bare `auth` ONLY with explicit `:`/`=` delimiters
+   (`auth=tk`, `auth: x`), never space-delimited. This is the
+   reviewer's round-1 suggestion, now applied precisely: prose like
+   "auth flow" survives; `auth=tk` scrubs again.
+2. `src/ai/__tests__/trace.test.ts` — 3 new tests: `auth=tk` scrubs
+   (with `<redacted>`), literal key `{ auth: "short-secret" }`
+   scrubs, and delimiter-free prose ("we discuss auth in the next
+   section") survives.
+
+Verification: focused 73/73 green, typecheck clean.
+
+Status: PASS
