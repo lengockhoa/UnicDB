@@ -1,7 +1,7 @@
 # TASK-DBX06-002 — catalog usage SQL + plan builder
 
 Cycle: DBX-06 · Wave 4 · Priority: P1
-Status: done
+Status: done (reviewer APPROVED — see verdict block in TASK-DBX06-001.md)
 Depends on: DBX06-001
 Reviewer: unic-smart (cycle reviewer)
 

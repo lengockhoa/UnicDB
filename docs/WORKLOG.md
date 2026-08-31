@@ -20,6 +20,12 @@ For each significant action, append:
 - Verification run
 - Outcome
 
+## 2026-08-31 — Cycle DBX-06 Safe Rename Refactor → v1.23.0 (unic-code executor + unic-smart reviewer)
+- Delivered: renameAnalysis (validateNewName + analyzeUsage, pure), renameCatalog (4 parameterized pg_catalog builders + buildRenamePlan), renameRunner (progress + cancel-before-next + partial-failure), renameForm host + textContent-only webview, adapter.renameUsage capability (Postgres), vsdb.renameTable/renameColumn commands (column-node fast path), esbuild renameForm entry.
+- Review: unic-smart 3 rounds. Key catches: esbuild non-watch dropped compare/er bundles; objectKey parse lossy for dotted quoted names (fixed: column nodes carry parent objectName). Final VERDICT: APPROVED.
+- Files: src/core/ddl/{renameAnalysis,renameCatalog,renameRunner}.ts, src/ui/{renameForm,renameFormMessages}.ts, webview/renameFormMain.ts, src/adapters/{types,postgres}.ts, tableCommands.ts, package.json + 6 test files.
+- Verification: 2610 passed | 2 skipped (199 files); typecheck 0; esbuild clean; v1.23.0 vsix packaged.
+
 ## 2026-08-31 — Cycle AIX-03 Database Analysis Copilot → v1.22.0 (unic-code executor + unic-smart reviewer)
 - Delivered: analysisReport (parseExplainPlan/summarizeToolOutcome/capTokens, pure), analysisTools (analyze_table composite w/ per-part degradation + injection-guarded identifiers; diagnose_query re-guarding + syntax/permission/connection/unknown classifier; createAnalysisTools), agent ToolOutcome + onToolResult, panel toolShapeSummary (JSON-structural, never row bytes; top-level error/ok:false honored), gate denial cards, tool_result wire kind + webview textContent-only cards, OMP onToolEnd cards + ACP registry analysis tools.
 - Review: unic-smart 3 rounds (4234a3e→559a669). Key catches: multi-statement identifier injection; serialized sample bytes leaking into one-line cards; missing formatter on cards; OMP parity gap; {error}/{ok:false} envelopes rendered as successes. Final VERDICT: APPROVED.

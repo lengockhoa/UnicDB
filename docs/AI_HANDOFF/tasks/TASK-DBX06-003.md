@@ -1,7 +1,7 @@
 # TASK-DBX06-003 — rename UI (preview + confirm + progress) + commands
 
 Cycle: DBX-06 · Wave 4 · Priority: P1
-Status: done
+Status: done (reviewer APPROVED — see verdict block in TASK-DBX06-001.md)
 Depends on: DBX06-002
 Reviewer: unic-smart (cycle reviewer)
 
