@@ -20,6 +20,12 @@ For each significant action, append:
 - Verification run
 - Outcome
 
+## 2026-08-31 — Cycle DBX-05 Connection Workspace → v1.20.0 (unic-code executor + unic-smart reviewer)
+- Delivered: folder grouping (palette/assignColor/groupConnections), read-only guard (ReadOnlyViolation, depth-aware scanner, EXPLAIN+CTE regressions), SSH tunnels (validated argv, explicit local port + PID identity proof via lsof/ss/netstat, SetEnv marker, fail-closed), connection form workspace fields (DOM-API render), tree folder nodes, scaffold tests.
+- Review: unic-smart 6 rounds (2de43e2→65b53a7). Key catches: dropped form fields (user/password), bastion vs target port, invalid SetEnv (ssh -G verified), pre-bind debug line not ownership proof, Windows ss-only gap. Final VERDICT: APPROVED.
+- Files: src/core/{connectionGroups,readOnlyIntent,sshTunnel,sshTunnelManager,connectionManager,dangerousStatement}.ts, src/ui/{schemaTree,connectionForm,connectionFormMessages}.ts, webview/connectionFormMain.ts, src/extension.ts, src/config/types.ts + 6 test files + fixture.
+- Verification: 2499 passed | 2 skipped (185 files); typecheck 0; esbuild clean; v1.20.0 vsix packaged.
+
 ## 2026-08-30 — DBX-04 Relationship Explorer + AIX-01 Grounded Workspace Context executed + reviewed
 
 - Action: executed two wave-2 cycles back-to-back, TDD-first with mandatory unic-smart review gates.

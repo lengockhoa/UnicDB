@@ -1,9 +1,9 @@
 # ACTIVE
 
-Cycle: DBX-05   Date: 2026-08-30   Base: main @ 23e17df
+Cycle: DBX-05   Date: 2026-08-31   Base: main @ 23e17df
 Goal: Connection Workspace — folders/colors for connection organization, read-only intent enforcement, lifecycle-managed SSH tunnels (PostgreSQL-first).
 Tasks: 4 total
-Status: planned — plan docs committed; TDD execution next.
+Status: done — 4/4 tasks APPROVED by unic-smart reviewer after 6 rounds (final 65b53a7: listener PID identity proof, SetEnv validity, probe temp-key, Windows netstat); 2499 passed | 2 skipped; typecheck 0. Ship as v1.20.0.
 
 Previous:
 Cycle: AIX-01   Date: 2026-08-30   Base: main @ 3b30f7c

@@ -44,3 +44,19 @@ npm run compile
 
 **GREEN evidence**: `npx vitest run src/__tests__/dbx05Scaffold.test.ts src/extension.test.ts` → 5 + 71 passed. Full `npm test` → 2495 passed | 2 skipped (185 files). `npm run typecheck` → 0 errors. `npm run compile` → esbuild clean. CHANGELOG 1.20.0 section + compare link added; README key-features bullets for read-only connections, SSH tunnels, folder grouping added.
 
+
+
+## Reviewer Verdict (unic-smart, cycle reviewer Dbx05Reviewer)
+
+Review rounds 1-6 (commits 2de43e2 → d49b7af → 0f236a4 → fb88be0 → HEAD → 65b53a7):
+
+- Round 1 CHANGES-REQUESTED: 8 findings (form payload fields dropped, tunnel bastion/target port conflation, probes bypassing tunnel lifecycle, invalid SetEnv syntax, readiness from debug-level line, EXPLAIN-parens read-only bypass, scaffold missing DOM-sink assertions, README Table Designer heading). All fixed in d49b7af.
+- Round 2 CHANGES-REQUESTED: ephemeral localPort parsed from pre-bind debug line; missing spawn `error` handler; edit probe reusing old tunnel via idempotent start; password field still missing from readForm. All fixed in 0f236a4.
+- Round 3 CHANGES-REQUESTED: blind TCP-connect readiness accepted any local listener (traffic theft). Fixed with quiet-period in fb88be0.
+- Round 4 CHANGES-REQUESTED: timing not proof of bind (reviewer verified OpenSSH channels.c prints the forward line pre-bind). Replaced with listener identity proof in round 5.
+- Round 5 CHANGES-REQUESTED: Windows portability (ss-only). Fixed with netstat -ano parsing in 65b53a7.
+- **Round 6: APPROVED** — "The listener ownership check now verifies the spawned ssh PID against the actual LISTEN socket (with lsof/ss/netstat dispatch), fails closed when unavailable, and the readiness docs match implementation. No remaining patch-introduced correctness or security blocker found."
+
+Final verification at 65b53a7: 2499 passed | 2 skipped (vitest, 185 files); `npm run typecheck` 0 errors; `npm run compile` esbuild clean.
+
+VERDICT: APPROVED

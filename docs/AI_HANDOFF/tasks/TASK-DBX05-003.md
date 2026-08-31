@@ -1,6 +1,6 @@
 # TASK-DBX05-003 — Config fields + ConnectionManager wiring + form/tree
 
-**Status:** implemented — awaiting reviewer (unic-smart)
+**Status:** done (reviewer APPROVED round 6, 65b53a7)
 **Owner:** executor (TDD)
 **Reviewer:** unic-smart (cycle reviewer)
 
