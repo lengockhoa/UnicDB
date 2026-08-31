@@ -278,9 +278,13 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
   // double-cancel across a single turn.
   let currentSessionId: string | null = null;
   let cancelSent = false;
-  // AIX-05: cancel() called while session/new is still pending — we can't
+  // AIX-05: cancel() called while session/new is in flight — we can't
   // address `session/cancel` without a sessionId, so we remember the
   // intent and emit the notify the instant sessionNew resolves.
+  // `sessionNewInFlight` is true ONLY between send() entry and
+  // sessionNew resolution — cancel() sets pendingCancel only in that
+  // window so an idle cancel() with no turn remains a no-op.
+  let sessionNewInFlight = false;
   let pendingCancel = false;
   // AIX-05: `acp.notify` is optional on AcpSession — the cancel()
   // helper uses optional chaining so fakes without notify stay compiling.
@@ -290,10 +294,12 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
   return {
     async send(text, events): Promise<void> {
       let sessionId: string;
+      sessionNewInFlight = true;
       try {
         const newResult = await acp.sessionNew({ cwd, mcpServers });
         sessionId = newResult.sessionId;
       } catch (err) {
+        sessionNewInFlight = false;
         const message = err instanceof Error ? err.message : String(err);
         // AIX-05: a cancel() called while session/new was pending fires
         // onError so the panel can settle the turn instead of hanging.
@@ -307,9 +313,13 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
       }
       currentSessionId = sessionId;
       cancelSent = false;
+      sessionNewInFlight = false;
       // AIX-05: drain a pending cancel from before session/new settled.
       if (pendingCancel) {
         pendingCancel = false;
+        // Clear the active id so a later cancel() is a no-op (the
+        // session is already cancelled and never received a prompt).
+        currentSessionId = null;
         try {
           notify("session/cancel", { sessionId });
         } catch {
@@ -384,9 +394,10 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
     cancel(): void {
       const id = currentSessionId;
       if (id === null) {
-        // session/new is still pending — remember the intent so the
-        // notify fires the instant a sessionId is assigned.
-        pendingCancel = true;
+        // No active turn — no-op UNLESS session/new is in flight, in
+        // which case we remember the intent so the notify fires the
+        // instant a sessionId is assigned.
+        if (sessionNewInFlight) pendingCancel = true;
         return;
       }
       if (cancelSent) return;
@@ -412,6 +423,7 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
       }
       currentSessionId = null;
       cancelSent = false;
+      sessionNewInFlight = false;
       pendingCancel = false;
     },
   };

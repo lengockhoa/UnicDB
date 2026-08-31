@@ -534,4 +534,46 @@ describe("OmpChatEngine.cancel (AIX-05)", () => {
     });
     await sendPromise;
   });
+
+  it("idle cancel() (no turn) is a true no-op and does NOT cancel the next send", async () => {
+    fakeAcp.sessionNew.mockResolvedValue({ sessionId: "sess-idle" });
+    fakeAcp.sessionPrompt.mockResolvedValue({ stopReason: "end_turn" });
+    const engine = createOmpChatEngine({
+      acp: fakeAcp,
+      hostMcp: fakeHostMcp,
+      cwd: "/workspace",
+    });
+    // Cancel with no turn in flight — must NOT set pendingCancel.
+    engine.cancel();
+    expect(fakeAcp.notify).not.toHaveBeenCalled();
+    // Next send should run to completion.
+    await engine.send("hi", {});
+    expect(fakeAcp.sessionPrompt).toHaveBeenCalledTimes(1);
+    expect(fakeAcp.sessionPrompt).toHaveBeenCalledWith("sess-idle", "hi");
+    expect(fakeAcp.notify).not.toHaveBeenCalled();
+  });
+
+  it("after pendingCancel drains, a subsequent cancel() is a no-op (no duplicate notify)", async () => {
+    let resolveNew: (v: { sessionId: string }) => void = () => undefined;
+    fakeAcp.sessionNew.mockImplementation(
+      () => new Promise<{ sessionId: string }>((res) => {
+        resolveNew = res;
+      }),
+    );
+    const engine = createOmpChatEngine({
+      acp: fakeAcp,
+      hostMcp: fakeHostMcp,
+      cwd: "/workspace",
+    });
+    const sendPromise = engine.send("hi", { onError: () => undefined });
+    engine.cancel(); // sets pendingCancel
+    resolveNew({ sessionId: "sess-pending-2" });
+    await flushMicrotasks();
+    // First notify fired by drain.
+    expect(fakeAcp.notify).toHaveBeenCalledTimes(1);
+    // A second cancel() with no active turn must NOT notify again.
+    engine.cancel();
+    expect(fakeAcp.notify).toHaveBeenCalledTimes(1);
+    await sendPromise;
+  });
 });
