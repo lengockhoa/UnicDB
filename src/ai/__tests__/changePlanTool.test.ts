@@ -77,6 +77,23 @@ describe("plan_change tool", () => {
     expect(out.plan.drift).toContain("c");
   });
 
+  it("multi-statement candidate flattened before classification (SELECT; DROP → none + red)", async () => {
+    const { f, runCalls } = spyAdapter();
+    const tool = createPlanChangeTool(f, fingerprint([]));
+    const out = JSON.parse(
+      await tool.execute({
+        intent: "drop after select",
+        statements: ["SELECT 1; DROP TABLE x"],
+        targetTable: "x",
+      }),
+    );
+    expect(out.ok).toBe(true);
+    expect(out.plan.statements).toHaveLength(2);
+    expect(out.plan.statements[0].tier).toBe("none");
+    expect(out.plan.statements[1].tier).toBe("red");
+    expect(runCalls).toBe(0);
+  });
+
   it("no target → no drift check", async () => {
     const { f } = spyAdapter();
     const tool = createPlanChangeTool(f, fingerprint(["a"]));

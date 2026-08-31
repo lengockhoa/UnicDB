@@ -14,6 +14,7 @@ import {
   detectDrift,
   type PlanStatement,
 } from "../changePlan";
+import { splitStatements } from "../../core/statementParser";
 
 const NO_CONNECTION_MSG =
   "No active database connection. Connect to a database first, then retry.";
@@ -115,6 +116,13 @@ export function createPlanChangeTool(
         if (errors.length > 0) {
           return JSON.stringify({ ok: false, error: errors.join(" ") });
         }
+        // Flatten multi-statement candidates BEFORE classification so the
+        // card's tier/unit granularity equals the consent + apply granularity:
+        // "SELECT 1; DROP TABLE x" renders as two items (none + red), never
+        // as one safe-looking item.
+        const flat = statements.flatMap((s) =>
+          splitStatements(s).map((st) => st.text),
+        );
 
         // Drift guard (advisory): only when a target table is named.
         let drift: string[] = [];
@@ -122,12 +130,12 @@ export function createPlanChangeTool(
           const adapter = await f();
           if (!adapter) return JSON.stringify({ ok: false, error: NO_CONNECTION_MSG });
           const current = await fingerprint(schema, table);
-          drift = detectDrift(current, claimedColumns(statements));
+          drift = detectDrift(current, claimedColumns(flat));
         }
 
         const plan = {
           intent: typeof args.intent === "string" ? args.intent : "",
-          statements: classifyStatements(statements) as PlanStatement[],
+          statements: classifyStatements(flat) as PlanStatement[],
           drift,
           drifted: drift.length > 0,
           // AIX-04: echoed so the HOST can re-check drift at consent time
