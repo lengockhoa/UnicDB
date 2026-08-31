@@ -56,10 +56,15 @@ describe("AIX-04 scaffold", () => {
     expect(tool).toMatch(/export function createChangePlanTools/);
   });
 
-  it("plan_change registered in BOTH builtin and OMP registries", () => {
+  it("plan_change registered in BOTH builtin and OMP registries (via shared registerStandardToolset)", () => {
     const src = readFileSync(join(ROOT, "src/ui/aiChatPanel.ts"), "utf8");
-    const count = (src.match(/createChangePlanTools\(/g) ?? []).length;
-    expect(count).toBe(2); // builtin + OMP/MCP mirror
+    // AIX-05 collapsed the two createChangePlanTools call sites into a
+    // single `registerStandardToolset` helper invoked from both code
+    // paths. The plan_change tool still appears inside that helper
+    // exactly once, and the helper is called twice (builtin + OMP/MCP).
+    const helperCalls = (src.match(/this\.registerStandardToolset\(/g) ?? []).length;
+    expect(helperCalls).toBe(2);
+    expect(src).toMatch(/createChangePlanTools\(/);
   });
 
   it("change_plan / plan_approve / plan_reject wire kinds exist in messages", () => {

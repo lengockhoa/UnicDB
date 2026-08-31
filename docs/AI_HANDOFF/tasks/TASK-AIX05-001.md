@@ -30,15 +30,29 @@ static engine banner:
 
 - [ ] Host posts connecting → running → done in order for a clean omp
       turn; error state before the error bubble on crash.
-- [ ] `running` is posted exactly once per turn (first stream event).
-- [ ] Webview chip renders each state (textContent-only; no innerHTML in
-      the chip function).
-- [ ] `npx vitest run src/ui/__tests__/aiChatPanelSessionState.test.ts`
-      green (host transitions) and
-      `npx vitest run src/ui/__tests__/aiChatPanelSessionStateWebview.test.ts`
-      green (chip render).
-
 ## Executor
+
+**RED**: `npx vitest run src/ui/__tests__/aiChatPanelSessionState.test.ts`
+→ 3 failed (no `session_state` posts). Plus webview: 4 failed (no chip).
+
+**GREEN**: `npx vitest run src/ui/__tests__/aiChatPanelSessionState.test.ts
+src/ui/__tests__/aiChatPanelSessionStateWebview.test.ts` → 7 passed
+(7). Typecheck 0.
+
+Notes:
+- Added `AiChatPanelSessionState` to the `AiChatPanelHostMessage` union
+  (also re-added `AiChatPanelEngine` + `AiChatPanelGroundingState` which
+  had drifted out of the union).
+- `runOmpEngineTurn` now: connecting (before send) → running (first
+  non-aborted stream event, posted exactly once) → done in finally
+  (gated `!postedError` so a crashed turn ends on the error state, not a
+  misleading "done") → error in onError/catch.
+- Webview `#sessionChip` textContent-only; re-uses or creates
+  `#sessionChip` inside the engine banner; class names
+  `vsdb-chat-session-{connecting|running|done|error}`.
+
+## Reviewer
+
 
 (to be filled by executor with RED + GREEN evidence)
 

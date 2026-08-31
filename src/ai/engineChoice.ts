@@ -56,10 +56,11 @@ export function resolveEngine(input: {
   }
 
   // omp unusable — fall back to the builtin provider, which DOES need a
-  // valid config. `detection.available` distinguishes "binary found but too
-  // old / unreadable version" (OMP_UPDATE_HINT) from "binary not found at
-  // all" (OMP_INSTALL_HINT).
-  const hint = detection.available ? OMP_UPDATE_HINT : OMP_INSTALL_HINT;
+  // valid config. Hint is keyed off the precise `reason` (AIX-05):
+  //   not-installed / spawn-failed / version-unknown → OMP_INSTALL_HINT
+  //   version-too-old                              → OMP_UPDATE_HINT
+  const hint =
+    detection.reason === "version-too-old" ? OMP_UPDATE_HINT : OMP_INSTALL_HINT;
   return {
     engine: "builtin",
     requiresConfig: config === null || config === undefined,

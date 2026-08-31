@@ -93,6 +93,18 @@ export interface AiChatPanelEngine {
   version?: string;
 }
 
+/** AIX-05: live OMP turn-lifecycle state. The host posts one transition
+ * per phase (connecting → running → done/error) so the webview shows
+ * session state, not just the static engine banner. `turnId` is a
+ * monotonically increasing per-panel counter that stays stable across the
+ * trio of posts for one turn. */
+export interface AiChatPanelSessionState {
+  type: "session_state";
+  state: "connecting" | "running" | "done" | "error";
+  turnId: string;
+}
+
+
 /** A single permission choice the user may grant for an ACP server request.
  * The `requestId` is a host-generated opaque token; the webview must echo it
  * back verbatim when the user picks an option (or denies). The webview never
@@ -183,6 +195,7 @@ export type AiChatPanelHostMessage =
   | AiChatPanelThought
   | AiChatPanelAssistant
   | AiChatPanelError
+  | AiChatPanelSessionState
   | AiChatPanelEngine
   | AiChatPanelDone
   | AiChatPanelPermissionRequest

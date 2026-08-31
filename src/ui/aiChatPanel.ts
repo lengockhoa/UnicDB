@@ -1084,6 +1084,10 @@ export class AiChatPanel {
    * send, true whenever `done` is posted.
    */
   private turnSettled = true;
+  /** AIX-05: monotonically increasing per-panel turn counter backing
+   * `session_state.turnId` (stable across the connecting/running/done
+   * trio of posts for one turn). */
+  private sessionTurnSeq = 0;
   /** Resolvers for in-flight ACP turns — fired by settle path. */
   private acpTurnResolvers: Array<() => void> = [];
   /** Per-turn AbortController for the built-in engine. Created in
@@ -1663,27 +1667,8 @@ export class AiChatPanel {
     // Cycle AD: the five DB-aware tools reach real row data, so each one is
     // wrapped in the permission gate — the model may call them, but nothing
     // executes until the user answers the card (default-deny).
-    for (const tool of createDbAwareTools(this.options.adapterFactory)) {
-      registry.register(this.dbToolGate.wrap(tool));
-    }
-    // AIX-03: composite analysis tools share the DB-aware gate treatment.
-    for (const tool of createAnalysisTools(this.options.adapterFactory)) {
-      registry.register(this.dbToolGate.wrap(tool));
-    }
-    // AIX-04: plan_change (reviewed change plans) — READ-ONLY by
-    // construction, but gate-wrapped for parity with the analysis tools.
-    // Live fingerprint: drift is computed against the ACTUAL schema columns
-    // (a default empty fingerprint would flag every plan as stale).
-    for (const tool of createChangePlanTools(
-      this.options.adapterFactory,
-      async (schema: string, table: string) => {
-        const adapter = await this.options.adapterFactory();
-        if (!adapter) return [];
-        return (await adapter.listColumns(table, schema)).map((c) => c.name);
-      },
-    )) {
-      registry.register(this.dbToolGate.wrap(tool));
-    }
+    // AIX-05: shared registration call. See registerStandardToolset.
+    this.registerStandardToolset(registry);
 
     const messages = await buildMessages(
       this.options.adapterFactory,
@@ -1885,18 +1870,35 @@ export class AiChatPanel {
     }
     const token = this.token;
     let postedError = false;
+    // AIX-05: `running` posts exactly once per turn, on the FIRST
+    // non-aborted stream event.
+    let runningPosted = false;
+    this.sessionTurnSeq += 1;
+    this.postSessionState("connecting");
     try {
       await engine.send(text, {
         onDelta: (delta) => {
           if (token?.aborted) return;
+          if (!runningPosted) {
+            runningPosted = true;
+            this.postSessionState("running");
+          }
           this.post({ type: "delta", text: delta });
         },
         onThought: (chunk) => {
           if (token?.aborted) return;
+          if (!runningPosted) {
+            runningPosted = true;
+            this.postSessionState("running");
+          }
           this.post({ type: "step", label: chunk });
         },
         onToolStart: (toolName) => {
           if (token?.aborted) return;
+          if (!runningPosted) {
+            runningPosted = true;
+            this.postSessionState("running");
+          }
           this.post({ type: "step", label: toolName });
         },
         onToolEnd: (toolName, result, isError) => {
@@ -1922,6 +1924,7 @@ export class AiChatPanel {
           // through the builtin engine.
           if (postedError) return;
           postedError = true;
+          this.postSessionState("error");
           this.post({ type: "error", message });
           this.engine = "builtin";
           this.postEngine("builtin");
@@ -1939,6 +1942,7 @@ export class AiChatPanel {
       // anyway so a stray rejection surfaces as one error bubble + flip.
       if (!postedError) {
         const message = err instanceof Error ? err.message : String(err);
+        this.postSessionState("error");
         this.post({ type: "error", message });
         this.engine = "builtin";
         this.postEngine("builtin");
@@ -1947,11 +1951,20 @@ export class AiChatPanel {
         });
       }
     } finally {
+      // A crashed turn ends on the error state, not a misleading "done".
+      if (!postedError) this.postSessionState("done");
       this.post({ type: "done" });
       this.token = null;
       this.turnSettled = true;
       void userMsg;
     }
+  }
+
+  /** AIX-05: post one session-state transition for the current turn. */
+  private postSessionState(
+    state: "connecting" | "running" | "done" | "error",
+  ): void {
+    this.post({ type: "session_state", state, turnId: String(this.sessionTurnSeq) });
   }
 
   /**
@@ -2224,24 +2237,9 @@ export class AiChatPanel {
     // Cycle AD: the five DB-aware tools reach real row data, so each one is
     // wrapped in the permission gate — the model may call them, but nothing
     // executes until the user answers the card (default-deny).
-    for (const tool of createDbAwareTools(this.options.adapterFactory)) {
-      registry.register(this.dbToolGate.wrap(tool));
-    }
-    // AIX-03 mirror: composite analysis tools on the OMP/MCP path too.
-    for (const tool of createAnalysisTools(this.options.adapterFactory)) {
-      registry.register(this.dbToolGate.wrap(tool));
-    }
-    // AIX-04 mirror: plan_change on the OMP/MCP path too (live fingerprint).
-    for (const tool of createChangePlanTools(
-      this.options.adapterFactory,
-      async (schema: string, table: string) => {
-        const adapter = await this.options.adapterFactory();
-        if (!adapter) return [];
-        return (await adapter.listColumns(table, schema)).map((c) => c.name);
-      },
-    )) {
-      registry.register(this.dbToolGate.wrap(tool));
-    }
+    // AIX-05: same shared registration call as the builtin path so
+    // the two registries stay in parity by construction.
+    this.registerStandardToolset(registry);
     const bridge: McpBridge = await createMcpBridge(registry);
     const mcpServers: ReadonlyArray<Record<string, unknown>> = [bridge.descriptor];
 
@@ -2530,6 +2528,12 @@ export class AiChatPanel {
       // (we suppress when token.aborted is true); the agent's runStep
       // rethrows it so the runBuiltinTurn catch is skipped.
       this.currentAbort?.abort();
+    }
+    // AIX-05: omp+ompChatEngine mode — cancel the active OMP session so
+    // the child stops generating. The legacy acpSession branch below
+    // stays for the raw-acp path.
+    if (this.engine === "omp" && this.options.ompChatEngine !== undefined) {
+      this.options.ompChatEngine.cancel();
     }
     if (this.engine === "omp" && this.acpSession !== null) {
       this.cancelAllPending();
@@ -3148,6 +3152,30 @@ export class AiChatPanel {
       msg.hint = this.options.engineHint;
     }
     this.post(msg);
+  }
+
+  /** AIX-05: register the three tool groups (DB-aware + analysis +
+   * plan_change) on a registry. Called identically on the builtin and
+   * OMP/MCP paths so the two registries stay in parity by construction. */
+  private registerStandardToolset(
+    registry: ReturnType<typeof createDbTools>,
+  ): void {
+    for (const tool of createDbAwareTools(this.options.adapterFactory)) {
+      registry.register(this.dbToolGate.wrap(tool));
+    }
+    for (const tool of createAnalysisTools(this.options.adapterFactory)) {
+      registry.register(this.dbToolGate.wrap(tool));
+    }
+    for (const tool of createChangePlanTools(
+      this.options.adapterFactory,
+      async (schema: string, table: string) => {
+        const adapter = await this.options.adapterFactory();
+        if (!adapter) return [];
+        return (await adapter.listColumns(table, schema)).map((c) => c.name);
+      },
+    )) {
+      registry.register(this.dbToolGate.wrap(tool));
+    }
   }
 
   private buildHtml(webview: vscode.Webview): string {

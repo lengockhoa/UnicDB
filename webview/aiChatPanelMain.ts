@@ -1337,6 +1337,33 @@ function applyEngine(msg: EngineMsg): void {
   }
 }
 
+/** AIX-05: live OMP turn-lifecycle chip. Appends/replaces a
+ * textContent-only `#sessionChip` inside the engine banner (or root when
+ * no banner exists yet). State strings are host-enum values mapped to
+ * fixed labels — never rendered verbatim. */
+function applySessionState(state: "connecting" | "running" | "done" | "error"): void {
+  const rootEl = document.getElementById("vsdb-root");
+  if (!rootEl) return;
+  let chip = document.getElementById("sessionChip") as HTMLSpanElement | null;
+  if (!chip) {
+    chip = document.createElement("span");
+    chip.id = "sessionChip";
+    const banner = document.getElementById("engineBanner");
+    const host = banner ?? rootEl;
+    host.appendChild(chip);
+  }
+  const label =
+    state === "connecting"
+      ? "Connecting…"
+      : state === "running"
+        ? "Running…"
+        : state === "done"
+          ? "Done"
+          : "Error";
+  chip.className = `vsdb-chat-session vsdb-chat-session-${state}`;
+  chip.textContent = label;
+}
+
 function applyInit(msg: InitMsg): void {
   state.hasHistory = msg.hasHistory;
   state.visionCapable = msg.visionCapable;
@@ -1646,6 +1673,9 @@ function renderHistory(msg: HistoryMsg): void {
       return;
     case "engine":
       applyEngine(msg);
+      return;
+    case "session_state":
+      applySessionState(msg.state);
       return;
     case "assistant":
       // Final assistant message: replace any open streaming bubble with a

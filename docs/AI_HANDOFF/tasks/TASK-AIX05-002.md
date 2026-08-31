@@ -30,7 +30,26 @@ Fix the OMP cancellation gap and pin restart safety:
    - Stop in omp mode must NOT double-cancel (panel calls cancel; the
      engine dedupes).
 
-## Acceptance
+## Executor
+
+**RED**: n/a (extending existing test file with new describe block).
+
+**GREEN**: `npx vitest run src/ai/omp/__tests__/ompChatEngine.test.ts` →
+12 passed (12). Typecheck 0.
+
+Notes:
+- Added `cancel(): void` to `OmpChatEngine` interface + factory closure
+  tracking `currentSessionId` + `cancelSent` dedup flag. `notify` made
+  optional on `AcpSession` interface (engine uses `acp.notify?.bind(acp)
+  ?? (() => {})` so existing fakes without notify keep compiling).
+- `handleStop()` omp+ompChatEngine branch calls `engine.cancel()` (real
+  gap: acpSession is never set by runOmpEngineTurn, so the legacy
+  branch was dead in this path → child kept generating).
+- Restart safety: `send()` finally clears `currentSessionId` on settle;
+  crash path clears the same way so the next send() opens a fresh
+  session (restart edge).
+
+## Reviewer
 
 - [ ] `OmpChatEngine.cancel` sends `session/cancel` with the ACTIVE
       sessionId; no-op without a turn; idempotent.

@@ -20,7 +20,31 @@ hint mapping:
 2. Tests (append to `src/ai/omp/__tests__/ompChatEngine.test.ts`):
    - unknown method frame → no event, no throw, turn still completes.
    - malformed-params frame → same.
-   - `tool_call` without name → no hostMcp.call, no throw.
+## Executor
+
+**RED**: scaffold missing. Added new test files.
+
+**GREEN**:
+- `npx vitest run src/ai/omp/__tests__/ompChatEngine.test.ts` →
+  14 passed (14). Added "dispatchNotification (AIX-05 protocol
+  robustness)" block: unknown method + null params dropped silently;
+  next valid chunk still streams; tool_call without name does not
+  touch hostMcp.
+- `npx vitest run src/ai/__tests__/engineChoice.test.ts` →
+  6 passed (6). All four detection reasons pinned to the right hint
+  (not-installed / spawn-failed / version-unknown → INSTALL_HINT;
+  version-too-old → UPDATE_HINT). Builtin/omp ok path regression
+  pinned.
+
+Notes:
+- `dispatchNotification` got a `isParamsRecord(n)` top guard (defense
+  in depth) — guards below already early-return on bad shape, this
+  catches a future change that throws before the existing guards.
+- `resolveEngine` hint now keys off `detection.reason` instead of
+  `detection.available` so the two `available:true` reasons
+  (version-too-old vs version-unknown) can diverge correctly.
+
+## Reviewer
    - after a malformed frame, a valid `agent_message_chunk` still
      streams (engine survives).
 3. Detection reason → hint mapping tests

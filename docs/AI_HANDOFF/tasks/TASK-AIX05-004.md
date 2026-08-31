@@ -24,7 +24,36 @@ Pin builtin ↔ OMP/MCP tool permission parity and close the cycle docs:
    - `OmpChatEngine` interface includes `cancel`;
    - `session_state` wire kind exists in aiChatPanelMessages;
    - exports present (createOmpChatEngine, detectOmp, resolveEngine,
-     MIN_OMP_VERSION).
+## Executor
+
+**RED**: scaffold missing. New test files added.
+
+**GREEN**:
+- `npx vitest run src/ui/__tests__/aiChatPanelToolParity.test.ts` →
+  1 passed.
+- `npx vitest run src/__tests__/aix05Scaffold.test.ts` → 13 passed.
+- `npx vitest run src/__tests__/aix04Scaffold.test.ts` → updated to
+  follow AIX-05 helper consolidation (2 helper calls instead of 2
+  `createChangePlanTools(` sites; the helper itself contains the
+  call). All cycle-AIX-04 scaffold assertions still hold.
+- `npm test` → 2671 passed (baseline 2645 + 26 new AIX-05 cases) |
+  2 skipped; typecheck 0; compile clean.
+
+Notes:
+- Refactored 2 parallel tool-registration sites in `src/ui/aiChatPanel.ts`
+  to a single `registerStandardToolset(registry)` helper. Both paths
+  (builtin + OMP/MCP) call the helper — parity by construction. The
+  helper lives next to `buildHtml` and is the only place where
+  `createDbAwareTools` + `createAnalysisTools` + `createChangePlanTools`
+  are combined.
+- `registerStandardToolset` keeps the AIX-04 live-fingerprint
+  closure (`adapter.listColumns`) exactly as it was in the two
+  prior sites.
+- Scaffold strips line/block comments before scanning for `shell:true`
+  / `execSync` so explanatory comments (e.g. in engineChoice.ts:33
+  and acpProcess.ts:126) don't false-positive.
+
+## Reviewer
 3. CHANGELOG 1.25.0 section + compare link (re-verify the whole link
    block after editing); README bullet after the 1.24.0 line.
 

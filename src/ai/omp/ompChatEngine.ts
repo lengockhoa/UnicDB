@@ -71,6 +71,11 @@ export interface AcpSession {
   onClose(listener: () => void): void;
   /** Best-effort teardown. Idempotent. */
   dispose(): void;
+  /** AIX-05: best-effort fire-and-forget `session/cancel` notify. The
+   * engine never relies on a response (the server cannot reply to a
+   * notify). Optional on the interface so existing fakes keep compiling;
+   * production wires AcpClient.notify. */
+  notify?(method: string, params: unknown): void;
 }
 
 /**
@@ -115,6 +120,12 @@ export interface OmpChatEngine {
   resume(sessionId: string, events: OmpChatEvents): Promise<void>;
   /** Best-effort shutdown. */
   shutdown(): Promise<void>;
+  /**
+   * AIX-05: cancel the in-flight turn. Sends `session/cancel` to the
+   * active session (if any). Idempotent — calling twice for the same
+   * turn sends exactly ONE notify. No-op without a turn.
+   */
+  cancel(): void;
 }
 
 export interface OmpChatEngineOptions {
@@ -188,6 +199,12 @@ async function dispatchNotification(
   events: OmpChatEvents,
   hostMcp: HostMcp,
 ): Promise<void> {
+  // AIX-05: a malformed frame MUST NOT kill a turn. Drop unknown methods
+  // and malformed params silently — the next valid frame still streams.
+  // Defence in depth: the guards below already early-return on bad shape;
+  // this catch is the last line so a future change that throws can never
+  // bubble out of the dispatcher.
+  if (!isParamsRecord(n)) return;
   if (n.method !== "session/update") return;
   if (!isParamsRecord(n.params)) return;
   const update = n.params["update"];
@@ -251,6 +268,15 @@ async function dispatchNotification(
 export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
   const { acp, hostMcp, cwd } = opts;
   const mcpServers = mcpServersDescriptor(hostMcp);
+  // AIX-05: track the active sessionId so cancel() can address the right
+  // `session/cancel` notify. Cleared on turn settle. `cancelSent` dedupes
+  // double-cancel across a single turn.
+  let currentSessionId: string | null = null;
+  let cancelSent = false;
+  // AIX-05: `acp.notify` is optional on AcpSession — the cancel()
+  // helper uses optional chaining so fakes without notify stay compiling.
+  const notify: (m: string, p: unknown) => void =
+    acp.notify?.bind(acp) ?? (() => { /* no-op */ });
 
   return {
     async send(text, events): Promise<void> {
@@ -263,6 +289,8 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
         events.onError?.(`session/new failed: ${message}`);
         return;
       }
+      currentSessionId = sessionId;
+      cancelSent = false;
 
       // Register notification dispatcher for the lifetime of this turn. The
       // acp session dedupes handlers (one per AcpClient instance) so this
@@ -281,6 +309,14 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
         // ONCE, do not throw.
         const message = err instanceof Error ? err.message : String(err);
         events.onError?.(message);
+      } finally {
+        // AIX-05: turn settled (success OR crash) — clear active session so
+        // a stale cancel() never addresses a dead session. The next send()
+        // opens a fresh session.
+        if (currentSessionId === sessionId) {
+          currentSessionId = null;
+          cancelSent = false;
+        }
       }
     },
 
@@ -289,6 +325,8 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
       try {
         const loadResult = await acp.sessionLoad(sessionId, cwd, mcpServers);
         loadedSessionId = loadResult.sessionId;
+        currentSessionId = loadedSessionId;
+        cancelSent = false;
         // Replay absorbed notifications through the same forwarder so the
         // panel renders the historical stream. The replay buffer closes on
         // the next outgoing request/notify (session/prompt in send), so
@@ -317,6 +355,19 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
       events.onDone?.();
     },
 
+    cancel(): void {
+      const id = currentSessionId;
+      if (id === null) return;
+      if (cancelSent) return;
+      cancelSent = true;
+      try {
+        notify("session/cancel", { sessionId: id });
+      } catch {
+        // Best-effort — process may already be gone; the next send()
+        // creates a fresh session anyway.
+      }
+    },
+
     async shutdown(): Promise<void> {
       try {
         acp.dispose();
@@ -328,6 +379,8 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
       } catch {
         /* best-effort */
       }
+      currentSessionId = null;
+      cancelSent = false;
     },
   };
 }

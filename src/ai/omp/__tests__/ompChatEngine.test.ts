@@ -25,6 +25,7 @@ const fakeAcp: AcpSession = {
   onNotification: vi.fn(),
   onClose: vi.fn(),
   dispose: vi.fn(),
+  notify: vi.fn(),
 };
 
 const fakeHostMcp: HostMcp = {
@@ -57,6 +58,7 @@ beforeEach(() => {
   fakeAcp.onNotification.mockReset();
   fakeAcp.onClose.mockReset();
   fakeAcp.dispose.mockReset();
+  fakeAcp.notify.mockReset();
   fakeHostMcp.call.mockReset();
 });
 
@@ -314,5 +316,173 @@ describe("OmpChatEngine.resume", () => {
         }),
       ]),
     );
+  });
+});
+// ---- AIX-05: cancel() contract ---------------------------------------------
+
+// ---- AIX-05: dispatchNotification robustness --------------------------------
+
+describe("dispatchNotification (AIX-05 protocol robustness)", () => {
+  it("drop unknown method without throwing; turn still streams next valid frame", async () => {
+    fakeAcp.sessionNew.mockResolvedValue({ sessionId: "sess-robust-1" });
+    fakeAcp.sessionPrompt.mockResolvedValue({ stopReason: "end_turn" });
+    const engine = createOmpChatEngine({
+      acp: fakeAcp,
+      hostMcp: fakeHostMcp,
+      cwd: "/workspace",
+    });
+    const deltas: string[] = [];
+    await engine.send("hi", { onDelta: (d) => deltas.push(d) });
+    const handler = registeredNotificationHandler();
+    // Unknown method — must be dropped.
+    expect(() =>
+      handler({ method: "totally/unknown", params: { whatever: 1 } }),
+    ).not.toThrow();
+    // Malformed params (null) — must be dropped.
+    expect(() => handler({ method: "session/update", params: null })).not.toThrow();
+    // Valid frame after the malformed ones — must still stream.
+    handler({
+      method: "session/update",
+      params: {
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "still alive" },
+        },
+      },
+    });
+    expect(deltas).toContain("still alive");
+  });
+
+  it("tool_call without name does not call hostMcp; does not throw", async () => {
+    fakeAcp.sessionNew.mockResolvedValue({ sessionId: "sess-robust-2" });
+    fakeAcp.sessionPrompt.mockResolvedValue({ stopReason: "end_turn" });
+    const engine = createOmpChatEngine({
+      acp: fakeAcp,
+      hostMcp: fakeHostMcp,
+      cwd: "/workspace",
+    });
+    const toolStarts: string[] = [];
+    await engine.send("hi", { onToolStart: (n) => toolStarts.push(n) });
+    const handler = registeredNotificationHandler();
+    handler({
+      method: "session/update",
+      params: { update: { sessionUpdate: "tool_call", toolCallId: "tc-1" } },
+    });
+    expect(fakeHostMcp.call).not.toHaveBeenCalled();
+    expect(toolStarts).toHaveLength(0);
+  });
+});
+
+describe("OmpChatEngine.cancel (AIX-05)", () => {
+  it("sends session/cancel with the active sessionId mid-turn", async () => {
+    let resolvePrompt: (v: { stopReason?: string }) => void = () => undefined;
+    fakeAcp.sessionNew.mockResolvedValue({ sessionId: "sess-cancel-1" });
+    fakeAcp.sessionPrompt.mockImplementation(
+      () => new Promise<{ stopReason?: string }>((res) => {
+        resolvePrompt = res;
+      }),
+    );
+    const engine = createOmpChatEngine({
+      acp: fakeAcp,
+      hostMcp: fakeHostMcp,
+      cwd: "/workspace",
+    });
+    const sendPromise = engine.send("hi", {});
+    await flushMicrotasks();
+    engine.cancel();
+    expect(fakeAcp.notify).toHaveBeenCalledTimes(1);
+    expect(fakeAcp.notify).toHaveBeenCalledWith("session/cancel", {
+      sessionId: "sess-cancel-1",
+    });
+    resolvePrompt({ stopReason: "end_turn" });
+    await sendPromise;
+  });
+
+  it("double-cancel sends exactly one notify per turn (idempotent)", async () => {
+    let resolvePrompt: (v: { stopReason?: string }) => void = () => undefined;
+    fakeAcp.sessionNew.mockResolvedValue({ sessionId: "sess-cancel-2" });
+    fakeAcp.sessionPrompt.mockImplementation(
+      () => new Promise<{ stopReason?: string }>((res) => {
+        resolvePrompt = res;
+      }),
+    );
+    const engine = createOmpChatEngine({
+      acp: fakeAcp,
+      hostMcp: fakeHostMcp,
+      cwd: "/workspace",
+    });
+    const sendPromise = engine.send("hi", {});
+    await flushMicrotasks();
+    engine.cancel();
+    engine.cancel();
+    engine.cancel();
+    expect(fakeAcp.notify).toHaveBeenCalledTimes(1);
+    resolvePrompt({ stopReason: "end_turn" });
+    await sendPromise;
+  });
+
+  it("no-op when no turn is in flight", () => {
+    const engine = createOmpChatEngine({
+      acp: fakeAcp,
+      hostMcp: fakeHostMcp,
+      cwd: "/workspace",
+    });
+    engine.cancel();
+    expect(fakeAcp.notify).not.toHaveBeenCalled();
+  });
+
+  it("send → cancel → send creates a fresh session (no reuse of cancelled id)", async () => {
+    fakeAcp.sessionNew.mockResolvedValueOnce({ sessionId: "sess-A" });
+    fakeAcp.sessionPrompt.mockImplementationOnce(() => Promise.resolve({ stopReason: "end_turn" }));
+    const engine = createOmpChatEngine({
+      acp: fakeAcp,
+      hostMcp: fakeHostMcp,
+      cwd: "/workspace",
+    });
+    await engine.send("hi", {});
+    expect(fakeAcp.sessionNew).toHaveBeenCalledTimes(1);
+    expect(fakeAcp.notify).not.toHaveBeenCalled();
+
+    // Second turn: arrange a new pending prompt so cancel addresses sess-B.
+    let resolveSecond: (v: { stopReason?: string }) => void = () => undefined;
+    fakeAcp.sessionNew.mockResolvedValueOnce({ sessionId: "sess-B" });
+    fakeAcp.sessionPrompt.mockImplementationOnce(
+      () => new Promise<{ stopReason?: string }>((res) => {
+        resolveSecond = res;
+      }),
+    );
+    const second = engine.send("next", {});
+    await flushMicrotasks();
+    engine.cancel();
+    expect(fakeAcp.notify).toHaveBeenLastCalledWith("session/cancel", {
+      sessionId: "sess-B",
+    });
+    resolveSecond({ stopReason: "end_turn" });
+    await second;
+    expect(fakeAcp.sessionNew).toHaveBeenCalledTimes(2);
+  });
+
+  it("crash mid-turn clears currentSessionId so the next send opens a fresh session", async () => {
+    fakeAcp.sessionNew.mockResolvedValueOnce({ sessionId: "sess-X" });
+    fakeAcp.sessionPrompt.mockImplementationOnce(() =>
+      Promise.reject(new Error("crash")),
+    );
+    const engine = createOmpChatEngine({
+      acp: fakeAcp,
+      hostMcp: fakeHostMcp,
+      cwd: "/workspace",
+    });
+    await engine.send("first", { onError: () => undefined });
+    // After crash, no active session — cancel must be a no-op.
+    engine.cancel();
+    expect(fakeAcp.notify).not.toHaveBeenCalled();
+    // Next send opens a fresh session.
+    fakeAcp.sessionNew.mockResolvedValueOnce({ sessionId: "sess-Y" });
+    fakeAcp.sessionPrompt.mockImplementationOnce(() =>
+      Promise.resolve({ stopReason: "end_turn" }),
+    );
+    await engine.send("second", {});
+    expect(fakeAcp.sessionNew).toHaveBeenCalledTimes(2);
+    expect(fakeAcp.sessionNew.mock.calls[1]?.[0]?.cwd).toBe("/workspace");
   });
 });
