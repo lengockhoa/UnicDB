@@ -21,6 +21,9 @@
 //   - Sensitive capabilities (context, tools, audit export) require ALL of:
 //     valid configured vocabulary + valid resolver choice + trusted workspace.
 //     Anything else fails closed with a concrete, non-empty notice.
+//   - Shared ALLOWED_*/DENIED_* decision constants are deep-frozen: a host
+//     mutating its returned decision object cannot corrupt default-deny for
+//     any later resolution (pinned by the mutation-guard tests).
 //   - Capability denial keeps the resolver route observable (`provider`) so
 //     `vsdb.ai.showPolicy` can still report the effective provider; only a
 //     missing/invalid resolver choice leaves `provider` null.
@@ -80,24 +83,27 @@ export interface PolicyInput {
 
 const CONFIGURED_ENGINE_VALUES: readonly string[] = ["builtin", "omp"];
 
-const ALLOWED_CONTEXT: PolicyContextDecision = {
+// Decision objects are flat (boolean fields only), so Object.freeze is a deep
+// freeze for them: no host can mutate a shared ALLOWED_*/DENIED_* constant
+// through a returned policy and corrupt later default-deny resolutions.
+const ALLOWED_CONTEXT: Readonly<PolicyContextDecision> = Object.freeze({
   schema: true,
   workspace: true,
   rows: true,
-};
-const DENIED_CONTEXT: PolicyContextDecision = {
+});
+const DENIED_CONTEXT: Readonly<PolicyContextDecision> = Object.freeze({
   schema: false,
   workspace: false,
   rows: false,
-};
-const ALLOWED_TOOLS: PolicyToolDecision = {
+});
+const ALLOWED_TOOLS: Readonly<PolicyToolDecision> = Object.freeze({
   database: true,
   workspace: true,
-};
-const DENIED_TOOLS: PolicyToolDecision = {
+});
+const DENIED_TOOLS: Readonly<PolicyToolDecision> = Object.freeze({
   database: false,
   workspace: false,
-};
+});
 
 /** True only when the raw configured value is known preference vocabulary.
  * Migrated/unsupported values (e.g. a pre-cycle engine string) fail closed. */
@@ -179,7 +185,13 @@ export function isExcludedWorkspacePath(relativePath: string): boolean {
   const segments = normalized.split("/");
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i];
-    if (seg === ".env" || seg === ".git") {
+    // Credentials: .env plus conventional variants (.env.local,
+    // .env.production, ...) — anything named exactly ".env" or ".env" followed
+    // by more characters.
+    if (seg === ".env" || seg.startsWith(".env.")) {
+      return true;
+    }
+    if (seg === ".git") {
       return true;
     }
     // Generated AI configuration: exactly .vscode/vsdb-ai-config.yml.

@@ -140,3 +140,73 @@ esbuild: build complete
 
 Status: PASS
 Note: none — no git add/commit/push performed; files left as-is in worktree. Exported surface for TASK-AIX07-003: `resolvePolicy(input: PolicyInput): EffectivePolicy`, `isExcludedWorkspacePath(path): boolean`, `isValidEngineChoice`, `isKnownConfiguredEngine`, types `EffectivePolicy` (provider/context/tools/auditExportAllowed/notice), `PolicyContextDecision` (schema/workspace/rows), `PolicyToolDecision` (database/workspace), `PolicyInput` (workspaceTrusted/configuredEngine/resolvedEngine).
+
+## Reviewer Verdict
+
+### Review · TASK-AIX07-001 · unic-smart
+VERDICT: changes_requested
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN: npm test -- src/ai/__tests__/policy.test.ts — PASS (1 file, 7 tests); npm run typecheck — PASS; npm run compile — PASS
+FINDINGS:
+  critical: none
+  important:
+    - src/ai/policy.ts:82-99,150,159 — `resolvePolicy()` returns shared mutable `ALLOWED_*`/`DENIED_*` objects. A caller can mutate a denied result (for example, `policy.context.schema = true`), causing every subsequent untrusted/invalid policy resolution to admit that sensitive class; return fresh or frozen readonly decisions so default-deny cannot be globally altered.
+    - src/ai/policy.ts:181-183 — the credential-path predicate rejects only the exact basename `.env`; conventional secret files such as `.env.local` and `.env.production` return `false` and can enter workspace context. Reject `.env` variants centrally and add assertions for them.
+  minor: none
+NEXT_STATUS_FOR_INDEX: changes_requested
+
+---
+
+## Executor Report (fix round 1)
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+
+RED_OUTPUT:
+
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+
+ ❯ src/ai/__tests__/policy.test.ts  (10 tests | 3 failed) 5ms
+   ❯ isExcludedWorkspacePath — centralized path policy > conventional .env variants are excluded, not only the exact .env basename
+     → expected false to be true // Object.is equality
+   ❯ shared-decision mutation guard — review fix round 1 > mutating a denied result cannot alter later default-deny resolutions
+     → expected false to be true // Object.is equality
+   ❯ shared-decision mutation guard — review fix round 1 > mutating an allowed result cannot alter later allowed resolutions
+     → expected false to be true // Object.is equality
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 7 passed (10)
+```
+
+Correct RED: `.env.local` returned `false` from `isExcludedWorkspacePath` (finding 2 confirmed), and `Object.isFrozen(first.context)` was `false` for both denied and allowed resolutions (finding 1 confirmed — shared constants were mutable). `npx vitest run src/ai/__tests__/policy.test.ts` pre-fix.
+
+Verification Output:
+
+1) `npx vitest run src/ai/__tests__/policy.test.ts`
+
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+
+ ✓ src/ai/__tests__/policy.test.ts  (10 tests) 2ms
+
+ Test Files  1 passed (1)
+      Tests  10 passed (10)
+```
+
+2) `npm run typecheck`
+
+```
+> vsdb@1.28.0 typecheck
+> tsc --noEmit
+```
+
+(exit 0, no diagnostics)
+
+Status: PASS
+Note:
+- Finding 1: `ALLOWED_CONTEXT`/`DENIED_CONTEXT`/`ALLOWED_TOOLS`/`DENIED_TOOLS` are now `Object.freeze`d with minimal `Readonly<...>` annotations (decision objects are flat, so freeze is a deep freeze); module contract doc-comment updated; no type-signature changes to `EffectivePolicy` consumers.
+- Finding 2: the central predicate now rejects `seg === ".env" || seg.startsWith(".env.")`, covering `.env.local`, `.env.production`, and nested variants; new test asserts all three are excluded.
+- New tests written first (RED above): one `.env`-variant path test + two mutation-guard tests (mutate denied/allowed result, re-resolve, assert posture unchanged). Verified `src/ui/aiChatPanel.ts` and `src/extension.ts` only read policy decisions, so freezing cannot throw at runtime.
+- No git add/commit/push performed.

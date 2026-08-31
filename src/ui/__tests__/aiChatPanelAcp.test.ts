@@ -1674,6 +1674,81 @@ describe("AiChatPanel — ACP turn lifecycle (TASK-007)", () => {
   });
 });
 
+// ============================================================================
+// AIX-07 fix round 1 (TASK-AIX07-003 review CRITICAL): the production raw-ACP
+// OMP path (extension.ts wires `acp` WITHOUT `ompChatEngine`) posts
+// `agent_message_chunk` deltas, `agent_thought_chunk` thoughts, and the raw
+// `session.buffer` final assistant message. Every outbound value must go
+// through the SAME redact() wire-hygiene pass the OmpChatEngine funnel uses
+// BEFORE it reaches the webview.
+// ============================================================================
+describe("AiChatPanel — raw ACP wire redaction (AIX-07 fix round 1)", () => {
+  it("R(critical) delta/thought/final assistant posted frames carry no sentinel credential VALUES", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const { start, sessions } = makeFakeAcpDeps();
+    // No `ompChatEngine` — mirrors extension.ts's production raw-ACP wiring.
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      acp: { start },
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+
+    handler({ type: "send", text: "go" });
+    await until(() => sessions.length > 0);
+    const session = sessions[0] as FakeAcpSession;
+    await until(() => lastPromptRequestId(session.transport) !== undefined);
+
+    feedAgentThoughtChunk(
+      session.transport,
+      "considering token=ACP-THOUGHT-SENTINEL-q3",
+    );
+    feedAgentMessageChunk(
+      session.transport,
+      "Authorization: Bearer ACP-LEAK-SENTINEL-x1\n",
+    );
+    feedAgentMessageChunk(session.transport, "apiKey=sk-acp-12345");
+    respondPrompt(
+      session.transport,
+      lastPromptRequestId(session.transport),
+      "end_turn",
+    );
+    await until(() => postedMessages(p).some(isDone));
+
+    const frames = postedMessages(p);
+    // The turn actually streamed — the test must not pass vacuously.
+    expect(frames.filter(isDelta)).toHaveLength(2);
+    expect(frames.some(isThought)).toBe(true);
+    expect(frames.some(isAssistant)).toBe(true);
+
+    // Wire privacy: no sentinel credential VALUE survives the panel
+    // boundary (delta frames, thought frames, or the final assistant
+    // bubble assembled from session.buffer).
+    const blob = JSON.stringify(frames);
+    expect(blob).not.toContain("ACP-LEAK-SENTINEL-x1");
+    expect(blob).not.toContain("sk-acp-12345");
+    expect(blob).not.toContain("ACP-THOUGHT-SENTINEL-q3");
+    // The scrubbing pass collapsed the secret shapes (same pin as the
+    // OmpChatEngine funnel wire-privacy tests in aiChatPanelPolicy.test.ts).
+    expect(blob).toContain("<redacted>");
+    // Defense in depth: the assistant text stored in history (which feeds
+    // future prompts) is the redacted value too.
+    const history = (
+      panel as unknown as {
+        history: Array<{ role: string; content: string }>;
+      }
+    ).history;
+    const lastAssistant = history[history.length - 1];
+    expect(lastAssistant?.role).toBe("assistant");
+    expect(lastAssistant?.content).not.toContain("ACP-LEAK-SENTINEL-x1");
+    expect(lastAssistant?.content).not.toContain("sk-acp-12345");
+  });
+});
+
 // ---- message narrowing helpers ---------------------------------------------
 
 function isInit(m: unknown): m is { type: "init"; hasHistory: boolean } {
@@ -1697,4 +1772,7 @@ function isError(m: unknown): m is { type: "error"; message: string } {
 }
 function isStep(m: unknown): m is { type: "step"; label: string } {
   return !!m && typeof m === "object" && (m as { type?: string }).type === "step";
+}
+function isThought(m: unknown): m is { type: "thought"; text: string } {
+  return !!m && typeof m === "object" && (m as { type?: string }).type === "thought";
 }

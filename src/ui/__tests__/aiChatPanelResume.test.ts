@@ -517,6 +517,85 @@ describe("AiChatPanel — resume_pick (TASK-003 #2)", () => {
 });
 
 // ============================================================================
+// #2b — AIX-07 fix round 2: the history WIRE POST must redact every item's
+// text before it reaches the webview. Replay from a saved OMP session can
+// carry credential-shaped text (the live raw-ACP delta/thought paths were
+// already redacted in fix round 1); resume must not render it verbatim.
+// The pure deriveHistoryFromReplay helper stays raw-passthrough (unit-pinned
+// elsewhere) — the post() boundary is where redact() applies, uniformly for
+// user items too (a pasted secret in a user message is equally a leak).
+// ============================================================================
+describe("AiChatPanel — resume_pick history wire post redacts secrets (TASK-AIX07-003 fix round 2)", () => {
+  it("redacts credential-shaped text in agent AND user history items before posting", async () => {
+    const { start } = makeFakeAcpDeps();
+    const { panel: p, handler } = await bootPanel(start);
+
+    handler({ type: "resume_pick", sessionId: "picked-77" });
+    const session = await awaitFakeSession();
+    await until(() =>
+      session.transport.written.some(
+        (l) => JSON.parse(l)["method"] === "session/load",
+      ),
+    );
+    const req = session.transport.allWritten().find((f) => f["method"] === "session/load");
+    expect(req).toBeDefined();
+    const id = req!["id"];
+
+    // Replay frames whose text embeds credential sentinels — agent text
+    // carries a Bearer token + apiKey=..., user text carries password=...
+    const replay: Array<{ method: string; params: unknown }> = [
+      {
+        method: "session/update",
+        params: {
+          sessionId: "picked-77",
+          update: {
+            sessionUpdate: "user_message_chunk",
+            content: { type: "text", text: "password=hunter2" },
+            messageId: "m1",
+          },
+        },
+      },
+      {
+        method: "session/update",
+        params: {
+          sessionId: "picked-77",
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: "Summary: Authorization: Bearer RESUME-LEAK-SENTINEL-9f3\napiKey=sk-resume-12345",
+            },
+          },
+        },
+      },
+    ];
+    for (const n of replay) {
+      session.transport.feed(JSON.stringify({ jsonrpc: "2.0", ...n }));
+    }
+    session.transport.feed(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        result: { configOptions: [], modes: {} },
+      }),
+    );
+
+    await until(() => postedMessages(p).some(isHistory));
+    const hist = postedMessages(p).find(isHistory)!;
+    expect(hist.items).toHaveLength(2);
+    expect(hist.items.map((i) => i.kind)).toEqual(["user", "assistant"]);
+
+    // NO history item may carry any sentinel verbatim — redact runs on ALL
+    // kinds uniformly (user text could equally carry a pasted secret).
+    for (const item of hist.items) {
+      expect(item.text).not.toContain("RESUME-LEAK-SENTINEL-9f3");
+      expect(item.text).not.toContain("sk-resume-12345");
+      expect(item.text).not.toContain("hunter2");
+    }
+  });
+});
+
+// ============================================================================
 // #3 — replay containing agent_thought_chunk must NOT produce any item
 // with thought content; other items still render.
 // ============================================================================

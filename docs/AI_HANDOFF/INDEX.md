@@ -7,9 +7,9 @@ Cycle AIX-07 — **Trust, Privacy & Governance**. Active, executable scope cover
 | TASK-RLX-001 | Cancel active PostgreSQL non-cursor queries | done | none | unic-smart |
 | TASK-RLX-002 | Coalesce SchemaCache stale refreshes | done | none | unic-smart |
 | TASK-RLX-003 | Fail closed on malformed import execution plans | done | none | unic-smart |
-| TASK-AIX07-001 | Central effective AI policy (pure) | pending_review | none | unic-smart |
-| TASK-AIX07-002 | Redacted all-turn audit export primitive | pending_review | none | unic-smart |
-| TASK-AIX07-003 | Policy and audit command host integration | pending_review | none | unic-smart |
+| TASK-AIX07-001 | Central effective AI policy (pure) | approved | fix round 1 verified | unic-smart |
+| TASK-AIX07-002 | Redacted all-turn audit export primitive | approved | fix round 1 verified | unic-smart |
+| TASK-AIX07-003 | Policy and audit command host integration | blocked | none | unic-smart |
 | TASK-DBX07-001 | AIX-06 Trace r3 review fixes | done | none | unic-smart |
 | PORT-RLX-02 | Cross-dialect query lifecycle completion | queued — NOT READY | RLX-01 | - |
 | PORT-RLX-03 | Connection, tunnel, and schema-refresh recovery | queued — NOT READY | RLX-01, PORT-RLX-02 | - |

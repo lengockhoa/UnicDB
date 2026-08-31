@@ -2281,7 +2281,12 @@ export class AiChatPanel {
 
       if (!this.turnDonePosted) {
         if (postAssistant && session.buffer.length > 0) {
-          const finalText = session.buffer;
+          // AIX-07 fix round 1 (review CRITICAL): redact the ASSEMBLED buffer
+          // before it reaches the webview OR this.history — the same wire
+          // hygiene the OmpChatEngine funnel applies to its final text.
+          // Redacting the whole buffer (not just per-chunk) also catches
+          // credential shapes that span chunk boundaries.
+          const finalText = String(redact(session.buffer));
           this.post({ type: "assistant", text: finalText, markdown: true });
           this.history = [
             ...this.history,
@@ -2483,7 +2488,11 @@ export class AiChatPanel {
       }
       if (typeof text === "string" && text.length > 0) {
         session.buffer += text;
-        this.post({ type: "delta", text });
+        // AIX-07 fix round 1 (review CRITICAL): raw-ACP deltas are the same
+        // webview wire surface as the OmpChatEngine funnel's onDelta — the
+        // engine may stream credential-shaped strings — so apply the SAME
+        // redact() pass BEFORE post().
+        this.post({ type: "delta", text: String(redact(text)) });
       }
       return;
     }
@@ -2518,7 +2527,10 @@ export class AiChatPanel {
       if (this.token?.aborted) return;
       const chunk = (update as { chunk?: unknown }).chunk;
       if (typeof chunk !== "string" || chunk.length === 0) return;
-      this.post({ type: "thought", text: chunk });
+      // AIX-07 fix round 1 (review CRITICAL): thought chunks are webview
+      // wire surface too — same redact() pass as the raw-ACP delta path
+      // and the OmpChatEngine funnel's onThought.
+      this.post({ type: "thought", text: String(redact(chunk)) });
       return;
     }
     // Every other update kind (including the stale cycle-L `agent_end` /
@@ -2982,7 +2994,18 @@ export class AiChatPanel {
       // runAcpTurn reads the new id when it next issues session/prompt.
       handle.sessionId = sessionId;
       acpSession.sessionId = sessionId;
-      this.post({ type: "history", items, truncated, truncatedCount });
+      // AIX-07 fix round 2: redact each item's text at the wire boundary —
+      // replayed session text may embed credential-shaped content from an
+      // earlier session. Same redact() pass as the live raw-ACP delta and
+      // thought paths (fix round 1); applied uniformly to ALL kinds since a
+      // user item could equally carry a pasted secret. The pure
+      // deriveHistoryFromReplay helper stays raw-passthrough by design.
+      this.post({
+        type: "history",
+        items: items.map((it) => ({ ...it, text: String(redact(it.text)) })),
+        truncated,
+        truncatedCount,
+      });
       // Fix round 4.5 (review): loading a saved session must NOT inherit
       // the in-memory `lastSentText` — a Regenerate pressed right after a
       // resume would re-send the pre-resume prompt into the reloaded
@@ -3027,12 +3050,23 @@ export class AiChatPanel {
       token: string;
     }> = [];
 
+    // AIX-07 fix round 1 (review IMPORTANT): resolve the effective policy
+    // BEFORE any adapter introspection or workspace enumeration — the
+    // @-dropdown candidates expose DB object names and workspace file
+    // names, both sensitive context classes. Denied admission returns the
+    // EMPTY lists (no adapterFactory call, no findFiles call) while the
+    // reply frame itself is still posted so the webview renders "No
+    // matches" and closes cleanly.
+    const policy = await this.resolveEffectivePolicy();
+
     // DB shortlist — collected once, bounded at MENTION_OBJECT_CAP.
     let adapter: DbAdapter | null = null;
-    try {
-      adapter = await this.options.adapterFactory();
-    } catch {
-      adapter = null;
+    if (policy.context.schema) {
+      try {
+        adapter = await this.options.adapterFactory();
+      } catch {
+        adapter = null;
+      }
     }
     if (adapter !== null) {
       try {
@@ -3108,29 +3142,33 @@ export class AiChatPanel {
     // findFiles("**/*", …) when the exclude arg is `undefined`; we pass
     // the platform-default exclude set explicitly so behaviour is stable
     // across hosts (and so the .git / node_modules / out tree is skipped).
-    try {
-      const exclude = "{**/node_modules/**,**/.git/**,**/dist/**,**/out/**}";
-      const uris = await vscode.workspace.findFiles(
-        "**/*",
-        exclude,
-        MENTION_FILE_CAP,
-      );
-      for (const u of uris) {
-        if (items.length >= MENTION_OBJECT_CAP + MENTION_FILE_CAP) break;
-        const wsRoot =
-          vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
-        const rel = wsRoot.length > 0 && u.fsPath.startsWith(wsRoot)
-          ? u.fsPath.slice(wsRoot.length).replace(/^\/+/, "")
-          : u.fsPath;
-        items.push({
-          kind: "file",
-          label: rel,
-          detail: "file",
-          token: rel,
-        });
+    // AIX-07 fix round 1: gated on `context.workspace` — a denied policy
+    // never enumerates workspace file names.
+    if (policy.context.workspace) {
+      try {
+        const exclude = "{**/node_modules/**,**/.git/**,**/dist/**,**/out/**}";
+        const uris = await vscode.workspace.findFiles(
+          "**/*",
+          exclude,
+          MENTION_FILE_CAP,
+        );
+        for (const u of uris) {
+          if (items.length >= MENTION_OBJECT_CAP + MENTION_FILE_CAP) break;
+          const wsRoot =
+            vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
+          const rel = wsRoot.length > 0 && u.fsPath.startsWith(wsRoot)
+            ? u.fsPath.slice(wsRoot.length).replace(/^\/+/, "")
+            : u.fsPath;
+          items.push({
+            kind: "file",
+            label: rel,
+            detail: "file",
+            token: rel,
+          });
+        }
+      } catch {
+        // findFiles failed (no workspace / permission) — file list stays empty.
       }
-    } catch {
-      // findFiles failed (no workspace / permission) — file list stays empty.
     }
 
     this.post({ type: "mention_objects", items });

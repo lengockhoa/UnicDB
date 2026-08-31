@@ -87,6 +87,34 @@ describe("audit export envelope (TASK-AIX07-002)", () => {
     expect(parsed.turns[0]!.events).toHaveLength(2);
   });
 
+  it("serialized export cannot leak secrets through a payload toJSON hook", () => {
+    // Reviewer critical finding: JSON.stringify invokes toJSON() AFTER
+    // the final redact() pass, so a payload object carrying a toJSON
+    // hook that returns secret-shaped data was serialized raw.
+    const SENTINEL = "sk-live-sentinel-payload-key";
+    const r = new TraceRecorder();
+    r.record("turn-a", "prompt", {
+      note: "harmless",
+      toJSON: () => ({ apiKey: SENTINEL }),
+    });
+
+    const json = serializeAuditExport(r.dumpAll());
+    expect(json).not.toContain(SENTINEL);
+    expect(json).not.toContain("toJSON");
+    expect(json).toContain("harmless");
+
+    // Export must still be valid JSON with the envelope shape intact.
+    const parsed = JSON.parse(json) as {
+      schema: string;
+      version: number;
+      turns: Array<{ turnId: string; events: Array<{ payload: unknown }> }>;
+    };
+    expect(parsed.schema).toBe("vsdb.ai.audit-export");
+    expect(parsed.version).toBe(1);
+    expect(parsed.turns).toHaveLength(1);
+    expect(parsed.turns[0]!.turnId).toBe("turn-a");
+  });
+
   it("envelope build is copy-safe against consumer mutation", () => {
     const r = new TraceRecorder();
     r.record("t1", "prompt", { x: 1 });

@@ -447,6 +447,46 @@ describe("AiChatPanel — central policy admission (TASK-AIX07-003)", () => {
 // #2 — Mention expansion gated before DB-or-file read on a denied policy
 // ============================================================================
 describe("AiChatPanel — mention expansion gating", () => {
+  it("#2c denied policy: mention_list posts EMPTY mention_objects with ZERO adapterFactory and ZERO findFiles calls (fix round 1)", async () => {
+    const spy = makeAdapterSpy();
+    state.isTrusted = false;
+
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: spy.factory,
+      isWorkspaceTrusted: () => false,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+
+    // The webview's @-dropdown requests candidates — this path previously
+    // ran unconditionally: adapterFactory() + schema enumeration +
+    // workspace.findFiles() even under a denied policy, exposing DB and
+    // workspace NAMES via mention_objects.
+    handler({ type: "mention_list", query: "pu" });
+    await until(() =>
+      postedMessages(p).some((m) => (m as { type?: string }).type === "mention_objects"),
+    );
+
+    // Zero introspection, zero workspace enumeration on a denied policy.
+    expect(spy.factory).not.toHaveBeenCalled();
+    expect(spy.calls.listSchemas).toBe(0);
+    expect(spy.calls.listTables).toBe(0);
+    expect(spy.calls.listViews).toBe(0);
+    expect(spy.calls.listRoutines).toBe(0);
+    expect(state.findFilesMock).not.toHaveBeenCalled();
+
+    // Exactly one reply, and it is empty — the webview renders "No matches".
+    const replies = postedMessages(p).filter(
+      (m) => (m as { type?: string }).type === "mention_objects",
+    );
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toEqual({ type: "mention_objects", items: [] });
+  });
+
   it("#2 denied policy: object + file mention tokens do NOT call adapterFactory/listColumns, and fs.readFile is never invoked", async () => {
     const spy = makeAdapterSpy();
     state.isTrusted = false;

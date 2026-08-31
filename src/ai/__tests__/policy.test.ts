@@ -113,6 +113,51 @@ describe("isExcludedWorkspacePath — centralized path policy", () => {
     expect(isExcludedWorkspacePath("./.env")).toBe(true);
     expect(isExcludedWorkspacePath("")).toBe(true);
   });
+
+  it("conventional .env variants are excluded, not only the exact .env basename", () => {
+    expect(isExcludedWorkspacePath(".env.local")).toBe(true);
+    expect(isExcludedWorkspacePath(".env.production")).toBe(true);
+    expect(isExcludedWorkspacePath("packages/app/.env.local")).toBe(true);
+  });
+});
+
+describe("shared-decision mutation guard — review fix round 1", () => {
+  it("mutating a denied result cannot alter later default-deny resolutions", () => {
+    const first = resolvePolicy(input({ workspaceTrusted: false }));
+    // Shared DENIED_* decisions must not be globally corruptible by a host
+    // that flips a field on its own returned result. Frozen constants reject
+    // the write in strict mode (caught below); either way the next
+    // resolution must still deny every sensitive class.
+    expect(Object.isFrozen(first.context)).toBe(true);
+    expect(Object.isFrozen(first.tools)).toBe(true);
+    try {
+      (first.context as { schema: boolean }).schema = true;
+      (first.tools as { database: boolean }).database = true;
+    } catch {
+      // Frozen: the write was rejected — already safe.
+    }
+    const second = resolvePolicy(input({ workspaceTrusted: false }));
+    expect(second.context).toEqual({ schema: false, workspace: false, rows: false });
+    expect(second.tools).toEqual({ database: false, workspace: false });
+    expect(second.auditExportAllowed).toBe(false);
+    expect(second.notice.length).toBeGreaterThan(0);
+  });
+
+  it("mutating an allowed result cannot alter later allowed resolutions", () => {
+    const first = resolvePolicy(input({}));
+    expect(Object.isFrozen(first.context)).toBe(true);
+    expect(Object.isFrozen(first.tools)).toBe(true);
+    try {
+      (first.context as { schema: boolean }).schema = false;
+      (first.tools as { database: boolean }).database = false;
+    } catch {
+      // Frozen: the write was rejected — already safe.
+    }
+    const second = resolvePolicy(input({}));
+    expect(second.context).toEqual({ schema: true, workspace: true, rows: true });
+    expect(second.tools).toEqual({ database: true, workspace: true });
+    expect(second.notice).toBe("");
+  });
 });
 
 describe("purity guard — TASK-AIX07-001 acceptance", () => {

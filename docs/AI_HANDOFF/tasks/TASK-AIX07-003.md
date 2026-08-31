@@ -209,3 +209,170 @@ npm run compile  → esbuild: build complete
   pinned by both the pure policy tests (#4) and the host test (#2).
 - Generic chat completes under a denied policy (asserted by #1a/#2: runAgent
   invoked, final text posted, zero sensitive registrations, zero reads).
+
+
+## Reviewer Verdict
+
+### Review · TASK-AIX07-003 · unic-smart
+VERDICT: critical_block
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  - npm run compile — PASS
+  - npx vitest run src/ui/__tests__/aiChatPanelPolicy.test.ts src/extension.test.ts src/ai/__tests__/policy.test.ts src/ai/__tests__/auditExport.test.ts — PASS (101 tests)
+  - npm run typecheck — PASS
+FINDINGS:
+  critical:
+    - src/ui/aiChatPanel.ts:2486,2521,2285 — the production raw-ACP OMP path posts `agent_message_chunk` deltas and thought chunks unredacted, then posts the same unredacted `session.buffer` as the final assistant message. `src/extension.ts:1089-1093` wires this raw ACP path and never supplies `ompChatEngine`, so an OMP response containing bearer/KV credentials reaches the webview. Redact every raw-ACP outbound delta/thought/final-assistant value before `post()` (and add a raw-ACP regression test with sentinel values).
+  important:
+    - src/ui/aiChatPanel.ts:3032-3136 — a `mention_list` webview message still unconditionally calls `adapterFactory()`/schema enumeration and `workspace.findFiles()` under denied policy. An untrusted or invalid-policy panel can therefore expose database and workspace names through `mention_objects`; resolve policy before this method and return an empty list when schema/workspace admission is denied.
+  minor: none
+NEXT_STATUS_FOR_INDEX: blocked
+
+## Executor Report (fix round 1)
+
+- EXECUTOR_TOOL: claude-code
+- EXECUTOR_MODEL: unic-code
+- Status: PASS
+- Date: 2026-09-01
+
+### RED_OUTPUT (actual, captured pre-fix for both new tests)
+
+`npx vitest run src/ui/__tests__/aiChatPanelAcp.test.ts src/ui/__tests__/aiChatPanelPolicy.test.ts`:
+
+```
+ FAIL  src/ui/__tests__/aiChatPanelAcp.test.ts > AiChatPanel — raw ACP wire redaction (AIX-07 fix round 1) > R(critical) delta/thought/final assistant posted frames carry no sentinel credential VALUES
+AssertionError: expected JSON not to contain "ACP-LEAK-SENTINEL-x1"
+
+- ACP-LEAK-SENTINEL-x1
++ [{"type":"engine","name":"omp"},{"type":"init",...},
++  {"type":"thought","text":"considering token=ACP-THOUGHT-SENTINEL-q3"},
++  {"type":"delta","text":"Authorization: Bearer ACP-LEAK-SENTINEL-x1\n"},
++  {"type":"delta","text":"apiKey=sk-acp-12345"},
++  {"type":"assistant","text":"Authorization: Bearer ACP-LEAK-SENTINEL-x1\napiKey=sk-acp-12345","markdown":true},
++  {"type":"done"}]
+
+ ❯ src/ui/__tests__/aiChatPanelAcp.test.ts:1732
+
+ FAIL  src/ui/__tests__/aiChatPanelPolicy.test.ts > AiChatPanel — mention expansion gating > #2c denied policy: mention_list posts EMPTY mention_objects with ZERO adapterFactory and ZERO findFiles calls (fix round 1)
+AssertionError: expected "spy" to not be called at all, but actually been called 1 times
+
+ ❯ src/ui/__tests__/aiChatPanelPolicy.test.ts:475 (spy.factory)
+
+ Test Files  2 failed (2)
+      Tests  2 failed | 44 passed (46)
+```
+
+Both failed for the exact reviewed reason: the raw-ACP path posted
+thought/delta/final-buffer values unredacted (all three sentinels visible in
+webview frames AND in the final assistant bubble assembled from
+`session.buffer`), and `mention_list` under a denied policy called
+`adapterFactory()` (schema enumeration) plus `workspace.findFiles()`
+unconditionally.
+
+### Implementation (fix round 1)
+
+- `src/ui/aiChatPanel.ts` raw-ACP outbound redaction (review CRITICAL,
+  sites 2486/2521/2285): `agent_message_chunk` deltas now post
+  `String(redact(text))`, `agent_thought_chunk` posts `String(redact(chunk))`,
+  and the final assistant bubble assembles from
+  `String(redact(session.buffer))` before BOTH the `post()` and the
+  `this.history` append — the same `redact()` pass from `src/ai/trace.ts`
+  the OmpChatEngine funnel (onDelta/onThought) already uses as its last
+  wire pass. Redacting the whole buffer at finalize also catches credential
+  shapes that span chunk boundaries. No new scrubber duplicated.
+- `src/ui/aiChatPanel.ts` `handleMentionList` (review IMPORTANT,
+  sites 3032-3136): resolves the panel's existing `resolveEffectivePolicy()`
+  FIRST; `adapterFactory()` + schema enumeration run only when
+  `policy.context.schema` is admitted, `workspace.findFiles()` runs only
+  when `policy.context.workspace` is admitted. A denied policy still posts
+  the `mention_objects` reply with `items: []` so the webview renders
+  "No matches" and closes cleanly. No unrelated changes; the file-list
+  block kept its logic and only gained the gate + reindent.
+
+### Verification Output
+
+```
+npm run compile  → esbuild: build complete (exit 0)
+npx vitest run src/ui/__tests__/aiChatPanelPolicy.test.ts src/extension.test.ts
+                   Test Files  2 passed (2) / Tests  91 passed (91)
+npm run typecheck→ tsc --noEmit, exit 0
+```
+
+Targeted regression net over the neighboring ACP-path suites the change
+touches (raw-ACP delta/thought/final paths):
+
+```
+npx vitest run aiChatPanelResume.test.ts aiChatE2e.test.ts
+                aiChatPanelThoughtRegen.test.ts aiChatPanelPrivacy.test.ts
+                aiChatPanelMentions.test.ts → 76 passed (76)
+npx vitest run aiChatPanel.test.ts aiChatPanelEngine.test.ts
+                aiChatPanelToolParity.test.ts aiChatGrounding.test.ts
+                → 45 passed (45)
+```
+
+### Status: PASS
+
+### Note
+
+- New tests: `aiChatPanelAcp.test.ts` "R(critical) delta/thought/final
+  assistant posted frames carry no sentinel credential VALUES" (raw-ACP
+  path, no `ompChatEngine`, mirrors extension.ts production wiring);
+  `aiChatPanelPolicy.test.ts` "#2c denied policy: mention_list posts EMPTY
+  mention_objects with ZERO adapterFactory and ZERO findFiles calls".
+- The non-vacuous pin is asserted before the privacy scan: 2 delta frames +
+  a thought + an assistant bubble must exist, so a broken stream cannot
+  pass the sentinel assertions by posting nothing.
+- No `git add`/`commit`/`push` — worktree left dirty on `main` as
+  instructed.
+
+### Review round 2 · combined (AIX07-001/002/003) · unic-smart
+VERDICT: critical_block
+REVIEWER_MODEL: unic-smart
+VERIFICATION_RERUN:
+  - npm run compile — PASS
+  - npx vitest run src/ai/__tests__/policy.test.ts src/ai/__tests__/auditExport.test.ts src/ai/__tests__/trace.test.ts src/ui/__tests__/aiChatPanelPolicy.test.ts src/ui/__tests__/aiChatPanelAcp.test.ts src/extension.test.ts — PASS (6 files, 170 tests)
+  - npm run typecheck — PASS
+FINDINGS:
+  critical:
+    - src/ui/aiChatPanel.ts:2855-2863,2997 — resumed raw-ACP `agent_message_chunk` replay text is copied into `history` and posted as a `{ type: "history" }` frame without `redact()`. A saved ACP transcript containing `Authorization: Bearer <secret>` therefore leaks that secret to the webview when `resume_pick` loads it, bypassing the repaired live delta/thought/final-buffer paths. Redact replayed assistant text before adding it to `items` (and add a resume regression test that byte-scans the posted history frame).
+  important: none
+  minor: none
+PER_TASK: 001=fixed-confirmed 002=fixed-confirmed 003=still-broken
+NEXT_STATUS_FOR_INDEX: blocked
+
+## Executor Report (fix round 2)
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+RED_OUTPUT:
+  npx vitest run src/ui/__tests__/aiChatPanelResume.test.ts (PRE-fix):
+  FAIL > "resume_pick history wire post redacts secrets" >
+  AssertionError: expected 'password=hunter2' not to contain 'hunter2'
+  - Expected: hunter2 / + Received: password=hunter2
+  (aiChatPanelResume.test.ts:593) — Tests 1 failed | 11 passed (12)
+  → RED confirmed for the expected reason: raw replay text reached the
+  history wire post unredacted.
+Verification Output:
+  1. npm run compile → exit 0 ("esbuild: build complete")
+  2. npx vitest run src/ui/__tests__/aiChatPanelResume.test.ts
+     src/ui/__tests__/aiChatPanelAcp.test.ts
+     src/ui/__tests__/aiChatPanelPolicy.test.ts src/extension.test.ts
+     → Test Files 4 passed (4), Tests 135 passed (135), exit 0
+     (resume file alone post-fix: 12 passed (12) — GREEN)
+  3. npm run typecheck → exit 0 (tsc --noEmit, no errors)
+Status: PASS
+Note:
+  - Fix at src/ui/aiChatPanel.ts handleResumePick wire post: `items` is
+    mapped through `String(redact(it.text))` before
+    `this.post({ type: "history", ... })` — mirrors the round-1 live
+    delta/thought redact passes. `deriveHistoryFromReplay` untouched
+    (pure helper stays raw-passthrough per its unit pins).
+  - Redaction applied uniformly to ALL kinds (user items included — a
+    pasted secret in a user message is equally a leak). Verified
+    against trace.ts patterns: Bearer token → BEARER_RE,
+    apiKey=/password= → KV_RE.
+  - New regression test aiChatPanelResume.test.ts
+    "resume_pick history wire post redacts secrets" drives real
+    session/load replay frames (agent + user chunks with sentinels)
+    and byte-scans every posted history item; no git add/commit/push.

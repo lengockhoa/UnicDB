@@ -160,3 +160,66 @@ Files changed:
 Status: PASS
 Note: none — all §Verification Commands pass; worktree left uncommitted as instructed.
 
+
+
+## Reviewer Verdict
+
+### Review · TASK-AIX07-002 · unic-smart
+VERDICT: critical_block
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  npx vitest run src/ai/__tests__/auditExport.test.ts src/ai/__tests__/trace.test.ts — PASS (36 tests)
+  npm run typecheck — PASS
+  npm run compile — PASS
+FINDINGS:
+  critical:
+    - src/ai/auditExport.ts:61 — `JSON.stringify` invokes a copied payload object's `toJSON()` after the final `redact()` pass; `toJSON()` can return `{ apiKey: "sk-live-..." }`, which is serialized raw. Sanitize JSON conversion results or reject/strip executable serialization hooks before stringification, and add a serialized-string sentinel test for this path.
+  important: none
+  minor: none
+NEXT_STATUS_FOR_INDEX: blocked
+
+---
+
+## Executor Report (fix round 1)
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+
+RED_OUTPUT (fresh run of `npx vitest run src/ai/__tests__/auditExport.test.ts src/ai/__tests__/trace.test.ts` BEFORE the fix — new regression test only, existing 36 unaffected):
+
+```
+ FAIL  src/ai/__tests__/auditExport.test.ts > audit export envelope (TASK-AIX07-002) > serialized export cannot leak secrets through a payload toJSON hook
+AssertionError: expected '{"schema":"vsdb.ai.audit-export","ver…' not to contain 'sk-live-sentinel-payload-key'
++ {"schema":"vsdb.ai.audit-export","version":1,"exportedAt":"2026-08-31T19:03:22.614Z","turns":[{"turnId":"turn-a","events":[{"turnId":"turn-a","seq":1,"kind":"prompt","ts":1788203002614,"payload":{"apiKey":"sk-live-sentinel-payload-key"}}],"truncated":false}]}
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 36 passed (37)
+```
+
+Failure is exactly the reviewer's finding: the sentinel appears raw in the serialized string because `redactInner` copies the `toJSON` function property through untouched and `JSON.stringify` invokes it after the final redact pass.
+
+Verification Output (fresh in this turn):
+
+```
+$ npx vitest run src/ai/__tests__/auditExport.test.ts src/ai/__tests__/trace.test.ts
+ ✓ src/ai/__tests__/trace.test.ts  (32 tests) 4ms
+ ✓ src/ai/__tests__/auditExport.test.ts  (5 tests) 4ms
+
+ Test Files  2 passed (2)
+      Tests  37 passed (37)
+
+$ npm run typecheck
+> tsc --noEmit
+(exit 0, no output)
+
+$ npm run compile
+esbuild: build complete
+(exit 0)
+```
+
+Status: PASS
+Note:
+- Added regression test first (`serialized export cannot leak secrets through a payload toJSON hook`): payload with `toJSON: () => ({ apiKey: "sk-live-sentinel-payload-key" })`; asserts sentinel absent, no `toJSON` in output, plain data preserved, and parsed envelope keeps schema/version/turn shape.
+- Fix in `src/ai/auditExport.ts`: new hook-free `toPlainJson()` conversion runs inside `buildAuditEnvelope()` on every turn dump BEFORE redaction/stringification — drops every callable (so `toJSON` can never execute), handles cycles with `"[Circular]"`, maps non-finite numbers/bigints/other non-JSON types to JSON-safe markers, and never throws (same no-throw contract as `redact()`).
+- Envelope shape, `AUDIT_EXPORT_SCHEMA`, `AUDIT_EXPORT_VERSION`, and the final redact-before-stringify pass are untouched; stringification stays deterministic (no execution hooks possible between redaction and the wire).
+- Main tree (branch main), nothing staged/committed per instructions.
