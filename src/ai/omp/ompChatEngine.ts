@@ -101,7 +101,7 @@ export interface HostMcp {
   ): Promise<{ result: string; isError: boolean }>;
 }
 
-import { TraceRecorder, type TraceEvent } from "../trace";
+import { TraceRecorder, type TraceEvent, type TraceKind } from "../trace";
 
 /** Event surface the chat panel subscribes to per turn. */
 export interface OmpChatEvents {
@@ -205,6 +205,22 @@ function mcpServersDescriptor(
  *   - tool_call_update:    update.sessionUpdate === "tool_call_update",
  *                          update.toolCallId, update.name, update.result, update.isError
  */
+/** AIX-06 r2: single emission point. Records into the recorder (when
+ * present) and hands the RECORDER-ASSIGNED event — always redacted, with
+ * a real seq — to the optional onTrace sink. */
+function emit(
+  trace: TraceRecorder | undefined,
+  turnId: string | undefined,
+  events: OmpChatEvents,
+  kind: TraceKind,
+  payload: unknown,
+): void {
+  if (trace && turnId) {
+    const ev = trace.record(turnId, kind, payload);
+    if (events.onTrace) events.onTrace(ev);
+  }
+}
+
 async function dispatchNotification(
   n: { method: string; params: unknown },
   events: OmpChatEvents,
@@ -230,14 +246,7 @@ async function dispatchNotification(
     if (!isParamsRecord(content)) return;
     const text = content["text"];
     if (typeof text === "string" && text.length > 0) {
-      if (trace && turnId) trace.record(turnId, "delta", { text });
-      events.onTrace?.({
-        turnId: turnId ?? "",
-        seq: 0,
-        kind: "delta",
-        ts: Date.now(),
-        payload: { text },
-      });
+      emit(trace, turnId, events, "delta", { text });
       events.onDelta?.(text);
     }
     return;
@@ -246,14 +255,7 @@ async function dispatchNotification(
   if (sessionUpdate === "agent_thought_chunk") {
     const chunk = update["chunk"];
     if (typeof chunk === "string" && chunk.length > 0) {
-      if (trace && turnId) trace.record(turnId, "thought", { text: chunk });
-      events.onTrace?.({
-        turnId: turnId ?? "",
-        seq: 0,
-        kind: "thought",
-        ts: Date.now(),
-        payload: { text: chunk },
-      });
+      emit(trace, turnId, events, "thought", { text: chunk });
       events.onThought?.(chunk);
     }
     return;
@@ -264,19 +266,15 @@ async function dispatchNotification(
     if (name === undefined) return;
     const rawArgs = update["args"];
     const args: Record<string, unknown> = isParamsRecord(rawArgs) ? rawArgs : {};
-    if (trace && turnId) trace.record(turnId, "tool_start", { name, args });
+    emit(trace, turnId, events, "tool_start", { name, args });
     events.onToolStart?.(name);
     try {
       const out = await hostMcp.call(name, args);
-      if (trace && turnId) {
-        trace.record(turnId, "tool_end", { name, isError: out.isError });
-      }
+      emit(trace, turnId, events, "tool_end", { name, isError: out.isError });
       events.onToolEnd?.(name, out.result, out.isError);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      if (trace && turnId) {
-        trace.record(turnId, "tool_end", { name, isError: true });
-      }
+      emit(trace, turnId, events, "tool_end", { name, isError: true });
       events.onToolEnd?.(name, `Tool failed: ${message}`, true);
     }
     return;
@@ -335,16 +333,7 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
       // AIX-06: turnId for this turn. Recorder presence decides whether
       // trace events flow; every payload is redacted inside record().
       const turnId = trace !== undefined ? `turn-${(sendSeq += 1)}` : "";
-      if (trace !== undefined) {
-        trace.record(turnId, "prompt", { text });
-      }
-      events.onTrace?.({
-        turnId,
-        seq: 0,
-        kind: "prompt",
-        ts: Date.now(),
-        payload: { text },
-      });
+      emit(trace, turnId, events, "prompt", { text });
       let sessionId: string;
       sessionNewInFlight = true;
       try {
@@ -355,7 +344,7 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
         const message = err instanceof Error ? err.message : String(err);
         // AIX-05: a cancel() called while session/new was pending fires
         // onError so the panel can settle the turn instead of hanging.
-        if (trace) trace.record(turnId, "error", { message });
+        emit(trace, turnId, events, "error", { message });
         if (pendingCancel) {
           pendingCancel = false;
           events.onError?.(`session/new cancelled: ${message}`);
@@ -390,7 +379,7 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
 
       try {
         await acp.sessionPrompt(sessionId, text);
-        if (trace) trace.record(turnId, "done", {});
+        emit(trace, turnId, events, "done", {});
         events.onDone?.();
       } catch (err) {
         // Crash mid-turn (process exit / connection lost / session/prompt
@@ -398,7 +387,7 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
         // and continues with builtin on subsequent turns — fire onError
         // ONCE, do not throw.
         const message = err instanceof Error ? err.message : String(err);
-        if (trace) trace.record(turnId, "error", { message });
+        emit(trace, turnId, events, "error", { message });
         events.onError?.(message);
       } finally {
         // AIX-05: turn settled (success OR crash) — clear active session so

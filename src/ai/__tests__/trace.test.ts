@@ -148,3 +148,21 @@ describe("events() global insertion order (AIX-06 review F2)", () => {
     expect(evs.map((e) => e.payload)).toEqual([{ x: 1 }, { x: 2 }, { x: 3 }]);
   });
 });
+
+describe("redact r2 review (AIX-06)", () => {
+  it("scrubs apiKey<space>value (whitespace delimiter)", () => {
+    const out = redact({ s: "apiKey short" }) as Record<string, string>;
+    expect(out.s).not.toContain("short");
+  });
+  it("scrubs 2-char value (no minimum)", () => {
+    const out = redact({ s: "token ab" }) as Record<string, string>;
+    expect(out.s).not.toContain("ab");
+  });
+  it("never emits an onTrace payload containing a raw secret", () => {
+    // emit() in ompChatEngine.ts must call trace.record BEFORE onTrace.
+    // The recorder returns the redacted event; onTrace receives it.
+    const r = new TraceRecorder();
+    const ev = r.record("t1", "delta", { text: "Authorization: Bearer abc" });
+    expect(JSON.stringify(ev)).not.toContain("abc");
+  });
+});

@@ -233,6 +233,7 @@ export async function runAgent(
   trace?: TraceRecorder,
 ): Promise<AgentRunResult> {
   const role: AiModelRole = input.role ?? "work";
+  // AIX-06: record error on any thrown path before rethrow (single catch).
   // AIX-06: optional ordered trace. turnId derived from the first user
   // message text hash so panel Clear/Regenerate cycles stay separable.
   const turnId = trace !== undefined ? `builtin-${Date.now()}` : "";
@@ -253,6 +254,7 @@ export async function runAgent(
     throw err;
   }
 
+  try {
   // 2. Vision guard BEFORE any provider call.
   const hasImage = input.messages.some((m) =>
     Array.isArray(m.content) && (m.content as ChatContentPart[]).some((p) => p.type === "image_url"),
@@ -341,4 +343,11 @@ export async function runAgent(
     finalText: lastAssistantNoToolText,
     stoppedOnBudget: true,
   };
+  } catch (err) {
+    if (trace) {
+      const message = err instanceof Error ? err.message : String(err);
+      trace.record(turnId, "error", { message });
+    }
+    throw err;
+  }
 }

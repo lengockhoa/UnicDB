@@ -41,7 +41,7 @@ const HEADER_RE =
 const BEARER_RE = /Bearer\s+[A-Za-z0-9._\-+/=]+/gi;
 const BASIC_RE = /Basic\s+[A-Za-z0-9._\-+/=]+/gi;
 /** Key=value / key: value / key value forms inside plain strings. */
-const KV_RE = /\b(api[_-]?key|secret|password|passphrase|token)\b\s*[=:]\s*["']?[A-Za-z0-9._\-+/=]{4,}["']?/gi;
+const KV_RE = /\b(api[_-]?key|secret|password|passphrase|token)\b\s*[=: ]\s*["']?[A-Za-z0-9._\-+/=]+["']?/gi;
 /** Long opaque run — ≥ 24 hex/base64 chars incl. + / = padding. */
 const LONG_RUN_RE = /[A-Za-z0-9_+/=-]{24,}/g;
 
