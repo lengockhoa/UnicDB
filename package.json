@@ -408,7 +408,7 @@
         },
         {
           "command": "vsdb.renameColumn",
-          "when": "view == vsdb.schemaTree && viewItem == table",
+          "when": "view == vsdb.schemaTree && (viewItem == table || viewItem == column)",
           "group": "vsdb"
         },
         {

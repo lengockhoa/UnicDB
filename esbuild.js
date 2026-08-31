@@ -170,7 +170,8 @@ async function run() {
       esbuild.build(aiSettingsFormConfig),
       esbuild.build(aiChatPanelConfig),
       esbuild.build(schemaFormConfig),
-      esbuild.build(consolePanelConfig),
+      esbuild.build(comparePanelConfig),
+      esbuild.build(erPanelConfig),
       esbuild.build(renameFormConfig),
     ]);
     console.log("esbuild: build complete");

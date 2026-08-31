@@ -46,12 +46,13 @@ import {
   registerSchemaTreeProvider,
   type VsdbNode,
 } from "./schemaTree";
-
 interface ResolvedTableNode {
   conn: ConnectionConfig;
   schema: string;
   table: string;
   category?: string;
+  /** Column node arg: the column name (else ""). */
+  column?: string;
 }
 
 function resolveTableNode(arg: unknown): ResolvedTableNode | null {
@@ -61,15 +62,26 @@ function resolveTableNode(arg: unknown): ResolvedTableNode | null {
       connection?: ConnectionConfig;
       schema?: string;
       objectName?: string;
+      objectKey?: string;
       category?: string;
+      column?: { name?: string };
     };
   }).meta;
   if (!meta || !meta.connection || !meta.schema) return null;
+  // Table nodes carry objectName; column nodes carry objectKey
+  // ("connId.schema.table") instead. Fall back so renameColumn works from
+  // a column context-menu item.
+  let table = meta.objectName ?? "";
+  if (table === "" && meta.objectKey) {
+    const parts = meta.objectKey.split(".");
+    if (parts.length >= 2) table = parts[parts.length - 1]!;
+  }
   return {
     conn: meta.connection,
     schema: meta.schema,
-    table: meta.objectName ?? "",
+    table,
     category: meta.category,
+    column: meta.column?.name ?? "",
   };
 }
 
@@ -466,7 +478,9 @@ export function registerTableCommands(deps: RegisterDeps): void {
     }),
   );
 
-  // DBX-06 — vsdb.renameColumn: pick a column, then safe rename dialog.
+  // DBX-06 — vsdb.renameColumn:
+  //   - column-tree node: resolved.column → use directly (no QuickPick).
+  //   - table-tree node / palette: introspectTable + QuickPick (fallback).
   context.subscriptions.push(
     vscode.commands.registerCommand("vsdb.renameColumn", async (arg?: unknown) => {
       const resolved = resolveTableNode(arg);
@@ -475,13 +489,17 @@ export function registerTableCommands(deps: RegisterDeps): void {
       if (!guarded) return;
       const { conn, schema, table } = guarded;
       if (table === "") return;
+      let picked = resolved.column ?? "";
       try {
-        const { columns } = await introspectTable(mgr, conn, schema, table);
-        const names = columns.map((c) => c.column_name);
-        const picked = await vscode.window.showQuickPick(names, {
-          placeHolder: `Select column to rename on ${schema}.${table}`,
-        });
-        if (!picked) return;
+        if (picked === "") {
+          const { columns } = await introspectTable(mgr, conn, schema, table);
+          const names = columns.map((c) => c.column_name);
+          picked =
+            (await vscode.window.showQuickPick(names, {
+              placeHolder: `Select column to rename on ${schema}.${table}`,
+            })) ?? "";
+        }
+        if (picked === "") return;
         const form = new RenameForm({
           extensionUri: context.extensionUri,
           mode: "column",

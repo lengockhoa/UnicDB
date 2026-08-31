@@ -310,6 +310,34 @@ describe("tableCommands — guards", () => {
     expect(treeView.reveal).not.toHaveBeenCalled();
   });
 
+  it("#8a renameColumn on column node opens form WITHOUT introspectTable or QuickPick", async () => {
+    const mgr = makeFakeMgr();
+    const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
+    registerSchemaTreeProvider(provider);
+    registerTableCommands({
+      mgr: mgr.stub as unknown as ConnectionManager,
+      tree: provider,
+      treeView: treeView as unknown as TreeView<unknown>,
+      context: { subscriptions: [] } as unknown as ExtensionContext,
+    });
+    const columnNode: VsdbNode = {
+      label: "id",
+      contextValue: "column",
+      collapsible: 0,
+      meta: {
+        connection: mgr.cfg,
+        schema: "public",
+        objectKey: "public.t",
+        column: { name: "id", dataType: "int" },
+      },
+    };
+    await state.registeredCommands.get("vsdb.renameColumn")!(columnNode);
+    // No introspectTable call (we have the name from arg.meta.column).
+    expect(mgr.adapter.listTableDetailCalls).toHaveLength(0);
+    // A webview panel was created (the rename form).
+    expect(state.createdPanels.length).toBeGreaterThan(0);
+  });
+
   it("#8 non-tables category (views) → Information mentioning Tables; no NewTableForm", async () => {
     const mgr = makeFakeMgr();
     const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
