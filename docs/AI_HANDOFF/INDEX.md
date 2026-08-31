@@ -26,3 +26,17 @@ Graph: TASK-AIX07-001 independent; TASK-AIX07-002 independent; TASK-AIX07-003 in
 - Wave 2 (1): TASK-AIX07-003
 
 No same-wave target-file overlap. Portfolio rows require a new source-grounded plan and task batch before becoming active.
+
+## Cycle AIX-08 — Extensible MCP Tool Contracts
+
+| Task / Portfolio | Title | Status | Dependencies | Reviewer |
+|---|---|---|---|---|
+| TASK-AIX08-001 | Curated MCP extension registry and least-privilege contract | ready | none | unic-smart |
+| TASK-AIX08-002 | Contain curated extensions in host MCP calls | ready | TASK-AIX08-001 | unic-smart |
+
+Graph: TASK-AIX08-001 → TASK-AIX08-002.
+
+- Wave 1 (1): TASK-AIX08-001
+- Wave 2 (1): TASK-AIX08-002
+
+No same-wave target-file overlap. The registry contract is intentionally separate from host transport integration.
