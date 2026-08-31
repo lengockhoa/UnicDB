@@ -25,9 +25,13 @@ describe("redact (TASK-AIX06-001)", () => {
   });
 
   it("scrubs Authorization: Bearer header inside a string value", () => {
-    const out = redact({ header: "Authorization: Bearer eyJhbGciOi.x.y" });
-    expect(JSON.stringify(out)).toContain("Bearer <redacted>");
+    const out = redact({ header: "Authorization: Bearer eyJhbGciOi" });
+    // AIX-06 r3: Authorization is now caught by the KV scrubber (covers
+    // both the structural "Authorization: <value>" form and the raw
+    // "Authorization=short" form). The value `eyJhbGciOi` is also
+    // long enough to be caught by the opaque-run scrubber.
     expect(JSON.stringify(out)).not.toContain("eyJhbGciOi");
+    expect(JSON.stringify(out)).toContain("<redacted>");
   });
 
   it("scrubs Basic auth in a string value", () => {
@@ -164,5 +168,20 @@ describe("redact r2 review (AIX-06)", () => {
     const r = new TraceRecorder();
     const ev = r.record("t1", "delta", { text: "Authorization: Bearer abc" });
     expect(JSON.stringify(ev)).not.toContain("abc");
+  });
+});
+
+describe("redact r3 review (AIX-06 / DBX-07)", () => {
+  it("scrubs Authorization=<short> (KV_RE alternative covers bare Authorization)", () => {
+    // r3 added `authorization` to the KV_RE alternative so the bare
+    // `Authorization=ab` form is scrubbed even when the value is too
+    // short for LONG_RUN_RE. The no-min rule from r2 still applies.
+    const out = redact({ s: "Authorization=ab" }) as Record<string, string>;
+    expect(out.s).not.toContain("ab");
+    expect(out.s).toContain("<redacted>");
+  });
+  it("scrubs auth=<short> (r3 also covers the bare auth alias)", () => {
+    const out = redact({ s: "auth=tk" }) as Record<string, string>;
+    expect(out.s).not.toContain("tk");
   });
 });

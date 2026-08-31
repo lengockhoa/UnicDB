@@ -654,4 +654,71 @@ describe("OmpChatEngine trace (TASK-AIX06-002)", () => {
     expect(kinds).toContain("prompt");
     expect(kinds).not.toContain("done");
   });
+
+  // AIX-06 r3 / DBX-07: onTrace now works even without a recorder —
+  // buildEv() synthesises the event with a real monotonic seq.
+  it("onTrace fires with monotonic seq even without a recorder (r3 buildEv path)", async () => {
+    fakeAcp.sessionNew.mockResolvedValue({ sessionId: "sess-trace-4" });
+    fakeAcp.sessionPrompt.mockResolvedValue({ stopReason: "end_turn" });
+    const engine = createOmpChatEngine({
+      acp: fakeAcp,
+      hostMcp: fakeHostMcp,
+      cwd: "/workspace",
+      // no trace recorder attached
+    });
+    const seen: { kind: string; seq: number }[] = [];
+    await engine.send("hi", {
+      onTrace: (e) => seen.push({ kind: e.kind, seq: e.seq }),
+      onDelta: () => undefined,
+    });
+    const handler = registeredNotificationHandler();
+    handler({
+      method: "session/update",
+      params: {
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "d1" },
+        },
+      },
+    });
+    handler({
+      method: "session/update",
+      params: {
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "d2" },
+        },
+      },
+    });
+    // prompt + done came through send() (send resolves after the prompt
+    // settles, so done lands before the post-send handler calls fire);
+    // the two deltas through the handler.
+    const kindsInOrder = seen.map((e) => e.kind);
+    expect(kindsInOrder).toEqual(["prompt", "done", "delta", "delta"]);
+    expect(seen.map((e) => e.seq)).toEqual([1, 2, 3, 4]);
+  });
+
+  it("onTrace with a recorder attached receives the recorder-assigned event exactly once", async () => {
+    fakeAcp.sessionNew.mockResolvedValue({ sessionId: "sess-trace-5" });
+    fakeAcp.sessionPrompt.mockResolvedValue({ stopReason: "end_turn" });
+    const { TraceRecorder } = await import("../../trace");
+    const rec = new TraceRecorder();
+    const engine = createOmpChatEngine({
+      acp: fakeAcp,
+      hostMcp: fakeHostMcp,
+      cwd: "/workspace",
+      trace: rec,
+    });
+    const onTrace = vi.fn();
+    await engine.send("hi", { onTrace });
+    const kinds = rec.events().map((e) => e.kind);
+    // Every recorded event was forwarded to onTrace exactly once.
+    expect(onTrace.mock.calls.length).toBe(kinds.length);
+    expect(onTrace.mock.calls.map((c) => c[0].kind)).toEqual(kinds);
+    // seq values came from the recorder, strictly monotonic.
+    const seqs = onTrace.mock.calls.map((c) => c[0].seq);
+    for (let i = 1; i < seqs.length; i++) {
+      expect(seqs[i]!).toBeGreaterThan(seqs[i - 1]!);
+    }
+  });
 });

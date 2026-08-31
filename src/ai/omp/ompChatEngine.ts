@@ -101,7 +101,7 @@ export interface HostMcp {
   ): Promise<{ result: string; isError: boolean }>;
 }
 
-import { TraceRecorder, type TraceEvent, type TraceKind } from "../trace";
+import { TraceRecorder, type TraceEvent, type TraceKind, redact } from "../trace";
 
 /** Event surface the chat panel subscribes to per turn. */
 export interface OmpChatEvents {
@@ -205,19 +205,41 @@ function mcpServersDescriptor(
  *   - tool_call_update:    update.sessionUpdate === "tool_call_update",
  *                          update.toolCallId, update.name, update.result, update.isError
  */
-/** AIX-06 r2: single emission point. Records into the recorder (when
- * present) and hands the RECORDER-ASSIGNED event — always redacted, with
- * a real seq — to the optional onTrace sink. */
+// AIX-06 r3: per-turn state shared between send() and
+// dispatchNotification so onTrace always sees a real monotonic seq
+// even when no recorder is attached.
+interface TurnState {
+  turnId: string;
+  seq: number;
+}
+function buildEv(
+  state: TurnState,
+  kind: TraceKind,
+  payload: unknown,
+): TraceEvent {
+  state.seq += 1;
+  return {
+    turnId: state.turnId,
+    seq: state.seq,
+    kind,
+    ts: Date.now(),
+    payload: redact(payload),
+  };
+}
+/** AIX-06 r3: single emission point. */
 function emit(
   trace: TraceRecorder | undefined,
-  turnId: string | undefined,
+  state: TurnState | undefined,
   events: OmpChatEvents,
   kind: TraceKind,
   payload: unknown,
 ): void {
-  if (trace && turnId) {
-    const ev = trace.record(turnId, kind, payload);
+  if (!state) return;
+  if (trace) {
+    const ev = trace.record(state.turnId, kind, payload);
     if (events.onTrace) events.onTrace(ev);
+  } else if (events.onTrace) {
+    events.onTrace(buildEv(state, kind, payload));
   }
 }
 
@@ -226,7 +248,7 @@ async function dispatchNotification(
   events: OmpChatEvents,
   hostMcp: HostMcp,
   trace?: TraceRecorder,
-  turnId?: string,
+  state?: TurnState,
 ): Promise<void> {
   // AIX-05: a malformed frame MUST NOT kill a turn. Drop unknown methods
   // and malformed params silently — the next valid frame still streams.
@@ -246,7 +268,7 @@ async function dispatchNotification(
     if (!isParamsRecord(content)) return;
     const text = content["text"];
     if (typeof text === "string" && text.length > 0) {
-      emit(trace, turnId, events, "delta", { text });
+      emit(trace, state, events, "delta", { text });
       events.onDelta?.(text);
     }
     return;
@@ -255,7 +277,7 @@ async function dispatchNotification(
   if (sessionUpdate === "agent_thought_chunk") {
     const chunk = update["chunk"];
     if (typeof chunk === "string" && chunk.length > 0) {
-      emit(trace, turnId, events, "thought", { text: chunk });
+      emit(trace, state, events, "thought", { text: chunk });
       events.onThought?.(chunk);
     }
     return;
@@ -266,15 +288,15 @@ async function dispatchNotification(
     if (name === undefined) return;
     const rawArgs = update["args"];
     const args: Record<string, unknown> = isParamsRecord(rawArgs) ? rawArgs : {};
-    emit(trace, turnId, events, "tool_start", { name, args });
+    emit(trace, state, events, "tool_start", { name, args });
     events.onToolStart?.(name);
     try {
       const out = await hostMcp.call(name, args);
-      emit(trace, turnId, events, "tool_end", { name, isError: out.isError });
+      emit(trace, state, events, "tool_end", { name, isError: out.isError });
       events.onToolEnd?.(name, out.result, out.isError);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      emit(trace, turnId, events, "tool_end", { name, isError: true });
+      emit(trace, state, events, "tool_end", { name, isError: true });
       events.onToolEnd?.(name, `Tool failed: ${message}`, true);
     }
     return;
@@ -330,10 +352,16 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
 
   return {
     async send(text, events): Promise<void> {
-      // AIX-06: turnId for this turn. Recorder presence decides whether
-      // trace events flow; every payload is redacted inside record().
-      const turnId = trace !== undefined ? `turn-${(sendSeq += 1)}` : "";
-      emit(trace, turnId, events, "prompt", { text });
+      // AIX-06 r3: per-turn state shared with dispatchNotification so
+      // onTrace always sees a real monotonic seq even when no recorder
+      // is attached. A state is allocated when a recorder is attached
+      // OR an onTrace subscriber exists; every payload is redacted
+      // inside record() / buildEv().
+      const state: TurnState | undefined =
+        trace !== undefined || events.onTrace !== undefined
+          ? { turnId: `turn-${(sendSeq += 1)}`, seq: 0 }
+          : undefined;
+      emit(trace, state, events, "prompt", { text });
       let sessionId: string;
       sessionNewInFlight = true;
       try {
@@ -344,7 +372,7 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
         const message = err instanceof Error ? err.message : String(err);
         // AIX-05: a cancel() called while session/new was pending fires
         // onError so the panel can settle the turn instead of hanging.
-        emit(trace, turnId, events, "error", { message });
+        emit(trace, state, events, "error", { message });
         if (pendingCancel) {
           pendingCancel = false;
           events.onError?.(`session/new cancelled: ${message}`);
@@ -374,12 +402,12 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
       // acp session dedupes handlers (one per AcpClient instance) so this
       // is safe across repeated send() calls.
       acp.onNotification((n) => {
-        void dispatchNotification(n, events, hostMcp, trace, turnId);
+        void dispatchNotification(n, events, hostMcp, trace, state);
       });
 
       try {
         await acp.sessionPrompt(sessionId, text);
-        emit(trace, turnId, events, "done", {});
+        emit(trace, state, events, "done", {});
         events.onDone?.();
       } catch (err) {
         // Crash mid-turn (process exit / connection lost / session/prompt
@@ -387,7 +415,7 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
         // and continues with builtin on subsequent turns — fire onError
         // ONCE, do not throw.
         const message = err instanceof Error ? err.message : String(err);
-        emit(trace, turnId, events, "error", { message });
+        emit(trace, state, events, "error", { message });
         events.onError?.(message);
       } finally {
         // AIX-05: turn settled (success OR crash) — clear active session so
@@ -401,8 +429,13 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
     },
 
     async resume(sessionId, events): Promise<void> {
-      // AIX-06: resume replays into the same trace channel.
-      const turnId = trace !== undefined ? `resume-${sessionId}` : "";
+      // AIX-06 r3: per-turn state shared with dispatchNotification. The
+      // seq counter resets to 0 — resume is a fresh turn for trace
+      // consumers even though it loads an existing session.
+      const state: TurnState | undefined =
+        trace !== undefined || events.onTrace !== undefined
+          ? { turnId: `resume-${sessionId}`, seq: 0 }
+          : undefined;
       let loadedSessionId: string;
       try {
         const loadResult = await acp.sessionLoad(sessionId, cwd, mcpServers);
@@ -427,7 +460,7 @@ export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
       // turn will stream as usual. resume() itself resolves once replay is
       // flushed — the next send() drives the turn.
       acp.onNotification((n) => {
-        void dispatchNotification(n, events, hostMcp, trace, turnId);
+        void dispatchNotification(n, events, hostMcp, trace, state);
       });
 
       // Touch loadedSessionId so unused-locals don't trip strict-mode — it

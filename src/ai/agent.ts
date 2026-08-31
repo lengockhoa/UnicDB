@@ -246,15 +246,13 @@ export async function runAgent(
     });
   }
 
+  try {
   // 1. Fresh config snapshot per run — exactly one loadConfig call.
   const cfg = await deps.loadConfig();
   if (!cfg) {
-    const err = new Error("AI is not configured");
-    if (trace) trace.record(turnId, "error", { message: err.message });
-    throw err;
+    throw new Error("AI is not configured");
   }
 
-  try {
   // 2. Vision guard BEFORE any provider call.
   const hasImage = input.messages.some((m) =>
     Array.isArray(m.content) && (m.content as ChatContentPart[]).some((p) => p.type === "image_url"),
