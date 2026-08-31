@@ -190,6 +190,22 @@ export class TraceRecorder {
     };
   }
 
+  /** AIX-07: snapshot of every retained turn, oldest first (FIFO
+   *  insertion order), each dump copied so caller mutation can never
+   *  reach recorder internals. */
+  dumpAll(): readonly TraceDump[] {
+    return Object.freeze(
+      this.order.map((id) => {
+        const buf = this.turns.get(id)!;
+        return {
+          turnId: id,
+          events: buf.events.slice(),
+          truncated: buf.truncated,
+        };
+      }),
+    );
+  }
+
   clear(): void {
     this.turns.clear();
     this.order.length = 0;

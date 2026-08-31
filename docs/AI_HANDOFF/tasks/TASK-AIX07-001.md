@@ -67,3 +67,76 @@ No `lint` script exists in `package.json`.
 The policy must govern admission at shared panel funnels, not add logic inside individual `createDbAwareTools`, `createAnalysisTools`, or `createChangePlanTools` implementations. Preserve generic chat even when sensitive capability admission is denied.
 
 ---
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT:
+
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-aix07-001
+
+ ❯ src/ai/__tests__/policy.test.ts  (0 test)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/ai/__tests__/policy.test.ts [ src/ai/__tests__/policy.test.ts ]
+Error: Failed to load url ../policy (resolved id: ../policy) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-aix07-001/src/ai/__tests__/policy.test.ts. Does the file exist?
+ ❯ loadAndTransform ../../node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed (1)
+      Tests  no tests
+   Start at  22:13:17
+   Duration  205ms (transform 20ms, setup 0ms, collect 0ms, tests 0ms, environment 0ms, prepare 52ms)
+```
+
+Correct RED: the suite fails at module load because `src/ai/policy.ts` does not exist yet (`npx vitest run src/ai/__tests__/policy.test.ts`).
+
+Verification Output:
+
+1) `npm test -- src/ai/__tests__/policy.test.ts`
+
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-aix07-001
+
+ ✓ src/ai/__tests__/policy.test.ts  (7 tests) 3ms
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  22:14:08
+   Duration  194ms (transform 23ms, setup 0ms, collect 23ms, tests 3ms, environment 0ms, prepare 28ms)
+```
+
+2) `npm run typecheck`
+
+```
+> vsdb@1.27.0 typecheck
+> tsc --noEmit
+```
+(exit 0, no diagnostics)
+
+3) `npm run compile`
+
+```
+  dist/webview.js        2.2mb ⚠️
+  dist/webview.css      34.2kb
+  dist/webview.js.map    4.0mb
+  dist/webview.css.map  65.2kb
+
+⚡ Done in 137ms
+
+  dist/extension.js      5.2mb ⚠️
+  dist/extension.js.map  9.0mb
+
+⚡ Done in 169ms
+esbuild: build complete
+```
+(exit 0)
+
+Status: PASS
+Note: none — no git add/commit/push performed; files left as-is in worktree. Exported surface for TASK-AIX07-003: `resolvePolicy(input: PolicyInput): EffectivePolicy`, `isExcludedWorkspacePath(path): boolean`, `isValidEngineChoice`, `isKnownConfiguredEngine`, types `EffectivePolicy` (provider/context/tools/auditExportAllowed/notice), `PolicyContextDecision` (schema/workspace/rows), `PolicyToolDecision` (database/workspace), `PolicyInput` (workspaceTrusted/configuredEngine/resolvedEngine).

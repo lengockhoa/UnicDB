@@ -171,6 +171,78 @@ describe("redact r2 review (AIX-06)", () => {
   });
 });
 
+describe("TraceRecorder.dumpAll (TASK-AIX07-002)", () => {
+  it("returns turns in insertion order, copy-safe", () => {
+    const r = new TraceRecorder();
+    r.record("turn-a", "prompt", { x: 1 });
+    r.record("turn-b", "prompt", { x: 2 });
+    r.record("turn-a", "delta", { x: 3 });
+    const all = r.dumpAll();
+    expect(all.map((d) => d.turnId)).toEqual(["turn-a", "turn-b"]);
+    // seq is per-turn: turn-a holds seq 1 then 2, turn-b holds seq 1.
+    expect(all[0]!.events.map((e) => e.seq)).toEqual([1, 2]);
+    expect(all[0]!.events.map((e) => e.payload)).toEqual([{ x: 1 }, { x: 3 }]);
+    expect(all[1]!.events.map((e) => e.seq)).toEqual([1]);
+    expect(all[1]!.events.map((e) => e.payload)).toEqual([{ x: 2 }]);
+    // Copy-safe: mutating the returned inner arrays must not leak in.
+    all[0]!.events.push({
+      turnId: "turn-a",
+      seq: 999,
+      kind: "error",
+      ts: 0,
+      payload: "mutated",
+    });
+    expect(r.dumpAll()[0]!.events).toHaveLength(2);
+    expect(r.events("turn-a")).toHaveLength(2);
+  });
+
+  it("empty recorder snapshots to an empty array", () => {
+    const r = new TraceRecorder();
+    expect(r.dumpAll()).toEqual([]);
+  });
+
+  it("preserves per-turn truncated flag in the snapshot", () => {
+    const r = new TraceRecorder({ maxEntriesPerTurn: 2 });
+    for (let i = 0; i < 4; i++) r.record("t1", "delta", { i });
+    const all = r.dumpAll();
+    expect(all).toHaveLength(1);
+    expect(all[0]!.truncated).toBe(true);
+    expect(all[0]!.events).toHaveLength(2);
+  });
+
+  it("snapshot cannot mutate recorder internals", () => {
+    const r = new TraceRecorder();
+    r.record("t1", "prompt", { x: 1 });
+    const all = r.dumpAll();
+    // Outer array is frozen; a push must throw and never land.
+    expect(() =>
+      (all as unknown as { push: (d: unknown) => void }).push({
+        turnId: "evil",
+        events: [],
+        truncated: false,
+      }),
+    ).toThrow();
+    expect(r.dumpAll().map((d) => d.turnId)).toEqual(["t1"]);
+    // Even an inner-copy mutation leaves subsequent output intact.
+    r.dumpAll()[0]!.events.push({
+      turnId: "t1",
+      seq: 42,
+      kind: "error",
+      ts: 0,
+      payload: "injected",
+    });
+    expect(r.events("t1")).toHaveLength(1);
+    expect(r.dumpAll()[0]!.events).toHaveLength(1);
+  });
+
+  it("clear() empties dumpAll() too", () => {
+    const r = new TraceRecorder();
+    r.record("t1", "prompt", { x: 1 });
+    r.clear();
+    expect(r.dumpAll()).toEqual([]);
+  });
+});
+
 describe("redact r3 review (AIX-06 / DBX-07)", () => {
   it("scrubs Authorization=<short> (KV_RE alternative covers bare Authorization)", () => {
     // r3 added `authorization` to the KV_RE alternative so the bare
