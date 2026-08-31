@@ -2,9 +2,10 @@
 // AdminTreeProvider — TreeDataProvider cho "Admin" view (TASK-AHL-002).
 //
 // Quy tắc cứng:
-//   - Admin category chỉ xuất hiện khi `adapter.admin !== undefined` (Postgres).
-//     Mysql/mssql → Admin ẩn hoàn toàn (không hiện category node, không hiện
-//     error placeholder, không fire probe).
+//   - DBX-08: Admin category chỉ xuất hiện khi adapter DECLARE `admin`
+//     (hasAdapterCapability, fail-closed). False/missing declaration → đúng
+//     MỘT explanation node verbatim `ADMIN_UNSUPPORTED_LABEL`, KHÔNG gọi bất
+//     kỳ AdminApi method nào (gate chạy trước mọi structural access).
 //   - Sub-categories: Roles, Sessions, Locks. Grants hiển thị như sub của Role
 //     (lazy; expand Role → listRoleGrants).
 //   - Probe fail → `admin_error` node mang PG error code (vd 42501) cho user.
@@ -14,7 +15,17 @@
 import * as vscode from "vscode";
 import type { ConnectionConfig } from "../config/types";
 import type { ConnectionManager } from "../core/connectionManager";
-import type { DbAdapter } from "../adapters/types";
+import { hasAdapterCapability, type DbAdapter } from "../adapters/types";
+// DBX-08 — single source of truth for the pinned unsupported-admin wording
+// (owned by adminSessionsPanel; the tree re-exports it as its node label).
+import { ADMIN_UNSUPPORTED_MESSAGE } from "./adminSessionsPanel";
+
+/**
+ * DBX-08 — verbatim root label for a connection whose adapter does NOT declare
+ * the `admin` capability (false, missing, or partial declaration). Pinned by
+ * TASK-DBX08-003 Test Case #4; do not reword.
+ */
+export const ADMIN_UNSUPPORTED_LABEL = ADMIN_UNSUPPORTED_MESSAGE;
 
 /** Discriminator cho admin node (phân biệt với schemaTree category). */
 export type AdminKind =
@@ -26,7 +37,8 @@ export type AdminKind =
   | "session"
   | "locks"
   | "lock_wait"
-  | "admin_error";
+  | "admin_error"
+  | "admin_unsupported";
 
 export interface AdminNode {
   label: string;
@@ -161,21 +173,35 @@ export class AdminTreeProvider implements vscode.TreeDataProvider<AdminNode> {
     const conns = this.mgr.listConnections();
     const out: AdminNode[] = [];
     for (const conn of conns) {
+      let adapter: DbAdapter | null = null;
       try {
-        const adapter = await this.getAdapterFor(conn);
-        if (!adapter.admin) continue; // mysql/mssql: skip silently
-        out.push({
-          label: `Admin (${conn.name})`,
-          icon: "shield",
-          contextValue: "admin_category",
-          collapsible: vscode.TreeItemCollapsibleState.Collapsed,
-          meta: { connection: conn, adminKind: "admin_category" },
-        });
+        adapter = await this.getAdapterFor(conn);
       } catch {
         // Probe fail (can't connect) → omit. Don't surface an error node at
         // root; the existing schema tree / connection tree handles it.
         continue;
       }
+      // DBX-08 — admission is the DECLARED admin capability, never structural
+      // `adapter.admin` presence. The gate must fire BEFORE any access to
+      // adapter.admin (no AdminApi member is reached on a non-admin adapter);
+      // false/missing declaration → one verbatim explanation node instead of
+      // silent omission.
+      if (!hasAdapterCapability(adapter, "admin")) {
+        out.push({
+          label: ADMIN_UNSUPPORTED_LABEL,
+          contextValue: "admin_unsupported",
+          collapsible: vscode.TreeItemCollapsibleState.None,
+          meta: { connection: conn },
+        });
+        continue;
+      }
+      out.push({
+        label: `Admin (${conn.name})`,
+        icon: "shield",
+        contextValue: "admin_category",
+        collapsible: vscode.TreeItemCollapsibleState.Collapsed,
+        meta: { connection: conn, adminKind: "admin_category" },
+      });
     }
     return out;
   }

@@ -4,7 +4,28 @@
 import * as vscode from "vscode";
 import type { ConnectionConfig } from "../config/types";
 import type { ConnectionManager } from "../core/connectionManager";
-import type { DbAdapter } from "../adapters/types";
+import { hasAdapterCapability, type DbAdapter } from "../adapters/types";
+
+/**
+ * DBX-08 — verbatim unsupported-admin explanation. Rendered by the sessions
+ * panel and the Admin tree (TASK-DBX08-003 Test Case #4) whenever the active
+ * adapter does NOT declare the `admin` capability. Pinned text; do not reword.
+ */
+export const ADMIN_UNSUPPORTED_MESSAGE =
+  "VSDB: Admin tools are not supported by this connection's database.";
+
+/**
+ * DBX-08 — precise unsupported error state: renders ONLY the explanation
+ * banner over empty sessions/locks tables (no data rows, no stale state).
+ */
+export function renderUnsupportedAdminHtml(): string {
+  return buildPanelHtml({
+    sessions: [],
+    locks: [],
+    selfPid: null,
+    errorMessage: ADMIN_UNSUPPORTED_MESSAGE,
+  });
+}
 
 /** Distinct user-action messages từ webview. */
 export type PanelMessage =
@@ -308,8 +329,19 @@ export class AdminSessionsPanel {
   async refresh(): Promise<void> {
     try {
       const adapter = await this.getAdapter();
+      // DBX-08 — admission is the DECLARED admin capability, checked BEFORE
+      // the pg_backend_pid() self-pid SQL and before any AdminApi member is
+      // touched. Structural `adapter.admin` presence alone admits nothing;
+      // false/missing declaration → the precise unsupported error state.
+      if (!hasAdapterCapability(adapter, "admin")) {
+        this.core.setError(ADMIN_UNSUPPORTED_MESSAGE);
+        this.panel.webview.html = this.core.render();
+        return;
+      }
       if (!adapter.admin) {
-        this.core.setError("Adapter does not support admin operations");
+        // Declared true but API missing — invariant violation; degrade to the
+        // unsupported state instead of a TypeError.
+        this.core.setError(ADMIN_UNSUPPORTED_MESSAGE);
         this.panel.webview.html = this.core.render();
         return;
       }

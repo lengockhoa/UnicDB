@@ -104,6 +104,8 @@ interface MakeFakeAdapterOpts {
   introspectRows?: { columns: PgColumnRow[]; constraints: PgConstraintRow[] };
   initialTables?: Array<{ name: string; schema: string }>;
   listTableDetailUnsupported?: boolean;
+  /** DBX-08 — explicit capability override; defaults mirror the driver's production matrix. */
+  capabilities?: { catalog: boolean; objectDdl: boolean; tableDdl: boolean; admin: boolean };
 }
 type FakeAdapter = DbAdapter & {
   runCalls: RunCall[];
@@ -130,6 +132,13 @@ function makeFakeAdapter(opts: MakeFakeAdapterOpts = {}): FakeAdapter {
   const initialTables = opts.initialTables ?? [];
   const adapter: FakeAdapter = {
     driver,
+    // DBX-08 — default matrix mirrors the production adapters: postgres all
+    // true, mysql/mssql all false. Tests may override per-capability.
+    capabilities:
+      opts.capabilities ??
+      (driver === "postgres"
+        ? { catalog: true, objectDdl: true, tableDdl: true, admin: true }
+        : { catalog: false, objectDdl: false, tableDdl: false, admin: false }),
     connect: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
     runQuery,
@@ -156,6 +165,8 @@ interface FakeMgrOptions {
   tables?: Array<{ name: string; schema: string }>;
   rejectRun?: boolean;
   listTableDetailUnsupported?: boolean;
+  /** DBX-08 — explicit capability override for the underlying fake adapter. */
+  capabilities?: { catalog: boolean; objectDdl: boolean; tableDdl: boolean; admin: boolean };
 }
 
 function makeFakeMgr(opts: FakeMgrOptions = {}) {
@@ -173,6 +184,7 @@ function makeFakeMgr(opts: FakeMgrOptions = {}) {
     introspectRows: opts.introspectRows,
     initialTables: opts.tables,
     listTableDetailUnsupported: opts.listTableDetailUnsupported,
+    capabilities: opts.capabilities,
   });
   if (opts.rejectRun) (adapter.runQuery as Mock).mockRejectedValue(new Error("boom"));
   const stub = {
@@ -289,7 +301,7 @@ describe("tableCommands — vsdb.modifyTable", () => {
 });
 
 describe("tableCommands — guards", () => {
-  it("#7 mysql guard → 'Modify Table: PostgreSQL connections only' info, no runQuery", async () => {
+  it("#7 mysql guard → 'VSDB: Modify Table is not supported by this connection's database.' info, no runQuery", async () => {
     const mgr = makeFakeMgr({ driver: "mysql", listTableDetailUnsupported: true });
     const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
     registerSchemaTreeProvider(provider);
@@ -306,7 +318,7 @@ describe("tableCommands — guards", () => {
       meta: { connection: mgr.cfg, schema: "public", objectName: "t" },
     };
     await state.registeredCommands.get("vsdb.modifyTable")!(tableNode);
-    expect(state.infoMessages.some((m) => /Modify Table.*PostgreSQL connections only/.test(m))).toBe(true);
+    expect(state.infoMessages.some((m) => m === "VSDB: Modify Table is not supported by this connection's database.")).toBe(true);
     expect(mgr.adapter.runCalls).toHaveLength(0);
     expect(state.createdPanels.length).toBe(0);
     expect(treeView.reveal).not.toHaveBeenCalled();
@@ -925,7 +937,7 @@ describe("tableCommands — TASK-003 vsdb.createSchema", () => {
     expect(state.infoMessages.some((m) => /schema\s+"x"\s+created/i.test(m))).toBe(true);
   });
 
-  it("#5 mysql driver on connection node → 'Create Schema: PostgreSQL connections only' info; no form", async () => {
+  it("#5 mysql driver on connection node → 'VSDB: Create Schema is not supported by this connection's database.' info; no form", async () => {
     const mgr = makeFakeMgr({ driver: "mysql" });
     const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
     registerSchemaTreeProvider(provider);
@@ -942,7 +954,7 @@ describe("tableCommands — TASK-003 vsdb.createSchema", () => {
       meta: { connection: mgr.cfg },
     };
     await state.registeredCommands.get("vsdb.createSchema")!(connNode);
-    expect(state.infoMessages.some((m) => /Create Schema.*PostgreSQL connections only/.test(m))).toBe(true);
+    expect(state.infoMessages.some((m) => m === "VSDB: Create Schema is not supported by this connection's database.")).toBe(true);
     expect(state.createdPanels.length).toBe(0);
     expect(mgr.adapter.runCalls).toHaveLength(0);
     expect(treeView.reveal).not.toHaveBeenCalled();
@@ -965,7 +977,7 @@ describe("tableCommands — TASK-003 vsdb.createSchema", () => {
       meta: { connection: mgr.cfg },
     };
     await state.registeredCommands.get("vsdb.createSchema")!(connNode);
-    expect(state.infoMessages.some((m) => /Create Schema.*PostgreSQL connections only/.test(m))).toBe(true);
+    expect(state.infoMessages.some((m) => m === "VSDB: Create Schema is not supported by this connection's database.")).toBe(true);
     expect(state.createdPanels.length).toBe(0);
   });
 
@@ -1115,7 +1127,7 @@ describe("tableCommands — TASK-008 vsdb.postmanPayload", () => {
       await state.registeredCommands.get("vsdb.postmanPayload")!(tableNode);
       expect(
         state.infoMessages.some((m) =>
-          /Postman Payload.*PostgreSQL connections only/.test(m),
+          m === "VSDB: Postman Payload is not supported by this connection's database.",
         ),
       ).toBe(true);
       expect(vscode.env.clipboard.writeText).not.toHaveBeenCalled();
@@ -1247,7 +1259,7 @@ describe("tableCommands — TASK-004 vsdb.exportAllStructures", () => {
     await state.registeredCommands.get("vsdb.exportAllStructures")!(connNode);
     expect(
       state.infoMessages.some((m) =>
-        /Export All Structures.*PostgreSQL connections only/.test(m),
+        m === "VSDB: Export All Structures is not supported by this connection's database.",
       ),
     ).toBe(true);
     expect(vscode.env.clipboard.writeText).not.toHaveBeenCalled();
@@ -1352,7 +1364,7 @@ describe("tableCommands — TASK-004 vsdb.exportAllStructures", () => {
     expect(/no.*(connection|active)/i.test(messages)).toBe(true);
   });
 
-  it("#6b factory getAdapterFor rejects → error message; no clipboard write; no unhandled rejection", async () => {
+  it("#6b factory getAdapterFor rejects → fail-closed capability message; no clipboard write; no unhandled rejection", async () => {
     const mgr = makeFakeMgr();
     const fakeMgr = {
       listConnections: () => [mgr.cfg],
@@ -1373,9 +1385,14 @@ describe("tableCommands — TASK-004 vsdb.exportAllStructures", () => {
     vscode.env.clipboard.writeText.mockClear();
     await state.registeredCommands.get("vsdb.exportAllStructures")!();
     expect(vscode.env.clipboard.writeText).not.toHaveBeenCalled();
+    // DBX-08: an unresolvable adapter declares nothing → fail-closed gate
+    // reports the unsupported capability instead of running the export.
     expect(
-      state.errorMessages.some((m) => /Export All Structures failed/.test(m)),
+      state.infoMessages.some((m) =>
+        m === "VSDB: Export All Structures is not supported by this connection's database.",
+      ),
     ).toBe(true);
+    expect(state.errorMessages).toHaveLength(0);
   });
 
   it("#7 wiring: registeredCommands has vsdb.exportAllStructures + package.json menu covers connection|schema", () => {
@@ -1398,5 +1415,169 @@ describe("tableCommands — TASK-004 vsdb.exportAllStructures", () => {
     expect(entry).toBeDefined();
     expect(entry!.when).toMatch(/viewItem == connection/);
     expect(entry!.when).toMatch(/viewItem == schema/);
+  });
+});
+
+// =============================================================================
+// TASK-DBX08-003 — capability-gated table-DDL admission.
+// Test Case #1: a true `tableDdl` declaration keeps every existing flow
+// (forms open, DDL runs, clipboard writes).
+// Test Case #2: `tableDdl: false` (MySQL/MSSQL-shaped) stops EVERY current
+// table-DDL utility command before runQuery / listTableDetail / AI / clipboard
+// / form side effects with one concise `VSDB:` message.
+// =============================================================================
+describe("tableCommands — DBX-08 tableDdl capability gate", () => {
+  /** Register commands against a fresh tree for the given adapter opts. */
+  function setup(opts: Parameters<typeof makeFakeMgr>[0]) {
+    const mgr = makeFakeMgr(opts);
+    const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
+    registerSchemaTreeProvider(provider);
+    registerTableCommands({
+      mgr: mgr.stub as unknown as ConnectionManager,
+      tree: provider,
+      treeView: treeView as unknown as TreeView<unknown>,
+      context: { subscriptions: [] } as unknown as ExtensionContext,
+    });
+    return { mgr, treeView };
+  }
+
+  function tableNodeMeta(cfg: ConnectionConfig): VsdbNode {
+    return {
+      label: "t",
+      contextValue: "table",
+      collapsible: 0,
+      meta: { connection: cfg, schema: "public", objectName: "t" },
+    };
+  }
+
+  const TABLE_DDL_COMMANDS = [
+    "vsdb.modifyTable",
+    "vsdb.copyCreateDdl",
+    "vsdb.generateSampleData",
+    "vsdb.analyzeTable",
+    "vsdb.vacuumTable",
+    "vsdb.renameTable",
+    "vsdb.renameColumn",
+  ] as const;
+
+  /** Exact concise capability message the guard must emit for a command. */
+  function expectedMsg(command: string): string {
+    // Map camelCase command name to the COMMAND_TITLE wording used in prod.
+    const titles: Record<string, string> = {
+      modifyTable: "Modify Table",
+      copyCreateDdl: "Copy Create Query",
+      generateSampleData: "Generate Sample Data",
+      analyzeTable: "Analyze Table",
+      vacuumTable: "Vacuum Table",
+      renameTable: "Rename Table",
+      renameColumn: "Rename Column",
+      newTable: "New Table",
+      postmanPayload: "Postman Payload",
+      exportStructure: "Export Structure",
+      exportAllStructures: "Export All Structures",
+      createSchema: "Create Schema",
+    };
+    const key = command.replace("vsdb.", "");
+    return `VSDB: ${titles[key]} is not supported by this connection's database.`;
+  }
+
+  it("declared PostgreSQL table-DDL preserves existing flow (analyze + vacuum + copyCreateDdl)", async () => {
+    const cols: PgColumnRow[] = [
+      { column_name: "id", format_type: "bigint", is_nullable: "NO", column_default: null },
+    ];
+    const mgr = setup({
+      driver: "postgres",
+      introspectRows: { columns: cols, constraints: [] },
+      tables: [{ name: "t", schema: "public" }],
+    });
+    const tableNode = tableNodeMeta(mgr.mgr.cfg);
+    await state.registeredCommands.get("vsdb.analyzeTable")!(tableNode);
+    await state.registeredCommands.get("vsdb.vacuumTable")!(tableNode);
+    await state.registeredCommands.get("vsdb.copyCreateDdl")!(tableNode);
+    const ddlCalls = mgr.mgr.adapter.runCalls.map((c) => c.sql);
+    expect(ddlCalls).toContain('ANALYZE "public"."t"');
+    expect(ddlCalls).toContain('VACUUM ANALYZE "public"."t"');
+    expect(mgr.mgr.adapter.listTableDetailCalls.length).toBeGreaterThanOrEqual(1);
+    expect(vscode.env.clipboard.writeText).toHaveBeenCalled();
+    expect(state.errorMessages).toHaveLength(0);
+  });
+
+  it("declared tableDdl:true on a mysql-driver adapter admits the flow (declaration, not driver, decides)", async () => {
+    const mgr = setup({
+      driver: "mysql",
+      capabilities: { catalog: false, objectDdl: false, tableDdl: true, admin: false },
+    });
+    const tableNode = tableNodeMeta(mgr.mgr.cfg);
+    await state.registeredCommands.get("vsdb.analyzeTable")!(tableNode);
+    expect(mgr.mgr.adapter.runCalls.some((c) => c.sql.startsWith("ANALYZE"))).toBe(true);
+    expect(state.errorMessages).toHaveLength(0);
+  });
+
+  it("tableDdl:false blocks MySQL and MSSQL before side effects (all utility commands)", async () => {
+    for (const driver of ["mysql", "mssql"] as const) {
+      for (const cmd of TABLE_DDL_COMMANDS) {
+        const mgr = setup({ driver, listTableDetailUnsupported: true });
+        const tableNode = tableNodeMeta(mgr.mgr.cfg);
+        vscode.env.clipboard.writeText.mockClear();
+        state.inputBoxResult = "5";
+        await state.registeredCommands.get(cmd)!(tableNode);
+        expect(
+          state.infoMessages.some((m) => m === expectedMsg(cmd)),
+        ).toBe(true);
+        // No side effect of any kind:
+        expect(mgr.mgr.adapter.runCalls).toHaveLength(0);
+        expect(mgr.mgr.adapter.listTableDetailCalls).toHaveLength(0);
+        expect(vscode.env.clipboard.writeText).not.toHaveBeenCalled();
+        expect(state.createdPanels.length).toBe(0);
+        expect(mgr.treeView.reveal).not.toHaveBeenCalled();
+      }
+    }
+  });
+
+  it("tableDdl:false blocks newTable before form creation", async () => {
+    const mgr = setup({ driver: "mysql", listTableDetailUnsupported: true });
+    const schemaNode: VsdbNode = {
+      label: "public",
+      contextValue: "schema",
+      collapsible: 0,
+      meta: { connection: mgr.mgr.cfg, schema: "public" },
+    };
+    await state.registeredCommands.get("vsdb.newTable")!(schemaNode);
+    expect(state.createdPanels.length).toBe(0);
+    expect(mgr.mgr.adapter.runCalls).toHaveLength(0);
+    expect(
+      state.infoMessages.some((m) => m === expectedMsg("vsdb.newTable")),
+    ).toBe(true);
+  });
+
+  it("tableDdl:false blocks postmanPayload + exportStructure + exportAllStructures before clipboard", async () => {
+    for (const cmd of ["vsdb.postmanPayload", "vsdb.exportStructure", "vsdb.exportAllStructures"]) {
+      const mgr = setup({ driver: "mysql", listTableDetailUnsupported: true });
+      vscode.env.clipboard.writeText.mockClear();
+      const tableNode = tableNodeMeta(mgr.mgr.cfg);
+      await state.registeredCommands.get(cmd)!(tableNode);
+      expect(vscode.env.clipboard.writeText).not.toHaveBeenCalled();
+      expect(mgr.mgr.adapter.listColumns).not.toHaveBeenCalled();
+      expect(mgr.mgr.adapter.runCalls).toHaveLength(0);
+      expect(
+        state.infoMessages.some((m) => m === expectedMsg(cmd)),
+      ).toBe(true);
+    }
+  });
+
+  it("generateSampleData with tableDdl:false never reaches AI config or provider", async () => {
+    // The AI mocks in this file resolve config to null → the un-gated command
+    // would show "AI not configured". With the gate, the capability message
+    // fires INSTEAD and showInputBox never runs.
+    const mgr = setup({ driver: "mysql", listTableDetailUnsupported: true });
+    const tableNode = tableNodeMeta(mgr.mgr.cfg);
+    state.inputBoxResult = "5";
+    await state.registeredCommands.get("vsdb.generateSampleData")!(tableNode);
+    expect(
+      state.infoMessages.some((m) => m === expectedMsg("vsdb.generateSampleData")),
+    ).toBe(true);
+    expect(
+      state.infoMessages.some((m) => /AI not configured/i.test(m)),
+    ).toBe(false);
   });
 });

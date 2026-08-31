@@ -14,7 +14,10 @@ import {
   registerSchemaTreeProvider,
 } from "./ui/schemaTree";
 import { AdminTreeProvider } from "./ui/adminTree";
-import { AdminSessionsPanel } from "./ui/adminSessionsPanel";
+import {
+  AdminSessionsPanel,
+  ADMIN_UNSUPPORTED_MESSAGE,
+} from "./ui/adminSessionsPanel";
 import { openImportWizard } from "./ui/importWizard";
 import { runCompare } from "./ui/compareService";
 import { ComparePanel } from "./ui/comparePanel";
@@ -742,6 +745,10 @@ export async function activate(
 
   // vsdb.openSessionsPanel — open the sessions/locks webview for the
   // active connection. Reuses the existing single-instance pattern.
+  // DBX-08 — after the select-connection warning, admission is the DECLARED
+  // admin capability of the active adapter: false/missing declaration shows
+  // the concise unsupported message and never creates a panel or resolves an
+  // AdminApi member.
   disposables.push(
     vscode.commands.registerCommand("vsdb.openSessionsPanel", async () => {
       const active = mgr.getActive();
@@ -749,6 +756,17 @@ export async function activate(
         void vscode.window.showWarningMessage(
           "VSDB: select a connection first to open the Sessions panel.",
         );
+        return;
+      }
+      let sessionsAdapter: Awaited<ReturnType<typeof mgr.getAdapter>> | null =
+        null;
+      try {
+        sessionsAdapter = await mgr.getAdapter();
+      } catch {
+        sessionsAdapter = null;
+      }
+      if (!hasAdapterCapability(sessionsAdapter, "admin")) {
+        void vscode.window.showInformationMessage(ADMIN_UNSUPPORTED_MESSAGE);
         return;
       }
       await AdminSessionsPanel.show(mgr, active);
@@ -795,10 +813,32 @@ export async function activate(
   // through the existing confirmDangerousStatements gate (now extended
   // for admin-red). Imported statically at top of file via the same
   // import as AdminTreeProvider/AdminSessionsPanel.
+  // DBX-08 — the DECLARED admin capability gates the whole wizard: a
+  // false/missing declaration shows the concise unsupported message BEFORE
+  // any wizard input, AdminApi builder call, or SQL execution. No active
+  // connection is a distinct case — the wizard keeps its own
+  // select-connection warning (capability of a non-existent adapter is not
+  // the truthful reason there).
   disposables.push(
     vscode.commands.registerCommand(
       "vsdb.runGrantSql",
       async (kind: "grant" | "revoke") => {
+        if (mgr.getActive()) {
+          let grantAdapter: Awaited<
+            ReturnType<typeof mgr.getAdapter>
+          > | null = null;
+          try {
+            grantAdapter = await mgr.getAdapter();
+          } catch {
+            grantAdapter = null;
+          }
+          if (!hasAdapterCapability(grantAdapter, "admin")) {
+            void vscode.window.showInformationMessage(
+              ADMIN_UNSUPPORTED_MESSAGE,
+            );
+            return;
+          }
+        }
         await commandOpenGrantWizard(mgr, kind, async (sql: string) => {
           // Re-review fix: route the wizard SQL through the SAME guarded
           // pipeline as the editor (admin-red gate + runQuery) instead of

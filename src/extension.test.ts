@@ -2470,3 +2470,193 @@ describe("TASK-001 — manualCommit forwarded into connection config (add + edit
     expect(patch.manualCommit).toBe(true);
   });
 });
+
+// =============================================================================
+// TASK-DBX08-003 — extension host entry points gated by DECLARED capabilities.
+//  #1 happy: a declared-PostgreSQL adapter keeps the existing sessions-panel
+//     and GRANT/REVOKE routes (confirmDangerousStatements before runQuery).
+//  #3 edge: false/missing admin declaration blocks vsdb.openSessionsPanel and
+//     vsdb.runGrantSql before AdminSessionsPanel.show / commandOpenGrantWizard /
+//     getAdapter().runQuery / pg_backend_pid() / any AdminApi call.
+//  #5 edge: no active connection keeps the select-connection warning; no
+//     adapter lookup, no panel creation.
+// =============================================================================
+describe("extension — DBX-08 capability-gated admin host commands", () => {
+  const UNSUPPORTED_MESSAGE =
+    "VSDB: Admin tools are not supported by this connection's database.";
+
+  function makeAdminApi() {
+    return {
+      listRoles: vi.fn().mockResolvedValue([]),
+      listRoleGrants: vi.fn().mockResolvedValue([]),
+      listSessions: vi.fn().mockResolvedValue([]),
+      listLockWaits: vi.fn().mockResolvedValue([]),
+      buildGrantSql: vi.fn(),
+      buildRevokeSql: vi.fn(),
+    };
+  }
+
+  function makeAdapter(capabilities: unknown, admin: unknown): DbAdapter {
+    const adapter = { capabilities, admin } as unknown as DbAdapter;
+    (adapter as unknown as {
+      runQuery: ReturnType<typeof vi.fn>;
+    }).runQuery = vi.fn().mockResolvedValue({
+      results: [],
+    });
+    return adapter;
+  }
+
+  function seededCtx(driver: string) {
+    const ctx = makeCtx();
+    ctx.globalState.get = vi.fn((key: string) => {
+      if (key === "vsdb.connections") {
+        return [
+          {
+            id: "c1",
+            name: "c",
+            driver,
+            host: "h",
+            port: 5432,
+            user: "u",
+            database: "d",
+          },
+        ];
+      }
+      if (key === "vsdb.activeConnection") return "c1";
+      return undefined;
+    }) as never;
+    return ctx;
+  }
+
+  async function activateWithAdapter(adapter: DbAdapter) {
+    const connectionMgrMod = await import("./core/connectionManager");
+    vi.spyOn(
+      connectionMgrMod.ConnectionManager.prototype,
+      "getAdapter",
+    ).mockResolvedValue(adapter);
+    const ext = await import("./extension");
+    const ctx = seededCtx("postgres");
+    await ext.activate(ctx as never);
+    return ext;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+    state.createdWebviewPanels.length = 0;
+    state.createdTreeViews.length = 0;
+  });
+
+  it("#1 declared PostgreSQL adapter keeps vsdb.openSessionsPanel + GRANT/REVOKE confirmation route", async () => {
+    const admin = makeAdminApi();
+    const adapter = makeAdapter(
+      { catalog: true, objectDdl: true, tableDdl: true, admin: true },
+      admin,
+    );
+    const ext = await activateWithAdapter(adapter);
+
+    // Sessions panel: PG admission → a webview panel is created.
+    await state.registeredCommands.get("vsdb.openSessionsPanel")!();
+    expect(state.createdWebviewPanels.length).toBe(1);
+
+    // GRANT/REVOKE: wizard flow stubs the vscode IO so commandOpenGrantWizard
+    // produces SQL and routes it through the confirm + runQuery execute seam.
+    const vscodeIo = (await import("vscode")) as unknown as {
+      window: Record<string, ReturnType<typeof vi.fn>>;
+    };
+    const answers = ["public", "t1", "app_rw", "SELECT"];
+    vscodeIo.window.showInputBox = vi
+      .fn()
+      .mockImplementation(() => Promise.resolve(answers.shift()));
+    // Wizard preview modal: user accepts with "OK".
+    vscodeIo.window.showInformationMessage =
+      vi.fn().mockResolvedValue("OK") as unknown as ReturnType<typeof vi.fn>;
+    // confirmDangerousStatements admin gate: user accepts.
+    vscodeIo.window.showWarningMessage = vi
+      .fn()
+      .mockResolvedValue("Vẫn chạy (admin)");
+    await state.registeredCommands.get("vsdb.runGrantSql")!("grant");
+    expect(adapter.runQuery).toHaveBeenCalled();
+    const allSql = (adapter.runQuery as ReturnType<typeof vi.fn>).mock.calls.map(
+      (c) => String(c[0]),
+    );
+    expect(
+      allSql.some((sql) => sql.includes('GRANT SELECT ON TABLE "public"."t1"')),
+    ).toBe(true);
+    void ext;
+  });
+
+  it("#3 false admin declaration blocks sessions panel + grant/revoke before UI or SQL", async () => {
+    const admin = makeAdminApi();
+    const adapter = makeAdapter(
+      { catalog: false, objectDdl: false, tableDdl: false, admin: false },
+      admin,
+    );
+    await activateWithAdapter(adapter);
+    const vscodeIo = (await import("vscode")) as unknown as {
+      window: Record<string, ReturnType<typeof vi.fn>>;
+    };
+    vscodeIo.window.showInputBox = vi.fn().mockResolvedValue("public");
+
+    // Sessions panel blocked:
+    await state.registeredCommands.get("vsdb.openSessionsPanel")!();
+    expect(state.createdWebviewPanels.length).toBe(0);
+    expect(
+      vi.mocked(vscodeMock.window.showInformationMessage).mock.calls.some(
+        (c) => c[0] === UNSUPPORTED_MESSAGE,
+      ),
+    ).toBe(true);
+
+    // Grant wizard blocked before any input or AdminApi/SQL use:
+    await state.registeredCommands.get("vsdb.runGrantSql")!("grant");
+    expect(vscodeIo.window.showInputBox).not.toHaveBeenCalled();
+    expect(admin.buildGrantSql).not.toHaveBeenCalled();
+    expect(admin.listRoles).not.toHaveBeenCalled();
+    expect(adapter.runQuery).not.toHaveBeenCalled();
+    expect(
+      vi.mocked(vscodeMock.window.showInformationMessage).mock.calls.filter(
+        (c) => c[0] === UNSUPPORTED_MESSAGE,
+      ).length,
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  it("#3b legacy adapter (missing capabilities) is denied identically", async () => {
+    const admin = makeAdminApi();
+    const adapter = makeAdapter(undefined, admin);
+    await activateWithAdapter(adapter);
+
+    await state.registeredCommands.get("vsdb.openSessionsPanel")!();
+    expect(state.createdWebviewPanels.length).toBe(0);
+    expect(
+      vi.mocked(vscodeMock.window.showInformationMessage).mock.calls.some(
+        (c) => c[0] === UNSUPPORTED_MESSAGE,
+      ),
+    ).toBe(true);
+
+    await state.registeredCommands.get("vsdb.runGrantSql")!("revoke");
+    expect(admin.buildRevokeSql).not.toHaveBeenCalled();
+    expect(adapter.runQuery).not.toHaveBeenCalled();
+  });
+
+  it("#5 no active connection keeps the select-connection warning; no panel", async () => {
+    // No seeded globalState → ConnectionManager has no active connection.
+    const ctx = makeCtx();
+    const connectionMgrMod = await import("./core/connectionManager");
+    vi.spyOn(
+      connectionMgrMod.ConnectionManager.prototype,
+      "getAdapter",
+    ).mockRejectedValue(new Error("no adapter expected"));
+    const ext = await import("./extension");
+    await ext.activate(ctx as never);
+
+    state.createdWebviewPanels.length = 0;
+    vi.mocked(vscodeMock.window.showWarningMessage).mockClear();
+    await state.registeredCommands.get("vsdb.openSessionsPanel")!();
+    expect(
+      vi.mocked(vscodeMock.window.showWarningMessage).mock.calls.some((c) =>
+        /select a connection first/i.test(String(c[0])),
+      ),
+    ).toBe(true);
+    expect(state.createdWebviewPanels.length).toBe(0);
+  });
+});

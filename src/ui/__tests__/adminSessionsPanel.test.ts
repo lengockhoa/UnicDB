@@ -1,5 +1,5 @@
 // src/ui/__tests__/adminSessionsPanel.test.ts
-// Tests for AdminSessionsPanelCore (TASK-AHL-003).
+// Tests for AdminSessionsPanelCore (TASK-AHL-003) + DBX-08 capability gate.
 import { describe, it, expect, vi } from "vitest";
 
 vi.mock('vscode', () => ({
@@ -12,6 +12,7 @@ vi.mock('vscode', () => ({
 import {
   AdminSessionsPanelCore,
   buildPanelHtml,
+  renderUnsupportedAdminHtml,
   type PanelMessage,
 } from "../adminSessionsPanel";
 
@@ -129,5 +130,147 @@ describe("AdminSessionsPanelCore", () => {
     expect(html).not.toContain("<script>alert(1)</script>");
     expect(html).toContain("&lt;script&gt;");
     expect(html).toContain("&quot;t&quot;");
+  });
+});
+
+// =============================================================================
+// TASK-DBX08-003 — Test Case #3 (panel seam): a false/missing `admin`
+// declaration produces the precise unsupported error state BEFORE
+// `pg_backend_pid()` SQL or any AdminApi method call. Structural presence of
+// `adapter.admin` alone no longer admits the panel data path.
+// =============================================================================
+describe("AdminSessionsPanel refresh — DBX-08 declared admin capability", () => {
+  const UNSUPPORTED_MESSAGE =
+    "VSDB: Admin tools are not supported by this connection's database.";
+
+  function makeAdminApi(): {
+    api: {
+      listRoles: ReturnType<typeof vi.fn>;
+      listRoleGrants: ReturnType<typeof vi.fn>;
+      listSessions: ReturnType<typeof vi.fn>;
+      listLockWaits: ReturnType<typeof vi.fn>;
+      buildGrantSql: ReturnType<typeof vi.fn>;
+      buildRevokeSql: ReturnType<typeof vi.fn>;
+    };
+  } {
+    return {
+      api: {
+        listRoles: vi.fn().mockResolvedValue([]),
+        listRoleGrants: vi.fn().mockResolvedValue([]),
+        listSessions: vi.fn().mockResolvedValue([]),
+        listLockWaits: vi.fn().mockResolvedValue([]),
+        buildGrantSql: vi.fn(),
+        buildRevokeSql: vi.fn(),
+      },
+    };
+  }
+
+  async function refreshAgainst(adapter: unknown): Promise<{
+    html: string;
+    runSqlCalls: string[];
+    getError: () => string | null;
+  }> {
+    let html = "";
+    const runSqlCalls: string[] = [];
+    let errorState: string | null = null;
+    // Exercise the real refresh() path with a minimal webview double, keeping
+    // the test mapped to src/ui/adminSessionsPanel.ts (not just the core).
+    const { AdminSessionsPanel } = await import("../adminSessionsPanel");
+    interface Refreshable {
+      refresh(): Promise<void>;
+    }
+    const panelStub = {
+      webview: {
+        set html(value: string) {
+          html = value;
+        },
+        get html() {
+          return html;
+        },
+        postMessage: vi.fn().mockResolvedValue(undefined),
+        onDidReceiveMessage: vi.fn(() => ({ dispose: () => {} })),
+      },
+      onDidDispose: vi.fn(() => ({ dispose: () => {} })),
+      reveal: vi.fn(),
+    };
+    const conn = {
+      id: "c1",
+      name: "c",
+      driver: "mysql",
+      host: "h",
+      port: 5432,
+      user: "u",
+      database: "d",
+    };
+    const mgr = {
+      getActive: () => conn,
+      getAdapter: vi.fn(async () => adapter),
+      getAdapterFor: vi.fn(async () => adapter),
+    };
+    // The private constructor is exercised here on purpose: refresh() is the
+    // production data path under test (capability gate before self-PID SQL).
+    const PrivatePanel = AdminSessionsPanel as unknown as {
+      new (...args: unknown[]): Refreshable;
+    };
+    const fakeAdapter = adapter as {
+      runQuery?: (sql: string) => Promise<unknown>;
+    };
+    fakeAdapter.runQuery = vi.fn(async (sql: string) => {
+      runSqlCalls.push(sql);
+      return { rows: [{ pid: 4242 }] };
+    });
+    const instance = new PrivatePanel(panelStub, mgr, conn) as unknown as {
+      refresh(): Promise<void>;
+      core: AdminSessionsPanelCore;
+    };
+    await instance.refresh();
+    return { html, runSqlCalls, getError: () => instance.core.getError() };
+  }
+
+  it("refresh with false admin declaration renders the unsupported state before pg_backend_pid or admin calls", async () => {
+    const { api } = makeAdminApi();
+    const adapter = {
+      capabilities: { catalog: false, objectDdl: false, tableDdl: false, admin: false },
+      admin: api,
+    };
+    const { html, runSqlCalls, getError } = await refreshAgainst(adapter);
+    // Core error state is the VERBATIM message; the HTML banner is its
+    // HTML-escaped render (browser-equivalent).
+    expect(getError()).toBe(UNSUPPORTED_MESSAGE);
+    expect(html).toContain("Admin tools are not supported by this connection");
+    expect(runSqlCalls).toHaveLength(0); // no SELECT pg_backend_pid()
+    expect(api.listSessions).not.toHaveBeenCalled();
+    expect(api.listLockWaits).not.toHaveBeenCalled();
+  });
+
+  it("refresh with missing capabilities (legacy adapter) renders the same unsupported state", async () => {
+    const { api } = makeAdminApi();
+    const adapter = { admin: api };
+    const { html, runSqlCalls, getError } = await refreshAgainst(adapter);
+    expect(getError()).toBe(UNSUPPORTED_MESSAGE);
+    expect(html).toContain("Admin tools are not supported by this connection");
+    expect(runSqlCalls).toHaveLength(0);
+    expect(api.listSessions).not.toHaveBeenCalled();
+  });
+
+  it("declared admin:true keeps the existing data flow (self-PID + sessions)", async () => {
+    const { api } = makeAdminApi();
+    api.listSessions.mockResolvedValue([
+      { pid: 7, usename: "bob", state: "active", durationMs: 5, query: "SELECT 1" },
+    ]);
+    api.listLockWaits.mockResolvedValue([]);
+    const adapter = {
+      capabilities: { catalog: true, objectDdl: true, tableDdl: true, admin: true },
+      admin: api,
+    };
+    const { html, runSqlCalls } = await refreshAgainst(adapter);
+    expect(html).toContain("bob");
+    expect(runSqlCalls).toContain("SELECT pg_backend_pid() AS pid");
+  });
+
+  it("renderUnsupportedAdminHtml renders the precise unsupported error state", () => {
+    const html = renderUnsupportedAdminHtml();
+    expect(html).toContain("Admin tools are not supported by this connection");
+    expect(html).toContain("error");
   });
 });

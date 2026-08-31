@@ -77,3 +77,69 @@ No `lint` script exists in `package.json`.
 `tableDdl` deliberately gates the existing collection of PostgreSQL-only table utility commands even where a command happens to use generic metadata internally: those commands were previously advertised as PostgreSQL-only and no equivalent MySQL/MSSQL table-DDL workflow is proven. Keep the existing package commands and menus; this task corrects admission and messaging, not contribution visibility.
 
 ---
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+
+RED_OUTPUT: All new gating tests failed against the pre-task implementation, for the expected reasons:
+
+1. `npx vitest run src/ui/__tests__/tableCommands.test.ts` → `Test Files 1 failed (1) · Tests 10 failed | 33 passed (43)`. Representative failures (old driver-text guard produced neither the new `VSDB:` capability message nor capability admission):
+   ```
+   FAIL … tableCommands — guards > #7 mysql guard → 'VSDB: Modify Table is not supported by this connection's database.' info, no runQuery
+   FAIL … DBX-08 tableDdl capability gate > declared tableDdl:true on a mysql-driver adapter admits the flow (declaration, not driver, decides)
+   FAIL … DBX-08 tableDdl capability gate > tableDdl:false blocks MySQL and MSSQL before side effects (all utility commands)
+   AssertionError: expected false to be true // Object.is equality
+    ❯ src/ui/__tests__/tableCommands.test.ts:1520:11
+   ```
+
+2. `npx vitest run src/ui/__tests__/adminTree.test.ts` → `Tests 2 failed | 6 passed (8)`:
+   ```
+   FAIL … AdminTreeProvider — DBX-08 declared admin capability > false or missing admin declaration renders an unsupported explanation node and never calls AdminApi
+   FAIL … AdminTreeProvider — DBX-08 declared admin capability > legacy adapter without capabilities behaves identically (verbatim label, no Admin roots)
+   ```
+   (pre-task provider silently omitted the root: `if (!adapter.admin) continue` — no explanation node existed)
+
+3. `npx vitest run src/ui/__tests__/adminSessionsPanel.test.ts` → `Tests 3 failed | 11 passed (14)`:
+   ```
+   FAIL … refresh with false admin declaration renders the unsupported state before pg_backend_pid or admin calls
+   AssertionError: expected '<!doctype html>…' to contain 'VSDB: Admin tools are not supported b…'
+   FAIL … renderUnsupportedAdminHtml renders the precise unsupported error state
+   TypeError: renderUnsupportedAdminHtml is not a function
+   ```
+
+4. `npx vitest run src/extension.test.ts` → `Tests 2 failed | 79 passed (81)`:
+   ```
+   FAIL … extension — DBX-08 capability-gated admin host commands > #3 false admin declaration blocks sessions panel + grant/revoke before UI or SQL
+   AssertionError: expected 1 to be +0 // Object.is equality   (webview panel WAS created via structural `adapter.admin` admission)
+   FAIL … #3b legacy adapter (missing capabilities) is denied identically — same `expected 1 to be +0`
+   ```
+
+Verification Output:
+```bash
+# 1) npm test -- src/ui/__tests__/tableCommands.test.ts src/ui/__tests__/adminTree.test.ts src/ui/__tests__/adminSessionsPanel.test.ts src/ui/__tests__/adminWizard.test.ts src/extension.test.ts
+ ✓ src/ui/__tests__/adminTree.test.ts  (8 tests) 4ms
+ ✓ src/ui/__tests__/adminSessionsPanel.test.ts  (14 tests) 4ms
+ ✓ src/ui/__tests__/adminWizard.test.ts  (12 tests) 7ms
+ ✓ src/ui/__tests__/tableCommands.test.ts  (43 tests) 17ms
+ ✓ src/extension.test.ts  (81 tests) 468ms
+ Test Files  5 passed (5)
+      Tests  158 passed (158)
+
+# 2) npm run typecheck   → tsc --noEmit, exit 0
+# 3) npm run compile     → esbuild: build complete, exit 0
+
+# 4) regression net: npx vitest run src/ui/__tests__/schemaCache.test.ts src/ui/__tests__/schemaTreeCatalog.test.ts src/ui/__tests__/sqlCatalog.test.ts src/ui/__tests__/ddlView.test.ts src/ui/__tests__/sqlNavigationProvider.test.ts src/adapters/__tests__/capabilities.test.ts
+ Test Files  6 passed (6)
+      Tests  45 passed (45)
+
+# 5) full npm test
+ Test Files  213 passed | 1 skipped (214)
+      Tests  2810 passed | 2 skipped (2812)
+```
+
+Status: PASS
+
+Note: implementation details — (a) `guardPostgres` in `src/ui/tableCommands.ts` became async and now resolves the exact target adapter via `mgr.getAdapterFor(conn)` then checks `hasAdapterCapability(adapter, "tableDdl")` (fail-closed; unresolvable adapter → capability message, zero side effects); `createSchema`/`exportAllStructures` driver checks were replaced the same way. (b) `AdminTreeProvider.getRootChildren` renders exactly one verbatim `ADMIN_UNSUPPORTED_LABEL` node for false/missing `admin` declaration and never touches `adapter.admin`; `ADMIN_UNSUPPORTED_LABEL` re-exports the single pinned constant owned by `adminSessionsPanel.ts`. (c) `AdminSessionsPanel.refresh` checks `hasAdapterCapability(adapter, "admin")` BEFORE `pg_backend_pid()` and any AdminApi call; new `renderUnsupportedAdminHtml` renders the precise unsupported banner. (d) `extension.ts`: `vsdb.openSessionsPanel` keeps the no-connection warning first, then capability-gates before `AdminSessionsPanel.show`; `vsdb.runGrantSql` capability-gates before `commandOpenGrantWizard` (no-connection still gets the wizard's own select-connection warning — distinct case per PLAN §4); the GRANT execute seam still routes through `confirmDangerousStatements(parsed, "postgres")` before `adapter.runQuery(sql)`. (e) Pre-existing tests asserting the removed "PostgreSQL connections only" wording were updated to the new pinned `VSDB:` message (Test Case #6 contract: safeguards unchanged, message text now capability-based). package.json untouched; version 1.28.0; no new deps; no git add/commit.

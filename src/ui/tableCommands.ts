@@ -9,7 +9,9 @@
 //
 // All commands share the same guards:
 //   1. node.meta hợp lệ → resolve {conn, schema, table?}
-//   2. driver === "postgres" → else showInformationMessage "<Title>: PostgreSQL connections only"
+//   2. DBX-08 — resolved adapter declares tableDdl (hasAdapterCapability,
+//      fail-closed) → else concise `VSDB: <Title> is not supported…` message
+//      BEFORE any form/SQL/AI/clipboard side effect
 //   3. category hợp lệ (newTable requires "tables") → else showInformationMessage mentioning "Tables"
 //   4. Run DDL qua mgr.getAdapterFor(conn).runQuery, never QueryRunner
 //   5. After OK: tree.refresh() + revealTableNode(treeView, conn, schema, table) + notification
@@ -21,6 +23,7 @@
 import * as vscode from "vscode";
 import type { ConnectionConfig } from "../config/types";
 import type { ConnectionManager } from "../core/connectionManager";
+import { hasAdapterCapability, type DbAdapter } from "../adapters/types";
 import {
   generateCreateTable,
   defaultColumnSpecs,
@@ -84,6 +87,7 @@ export function resolveTableNode(arg: unknown): ResolvedTableNode | null {
 }
 
 const COMMAND_TITLE: Record<string, string> = {
+  newTable: "New Table",
   modifyTable: "Modify Table",
   renameTable: "Rename Table",
   renameColumn: "Rename Column",
@@ -93,6 +97,8 @@ const COMMAND_TITLE: Record<string, string> = {
   vacuumTable: "Vacuum Table",
   createSchema: "Create Schema",
   postmanPayload: "Postman Payload",
+  exportStructure: "Export Structure",
+  exportAllStructures: "Export All Structures",
 };
 
 interface GuardedTarget {
@@ -118,15 +124,25 @@ async function runDdl(
 }
 
 /** Guard: meta + driver. Trả null nếu pass hoặc đã hiển thị message. */
-function guardPostgres(
+async function guardPostgres(
+  mgr: ConnectionManager,
   resolved: ResolvedTableNode | null,
   command: keyof typeof COMMAND_TITLE,
-): GuardedTarget | null {
+): Promise<GuardedTarget | null> {
   if (!resolved) return null;
   const title = COMMAND_TITLE[command];
-  if (resolved.conn.driver !== "postgres") {
+  // DBX-08 — admission is the DECLARED tableDdl capability of the exact
+  // target adapter, never `driver === "postgres"`. Resolve the adapter first;
+  // false/missing declaration → concise VSDB message, zero side effects.
+  let adapter: DbAdapter | null = null;
+  try {
+    adapter = await mgr.getAdapterFor(resolved.conn);
+  } catch {
+    adapter = null;
+  }
+  if (!hasAdapterCapability(adapter, "tableDdl")) {
     void vscode.window.showInformationMessage(
-      `${title}: PostgreSQL connections only`,
+      `VSDB: ${title} is not supported by this connection's database.`,
     );
     return null;
   }
@@ -204,7 +220,7 @@ export function registerTableCommands(deps: RegisterDeps): void {
         );
         return;
       }
-      const guarded = guardPostgres(resolved, "newTable");
+      const guarded = await guardPostgres(mgr, resolved, "newTable");
       if (!guarded) return;
 
       const { conn, schema } = guarded;
@@ -245,7 +261,7 @@ export function registerTableCommands(deps: RegisterDeps): void {
     vscode.commands.registerCommand("vsdb.modifyTable", async (arg?: unknown) => {
       const resolved = resolveTableNode(arg);
       if (!resolved) return;
-      const guarded = guardPostgres(resolved, "modifyTable");
+      const guarded = await guardPostgres(mgr, resolved, "modifyTable");
       if (!guarded) return;
       const { conn, schema, table } = guarded;
       if (table === "") return;
@@ -287,7 +303,7 @@ export function registerTableCommands(deps: RegisterDeps): void {
     vscode.commands.registerCommand("vsdb.copyCreateDdl", async (arg?: unknown) => {
       const resolved = resolveTableNode(arg);
       if (!resolved) return;
-      const guarded = guardPostgres(resolved, "copyCreateDdl");
+      const guarded = await guardPostgres(mgr, resolved, "copyCreateDdl");
       if (!guarded) return;
       const { conn, schema, table } = guarded;
       if (table === "") return;
@@ -317,7 +333,7 @@ export function registerTableCommands(deps: RegisterDeps): void {
       async (arg?: unknown) => {
         const resolved = resolveTableNode(arg);
         if (!resolved) return;
-        const guarded = guardPostgres(resolved, "generateSampleData");
+        const guarded = await guardPostgres(mgr, resolved, "generateSampleData");
         if (!guarded) return;
         const { conn, schema, table } = guarded;
         if (table === "") return;
@@ -412,7 +428,7 @@ export function registerTableCommands(deps: RegisterDeps): void {
     vscode.commands.registerCommand("vsdb.analyzeTable", async (arg?: unknown) => {
       const resolved = resolveTableNode(arg);
       if (!resolved) return;
-      const guarded = guardPostgres(resolved, "analyzeTable");
+      const guarded = await guardPostgres(mgr, resolved, "analyzeTable");
       if (!guarded) return;
       const { conn, schema, table } = guarded;
       if (table === "") return;
@@ -433,7 +449,7 @@ export function registerTableCommands(deps: RegisterDeps): void {
     vscode.commands.registerCommand("vsdb.vacuumTable", async (arg?: unknown) => {
       const resolved = resolveTableNode(arg);
       if (!resolved) return;
-      const guarded = guardPostgres(resolved, "vacuumTable");
+      const guarded = await guardPostgres(mgr, resolved, "vacuumTable");
       if (!guarded) return;
       const { conn, schema, table } = guarded;
       if (table === "") return;
@@ -455,7 +471,7 @@ export function registerTableCommands(deps: RegisterDeps): void {
     vscode.commands.registerCommand("vsdb.renameTable", async (arg?: unknown) => {
       const resolved = resolveTableNode(arg);
       if (!resolved) return;
-      const guarded = guardPostgres(resolved, "renameTable");
+      const guarded = await guardPostgres(mgr, resolved, "renameTable");
       if (!guarded) return;
       const { conn, schema, table } = guarded;
       if (table === "") return;
@@ -483,7 +499,7 @@ export function registerTableCommands(deps: RegisterDeps): void {
     vscode.commands.registerCommand("vsdb.renameColumn", async (arg?: unknown) => {
       const resolved = resolveTableNode(arg);
       if (!resolved) return;
-      const guarded = guardPostgres(resolved, "renameColumn");
+      const guarded = await guardPostgres(mgr, resolved, "renameColumn");
       if (!guarded) return;
       const { conn, schema, table } = guarded;
       if (table === "") return;
@@ -538,9 +554,16 @@ export function registerTableCommands(deps: RegisterDeps): void {
         );
         return;
       }
-      if (conn.driver !== "postgres") {
+      // DBX-08 — declared tableDdl capability gates schema DDL (never driver).
+      let createSchemaAdapter: DbAdapter | null = null;
+      try {
+        createSchemaAdapter = await mgr.getAdapterFor(conn);
+      } catch {
+        createSchemaAdapter = null;
+      }
+      if (!hasAdapterCapability(createSchemaAdapter, "tableDdl")) {
         void vscode.window.showInformationMessage(
-          `${COMMAND_TITLE.createSchema}: PostgreSQL connections only`,
+          `VSDB: ${COMMAND_TITLE.createSchema} is not supported by this connection's database.`,
         );
         return;
       }
@@ -584,7 +607,8 @@ export function registerTableCommands(deps: RegisterDeps): void {
         if (!arg || typeof arg !== "object") return;
         const node = arg as { contextValue?: string; meta?: { connection?: ConnectionConfig; schema?: string; objectName?: string } };
         if (!node.meta?.connection || !node.meta.schema) return;
-        const guarded = guardPostgres(
+        const guarded = await guardPostgres(
+          mgr,
           resolveTableNode(arg),
           "postmanPayload",
         );
@@ -623,7 +647,8 @@ export function registerTableCommands(deps: RegisterDeps): void {
       async (arg?: unknown) => {
         if (!arg || typeof arg !== "object") return;
         const node = arg as { contextValue?: string };
-        const guarded = guardPostgres(
+        const guarded = await guardPostgres(
+          mgr,
           resolveTableNode(arg),
           "exportStructure",
         );
@@ -686,9 +711,17 @@ export function registerTableCommands(deps: RegisterDeps): void {
           );
           return;
         }
-        if (conn.driver !== "postgres") {
+        // DBX-08 — declared tableDdl capability gates whole-DB structure
+        // export (never driver identity).
+        let exportAdapter: DbAdapter | null = null;
+        try {
+          exportAdapter = await mgr.getAdapterFor(conn);
+        } catch {
+          exportAdapter = null;
+        }
+        if (!hasAdapterCapability(exportAdapter, "tableDdl")) {
           void vscode.window.showInformationMessage(
-            "Export All Structures: PostgreSQL connections only",
+            `VSDB: Export All Structures is not supported by this connection's database.`,
           );
           return;
         }
