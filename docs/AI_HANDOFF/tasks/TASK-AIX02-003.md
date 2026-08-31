@@ -1,6 +1,6 @@
 # TASK-AIX02-003 — aiChatPanel registration + permission gate + card detail
 
-**Status:** implemented — awaiting reviewer (unic-smart)
+**Status:** done (reviewer APPROVED — see verdict block in TASK-AIX02-001.md)
 **Owner:** executor (TDD)
 **Reviewer:** unic-smart (cycle reviewer)
 
