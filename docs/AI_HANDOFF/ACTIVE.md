@@ -1,6 +1,6 @@
 # ACTIVE
 
-Cycle: AIX-07   Date: 2026-08-31   Base: main @ 4761043
-Goal: Establish centralized AI trust, privacy, provider-route, and redacted audit-export governance.
+Cycle: DBX-08   Date: 2026-09-01   Base: main @ f5f3d45
+Goal: Establish explicit, tested adapter capability declarations that truthfully gate catalog, DDL, navigation, and admin surfaces.
 Tasks: 3 total
 Status: planning_done — ready for executor
