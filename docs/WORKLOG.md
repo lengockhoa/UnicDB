@@ -20,6 +20,12 @@ For each significant action, append:
 - Verification run
 - Outcome
 
+## 2026-08-31 — Cycle AIX-03 Database Analysis Copilot → v1.22.0 (unic-code executor + unic-smart reviewer)
+- Delivered: analysisReport (parseExplainPlan/summarizeToolOutcome/capTokens, pure), analysisTools (analyze_table composite w/ per-part degradation + injection-guarded identifiers; diagnose_query re-guarding + syntax/permission/connection/unknown classifier; createAnalysisTools), agent ToolOutcome + onToolResult, panel toolShapeSummary (JSON-structural, never row bytes; top-level error/ok:false honored), gate denial cards, tool_result wire kind + webview textContent-only cards, OMP onToolEnd cards + ACP registry analysis tools.
+- Review: unic-smart 3 rounds (4234a3e→559a669). Key catches: multi-statement identifier injection; serialized sample bytes leaking into one-line cards; missing formatter on cards; OMP parity gap; {error}/{ok:false} envelopes rendered as successes. Final VERDICT: APPROVED.
+- Files: src/ai/{analysisReport.ts,tools/analysisTools.ts,agent.ts}, src/ui/{aiChatPanel.ts,aiChatPanelMessages.ts}, webview/aiChatPanelMain.ts + 4 test files.
+- Verification: 2570 passed | 2 skipped (193 files); typecheck 0; esbuild clean; v1.22.0 vsix packaged.
+
 ## 2026-08-31 — Cycle AIX-02 Safe File Operations → v1.21.0 (unic-code executor + unic-smart reviewer)
 - Delivered: fileDiff (pure LCS unified diff, capped, git-faithful sentinels incl. both-sides + overflow cases), fileOpsTool (workspace_write: exact URI allowlist, JSON envelopes, request-scoped expected-content binding, host CAS temp+rename), aiChatPanel (registration gated on grounding.writeFile + workspace trust, builtin + omp/MCP mirror; permission card shows REAL computed diff pre-approval via gate describe/bindArgs; JSON deny envelope), extension (refreshGroundingFiles from findFiles cap 200, isWorkspaceTrusted wiring, atomic CAS writer), scaffold tests, CHANGELOG/README.
 - Review: unic-smart 5 rounds (e028910→0b5d6b8). Key catches: empty allowlist; diff not shown before approval; non-JSON denial; sentinel placement (per-side, both-sides, overflow); trust gate absent; shared-Map snapshot race (→ request-scoped); TOCTOU (→ host CAS); fsPath scheme coercion (→ URI strings); multi-hunk truncation. Final VERDICT: APPROVED.
