@@ -68,3 +68,43 @@ No `lint` script exists in `package.json`.
 The contract must be declarative and fail closed. Do not infer truth from `adapter.catalog` or `adapter.admin`: consumer tasks use the helper as their admission source, while the actual optional APIs remain the execution seam. MySQL/MSSQL declarations are product truth for the checked-in implementations, not a request to add backend methods.
 
 ---
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+
+### Implementation notes
+
+- `src/adapters/types.ts`: added `AdapterCapability` ("catalog" | "objectDdl" | "tableDdl" | "admin"), `AdapterCapabilities`, optional `DbAdapter.capabilities?: AdapterCapabilities`, and the pure fail-closed `hasAdapterCapability(adapter, capability)` helper (true ONLY for an explicit `true` declaration; absent/malformed = unsupported).
+- `src/adapters/postgres.ts`: frozen literal matrix `{ catalog: true, objectDdl: true, tableDdl: true, admin: true }` (corresponds to its existing `readonly catalog: CatalogApi` / `readonly admin: AdminApi`).
+- `src/adapters/mysql.ts` + `src/adapters/mssql.ts`: frozen literal all-false matrices; no backend methods added.
+- `src/adapters/__tests__/capabilities.test.ts` (new): real unconnected adapter instances assert the matrix, API agreement, fail-closed legacy/partial fixtures, and immutability (Object.freeze mutation check).
+- Note: TS `readonly` alone failed the mutation Test Case #3 mid-round — production matrices use `Object.freeze` (executor self-caught and fixed before GREEN).
+
+### RED_OUTPUT
+
+Re-derived RED against pre-implementation adapters (implementation stashed; test file is the executor-authored one):
+
+```
+ ❯ src/adapters/__tests__/capabilities.test.ts > ... production adapters declare the DBX-08 advanced capability matrix
+    137|       expect(hasAdapterCapability(adapter, "catalog")).toBe(false);
+    138|       expect(hasAdapterCapability(adapter, "admin")).toBe(false);
+    139|       expect(adapter.capabilities.catalog).toBe(false);
+ Test Files  1 failed (1)
+      Tests  3 failed (3)
+   Start at 02:54:46
+```
+
+(3 failures: missing `capabilities` on all three production adapters — helper imported but absent from types.ts.)
+
+### Verification Output
+
+Command: `npx vitest run src/adapters/__tests__/capabilities.test.ts` → Test Files 1 passed (1), all GREEN.
+Command: `npm run typecheck` → tsc --noEmit, exit 0.
+Command: task test selection (17 tests across capabilities + postgres/mysql/mssql suites) → all pass.
+Command: `npm run compile` → esbuild build complete.
+
+Status: PASS
+Note: Full original executor log was lost in an orchestrator copy-back mistake (git checkout of docs/); RED evidence re-derived exactly as described above against the executor's own test file with the implementation stashed, then popped. No git add/commit/push.

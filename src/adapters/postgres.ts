@@ -32,6 +32,7 @@ import type { ConnectionConfig } from "../config/types";
 import { resolveSslOptions } from "../core/sslOptions";
 import type {
   AdminApi,
+  AdapterCapabilities,
   CatalogApi,
   BatchedQuery,
   DbTransaction,
@@ -262,6 +263,20 @@ export class PostgresAdapter implements DbAdapter {
     private readonly cfg: ConnectionConfig,
     private readonly password: string,
   ) {}
+
+  /**
+   * DBX-08 — declared advanced-capability matrix. PostgresAdapter là adapter
+   * duy nhất expose CatalogApi (`catalog`, gồm objectDdl) và AdminApi
+   * (`admin`) thật, cùng table-DDL qua listTableDetail — nên cả 4 entry đều
+   * true tường minh. Đây là nguồn truth cho admission (host/UI funnels đọc
+   * qua hasAdapterCapability), KHÔNG phải `driver === "postgres"`.
+   */
+  readonly capabilities: AdapterCapabilities = Object.freeze({
+    catalog: true,
+    objectDdl: true,
+    tableDdl: true,
+    admin: true,
+  });
 
   async connect(): Promise<void> {
     if (this.pool) return;

@@ -10,6 +10,7 @@ import { splitStatements } from "../core/statementParser";
 import { quoteIdent } from "../core/saveStatements";
 import {
   NotImplementedError,
+  type AdapterCapabilities,
   type BatchedQuery,
   type DbTransaction,
   type ColumnInfo,
@@ -111,6 +112,20 @@ export class MySqlAdapter implements DbAdapter {
     private readonly cfg: ConnectionConfig,
     private readonly password: string,
   ) {}
+
+  /**
+   * DBX-08 — declared advanced-capability matrix. Checked-in MySqlAdapter
+   * KHÔNG có backend thật cho catalog/object-DDL/table-DDL detail/admin
+   * (catalog lẫn admin đều undefined) — nên cả 4 entry đều false tường
+   * minh. Baseline navigation (schemas/tables/views/routines/columns +
+   * row estimates) KHÔNG nằm trong matrix này và vẫn hoạt động như cũ.
+   */
+  readonly capabilities: AdapterCapabilities = Object.freeze({
+    catalog: false,
+    objectDdl: false,
+    tableDdl: false,
+    admin: false,
+  });
 
   async connect(): Promise<void> {
     if (this.pool) return;

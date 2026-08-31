@@ -172,6 +172,44 @@ export interface DbAdapter {
   renameUsage?: RenameUsageApi;
   catalog?: CatalogApi;
   admin?: AdminApi;
+  /**
+   * DBX-08 — declarative advanced-capability matrix (PostgreSQL-first).
+   * Optional for fixture/mock compatibility, nhưng matrix NÀY là nguồn
+   * truth duy nhất cho admission ở host/UI funnels: absent, false, hay
+   * partial entry đều được coi là KHÔNG hỗ trợ (fail-closed). Không suy
+   * diễn support từ `driver` hay từ sự hiện diện cấu trúc của
+   * `catalog`/`admin` — dùng hasAdapterCapability().
+   */
+  capabilities?: AdapterCapabilities;
+}
+
+/**
+ * DBX-08 — các advanced surface của adapter. Mỗi key chỉ true khi adapter
+ * CÓ implementation thật đã được chứng minh (capability true phải tương ứng
+ * với API thật — CatalogApi.objectDdl cho `objectDdl`, v.v.).
+ */
+export type AdapterCapability = "catalog" | "objectDdl" | "tableDdl" | "admin";
+
+/** Khai báo đầy đủ cả 4 capability — production adapters expose literal. */
+export interface AdapterCapabilities {
+  catalog: boolean;
+  objectDdl: boolean;
+  tableDdl: boolean;
+  admin: boolean;
+}
+
+/**
+ * DBX-08 — pure predicate: trả true CHỈ khi declaration là `true` tường
+ * minh (=== true). Fail-closed cho mọi trường hợp còn lại: adapter
+ * null/undefined, thiếu `capabilities`, thiếu key, false, hay truthy
+ * non-boolean. KHÔNG bao giờ đọc `driver`, `catalog`, hay `admin` —
+ * structural presence không tự động thành support.
+ */
+export function hasAdapterCapability(
+  adapter: Pick<DbAdapter, "capabilities"> | null | undefined,
+  capability: AdapterCapability,
+): boolean {
+  return adapter?.capabilities?.[capability] === true;
 }
 
 /**
