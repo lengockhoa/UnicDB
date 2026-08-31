@@ -4,9 +4,13 @@
 // (`spawn("ssh", args)`, shell: false by default, no exec/execSync).
 // No vscode import. Handles are in-memory only; dispose() drains everything.
 import { spawn, type ChildProcess } from "node:child_process";
+import { createServer } from "node:net";
 import { buildTunnelArgs, type TunnelConfig } from "./sshTunnel";
 
 const READY_TIMEOUT_MS = 10_000;
+/** Grace after ssh's forward line: bind failures (port stolen) exit fast —
+ * waiting this long past the line means ssh's bind actually succeeded. */
+const READY_QUIET_MS = 400;
 
 export interface TunnelHandle {
   readonly key: string;
@@ -20,17 +24,20 @@ const MARKER = "vsdb-tunnel";
 
 /**
  * Bind an ephemeral port, read it, and release it for ssh to re-bind.
- * TOCTOU note: between release and ssh's bind another process could claim
- * the port. That attempt is SAFE BY CONSTRUCTION: ssh then fails with
- * EADDRINUSE and, because ExitOnForwardFailure=yes, exits — start() rejects.
- * Ownership is proven below by requiring ssh's own verbose forward line for
- * OUR explicit port (an impostor listener cannot make ssh print it), never
- * by a blind TCP connect (which any local process could satisfy).
+ *
+ * Race (a local process binding the port between our release and ssh's
+ * bind) is handled FAIL-CLOSED, not assumed away: OpenSSH binds AFTER it
+ * prints the verbose forward line, and if the port is taken its bind fails
+ * and (ExitOnForwardFailure=yes) the process exits immediately. The manager
+ * therefore only accepts readiness after a quiet period in which ssh stays
+ * alive past the bind step — see READY_QUIET_MS in start(). An impostor
+ * listener can never pass: either ssh's bind succeeds (the impostor cannot
+ * also bind — the kernel rejects a second listener) or ssh exits and the
+ * start is rejected. No window remains in which DB traffic can reach a
+ * foreign listener through a "ready" handle.
  */
 function pickFreeLocalPort(): Promise<number> {
   return new Promise((resolve, reject) => {
-    // Lazy import kept inline to avoid a top-level net import in consumers.
-    const { createServer } = require("node:net") as typeof import("node:net");
     const srv = createServer();
     srv.unref();
     srv.on("error", reject);
@@ -82,10 +89,12 @@ export class SshTunnelManager {
     await new Promise<void>((resolve, reject) => {
       let settled = false;
       let buffer = "";
+      let sawLine = false;
       const finish = (err?: Error) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        clearTimeout(quiet);
         child.removeAllListeners("error");
         err ? reject(err) : resolve();
       };
@@ -110,22 +119,30 @@ export class SshTunnelManager {
         );
       });
 
+      // OpenSSH prints the forward line BEFORE bind(); a port thief makes
+      // ssh exit right after the line. Only trust readiness once ssh has
+      // stayed alive past the bind step.
+      let quiet: ReturnType<typeof setTimeout> | undefined;
+      const armQuiet = () => {
+        quiet = setTimeout(() => {
+          if (!exited && sawLine) finish();
+          // If the child died in the meantime the exit handler rejects.
+        }, READY_QUIET_MS);
+      };
+
       const scan = (chunk: Buffer | string) => {
         if (settled) {
           drain(chunk);
           return;
         }
         buffer += chunk.toString();
-        // With an EXPLICIT local port, OpenSSH's verbose line reports that
-        // exact port after a successful bind. Matching our port proves ssh —
-        // not an impostor local listener — owns the socket.
         const re = new RegExp(
           `Local forwarding listening on 127\\.0\\.0\\.1 port ${localPort}\\b`,
         );
-        if (re.test(buffer) && !exited) {
-          finish();
-          // From here on just drain the verbose pipes so they never fill
-          // and block the long-lived ssh process.
+        if (!sawLine && re.test(buffer)) {
+          sawLine = true;
+          armQuiet();
+          // Drain the verbose pipes from here on so they never fill.
           child.stdout?.resume();
           child.stderr?.resume();
         }
