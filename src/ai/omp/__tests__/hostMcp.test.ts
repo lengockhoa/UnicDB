@@ -32,6 +32,13 @@ import * as http from "node:http";
 
 import { createHostMcp, type HostMcp } from "../hostMcp";
 import { DB_TOOL_DENIED_MESSAGE } from "../../ui/aiChatPanel";
+import { createMcpExtensionRegistry } from "../mcpExtensionRegistry";
+import type {
+  CuratedMcpTool,
+  McpExtensionContribution,
+} from "../mcpExtensionRegistry";
+import type { EffectivePolicy } from "../../policy";
+import type { DbAdapter } from "../../../adapters/types";
 
 // ---------------------------------------------------------------------------
 // Test doubles — minimal tool shape the gate exercises.
@@ -151,6 +158,7 @@ interface Fixture {
 interface BuildOptions {
   tools?: FakeTool[];
   postPermission?: PermissionPost;
+  extensions?: CuratedMcpTool[];
 }
 
 async function buildFixture(opts: BuildOptions = {}): Promise<Fixture> {
@@ -171,6 +179,7 @@ async function buildFixture(opts: BuildOptions = {}): Promise<Fixture> {
   const host = createHostMcp({
     gatePost: opts.postPermission ?? (() => undefined),
     tools,
+    ...(opts.extensions ? { extensions: opts.extensions } : {}),
   });
   await host.start();
   return { host };
@@ -560,5 +569,257 @@ describe("createHostMcp — call() wrapper (T2 contract bridge)", () => {
     expect(out.isError).toBe(true);
     expect(typeof out.result).toBe("string");
     expect(out.result.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TASK-AIX08-002 — curated extension containment in the host MCP path.
+// ---------------------------------------------------------------------------
+
+/** Policy fixture matching src/ai/policy.ts EffectivePolicy (db + workspace
+ * allowed) so the registry admits db-read contributions. */
+function allowedPolicy(): EffectivePolicy {
+  return {
+    provider: "omp",
+    context: { schema: true, workspace: true, rows: true },
+    tools: { database: true, workspace: true },
+    auditExportAllowed: true,
+    notice: "",
+  };
+}
+
+/** Registry-produced curated tool via the real TASK-AIX08-001 registry —
+ * the host must consume `registry.list()` output exactly as declared. */
+function curatedTool(opts: {
+  name?: string;
+  schema?: McpExtensionContribution["inputSchema"];
+  timeoutMs?: number;
+  handler: McpExtensionContribution["handler"];
+}): CuratedMcpTool {
+  const registry = createMcpExtensionRegistry({
+    policy: allowedPolicy(),
+    adapterFactory: async () => {
+      const adapter = {
+        capabilities: {
+          catalog: true,
+          objectDdl: true,
+          tableDdl: true,
+          admin: true,
+        },
+        runQuery: async () => ({
+          results: [
+            { columns: ["?column?"], rows: [[1]], rowCount: 1, durationMs: 1 },
+          ],
+        }),
+      } as unknown as DbAdapter;
+      return adapter;
+    },
+  });
+  const declaration: McpExtensionContribution = {
+    name: opts.name ?? "catalog-probe",
+    description: "Curated catalog probe",
+    contractVersion: 1,
+    inputSchema:
+      opts.schema ??
+      ({
+        type: "object",
+        properties: {
+          schema: { type: "string" },
+          limit: { type: "number" },
+          verbose: { type: "boolean" },
+        },
+        required: ["schema"],
+        additionalProperties: false,
+      } satisfies McpExtensionContribution["inputSchema"]),
+    capabilities: [{ kind: "db-read", requiredCapabilities: ["catalog"] }],
+    timeoutMs: opts.timeoutMs ?? 1000,
+    handler: opts.handler,
+  };
+  const outcome = registry.register(declaration);
+  if (!outcome.ok) throw new Error(outcome.error);
+  const tool = registry.list().find((t) => t.name === declaration.name);
+  if (!tool) throw new Error("fixture tool not admitted");
+  return tool;
+}
+
+describe("createHostMcp — curated extension containment (TASK-AIX08-002)", () => {
+  it("admitted curated tool appears in tools/list and returns MCP text content", async () => {
+    fixture = await buildFixture({
+      tools: [],
+      extensions: [
+        curatedTool({
+          handler: async () => "catalog ok",
+        }),
+      ],
+    });
+    await probeJson(fixture.host.url, {
+      method: "POST",
+      body: { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+    });
+
+    const listRes = await probeJson(fixture.host.url, {
+      method: "POST",
+      body: { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+    });
+    const listBody = listRes.body as {
+      result?: {
+        tools?: Array<{ name: string; inputSchema?: Record<string, unknown> }>;
+      };
+    };
+    const listed = listBody.result?.tools ?? [];
+    const curated = listed.find((t) => t.name === "catalog-probe");
+    expect(curated).toBeDefined();
+    expect(curated!.inputSchema).toEqual({
+      type: "object",
+      properties: {
+        schema: { type: "string" },
+        limit: { type: "number" },
+        verbose: { type: "boolean" },
+      },
+      required: ["schema"],
+      additionalProperties: false,
+    });
+
+    const callRes = await probeJson(fixture.host.url, {
+      method: "POST",
+      body: {
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "catalog-probe", arguments: { schema: "public" } },
+      },
+    });
+    const callBody = callRes.body as {
+      result?: {
+        content?: Array<{ type: string; text: string }>;
+        isError?: boolean;
+      };
+    };
+    expect(callRes.status).toBe(200);
+    expect(callBody.result?.content?.[0]?.text).toBe("catalog ok");
+    expect(callBody.result?.isError).toBeUndefined();
+  });
+
+  it("curated exact invalid-argument literals return isError before handler", async () => {
+    const handlerCalls: number[] = [];
+    fixture = await buildFixture({
+      tools: [],
+      extensions: [
+        curatedTool({
+          handler: async () => {
+            handlerCalls.push(1);
+            return "handler-ok";
+          },
+        }),
+      ],
+    });
+
+    const callCurated = async (args: Record<string, unknown>) => {
+      const res = await fixture!.host.handle({
+        method: "tools/call",
+        params: { name: "catalog-probe", arguments: args },
+        id: 7,
+      });
+      const result = res.result as {
+        content?: Array<{ text?: string }>;
+        isError?: boolean;
+      };
+      return { text: result.content?.[0]?.text ?? "", isError: result.isError };
+    };
+
+    expect(await callCurated({})).toEqual({
+      text: 'MCP extension invalid arguments: missing required property "schema"',
+      isError: true,
+    });
+    expect(await callCurated({ schema: "public", extra: true })).toEqual({
+      text: 'MCP extension invalid arguments: unexpected property "extra"',
+      isError: true,
+    });
+    expect(await callCurated({ schema: 1 })).toEqual({
+      text: 'MCP extension invalid arguments: property "schema" must be string',
+      isError: true,
+    });
+    expect(await callCurated({ schema: "public", limit: "1" })).toEqual({
+      text: 'MCP extension invalid arguments: property "limit" must be number',
+      isError: true,
+    });
+    expect(await callCurated({ schema: "public", verbose: "true" })).toEqual({
+      text: 'MCP extension invalid arguments: property "verbose" must be boolean',
+      isError: true,
+    });
+    expect(handlerCalls).toHaveLength(0);
+  });
+
+  it("never-settling curated handler times out and host remains usable", async () => {
+    fixture = await buildFixture({
+      tools: fiveDbTools(),
+      extensions: [
+        curatedTool({
+          timeoutMs: 100,
+          handler: () =>
+            new Promise<string>(() => {
+              /* never settles */
+            }),
+        }),
+      ],
+      postPermission: (m) => {
+        queueMicrotask(() => fixture!.host.respond(m.requestId, "allow-once"));
+      },
+    });
+    await probeJson(fixture.host.url, {
+      method: "POST",
+      body: { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+    });
+
+    const out = await fixture.host.call("catalog-probe", { schema: "public" });
+    expect(out).toEqual({
+      result: "MCP extension tool timed out after 100ms",
+      isError: true,
+    });
+
+    // The host must remain usable for standard tools after the timeout.
+    const after = await fixture.host.call("run_readonly_query", { sql: "SELECT 1" });
+    expect(after).toEqual({ result: "OUT-run_readonly_query", isError: false });
+
+    // stop() must complete (no leaked timer / wedge).
+    await fixture.host.stop();
+    fixture = undefined;
+  });
+
+  it("curated crash is contained while standard host failure wording is unchanged", async () => {
+    fixture = await buildFixture({
+      tools: [
+        {
+          name: "standard_boom",
+          description: "standard tool that throws",
+          parameters: { type: "object", properties: {} },
+          execute: async () => {
+            throw new Error("standard boom");
+          },
+        } as unknown as FakeTool,
+      ],
+      extensions: [
+        curatedTool({
+          handler: async () => {
+            throw new Error("extension boom");
+          },
+        }),
+      ],
+      postPermission: (m) => {
+        queueMicrotask(() => fixture!.host.respond(m.requestId, "allow-once"));
+      },
+    });
+
+    const curatedOut = await fixture.host.call("catalog-probe", { schema: "public" });
+    expect(curatedOut).toEqual({
+      result: "MCP extension tool failed: extension boom",
+      isError: true,
+    });
+
+    const standardOut = await fixture.host.call("standard_boom", {});
+    expect(standardOut).toEqual({
+      result: "Tool failed: standard boom",
+      isError: true,
+    });
   });
 });

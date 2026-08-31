@@ -79,6 +79,82 @@ Do not implement a second MCP transport, bridge, registry, permission system, or
 
 ---
 
+### 2026-09-01 · executor · unic-code
+
+Fixture-name deviation: Test Case #1 names the probe `catalog_probe` (underscore), but the binding v1 name grammar in PLAN_AIX08 §3 (`/^[a-z][a-z0-9-]{0,63}$/`, enforced with exact rejection literal N1–N3) forbids underscores, and the fixture must be registry-produced. The tests use grammar-valid `catalog-probe`; behavior under test is unchanged.
+
+---
+
 ## Executor Report
 
-(not started)
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+
+RED_OUTPUT:
+
+```
+npx vitest run src/ai/omp/__tests__/hostMcp.test.ts  (after adding the 4 new tests, before touching hostMcp.ts)
+
+ ❯ src/ai/omp/__tests__/hostMcp.test.ts  (17 tests | 4 failed) 26ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL … > admitted curated tool appears in tools/list and returns MCP text content
+AssertionError: expected undefined not to be undefined
+ ❯ src/ai/omp/__tests__/hostMcp.test.ts:671:21
+    669|     const listed = listBody.result?.tools ?? [];
+    670|     const curated = listed.find((t) => t.name === "catalog-probe");
+    671|     expect(curated).toBeDefined();
+
+ FAIL … > curated exact invalid-argument literals return isError before handler
+- Expected: "MCP extension invalid arguments: missing required property \"schema\""
++ Received: "Unknown tool: catalog-probe"
+ ❯ src/ai/omp/__tests__/hostMcp.test.ts:730:35
+
+ FAIL … > never-settling curated handler times out and host remains usable
+- Expected: "MCP extension tool timed out after 100ms"
++ Received: "Unknown tool: catalog-probe"
+ ❯ src/ai/omp/__tests__/hostMcp.test.ts:775:17
+
+ FAIL … > curated crash is contained while standard host failure wording is unchanged
+- Expected: "MCP extension tool failed: extension boom"
++ Received: "Unknown tool: catalog-probe"
+ ❯ src/ai/omp/__tests__/hostMcp.test.ts:809:24
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 13 passed (17)
+```
+
+All 4 failures are the genuine missing-feature failure (curated tools unknown to the host); all 13 pre-existing hostMcp assertions passed in the same RED run.
+
+Verification Output:
+
+```
+# npm test -- src/ai/omp/__tests__/hostMcp.test.ts src/ai/omp/__tests__/mcpExtensionRegistry.test.ts
+ ✓ src/ai/omp/__tests__/mcpExtensionRegistry.test.ts  (7 tests) 5ms
+ ✓ src/ai/omp/__tests__/hostMcp.test.ts  (17 tests) 125ms
+ Test Files  2 passed (2)
+      Tests  24 passed (24)
+
+# npm run typecheck
+> tsc --noEmit
+(no errors, exit 0)
+
+# npm run compile
+⚡ Done in 144ms
+esbuild: build complete
+(exit 0)
+
+# Regression net: npx vitest run mcpExtensionRegistry aix03Scaffold aix04Scaffold capabilities aiChatPanelToolParity mcpBridge ompChatEngine
+ Test Files  7 passed (7)
+      Tests  56 passed (56)
+
+# npm test (full suite, once)
+ Test Files  214 passed | 1 skipped (215)
+      Tests  2822 passed | 2 skipped (2824)
+```
+
+(The 1 skipped file / 2 skipped tests are pre-existing skips, unrelated to this task.)
+
+Status: PASS
+Note: none. Standard-tool semantics untouched (permission gate, `DB_TOOL_DENIED_MESSAGE`, `Tool failed: <msg>`, wire/lifecycle all covered by the 13 pre-existing assertions, still green). Curated lane is containment-only: `setTimeout` budget always cleared in `finally`, single-settle race promise so a late handler settlement is observed, never unhandled; curated outcomes classified via the registry's explicit `isErrorResult`/`timeoutError`/`formatError` metadata (no string-prefix guessing); a curated name colliding with a standard tool loses (fail closed). No git add/commit/push; no package.json/INDEX.md/RUN.md/STATUS.md/WORKLOG.md/CHANGELOG.md changes.

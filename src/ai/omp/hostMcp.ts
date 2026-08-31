@@ -20,6 +20,10 @@ import {
   DB_TOOL_DENIED_MESSAGE,
   type DbToolPermissionGate,
 } from "../../ui/aiChatPanel";
+// Type-only import: the curated registry is a pure host-side module. The
+// dependency direction registry → hostMcp is forbidden; host → registry
+// types is the declared TASK-AIX08-002 seam (PLAN_AIX08 §2/§3.4).
+import type { CuratedMcpTool } from "./mcpExtensionRegistry";
 
 // ---------------------------------------------------------------------------
 // Public interface.
@@ -48,6 +52,11 @@ export interface CreateHostMcpOptions {
   gatePost: HostMcpPostPermission;
   /** Tool list, in registration order. The gate wraps each before listing. */
   tools: ReadonlyArray<HostMcpTool>;
+  /** Policy-admitted curated registry output (TASK-AIX08-002). Listed and
+   * invoked through the same MCP envelopes but NOT routed through the
+   * permission gate — the registry already applied the AIX-07 policy +
+   * DBX-08 capability admission before producing these tools. */
+  extensions?: ReadonlyArray<CuratedMcpTool>;
   /** When true, `server.unref()` keeps the test/event-loop from hanging. */
   unref?: boolean;
 }
@@ -185,12 +194,62 @@ export function createHostMcp(opts: CreateHostMcpOptions): HostMcp {
     );
   }
 
+  /**
+   * Curated extension containment (TASK-AIX08-002): race the registry-
+   * produced handler against its own validated timeout bound and map the
+   * explicit failure classification to MCP outcomes. The registry context
+   * is structurally read-only, so a timed-out promise cannot gain new
+   * privileged authority after the host has returned; a late settlement is
+   * simply observed (never an unhandled rejection). The timer is always
+   * cleared in a finally block so no timer can wedge the host or hang stop().
+   */
+  function containedExecute(
+    tool: CuratedMcpTool,
+    args: Record<string, unknown>,
+  ): Promise<string> {
+    const budget = typeof tool.timeoutMs === "number" ? tool.timeoutMs : 0;
+    if (!(budget > 0)) {
+      // Fail closed: a curated tool without a positive validated budget
+      // must not run unbounded. Treat as an immediate timeout outcome.
+      return Promise.resolve(tool.timeoutError(0));
+    }
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const timer = setTimeout(() => resolve(tool.timeoutError(budget)), budget);
+    // An errored handler must never surface as an unhandled rejection —
+    // the timeout branch may have settled the race promise already.
+    tool
+      .execute(args)
+      .then(
+        (text) => resolve(text),
+        (error: unknown) => resolve(tool.formatError(error)),
+      )
+      .finally(() => clearTimeout(timer));
+    return promise;
+  }
+
   const wrappedTools: HostMcpTool[] = opts.tools.map((t) => ({
     name: t.name,
     description: t.description,
     parameters: t.parameters,
     execute: (args) => wrappedExecute(t, args),
   }));
+
+  /** Registry-admitted curated tools (already policy/capability gated at
+   * admission time in mcpExtensionRegistry.ts). Kept as a Map keyed by the
+   * v1-validated unique name; a curated name colliding with a standard
+   * tool loses — the standard tool wins and the curated entry is ignored
+   * (fail closed, no silent override). */
+  const curatedByName = new Map<string, CuratedMcpTool>();
+  for (const ext of opts.extensions ?? []) {
+    if (
+      typeof ext?.name === "string" &&
+      ext.name.length > 0 &&
+      !wrappedTools.some((t) => t.name === ext.name) &&
+      !curatedByName.has(ext.name)
+    ) {
+      curatedByName.set(ext.name, ext);
+    }
+  }
 
   async function handle(req: {
     method: string;
@@ -211,11 +270,18 @@ export function createHostMcp(opts: CreateHostMcpOptions): HostMcp {
       case "tools/list":
         return {
           result: {
-            tools: wrappedTools.map((t) => ({
-              name: t.name,
-              description: t.description,
-              inputSchema: t.parameters,
-            })),
+            tools: [
+              ...wrappedTools.map((t) => ({
+                name: t.name,
+                description: t.description,
+                inputSchema: t.parameters,
+              })),
+              ...[...curatedByName.values()].map((t) => ({
+                name: t.name,
+                description: t.description,
+                inputSchema: t.parameters,
+              })),
+            ],
           },
         };
       case "tools/call": {
@@ -231,7 +297,8 @@ export function createHostMcp(opts: CreateHostMcpOptions): HostMcp {
         const name = params["name"];
         const args = params["arguments"];
         const tool = wrappedTools.find((t) => t.name === name);
-        if (!tool) {
+        const curated = curatedByName.get(name);
+        if (!tool && !curated) {
           return {
             result: {
               content: [{ type: "text", text: `Unknown tool: ${name}` }],
@@ -247,8 +314,24 @@ export function createHostMcp(opts: CreateHostMcpOptions): HostMcp {
             },
           };
         }
+        if (curated !== undefined) {
+          // Curated containment lane: timeout + crash are classified via
+          // the registry's explicit metadata (never string-prefix guesses
+          // for ordinary results), and curated error text is marked with
+          // isError via the registry's own classification predicate.
+          const text = await containedExecute(curated, args);
+          return {
+            result: {
+              content: [{ type: "text", text }],
+              ...(curated.isErrorResult(text) ? { isError: true } : {}),
+            },
+          };
+        }
+        // `curated` is undefined here, so `tool` must be defined (the
+        // unknown-tool early return above excluded the both-undefined case).
+        const standard = tool as HostMcpTool;
         try {
-          const text = await tool.execute(args);
+          const text = await standard.execute(args);
           // A deny path in the gate returns DB_TOOL_DENIED_MESSAGE (a plain
           // string) instead of running the tool. Surface it as an MCP
           // `isError: true` result so the model and the user both see the
