@@ -3,20 +3,54 @@
 // Spawns `ssh` with the VALIDATED argv from ./sshTunnel — never a shell
 // (`spawn("ssh", args)`, shell: false by default, no exec/execSync).
 // No vscode import. Handles are in-memory only; dispose() drains everything.
-import { spawn, type ChildProcess } from "child_process";
+import { spawn, type ChildProcess } from "node:child_process";
+import { createServer, connect as tcpConnect } from "node:net";
 import { buildTunnelArgs, type TunnelConfig } from "./sshTunnel";
 
 const READY_TIMEOUT_MS = 10_000;
 
 export interface TunnelHandle {
   readonly key: string;
-  /** Actual bound local port (resolved from ssh output). */
+  /** The local port ssh was told to bind (pre-allocated by the manager). */
   readonly localPort: number;
   readonly child: ChildProcess;
 }
 
 /** Marker token added to spawned argv so `ps` parsing can identify our tunnels. */
 const MARKER = "vsdb-tunnel";
+
+/**
+ * Bind an ephemeral port, read it, and release it. ssh then re-binds it in
+ * the -L forward. Racy in theory (TOCTOU), but the window is milliseconds
+ * and the manager verifies actual liveness with a TCP probe below.
+ */
+function pickFreeLocalPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = createServer();
+    srv.unref();
+    srv.on("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const addr = srv.address();
+      const port =
+        typeof addr === "object" && addr !== null ? addr.port : 0;
+      srv.close(() => (port > 0 ? resolve(port) : reject(new Error("no free port"))));
+    });
+  });
+}
+
+/** True when something accepts TCP connections on 127.0.0.1:port. */
+function portAlive(port: number, timeoutMs = 500): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = tcpConnect({ host: "127.0.0.1", port });
+    const done = (ok: boolean) => {
+      socket.destroy();
+      resolve(ok);
+    };
+    socket.setTimeout(timeoutMs, () => done(false));
+    socket.once("connect", () => done(true));
+    socket.once("error", () => done(false));
+  });
+}
 
 export class SshTunnelManager {
   private readonly tunnels = new Map<string, TunnelHandle>();
@@ -27,8 +61,15 @@ export class SshTunnelManager {
   ) {}
 
   /**
-   * Resolve once the tunnel reports its listening line; kill + throw on
-   * timeout/early-exit. Idempotent per key — a running tunnel is reused.
+   * Resolve once the local forward accepts TCP connections; kill + throw on
+   * timeout/early-exit/spawn-error. Idempotent per key — a running tunnel is
+   * reused.
+   *
+   * Readiness is NOT derived from ssh debug output: OpenSSH prints
+   * "Local forwarding listening on … port N" from the REQUESTED port before
+   * bind, so with an ephemeral -L port it would report 0. Instead the manager
+   * pre-allocates a free local port, passes it explicitly, and polls the
+   * bound socket until it accepts.
    */
   async start(cfg: TunnelConfig, key: string): Promise<TunnelHandle> {
     const existing = this.tunnels.get(key);
@@ -37,59 +78,66 @@ export class SshTunnelManager {
       throw new Error(`invalid tunnel key: ${key}`);
     }
 
-    const baseArgs = buildTunnelArgs({ ...cfg, localPort: 0 });
-    // Marker via a VALID OpenSSH SetEnv assignment (NAME=VALUE — a bare
-    // `SetEnv=vsdb-tunnel:key` makes ssh exit 255 with "Invalid SetEnv").
-    // The value appears in `ps` output so parseTunnelProcLine can identify
-    // our processes; the server only sees it when it accepts SetEnv.
-    const args = [...baseArgs, "-o", `SetEnv=VSDB_TUNNEL=vsdb-tunnel:${key}`];
+    const localPort = await pickFreeLocalPort();
+    const args = [
+      ...buildTunnelArgs({ ...cfg, localPort }),
+      "-o",
+      `SetEnv=VSDB_TUNNEL=${MARKER}:${key}`,
+    ];
 
     const child = spawn(this.sshPath, args, {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    const handle = await new Promise<TunnelHandle>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        child.kill("SIGTERM");
-        reject(new Error(`SSH tunnel did not report ready within ${READY_TIMEOUT_MS}ms`));
-      }, READY_TIMEOUT_MS);
-
+    await new Promise<void>((resolve, reject) => {
       let settled = false;
-      const onExit = (code: number | null) => {
+      const finish = (err?: Error) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        reject(new Error(`ssh exited before becoming ready (code ${code})`));
+        child.removeAllListeners("error");
+        err ? reject(err) : resolve();
       };
-      child.on("exit", onExit);
 
-      // Buffer across chunk boundaries — the verbose listening line can be
-      // split arbitrarily by the stream.
-      let buffer = "";
-      const scan = (chunk: Buffer | string) => {
-        if (settled) return;
-        buffer += chunk.toString();
-        // `ssh -v` emits `Local forwarding listening on 127.0.0.1 port N.`
-        // on stderr at the moment the local forward binds.
-        const m = /Local forwarding listening on 127\.0\.0\.1 port (\d+)/.exec(buffer);
-        if (m) {
-          settled = true;
-          clearTimeout(timer);
-          const localPort = Number.parseInt(m[1], 10);
-          child.removeListener("exit", onExit);
-          child.on("exit", () => {
-            // Child died later: drop the handle so a retry can start fresh.
-            this.tunnels.delete(key);
-          });
-          const h: TunnelHandle = { key, localPort, child };
-          this.tunnels.set(key, h);
-          resolve(h);
+      const timer = setTimeout(() => {
+        child.kill("SIGTERM");
+        finish(new Error(`SSH tunnel not ready within ${READY_TIMEOUT_MS}ms`));
+      }, READY_TIMEOUT_MS);
+
+      child.once("error", (err) => {
+        finish(new Error(`failed to start ssh: ${err.message}`));
+      });
+
+      let exited = false;
+      child.once("exit", (code) => {
+        exited = true;
+        finish(
+          new Error(
+            `ssh exited before becoming ready (code ${code ?? "signal"})`,
+          ),
+        );
+      });
+
+      const deadline = Date.now() + READY_TIMEOUT_MS;
+      const poll = async () => {
+        while (!exited && !settled && Date.now() < deadline) {
+          if (await portAlive(localPort)) {
+            finish();
+            return;
+          }
+          await new Promise((r) => setTimeout(r, 150));
         }
       };
-      child.stdout?.on("data", scan);
-      child.stderr?.on("data", scan);
+      void poll();
     });
-    return handle;
+
+    const h: TunnelHandle = { key, localPort, child };
+    this.tunnels.set(key, h);
+    child.once("exit", () => {
+      // Child died later: drop the handle so a retry can start fresh.
+      if (this.tunnels.get(key) === h) this.tunnels.delete(key);
+    });
+    return h;
   }
 
   stop(key: string): boolean {

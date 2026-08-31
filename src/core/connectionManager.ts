@@ -125,10 +125,15 @@ export class ConnectionManager {
     const next: ConnectionConfig = { ...old, ...patch, id: old.id };
 
     // Test-connect lại nếu có đổi password HOẶC đổi bất kỳ trường nào khác (driver/host/...).
-    // An toàn nhất: luôn test-connect. DBX-05: probe đi qua resolver để tunnel
-    // config mới được dùng ngay trong lúc test.
+    // An toàn nhất: luôn test-connect. DBX-05: probe dùng tunnel TEMP KEY —
+    // start() idempotent per key, nên nếu probe dùng `id` nó sẽ trả về
+    // tunnel CŨ (config bastion cũ) và một config mới sai vẫn pass save.
     const testPassword = password ?? (await this.tryGetPassword(id)) ?? "";
-    const probe = await this.resolveAdapter(next, testPassword);
+    const probe = await this.resolveAdapter(
+      next,
+      testPassword,
+      `probe-${id}`,
+    );
     let probeOk = false;
     try {
       await probe.testConnection();
@@ -139,8 +144,9 @@ export class ConnectionManager {
       } catch {
         // ignore
       }
-      // Nếu edit thất bại, đừng để tunnel mới của probe treo.
-      if (!probeOk) this.stopTunnel(id);
+      // Probe tunnel (dù thành công hay thất bại) luôn được dọn — nó chỉ
+      // phục vụ validation; tunnel thật cho id được start lazily sau.
+      this.stopTunnel(`probe-${id}`);
     }
 
     // Commit changes.
@@ -361,6 +367,8 @@ export class ConnectionManager {
   private async resolveAdapter(
     cfg: ConnectionConfig,
     password: string,
+    /** Override the tunnel key (validation probes use `probe-<id>`). */
+    keyOverride?: string,
   ): Promise<DbAdapter> {
     let effective = cfg;
     if (cfg.tunnel) {
@@ -372,7 +380,7 @@ export class ConnectionManager {
           port: cfg.tunnel.port ?? 22,
           targetPort: cfg.port,
         },
-        cfg.id,
+        keyOverride ?? cfg.id,
       );
       effective = {
         ...cfg,

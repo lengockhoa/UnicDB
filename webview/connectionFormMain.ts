@@ -62,6 +62,7 @@ function readForm() {
     port: parseInt(input("port").value, 10) || 0,
     user: input("user").value.trim(),
     database: input("database").value.trim(),
+    password: input("password").value,
     sslMode: (useSsl() ? select("sslMode").value : "disable") as SslMode,
     sslCaPath: input("sslCaPath").value.trim(),
     sslCertPath: input("sslCertPath").value.trim(),

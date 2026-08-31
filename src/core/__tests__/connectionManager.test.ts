@@ -470,4 +470,46 @@ describe("ConnectionManager DBX-05 read-only + tunnel", () => {
     await mgr.dispose();
     expect(stopped).toContain("ALL");
   });
+
+  // DBX-05 review round 2 — the edit/add validation probe MUST start its
+  // tunnel under a temp key, never the connection id (start() is idempotent
+  // per key, so probing under the id would reuse the OLD tunnel and let a
+  // bad new bastion config pass save).
+  it("edit probes through a temp probe-<id> tunnel key and cleans it up", async () => {
+    const startedKeys: string[] = [];
+    const stoppedKeys: string[] = [];
+    // Seed cE into memento BEFORE constructing the manager — loadState runs
+    // in the constructor. pickMemento depends on vscode.workspace folders, so
+    // seed both workspace + global.
+    const seed = [{ id: "cE", name: "e", driver: "postgres", host: "db", port: 5432, user: "u", database: "d", tunnel: { host: "bastion", port: 22 } }];
+    (STUB_CTX as any).workspaceState.get = (key: string) =>
+      key === "vsdb.connections" ? seed : undefined;
+    (STUB_CTX as any).globalState.get = (key: string) =>
+      key === "vsdb.connections" ? seed : undefined;
+    const fakeTunnels = {
+      start: async (tcfg: unknown, key: string) => {
+        startedKeys.push(key);
+        return { key, localPort: 55433, child: undefined };
+      },
+      stop: (key: string) => {
+        stoppedKeys.push(key);
+        return true;
+      },
+      stopAll: () => {},
+      list: () => [],
+      dispose: () => {},
+    } as unknown as SshTunnelManager;
+    const mgr = new (ConnectionManager)(
+      STUB_CTX,
+      () => ({ runQuery: async () => ({ results: [] }), testConnection: async () => {}, close: async () => {} }),
+      fakeTunnels,
+    );
+    (STUB_CTX as any).secrets.get = async (k: string) => (k.endsWith("cE") ? "pw" : undefined);
+    await mgr.editConnection("cE", { host: "db2" });
+    expect(startedKeys).toContain("probe-cE");
+    expect(stoppedKeys).toContain("probe-cE");
+    // The real connection id tunnel was never started during the probe.
+    expect(startedKeys).not.toContain("cE");
+    mgr.dispose();
+  });
 });

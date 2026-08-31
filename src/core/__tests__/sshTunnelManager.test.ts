@@ -74,4 +74,14 @@ describe("SshTunnelManager (fixture ssh)", () => {
     mgr.stopAll();
     expect(mgr.list().length).toBe(0);
   });
+
+  // DBX-05 review round 2: a missing/unexecutable ssh binary emits `error`
+  // (not `exit`) — start must reject promptly instead of crashing the host.
+  it("rejects with a clear error when the ssh binary is missing", async () => {
+    const mgr = new SshTunnelManager("/nonexistent/vsdb-missing-ssh");
+    managers.push(mgr);
+    await expect(mgr.start(cfg, "c5")).rejects.toThrow(
+      /failed to start ssh|exited before becoming ready/,
+    );
+  });
 });
