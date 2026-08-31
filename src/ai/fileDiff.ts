@@ -111,32 +111,6 @@ function missingFinalNewline(text: string): boolean {
 
 
 /**
- * Index in `out` AFTER which the no-newline sentinel belongs: the last
- * `-` line when the OLD side lacks a final newline (and the new side's
- * matching state), else the last `+` line when the NEW side does. -1 when
- * neither applies or no matching line exists.
- */
-function lastTouchedIndex(out: string[], oldNoNl: boolean, newNoNl: boolean): number {
-  let idx = -1;
-  for (let i = 0; i < out.length; i++) {
-    const line = out[i];
-    const isDel = line.startsWith("-");
-    const isAdd = line.startsWith("+");
-    if (oldNoNl && newNoNl) {
-      // Both sides missing: sentinel after the very last -/+ line.
-      if (isDel || isAdd) idx = i;
-    } else if (oldNoNl && (isDel || line.startsWith(" "))) {
-      // Old side unchanged-tail case: a ` ` context line still SHOWS the
-      // old final line, so the sentinel belongs after it too.
-      idx = i;
-    } else if (newNoNl && (isAdd || line.startsWith(" "))) {
-      idx = i;
-    }
-  }
-  return idx;
-}
-
-/**
  * Unified diff (git-style) between oldText and newText.
  * Returns "" when identical. Truncates to maxLines rendered lines with a
  * `… (N more lines)` marker. Emits `\ No newline at end of file` when the
@@ -154,27 +128,65 @@ export function buildUnifiedDiff(
   const ops = diffOps(a, b);
   const hunks = buildHunks(ops, a, b);
 
+  // Sentinel plan: when a side lacks the final newline, git puts one
+  // sentinel directly after that side's LAST diff line (which may be a
+  // `-`, `+`, or ` ` context line — both sides can need their own).
+  const oldNoNl = missingFinalNewline(oldText);
+  const newNoNl = missingFinalNewline(newText);
+  const oldTail = hunks.find((h) => h.aStart + h.aCount >= a.length);
+  const newTail = hunks.find((h) => h.bStart + h.bCount >= b.length);
+
   const out: string[] = [];
   let truncated = 0;
   let stopped = false;
+  const pushHunk = (h: Hunk): void => {
+    out.push(`@@ -${h.aStart + 1},${h.aCount} +${h.bStart + 1},${h.bCount} @@`);
+    // Last line in this hunk that SHOWS the old/new side's final content.
+    let lastOld = -1;
+    let lastNew = -1;
+    for (let i = 0; i < h.lines.length; i++) {
+      const l = h.lines[i];
+      if (l.startsWith("-") || l.startsWith(" ")) lastOld = i;
+      if (l.startsWith("+") || l.startsWith(" ")) lastNew = i;
+    }
+    for (let i = 0; i < h.lines.length; i++) {
+      const line = h.lines[i];
+      out.push(line);
+      // Sentinel immediately after the line it describes — the last
+      // line of the side lacking the final newline (git semantics).
+      if (oldNoNl && h === oldTail && i === lastOld) {
+        out.push("\\ No newline at end of file");
+      }
+      if (newNoNl && h === newTail && i === lastNew) {
+        out.push("\\ No newline at end of file");
+      }
+    }
+  };
+
   for (const h of hunks) {
     if (stopped) {
       truncated += h.lines.length + 1;
       continue;
     }
-    const header = `@@ -${h.aStart + 1},${h.aCount} +${h.bStart + 1},${h.bCount} @@`;
     if (out.length >= maxLines) {
       // No capacity left at all — the rest goes into the marker.
       truncated += h.lines.length + 1;
       stopped = true;
       continue;
     }
-    if (out.length + h.lines.length + 1 > maxLines) {
+    const projected =
+      out.length +
+      h.lines.length +
+      1 +
+      (oldNoNl && h === oldTail ? 1 : 0) +
+      (newNoNl && h === newTail ? 1 : 0);
+    if (projected > maxLines) {
       // This hunk cannot fit whole: render the header + a fitting prefix,
       // then stop (tail truncation). Room >= 1 guarantees at least the
       // header shows; the prefix gives the user a real glimpse.
-      out.push(header);
-      for (const line of h.lines) {
+      out.push(`@@ -${h.aStart + 1},${h.aCount} +${h.bStart + 1},${h.bCount} @@`);
+      for (let i = 0; i < h.lines.length; i++) {
+        const line = h.lines[i];
         if (out.length >= maxLines) {
           truncated++;
           continue;
@@ -184,21 +196,7 @@ export function buildUnifiedDiff(
       stopped = true;
       continue;
     }
-    out.push(header);
-    out.push(...h.lines);
-  }
-  // Sentinel placement: emit `\ No newline at end of file` IMMEDIATELY
-  // after the last diff line that touched the side lacking the final
-  // newline — matching git so readers attribute it to the right line.
-  const oldNoNl = missingFinalNewline(oldText);
-  const newNoNl = missingFinalNewline(newText);
-  if (oldNoNl || newNoNl) {
-    const insertAt = lastTouchedIndex(out, oldNoNl, newNoNl);
-    if (insertAt !== -1 && insertAt < maxLines) {
-      out.splice(insertAt + 1, 0, "\\ No newline at end of file");
-    } else if (insertAt >= maxLines) {
-      truncated++;
-    }
+    pushHunk(h);
   }
   if (truncated > 0) {
     out.push(`… (${truncated} more lines)`);

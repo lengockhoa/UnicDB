@@ -44,11 +44,20 @@ describe("buildUnifiedDiff", () => {
 
   // AIX-02 review: the sentinel must sit next to the line it describes.
   it("sentinel placement: new side lacks newline → after last + line", () => {
-    const d = buildUnifiedDiff("a", "a\nb");
+    const d = buildUnifiedDiff("a\n", "a\nb");
     const lines = d.split("\n");
     const sentinel = lines.indexOf("\\ No newline at end of file");
     expect(sentinel).toBeGreaterThan(0);
     expect(lines[sentinel - 1]).toBe("+b"); // directly after the added line
+  });
+
+  it("sentinel placement: BOTH sides lack newline → two sentinels", () => {
+    const d = buildUnifiedDiff("a", "b");
+    const lines = d.split("\n");
+    const at = lines.map((l, i) => (l === "\\ No newline at end of file" ? i : -1)).filter((i) => i >= 0);
+    expect(at.length).toBe(2);
+    expect(lines[at[0] - 1]).toBe("-a"); // old-side sentinel
+    expect(lines[at[1] - 1]).toBe("+b"); // new-side sentinel
   });
 
   it("sentinel placement: old side lacks newline → after last - line", () => {

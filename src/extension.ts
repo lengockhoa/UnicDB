@@ -142,8 +142,21 @@ async function readWorkspaceFile(p: string): Promise<string> {
  * target. vscode.workspace.fs.rename never leaves a half-written target —
  * the original stays intact when anything throws before the rename.
  */
-async function writeWorkspaceFileAtomic(p: string, content: string): Promise<void> {
+async function writeWorkspaceFileAtomic(
+  p: string,
+  content: string,
+  expectedOld?: string,
+): Promise<void> {
   const target = vscode.Uri.parse(p);
+  // CAS: when the caller pins the previewed snapshot, re-read the target
+  // immediately before the rename and refuse the swap when it changed —
+  // the approval the user gave described DIFFERENT bytes.
+  if (expectedOld !== undefined) {
+    const current = new TextDecoder().decode(await vscode.workspace.fs.readFile(target));
+    if (current !== expectedOld) {
+      throw new Error("conflict: file changed since the approved preview");
+    }
+  }
   const tmp = target.with({
     path: `${target.path}.vsdb-tmp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
   });

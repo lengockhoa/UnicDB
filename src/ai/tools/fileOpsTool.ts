@@ -12,8 +12,13 @@ import { buildUnifiedDiff, diffStats } from "../fileDiff";
 
 export interface FileOpsDeps {
   readFile: (path: string) => Promise<string>;
-  /** Host MUST implement temp-write + rename (atomic replacement). */
-  writeFile: (path: string, content: string) => Promise<void>;
+  /**
+   * Host MUST implement temp-write + rename (atomic replacement) AND a
+   * compare-and-swap: when expectedOld is provided the host re-reads the
+   * target right before the rename and MUST reject (throw) when it differs
+   * — closing the check→write TOCTOU window.
+   */
+  writeFile: (path: string, content: string, expectedOld?: string) => Promise<void>;
   /** Host-curated workspace allowlist (grounding file list). Exact strings. */
   files: readonly string[];
   /** Test/debug escape hatch: mirror a denied permission decision. */
@@ -48,71 +53,65 @@ export function fileOpsDeniedEnvelope(): string {
 }
 
 /**
- * Freshness ledger shared by the preview and execute halves of ONE
- * workspace_write registration: the preview records the snapshot the user
- * approved; execute refuses to write if the file changed since that
- * snapshot (stale-approval protection).
+ * Per-call snapshot carry: the preview computes and returns the file
+ * snapshot it rendered; the registration (aiChatPanel) binds that snapshot
+ * to THE individual permission request, so two concurrent cards for the
+ * same path can never approve against each other's snapshot. The snapshot
+ * rides on the execute args as `__vsdbExpectedOld` (stripped before the
+ * model-visible envelope contract; also passed to the host writeFile CAS).
  */
-export function createFileOpsLedger(): {
-  record: (path: string, seen: string) => void;
-  check: (path: string, current: string) => boolean;
-} {
-  const seen = new Map<string, string>();
-  return {
-    record: (path, snapshot) => {
-      seen.set(path, snapshot);
-    },
-    check: (path, current) => {
-      const snapshot = seen.get(path);
-      return snapshot === undefined || snapshot === current;
-    },
-  };
+const SNAPSHOT_ARG = "__vsdbExpectedOld";
+
+export interface FileOpsPreview {
+  card: string | undefined;
+  /** undefined when no snapshot was captured (bad-args/out-of-scope/missing). */
+  snapshot?: string;
 }
 
 /**
  * Build the permission-card preview BEFORE the user decides: reads the
  * current file and renders the same capped unified diff the write would
- * apply. Also records the read snapshot for execute-time freshness.
- * Returns undefined for bad-args/outside-workspace/not-found so the card
- * falls back to the plain args summary (the tool's own execute will still
- * produce the precise envelope).
+ * apply, returning the snapshot for request-scoped binding.
  */
 export function createFileOpsPreview(
   deps: Pick<FileOpsDeps, "readFile" | "files">,
-  ledger = createFileOpsLedger(),
-): (args: Record<string, unknown>) => Promise<string | undefined> {
+): (args: Record<string, unknown>) => Promise<FileOpsPreview | undefined> {
   return async (args) => {
     const path = typeof args["path"] === "string" ? args["path"] : undefined;
     const newContent = typeof args["newContent"] === "string" ? args["newContent"] : undefined;
-    if (path === undefined || newContent === undefined) return undefined;
-    if (!deps.files.includes(path)) return undefined;
+    if (path === undefined || newContent === undefined) return { card: undefined };
+    if (!deps.files.includes(path)) return { card: undefined };
     let old: string;
     try {
       old = await deps.readFile(path);
     } catch {
-      return undefined;
+      return { card: undefined };
     }
-    ledger.record(path, old);
     const stats = diffStats(old, newContent);
     const diff = buildUnifiedDiff(old, newContent);
     const head = `proposed ${path} (+${stats.added} -${stats.removed})`;
-    return diff === "" ? `${head} — no changes` : `${head}\n${diff}`;
+    return {
+      card: diff === "" ? `${head} — no changes` : `${head}\n${diff}`,
+      snapshot: old,
+    };
   };
 }
 
-export function createFileOpsTool(deps: FileOpsDeps, ledger = createFileOpsLedger()): AgentTool {
+export function createFileOpsTool(deps: FileOpsDeps): AgentTool {
   return {
     name: "workspace_write",
     description:
       "Propose an edit to ONE workspace file (exact allowlist paths only). " +
       "Returns a unified diff preview; the user must explicitly approve before " +
-      "anything is written. Writes are atomic (temp+rename by the host). " +
-      "Refuses with reason=stale-preview if the file changed after the " +
-      "previewed snapshot.",
+      "anything is written. Writes are atomic (temp+rename by the host) and " +
+      "compare-and-swapped against the previewed snapshot — the host refuses " +
+      "and the tool returns reason=stale-preview if the file changed after " +
+      "the preview the user approved.",
     parameters: SCHEMA,
     execute: async (args: Record<string, unknown>): Promise<string> => {
       const path = typeof args["path"] === "string" ? args["path"] : undefined;
       const newContent = typeof args["newContent"] === "string" ? args["newContent"] : undefined;
+      const expectedOld = typeof args[SNAPSHOT_ARG] === "string" ? (args[SNAPSHOT_ARG] as string) : undefined;
       if (path === undefined || newContent === undefined) {
         return envelope("bad-args", "path and newContent are required strings");
       }
@@ -126,9 +125,9 @@ export function createFileOpsTool(deps: FileOpsDeps, ledger = createFileOpsLedge
       } catch {
         return envelope("not-found", path);
       }
-      // Freshness: refuse when the file no longer matches the previewed
-      // snapshot the approval was based on.
-      if (!ledger.check(path, old)) {
+      // Freshness (approval-scope): refuse when the file no longer matches
+      // the snapshot bound to THIS permission decision.
+      if (expectedOld !== undefined && expectedOld !== old) {
         return envelope("stale-preview", path);
       }
       const diff = buildUnifiedDiff(old, newContent);
@@ -136,7 +135,8 @@ export function createFileOpsTool(deps: FileOpsDeps, ledger = createFileOpsLedge
         return JSON.stringify({ applied: true, path, diff: "", unchanged: true });
       }
       try {
-        await deps.writeFile(path, newContent);
+        // CAS: the host re-checks expectedOld right before the rename.
+        await deps.writeFile(path, newContent, expectedOld);
       } catch (err) {
         return envelope("write-failed", err instanceof Error ? err.message : String(err));
       }

@@ -56,7 +56,7 @@ import {
 import { defaultAiSettings, type AiModelRole } from "../ai/settings";
 import { createDbTools } from "../ai/tools/registry";
 import { createWorkspaceSearchTool } from "../ai/tools/workspaceSearchTool";
-import { createFileOpsTool, createFileOpsPreview, createFileOpsLedger, fileOpsDeniedEnvelope } from "../ai/tools/fileOpsTool";
+import { createFileOpsTool, createFileOpsPreview, fileOpsDeniedEnvelope } from "../ai/tools/fileOpsTool";
 import { diffStats } from "../ai/fileDiff";
 import { createSqlTool } from "../ai/tools/sqlTool";
 import { createExportStructureTool } from "../ai/tools/schemaTools";
@@ -644,26 +644,37 @@ export class DbToolPermissionGate {
    * Gate a tool behind the explicit approval card.
    * @param opts.describe optional async detail builder — runs BEFORE the
    *   card is posted so the user sees a real preview (AIX-02: the computed
-   *   unified diff), not just an args summary.
+   *   unified diff), not just an args summary. May return bound args that
+   *   are merged into the execute call ON THIS REQUEST only — concurrent
+   *   cards each keep their own snapshot (no shared mutable state).
    * @param opts.deniedResult optional deny envelope — lets a tool keep its
    *   JSON contract on denial (default: generic DB_TOOL_DENIED_MESSAGE).
    */
   wrap(
     tool: AgentTool,
     opts?: {
-      describe?: (args: Record<string, unknown>) => Promise<string | undefined> | string | undefined;
+      describe?: (
+        args: Record<string, unknown>,
+      ) =>
+        | string
+        | undefined
+        | { detail?: string; bindArgs?: Record<string, unknown> }
+        | Promise<string | undefined | { detail?: string; bindArgs?: Record<string, unknown> }>;
       deniedResult?: () => string;
     },
   ): AgentTool {
     return {
       ...tool,
       execute: async (args: Record<string, unknown>): Promise<string> => {
-        const detail = opts?.describe ? await opts.describe(args) : undefined;
+        const described = opts?.describe ? await opts.describe(args) : undefined;
+        const detail = typeof described === "string" ? described : described?.detail;
+        const bindArgs = typeof described === "object" && described !== null ? described.bindArgs : undefined;
+        const callArgs = bindArgs ? { ...args, ...bindArgs } : args;
         const granted = await this.request(tool.name, args, detail);
         if (!granted) {
           return opts?.deniedResult ? opts.deniedResult() : DB_TOOL_DENIED_MESSAGE;
         }
-        return tool.execute(args);
+        return tool.execute(callArgs);
       },
     };
   }
@@ -1540,11 +1551,13 @@ export class AiChatPanel {
           writeFile: this.options.grounding.writeFile,
           files: this.options.grounding.filesToRead ?? [],
         };
-        const ledger = createFileOpsLedger();
-        const fileOps = createFileOpsTool(fileOpsDeps, ledger);
+        const fileOps = createFileOpsTool(fileOpsDeps);
         registry.register(
           this.dbToolGate.wrap(fileOps, {
-            describe: createFileOpsPreview(fileOpsDeps, ledger),
+            describe: async (args) => {
+              const p = await createFileOpsPreview(fileOpsDeps)(args);
+              return p ? { detail: p.card, bindArgs: { __vsdbExpectedOld: p.snapshot } } : undefined;
+            },
             deniedResult: fileOpsDeniedEnvelope,
           }),
         );
@@ -2000,11 +2013,13 @@ export class AiChatPanel {
           writeFile: this.options.grounding.writeFile,
           files: this.options.grounding.filesToRead ?? [],
         };
-        const ledger = createFileOpsLedger();
-        const fileOps = createFileOpsTool(fileOpsDeps, ledger);
+        const fileOps = createFileOpsTool(fileOpsDeps);
         registry.register(
           this.dbToolGate.wrap(fileOps, {
-            describe: createFileOpsPreview(fileOpsDeps, ledger),
+            describe: async (args) => {
+              const p = await createFileOpsPreview(fileOpsDeps)(args);
+              return p ? { detail: p.card, bindArgs: { __vsdbExpectedOld: p.snapshot } } : undefined;
+            },
             deniedResult: fileOpsDeniedEnvelope,
           }),
         );
