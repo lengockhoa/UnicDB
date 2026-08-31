@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.27.0] — 2026-08-31
+
+Cycle RLX-01: Operational Reliability Foundation (targeted PG cancellation, single-flight schema refresh, fail-closed import validation).
+
+### Added
+- **`cancelActiveQuery` adapter seam** (`src/adapters/types.ts` + `src/adapters/postgres.ts` + `src/core/queryRunner.ts`): `vsdb.cancelQuery` now cancels the active non-cursor PostgreSQL backend owned by `QueryRunner` via `pg_cancel_backend` on a dedicated client — the shared pool/adapter is never closed. Backend PIDs are tracked in a per-adapter `Set` while a `runQuery` client is checked out, added per call and deleted by exact value in `finally`, so overlapping runs (grant wizard, metadata calls) can't clear each other's window or steal the cancel target. Batched cursors keep `BatchedQuery.cancel()` as the exclusive path; after a statement settles the runner's cancel is a no-op.
+- **SchemaCache single-flight coalescing** (`src/ui/schemaCache.ts`): concurrent identical loads share one provider call via a keyed in-flight registry with a generation guard against `invalidate()` races. Any settle path — including a SYNCHRONOUS provider throw — clears the registry entry, so the next caller always retries fresh (first-caller stale-on-error fallback preserved). Public API and 60s TTL unchanged.
+- **Import plan fail-closed validation** (`src/core/importer/importExecute.ts`): a malformed execution plan (invalid batch count, missing/unexpected statement, empty parameterSets) aborts BEFORE `beginTransaction` with the offending 0-based statement index and per-case reason — no partial writes, valid plans unaffected.
+
+### Review
+- Independent unic-smart cycle review (3 parallel reviewers) — all approved in round 2 after one auto-fix round each: RLX-001 gained overlap-race regression tests (earlier run settling must not clear a later run's PID window; cancel targets every tracked pid through one dedicated client) and a rewritten provider-deferred cancel race test; RLX-002 gained a sync-throw provider regression test pinning fresh-retry semantics; RLX-003's gate errors now pin statement index + reason. Full suite 2735 passed | 2 skipped, typecheck clean.
+
 ## [1.26.0] — 2026-08-31
 
 Cycle AIX-06: Agent Trace & Replay (ordered, redacted, bounded in-memory turn trace on both engines).
