@@ -149,9 +149,28 @@ export interface DbAdapter {
    */
   listTableDetail(schema: string, table: string): Promise<TableDetail>;
   testConnection(): Promise<void>;
+  /**
+   * DBX-06 Safe Rename usage analysis — parameterized pg_catalog queries
+   * (views/matviews depending on the table, FKs referencing it, routines
+   * mentioning it, target-name collisions). Undefined on mysql/mssql —
+   * callers guard driver === "postgres" first (same as catalog/admin).
+   */
+  renameUsage?: RenameUsageApi;
   catalog?: CatalogApi;
   admin?: AdminApi;
 }
+
+/**
+ * DBX-06 — all four lookups MUST be $n-parameterized (never interpolate
+ * user identifiers into SQL text).
+ */
+export interface RenameUsageApi {
+  dependentViews(schema: string, table: string): Promise<Array<{ name: string; kind: string }>>;
+  referencingFks(schema: string, table: string): Promise<Array<{ constraint: string; fromTable: string }>>;
+  routines(schema: string, table: string): Promise<Array<{ name: string }>>;
+  nameCollision(schema: string, candidate: string): Promise<Array<{ name: string; kind: string }>>;
+}
+
 /**
  * Result shape cho adapter.listTableDetail. Row format giữ stringly-typed cho
  * pg_catalog (pgIntrospect map sang TableSpec sau).

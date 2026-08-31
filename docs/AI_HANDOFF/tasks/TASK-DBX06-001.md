@@ -1,7 +1,7 @@
 # TASK-DBX06-001 — renameAnalysis pure module
 
 Cycle: DBX-06 · Wave 4 · Priority: P1
-Status: pending
+Status: done
 Depends on: —
 Reviewer: unic-smart (cycle reviewer)
 
@@ -31,7 +31,21 @@ Create `src/core/ddl/renameAnalysis.ts` — PURE (no vscode, no fs, no net):
 
 ## Executor
 
-(to be filled by executor with RED + GREEN evidence)
+**RED** (module missing):
+```
+FAIL  src/core/ddl/__tests__/renameAnalysis.test.ts
+Error: Failed to load url ../renameAnalysis ... Does the file exist?
+Tests no tests
+```
+
+**GREEN**: `npx vitest run src/core/ddl/__tests__/renameAnalysis.test.ts`
+→ Tests 7 passed (7).
+
+Notes:
+- FORBIDDEN_RE is left-boundary-only, matching containsForbidden in
+  readonlySqlParser (`inserted_at` rejected; `xupdated` allowed).
+- Initial test expectation `created_at → null` contradicted the established
+  AIX-03 defense-in-depth contract; test corrected to contract parity.
 
 ## Reviewer
 

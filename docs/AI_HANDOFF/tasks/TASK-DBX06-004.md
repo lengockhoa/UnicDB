@@ -1,7 +1,7 @@
 # TASK-DBX06-004 — scaffold hygiene + CHANGELOG/README
 
 Cycle: DBX-06 · Wave 4 · Priority: P2
-Status: pending
+Status: done
 Depends on: DBX06-003
 Reviewer: unic-smart (cycle reviewer)
 
@@ -26,7 +26,19 @@ Reviewer: unic-smart (cycle reviewer)
 
 ## Executor
 
-(to be filled by executor with RED + GREEN evidence)
+**Scaffold tests** (dbx06Scaffold.test.ts): 12/12 green — pure modules
+are vscode-free, SQL builders parameterized with no `${schema}`-style
+substitution, exports present, package.json declares both commands, all
+cycle files exist.
+
+**Cycle close**: `npm test` 2608 passed | 2 skipped (199 files);
+`npm run typecheck` 0; `npm run compile` esbuild clean.
+
+**CHANGELOG**: `## [1.23.0] — 2026-08-31` section + compare link
+`v1.22.0...v1.23.0` (re-inserted 1.18/1.20/1.21 link rows that earlier
+edits had dropped).
+
+**README**: bullet after the 1.22.0 line — Safe Rename Refactor summary.
 
 ## Reviewer
 

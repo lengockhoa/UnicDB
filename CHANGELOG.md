@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.23.0] — 2026-08-31
+
+Cycle DBX-06: Safe Rename Refactor.
+
+### Added
+- **`vsdb.renameTable` / `vsdb.renameColumn` commands** (PostgreSQL-only): open a Safe Rename dialog. Usage analysis runs first — dependent views, referencing foreign keys, and routines that mention the name are reported alongside the proposed `ALTER … RENAME …` statement. The user reviews the plan; approve then runs the rename, with per-statement progress.
+- **Catalog usage analysis** (`src/core/ddl/renameCatalog.ts`): four parameterized pg_catalog queries — `DEPENDENT_VIEWS_SQL` (pg_depend → pg_rewrite), `TABLE_FKS_SQL` (constraints on other tables referencing the target), `ROUTINES_SQL` (advisory: routines whose `prosrc` mentions the name), `NAME_COLLISION_SQL` (union over `r/v/m/S/i` relkinds for candidate-name conflicts). All four take `$1`/`$2` bound parameters — no identifier is interpolated into the SQL text.
+- **Name validation + collision-safe plan builder** (`renameAnalysis.ts` + `buildRenamePlan`): the new name must match `^[A-Za-z_][A-Za-z0-9_$]*$` and not start with a SQL keyword (the same defense-in-depth contract as the agent tool identifier guard). A collision or an identical-name request returns `errors` and NO statements — nothing runs.
+- **Sequential statement runner with progress and cancel** (`renameRunner.ts`): executes the plan in order, posts per-statement progress, and supports cancel-before-next. Mid-run failure reports `applied` + `failedAt` + the failing statement + the error message. Cancellation reports `applied` + `cancelledAfter` + `remaining`.
+- **Webview** (`webview/renameFormMain.ts` + `dist/renameForm.js`): vanilla DOM, textContent-only, CSP-safe; renders init / analysis / progress / done states.
+
+### Adapter surface
+- Added an optional `renameUsage` capability on `DbAdapter` (`RenameUsageApi` in `src/adapters/types.ts`). Postgres implements it; mysql/mssql leave it undefined (callers guard `driver === "postgres"` first via `guardPostgres`).
+
+### Review
+- Independent unic-smart cycle review — queued.
+
 ## [1.22.0] — 2026-08-31
 
 Cycle AIX-03: Database Analysis Copilot.
@@ -546,8 +563,7 @@ Cycle G: set-filter, toolbar icons, `run-sh` fix.
 [1.16.0]: https://github.com/lengockhoa/VSDB/compare/v1.15.0...v1.16.0
 [1.17.0]: https://github.com/lengockhoa/VSDB/compare/v1.16.0...v1.17.0
 [1.18.0]: https://github.com/lengockhoa/VSDB/compare/v1.17.0...v1.18.0
+[1.23.0]: https://github.com/lengockhoa/VSDB/compare/v1.22.0...v1.23.0
 [1.22.0]: https://github.com/lengockhoa/VSDB/compare/v1.21.0...v1.22.0
 [1.21.0]: https://github.com/lengockhoa/VSDB/compare/v1.20.0...v1.21.0
 [1.20.0]: https://github.com/lengockhoa/VSDB/compare/v1.19.0...v1.20.0
-[1.19.0]: https://github.com/lengockhoa/VSDB/compare/v1.18.0...v1.19.0
-[1.13.0]: https://github.com/lengockhoa/VSDB/compare/v1.12.0...v1.13.0

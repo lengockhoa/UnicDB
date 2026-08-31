@@ -72,6 +72,18 @@ const aiSettingsFormConfig = {
   logLevel: "info",
 };
 /** @type {import('esbuild').BuildOptions} */
+const renameFormConfig = {
+  entryPoints: ["webview/renameFormMain.ts"],
+  outfile: "dist/renameForm.js",
+  bundle: true,
+  platform: "browser",
+  format: "iife",
+  target: "es2022",
+  sourcemap: !minify,
+  minify,
+  logLevel: "info",
+};
+/** @type {import('esbuild').BuildOptions} */
 const aiChatPanelConfig = {
   entryPoints: ["webview/aiChatPanelMain.ts"],
   outfile: "dist/aiChatPanel.js",
@@ -146,7 +158,8 @@ async function run() {
     const ctx8 = await esbuild.context(consolePanelConfig);
     const ctx9 = await esbuild.context(comparePanelConfig);
     const ctx10 = await esbuild.context(erPanelConfig);
-    await Promise.all([ctx1.watch(), ctx2.watch(), ctx3.watch(), ctx4.watch(), ctx5.watch(), ctx6.watch(), ctx7.watch(), ctx8.watch(), ctx9.watch(), ctx10.watch()]);
+    const ctxRename = await esbuild.context(renameFormConfig);
+    await Promise.all([ctx1.watch(), ctx2.watch(), ctx3.watch(), ctx4.watch(), ctx5.watch(), ctx6.watch(), ctx7.watch(), ctx8.watch(), ctx9.watch(), ctx10.watch(), ctxRename.watch()]);
     console.log("esbuild: watching...");
   } else {
     await Promise.all([
@@ -158,8 +171,7 @@ async function run() {
       esbuild.build(aiChatPanelConfig),
       esbuild.build(schemaFormConfig),
       esbuild.build(consolePanelConfig),
-      esbuild.build(comparePanelConfig),
-      esbuild.build(erPanelConfig),
+      esbuild.build(renameFormConfig),
     ]);
     console.log("esbuild: build complete");
   }

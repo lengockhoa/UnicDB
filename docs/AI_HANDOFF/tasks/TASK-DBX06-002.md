@@ -1,7 +1,7 @@
 # TASK-DBX06-002 — catalog usage SQL + plan builder
 
 Cycle: DBX-06 · Wave 4 · Priority: P1
-Status: pending
+Status: done
 Depends on: DBX06-001
 Reviewer: unic-smart (cycle reviewer)
 
@@ -41,7 +41,22 @@ Create `src/core/ddl/renameCatalog.ts` — SQL builders + pure plan builder
 
 ## Executor
 
-(to be filled by executor with RED + GREEN evidence)
+**RED**: `Failed to load url ../renameCatalog ... Does the file exist?` —
+Tests no tests.
+
+**GREEN**: `npx vitest run src/core/ddl/__tests__/renameCatalog.test.ts
+src/core/ddl/__tests__/renameAnalysis.test.ts` → Tests 14 passed (14).
+
+Notes:
+- 4 SQL builders parameterized ($1 schema, $2 table/candidate), pg_catalog
+  only, zero information_schema, zero regclass-in-WHERE.
+- DEPENDENT_VIEWS_SQL: pg_depend→pg_rewrite→pg_class join, excludes the
+  table itself.
+- TABLE_FKS_SQL: contype='f' with confrelid=target, excludes self-FK.
+- ROUTINES_SQL: prosrc ILIKE advisory mention.
+- NAME_COLLISION_SQL: relkind r/v/m/S/i in target schema.
+- buildRenamePlan: ONE atomic statement; collision/same-name → errors +
+  empty statements.
 
 ## Reviewer
 

@@ -42,13 +42,14 @@ import type {
   ListSessionsOptions,
   QueryResult,
   RoutineInfo,
-  RunResult,
   SchemaInfo,
   SequenceInfo,
   TableConstraintInfo,
   TableDetail,
-  TableInfo,
   TriggerInfo,
+  TableInfo,
+  RunResult,
+  RenameUsageApi,
   ViewInfo,
 } from "./types";
 import {
@@ -76,6 +77,12 @@ import {
   INTROSPECT_COLUMNS_SQL,
   INTROSPECT_CONSTRAINTS_SQL,
 } from "../core/ddl/pgIntrospect";
+import {
+  DEPENDENT_VIEWS_SQL,
+  TABLE_FKS_SQL,
+  ROUTINES_SQL,
+  NAME_COLLISION_SQL,
+} from "../core/ddl/renameCatalog";
 import { splitStatements } from "../core/statementParser";
 import { maskLiteralsAndComments } from "../core/dangerousStatement";
 
@@ -711,6 +718,38 @@ export class PostgresAdapter implements DbAdapter {
       constraints: consRes.rows,
     };
   }
+
+  // ---- DBX-06 Safe Rename usage analysis (parameterized pg_catalog) --------
+
+  readonly renameUsage: RenameUsageApi = {
+    dependentViews: (schema, table) =>
+      this.query<{ name: string; kind: string }>(DEPENDENT_VIEWS_SQL(), [
+        schema,
+        table,
+      ]).then((r) => r.rows),
+
+    referencingFks: (schema, table) =>
+      this.query<{
+        constraint: string;
+        from_table: string;
+      }>(TABLE_FKS_SQL(), [schema, table]).then((r) =>
+        r.rows.map((row) => ({
+          constraint: row.constraint,
+          fromTable: row.from_table,
+        })),
+      ),
+
+    routines: (schema, table) =>
+      this.query<{ name: string }>(ROUTINES_SQL(), [schema, table]).then(
+        (r) => r.rows,
+      ),
+
+    nameCollision: (schema, candidate) =>
+      this.query<{ name: string; kind: string }>(NAME_COLLISION_SQL(), [
+        schema,
+        candidate,
+      ]).then((r) => r.rows),
+  };
 
   // ---- Helpers --------------------------------------------------------------
 

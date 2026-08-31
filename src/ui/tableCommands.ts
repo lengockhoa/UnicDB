@@ -35,6 +35,7 @@ import {
   type SampleColumn,
 } from "./sampleDataAi";
 import { NewTableForm } from "./newTableForm";
+import { RenameForm } from "./renameForm";
 import { SchemaForm } from "./schemaForm";
 import { buildPostmanPayload } from "./postmanPayload";
 import { buildTableStructure, buildViewStructure, buildDatabaseStructure, type ExportColumn } from "./exportStructure";
@@ -73,8 +74,9 @@ function resolveTableNode(arg: unknown): ResolvedTableNode | null {
 }
 
 const COMMAND_TITLE: Record<string, string> = {
-  newTable: "New Table",
   modifyTable: "Modify Table",
+  renameTable: "Rename Table",
+  renameColumn: "Rename Column",
   copyCreateDdl: "Copy Create Query",
   generateSampleData: "Generate Sample Data",
   analyzeTable: "Analyze Table",
@@ -434,6 +436,68 @@ export function registerTableCommands(deps: RegisterDeps): void {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         void vscode.window.showErrorMessage(`Vacuum Table failed: ${msg}`);
+      }
+    }),
+  );
+
+  // DBX-06 — vsdb.renameTable: safe rename dialog (table nodes, PG only).
+  context.subscriptions.push(
+    vscode.commands.registerCommand("vsdb.renameTable", async (arg?: unknown) => {
+      const resolved = resolveTableNode(arg);
+      if (!resolved) return;
+      const guarded = guardPostgres(resolved, "renameTable");
+      if (!guarded) return;
+      const { conn, schema, table } = guarded;
+      if (table === "") return;
+      const form = new RenameForm({
+        extensionUri: context.extensionUri,
+        mode: "table",
+        schema,
+        table,
+        oldName: table,
+        mgr,
+        conn,
+        onRenamed: async (newName) => {
+          tree.refresh();
+          await revealTableNode(treeView, conn, schema, newName);
+        },
+      });
+      form.show();
+    }),
+  );
+
+  // DBX-06 — vsdb.renameColumn: pick a column, then safe rename dialog.
+  context.subscriptions.push(
+    vscode.commands.registerCommand("vsdb.renameColumn", async (arg?: unknown) => {
+      const resolved = resolveTableNode(arg);
+      if (!resolved) return;
+      const guarded = guardPostgres(resolved, "renameColumn");
+      if (!guarded) return;
+      const { conn, schema, table } = guarded;
+      if (table === "") return;
+      try {
+        const { columns } = await introspectTable(mgr, conn, schema, table);
+        const names = columns.map((c) => c.column_name);
+        const picked = await vscode.window.showQuickPick(names, {
+          placeHolder: `Select column to rename on ${schema}.${table}`,
+        });
+        if (!picked) return;
+        const form = new RenameForm({
+          extensionUri: context.extensionUri,
+          mode: "column",
+          schema,
+          table,
+          oldName: picked,
+          mgr,
+          conn,
+          onRenamed: async () => {
+            tree.refresh();
+          },
+        });
+        form.show();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        void vscode.window.showErrorMessage(`Rename Column failed: ${msg}`);
       }
     }),
   );

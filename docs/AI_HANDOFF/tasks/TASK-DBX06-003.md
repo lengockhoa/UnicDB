@@ -1,7 +1,7 @@
 # TASK-DBX06-003 — rename UI (preview + confirm + progress) + commands
 
 Cycle: DBX-06 · Wave 4 · Priority: P1
-Status: pending
+Status: done
 Depends on: DBX06-002
 Reviewer: unic-smart (cycle reviewer)
 
@@ -40,7 +40,17 @@ Reviewer: unic-smart (cycle reviewer)
 
 ## Executor
 
-(to be filled by executor with RED + GREEN evidence)
+Delivered: src/core/ddl/renameRunner.ts (pure runRenameStatements — progress + mid-run failure + cancel-before-next), src/ui/renameFormMessages.ts (typed init/analysis/progress/done contract), src/ui/renameForm.ts (host — runs the 4 parameterized pg_catalog lookups via adapter.renameUsage capability, builds plan, runs statements, posts per-statement progress + done shape), webview/renameFormMain.ts (vanilla DOM, textContent-only, init/analysis/progress/done renders), esbuild entry dist/renameForm.js, tableCommands.ts wires vsdb.renameTable + vsdb.renameColumn (renameTable → onRenamed reveals the renamed node; renameColumn → QuickPick over listTableDetail columns), package.json command + menu contributions.
+
+**RED → GREEN evidence**:
+- `npx vitest run src/core/ddl/__tests__/renameRunner.test.ts` → Tests 3 passed
+- `npx vitest run src/ui/__tests__/renameFormHost.test.ts` → Tests 4 passed
+- `npm run compile` + `npx vitest run src/ui/__tests__/renameFormBundle.test.ts` → Tests 5 passed
+
+Notes:
+- Adapter interface gained an OPTIONAL `renameUsage` capability (RenameUsageApi in src/adapters/types.ts). PostgresAdapter implements it; mysql/mssql leave it undefined (caller guard via guardPostgres + non-null check in RenameForm.usage()).
+- Cancellation respects the roadmap "cancellation/partial failure" edge: the cancel probe is polled BEFORE each statement, so a mid-flight cancel still completes the in-flight statement and reports applied/cancelledAfter/remaining.
+- Webview is textContent-only — bundle source asserts no innerHTML/insertAdjacentHTML writes (regression for the project-wide webview-CSP rule).
 
 ## Reviewer
 
