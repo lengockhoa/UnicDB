@@ -1,6 +1,6 @@
 # TASK-AIX02-003 — aiChatPanel registration + permission gate + card detail
 
-**Status:** pending
+**Status:** implemented — awaiting reviewer (unic-smart)
 **Owner:** executor (TDD)
 **Reviewer:** unic-smart (cycle reviewer)
 
@@ -30,4 +30,11 @@ npm run typecheck
 
 ## Executor Report
 
-(to be filled by executor with RED + GREEN evidence)
+### Executor (unic-code)
+
+**RED evidence**: first run of `src/ui/__tests__/aix02Registration.test.ts` → `1 failed`: the gate-mirror test's writeFile stub threw "MUST NOT be called" even on the allowed path (test bug) — after fixing the stub to count writes, the deny→no-write and allow→one-write invariants both hold.
+
+**GREEN evidence**: 6/6 (+17 existing aiChatPanelDbAware unchanged). Registration policy: `workspace_write` registers ONLY when `grounding.writeFile` is present (added to `GroundingDeps` as optional; `extension.ts` passes `writeWorkspaceFileAtomic` — temp sibling + rename with temp cleanup on rename failure). Both runBuiltinTurn and the omp/MCP mirror wrap the tool with `dbToolGate.wrap`. Permission-card `detail` branch: `path=… +N lines (proposed file, M chars)` — path + counts only, never raw content.
+
+**Typecheck**: 0 errors. Existing suites (aiChatPanelDbAware etc.) green.
+

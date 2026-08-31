@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.21.0] — 2026-08-31
+
+Cycle AIX-02: Safe File Operations.
+
+### Added
+- **`workspace_write` agent tool** (opt-in, requires `vsdb.ai.grounding`): the AI can propose an edit to ONE file from the host-curated workspace allowlist. Every execution is fronted by the existing explicit permission card (allow once / allow session / deny, default-deny).
+- **Unified diff preview**: the tool returns a git-style diff (LCS line matching, ≤200 rendered lines, `\ No newline` sentinel) plus the diff counts on the approval card — path + line counts, never raw file content.
+- **Scope discipline**: exact-string allowlist membership only — path normalization or `..` traversal can never widen scope; anything outside returns `outside-workspace`.
+- **Atomic writes**: the host writes via temp-file + rename (`writeWorkspaceFileAtomic`); a failed rename removes the temp and leaves the original untouched. All failures come back as JSON envelopes (`not-found`, `write-failed`, `outside-workspace`, `permission-denied`) — the tool never throws and never writes on a rejected case.
+
+### Review
+- Independent unic-smart review — fix rounds, superseding APPROVED.
+
 ## [1.20.0] — 2026-08-31
 
 Cycle DBX-05: Connection Workspace.
@@ -521,6 +534,7 @@ Cycle G: set-filter, toolbar icons, `run-sh` fix.
 [1.16.0]: https://github.com/lengockhoa/VSDB/compare/v1.15.0...v1.16.0
 [1.17.0]: https://github.com/lengockhoa/VSDB/compare/v1.16.0...v1.17.0
 [1.18.0]: https://github.com/lengockhoa/VSDB/compare/v1.17.0...v1.18.0
+[1.21.0]: https://github.com/lengockhoa/VSDB/compare/v1.20.0...v1.21.0
 [1.20.0]: https://github.com/lengockhoa/VSDB/compare/v1.19.0...v1.20.0
 [1.19.0]: https://github.com/lengockhoa/VSDB/compare/v1.18.0...v1.19.0
 [1.13.0]: https://github.com/lengockhoa/VSDB/compare/v1.12.0...v1.13.0

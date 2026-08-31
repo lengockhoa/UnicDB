@@ -113,6 +113,29 @@ async function readWorkspaceFile(p: string): Promise<string> {
   const bytes = await vscode.workspace.fs.readFile(vscode.Uri.file(p));
   return new TextDecoder().decode(bytes);
 }
+/**
+ * AIX-02 — atomic write: write to a temp sibling, then rename over the
+ * target. vscode.workspace.fs.rename never leaves a half-written target —
+ * the original stays intact when anything throws before the rename.
+ */
+async function writeWorkspaceFileAtomic(p: string, content: string): Promise<void> {
+  const target = vscode.Uri.file(p);
+  const tmp = target.with({
+    path: `${target.path}.vsdb-tmp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+  });
+  await vscode.workspace.fs.writeFile(tmp, new TextEncoder().encode(content));
+  try {
+    await vscode.workspace.fs.rename(tmp, target, { overwrite: true });
+  } catch (err) {
+    // Rename failed — remove the temp so no litter remains.
+    try {
+      await vscode.workspace.fs.delete(tmp);
+    } catch {
+      /* best-effort */
+    }
+    throw err;
+  }
+}
 
 export async function activate(
   context: vscode.ExtensionContext,
@@ -962,6 +985,17 @@ async function commandOpenAiChat(
     extensionUri: extensionUriForForm,
     deps,
     adapterFactory,
+    // AIX-01/AIX-02: opt-in workspace grounding + gated file writes.
+    // `vsdb.ai.grounding` defaults to false so the pre-AIX-01 turn path is
+    // unchanged; writeFile absent → workspace_write is never registered.
+    grounding: isGroundingEnabled()
+      ? {
+          getSelection: readActiveSelection,
+          readFile: readWorkspaceFile,
+          writeFile: writeWorkspaceFileAtomic,
+          filesToRead: groundingFiles,
+        }
+      : undefined,
     acp: choice.engine === "omp" ? buildAcpDeps() : undefined,
     engineVersion: choice.version,
     engineHint: choice.hint,
@@ -969,15 +1003,6 @@ async function commandOpenAiChat(
     onDispose: () => {
       aiChatPanel = null;
     },
-    // AIX-01: opt-in workspace grounding. `vsdb.ai.grounding` defaults
-    // to false so the pre-AIX-01 turn path is unchanged.
-    grounding: isGroundingEnabled()
-      ? {
-          getSelection: readActiveSelection,
-          readFile: readWorkspaceFile,
-          filesToRead: groundingFiles,
-        }
-      : undefined,
   });
   aiChatPanel.show();
 }

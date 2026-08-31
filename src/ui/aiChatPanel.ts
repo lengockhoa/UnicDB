@@ -56,6 +56,8 @@ import {
 import { defaultAiSettings, type AiModelRole } from "../ai/settings";
 import { createDbTools } from "../ai/tools/registry";
 import { createWorkspaceSearchTool } from "../ai/tools/workspaceSearchTool";
+import { createFileOpsTool } from "../ai/tools/fileOpsTool";
+import { diffStats } from "../ai/fileDiff";
 import { createSqlTool } from "../ai/tools/sqlTool";
 import { createExportStructureTool } from "../ai/tools/schemaTools";
 import { createDbAwareTools } from "../ai/tools/dbAwareTools";
@@ -706,6 +708,14 @@ export class DbToolPermissionGate {
  * string cannot blow up the card.
  */
 function summarizeDbToolArgs(args: Record<string, unknown>): string {
+  // AIX-02: file-op cards show path + +/- counts, never the whole content.
+  if (
+    typeof args["path"] === "string" &&
+    typeof args["newContent"] === "string"
+  ) {
+    const stats = diffStats("", args["newContent"]);
+    return `path=${args["path"]} +${stats.added} lines (proposed file, ${args["newContent"].length} chars)`;
+  }
   const parts: string[] = [];
   for (const [key, value] of Object.entries(args)) {
     const raw = typeof value === "string" ? value : JSON.stringify(value);
@@ -1487,6 +1497,21 @@ export class AiChatPanel {
           files: this.options.grounding.filesToRead ?? [],
         }),
       );
+      // AIX-02: workspace_write — AI proposes a file edit; the permission
+      // gate fronts EVERY execute with an explicit allow card, and scope is
+      // the same host-curated allowlist. Registered ONLY when the host
+      // provides an atomic writeFile; grounding off/absent → tool absent.
+      if (this.options.grounding.writeFile) {
+        registry.register(
+          this.dbToolGate.wrap(
+            createFileOpsTool({
+              readFile: this.options.grounding.readFile ?? (async () => ""),
+              writeFile: this.options.grounding.writeFile,
+              files: this.options.grounding.filesToRead ?? [],
+            }),
+          ),
+        );
+      }
     }
     // Cycle AD: the five DB-aware tools reach real row data, so each one is
     // wrapped in the permission gate — the model may call them, but nothing
@@ -1930,6 +1955,18 @@ export class AiChatPanel {
           files: this.options.grounding.filesToRead ?? [],
         }),
       );
+      // AIX-02 mirror: same gated workspace_write on the OMP/MCP path.
+      if (this.options.grounding.writeFile) {
+        registry.register(
+          this.dbToolGate.wrap(
+            createFileOpsTool({
+              readFile: this.options.grounding.readFile ?? (async () => ""),
+              writeFile: this.options.grounding.writeFile,
+              files: this.options.grounding.filesToRead ?? [],
+            }),
+          ),
+        );
+      }
     }
     // Cycle AD: the five DB-aware tools reach real row data, so each one is
     // wrapped in the permission gate — the model may call them, but nothing

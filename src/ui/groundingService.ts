@@ -23,6 +23,11 @@ export interface GroundingDeps {
   enabled?: boolean;
   getSelection?: () => { path: string; text: string; startLine?: number; endLine?: number } | null | undefined;
   readFile?: (path: string) => Promise<string>;
+  /**
+   * AIX-02 — atomic write callback for workspace_write (host implements
+   * temp-write + rename). Absent → the file-ops tool is not registered.
+   */
+  writeFile?: (path: string, content: string) => Promise<void>;
   filesToRead?: readonly string[];
   turnId?: string;
 }

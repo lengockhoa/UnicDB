@@ -1,6 +1,6 @@
 # TASK-AIX02-001 — fileDiff pure unified-diff module
 
-**Status:** pending
+**Status:** implemented — awaiting reviewer (unic-smart)
 **Owner:** executor (TDD)
 **Reviewer:** unic-smart (cycle reviewer)
 
@@ -37,4 +37,9 @@ npm run typecheck
 
 ## Executor Report
 
-(to be filled by executor with RED + GREEN evidence)
+### Executor (unic-code)
+
+**RED evidence**: first `npx vitest run src/ai/__tests__/fileDiff.test.ts` → `Tests no tests` (file failed to load: `src/ai/fileDiff.ts` did not exist — module-not-found RED).
+
+**GREEN evidence**: 7/7 after implementing `buildUnifiedDiff` (LCS table, hunk grouping with 3-line context, 200-line cap with `… (N more lines)`, `\ No newline at end of file` sentinel) + `diffStats`. One test expectation corrected during GREEN: the hunk header spans the full context window (`@@ -1,5 +1,5 @@`), matching git semantics, not the bare changed line.
+

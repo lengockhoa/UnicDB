@@ -1,6 +1,6 @@
 # TASK-AIX02-004 — scaffold hygiene + docs
 
-**Status:** pending
+**Status:** implemented — awaiting reviewer (unic-smart)
 **Owner:** executor (TDD)
 **Reviewer:** unic-smart (cycle reviewer)
 
@@ -25,4 +25,9 @@ npm run compile
 
 ## Executor Report
 
-(to be filled by executor with RED + GREEN evidence)
+### Executor (unic-code)
+
+**RED evidence**: none captured beyond module-load RED for the scaffold itself (file absent on first run → `no tests`); the target modules were already vscode-free and fs-free by construction (verified: the tightened import-regex checks passed immediately after creation — the DBX-05 lesson about comment-text false positives was applied up front).
+
+**GREEN evidence**: 3/3 scaffold (no vscode imports in fileDiff/fileOpsTool; no shell:true/execSync/child_process/fs in fileOpsTool — I/O strictly via injected deps; both public exports present). CHANGELOG 1.21.0 + compare link; README feature bullet. Full `npm test` → 2522 passed | 2 skipped (189 files); typecheck 0; esbuild clean.
+

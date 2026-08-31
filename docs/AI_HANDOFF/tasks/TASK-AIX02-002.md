@@ -1,6 +1,6 @@
 # TASK-AIX02-002 — fileOpsTool tool factory (scope + atomicity + envelope)
 
-**Status:** pending
+**Status:** implemented — awaiting reviewer (unic-smart)
 **Owner:** executor (TDD)
 **Reviewer:** unic-smart (cycle reviewer)
 
@@ -40,4 +40,9 @@ npm run typecheck
 
 ## Executor Report
 
-(to be filled by executor with RED + GREEN evidence)
+### Executor (unic-code)
+
+**RED evidence**: first run of `src/ai/tools/__tests__/fileOpsTool.test.ts` failed at module load — `../fileOpsTool` did not exist (import-time RED). After the factory was created, 1 further RED: the `not-found` test initially used a path outside the allowlist and got `outside-workspace` (correct behavior exposed a wrong test fixture) — the test was fixed to allowlist the file but have `readFile` throw.
+
+**GREEN evidence**: 7/7. Envelope contract verified: never throws, `writeFile` NOT called for outside-workspace / permission-denied / not-found / bad-args (asserted via writes.length === 0); write-throw → `write-failed` with error detail; happy path → one write with exact new content + unified diff. Traversal attempt (`src/../src/a.ts`) rejected by exact-string membership (no normalization by design).
+
