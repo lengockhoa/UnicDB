@@ -1017,13 +1017,21 @@ export function toolShapeSummary(resultText: string): string {
           ? Object.keys(parsed as Record<string, unknown>)
           : [];
       const obj = parsed as Record<string, unknown>;
-      const okPart = typeof obj["ok"] === "boolean" ? ` ok=${String(obj["ok"])}` : "";
+      // Top-level failure markers first: an envelope like
+      // {error, detail} or {ok: false, class, detail} must never be
+      // rendered as a success ("parts ok") card.
+      if (typeof obj["error"] === "string") {
+        return capTokens(`JSON error: ${String(obj["error"])}`, 30);
+      }
+      if (obj["ok"] === false) {
+        return capTokens("JSON report: ok=false", 30);
+      }
       const errCount = keys.filter((k) => {
         const v = obj[k];
         return typeof v === "object" && v !== null && "error" in (v as object);
       }).length;
       return capTokens(
-        `JSON report:${okPart} ${keys.length} fields, ${keys.length - errCount}/${keys.length} parts ok`,
+        `JSON report: ${keys.length} fields, ${keys.length - errCount}/${keys.length} parts ok`,
         30,
       );
     } catch {

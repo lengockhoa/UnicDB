@@ -145,6 +145,12 @@ describe("DbToolPermissionGate", () => {
     );
     // Opaque one-liner → token-capped.
     expect(toolShapeSummary("ok")).toBe("ok");
+    // Top-level failure envelopes are NOT rendered as successes.
+    const badId = JSON.stringify({ error: "bad_identifier", detail: "x" });
+    expect(toolShapeSummary(badId)).toContain("JSON error");
+    expect(toolShapeSummary(badId)).not.toContain("parts ok");
+    const diagFail = JSON.stringify({ ok: false, class: "syntax", detail: "near FROM" });
+    expect(toolShapeSummary(diagFail)).toBe("JSON report: ok=false");
   });
 
   it("AIX-03: summarizeToolOutcomeCard formats tool + status + shape", () => {
