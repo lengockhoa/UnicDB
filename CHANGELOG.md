@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.29.0] — 2026-09-01
+
+Cycle DBX-08: Dialect Parity Contract (explicit, fail-closed adapter capability declarations consumed by every catalog/DDL/admin entry point).
+
+### Added
+- **Adapter capability matrix** (`src/adapters/types.ts`): `AdapterCapability` (`catalog` / `objectDdl` / `tableDdl` / `admin`), optional `DbAdapter.capabilities?: AdapterCapabilities`, and the pure fail-closed `hasAdapterCapability(adapter, capability)` — true ONLY for an explicit `true` declaration; absent/malformed declarations are unsupported (no driver checks, no structural-presence inference). `PostgresAdapter` declares all four true; `MySqlAdapter` and `MsSqlAdapter` declare all four false — both as `Object.freeze`-ed literals (mutation cannot manufacture support). Contract tests instantiate the real unconnected adapters and prove declaration↔API agreement.
+- **Capability-gated catalog navigation** (`src/ui/schemaCache.ts`, `src/ui/schemaTree.ts`, `src/ui/sqlCatalog.ts`, `src/ui/ddlView.ts`): catalog categories, constraints/sequences/object-DDL loads, and SQL catalog results all require the declared `catalog`/`objectDdl` capability; MySQL/MSSQL keep their full baseline Tables/Views/Routines/Columns navigation with batched row-estimate fallback and make ZERO catalog/cache calls on undeclared adapters. `createCatalogResolver`'s option is now `declaresCatalog` (awaited predicate; a rejected predicate fails closed to `[]`/`undefined`), replacing the `driver === "postgres"` check. "Open DDL" on an undeclared adapter renders an accurate unsupported document (no "Postgres-only" claim) and never invokes `CatalogApi.objectDdl`; a true declaration without a callable API renders a defensive unavailable document.
+- **Capability-gated table-DDL and admin entry points** (`src/ui/tableCommands.ts`, `src/ui/adminTree.ts`, `src/ui/adminSessionsPanel.ts`, `src/extension.ts`): every PostgreSQL-only table utility command resolves its target adapter and requires declared `tableDdl`; `vsdb.openSessionsPanel`/`vsdb.runGrantSql` and the Admin tree/sessions panel require declared `admin` — unsupported adapters get one concise `VSDB:` message (or the pinned Admin-tree explanation node `VSDB: Admin tools are not supported by this connection's database.`) BEFORE any SQL, form, wizard, webview, clipboard, or `pg_backend_pid()` side effect. PostgreSQL flows (incl. `confirmDangerousStatements` before GRANT/REVOKE execution) unchanged.
+
+### Review
+- Independent unic-smart review, 3 parallel reviewers: 001 and 003 APPROVED round 1; 002's single finding (rejected async `declaresCatalog` escaping the resolver instead of failing closed) fixed in auto-fix round 1 with a sentinel test — all three methods return `[]`/`undefined` with zero cache calls. Full suite 2811 passed | 2 skipped, typecheck + compile clean.
+
 ## [1.28.0] — 2026-08-31
 
 Cycle AIX-07: Trust, Privacy & Governance (central default-deny AI policy + redacted all-turn audit export + host integration).

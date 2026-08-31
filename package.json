@@ -1,632 +1,632 @@
 {
-	"name": "vsdb",
-	"displayName": "VSDB — Run SQL from VS Code",
-	"description": "Run SQL against PostgreSQL, MySQL/MariaDB and SQL Server directly from VS Code. Cmd+Enter (macOS) / Ctrl+Enter (Win/Linux) executes the selected statement.",
-	"version": "1.28.0",
-	"publisher": "lengockhoa",
-	"engines": {
-		"vscode": "^1.75.0"
-	},
-	"main": "dist/extension.js",
-	"extensionKind": [
-		"ui"
-	],
-	"icon": "media/icon.png",
-	"license": "MIT",
-	"categories": [
-		"Other"
-	],
-	"keywords": [
-		"sql",
-		"postgresql",
-		"mysql",
-		"mariadb",
-		"mssql",
-		"database"
-	],
-	"repository": {
-		"type": "git",
-		"url": "https://github.com/lengockhoa/VSDB"
-	},
-	"bugs": {
-		"url": "https://github.com/lengockhoa/VSDB/issues"
-	},
-	"homepage": "https://github.com/lengockhoa/VSDB#readme",
-	"activationEvents": [
-		"onLanguage:sql",
-		"onCommand:vsdb.addConnection",
-		"onCommand:vsdb.editConnection",
-		"onCommand:vsdb.deleteConnection",
-		"onCommand:vsdb.selectConnection",
-		"onCommand:vsdb.runQuery",
-		"onCommand:vsdb.cancelQuery",
-		"onCommand:vsdb.generateSelect",
-		"onCommand:vsdb.copyQualifiedName",
-		"onCommand:vsdb.refreshSchema",
-		"onCommand:vsdb.runScript",
-		"onLanguage:shellscript",
-		"onCommand:vsdb.runStatement",
-		"onCommand:vsdb.newTable",
-		"onCommand:vsdb.modifyTable",
-		"onCommand:vsdb.copyCreateDdl",
-		"onCommand:vsdb.generateSampleData",
-		"onCommand:vsdb.analyzeTable",
-		"onCommand:vsdb.vacuumTable",
-		"onCommand:vsdb.openAiSettings",
-		"onCommand:vsdb.aiChat",
-		"onCommand:vsdb.ai.useWithOmp",
-		"onCommand:vsdb.ai.refreshDbContext",
-		"onCommand:vsdb.ai.showPolicy",
-		"onCommand:vsdb.ai.exportTrace",
-		"onCommand:vsdb.ai.clearTrace",
-		"onCommand:vsdb.browseTableData",
-		"onCommand:vsdb.renameTable",
-		"onCommand:vsdb.renameColumn",
-		"onCommand:vsdb.createSchema",
-		"onCommand:vsdb.exportStructure",
-		"onCommand:vsdb.exportAllStructures",
-		"onCommand:vsdb.openConsole",
-		"onCommand:vsdb.consoleNewTab",
-		"onCommand:vsdb.refreshAdmin",
-		"onCommand:vsdb.openSessionsPanel",
-		"onCommand:vsdb.importCsv",
-		"onCommand:vsdb.importJson",
-		"onCommand:vsdb.openFormView",
-		"onCommand:vsdb.editLargeValue"
-	],
-	"contributes": {
-		"commands": [
-			{
-				"command": "vsdb.addConnection",
-				"title": "VSDB: Add Connection",
-				"category": "VSDB",
-				"icon": "$(add)"
-			},
-			{
-				"command": "vsdb.editConnection",
-				"title": "VSDB: Edit Connection",
-				"category": "VSDB",
-				"icon": "$(edit)"
-			},
-			{
-				"command": "vsdb.deleteConnection",
-				"title": "VSDB: Delete Connection",
-				"category": "VSDB",
-				"icon": "$(trash)"
-			},
-			{
-				"command": "vsdb.selectConnection",
-				"title": "VSDB: Select Active Connection",
-				"category": "VSDB",
-				"icon": "$(plug)"
-			},
-			{
-				"command": "vsdb.runQuery",
-				"title": "VSDB: Run Query",
-				"category": "VSDB",
-				"icon": "$(play)"
-			},
-			{
-				"command": "vsdb.cancelQuery",
-				"title": "VSDB: Cancel Query",
-				"category": "VSDB",
-				"icon": "$(debug-stop)"
-			},
-			{
-				"command": "vsdb.generateSelect",
-				"title": "VSDB: Generate SELECT",
-				"category": "VSDB",
-				"icon": "$(preview)"
-			},
-			{
-				"command": "vsdb.copyQualifiedName",
-				"title": "VSDB: Copy Qualified Name",
-				"category": "VSDB",
-				"icon": "$(copy)"
-			},
-			{
-				"command": "vsdb.refreshSchema",
-				"title": "VSDB: Refresh Schema",
-				"category": "VSDB",
-				"icon": "$(refresh)"
-			},
-			{
-				"command": "vsdb.runStatement",
-				"title": "VSDB: Run Statement",
-				"category": "VSDB",
-				"icon": "$(play)"
-			},
-			{
-				"command": "vsdb.filterSchemaTree",
-				"title": "Filter Schema Tree",
-				"category": "VSDB",
-				"icon": "$(filter)"
-			},
-			{
-				"command": "vsdb.clearSchemaTreeFilter",
-				"title": "Clear Schema Tree Filter",
-				"category": "VSDB",
-				"icon": "$(close)"
-			},
-			{
-				"command": "vsdb.runScript",
-				"title": "VSDB: Run Script",
-				"category": "VSDB",
-				"icon": "$(play)"
-			},
-			{
-				"command": "vsdb.newTable",
-				"title": "New Table…",
-				"category": "VSDB",
-				"icon": "$(add)"
-			},
-			{
-				"command": "vsdb.modifyTable",
-				"title": "Modify Table…",
-				"category": "VSDB",
-				"icon": "$(edit)"
-			},
-			{
-				"command": "vsdb.renameTable",
-				"title": "Rename Table…",
-				"category": "VSDB",
-				"icon": "$(replace)"
-			},
-			{
-				"command": "vsdb.renameColumn",
-				"title": "Rename Column…",
-				"category": "VSDB",
-				"icon": "$(replace)"
-			},
-			{
-				"command": "vsdb.copyCreateDdl",
-				"title": "Copy Create Query",
-				"category": "VSDB",
-				"icon": "$(copy)"
-			},
-			{
-				"command": "vsdb.generateSampleData",
-				"title": "Generate Sample Data…",
-				"category": "VSDB",
-				"icon": "$(file-text)"
-			},
-			{
-				"command": "vsdb.analyzeTable",
-				"title": "Analyze Table",
-				"category": "VSDB",
-				"icon": "$(graph)"
-			},
-			{
-				"command": "vsdb.vacuumTable",
-				"title": "Vacuum Table",
-				"category": "VSDB",
-				"icon": "$(trash)"
-			},
-			{
-				"command": "vsdb.openAiSettings",
-				"title": "Open AI Settings…",
-				"category": "VSDB",
-				"icon": "$(gear)"
-			},
-			{
-				"command": "vsdb.aiChat",
-				"title": "VSDB: AI Chat",
-				"category": "VSDB",
-				"icon": "$(comment-discussion)"
-			},
-			{
-				"command": "vsdb.ai.useWithOmp",
-				"title": "VSDB: Use AI with OMP",
-				"category": "VSDB",
-				"icon": "$(terminal)"
-			},
-			{
-				"command": "vsdb.ai.refreshDbContext",
-				"title": "VSDB: Refresh AI DB Context",
-				"category": "VSDB",
-				"icon": "$(refresh)"
-			},
-			{
-				"command": "vsdb.ai.showPolicy",
-				"title": "VSDB: Show AI Policy",
-				"category": "VSDB",
-				"icon": "$(shield)"
-			},
-			{
-				"command": "vsdb.ai.exportTrace",
-				"title": "VSDB: Export AI Audit Trace",
-				"category": "VSDB",
-				"icon": "$(export)"
-			},
-			{
-				"command": "vsdb.ai.clearTrace",
-				"title": "VSDB: Clear AI Audit Trace",
-				"category": "VSDB",
-				"icon": "$(clear-all)"
-			},
-			{
-				"command": "vsdb.browseTableData",
-				"title": "VSDB: Browse Table Data",
-				"category": "VSDB",
-				"icon": "$(preview)"
-			},
-			{
-				"command": "vsdb.createSchema",
-				"title": "VSDB: Create New Schema",
-				"category": "VSDB",
-				"icon": "$(add)"
-			},
-			{
-				"command": "vsdb.postmanPayload",
-				"title": "VSDB: Postman Payload",
-				"category": "VSDB",
-				"icon": "$(copy)"
-			},
-			{
-				"command": "vsdb.exportStructure",
-				"title": "VSDB: Export Structure",
-				"category": "VSDB",
-				"icon": "$(output)"
-			},
-			{
-				"command": "vsdb.exportAllStructures",
-				"title": "VSDB: Export All Structures (Copy DDL)",
-				"category": "VSDB",
-				"icon": "$(output)"
-			},
-			{
-				"command": "vsdb.openConsole",
-				"title": "VSDB: Open Console",
-				"category": "VSDB",
-				"icon": "$(window)"
-			},
-			{
-				"command": "vsdb.consoleNewTab",
-				"title": "VSDB: Console — New Tab",
-				"category": "VSDB",
-				"icon": "$(add)"
-			},
-			{
-				"command": "vsdb.refreshAdmin",
-				"title": "VSDB: Refresh Admin",
-				"category": "VSDB",
-				"icon": "$(refresh)"
-			},
-			{
-				"command": "vsdb.openSessionsPanel",
-				"title": "VSDB: Open Sessions Panel",
-				"category": "VSDB",
-				"icon": "$(pulse)"
-			},
-			{
-				"command": "vsdb.killSession",
-				"title": "VSDB: Kill Session (Cancel Query)",
-				"category": "VSDB",
-				"icon": "$(debug-stop)"
-			},
-			{
-				"command": "vsdb.terminateSession",
-				"title": "VSDB: Terminate Session",
-				"category": "VSDB",
-				"icon": "$(trash)"
-			},
-			{
-				"command": "vsdb.runGrantSql",
-				"title": "VSDB: Run GRANT/REVOKE SQL",
-				"category": "VSDB",
-				"icon": "$(shield)"
-			},
-			{
-				"command": "vsdb.importCsv",
-				"title": "VSDB: Import CSV into Table",
-				"category": "VSDB",
-				"icon": "$(arrow-down-to-line)"
-			},
-			{
-				"command": "vsdb.importJson",
-				"title": "VSDB: Import JSON into Table",
-				"category": "VSDB",
-				"icon": "$(arrow-down-to-line)"
-			},
-			{
-				"command": "vsdb.openFormView",
-				"title": "VSDB: Open Form View",
-				"category": "VSDB",
-				"icon": "$(notebook)"
-			},
-			{
-				"command": "vsdb.editLargeValue",
-				"title": "VSDB: Edit Large Value",
-				"category": "VSDB",
-				"icon": "$(expand-all)"
-			},
-			{
-				"command": "vsdb.compareTables",
-				"title": "Compare Tables (Schema & Data)",
-				"category": "VSDB",
-				"icon": "$(diff)"
-			},
-			{
-				"command": "vsdb.relationshipExplorer",
-				"title": "Relationship Explorer (FK Diagram)",
-				"category": "VSDB",
-				"icon": "$(circuit-board)"
-			}
-		],
-		"keybindings": [
-			{
-				"command": "vsdb.runQuery",
-				"key": "cmd+enter",
-				"mac": "cmd+enter",
-				"when": "editorTextFocus && resourceLangId == sql"
-			},
-			{
-				"command": "vsdb.runQuery",
-				"key": "ctrl+enter",
-				"win": "ctrl+enter",
-				"linux": "ctrl+enter",
-				"when": "editorTextFocus && resourceLangId == sql"
-			}
-		],
-		"menus": {
-			"editor/title": [
-				{
-					"command": "vsdb.runQuery",
-					"when": "editorTextFocus && resourceLangId == sql",
-					"group": "navigation"
-				},
-				{
-					"command": "vsdb.cancelQuery",
-					"when": "editorTextFocus && resourceLangId == sql",
-					"group": "navigation"
-				},
-				{
-					"command": "vsdb.runScript",
-					"when": "resourceLangId == shellscript",
-					"group": "navigation"
-				}
-			],
-			"view/item/context": [
-				{
-					"command": "vsdb.generateSelect",
-					"when": "view == vsdb.schemaTree && (viewItem == table || viewItem == view)",
-					"group": "inline"
-				},
-				{
-					"command": "vsdb.copyQualifiedName",
-					"when": "view == vsdb.schemaTree && (viewItem == table || viewItem == view || viewItem == column || viewItem == routine)",
-					"group": "inline"
-				},
-				{
-					"command": "vsdb.refreshSchema",
-					"when": "view == vsdb.schemaTree",
-					"group": "vsdb"
-				},
-				{
-					"command": "vsdb.editConnection",
-					"when": "view == vsdb.schemaTree && viewItem == connection",
-					"group": "vsdb"
-				},
-				{
-					"command": "vsdb.deleteConnection",
-					"when": "view == vsdb.schemaTree && viewItem == connection",
-					"group": "vsdb"
-				},
-				{
-					"command": "vsdb.newTable",
-					"when": "view == vsdb.schemaTree && (viewItem == schema || viewItem == category || viewItem == table)",
-					"group": "vsdb"
-				},
-				{
-					"command": "vsdb.modifyTable",
-					"when": "view == vsdb.schemaTree && viewItem == table",
-					"group": "vsdb"
-				},
-				{
-					"command": "vsdb.renameTable",
-					"when": "view == vsdb.schemaTree && viewItem == table",
-					"group": "vsdb"
-				},
-				{
-					"command": "vsdb.renameColumn",
-					"when": "view == vsdb.schemaTree && (viewItem == table || viewItem == column)",
-					"group": "vsdb"
-				},
-				{
-					"command": "vsdb.copyCreateDdl",
-					"when": "view == vsdb.schemaTree && viewItem == table",
-					"group": "vsdb"
-				},
-				{
-					"command": "vsdb.generateSampleData",
-					"when": "view == vsdb.schemaTree && viewItem == table",
-					"group": "vsdb"
-				},
-				{
-					"command": "vsdb.analyzeTable",
-					"when": "view == vsdb.schemaTree && viewItem == table",
-					"group": "vsdb"
-				},
-				{
-					"command": "vsdb.vacuumTable",
-					"when": "view == vsdb.schemaTree && viewItem == table",
-					"group": "vsdb"
-				},
-				{
-					"command": "vsdb.createSchema",
-					"when": "view == vsdb.schemaTree && (viewItem == connection || viewItem == schema)",
-					"group": "vsdb"
-				},
-				{
-					"command": "vsdb.postmanPayload",
-					"when": "view == vsdb.schemaTree && (viewItem == table || viewItem == view || viewItem == routine)",
-					"group": "vsdb"
-				},
-				{
-					"command": "vsdb.exportStructure",
-					"when": "view == vsdb.schemaTree && (viewItem == table || viewItem == view)",
-					"group": "vsdb"
-				},
-				{
-					"command": "vsdb.exportAllStructures",
-					"when": "view == vsdb.schemaTree && (viewItem == connection || viewItem == schema)",
-					"group": "vsdb"
-				}
-			],
-			"view/title": [
-				{
-					"command": "vsdb.refreshSchema",
-					"when": "view == vsdb.schemaTree",
-					"group": "navigation"
-				},
-				{
-					"command": "vsdb.addConnection",
-					"when": "view == vsdb.schemaTree",
-					"group": "navigation"
-				},
-				{
-					"command": "vsdb.filterSchemaTree",
-					"when": "view == vsdb.schemaTree",
-					"group": "navigation"
-				},
-				{
-					"command": "vsdb.openAiSettings",
-					"when": "view == vsdb.schemaTree",
-					"group": "navigation"
-				},
-				{
-					"command": "vsdb.aiChat",
-					"when": "view == vsdb.schemaTree",
-					"group": "navigation"
-				},
-				{
-					"command": "vsdb.clearSchemaTreeFilter",
-					"when": "view == vsdb.schemaTree && vsdb.schemaTreeFilterActive",
-					"group": "navigation"
-				}
-			]
-		},
-		"views": {
-			"vsdb": [
-				{
-					"id": "vsdb.schemaTree",
-					"name": "Schema Explorer"
-				},
-				{
-					"id": "vsdb.adminTree",
-					"name": "Admin (Roles / Sessions / Locks)"
-				}
-			]
-		},
-		"viewsContainers": {
-			"activitybar": [
-				{
-					"id": "vsdb",
-					"title": "VSDB",
-					"icon": "media/vsdb.svg"
-				}
-			]
-		},
-		"viewsWelcome": [
-			{
-				"view": "vsdb.schemaTree",
-				"contents": "No connections yet.\n[Add Connection](command:vsdb.addConnection)"
-			}
-		],
-		"configuration": {
-			"title": "VSDB",
-			"properties": {
-				"vsdb.showRunLens": {
-					"type": "boolean",
-					"default": true,
-					"description": "Hiển thị CodeLens ▶ Run phía trên mỗi SQL statement trong file .sql."
-				},
-				"vsdb.import.batchSize": {
-					"type": "number",
-					"default": 1000,
-					"minimum": 1,
-					"maximum": 10000,
-					"description": "Rows per INSERT statement during CSV/JSON import (DBX-01)."
-				},
-				"vsdb.showRunLensSh": {
-					"type": "boolean",
-					"default": true,
-					"description": "Hiển thị CodeLens ▶ Run ở đầu file .sh (shellscript)."
-				},
-				"vsdb.batchSize": {
-					"type": "number",
-					"default": 500,
-					"minimum": 50,
-					"maximum": 10000,
-					"description": "Số rows tải về mỗi lần (Load 500 more)."
-				},
-				"vsdb.admin.confirmGrant": {
-					"type": "boolean",
-					"default": true,
-					"description": "TASK-AHL-004 — ask for confirmation before running GRANT/REVOKE/KILL/TERMINATE statements (admin DCL). Always ON by default; set to false to skip the confirm modal at your own risk."
-				},
-				"vsdb.confirmDestructive": {
-					"type": "boolean",
-					"default": true,
-					"description": "Hỏi xác nhận trước khi chạy câu lệnh phá hoại (DELETE/UPDATE không WHERE, TRUNCATE, DROP)."
-				},
-				"vsdb.hideSystemSchemas": {
-					"type": "boolean",
-					"default": true,
-					"description": "Hide system schemas such as pg_catalog and information_schema in the Schema Explorer."
-				},
-				"vsdb.ai.engine": {
-					"type": "string",
-					"enum": [
-						"builtin",
-						"omp"
-					],
-					"default": "builtin",
-					"description": "Cycle AE — chat engine selection. \"omp\" routes the AI Chat panel through the in-process OmpChatEngine (requires the `omp` CLI installed and >= 17.0.0). \"builtin\" runs runAgent against the configured OpenAI-compatible provider. When \"omp\" is selected but the binary is missing or too old, VSDB silently degrades to \"builtin\" and shows a one-time install/update notice."
-				},
-				"vsdb.resultsPlacement": {
-					"type": "string",
-					"enum": [
-						"below",
-						"beside"
-					],
-					"default": "below",
-					"description": "AI-001 — vị trí của panel VSDB Results cho các lần chạy MỚI: \"below\" mở vertical split ngay dưới editor đang active, \"beside\" mở side-by-side bên cạnh. Setting chỉ áp dụng khi panel được tạo mới; panel đang mở không bao giờ bị di chuyển (reveal giữ nguyên group người dùng đã kéo)."
-				}
-			}
-		},
-		"grammars": [
-			{
-				"scopeName": "source.sql.vsdb",
-				"path": "./syntaxes/vsdb-sql-injection.tmLanguage.json",
-				"injectTo": [
-					"source.sql"
-				]
-			}
-		]
-	},
-	"scripts": {
-		"compile": "node esbuild.js",
-		"watch": "node esbuild.js --watch",
-		"test": "vitest run",
-		"test:integration": "vitest run -c vitest.integration.config.ts",
-		"typecheck": "tsc --noEmit",
-		"package": "vsce package",
-		"vscode:prepublish": "npm run compile"
-	},
-	"devDependencies": {
-		"@types/vscode": "1.75.0",
-		"@vscode/vsce": "^3.0.0",
-		"esbuild": "^0.24.0",
-		"jsdom": "^29.1.1",
-		"typescript": "^5.4.5",
-		"vitest": "^1.6.0"
-	},
-	"dependencies": {
-		"@types/pg": "^8.11.0",
-		"ag-grid-community": "^36.1.0",
-		"mysql2": "^3.10.0",
-		"pg": "^8.11.5",
-		"tedious": "^18.6.1"
-	}
+  "name": "vsdb",
+  "displayName": "VSDB — Run SQL from VS Code",
+  "description": "Run SQL against PostgreSQL, MySQL/MariaDB and SQL Server directly from VS Code. Cmd+Enter (macOS) / Ctrl+Enter (Win/Linux) executes the selected statement.",
+  "version": "1.29.0",
+  "publisher": "lengockhoa",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "main": "dist/extension.js",
+  "extensionKind": [
+    "ui"
+  ],
+  "icon": "media/icon.png",
+  "license": "MIT",
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "sql",
+    "postgresql",
+    "mysql",
+    "mariadb",
+    "mssql",
+    "database"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lengockhoa/VSDB"
+  },
+  "bugs": {
+    "url": "https://github.com/lengockhoa/VSDB/issues"
+  },
+  "homepage": "https://github.com/lengockhoa/VSDB#readme",
+  "activationEvents": [
+    "onLanguage:sql",
+    "onCommand:vsdb.addConnection",
+    "onCommand:vsdb.editConnection",
+    "onCommand:vsdb.deleteConnection",
+    "onCommand:vsdb.selectConnection",
+    "onCommand:vsdb.runQuery",
+    "onCommand:vsdb.cancelQuery",
+    "onCommand:vsdb.generateSelect",
+    "onCommand:vsdb.copyQualifiedName",
+    "onCommand:vsdb.refreshSchema",
+    "onCommand:vsdb.runScript",
+    "onLanguage:shellscript",
+    "onCommand:vsdb.runStatement",
+    "onCommand:vsdb.newTable",
+    "onCommand:vsdb.modifyTable",
+    "onCommand:vsdb.copyCreateDdl",
+    "onCommand:vsdb.generateSampleData",
+    "onCommand:vsdb.analyzeTable",
+    "onCommand:vsdb.vacuumTable",
+    "onCommand:vsdb.openAiSettings",
+    "onCommand:vsdb.aiChat",
+    "onCommand:vsdb.ai.useWithOmp",
+    "onCommand:vsdb.ai.refreshDbContext",
+    "onCommand:vsdb.ai.showPolicy",
+    "onCommand:vsdb.ai.exportTrace",
+    "onCommand:vsdb.ai.clearTrace",
+    "onCommand:vsdb.browseTableData",
+    "onCommand:vsdb.renameTable",
+    "onCommand:vsdb.renameColumn",
+    "onCommand:vsdb.createSchema",
+    "onCommand:vsdb.exportStructure",
+    "onCommand:vsdb.exportAllStructures",
+    "onCommand:vsdb.openConsole",
+    "onCommand:vsdb.consoleNewTab",
+    "onCommand:vsdb.refreshAdmin",
+    "onCommand:vsdb.openSessionsPanel",
+    "onCommand:vsdb.importCsv",
+    "onCommand:vsdb.importJson",
+    "onCommand:vsdb.openFormView",
+    "onCommand:vsdb.editLargeValue"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "vsdb.addConnection",
+        "title": "VSDB: Add Connection",
+        "category": "VSDB",
+        "icon": "$(add)"
+      },
+      {
+        "command": "vsdb.editConnection",
+        "title": "VSDB: Edit Connection",
+        "category": "VSDB",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "vsdb.deleteConnection",
+        "title": "VSDB: Delete Connection",
+        "category": "VSDB",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "vsdb.selectConnection",
+        "title": "VSDB: Select Active Connection",
+        "category": "VSDB",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "vsdb.runQuery",
+        "title": "VSDB: Run Query",
+        "category": "VSDB",
+        "icon": "$(play)"
+      },
+      {
+        "command": "vsdb.cancelQuery",
+        "title": "VSDB: Cancel Query",
+        "category": "VSDB",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "vsdb.generateSelect",
+        "title": "VSDB: Generate SELECT",
+        "category": "VSDB",
+        "icon": "$(preview)"
+      },
+      {
+        "command": "vsdb.copyQualifiedName",
+        "title": "VSDB: Copy Qualified Name",
+        "category": "VSDB",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "vsdb.refreshSchema",
+        "title": "VSDB: Refresh Schema",
+        "category": "VSDB",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "vsdb.runStatement",
+        "title": "VSDB: Run Statement",
+        "category": "VSDB",
+        "icon": "$(play)"
+      },
+      {
+        "command": "vsdb.filterSchemaTree",
+        "title": "Filter Schema Tree",
+        "category": "VSDB",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "vsdb.clearSchemaTreeFilter",
+        "title": "Clear Schema Tree Filter",
+        "category": "VSDB",
+        "icon": "$(close)"
+      },
+      {
+        "command": "vsdb.runScript",
+        "title": "VSDB: Run Script",
+        "category": "VSDB",
+        "icon": "$(play)"
+      },
+      {
+        "command": "vsdb.newTable",
+        "title": "New Table…",
+        "category": "VSDB",
+        "icon": "$(add)"
+      },
+      {
+        "command": "vsdb.modifyTable",
+        "title": "Modify Table…",
+        "category": "VSDB",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "vsdb.renameTable",
+        "title": "Rename Table…",
+        "category": "VSDB",
+        "icon": "$(replace)"
+      },
+      {
+        "command": "vsdb.renameColumn",
+        "title": "Rename Column…",
+        "category": "VSDB",
+        "icon": "$(replace)"
+      },
+      {
+        "command": "vsdb.copyCreateDdl",
+        "title": "Copy Create Query",
+        "category": "VSDB",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "vsdb.generateSampleData",
+        "title": "Generate Sample Data…",
+        "category": "VSDB",
+        "icon": "$(file-text)"
+      },
+      {
+        "command": "vsdb.analyzeTable",
+        "title": "Analyze Table",
+        "category": "VSDB",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "vsdb.vacuumTable",
+        "title": "Vacuum Table",
+        "category": "VSDB",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "vsdb.openAiSettings",
+        "title": "Open AI Settings…",
+        "category": "VSDB",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "vsdb.aiChat",
+        "title": "VSDB: AI Chat",
+        "category": "VSDB",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "vsdb.ai.useWithOmp",
+        "title": "VSDB: Use AI with OMP",
+        "category": "VSDB",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "vsdb.ai.refreshDbContext",
+        "title": "VSDB: Refresh AI DB Context",
+        "category": "VSDB",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "vsdb.ai.showPolicy",
+        "title": "VSDB: Show AI Policy",
+        "category": "VSDB",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "vsdb.ai.exportTrace",
+        "title": "VSDB: Export AI Audit Trace",
+        "category": "VSDB",
+        "icon": "$(export)"
+      },
+      {
+        "command": "vsdb.ai.clearTrace",
+        "title": "VSDB: Clear AI Audit Trace",
+        "category": "VSDB",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "vsdb.browseTableData",
+        "title": "VSDB: Browse Table Data",
+        "category": "VSDB",
+        "icon": "$(preview)"
+      },
+      {
+        "command": "vsdb.createSchema",
+        "title": "VSDB: Create New Schema",
+        "category": "VSDB",
+        "icon": "$(add)"
+      },
+      {
+        "command": "vsdb.postmanPayload",
+        "title": "VSDB: Postman Payload",
+        "category": "VSDB",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "vsdb.exportStructure",
+        "title": "VSDB: Export Structure",
+        "category": "VSDB",
+        "icon": "$(output)"
+      },
+      {
+        "command": "vsdb.exportAllStructures",
+        "title": "VSDB: Export All Structures (Copy DDL)",
+        "category": "VSDB",
+        "icon": "$(output)"
+      },
+      {
+        "command": "vsdb.openConsole",
+        "title": "VSDB: Open Console",
+        "category": "VSDB",
+        "icon": "$(window)"
+      },
+      {
+        "command": "vsdb.consoleNewTab",
+        "title": "VSDB: Console — New Tab",
+        "category": "VSDB",
+        "icon": "$(add)"
+      },
+      {
+        "command": "vsdb.refreshAdmin",
+        "title": "VSDB: Refresh Admin",
+        "category": "VSDB",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "vsdb.openSessionsPanel",
+        "title": "VSDB: Open Sessions Panel",
+        "category": "VSDB",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "vsdb.killSession",
+        "title": "VSDB: Kill Session (Cancel Query)",
+        "category": "VSDB",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "vsdb.terminateSession",
+        "title": "VSDB: Terminate Session",
+        "category": "VSDB",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "vsdb.runGrantSql",
+        "title": "VSDB: Run GRANT/REVOKE SQL",
+        "category": "VSDB",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "vsdb.importCsv",
+        "title": "VSDB: Import CSV into Table",
+        "category": "VSDB",
+        "icon": "$(arrow-down-to-line)"
+      },
+      {
+        "command": "vsdb.importJson",
+        "title": "VSDB: Import JSON into Table",
+        "category": "VSDB",
+        "icon": "$(arrow-down-to-line)"
+      },
+      {
+        "command": "vsdb.openFormView",
+        "title": "VSDB: Open Form View",
+        "category": "VSDB",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "vsdb.editLargeValue",
+        "title": "VSDB: Edit Large Value",
+        "category": "VSDB",
+        "icon": "$(expand-all)"
+      },
+      {
+        "command": "vsdb.compareTables",
+        "title": "Compare Tables (Schema & Data)",
+        "category": "VSDB",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "vsdb.relationshipExplorer",
+        "title": "Relationship Explorer (FK Diagram)",
+        "category": "VSDB",
+        "icon": "$(circuit-board)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "vsdb.runQuery",
+        "key": "cmd+enter",
+        "mac": "cmd+enter",
+        "when": "editorTextFocus && resourceLangId == sql"
+      },
+      {
+        "command": "vsdb.runQuery",
+        "key": "ctrl+enter",
+        "win": "ctrl+enter",
+        "linux": "ctrl+enter",
+        "when": "editorTextFocus && resourceLangId == sql"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "vsdb.runQuery",
+          "when": "editorTextFocus && resourceLangId == sql",
+          "group": "navigation"
+        },
+        {
+          "command": "vsdb.cancelQuery",
+          "when": "editorTextFocus && resourceLangId == sql",
+          "group": "navigation"
+        },
+        {
+          "command": "vsdb.runScript",
+          "when": "resourceLangId == shellscript",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "vsdb.generateSelect",
+          "when": "view == vsdb.schemaTree && (viewItem == table || viewItem == view)",
+          "group": "inline"
+        },
+        {
+          "command": "vsdb.copyQualifiedName",
+          "when": "view == vsdb.schemaTree && (viewItem == table || viewItem == view || viewItem == column || viewItem == routine)",
+          "group": "inline"
+        },
+        {
+          "command": "vsdb.refreshSchema",
+          "when": "view == vsdb.schemaTree",
+          "group": "vsdb"
+        },
+        {
+          "command": "vsdb.editConnection",
+          "when": "view == vsdb.schemaTree && viewItem == connection",
+          "group": "vsdb"
+        },
+        {
+          "command": "vsdb.deleteConnection",
+          "when": "view == vsdb.schemaTree && viewItem == connection",
+          "group": "vsdb"
+        },
+        {
+          "command": "vsdb.newTable",
+          "when": "view == vsdb.schemaTree && (viewItem == schema || viewItem == category || viewItem == table)",
+          "group": "vsdb"
+        },
+        {
+          "command": "vsdb.modifyTable",
+          "when": "view == vsdb.schemaTree && viewItem == table",
+          "group": "vsdb"
+        },
+        {
+          "command": "vsdb.renameTable",
+          "when": "view == vsdb.schemaTree && viewItem == table",
+          "group": "vsdb"
+        },
+        {
+          "command": "vsdb.renameColumn",
+          "when": "view == vsdb.schemaTree && (viewItem == table || viewItem == column)",
+          "group": "vsdb"
+        },
+        {
+          "command": "vsdb.copyCreateDdl",
+          "when": "view == vsdb.schemaTree && viewItem == table",
+          "group": "vsdb"
+        },
+        {
+          "command": "vsdb.generateSampleData",
+          "when": "view == vsdb.schemaTree && viewItem == table",
+          "group": "vsdb"
+        },
+        {
+          "command": "vsdb.analyzeTable",
+          "when": "view == vsdb.schemaTree && viewItem == table",
+          "group": "vsdb"
+        },
+        {
+          "command": "vsdb.vacuumTable",
+          "when": "view == vsdb.schemaTree && viewItem == table",
+          "group": "vsdb"
+        },
+        {
+          "command": "vsdb.createSchema",
+          "when": "view == vsdb.schemaTree && (viewItem == connection || viewItem == schema)",
+          "group": "vsdb"
+        },
+        {
+          "command": "vsdb.postmanPayload",
+          "when": "view == vsdb.schemaTree && (viewItem == table || viewItem == view || viewItem == routine)",
+          "group": "vsdb"
+        },
+        {
+          "command": "vsdb.exportStructure",
+          "when": "view == vsdb.schemaTree && (viewItem == table || viewItem == view)",
+          "group": "vsdb"
+        },
+        {
+          "command": "vsdb.exportAllStructures",
+          "when": "view == vsdb.schemaTree && (viewItem == connection || viewItem == schema)",
+          "group": "vsdb"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "vsdb.refreshSchema",
+          "when": "view == vsdb.schemaTree",
+          "group": "navigation"
+        },
+        {
+          "command": "vsdb.addConnection",
+          "when": "view == vsdb.schemaTree",
+          "group": "navigation"
+        },
+        {
+          "command": "vsdb.filterSchemaTree",
+          "when": "view == vsdb.schemaTree",
+          "group": "navigation"
+        },
+        {
+          "command": "vsdb.openAiSettings",
+          "when": "view == vsdb.schemaTree",
+          "group": "navigation"
+        },
+        {
+          "command": "vsdb.aiChat",
+          "when": "view == vsdb.schemaTree",
+          "group": "navigation"
+        },
+        {
+          "command": "vsdb.clearSchemaTreeFilter",
+          "when": "view == vsdb.schemaTree && vsdb.schemaTreeFilterActive",
+          "group": "navigation"
+        }
+      ]
+    },
+    "views": {
+      "vsdb": [
+        {
+          "id": "vsdb.schemaTree",
+          "name": "Schema Explorer"
+        },
+        {
+          "id": "vsdb.adminTree",
+          "name": "Admin (Roles / Sessions / Locks)"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vsdb",
+          "title": "VSDB",
+          "icon": "media/vsdb.svg"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "vsdb.schemaTree",
+        "contents": "No connections yet.\n[Add Connection](command:vsdb.addConnection)"
+      }
+    ],
+    "configuration": {
+      "title": "VSDB",
+      "properties": {
+        "vsdb.showRunLens": {
+          "type": "boolean",
+          "default": true,
+          "description": "Hiển thị CodeLens ▶ Run phía trên mỗi SQL statement trong file .sql."
+        },
+        "vsdb.import.batchSize": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 1,
+          "maximum": 10000,
+          "description": "Rows per INSERT statement during CSV/JSON import (DBX-01)."
+        },
+        "vsdb.showRunLensSh": {
+          "type": "boolean",
+          "default": true,
+          "description": "Hiển thị CodeLens ▶ Run ở đầu file .sh (shellscript)."
+        },
+        "vsdb.batchSize": {
+          "type": "number",
+          "default": 500,
+          "minimum": 50,
+          "maximum": 10000,
+          "description": "Số rows tải về mỗi lần (Load 500 more)."
+        },
+        "vsdb.admin.confirmGrant": {
+          "type": "boolean",
+          "default": true,
+          "description": "TASK-AHL-004 — ask for confirmation before running GRANT/REVOKE/KILL/TERMINATE statements (admin DCL). Always ON by default; set to false to skip the confirm modal at your own risk."
+        },
+        "vsdb.confirmDestructive": {
+          "type": "boolean",
+          "default": true,
+          "description": "Hỏi xác nhận trước khi chạy câu lệnh phá hoại (DELETE/UPDATE không WHERE, TRUNCATE, DROP)."
+        },
+        "vsdb.hideSystemSchemas": {
+          "type": "boolean",
+          "default": true,
+          "description": "Hide system schemas such as pg_catalog and information_schema in the Schema Explorer."
+        },
+        "vsdb.ai.engine": {
+          "type": "string",
+          "enum": [
+            "builtin",
+            "omp"
+          ],
+          "default": "builtin",
+          "description": "Cycle AE — chat engine selection. \"omp\" routes the AI Chat panel through the in-process OmpChatEngine (requires the `omp` CLI installed and >= 17.0.0). \"builtin\" runs runAgent against the configured OpenAI-compatible provider. When \"omp\" is selected but the binary is missing or too old, VSDB silently degrades to \"builtin\" and shows a one-time install/update notice."
+        },
+        "vsdb.resultsPlacement": {
+          "type": "string",
+          "enum": [
+            "below",
+            "beside"
+          ],
+          "default": "below",
+          "description": "AI-001 — vị trí của panel VSDB Results cho các lần chạy MỚI: \"below\" mở vertical split ngay dưới editor đang active, \"beside\" mở side-by-side bên cạnh. Setting chỉ áp dụng khi panel được tạo mới; panel đang mở không bao giờ bị di chuyển (reveal giữ nguyên group người dùng đã kéo)."
+        }
+      }
+    },
+    "grammars": [
+      {
+        "scopeName": "source.sql.vsdb",
+        "path": "./syntaxes/vsdb-sql-injection.tmLanguage.json",
+        "injectTo": [
+          "source.sql"
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "test": "vitest run",
+    "test:integration": "vitest run -c vitest.integration.config.ts",
+    "typecheck": "tsc --noEmit",
+    "package": "vsce package",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/vscode": "1.75.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.24.0",
+    "jsdom": "^29.1.1",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
+  },
+  "dependencies": {
+    "@types/pg": "^8.11.0",
+    "ag-grid-community": "^36.1.0",
+    "mysql2": "^3.10.0",
+    "pg": "^8.11.5",
+    "tedious": "^18.6.1"
+  }
 }
