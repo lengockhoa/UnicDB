@@ -381,6 +381,31 @@ beforeEach(() => {
   recoveryState.panels.length = 0;
 });
 
+/** Poll a condition with real time slices (panel turns are multi-await). */
+async function until(cond: () => boolean): Promise<void> {
+  for (let i = 0; i < 400; i++) {
+    if (cond()) return;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
+/** Minimal valid AiConfig the fake deps.loadConfig can return. */
+function fakeAiConfig() {
+  return {
+    baseUrl: "https://api.test/v1",
+    method: "chat/completions" as const,
+    timeoutMs: 60_000,
+    maxSteps: 3,
+    models: {
+      work: { modelId: "m", vision: true },
+      smart: { modelId: "m", vision: false },
+      autocomplete: { modelId: "", vision: false },
+    },
+    engine: "builtin" as const,
+    apiKey: "k",
+  };
+}
+
 describe("AiChatPanel — recovery subscription seam (TASK-AIX03-102 case 1)", () => {
   it("subscribes to onDidChangeRecoveryStatus; `recovering` posts session_state:error and never an error bubble", () => {
     const fakeEv = makeFakeRecoveryEvent();
@@ -421,38 +446,118 @@ describe("AiChatPanel — recovery subscription seam (TASK-AIX03-102 case 1)", (
 });
 
 describe("AiChatPanel — recovery/builtin turn (TASK-AIX03-102 case 2)", () => {
-  it("`recovering` during a builtin turn aborts the AbortController and posts session_state:error", () => {
+  it("`recovering` during a builtin turn aborts the AbortController, cancels the pending DbToolPermissionGate request, and posts session_state:error", async () => {
     const fakeEv = makeFakeRecoveryEvent();
     const factory: AdapterFactory = vi.fn(async () => null);
+    // Deferred builtin turn: step 1 asks for the gated tool; step 2 blocks
+    // on `streamGate` until the test releases it, so the turn is genuinely
+    // in flight (pending permission card) when `recovering` fires.
+    let releaseStream: (() => void) | null = null;
+    const streamGate = new Promise<void>((resolve) => {
+      releaseStream = resolve;
+    });
+    let providerSteps = 0;
+    const agentDeps: AgentDeps = {
+      loadConfig: vi.fn(async () => fakeAiConfig()),
+      complete: vi.fn(async () => {
+        providerSteps += 1;
+        if (providerSteps === 1) {
+          return {
+            text: "",
+            toolCalls: [
+              {
+                id: "tc-1",
+                name: "run_readonly_query",
+                argumentsJson: JSON.stringify({ sql: "SELECT 1" }),
+              },
+            ],
+            finishReason: "tool_calls" as const,
+            usage: { inputTokens: 1, outputTokens: 1 },
+          };
+        }
+        // Later steps: hold until released (recovery lands first).
+        await streamGate;
+        return {
+          text: "",
+          toolCalls: [],
+          finishReason: "stop" as const,
+          usage: { inputTokens: 1, outputTokens: 1 },
+        };
+      }),
+    } as unknown as AgentDeps;
     const panel = new AiChatPanel({
       extensionUri: { fsPath: "/ext", toString: () => "file:///ext" } as never,
-      deps: { loadConfig: vi.fn(async () => null), complete: vi.fn() } as AgentDeps,
+      deps: agentDeps,
       adapterFactory: factory,
       onDidChangeRecoveryStatus: fakeEv.event as never,
     });
     panel.show();
-    // Bring the panel into a busy state by running a deferred builtin turn.
+    const mp = recoveryState.panels[recoveryState.panels.length - 1] as MockPanel2;
+    // Drive a REAL builtin turn through the webview `send` message (the
+    // same path the production webview uses). `ready` first so handleSend
+    // routes to the builtin engine (options.acp is absent → builtin).
+    const handleMessage = mp.webview.onDidReceiveMessage.mock
+      .calls[0]![0] as unknown as (msg: unknown) => void;
+    void handleMessage({ type: "ready" });
+    const panelHandle = (panel as unknown as { engine: string | null });
+    await until(() => panelHandle.engine === "builtin");
+    void handleMessage({ type: "send", text: "run a query" });
+    // Wait until the turn is truly in flight: the gate card for the
+    // DB-aware tool has been posted (pending permission request exists).
+    await until(() =>
+      mp.webview.postMessage.mock.calls.some(
+        (c) => (c[0] as { type?: string }).type === "permission_request",
+      ),
+    );
+    const permRequest = mp.webview.postMessage.mock.calls
+      .map((c) => c[0] as { type: string; requestId: string })
+      .find((m) => m.type === "permission_request")!;
+    // The panel's AbortController + ChatAbortToken exist mid-turn.
     const handle = (panel as unknown as {
-      handleSend: (text: string) => Promise<void>;
       currentAbort: AbortController | null;
       token: { aborted: boolean } | null;
-      engine: "builtin" | "omp" | "acp";
     });
-    // Force the panel into "builtin busy" — direct internal touch.
-    handle.engine = "builtin";
-    handle.token = { aborted: false };
-    handle.currentAbort = new AbortController();
-    const abortSpy = vi.spyOn(handle.currentAbort, "abort");
-    // Emit the recovering event.
+    expect(handle.currentAbort).toBeInstanceOf(AbortController);
+    expect(handle.token).not.toBeNull();
+    const abortSpy = vi.spyOn(handle.currentAbort!, "abort");
+    // Fire `recovering` mid-turn — the panel must fail-close.
     fakeEv.fire({
       connectionId: "c1",
       state: "recovering",
       attempt: 1,
       maxAttempts: 2,
     });
-    // The builtin branch of handleStop must have called .abort().
+    // (a) The builtin branch of handleStop aborted the per-turn controller.
     expect(abortSpy).toHaveBeenCalledTimes(1);
-    expect(handle.token.aborted).toBe(true);
+    expect(handle.token?.aborted).toBe(true);
+    // (b) The pending DbToolPermissionGate request was cancelled by
+    // handleStop → cancelAll: a late webview respond for the cancelled id
+    // is ignored (the gate already default-denied it).
+    const gate = (panel as unknown as {
+      dbToolGate: DbToolPermissionGate;
+    }).dbToolGate;
+    expect(gate.respond(permRequest.requestId, "allow-once")).toBe(false);
+    // Release the blocked provider step so the aborted turn can unwind,
+    // then wait for the turn's finally to clear the token.
+    releaseStream?.();
+    await until(() => handle.token === null);
+    // (c) The visible failure surface is the existing session_state:error —
+    // posted exactly once by the recovery path, never an error bubble.
+    const posted = mp.webview.postMessage.mock.calls.map((c) => c[0]) as Array<{
+      type: string;
+      state?: string;
+      status?: string;
+    }>;
+    const errorStates = posted.filter(
+      (m) => m.type === "session_state" && m.state === "error",
+    );
+    expect(errorStates).toHaveLength(1);
+    expect(posted.filter((m) => m.type === "error")).toHaveLength(0);
+    // The denial card for the cancelled gate request is visible.
+    const deniedCards = posted.filter(
+      (m) => m.type === "tool_result" && m.status === "denied",
+    );
+    expect(deniedCards.length).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -536,7 +641,7 @@ describe("AiChatPanel — recovery/OMP turn (TASK-AIX03-102 case 3)", () => {
 });
 
 describe("AiChatPanel — listener containment (TASK-AIX03-102 case 4)", () => {
-  it("recovery listener throws → the throw is swallowed at the subscription boundary; no message reaches the webview", () => {
+  it("recovery listener throws → the throw is swallowed at the subscription boundary; no message reaches the webview", async () => {
     const fakeEv = makeFakeRecoveryEvent();
     const factory: AdapterFactory = vi.fn(async () => null);
     const panel = new AiChatPanel({
@@ -547,16 +652,28 @@ describe("AiChatPanel — listener containment (TASK-AIX03-102 case 4)", () => {
     });
     panel.show();
     const mp = recoveryState.panels[recoveryState.panels.length - 1] as MockPanel2;
-    // Replace the registered handler with one that throws — simulates a
-    // misbehaving panel handler. Real wiring wraps in try/catch.
-    // Force the throw via direct internal field access.
-    (panel as unknown as { recoveryHandler: ((s: ConnectionRecoveryStatus) => void) | null }).recoveryHandler = () => {
-      throw new Error("boom");
+    // Provoke a REAL throw through the registered callback: arm the panel's
+    // internals exactly like the busy-builtin case, then replace the
+    // instance's DbToolPermissionGate with one whose cancelAll() throws
+    // synchronously on entry. `handleRecoveryStatus` → `handleStop()` →
+    // `dbToolGate.cancelAll()` → throw — the subscription's try/catch must
+    // swallow it BEFORE `postSessionState("error")` runs, so NOTHING is
+    // posted to the webview and nothing escapes to the emitter.
+    const handle = (panel as unknown as {
+      engine: "builtin" | "omp" | "acp";
+      token: { aborted: boolean } | null;
+      currentAbort: AbortController | null;
+      dbToolGate: { cancelAll: () => void };
+    });
+    handle.engine = "builtin";
+    handle.token = { aborted: false };
+    handle.currentAbort = new AbortController();
+    handle.dbToolGate = {
+      cancelAll: () => {
+        throw new Error("boom");
+      },
     };
-    // Re-arm the listener through the same seam so the wrapped handler
-    // is what runs. Instead of wrestling with internals, just verify
-    // that calling the event with the existing handler does NOT throw
-    // to the caller.
+    const postedBefore = mp.webview.postMessage.mock.calls.length;
     let threw = false;
     try {
       fakeEv.fire({
@@ -568,12 +685,16 @@ describe("AiChatPanel — listener containment (TASK-AIX03-102 case 4)", () => {
     } catch {
       threw = true;
     }
+    // Emission never throws to the ConnectionManager emitter.
     expect(threw).toBe(false);
-    // No fabricated error bubble even on `failed` because the listener
-    // threw — the swallow path emits nothing.
-    const errorBubbles = mp.webview.postMessage.mock.calls
-      .map((c) => c[0])
-      .filter((m) => (m as { type?: string }).type === "error");
-    expect(errorBubbles).toHaveLength(0);
+    // The swallow path emits NOTHING — not even session_state — because the
+    // throw happened before postSessionState ran.
+    expect(mp.webview.postMessage.mock.calls.length).toBe(postedBefore);
+    // Sanity: the throwing gate was actually reached (the test exercises the
+    // swallow path, not a vacuous fire).
+    expect(handle.token?.aborted).toBe(true);
+    // Give any stray async post a microtask to land, then re-assert nothing.
+    await Promise.resolve();
+    expect(mp.webview.postMessage.mock.calls.length).toBe(postedBefore);
   });
 });

@@ -1330,11 +1330,13 @@ describe("TASK-011 (B3) — commandOpenAiChat resolves engine via detectOmp() + 
   });
 
   // ---- TASK-AIX03-102 case 5: dispose + re-subscription ---------------------
-  // After the first panel is disposed (via its onDispose seam), the next
-  // vsdb.aiChat command must construct a SECOND panel that receives the same
+  // REAL panel disposal: the first panel's teardown must dispose its
+  // recovery subscription EXACTLY ONCE (listener count back to zero on the
+  // host emitter), and the next vsdb.aiChat command must construct a SECOND
+  // panel that registers one FRESH listener on the SAME
   // ConnectionManager.onDidChangeRecoveryStatus event reference (proves the
   // host wired the activation-scoped `mgr`, not a fresh closure).
-  it("case 5: panel dispose → next panel receives the same mgr.onDidChangeRecoveryStatus reference", async () => {
+  it("case 5: real panel dispose releases its recovery subscription; the next panel re-subscribes on the same mgr event", async () => {
     state.aiEngine = "omp";
     detectOmpState.impl = async () => ({
       available: true,
@@ -1344,19 +1346,33 @@ describe("TASK-011 (B3) — commandOpenAiChat resolves engine via detectOmp() + 
     });
     vi.resetModules();
     // Re-mock the aiChatPanel module here (file-wide vi.mock is hoisted
-    // out of this test) so panelConstructorCalls is captured.
-    vi.doMock("./ui/aiChatPanel", () => ({
-      AiChatPanel: class {
-        constructor(opts: unknown) {
-          panelConstructorCalls.push(opts);
-        }
-        show(): void {}
-        dispose(): void {}
-      },
-    }));
+    // out of this test) with the REAL panel subclassed so construction is
+    // captured while teardown stays fully real: constructor subscribes to
+    // the recovery event; dispose() → real teardown → recoverySub.dispose().
+    const panelInstances: Array<{
+      dispose(): void;
+    }> = [];
+    vi.doMock("./ui/aiChatPanel", async (importOriginal) => {
+      const actual =
+        await importOriginal<typeof import("./ui/aiChatPanel")>();
+      return {
+        ...actual,
+        AiChatPanel: class extends actual.AiChatPanel {
+          constructor(opts: unknown) {
+            super(opts as never);
+            panelConstructorCalls.push(opts);
+            panelInstances.push(this as unknown as { dispose(): void });
+          }
+        },
+      };
+    });
     // Mock the connection manager module BEFORE importing extension.ts.
     // Every `new ConnectionManager(...)` is captured here.
-    let liveMgr: { onDidChangeRecoveryStatus: unknown } | null = null;
+    let liveMgr: {
+      onDidChangeRecoveryStatus: (
+        listener: (s: unknown) => void,
+      ) => { dispose(): void };
+    } | null = null;
     vi.doMock("./core/connectionManager", async () => {
       const actual = await vi.importActual<typeof import("./core/connectionManager")>(
         "./core/connectionManager",
@@ -1366,7 +1382,7 @@ describe("TASK-011 (B3) — commandOpenAiChat resolves engine via detectOmp() + 
         constructor(...a: unknown[]) {
           // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
           super(...(a as []));
-          liveMgr = this as unknown as { onDidChangeRecoveryStatus: unknown };
+          liveMgr = this as unknown as typeof liveMgr;
         }
       }
       return { ...actual, ConnectionManager: SpyMgr };
@@ -1374,6 +1390,29 @@ describe("TASK-011 (B3) — commandOpenAiChat resolves engine via detectOmp() + 
     const ext = await import("./extension");
     const ctx2 = makeCtx();
     await ext.activate(ctx2 as never);
+    expect(liveMgr).not.toBeNull();
+    // Wrap the mgr's real event with a counting wrapper — the host must
+    // pass THIS exact reference to both panels, and the wrapper tracks
+    // registrations, active listeners, and dispose() calls.
+    const baseEvent = liveMgr!.onDidChangeRecoveryStatus;
+    const registered: Array<(s: unknown) => void> = [];
+    let activeListeners = 0;
+    let subDisposeCalls = 0;
+    const countingEvent = (listener: (s: unknown) => void) => {
+      registered.push(listener);
+      activeListeners += 1;
+      const d = baseEvent(listener);
+      return {
+        dispose: () => {
+          subDisposeCalls += 1;
+          activeListeners -= 1;
+          d.dispose();
+        },
+      };
+    };
+    (liveMgr as { onDidChangeRecoveryStatus: unknown }).onDidChangeRecoveryStatus =
+      countingEvent;
+
     const fn = state.registeredCommands.get("vsdb.aiChat");
     expect(fn).toBeDefined();
 
@@ -1381,28 +1420,46 @@ describe("TASK-011 (B3) — commandOpenAiChat resolves engine via detectOmp() + 
     expect(panelConstructorCalls.length).toBe(1);
     const firstOpts = panelConstructorCalls[0] as {
       onDidChangeRecoveryStatus?: unknown;
-      onDispose?: () => void;
     };
-    expect(typeof firstOpts.onDidChangeRecoveryStatus).toBe("function");
-    // First panel teardown via the onDispose seam.
-    firstOpts.onDispose!();
+    // The first panel got the (wrapped) mgr event reference and subscribed.
+    expect(firstOpts.onDidChangeRecoveryStatus).toBe(countingEvent);
+    expect(registered.length).toBe(1);
+    expect(activeListeners).toBe(1);
+
+    // REAL disposal — the panel's own teardown path, exactly what VS Code's
+    // onDidDispose triggers in production.
+    panelInstances[0]!.dispose();
+    // The first subscription's dispose() ran EXACTLY ONCE (the torndown
+    // guard collapses the explicit dispose + re-entrant onDidDispose into a
+    // single teardown), and the host emitter is back to zero listeners.
+    expect(subDisposeCalls).toBe(1);
+    expect(activeListeners).toBe(0);
+
     await fn!();
     expect(panelConstructorCalls.length).toBe(2);
 
     const secondOpts = panelConstructorCalls[1] as {
       onDidChangeRecoveryStatus?: unknown;
     };
-    expect(typeof secondOpts.onDidChangeRecoveryStatus).toBe("function");
-    // Both panels received the SAME event reference (host reused the
-    // activation-scoped mgr, not a fresh emitter per construction).
-    expect(secondOpts.onDidChangeRecoveryStatus).toBe(
-      firstOpts.onDidChangeRecoveryStatus,
-    );
-    // The activation-scoped `mgr` instance was captured by the SpyMgr.
-    expect(liveMgr).not.toBeNull();
-    expect(firstOpts.onDidChangeRecoveryStatus).toBe(
-      liveMgr?.onDidChangeRecoveryStatus,
-    );
+    // The SECOND panel received the SAME event reference (host reused the
+    // activation-scoped mgr, not a fresh emitter per construction) and
+    // registered exactly ONE fresh listener.
+    expect(secondOpts.onDidChangeRecoveryStatus).toBe(countingEvent);
+    expect(registered.length).toBe(2);
+    expect(activeListeners).toBe(1);
+    expect(registered[1]).not.toBe(registered[0]);
+
+    // Restore the file-wide no-op panel mock so this test's doMock does not
+    // leak into later describes (vi.doMock persists across resetModules).
+    vi.doMock("./ui/aiChatPanel", () => ({
+      AiChatPanel: class {
+        constructor(opts: unknown) {
+          panelConstructorCalls.push(opts);
+        }
+        show(): void {}
+        dispose(): void {}
+      },
+    }));
   });
 });
 

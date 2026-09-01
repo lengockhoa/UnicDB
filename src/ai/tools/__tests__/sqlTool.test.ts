@@ -279,6 +279,27 @@ describe("isReadOnlySql", () => {
     expect(r.ok).toBe(false);
     expect(r.reason).toBe("Only SELECT/SHOW/EXPLAIN/WITH…SELECT are allowed (read-only)");
   });
+
+  // TASK-AIX03-101 fix round 1 (reviewer verdict: critical_block):
+  // The EXPLAIN branch returned { ok: true } before reaching the ROW_LOCK_RE
+  // guard, letting `EXPLAIN ANALYZE SELECT … FOR SHARE` and `… FOR KEY SHARE`
+  // execute and acquire share row locks. Regression: the row-lock guard must
+  // run against the EXPLAIN inner statement too.
+  it("rejects EXPLAIN ANALYZE SELECT … FOR SHARE (share lock bypass)", () => {
+    const r = isReadOnlySql("EXPLAIN ANALYZE SELECT * FROM t FOR SHARE");
+    expect(r).toEqual({
+      ok: false,
+      reason: "Read-only violation: FOR UPDATE/SHARE",
+    });
+  });
+
+  it("rejects EXPLAIN ANALYZE SELECT … FOR KEY SHARE (key share lock bypass)", () => {
+    const r = isReadOnlySql("EXPLAIN ANALYZE SELECT * FROM t FOR KEY SHARE");
+    expect(r).toEqual({
+      ok: false,
+      reason: "Read-only violation: FOR UPDATE/SHARE",
+    });
+  });
 });
 
 // ---- createSqlTool --------------------------------------------------------

@@ -160,3 +160,44 @@ FINDINGS:
     - src/extension.test.ts:1388 — case 5 invokes only a mocked panel's `onDispose` callback and never calls a real panel teardown or checks the event disposable. Exercise real disposal, assert the first subscription disposes exactly once, then assert a new panel registers one fresh listener.
   minor: none
 NEXT_STATUS_FOR_INDEX: changes_requested
+
+## Executor Report (fix round 1)
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT (each finding proven via mutation of the reviewed behavior — the strengthened test fails against mutated source and the OLD test demonstrably passed, proving the gap):
+  finding 1 (case 4, listener containment):
+    Mutation: constructor subscription try/catch removed (listener throws escape to the emitter).
+    OLD test result under mutation: PASS (vacuous — assigned a nonexistent `recoveryHandler` field; the real handler never threw).
+    NEW test result under mutation:
+      FAIL src/ui/__tests__/aiChatPanelDbAware.test.ts > AiChatPanel — listener containment (TASK-AIX03-102 case 4) > recovery listener throws → the throw is swallowed at the subscription boundary; no message reaches the webview
+        → AssertionError: expected true to be false // Object.is equality   (threw === true: the escape reached the emitter)
+  finding 2 (case 2, recovery/builtin + pending gate):
+    Mutation: `handleStop()` no longer calls `this.dbToolGate.cancelAll()`.
+    OLD test result under mutation: PASS (gap proven — it never created a pending gate request).
+    NEW test result under mutation:
+      FAIL src/ui/__tests__/aiChatPanelDbAware.test.ts > AiChatPanel — recovery/builtin turn (TASK-AIX03-102 case 2) > …
+        → AssertionError: expected true to be false // Object.is equality   (late gate.respond() still accepted ⇒ pending request was NOT cancelled)
+    Second mutation (recovery handler skips handleStop entirely):
+        → AssertionError: expected "abort" to be called 1 times, but got 0 times
+  finding 3 (case 5, real dispose/re-subscription):
+    Mutation: `teardown()` no longer disposes `recoverySub`.
+    NEW test result under mutation:
+      FAIL src/extension.test.ts > TASK-011 (B3) … > case 5: real panel dispose releases its recovery subscription; the next panel re-subscribes on the same mgr event
+        → AssertionError: expected +0 to be 1 // Object.is equality   (subDisposeCalls === 0 after real dispose())
+
+Verification Output:
+  npx vitest run src/ui/__tests__/aiChatPanelDbAware.test.ts src/extension.test.ts src/ai/omp/__tests__/ompChatEngine.test.ts
+    129 passed (129) | Test Files: 3 passed (3)
+  npx vitest run src/ui/ (regression sweep)
+    1457 passed (1457) | Test Files: 108 passed (108)
+  npx vitest run src/ai/omp/ src/extension.test.ts
+    198 passed | 2 skipped (200)
+  npm run typecheck
+    exit 0 (no errors)
+  npm run compile
+    esbuild: build complete
+
+Status: PASS
+Note: All three IMPORTANT findings fixed as test-only changes (no production edit needed, per reviewer prediction): case 2 now drives a REAL deferred builtin turn with a pending DbToolPermissionGate request and asserts abort + gate-cancel + session_state:error; case 4 provokes a real synchronous throw through the registered callback (throwing gate stub) and asserts fire() swallows it posting nothing; case 5 subclasses the REAL AiChatPanel, exercises real teardown via dispose(), asserts the recovery subscription's dispose() runs exactly once and the next panel registers one fresh listener on the SAME counting-wrapped mgr event reference (doMock restored afterward to prevent leakage).

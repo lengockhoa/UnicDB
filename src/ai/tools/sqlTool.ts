@@ -129,6 +129,14 @@ export function isReadOnlySql(sql: string): ReadOnlyCheck {
     if (innerKw === "with" && /\b(insert|update|delete|merge)\b/.test(inner)) {
       return { ok: false, reason: WCTE_REASON };
     }
+    // Row-locking clause (TASK-AIX03-101 fix round 1): EXPLAIN ANALYZE of a
+    // SELECT … FOR SHARE / FOR KEY SHARE actually executes and takes share
+    // row locks. Run the row-lock guard against the EXPLAIN inner statement
+    // before accepting — the top-level ROW_LOCK_RE guard below only sees
+    // `explain …` and would miss it.
+    if (ROW_LOCK_RE.test(inner)) {
+      return { ok: false, reason: ROW_LOCK_REASON };
+    }
     if (/\binto\b/.test(inner)) return { ok: false, reason: INTO_REASON };
     return { ok: true };
   }

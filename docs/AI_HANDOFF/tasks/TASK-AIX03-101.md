@@ -142,3 +142,33 @@ FINDINGS:
   important: none
   minor: none
 NEXT_STATUS_FOR_INDEX: critical_block
+
+## Executor Report (fix round 1)
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT:
+```
+ FAIL  src/ai/tools/__tests__/sqlTool.test.ts > isReadOnlySql > rejects EXPLAIN ANALYZE SELECT … FOR SHARE (share lock bypass)
+AssertionError: expected { ok: true } to deeply equal { ok: false, …(1) }
++   "ok": true,
+-   "ok": false,
+-   "reason": "Read-only violation: FOR UPDATE/SHARE",
+ FAIL  src/ai/tools/__tests__/sqlTool.test.ts > isReadOnlySql > rejects EXPLAIN ANALYZE SELECT … FOR KEY SHARE (key share lock bypass)
+AssertionError: expected { ok: true } to deeply equal { ok: false, …(1) }
++   "ok": true,
+-   "ok": false,
+-   "reason": "Read-only violation: FOR UPDATE/SHARE",
+ Test Files  1 failed (1)
+      Tests  2 failed | 40 skipped (42)
+```
+
+Verification Output:
+- RED: both new EXPLAIN row-lock regression tests failed against current source, each receiving `{ ok: true }` (confirms the bypass — EXPLAIN branch returned success before ROW_LOCK_RE).
+- Fix: `isReadOnlySql` EXPLAIN branch now runs `ROW_LOCK_RE.test(inner)` against the stripped inner statement before `{ ok: true }`.
+- GREEN: `npx vitest run …/sqlTool.test.ts` → 42/42 pass (2 new EXPLAIN row-lock tests pass).
+- `npx vitest run src/ai/tools/__tests__/readonlySqlParser.test.ts src/ai/tools/__tests__/sqlTool.test.ts src/ai/tools/__tests__/dbAwareTools.test.ts` → 3 files passed, 114/114 tests pass.
+- `npm run typecheck` → 0 errors.
+
+Status: PASS
+Note: Fixed the critical EXPLAIN-bypass by running ROW_LOCK_RE against the EXPLAIN inner statement before success; added 2 EXPLAIN row-lock regression tests (FOR SHARE + FOR KEY SHARE, both now `{ ok: false, reason: "Read-only violation: FOR UPDATE/SHARE" }`); no git add/commit/push performed.
