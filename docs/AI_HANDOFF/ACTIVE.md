@@ -1,4 +1,6 @@
-Cycle: ARP-05   Date: 2026-09-02   Base: main @ 65b9c4f (v1.40.0)
-Goal: Cross-driver timeout/pool resilience contract — measured matrix + finite failure proof
-Tasks: 5 total
-Status: planning_done — ready for executor
+Cycle: (none — idle)
+Date: 2026-09-02
+Base: main @ 0087d35 (v1.41.0)
+Goal: (awaiting next cycle)
+Tasks: 0 total
+Status: idle — ARP-05 shipped as v1.41.0 (5/5 approved; 001 approved_minor after fix round 1)
