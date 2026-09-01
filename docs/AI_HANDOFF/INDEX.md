@@ -1,6 +1,6 @@
 # INDEX
 
-Cycle AIX-07 — **Trust, Privacy & Governance** — complete; shipped in v1.28.0. Cycle DX-01 — Release confidence lane — shipped in v1.36.0. Next commissionable cycle: ARP-01 (read-only enforcement completeness) from `docs/plans/2026-09-01-vsdb-additive-roadmap.md`.
+Cycle AIX-07 — **Trust, Privacy & Governance** — complete; shipped in v1.28.0. Cycle DX-01 — Release confidence lane — shipped in v1.36.0. Cycle ARP-02 — shutdown-safe query ownership — shipped in v1.38.0. Next commissionable cycle: ARP-03 (retained-result memory budget) from `docs/plans/2026-09-01-vsdb-additive-roadmap.md`.
 
 | Task / Portfolio | Title | Status | Dependencies | Reviewer |
 |---|---|---|---|---|
@@ -23,6 +23,7 @@ Cycle AIX-07 — **Trust, Privacy & Governance** — complete; shipped in v1.28.
 | PORT-AIX-06/07 | Redacted agent trace and centralized governance | superseded (shipped in v1.26.0–v1.28.0) | - | unic-smart |
 | PORT-DX-01 | Regression and release confidence lane | superseded (shipped in v1.36.0) | - | unic-smart |
 | PORT-ARP-01 | Read-only enforcement completeness | superseded (shipped in v1.37.0) | - | unic-smart |
+| PORT-ARP-02 | Shutdown-safe query ownership and connection provenance | superseded (shipped in v1.38.0) | - | unic-smart |
 
 ## Cycle AIX-03 — Read-only Database Analysis Copilot Hardening
 
@@ -125,10 +126,10 @@ No same-wave target-file overlap. MySQL and SQL Server own disjoint adapter/test
 
 | Task / Portfolio | Title | Status | Dependencies | Reviewer |
 |---|---|---|---|---|
-| TASK-ARP02-001 | Cancel ownership: sticky cancel + in-flight-scoped pending + monotonic seq | pending_review | none | unic-smart |
-| TASK-ARP02-002 | Panel-close session-epoch guard for deferred continuations | pending_review | none | unic-smart |
-| TASK-ARP02-003 | Late-completion connection provenance (per-connection revision map) | pending_review | none | unic-smart |
-| TASK-ARP02-004 | Host integration: runStatements busy ownership + deactivate fence | approved_minor | TASK-ARP02-001, TASK-ARP02-002 | unic-smart |
+| TASK-ARP02-001 | Cancel ownership: sticky cancel + in-flight-scoped pending + monotonic seq | done | none | unic-smart |
+| TASK-ARP02-002 | Panel-close session-epoch guard for deferred continuations | done | none | unic-smart |
+| TASK-ARP02-003 | Late-completion connection provenance (per-connection revision map) | done | none | unic-smart |
+| TASK-ARP02-004 | Host integration: runStatements busy ownership + deactivate fence | done | TASK-ARP02-001, TASK-ARP02-002 | unic-smart |
 
 Graph: TASK-ARP02-001 independent; TASK-ARP02-002 independent; TASK-ARP02-003 independent; TASK-ARP02-001 → TASK-ARP02-004; TASK-ARP02-002 → TASK-ARP02-004.
 
