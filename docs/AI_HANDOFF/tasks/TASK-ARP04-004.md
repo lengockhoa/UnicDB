@@ -1,6 +1,6 @@
 # TASK-ARP04-004 — Form wiring gate (verify-only — expected to close not-needed)
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §1–§4 (ARP-04.4)
@@ -66,3 +66,38 @@ No `lint` script exists in this repo — `typecheck` is the static gate.
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code (orchestrator direct — verify-only task, no worktree/agent needed)
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+RED_OUTPUT: N/A — verify-only gate task; no test cases authored (per task §Test Cases: "N/A per RULES").
+Verification Output:
+
+Command 1+2 combined (rg sweep, equivalent to the task's grep):
+  rg -l "StrictHostKeyChecking" src
+  → src/core/sshTunnel.ts, src/core/__tests__/sshTunnelManager.test.ts, src/core/__tests__/sshTunnel.test.ts  (core-only)
+  rg -l "UserKnownHostsFile" src
+  → src/core/sshTunnel.ts + the same two core test files  (core-only)
+  rg -l "known_hosts" src
+  → src/core/sshTunnel.ts  (core-only — appears only in a comment naming the default trust store)
+  rg -l "hostKey" src
+  → (no output — zero matches in all of src)
+  fingerprint: 0 matches in src/ui/connectionForm.ts and src/ui/connectionFormMessages.ts; the only src matches are src/ai/sqlAutocomplete.ts, src/ai/tools/changePlanTool.ts, src/ui/aiSqlCompletionProvider.ts and their AI tests — an unrelated "AI SQL fingerprint" concept, not SSH host keys.
+  Net: NO host-key/strict-checking/known_hosts/fingerprint token exists in src/ui/connectionForm.ts, src/ui/connectionFormMessages.ts, or src/config/types.ts. The form/config surface is unchanged by this cycle.
+
+Command 3 (form suite + typecheck):
+  npx vitest run src/ui/__tests__/connectionForm.test.ts
+    Test Files  1 passed (1) / Tests 11 passed (11)
+  npm run typecheck → exit 0 (run at wave-3 boundary, no source changed since)
+
+Form message-surface evidence (src/ui/connectionFormMessages.ts:34-37):
+  tunnelHost: string;
+  tunnelPort: number | null;
+  tunnelUser: string;
+  tunnelIdentityFile: string;
+  — the only tunnel fields the form knows. No host-key field, per the ADR's "no form input required" conclusion.
+
+Status: PASS
+Note: Gate closed **not-needed** — no form/config wiring exists or is required. No src/ui/ or src/config/ file was modified by this cycle (wave commits touched core only). No follow-up task needed.
