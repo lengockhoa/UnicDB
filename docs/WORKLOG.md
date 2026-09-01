@@ -20,6 +20,13 @@ For each significant action, append:
 - Verification run
 - Outcome
 
+## 2026-09-01 — Wave 7 RLX-02 Cross-dialect Query Lifecycle → v1.31.0 (main @ cb27b86)
+- Full handoff cycle: plan (review rounds 2) → 3 tasks in 2 waves → unic-smart review (2 APPROVED round 1, TASK-001 fixed round 1) → release v1.31.0 (tag + vsdb-1.31.0.vsix).
+- MySQL: `PoolConnection.destroy()` on cancellation + pre-handoff stream cancel (drain before busy-clear). MSSQL: snapshot `activeRequests` set + per-request `request.cancel()` so cancellation survives adapter handoff. `vsdb.cancelQuery` now `await`s `runner.cancel()` before clearing the busy state, eliminating the race where UI showed idle but the query was still draining.
+- Files: `src/adapters/{mysql,mssql}.ts`, `src/core/queryRunner.ts`, `src/extension.ts`, `src/__tests__/cancel*.test.ts`, `mockMysqlTxConnection` `queryImpl` parameter (natural rejection), PLAN_RLX02.md, INDEX_RLX02.md, TASK-RLX02-001/002/003.md, CHANGELOG, STATUS, ACTIVE.
+- Verification: full suite **2838 passed | 2 skipped + 1 pre-existing flaky perf test** (`saveStatementsParser` 200KB — passes in isolation); typecheck 0; compile clean at v1.31.0.
+- Lessons: (a) wave-2 executor agent died on gateway 503 (unic-code pool exhausted) mid-run — worktree was clean so retry was free; always check `git -C .worktrees/<task> status --short` after a dead agent before retrying. (b) `SELECT 1` goes down the streaming path in `MySqlAdapter.runQuery` — natural-rejection fixtures for the non-stream path must use DML. (c) Patching `.then` on a mock's returned promise is fragile; `mockMysqlTxConnection`'s `queryImpl` parameter rejects naturally. (d) Reviewer finding worth remembering: test constants like `beforeDestroys = 0` are non-observing — always count real calls.
+
 ## 2026-09-01 — Wave 6 shipped: DBX-08 (v1.29.0) + AIX-08 (v1.30.0) (main @ d9d30e3)
 - Two complete handoff-fullstack cycles run back-to-back per the standing autonomy directive.
 - **DBX-08 Dialect Parity Contract**: waves 1-3 via feature-implementer agents in worktrees (capability matrix + fail-closed helper; catalog/object-DDL gating with `isPostgres`→`declaresCatalog`; table-DDL/admin gating with pinned admin-tree node). unic-smart review ×3 parallel: 001/003 APPROVED, 002 CHANGES-REQUESTED → fixed rejected-async-predicate fail-closed hole in sqlCatalog. Release v1.29.0 (tag pushed, VSIX).
