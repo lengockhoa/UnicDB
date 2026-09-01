@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.33.0] — 2026-09-01
+
+Cycle DBX-06: Reviewed PostgreSQL Rename Workflow (catalog usage analysis, pure rename-plan builder, and host preview/confirmation integration with DBX-08 capability gating and partial-failure reporting).
+
+### Added
+- **Catalog usage analysis** (`src/core/ddl/renameAnalysis.ts`, `src/core/ddl/renameCatalog.ts`): pure SQL templates + row mappers detect dependent objects for a table/column rename. Always-three-value binding contract (`$1` schema, `$2` table, `$3` column-or-empty-string for table mode), pinned `int2vector` casts, `pg_get_expr` signatures, `$3=''` short-circuit, and `k.attnum > 0` ordinal filter. Inclusion rules pinned: direct references via `tgattr`/`indkey`, expression and predicate references via word-boundary match on `tgqual`/`indexprs`/`indpred`; function/trigger-function bodies are explicitly excluded. All identifiers flow through `quoteIdent`; collision detection emits a pinned literal before any side effect.
+- **Multi-step rename-plan builder** (same files): pure plan struct (`RenamePlan.steps: RenameStep[]`) where each step has a kind (`renameTable`/`renameColumn`), pinned executable label (`"Rename table"` / `"Rename column"`), and SQL; the host runs steps in order, stops at first failure, and reports a named `applied`/`failed`/`cancelled` record so partial-failure state is always reconstructable. Adapter additions are additive (`RenameUsageApi.triggers`/`indexes` on `PostgresAdapter`); MySQL/MSSQL gain nothing.
+- **Host preview/confirmation integration** (`src/core/ddl/renameRunner.ts`, `src/ui/renameForm.ts`, `src/ui/renameFormMessages.ts`, `webview/renameFormMain.ts`): the rename command resolves the active adapter and requires the DBX-08 `tableDdl` capability BEFORE any analysis, form, or webview work — unsupported adapters receive the pinned denial `VSDB: Rename Table is not supported by this connection's database.` and exit cleanly. Successful capability check runs analysis, surfaces a step-by-step preview, requires explicit confirm, then executes via `runRenameSteps` (no accidental execution). Stale plans are cleared after a bad analysis; the webview protocol carries the structured `steps` + named-step completion record for the host; DOM rendering is text-only (no identifier injection). Legacy `runRenameStatements` consumer (`aiChatPanel`) is untouched.
+
+### Review
+- Independent unic-smart review, 2 parallel reviewers: both APPROVED round 1. Plan review required 2 rounds (param-binding consistency, multi-step vs single-step partial-failure, column-inclusion rules — all resolved pre-implementation with 2 cosmetic plan notes applied without re-review). Focused net 65/65, full suite 2878 passed | 2 skipped, typecheck + compile clean.
+
 ## [1.32.0] — 2026-09-01
 
 Cycle RLX-03: Connection, Tunnel & Schema-Refresh Recovery (typed tunnel-exit lifecycle, bounded active reconnect with ownership guards, and adapter-transition schema-cache invalidation — bounded retries and disposal proven by fake-SSH/injected-clock tests).
