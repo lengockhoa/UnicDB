@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, type Mock } from "vitest";
 import {
   runAgent,
+  summarizeTurnUsage,
   EMPTY_TOOL_REGISTRY,
   type AgentDeps,
   type AgentInput,
@@ -869,5 +870,147 @@ describe("runAgent trace (TASK-AIX06-003)", () => {
       complete: vi.fn(),
     };
     await expect(runAgent({ messages: [] }, deps)).rejects.toThrow("AI is not configured");
+  });
+});
+
+// ============================================================================
+// TASK-ARP06-004 — Per-turn usage accounting pins.
+//   Policy (PLAN.md §2/§3): usage is reported or unknown — NEVER invented;
+//   aborted turns never resolve an AgentRunResult; maxSteps remains the ONLY
+//   hard stop (no token-based kill).
+// ============================================================================
+
+const ZERO_USAGE = { inputTokens: 0, outputTokens: 0 };
+
+function resultWithUsage(
+  text: string,
+  usage: { inputTokens: number; outputTokens: number },
+  toolCalls: ToolCall[] = [],
+): ProviderResult {
+  return { text, toolCalls, finishReason: toolCalls.length > 0 ? "tool_calls" : "stop", usage };
+}
+
+function stepWithUsage(usage: { inputTokens: number; outputTokens: number }): AgentStep {
+  return {
+    messages: [{ role: "assistant", content: "assistant text" }],
+    result: resultWithUsage("assistant text", usage),
+  };
+}
+
+function tickRegistry(): ToolRegistry {
+  const tool: AgentTool = {
+    name: "tick",
+    description: "tick",
+    parameters: { type: "object", properties: {} },
+    execute: vi.fn(async () => "ok"),
+  };
+  return { list: () => [tool], get: () => tool };
+}
+
+describe("runAgent — per-turn usage accounting (TASK-ARP06-004)", () => {
+  it("test #1 exact cumulative usage across steps — helper and AgentRunResult agree", async () => {
+    const deps = makeDeps({
+      results: [
+        resultWithUsage("", { inputTokens: 1, outputTokens: 1 }, [
+          { id: "a", name: "tick", argumentsJson: "{}" },
+        ]),
+        resultWithUsage("", { inputTokens: 2, outputTokens: 3 }, [
+          { id: "b", name: "tick", argumentsJson: "{}" },
+        ]),
+        resultWithUsage("final", { inputTokens: 5, outputTokens: 6 }),
+      ],
+    });
+    const out = await runAgent({ messages: [textMsg("user", "u")], tools: tickRegistry() }, deps);
+
+    expect(out.steps).toHaveLength(3);
+    expect(out.stoppedOnBudget).toBe(false);
+    expect(out.finalText).toBe("final");
+    expect(out.usage).toEqual({ inputTokens: 8, outputTokens: 10, unknown: false, steps: 3 });
+    expect(summarizeTurnUsage(out.steps)).toEqual(out.usage);
+  });
+
+  it("test #2 all-unknown usage is never invented (zeros stay zeros, unknown:true)", async () => {
+    const deps = makeDeps({
+      results: [
+        resultWithUsage("", ZERO_USAGE, [{ id: "a", name: "tick", argumentsJson: "{}" }]),
+        resultWithUsage("done", ZERO_USAGE),
+      ],
+    });
+    const out = await runAgent({ messages: [textMsg("user", "u")], tools: tickRegistry() }, deps);
+
+    expect(out.steps).toHaveLength(2);
+    expect(out.finalText).toBe("done");
+    expect(out.usage).toEqual({ inputTokens: 0, outputTokens: 0, unknown: true, steps: 2 });
+    expect(summarizeTurnUsage(out.steps)).toEqual(out.usage);
+  });
+
+  it("test #3 partial unknowns are summed, not treated as unknown", () => {
+    const steps: AgentStep[] = [
+      stepWithUsage(ZERO_USAGE),
+      stepWithUsage({ inputTokens: 5, outputTokens: 3 }),
+      stepWithUsage(ZERO_USAGE),
+    ];
+    expect(summarizeTurnUsage(steps)).toEqual({
+      inputTokens: 5,
+      outputTokens: 3,
+      unknown: false,
+      steps: 3,
+    });
+  });
+
+  it("test #4 empty steps → zeros/unknown:true; budget-capped run reports usage from completed steps only", async () => {
+    // Empty accounting — zero completed steps are never given invented cost.
+    expect(summarizeTurnUsage([])).toEqual({ inputTokens: 0, outputTokens: 0, unknown: true, steps: 0 });
+
+    // Budget-capped (tool-only model, maxSteps exhausted before a no-tool reply):
+    // usage is present on the budget path and unknown stays true (nothing reported).
+    const deps = makeDeps({
+      results: [resultWithUsage("", ZERO_USAGE, [{ id: "a", name: "tick", argumentsJson: "{}" }])],
+    });
+    const out = await runAgent(
+      { messages: [textMsg("user", "u")], tools: tickRegistry(), maxSteps: 1 },
+      deps,
+    );
+    expect(out.stoppedOnBudget).toBe(true);
+    expect(out.steps).toHaveLength(1);
+    expect(out.finalText).toBe("");
+    expect(out.usage).toEqual({ inputTokens: 0, outputTokens: 0, unknown: true, steps: 1 });
+  });
+
+  it("test #5 aborted turn rethrows — never resolves an AgentRunResult with fabricated usage", async () => {
+    const controller = new AbortController();
+    const deps: AgentDeps = {
+      loadConfig: vi.fn(async () => makeConfig()),
+      complete: vi.fn(async () => {
+        controller.abort();
+        const err = new Error("user aborted");
+        err.name = "AbortError";
+        throw err;
+      }),
+    };
+    const runP = runAgent({ messages: [textMsg("user", "u")] }, deps, undefined, controller.signal);
+    await expect(runP).rejects.toThrow("user aborted");
+    // User stop must never trigger a re-request (frozen TASK-002 abort rule).
+    expect(deps.complete).toHaveBeenCalledTimes(1);
+  });
+
+  it("test #6 maxSteps is the ONLY hard stop — huge reported usage never kills the run early", async () => {
+    const big = { inputTokens: 900, outputTokens: 900 };
+    const deps = makeDeps({
+      results: [
+        resultWithUsage("", big, [{ id: "a", name: "tick", argumentsJson: "{}" }]),
+        resultWithUsage("", big, [{ id: "b", name: "tick", argumentsJson: "{}" }]),
+        resultWithUsage("", big, [{ id: "c", name: "tick", argumentsJson: "{}" }]),
+      ],
+    });
+    const out = await runAgent(
+      { messages: [textMsg("user", "u")], tools: tickRegistry(), maxSteps: 3 },
+      deps,
+    );
+
+    expect(deps.complete).toHaveBeenCalledTimes(3);
+    expect(out.steps).toHaveLength(3);
+    expect(out.stoppedOnBudget).toBe(true);
+    expect(out.usage).toEqual({ inputTokens: 2700, outputTokens: 2700, unknown: false, steps: 3 });
   });
 });

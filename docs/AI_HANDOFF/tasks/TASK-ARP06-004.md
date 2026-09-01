@@ -82,6 +82,99 @@ runs in the cycle `npm test` net.
 
 ---
 
+## Executor Report
+
+```
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: Claude:feature-implementer
+```
+
+RED_OUTPUT (actual failing output after writing §Test Cases 1-6, before any production change):
+
+```
+ FAIL  src/ai/__tests__/agent.test.ts > runAgent — per-turn usage accounting (TASK-ARP06-004) > test #1 exact cumulative usage across steps — helper and AgentRunResult agree
+ FAIL  src/ai/__tests__/agent.test.ts > runAgent — per-turn usage accounting (TASK-ARP06-004) > test #2 all-unknown usage is never invented (zeros stay zeros, unknown:true)
+ FAIL  src/ai/__tests__/agent.test.ts > runAgent — per-turn usage accounting (TASK-ARP06-004) > test #3 partial unknowns are summed, not treated as unknown
+ FAIL  src/ai/__tests__/agent.test.ts > runAgent — per-turn usage accounting (TASK-ARP06-004) > test #4 empty steps → zeros/unknown:true; budget-capped run reports usage from completed steps only
+TypeError: summarizeTurnUsage is not a function
+ FAIL  src/ai/__tests__/agent.test.ts > runAgent — per-turn usage accounting (TASK-ARP06-004) > test #6 maxSteps is the ONLY hard stop — huge reported usage never kills the run early
+AssertionError: expected undefined to deeply equal { inputTokens: 2700, …(3) }  — out.usage === undefined
+      Tests  5 failed | 28 passed (33)
+```
+
+Note: test #5 (abort) passed on base — it pins existing frozen TASK-002 abort behavior
+(`AbortError` mid-run rethrows, no re-request). GREEN-on-base pin, permitted: the task
+spec's acceptance criterion for abort is "never resolves a fabricated AgentRunResult",
+which the base already guarantees and the pin locks.
+
+Verification Output (all three §Verification Commands, fresh in this turn):
+
+```
+$ npx vitest run src/ai/__tests__/agent.test.ts
+ ✓ src/ai/__tests__/agent.test.ts  (33 tests) 14ms
+ Test Files  1 passed (1)
+      Tests  33 passed (33)
+   Start at  06:37:59
+   Duration  209ms (transform 53ms, setup 0ms, collect 46ms, tests 14ms, environment 0ms, prepare 36ms)
+
+$ npm run typecheck
+> tsc --noEmit
+exit 0
+
+$ npm run compile
+esbuild: build complete
+exit 0
+```
+
+Status: PASS
+
+```
+SUMMARY: Added exported pure `summarizeTurnUsage(steps)` + `TurnUsageSummary` and attached
+`usage: TurnUsageSummary` to `AgentRunResult` on BOTH resolution paths (normal completion and
+budget exhaustion). No new hard stop — maxSteps untouched as the only termination lever; abort
+path still rethrows and never resolves a fabricated result.
+TEST_PLAN_FOLLOWED: task §Test Cases (all 6) + §Verification Commands.
+FILES_CHANGED:
+  - src/ai/agent.ts: TurnUsageSummary interface + pure exported summarizeTurnUsage() +
+    usage field on AgentRunResult, computed on both return paths (stoppedOnBudget true and false).
+  - src/ai/__tests__/agent.test.ts: 6 new accounting pins (exact sum, all-unknown, mixed partial,
+    empty + budget-capped, abort rethrow, maxSteps-only hard stop with huge usage).
+TESTS_ADDED:
+  - src/ai/__tests__/agent.test.ts: runAgent — per-turn usage accounting (TASK-ARP06-004):
+    test #1..#6 per task §Test Cases.
+VERIFICATION:
+  command: npx vitest run src/ai/__tests__/agent.test.ts && npm run typecheck && npm run compile
+  result: 33 pass / 0 fail; typecheck exit 0; compile exit 0
+  output_excerpt: |
+     Test Files  1 passed (1)
+          Tests  33 passed (33)
+     > tsc --noEmit  (exit 0)
+     esbuild: build complete  (exit 0)
+ISSUES: one mid-green hiccup — 3 pre-existing trace tests build steps from untyped mocks without
+a `usage` object; summarizeTurnUsage initially crashed reading `.inputTokens` of undefined.
+Fixed defensively: missing `usage` counts as NOT reported (0/0), consistent with the
+"reported or unknown — never invented" policy. provider.ts itself always sets usage; no
+provider change was needed or made.
+HANDOFF_TO_REVIEWER: yes — all acceptance criteria met except the review verdict itself.
+NEXT: ready for review (TASK-ARP06-005 can consume the interface now).
+```
+
+Interface shape for TASK-ARP06-005 (exact, produced here):
+
+```ts
+export interface TurnUsageSummary {
+  inputTokens: number;   // sum of reported input tokens over completed steps
+  outputTokens: number;  // sum of reported output tokens over completed steps
+  unknown: boolean;      // true iff NO completed step reported a nonzero count
+  steps: number;         // completed step count folded into this summary
+}
+// AgentRunResult.usage: TurnUsageSummary — present on every resolved result
+// (stoppedOnBudget true AND false). Abort paths rethrow: no result, no usage.
+```
+
+---
+
 <!--
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.

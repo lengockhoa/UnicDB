@@ -75,7 +75,61 @@ export interface AgentRunResult {
   finalText: string;
   /** True iff hit maxSteps before a no-tool-call reply. */
   stoppedOnBudget: boolean;
+  /** TASK-ARP06-004: exact per-turn usage over completed steps only. Reported
+   * or unknown — never invented (unknown:true when every completed step
+   * reported 0/0). Present on every resolution path, budget exhaustion
+   * included. Abort paths rethrow and never resolve a fabricated result.
+   * Consumed by TASK-ARP06-005. */
+  usage: TurnUsageSummary;
 }
+
+/** TASK-ARP06-004 — per-turn usage roll-up over completed agent steps. */
+export interface TurnUsageSummary {
+  inputTokens: number;
+  outputTokens: number;
+  /** True iff NO completed step reported a nonzero token count — i.e. all
+   * reported usage was unknown/zero, so totals must be treated as unknown,
+   * never as invented cost. */
+  unknown: boolean;
+  /** Number of completed steps folded into this summary. */
+  steps: number;
+}
+
+/**
+ * TASK-ARP06-004 — pure roll-up of per-step provider usage across a turn.
+ * Only steps that actually completed (in `steps`) are folded; aborted turns
+ * rethrow and never reach this. A step is counted as "reporting" only when it
+ * carries a nonzero token count; a turn whose every step is 0/0 (or that has
+ * no completed steps) is `unknown: true` — zeros are echoed, never fabricated
+ * into a cost. Consumed by runAgent on every resolution path (TASK-ARP06-005
+ * reads the shape from AgentRunResult.usage).
+ */
+export function summarizeTurnUsage(steps: readonly AgentStep[]): TurnUsageSummary {
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let anyReported = false;
+  for (const step of steps) {
+    // A missing usage object (defensive: provider.ts guarantees the field, but
+    // untyped callers may not) counts as NOT reported — 0/0, never invented.
+    const u = step.result.usage ?? ZERO_USAGE_SUMMARY;
+    inputTokens += u.inputTokens;
+    outputTokens += u.outputTokens;
+    if (u.inputTokens > 0 || u.outputTokens > 0) {
+      anyReported = true;
+    }
+  }
+  return {
+    inputTokens,
+    outputTokens,
+    unknown: !anyReported,
+    steps: steps.length,
+  };
+}
+
+const ZERO_USAGE_SUMMARY: { inputTokens: number; outputTokens: number } = {
+  inputTokens: 0,
+  outputTokens: 0,
+};
 
 export interface AgentCallbacks {
   onStep?(step: AgentStep): void;
@@ -306,6 +360,7 @@ export async function runAgent(
         history,
         finalText: result.text,
         stoppedOnBudget: false,
+        usage: summarizeTurnUsage(steps),
       };
     }
 
@@ -340,6 +395,7 @@ export async function runAgent(
     history,
     finalText: lastAssistantNoToolText,
     stoppedOnBudget: true,
+    usage: summarizeTurnUsage(steps),
   };
   } catch (err) {
     if (trace) {
