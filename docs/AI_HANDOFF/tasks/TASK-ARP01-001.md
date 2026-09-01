@@ -197,10 +197,18 @@ NEXT: reviewer verdict; optional follow-up task for MSSQL [identifier] masking.
 
 ## Reviewer Verdict
 
+VERDICT: APPROVED-WITH-MINOR
 REVIEWER_MODEL: unic-smart
 EXECUTOR_MODEL: unic-code
-VERDICT:
 VERIFICATION_RERUN:
-TEST_PLAN_COVERAGE:
+  command: npx vitest run src/core/__tests__/readOnlyIntent.test.ts src/core/__tests__/dangerousStatement.test.ts && npm run typecheck && npm run compile
+  result: 49 pass / 0 fail; typecheck + compile clean
+TEST_PLAN_COVERAGE: all-followed
 FINDINGS:
-NOTES:
+  critical: none
+  important: none
+  minor:
+    - src/core/dangerousStatement.ts:188 — MySQL backslash-escape inside a backtick identifier (e.g. "SELECT `\`insert` FROM t", mysql) stops the mask at the escaped backtick, leaking "insert" into the depth-scan → over-blocking false positive. Documented in the branch comment; safe direction for a read-only guard (never under-blocks). Acceptable today; handle `\`` if such identifiers become real input.
+    - src/core/dangerousStatement.ts:94 — `useBackslashEscape` doubles as the mysql dialect gate for the backtick branch; overloaded name. Already flagged in Discussion; consider renaming to `isMysqlDialect` if bracket masking lands.
+NEXT_STATUS_FOR_INDEX: done
+NOTES: Model isolation OK (executor unic-code != reviewer unic-smart). RED proof real (1 fail/19 pass pre-fix). postgres/mssql masking byte-identical (probe-verified). MSSQL [insert] deferred by executor, consistent with task scope.

@@ -180,10 +180,16 @@ NEXT: ready for review.
 
 ## Reviewer Verdict
 
+VERDICT: approved_minor
 REVIEWER_MODEL: unic-smart
 EXECUTOR_MODEL: unic-code
-VERDICT:
-VERIFICATION_RERUN:
-TEST_PLAN_COVERAGE:
+VERIFICATION_RERUN: PASS
+TEST_PLAN_COVERAGE: all-followed (7/7 cases; RED-first proof pasted with real AssertionError + line refs)
 FINDINGS:
-NOTES:
+  critical: none
+  important: none
+  minor:
+    - src/core/connectionManager.ts:676,679 — beginTransaction + tx.runQuery use plain assignment instead of Object.defineProperty as prescribed by PLAN §ARP-01.2; functionally equivalent (targets are writable class/object-literal methods — no dispose/prototype-chain risk) but deviates from the established runQuery-wrap pattern.
+    - src/core/connectionManager.ts:661-664,679-683 — the isMutationSql gate block is duplicated across the runQuery and tx.runQuery wraps; a small shared guard helper would remove the copy (optional).
+NEXT_STATUS_FOR_INDEX: done
+NOTES: Implementation closes the secondary boundary correctly: gate runs BEFORE originalTxRun is invoked (driver never called on RO tx mutation, verified by calls[] assertion + RED output); per-call freshness holds (fresh wrap per beginTransaction, case 4); commit/rollback and optional API untouched; dialect not threaded (documented decision, default postgres acceptable).

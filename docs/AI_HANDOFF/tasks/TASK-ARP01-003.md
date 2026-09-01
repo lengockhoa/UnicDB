@@ -184,10 +184,18 @@ NEXT: ready for review; follow-up: lockfile version sync (non-blocking).
 
 ## Reviewer Verdict
 
+VERDICT: APPROVED-WITH-MINOR
 REVIEWER_MODEL: unic-smart
 EXECUTOR_MODEL: unic-code
-VERDICT:
 VERIFICATION_RERUN:
-TEST_PLAN_COVERAGE:
+  command: npx vitest run src/adapters/__tests__/adapterQueryShape.test.ts && npx vitest run src/core/__tests__/connectionManager.test.ts src/core/__tests__/readOnlyIntent.test.ts && npm run typecheck
+  result: 53/53 pass + 48/48 pass; typecheck exit 0 (all PASS)
+TEST_PLAN_COVERAGE: all-followed — closed as not-needed; cases 1-4 satisfied (both task-owned files empty vs base a948b3f, re-verified independently)
 FINDINGS:
-NOTES:
+  critical: none
+  important: none
+  minor:
+    - docs/AI_HANDOFF/tasks/TASK-ARP01-003.md:140 — report cites "getAdapterWithPassword :399"; no such method exists (grep clean). Line 399 is buildAdapter. Evidence narrative mislabel only; substantive claim (getAdapter→guardAdapter) verified accurate.
+    - docs/AI_HANDOFF/tasks/TASK-ARP01-003.md:170 — report says "git diff a948b3f..HEAD -- package.json package-lock.json is EMPTY"; package-lock.json WAS synced 1.35.0→1.36.0 in wave-2 handoff commit. Drift was pre-existing at base (true); releaseHygiene now passes at HEAD (re-verified 3/3).
+NEXT_STATUS_FOR_INDEX: done
+NOTES: Independent no-bypass audit confirms closure. guardAdapter (src/core/connectionManager.ts:652-689) wraps both runQuery and beginTransaction (tx.runQuery re-guarded per call). All production adapter acquisition (getAdapter :543→buildAdapter :399, getAdapterFor :343) wraps through guardAdapter; unguarded resolveAdapter only at :159/:214 (add/edit test-connect probes, testConnection-only, closed in finally). All transaction consumers (QueryRunner extension.ts:241, resultsPanel :1057, importExecute via importWizard, schemaCache) obtain the adapter from guarded getAdapter. Admin SQL routes through guarded adapter.runQuery (extension.ts:864-875). No bypass path to DbTransaction.runQuery exists.

@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.37.0] — 2026-09-01
+
+Cycle ARP-01: Read-Only Enforcement Completeness — the read-only promise now covers the secondary execution boundary (transactions), and the mutation classifier is formalized with its first documented false-positive fix.
+
+### Fixed
+- **Read-only transaction guard** (`src/core/connectionManager.ts`): `guardAdapter` now wraps `DbAdapter.beginTransaction?()` so every `DbTransaction.runQuery()` runs through the same `isMutationSql` gate as `adapter.runQuery` — a mutation (`DELETE`/`UPDATE`/`INSERT`/…) throws `ReadOnlyViolation` BEFORE the underlying driver transaction is invoked (previously the transaction path bypassed the read-only guard entirely). Per-call freshness: each `beginTransaction()` wraps its own transaction, so two concurrent transactions are guarded independently. `commit()`/`rollback()` pass through untouched, non-read-only connections are unchanged, and adapters without `beginTransaction` keep the optional API `undefined` (no structural inference). Pinned by 7 new fake-adapter cases in `src/core/__tests__/connectionManager.test.ts` with a driver-call tracker proving "driver never called" on denial.
+- **MySQL backtick-quoted identifier false positive** (`src/core/dangerousStatement.ts`): `maskLiteralsAndComments` gains a dialect-gated MySQL backtick branch (with `` ` `` doubling escape) so a column literally named `` `insert` `` no longer leaks the keyword into the depth-0 mutation scan — `isMutationSql("SELECT \`insert\` FROM t", "mysql")` is now `false`. Postgres/MSSQL masking behavior is byte-identical to before (dialect-gated). Known false positive in the same class — MSSQL `[insert]` bracket identifiers — probed, documented, and deferred as a follow-up.
+- **Classifier formalization** (`src/core/readOnlyIntent.ts`): documented the dialect model (keyword classification is dialect-agnostic; split/mask seams are dialect-driven) and pinned the transaction-control decision — `BEGIN`/`START TRANSACTION`/`COMMIT`/`ROLLBACK`/`SAVEPOINT` are NOT mutations on a read-only connection.
+
+### Review
+- P2.5 plan review: round 1 Approved by unic-smart (3 advisory findings, non-blocking).
+- R2 per-task review: 001/002/003 all APPROVED-WITH-MINOR by unic-smart in round 1, zero blocking findings (minors: backslash-escaped-backtick safe-direction false positive, plain-assignment vs defineProperty style, duplicated gate block, two report-wording inaccuracies) — no fix round needed.
+- ARP-01.3 (interface regression gate) closed as not-needed with evidence: `src/adapters/types.ts` and `adapterQueryShape.test.ts` byte-identical to base; every production path reaching `DbTransaction.runQuery` goes through the guarded adapter.
+- Verification: full suite 2963 passed | 2 skipped (was 2952 | 2 at v1.36.0); `npm run typecheck` and `npm run compile` exit 0; `package-lock.json` version synced (1.35.0 → 1.36.0 drift from the previous release fixed, now pinned).
+
 ## [1.36.0] — 2026-09-01
 
 Cycle DX-01: Release Confidence Lane (PORT-DX-01) — deterministic, locally-runnable "is this release trustworthy?" gate that composes the existing `npm test && npm run typecheck && npm run compile` pipeline into a one-command runner plus a contract test that pins every new script entry and runner behaviour.
