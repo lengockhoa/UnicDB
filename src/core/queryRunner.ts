@@ -464,6 +464,16 @@ export class QueryRunner {
         // ARP-02 cancel path. Best-effort: a cursor that is already closed
         // (or a close() rejection) must not turn the limit into an error.
         this.currentBatchedCancelDelivered = true;
+        // Null currentBatched BEFORE the await: while `batched.close()` is
+        // pending, a concurrent cancel() must see close-origin state (no
+        // live cursor) so `cancelPending` stays false. If currentBatched
+        // still referenced the cursor here, cancel() would latch
+        // cancelPending=true, early-return on the delivered-once guard, and
+        // strand it — poisoning a later healthy loadMore on a DIFFERENT
+        // open statement with "Statement N cancelled" (ARP-02 isolation).
+        // The finally below only resets when the reference still matches,
+        // so this early null is safe (idempotent with it).
+        this.currentBatched = null;
         try {
           await batched.close();
         } catch {

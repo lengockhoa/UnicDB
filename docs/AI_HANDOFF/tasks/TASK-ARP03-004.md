@@ -211,3 +211,21 @@ HANDOFF_TO_REVIEWER: yes — all acceptance criteria met except the verdict itse
 (write here: VERDICT / REVIEWER_MODEL / EXECUTOR_MODEL / VERIFICATION_RERUN / TEST_PLAN_COVERAGE /
  FINDINGS / NEXT_STATUS_FOR_INDEX)
 ```
+
+---
+
+## Reviewer Report
+
+REVIEWER_MODEL: unic-smart
+ROUND: 1
+VERDICT: approved_minor
+Findings:
+- (minor) src/ui/__tests__/webviewResultLimit.test.ts:161 — `itIfBundle` is declared via `it.runIf(...)` but never used (every case uses plain `it`). Harmless because `describeIfBundle` (line 162) already skips the whole suite when `dist/webview.js` is missing, but it is a dead declaration that deviates from the `webviewBundle.test.ts` convention it mirrors — use `itIfBundle` or drop the constant.
+- (minor) webview/main.ts:3275-3281 — the truncation branch recomposes the `transactionOpen` + `durationMs` suffixes that the normal path also composes (3291-3294). Small duplication; acceptable, but the suffix expression could be hoisted once.
+- (minor/note) The plan/task claim that a cancelled statement "renders NO footer — updateFooterNow blanks it (webview/main.ts:1634-1640, 3274-3277)" is not literally true in production: the cancelled early-return at main.ts:1639-1644 never calls `updateFooterNow()`, so a real running→cancelled transition leaves the PREVIOUS terminal statement's footer text (potentially a prior "result truncated" copy) in place. This is pre-existing staleness that affects all footer states equally (not introduced by this diff), and the new test passes only because each case loads a fresh bundle. Distinctness of a freshly-rendered cancelled state holds; the plan's stated mechanism is just inaccurate.
+- (minor/note) Accessibility: `.vsdb-grid-footer` (webview/main.ts:1045-1047) is a plain `<div>` with no `role="status"`/`aria-live`. The truncation copy is real readable text (not a visual-only signal) and is at parity with every existing footer state, but it is not announced as a live-region change. If screen-reader announcement of the truncation is intended, the footer would need `role="status"`/`aria-live="polite"` — a broader change out of this task's scope.
+- Verified GREEN (fresh re-run, not trusting executor): `npm run compile` (exit 0), `npx vitest run src/ui/__tests__/webviewResultLimit.test.ts` (6/6), `npm run typecheck` (exit 0), full `src/ui/__tests__/webview*.test.ts` suite (19 files / 154 tests). RED_OUTPUT contains real assertion output ("20 of 20" without marker; loadMore posted). All 6 plan test cases implemented (≥2 edge); scope limited to webview/main.ts + the new test file.
+
+### Fix round 1 note
+
+Minor round-1 findings applied as a sidecar of the TASK-ARP03-002 fix round (no behavior change): (1) the unused `itIfBundle` constant was dropped from `src/ui/__tests__/webviewResultLimit.test.ts` — `describeIfBundle` already gates the whole suite, so plain `it` per case matches effective behavior; (2) the `transactionOpen` + durationMs suffix composition in `webview/main.ts` `updateFooter` was hoisted into a single `suffix` const shared by the truncation branch and the normal path (output byte-identical). VERIFICATION: `npm run compile` → exit 0; `npx vitest run src/ui/__tests__/webviewResultLimit.test.ts` → 6 passed (6); `npm run typecheck` → exit 0; full `npm test` → 3007 passed | 2 skipped (0 failed).

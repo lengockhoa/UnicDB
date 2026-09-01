@@ -211,3 +211,79 @@ HANDOFF_TO_REVIEWER: yes — status flipped to pending_review; reviewer model mu
 (write here: VERDICT / REVIEWER_MODEL / EXECUTOR_MODEL / VERIFICATION_RERUN / TEST_PLAN_COVERAGE /
  FINDINGS / NEXT_STATUS_FOR_INDEX)
 ```
+
+## Reviewer Report
+REVIEWER_MODEL: unic-smart
+ROUND: 1
+VERDICT: CHANGES-REQUESTED
+Findings:
+- important — src/core/queryRunner.ts:466-471 + cancel() :524-527: the budget close sets `this.currentBatchedCancelDelivered = true` and then `await batched.close()` while `currentBatched` still references the cursor. A `cancel()` landing in that window computes `liveCancel = true` (non-null `currentBatched`), sets `cancelPending = true`, then early-returns on the delivered-once guard — leaving `cancelPending` stuck true. A later `loadMore` on a DIFFERENT open statement (non-append multi-statement with multiple open cursors, or an adopted cursor) then throws "Statement cancelled" at the ARP-02 entry guard (:417-419) — a close-origin cancel poisoning a healthy loadMore, which the ARP-02 contract (queryRunner.ts:91-104) explicitly forbids. Fix (minimal): null `this.currentBatched` before `await batched.close()` in the limited branch so a concurrent cancel sees close-origin state (`liveCancel=false`, `cancelPending` stays false); the finally at :478-480 already guards the reset. Same-statement loadMore is unaffected (resultLimited entry guard no-ops first), which is why case 2 does not catch this.
+- minor — the task's RED list claims case 3 (concurrent cancel wins) fails on base, but it is a GREEN regression pin: ARP-02's cancelSeq re-check (pre-existing) already discards the late batch, so case 3 passes on base. Executor's RED output honestly shows 2 failed/39 passed (cases 1-2 only). Task-spec inaccuracy, not an executor defect.
+- minor — no runner-level exact-boundary test (plan §4 line 66 lists "exact cap reached across batches is not limited"); the boundary is exercised only at the helper level (001 test #2). Runner behavior is correct by delegation (`limited=false` → no close, no resultLimited) but untested at the runner boundary.
+
+## Fix Round 1 Report
+
+```
+STATUS: DONE
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT (npx vitest run src/core/__tests__/queryRunner.test.ts --testNamePattern "budget close",
+BEFORE the fix — reproduces the reviewer's interleaving exactly):
+ FAIL ... > cancel() during the budget close does not poison a later loadMore on another statement
+ Error: Statement 1 cancelled
+ ❯ QueryRunner.loadMoreImpl src/core/queryRunner.ts:418:13
+     417|     if (this.cancelRequested && this.cancelPending) {
+     418|       throw new Error(`Statement ${index} cancelled`);
+ Test Files  1 failed (1) | Tests  1 failed | 42 skipped (43)
+→ exactly the ARP-02 isolation violation: cancel() latched in the budget-close
+  window (currentBatched still set + delivered-once guard consumed →
+  cancelPending stranded true), then a loadMore on a DIFFERENT open statement
+  threw "Statement 1 cancelled" at the entry guard. RED at the predicted line.
+Boundary pin (plan §4, "exact cap reached across batches is not limited") ran
+GREEN pre-fix as a regression pin, as expected.
+
+FIX (src/core/queryRunner.ts, limited branch only): `this.currentBatched = null`
+moved BEFORE `await batched.close()`. A cancel() landing during the budget
+close now sees close-origin state (currentBatched === null → liveCancel=false
+→ cancelPending stays false, sticky flag only) instead of latching against the
+consumed delivered-once guard. The finally reset is reference-guarded
+(`if (this.currentBatched === batched)`) so the early null is idempotent with
+it. No other branch touched.
+
+TIMELINE PROOF for the fixed window (extends the round-0 T1-T5 table with T6):
+- T6 cancel DURING budget close: currentBatched already nulled before the
+  await → cancel() takes the close-origin path (no currentBatched branch, no
+  seam — PID window closed), sets only the sticky flag, cancelPending stays
+  false. Budget close completes → statement resultLimited + cursorClosed;
+  the OTHER open statement's loadMore proceeds healthy. Test asserts
+  batchedA.close === 1x total, batchedA.cancel === 0x, then loadMore(1)
+  fetches normally. No timeline yields a stranded cancelPending.
+
+VERIFICATION OUTPUT (all fresh, current turn):
+  1) npx vitest run src/core/__tests__/queryRunner.test.ts src/ui/__tests__/webviewResultLimit.test.ts
+     → Test Files  2 passed (2) / Tests  49 passed (49)
+       (queryRunner 43 passed — 41 prior + 2 new; webviewResultLimit 6 passed)
+  2) npm test
+     → Test Files  216 passed | 1 skipped (217)
+     → Tests  3007 passed | 2 skipped (3009)   [0 failed; floor 3005 + 2 new
+       = 3007 exact. The 2 skips are the pre-existing VSDB_OMP_SMOKE env gate.]
+  3) npm run typecheck → exit 0
+  4) npm run compile   → exit 0 ("esbuild: build complete")
+
+MINORS APPLIED (same fix round, per instruction):
+- webviewResultLimit.test.ts:161 — dropped the unused `itIfBundle` constant
+  (describeIfBundle already gates the whole suite; behavior unchanged).
+  Comment added so the plain-`it` convention is not "fixed" back by accident.
+- webview/main.ts:3275-3294 — hoisted the transactionOpen + durationMs suffix
+  into one `suffix` const shared by the truncation branch and the normal path
+  (output byte-identical).
+- Runner-level exact-boundary test added: "exact cap reached across batches is
+  not limited" — batches sum to exactly RETAINED_ROW_CAP → resultLimited
+  undefined, close not called, cursor open, following EOF loadMore unchanged
+  (plan §4 ARP-03.2 boundary row).
+
+ISSUES: none.
+HANDOFF_TO_REVIEWER: pending orchestrator — this is fix round 1 output;
+re-review required (reviewer model must differ from unic-code).
+```

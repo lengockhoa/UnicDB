@@ -158,7 +158,8 @@ function limitedResult(overrides: {
 
 // ---- tests ----------------------------------------------------------------
 
-const itIfBundle = it.runIf(bundleSrc !== null);
+// describeIfBundle gates the whole suite when dist/webview.js is missing, so
+// plain `it` is used per-case (no dead itIfBundle constant — reviewer R1 minor).
 const describeIfBundle = describe.runIf(bundleSrc !== null);
 
 describeIfBundle("webview resultLimited UX (TASK-ARP03-004)", () => {

@@ -236,3 +236,19 @@ from unic-code per handoff.reviewer config.
 (write here: VERDICT / REVIEWER_MODEL / EXECUTOR_MODEL / VERIFICATION_RERUN / TEST_PLAN_COVERAGE /
  FINDINGS / NEXT_STATUS_FOR_INDEX)
 ```
+
+## Reviewer Report
+
+REVIEWER_MODEL: unic-smart
+ROUND: 1
+VERDICT: approved_minor
+Findings:
+- leak pin closed in production, not just by the test: both `{ ...r }` save/refresh sites now destructure the markers out — `refreshManualStatement` (src/ui/resultsPanel.ts:681) and `handleSaveEdits` auto-refresh (src/ui/resultsPanel.ts:1265) use `const { resultLimited, cursorClosed, ...rest } = r` before building the fresh statement; `handleRequery` (:1904-1911) is untouched and already builds fresh without `...r`. Confirmed against runner mechanics: `loadMoreImpl`'s limited-entry guard (src/core/queryRunner.ts:397-399) no-ops on a leaked `resultLimited`, and `run()`'s stale-cursor sweep (:201-203) excludes a leaked `cursorClosed` from draining the max=1 pool client — both are now closed.
+- no false persistence: `render()` replaces `this.lastResults` wholesale (:320); the marker lives only on genuinely limited runner results; save/refresh strips it; requery builds a fresh object. A fresh query cannot inherit the limited gate.
+- toast suppression scope correct: `limited` is captured pre-await from `this.lastResults[msg.index]?.resultLimited === true` (:764); the runner's guard makes a limited statement a no-throw no-op, so the suppressed rejection is only reachable via a synthetic stub — real errors on non-limited statements still toast (case 3 pins exactly-once). Stale `lastResults` (retained rows + marker) are re-posted as `state` in the catch (:788-795), so the user keeps seeing the retained rows.
+- RED evidence authentic: the pasted RED_OUTPUT line numbers match the current test file exactly — case #2 assertion `expect(showErrMock().mock.calls).toHaveLength(0)` at resultsPanel.test.ts:1658, case #4 `expect(posted.resultLimited).toBeFalsy()` at :1767. Both failures are the genuine base defects (toast fired when it must be silent; marker leaked across the save-refresh spread).
+- case #1 GREEN-on-base deviation is acceptable: PLAN.md's own Discussion documents that `sanitizeStatementResult` is a plain `{ ...r }` spread (:2176-2189), so a top-level additive field passes through on base — an honest test of that shape cannot be RED. The executor kept it as a wire pin (render + ready re-post + no render-time error), the same treatment as regression pin #3. The two behavior-changing cases (#2, #4) were RED-proven, and the plan-review-mandated leak pin is the load-bearing requirement and was RED on base.
+- verification rerun (fresh, worktree): `npx vitest run src/ui/__tests__/resultsPanel.test.ts` → 45/45 PASS; `npm run typecheck` → exit 0; `npm run compile` → exit 0; `npm test` (release-boundary net) → 216 files passed | 1 skipped, 3005 passed | 2 skipped, exit 0.
+- model isolation: EXECUTOR_MODEL=unic-code (self-reported), REVIEWER_MODEL=unic-smart, config handoff.reviewer.model=unic-smart — differs from executor, check satisfied.
+- minor (non-blocking): the manual-commit refresh path's strip (`refreshManualStatement` :681) is not directly pinned by a new test — case 4 drives only the AUTO path (`handleSaveEdits` :1265). The manual-site fix is present and symmetric, and the plan allowed either trigger, but a future regression at :681 alone would not be caught by this suite. Add a manual-flow variant (stub `beginTransaction`/`transaction.commit` per the :1449-1496 precedent) if the cycle allows; not required for this handoff.
+- minor (non-blocking): executor's reported full-suite count (215 files / 2999 tests) differs from the fresh rerun (216 / 3005) — the +6 tests are ARP03-004's `webviewResultLimit.test.ts`, present in the same wave commit; the authoritative fresh run passes, so this is a reporting artifact only.

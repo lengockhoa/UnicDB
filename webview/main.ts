@@ -3272,11 +3272,12 @@ function updateFooter(
   // src/ui/resultsGridModel.ts) — never appended onto a count. Distinct
   // from the plain "N rows" EOF copy, from ".vsdb-empty", and from the
   // cancelled presentation (which renders no footer at all).
+  const suffix =
+    (transactionOpen ? "  Transaction open" : "") +
+    (r.durationMs > 0 ? `  ⏱ ${r.durationMs}ms` : "");
   if (r.resultLimited) {
     footer.textContent =
-      "result truncated — some rows were not loaded" +
-      (transactionOpen ? "  Transaction open" : "") +
-      (r.durationMs > 0 ? `  ⏱ ${r.durationMs}ms` : "");
+      "result truncated — some rows were not loaded" + suffix;
     return;
   }
   const state = model.getState();
@@ -3287,11 +3288,8 @@ function updateFooter(
   // Either the quick search box or a column filter counts as "filtered"
   // for footer display purposes.
   const filtered = displayed !== loaded && (quickFilterActive || colFilterActive);
-  const duration = r.durationMs;
   footer.textContent =
-    footerText(loaded, total, hasMore, displayed, filtered) +
-    (transactionOpen ? "  Transaction open" : "") +
-    (duration > 0 ? `  ⏱ ${duration}ms` : "");
+    footerText(loaded, total, hasMore, displayed, filtered) + suffix;
 }
 
 function updateFooterNow(): void {

@@ -1192,4 +1192,95 @@ describe("QueryRunner — retained-row cap (TASK-ARP03-002)", () => {
     expect(done[0].result?.rowCount).toBe(6);
     expect(batched.close).not.toHaveBeenCalled();
   });
+
+  it("exact cap reached across batches is not limited (plan §4 boundary pin)", async () => {
+    // Boundary — batches sum to EXACTLY RETAINED_ROW_CAP: appendBatchBounded's
+    // `limited = total > cap` must stay false at the exact boundary. Cursor
+    // stays open, close() never fires, and a following EOF loadMore returns
+    // the unchanged rows with the limit still unset.
+    const batched = makeBatched(
+      ["n"],
+      [rows(RETAINED_ROW_CAP - 3), rows(3), null],
+    );
+    const adapter = makeAdapter(async () => ({ results: [], batched }));
+    const runner = new QueryRunner(async () => adapter);
+
+    const result = await runner.run([stmt("SELECT * FROM big", 0, 18)], () => {});
+    expect(result[0].result?.rows).toHaveLength(RETAINED_ROW_CAP - 3);
+
+    const atCap = await runner.loadMore(0);
+    expect(atCap[0].result?.rows).toHaveLength(RETAINED_ROW_CAP);
+    expect(atCap[0].resultLimited).toBeUndefined();
+    expect(atCap[0].cursorClosed).toBeUndefined();
+    expect(batched.close).not.toHaveBeenCalled();
+    expect(batched.fetchBatch).toHaveBeenCalledTimes(2);
+
+    // Following EOF loadMore: unchanged rows, still not limited, still open.
+    const eof = await runner.loadMore(0);
+    expect(eof[0].result?.rows).toHaveLength(RETAINED_ROW_CAP);
+    expect(eof[0].result?.rowCount).toBe(RETAINED_ROW_CAP);
+    expect(eof[0].resultLimited).toBeUndefined();
+    expect(eof[0].cursorClosed).toBeUndefined();
+    expect(batched.close).not.toHaveBeenCalled();
+  });
+
+  it("cancel() during the budget close does not poison a later loadMore on another statement", async () => {
+    // Reviewer fix-round finding (queryRunner.ts budget close vs cancel()):
+    // the budget branch sets currentBatchedCancelDelivered then awaits
+    // batched.close() while currentBatched still references the cursor.
+    // A cancel() landing in that window latches cancelPending=true and
+    // early-returns on the delivered-once guard — stranding it — so a later
+    // loadMore on a DIFFERENT open statement throws "Statement cancelled"
+    // at the ARP-02 entry guard. Interleaving: deferred close → cancel()
+    // while close pending → resolve close → loadMore on the other statement
+    // must fetch normally.
+    const batchedA = makeBatched(
+      ["n"],
+      [rows(RETAINED_ROW_CAP - 2), rows(3)], // cap-crossing on loadMore
+    );
+    const batchedB = makeBatched(["n"], [rows(2), rows(1)]); // healthy cursor
+    const adapter = makeAdapter(async (sql) =>
+      sql.includes("big")
+        ? { results: [], batched: batchedA }
+        : { results: [], batched: batchedB },
+    );
+    const runner = new QueryRunner(async () => adapter);
+
+    // Non-append run of two → BOTH batched cursors stay open and done.
+    await runner.run(
+      [stmt("SELECT * FROM big", 0, 18), stmt("SELECT * FROM small", 19, 38)],
+      () => {},
+    );
+
+    // Defer ONLY the budget close of the limited cursor.
+    let resolveClose: (() => void) | null = null;
+    batchedA.close.mockImplementationOnce(
+      () => new Promise<void>((resolve) => { resolveClose = resolve; }),
+    );
+    const limitedPromise = runner.loadMore(0);
+    await new Promise((r) => setTimeout(r, 5));
+    // loadMore(0) is parked inside the budget `await batched.close()`.
+
+    const cancelPromise = runner.cancel(); // lands in the budget-close window
+    resolveClose!();
+    await Promise.all([limitedPromise, cancelPromise]);
+
+    // Statement 0 is now limited via the budget close exactly once, and the
+    // cancel must NOT have re-delivered on the same cursor.
+    expect(batchedA.close).toHaveBeenCalledTimes(1);
+    expect(batchedA.cancel).not.toHaveBeenCalled();
+
+    // THE FIX OBSERVABLE: a loadMore on the OTHER healthy open cursor must
+    // NOT throw "Statement 1 cancelled" (cancelPending must not be stranded).
+    const updated = await runner.loadMore(1);
+    expect(updated[1].result?.rows).toEqual([[1], [2], [1]]);
+    expect(updated[1].resultLimited).toBeUndefined();
+    expect(updated[1].cursorClosed).toBeUndefined();
+    expect(batchedB.close).not.toHaveBeenCalled();
+    expect(batchedB.fetchBatch).toHaveBeenCalledTimes(2); // initial + this one
+
+    const final = runner.getResults();
+    expect(final[0].resultLimited).toBe(true);
+    expect(final[1].result?.rows).toEqual([[1], [2], [1]]);
+  });
 });
