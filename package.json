@@ -612,6 +612,8 @@
     "test:integration": "vitest run -c vitest.integration.config.ts",
     "typecheck": "tsc --noEmit",
     "package": "vsce package",
+    "verify:fast": "npm run typecheck && npm run compile",
+    "verify:release": "npm test && npm run typecheck && npm run compile",
     "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {

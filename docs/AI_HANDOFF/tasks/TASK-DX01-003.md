@@ -76,7 +76,50 @@ npx vitest run   # full suite must stay green
 
 ## Executor Report
 
-(to be appended by Phase 3 executor)
+```
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+SUMMARY: Added src/__tests__/releaseVerify.test.ts as the 003-RED contract test. The file compiles under tsc, is discovered by `npx vitest run`, and currently fails RED (8/9 cases) because neither the new package.json verify:* keys nor scripts/verify-release.sh exist yet in this worktree — that is the expected in-wave state.
+TEST_PLAN_FOLLOWED: inline (task file §"Test Cases" — 9 cases, exact describe "verify-release.sh")
+FILES_CHANGED:
+  - /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-dx01-003/src/__tests__/releaseVerify.test.ts (new, 9 cases)
+TESTS_ADDED:
+  - src/__tests__/releaseVerify.test.ts:
+    1. "prints PASS per stage and final OK on all-zero exit"
+    2. "first non-zero stage aborts and prints FAIL npm-test"
+    3. "stdout/stderr are separated, no trailing whitespace, no ANSI"
+    4. "verify:fast is exactly one of the two allowed strings"
+    5. "verify:release is the exact pinned string"
+    6. "script strings have no shell-injection surface"
+    7. "runner script exists, is executable, has a POSIX shebang"
+    8. "existing four baseline scripts preserved"
+    9. "verify:* values reference ONLY pre-existing script keys"
+VERIFICATION:
+  command: npx tsc --noEmit -p tsconfig.json
+  result: exit 0 — no type errors against the new test file
+  output_excerpt: |
+    (no releaseVerify diagnostics)
+
+  command: npx vitest run src/__tests__/releaseVerify.test.ts
+  result: 8 failed | 1 passed (9) — RED state, expected for in-wave 003 task
+  output_excerpt: |
+     ❯ src/__tests__/releaseVerify.test.ts  (9 tests | 8 failed) 20ms
+     FAIL  src/__tests__/releaseVerify.test.ts > verify-release.sh > prints PASS per stage and final OK on all-zero exit
+     FAIL  src/__tests__/releaseVerify.test.ts > verify-release.sh > first non-zero stage aborts and prints FAIL npm-test
+     FAIL  src/__tests__/releaseVerify.test.ts > verify-release.sh > stdout/stderr are separated, no trailing whitespace, no ANSI
+     FAIL  src/__tests__/releaseVerify.test.ts > verify-release.sh > verify:fast is exactly one of the two allowed strings
+     FAIL  src/__tests__/releaseVerify.test.ts > verify-release.sh > verify:release is the exact pinned string
+     FAIL  src/__tests__/releaseVerify.test.ts > verify-release.sh > script strings have no shell-injection surface
+     FAIL  src/__tests__/releaseVerify.test.ts > verify-release.sh > runner script exists, is executable, has a POSIX shebang
+     FAIL  src/__tests__/releaseVerify.test.ts > verify-release.sh > verify:* values reference ONLY pre-existing script keys
+     Test Files  1 failed (1)
+          Tests  8 failed | 1 passed (9)
+ISSUES: RED in this worktree is by design — the task explicitly notes that 003 lands first in TDD order and the asserted files/keys are absent here. The single passing case (8, baseline scripts preserved) is correct: test/typecheck/compile/test:integration are already byte-identical to the v1.35.0 fixture. After 001 and 002 land on main and copy-back happens, all 9 cases are expected to turn GREEN. Cases 1-3 depend on the runner existing; cases 4-6 and 9 depend on the new package.json scripts; case 7 depends on the runner existing. No mocked imports were used (no `vi.mock` on node:fs / node:child_process). PATH-stubbed fixtures use mkdtempSync + chmodSync so the real npm/tsc/node/esbuild binaries are never invoked.
+HANDOFF_TO_REVIEWER: yes — 003 is a contract-test task; reviewer should validate test shape, fixture isolation, and that no owned file outside src/__tests__/releaseVerify.test.ts was touched.
+NEXT: Ready for review. After approval, copy the file back to main together with the 001 + 002 deliverables so the test goes GREEN.
+```
 
 ## Reviewer Verdict
 
