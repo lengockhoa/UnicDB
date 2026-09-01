@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.39.0] — 2026-09-02
+
+Cycle ARP-03: Retained-Result Memory Budget — Load More can no longer grow extension-host memory without bound. Results are capped at a deterministic row budget, the cursor is closed once at the limit, and the grid says "limited" — never an error, never a false EOF.
+
+### Added
+- **Bounded batch append** (`src/core/resultBatcher.ts`): new pure `appendBatchBounded(rows, batch, maxRows)` — under-budget appends, exact-boundary behavior, and oversized next batches retain a deterministic prefix without mutating input arrays; one fresh allocation per call, no intermediate concat/re-slice. `{ rows; limited }` return.
+- **Runner cap enforcement** (`src/core/queryRunner.ts`): Load More enforces the retained-row cap — at the limit the cursor is closed exactly once, no further batches are fetched, and later Load More on the limited statement is a graceful no-op (distinct from both an error and EOF, `cursorClosed` carried as a top-level `StatementResult` field). Composes with ARP-02 cancel ownership: a concurrent cancel still wins, and a cancel landing during the budget close no longer strands `cancelPending` onto unrelated statements (fix round 1 nulls `currentBatched` before the close await — fault-injection test pins the interleaving that previously made the next statement's Load More throw "cancelled"). Sub-cap results are byte-identical to previous behavior.
+- **Panel wiring** (`src/ui/resultsPanel.ts`): limited state disables Load More with no error toast; retained rows stay visible with the limited marker. The `resultLimited`/`cursorClosed` markers are stripped when a fresh statement state is built after save-refresh (`handleSaveEdits`, `refreshManualStatement`) so the limit can never leak onto a new cursor; requery keeps its own semantics.
+- **Webview truncation UX** (`webview/main.ts`): footer truncation copy short-circuits before the generic "N of N" row counter; distinct from empty, EOF, and cancelled states (the cancelled distinction is asserted against the ⌀ tab badge / cancelled message card, which render no footer). The limit gate re-opens per sync via `hasMore`, so a fresh query restores Load More.
+
+### Review
+- P2.5 plan review: Round 1 Issues Found (leak pin, cancelled-footer re-anchor, precedence rule, redundant `retained` field) — all applied; Round 2 Approved by unic-smart.
+- R2 per-task review by unic-smart: 001 approved, 003 approved_minor, 004 approved_minor, 002 changes_requested (cancel-during-budget-close stranding `cancelPending`) — fixed in R4.5 round 1 with a RED→GREEN interleaving test; all advisory minors applied (unused test helper, hoisted footer suffix, runner-level exact-cap boundary test).
+- Verification: full suite 3007 passed | 2 skipped (was 2985 | 2 at v1.38.0); `npm run typecheck` and `npm run compile` exit 0; `package-lock.json` both version fields synced to 1.39.0.
+
 ## [1.38.0] — 2026-09-02
 
 Cycle ARP-02: Shutdown-safe Query Ownership and Connection Provenance — fault-injection proof that late work cannot leak across panel close, extension deactivate, or connection edit/delete. Four seams, one ownership rule: whoever starts deferred work owns its writes, and stale owners stay silent.
