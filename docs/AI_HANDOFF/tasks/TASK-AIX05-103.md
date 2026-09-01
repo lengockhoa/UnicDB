@@ -100,4 +100,47 @@ Grounding: `src/ai/omp/ompChatEngine.ts:328` exports the engine factory, but `gr
 
 ## Executor Report
 
-(to be filled by executor with RED + GREEN evidence)
+### 2026-09-01 · executor · claude-code / unic-code / feature-implementer
+
+**Status: DONE**
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+
+**Implemented (all pinned contracts honoured)**
+
+1. `src/ui/aiChatPanelMessages.ts` — added `OmpEngineLifecycleState` (exactly the six `OmpEngineState` literals, no synonyms) + `AiChatPanelEngineState { type: "engine_state"; state }` to the host-message union.
+2. `webview/aiChatPanelMain.ts` — `applyEngineState()` renders the lifecycle chip into the existing engine banner via `textContent` ONLY (fixed label map; unknown literals render verbatim); dispatched from the host-message switch `case "engine_state"`.
+3. `src/ai/omp/ompChatEngine.ts` — added optional `mcpServers` to `OmpChatEngineOptions`; descriptor threaded VERBATIM (reference identity preserved) into `session/new` and `session/load`; no `headers: []` reconstruction.
+4. `src/ai/omp/mcpBridge.ts` — `createMcpBridge` composition overload: `(registry: ToolRegistry)` and `(hostMcp: HostMcp)`. Duck-check `typeof (x as Partial<HostMcp>).handle === "function"` picks the dispatch; the HostMcp handler delegates `tools/list` + `tools/call` to `hostMcp.handle(req)` (NOT `call(name,args)`), 401 bearer gate first, TASK-AIX05-102 terminal-disposed guard unchanged.
+5. `src/ui/aiChatPanel.ts` — panel-owned restart policy: exported `MAX_ENGINE_RESTARTS = 2`, `DEFAULT_ENGINE_RESTART_DELAY_MS = 1000`; injectable `sleep` via `AiChatPanelTuning.sleep` (real `setTimeout` default). New `handleEngineState(state, generation)`: live-generation guard (stale-generation events from a retired child are full no-ops — no post, no restart), posts every live transition, and on `"crashed"` retires the generation exactly once (`disposeAcpSession` → bridge disposed once, retired session id cleared) then either schedules ONE replacement after `sleep(1000)` or, at the limit, latches `engineFallbackDone` and posts exactly ONE `"fallback-builtin"`, flips engine to builtin + best-effort config persist; later `ensureAcpSession()` throws through the latch so no further child spawns. Monotonic `engineGeneration` bumped per runtime generation; sessions carry it; `AcpClient.onClose` and state callbacks are keyed to it. Case 3: raw-ACP Stop dedupe — repeated Stop sends exactly ONE `session/cancel` per session id (`acpCancelNotifySessionId` latch); handshake Stop cancels the SAME `create()`-captured `AcpProcess` (`pendingAcpProcess`). History continuity: `runOmpEngineTurn` accumulates streamed deltas and promotes the `[user, assistant]` pair to `this.history` ONLY on a clean `onDone` (not aborted, no error); cancelled/crashed partial turns never append. New `requestHostPermission()/resolveHostPermission()` seam: HostMcp gate cards route through the panel webview (`permission_response` dispatch now consults the host-gate resolver map before the raw-ACP path); `cancelAllPending` fail-closes pending host cards.
+6. `src/extension.ts` — `commandOpenAiChat` passes `ompChatEngine: choice.engine === "omp" ? await buildOmpChatEngine(...) : undefined` (builtin/detection-failure path constructs NO engine + NO acp). `buildOmpChatEngine`: `createHostMcp({ gatePost, tools: createDbAwareTools(adapterFactory) })` → `await hostMcp.start()` → `createMcpBridge(hostMcp)` (composition overload) → descriptor threaded verbatim as `mcpServers` → `buildAcpDepsCreate(ompPath, cwd, mcpServers)` (create()-captured UNSTARTED; lazy `start()` on the engine's first session call so panel-open never spawns a child) → `adaptProcessToSession()` maps AcpProcess/AcpProcessHandle onto the engine's `AcpSession` 1:1 (sessionNew/sessionPrompt timeoutMs:0/sessionLoad/onNotification/onClose/dispose-via-public-cancel/notify) → `createOmpChatEngine({ acp, hostMcp, cwd, mcpServers })`. `buildAcpDeps()` keeps `create()` returning the UNSTARTED `AcpProcess` and `start()` = `create(...).start(...)` (one code path).
+7. `src/ai/omp/acpProcess.ts` — public `cancel()` forwarding to the private `requestCancel()` (pinned cancellable seam).
+8. Tests: `ompChatEngine.test.ts` (+2 mcpServers pass-through), `mcpBridge.test.ts` (+5 HostMcp composition overload), `hostMcp.test.ts` (+1 curated-standard collision before/after host stop), `aiChatPanelEngine.test.ts` (+2 pinned-contract checks, +2 bounded restart cases 5/6), `aiChatPanelAcp.test.ts` (+1 case-4 Stop-during-handshake same-instance cancel), `extension.test.ts` (+2 cases 1–2 production wiring; vscode mock gained `ConfigurationTarget` + config `.update` no-op).
+
+**RED evidence (per contract, before implementation)**
+
+- mcpServers pass-through (ompChatEngine): `expected … headers: [] …` — engine manufactured a headerless descriptor; supplied array identity was dropped.
+- createMcpBridge(hostMcp): `TypeError: registry.list is not a function` / `registry.get is not a function` — hostMcp object fell into the old registry path.
+- Panel constants/UNSTARTED create(): `expected undefined to be 2` (MAX_ENGINE_RESTARTS) before constants existed.
+- Case 4 (Stop during handshake): legacy `start()` path made cancel unreachable — `expected 0 to be 1` cancelCalls on the captured instance.
+- Cases 5/6 (bounded restart): `Error: until: condition not met` — no restart scheduling existed (first RED at 19:16:42, 2 failed | 7 passed).
+- Extension case 1: `expected undefined to be defined` (no ompChatEngine constructed) — immediately GREEN after wiring case 2 harness fix.
+
+**GREEN evidence — Verification Commands (fresh, this turn, worktree)**
+
+```
+npx vitest run src/ai/omp/__tests__/ompChatEngine.test.ts src/ai/omp/__tests__/mcpBridge.test.ts \
+  src/ai/omp/__tests__/hostMcp.test.ts src/ui/__tests__/aiChatPanelEngine.test.ts \
+  src/ui/__tests__/aiChatPanelAcp.test.ts src/extension.test.ts
+ → Test Files  6 passed (6) | Tests  194 passed (194)
+npm run typecheck   → exit 0 (tsc --noEmit clean)
+npm run compile     → exit 0 (esbuild: build complete, dist/extension.js emitted)
+```
+
+**Note**
+
+- No `git add`/`commit`/`push` executed — files left as-is per instructions.
+- `src/extension.test.ts` pre-existing failure `schemaFormBundlePresent` was a stale-dist artifact on the base commit; resolved by `npm run compile` (not a source change).
+- Case 3's one-terminal-cancel is enforced via session-id dedupe latch; case 7 stale-generation is enforced via `engineGeneration` guard on state/close/notification paths; both exercised indirectly through the restart/Stop suites (panel-level tests for cases 3/7 ship in the Acp suite fixtures; engine-level generation guard tested in ompChatEngine suite from wave 1).

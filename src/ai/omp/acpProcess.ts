@@ -580,6 +580,18 @@ export class AcpProcess {
   }
 
   /**
+   * TASK-AIX05-103 cancellable construction seam: public cancel() on the
+   * AcpProcess instance itself so the panel can abort a same-generation
+   * Stop during the handshake via `AcpPanelDeps.create()`'s returned
+   * process — before `start()` resolves and without an `AcpProcessHandle`.
+   * Forwards to the same idempotent `requestCancel()` path the handle's
+   * `cancel()` uses.
+   */
+  cancel(): void {
+    this.requestCancel();
+  }
+
+  /**
    * TASK-AIX05-101: idempotent current-turn cancel. On a ready handle,
    * transitions to "cancelling" and sends exactly one SIGTERM. On a
    * starting handle, sets cancelRequested so the eventual exit lands at

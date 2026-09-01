@@ -70,6 +70,7 @@ const state = {
 vi.mock("vscode", () => {
   return {
     EventEmitter: vi.fn().mockImplementation(() => new FakeEventEmitter<unknown>()),
+    ConfigurationTarget: { Global: 1, Workspace: 2, WorkspaceFolder: 3 },
     window: {
       showInformationMessage: vi.fn().mockResolvedValue(undefined),
       showWarningMessage: vi.fn().mockResolvedValue(undefined),
@@ -137,6 +138,10 @@ vi.mock("vscode", () => {
           if (key === "ai.engine") return (state.aiEngine ?? "builtin") as T;
           return undefined;
         },
+        // TASK-AIX05-103: best-effort engine flip path
+        // (flipEngineToBuiltinInSettings / commandOpenAiChat fallback) calls
+        // `.update()` — resolve as a no-op so the fallback flow completes.
+        update: vi.fn(async () => undefined),
       })),
       fs: {
         writeFile: vi.fn().mockResolvedValue(undefined),
@@ -2853,5 +2858,88 @@ describe("TASK-RLX02-003 — vsdb.cancelQuery awaits runner.cancel before setBus
       (c) => c[0] === false,
     );
     expect(busyFalseAfter).toHaveLength(1);
+  });
+});
+
+// ============================================================================
+// TASK-AIX05-103 cases 1–2 — production OMP engine wiring in commandOpenAiChat
+// =============================================================================
+// Case 1: the resolved OMP route passes a production `ompChatEngine`
+// (`createOmpChatEngine` output) alongside `acp`; case 2: detection
+// fallback keeps the builtin route with NO engine adapter and NO acp deps.
+// =============================================================================
+describe("TASK-AIX05-103 — commandOpenAiChat production OMP engine wiring", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+    state.createdWebviewPanels.length = 0;
+    panelConstructorCalls.length = 0;
+    vi.resetModules();
+    state.aiEngine = undefined;
+  });
+
+  afterEach(async () => {
+    await deactivate();
+  });
+
+  it("case 1: resolved OMP route constructs the panel with a production ompChatEngine + acp deps", async () => {
+    state.aiEngine = "omp";
+    detectOmpState.impl = async () => ({
+      available: true,
+      ok: true,
+      path: "/usr/bin/omp",
+      version: "18.0.1",
+    });
+    vi.resetModules();
+    const ext = await import("./extension");
+    const ctx = makeCtx();
+    await ext.activate(ctx as never);
+    const fn = state.registeredCommands.get("vsdb.aiChat");
+    expect(fn).toBeDefined();
+    await fn!();
+
+    expect(panelConstructorCalls.length).toBe(1);
+    const opts = panelConstructorCalls[0] as {
+      acp?: unknown;
+      ompChatEngine?: unknown;
+    };
+    expect(opts.acp).toBeDefined();
+    // The engine adapter must exist and expose the OmpChatEngine surface
+    // (send/resume/shutdown/cancel/attachTrace) — the real factory output,
+    // not a mock.
+    expect(opts.ompChatEngine).toBeDefined();
+    const engine = opts.ompChatEngine as Record<string, unknown>;
+    expect(typeof engine.send).toBe("function");
+    expect(typeof engine.resume).toBe("function");
+    expect(typeof engine.shutdown).toBe("function");
+    expect(typeof engine.cancel).toBe("function");
+    expect(typeof engine.attachTrace).toBe("function");
+  });
+
+  it("case 2: detection fallback keeps builtin — no OMP engine adapter and no acp deps reach the panel", async () => {
+    state.aiEngine = "omp";
+    detectOmpState.impl = async () => ({
+      available: false,
+      ok: false,
+      reason: "not-installed",
+    });
+    vi.resetModules();
+    const ext = await import("./extension");
+    // Configured ctx: the builtin fallback requires a valid AI config, else
+    // commandOpenAiChat routes to the settings interstitial and constructs
+    // no panel at all.
+    const ctx = makeConfiguredCtx();
+    await ext.activate(ctx as never);
+    const fn = state.registeredCommands.get("vsdb.aiChat");
+    expect(fn).toBeDefined();
+    await fn!();
+
+    expect(panelConstructorCalls.length).toBe(1);
+    const opts = panelConstructorCalls[0] as {
+      acp?: unknown;
+      ompChatEngine?: unknown;
+    };
+    expect(opts.acp).toBeUndefined();
+    expect(opts.ompChatEngine).toBeUndefined();
   });
 });

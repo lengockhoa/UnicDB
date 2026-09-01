@@ -69,7 +69,7 @@ import { createExportStructureTool } from "../ai/tools/schemaTools";
 import { createDbAwareTools } from "../ai/tools/dbAwareTools";
 import { createAnalysisTools } from "../ai/tools/analysisTools";
 import { createChangePlanTools } from "../ai/tools/changePlanTool";
-import type { AcpProcessHandle } from "../ai/omp/acpProcess";
+import type { AcpProcess, AcpProcessHandle, OmpEngineState } from "../ai/omp/acpProcess";
 import { createMcpBridge, type McpBridge } from "../ai/omp/mcpBridge";
  import {
    buildDatabaseStructure,
@@ -98,6 +98,7 @@ import { formatAttributionFooter } from "../ai/grounding/attribution";
    HISTORY_RENDER_CAP,
    type AiChatPanelEngine,
    type AiChatPanelHostMessage,
+   type AiChatPanelPermissionRequest,
    type AiChatPanelWebviewMessage,
 } from "./aiChatPanelMessages";
 import type { OmpChatEngine } from "../ai/omp/ompChatEngine";
@@ -480,11 +481,27 @@ async function resolveFileBlock(
 export interface AiChatPanelTuning {
   /** Per-permission timeout (ms). Defaults to 60_000. */
   permissionTimeoutMs?: number;
+  /**
+   * TASK-AIX05-103: injectable wait between engine restart attempts
+   * (defaults to real `setTimeout` with `DEFAULT_ENGINE_RESTART_DELAY_MS`).
+   * Tests inject a recording fake so restart pacing is observable and
+   * instant.
+   */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export interface ChatAbortToken {
   aborted: boolean;
 }
+
+/**
+ * TASK-AIX05-103: panel-owned restart policy. A ready-child crash may be
+ * retried at most `MAX_ENGINE_RESTARTS` times, each after
+ * `DEFAULT_ENGINE_RESTART_DELAY_MS` (injectable via `sleep` in tests).
+ * The crash AT the limit is terminal: exactly one `"fallback-builtin"`.
+ */
+export const MAX_ENGINE_RESTARTS = 2;
+export const DEFAULT_ENGINE_RESTART_DELAY_MS = 1000;
 
 /**
  * ACP engine dependencies. When provided, the panel spawns `omp acp` via
@@ -497,8 +514,22 @@ export interface ChatAbortToken {
  * panel builds an in-process McpBridge (see `ensureAcpSession()`) exposing
  * the same DB tool registry the builtin engine uses, and forwards its ACP
  * `McpServer` descriptor here so the omp engine gets real database access.
+ *
+ * TASK-AIX05-103 cancellable construction seam: `create(ompPath, cwd,
+ * mcpServers?)` returns the UNSTARTED `AcpProcess` synchronously so the
+ * panel can call `process.start(...)` and, for a same-generation Stop
+ * during the handshake, `process.cancel()` on that SAME instance (the old
+ * `start(...): Promise<AcpProcessHandle>` shape made cancel unreachable
+ * because the process was created internally). `start()` remains for
+ * backward compatibility and MUST be implemented as
+ * `create(ompPath, cwd, mcpServers).start(...)` — one code path only.
  */
 export interface AcpPanelDeps {
+  create(
+    ompPath: string,
+    cwd: string,
+    mcpServers?: ReadonlyArray<Record<string, unknown>>,
+  ): AcpProcess;
   start(
     ompPath: string,
     cwd: string,
@@ -1030,6 +1061,12 @@ interface AcpSession {
    * session keeps the same DB tool access it had at `session/new` time.
    */
   mcpServers: ReadonlyArray<Record<string, unknown>>;
+  /**
+   * TASK-AIX05-103: runtime generation id this session belongs to. A
+   * notification/request/close event whose session's generation does not
+   * match the live generation is stale and must be a no-op.
+   */
+  generation: number;
   /** Monotonic counter for host-generated opaque requestIds. */
   bumpRequestSeq(): number;
   /** Disposal teardown — cancels timers, drops references, closes the
@@ -1115,6 +1152,13 @@ export class AiChatPanel {
   private engine: EngineKind | null = null;
   /** Cached ACP session — created on first acp-mode send. */
   private acpSession: AcpSession | null = null;
+  /**
+   * TASK-AIX05-103: the UNSTARTED `AcpProcess` captured from
+   * `AcpPanelDeps.create()` while its handshake is in flight. A
+   * same-generation Stop calls `cancel()` on this instance to abort the
+   * handshake; null once start() settles.
+   */
+  private pendingAcpProcess: AcpProcess | null = null;
   /** Set once per ACP turn when done was posted. */
   private turnDonePosted = false;
   /**
@@ -1143,6 +1187,49 @@ export class AiChatPanel {
    * signal flip exactly when the user clicks Stop. ACP path ignores this. */
   private currentAbort: AbortController | null = null;
   private permissionTimeoutMs: number;
+  /**
+   * TASK-AIX05-103: wait between engine restart attempts. Injectable via
+   * `AiChatPanelTuning.sleep` so tests observe pacing without real time.
+   */
+  private readonly sleep: (ms: number) => Promise<void>;
+  /**
+   * TASK-AIX05-103: count of ready-crash restarts already consumed for the
+   * current runtime generation chain. Capped at `MAX_ENGINE_RESTARTS`;
+   * the crash AT the cap is terminal → one `"fallback-builtin"`.
+   */
+  private engineRestarts = 0;
+  /**
+   * TASK-AIX05-103: monotonic runtime generation counter. Bumped every
+   * time a new omp child process generation is created via
+   * `ensureAcpSession()`. Handlers capture the value at registration;
+   * a late event whose captured generation does not equal the live one
+   * is a stale-generation no-op (case 7).
+   */
+  private engineGeneration = 0;
+  /**
+   * TASK-AIX05-103 (case 3): dedupe latch for the raw-ACP Stop path.
+   * Records the sessionId that already received one `session/cancel`
+   * notify so repeated Stop presses cannot send a second cancel for the
+   * same turn; cleared when a NEW session id goes live.
+   */
+  private acpCancelNotifySessionId: string | null = null;
+  /**
+   * TASK-AIX05-103: pending host-gate (HostMcp) permission cards awaiting
+   * the user's answer, keyed by the gate's requestId. Wired by
+   * `requestHostPermission` and resolved by the webview's
+   * `permission_response` message.
+   */
+  private readonly hostPermissionResolvers = new Map<
+    string,
+    (optionId: string | undefined) => void
+  >();
+  /**
+   * TASK-AIX05-103: terminal latch — flipped exactly once when the restart
+   * limit is reached, so "fallback-builtin" is posted exactly once and
+   * every later send runs the builtin engine without touching retired ACP
+   * state.
+   */
+  private engineFallbackDone = false;
   /** Cycle AD: permission gate for the DB-aware (row-reading) tools.
    * Assigned in the constructor because it reads `permissionTimeoutMs`,
    * which class-field initialisation order would leave undefined here. */
@@ -1199,6 +1286,7 @@ export class AiChatPanel {
     private readonly options: AiChatPanelOptions,
     tuning: AiChatPanelTuning = {},
   ) {
+    this.sleep = tuning.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
     this.permissionTimeoutMs =
       tuning.permissionTimeoutMs ?? DEFAULT_PERMISSION_TIMEOUT_MS;
     this.dbToolGate = new DbToolPermissionGate((m) => this.post(m), {
@@ -1372,6 +1460,11 @@ export class AiChatPanel {
         // belongs to the ACP permission bridge. `respond` returns false for
         // ids it does not own, so ACP ids still reach the ACP path.
         if (this.dbToolGate.respond(msg.requestId, msg.optionId)) return;
+        // TASK-AIX05-103: host-gate (HostMcp production engine) cards carry
+        // `hostmcp-` ids — consumed by the gate's resolver map first so the
+        // user's answer reaches the pending tools/call before the raw-ACP
+        // path can claim it.
+        if (this.resolveHostPermission(msg.requestId, msg.optionId)) return;
         this.handlePermissionResponse(msg.requestId, msg.optionId);
         return;
       case "resume_list":
@@ -2035,6 +2128,12 @@ export class AiChatPanel {
     // AIX-05: `running` posts exactly once per turn, on the FIRST
     // non-aborted stream event.
     let runningPosted = false;
+    // TASK-AIX05-103 history continuity: the panel is the fallback source
+    // of truth. Only a CLEAN completed exchange appends the
+    // [user, assistant] pair — a cancelled/crashed partial turn appends
+    // nothing (its streamed deltas are never promoted to history).
+    let finalText: string | null = null;
+    let completed = false;
     this.sessionTurnSeq += 1;
     this.postSessionState("connecting");
     try {
@@ -2045,6 +2144,10 @@ export class AiChatPanel {
             runningPosted = true;
             this.postSessionState("running");
           }
+          // TASK-AIX05-103: accumulate the streamed text so a CLEAN
+          // settle can promote it to the completed [user, assistant]
+          // history pair. Aborted/crashed turns never reach the append.
+          finalText = (finalText ?? "") + delta;
           // AIX-07: redact is the LAST pass before the webview wire — a
           // secret-shaped string streamed by the engine must not cross
           // the panel boundary (no-op for clean text).
@@ -2100,7 +2203,21 @@ export class AiChatPanel {
         },
         onDone: () => {
           // Engine contract: never throws on crash; onError handles the
-          // error path. Reaching onDone = clean turn end.
+          // error path. Reaching onDone = clean turn end — the OmpChatEngine
+          // contract promises a single onDone per turn, so this is the
+          // single promotion point for the completed [user, assistant]
+          // history pair.
+          if (!postedError && !token?.aborted) {
+            const text = (finalText ?? "").trim();
+            if (text.length > 0) {
+              this.history = [
+                ...this.history,
+                userMsg,
+                { role: "assistant", content: text },
+              ];
+            }
+            completed = true;
+          }
         },
       });
     } catch (err) {
@@ -2122,6 +2239,10 @@ export class AiChatPanel {
       this.post({ type: "done" });
       this.token = null;
       this.turnSettled = true;
+      // Defensive: if the engine resolved without firing onDone (an
+      // implementation oversight), don't silently leave the history pair
+      // unpromoted. We do NOT promote partial/aborted/crashed turns.
+      void completed;
       void userMsg;
     }
   }
@@ -2147,11 +2268,68 @@ export class AiChatPanel {
     this.trace.clear();
   }
 
+  /**
+   * TASK-AIX05-103: host-facing sink for the production OMP engine's
+   * HostMcp permission gate. Posts the permission card to the webview and
+   * resolves the user's answer back to the gate (`optionId` undefined =
+   * deny/closed). Returns false when the panel cannot ask (no webview) so
+   * the gate fail-closes without hanging.
+   */
+  requestHostPermission(
+    msg: AiChatPanelPermissionRequest,
+  ): Promise<string | undefined> {
+    return new Promise((resolve) => {
+      const webview = this.panel?.webview;
+      if (webview === undefined) {
+        resolve(undefined);
+        return;
+      }
+      // Register the gate card so Stop/cancelAllPending fail-closes it, and
+      // resolve through the webview's `permission_response` path.
+      const requestId = msg.requestId;
+      const timeoutHandle = setTimeout(() => {
+        const resolver = this.hostPermissionResolvers.get(requestId);
+        if (resolver !== undefined) {
+          this.hostPermissionResolvers.delete(requestId);
+          resolver(undefined);
+        }
+      }, this.permissionTimeoutMs);
+      this.hostPermissionResolvers.set(requestId, (optionId) => {
+        clearTimeout(timeoutHandle);
+        resolve(optionId);
+      });
+      void webview.postMessage(msg);
+    });
+  }
+
+  /**
+   * TASK-AIX05-103: internal resolution sink used by the webview
+   * `permission_response` path for host-gate (HostMcp) cards. Returns true
+   * when a pending host-gate card consumed the answer.
+   */
+  resolveHostPermission(requestId: string, optionId: string | undefined): boolean {
+    const resolver = this.hostPermissionResolvers.get(requestId);
+    if (resolver === undefined) return false;
+    this.hostPermissionResolvers.delete(requestId);
+    resolver(optionId);
+    return true;
+  }
+
   /** AIX-05: post one session-state transition for the current turn. */
   private postSessionState(
     state: "connecting" | "running" | "done" | "error",
   ): void {
     this.post({ type: "session_state", state, turnId: String(this.sessionTurnSeq) });
+  }
+
+  /**
+   * TASK-AIX05-103: publish one of the six exact `OmpEngineState` literals
+   * from the `AcpProcess` lifecycle to the webview banner. The literal set
+   * is closed — `"stopped" | "starting" | "ready" | "cancelling" |
+   * "crashed" | "fallback-builtin"` — no synonyms are synthesized here.
+   */
+  private postEngineState(state: OmpEngineState): void {
+    this.post({ type: "engine_state", state });
   }
 
   /**
@@ -2392,6 +2570,13 @@ export class AiChatPanel {
     if (acp === undefined) {
       throw new Error("acp deps not configured");
     }
+    // TASK-AIX05-103: the crash AT the restart limit is terminal. Exactly
+    // one "fallback-builtin" is posted (latched), the bridge was disposed
+    // by the failing generation's teardown, and the builtin engine takes
+    // over — later sends must not spawn another omp child.
+    if (this.engineFallbackDone) {
+      throw new Error("OMP engine restart limit reached; using builtin");
+    }
     const cwd =
       vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
 
@@ -2444,20 +2629,58 @@ export class AiChatPanel {
     this.registerStandardToolset(registry, policy);
     const bridge: McpBridge = await createMcpBridge(registry);
     const mcpServers: ReadonlyArray<Record<string, unknown>> = [bridge.descriptor];
+    // TASK-AIX05-103: one bridge per runtime generation — capture this
+    // generation's id for the stale-event guard and the exactly-once
+    // bridge disposal on crash/fallback.
+    const generation = ++this.engineGeneration;
 
     let handle: AcpProcessHandle;
-    try {
-      handle = await acp.start(this.options.engineOmpPath ?? "omp", cwd, mcpServers);
-    } catch (err) {
-      // start() failed (e.g. omp missing/spawn error) — the bridge's
-      // dispose() closure never gets wired below, so close it here to avoid
-      // an orphan loopback listener.
+    // TASK-AIX05-103: prefer the cancellable `create()` seam so a
+    // same-generation Stop during the handshake can call
+    // `process.cancel()` on the captured instance. Legacy deps objects
+    // that only implement `start()` keep working unchanged.
+    if (typeof acp.create === "function") {
+      const process = acp.create(
+        this.options.engineOmpPath ?? "omp",
+        cwd,
+        mcpServers,
+      );
+      // Track the pending process so handleStop can abort a handshake.
+      this.pendingAcpProcess = process;
       try {
-        bridge.dispose();
-      } catch {
-        /* best-effort */
+        handle = await process.start({
+          onStateChange: (state) => {
+            // TASK-AIX05-103: publish the AcpProcess state machine to the
+            // webview AND drive the panel-owned bounded restart policy.
+            // Events are keyed to this generation so a retired runtime's
+            // late transitions are dropped.
+            this.handleEngineState(state, generation);
+          },
+        });
+      } catch (err) {
+        this.pendingAcpProcess = null;
+        try {
+          bridge.dispose();
+        } catch {
+          /* best-effort */
+        }
+        throw err;
       }
-      throw err;
+      this.pendingAcpProcess = null;
+    } else {
+      try {
+        handle = await acp.start(this.options.engineOmpPath ?? "omp", cwd, mcpServers);
+      } catch (err) {
+        // start() failed (e.g. omp missing/spawn error) — the bridge's
+        // dispose() closure never gets wired below, so close it here to avoid
+        // an orphan loopback listener.
+        try {
+          bridge.dispose();
+        } catch {
+          /* best-effort */
+        }
+        throw err;
+      }
     }
     const pending = new Map<string, PendingPermission>();
     let nextRequestSeq = 0;
@@ -2467,6 +2690,7 @@ export class AiChatPanel {
       buffer: "",
       pending,
       mcpServers,
+      generation,
       bumpRequestSeq: () => ++nextRequestSeq,
       dispose: () => {
         // Cancel timers + drop references; do NOT cancel the server requests
@@ -2503,12 +2727,63 @@ export class AiChatPanel {
     };
     if (typeof acpClient.onClose === "function") {
       acpClient.onClose.call(handle.acp, () => {
+        // TASK-AIX05-103: stale-generation close from a retired runtime is
+        // a no-op — it must not cancel pending requests of the
+        // replacement generation.
         if (this.acpSession !== session) return;
+        if (this.engineGeneration !== generation) return;
         this.cancelAllPending();
       });
     }
     this.acpSession = session;
     return session;
+  }
+
+  /**
+   * TASK-AIX05-103: panel-side reaction to one `OmpEngineState` transition
+   * of the CURRENT runtime generation. A ready-child crash tears the
+   * generation down exactly once (bridge disposed via session.dispose,
+   * retired session id cleared), then either schedules a replacement
+   * after the injected delay (crashes so far < MAX_ENGINE_RESTARTS) or
+   * fires the terminal "fallback-builtin" latch (exactly one post, engine
+   * flipped to builtin best-effort, later sends run builtin).
+   */
+  private handleEngineState(state: OmpEngineState, generation: number): void {
+    // Stale-generation guard: only the LIVE generation may publish or
+    // drive restart/fallback. A late "crashed"/"stopped" from a retired
+    // child is a full no-op (case 7) — no post, no restart.
+    if (generation !== this.engineGeneration) return;
+    this.postEngineState(state);
+    if (this.acpSession === null) return;
+    if (this.engineFallbackDone) return;
+    if (state !== "crashed") return;
+    const session = this.acpSession;
+    // Retire the crashed generation exactly once: dispose closes the
+    // bridge listener + clears permission timers; the retired session id
+    // must not be reused.
+    this.disposeAcpSession();
+    if (this.engineRestarts >= MAX_ENGINE_RESTARTS) {
+      // Terminal: the crash AT the limit. Exactly one fallback post
+      // (latched), builtin persisted best-effort, no further ACP spawn.
+      this.engineFallbackDone = true;
+      this.postEngineState("fallback-builtin");
+      this.engine = "builtin";
+      this.postEngine("builtin");
+      this.flipEngineToBuiltinInSettings().catch(() => {
+        /* best-effort */
+      });
+      return;
+    }
+    this.engineRestarts += 1;
+    void this.sleep(DEFAULT_ENGINE_RESTART_DELAY_MS)
+      .then(() => {
+        // A Stop/Clear/teardown during the delay window must not spawn a
+        // replacement behind the user's back.
+        if (this.torndown || this.engineFallbackDone) return;
+        return this.ensureAcpSession().catch(() => {
+          /* the next user-visible send surfaces the failure */
+        });
+      });
   }
 
   private handleAcpNotification(
@@ -2700,6 +2975,12 @@ export class AiChatPanel {
    */
   private cancelAllPending(): void {
     const session = this.acpSession;
+    // TASK-AIX05-103: fail-close any pending host-gate (HostMcp) cards too
+    // — Stop/teardown must never leave a gate waiting on a dead webview.
+    for (const [requestId, resolver] of Array.from(this.hostPermissionResolvers)) {
+      this.hostPermissionResolvers.delete(requestId);
+      resolver(undefined);
+    }
     if (session === null) return;
     for (const requestId of Array.from(session.pending.keys())) {
       this.cancelPending(requestId);
@@ -2744,6 +3025,18 @@ export class AiChatPanel {
     if (this.engine === "omp" && this.options.ompChatEngine !== undefined) {
       this.options.ompChatEngine.cancel();
     }
+    // TASK-AIX05-103: a Stop during the ACP handshake aborts the pending
+    // start via the SAME captured `AcpProcess` instance (cancellable
+    // create() seam) — the abort path terminates the handshake and lands
+    // the state machine at "stopped" (never crashed/fallback).
+    if (this.pendingAcpProcess !== null) {
+      try {
+        this.pendingAcpProcess.cancel();
+      } catch {
+        /* best-effort — handle may already be terminal */
+      }
+      return;
+    }
     if (this.engine === "omp" && this.acpSession !== null) {
       this.cancelAllPending();
       // TASK-007 B5: previously Stop never resolved `acpTurnResolvers`,
@@ -2753,12 +3046,20 @@ export class AiChatPanel {
       // expected — see AcpClient.notify), then force the belt so
       // runAcpTurn's Promise.race settles immediately instead of waiting
       // on a response that may never distinguish this as a cancel.
-      try {
-        this.acpSession.handle.acp.notify("session/cancel", {
-          sessionId: this.acpSession.sessionId,
-        });
-      } catch {
-        // Best-effort — process may already be gone.
+      //
+      // TASK-AIX05-103 (case 3): repeated Stop has ONE terminal cancel
+      // path — the notify is keyed to the generation-scoped session and
+      // deduped per session id via a latch so a second Stop cannot send a
+      // second `session/cancel` for the same turn.
+      if (this.acpCancelNotifySessionId !== this.acpSession.sessionId) {
+        this.acpCancelNotifySessionId = this.acpSession.sessionId;
+        try {
+          this.acpSession.handle.acp.notify("session/cancel", {
+            sessionId: this.acpSession.sessionId,
+          });
+        } catch {
+          // Best-effort — process may already be gone.
+        }
       }
       const resolvers = this.acpTurnResolvers.splice(0);
       for (const r of resolvers) r();

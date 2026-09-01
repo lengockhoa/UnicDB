@@ -48,9 +48,20 @@ import type { AdapterFactory } from "./ai/tools/types";
 import type { AgentDeps } from "./ai/agent";
 import { AiChatPanel, type AcpPanelDeps } from "./ui/aiChatPanel";
 import { ConsolePanel } from "./ui/consolePanel";
-import { AcpProcess } from "./ai/omp/acpProcess";
+import { AcpProcess, type AcpProcessHandle } from "./ai/omp/acpProcess";
 import { detectOmp, OMP_INSTALL_HINT, OMP_UPDATE_HINT } from "./ai/omp/detect";
 import { resolveEngine } from "./ai/engineChoice";
+import {
+  createOmpChatEngine,
+  type AcpSession,
+  type OmpChatEngine,
+} from "./ai/omp/ompChatEngine";
+import { createMcpBridge } from "./ai/omp/mcpBridge";
+import {
+  createHostMcp,
+  type HostMcpTool,
+} from "./ai/omp/hostMcp";
+import { createDbAwareTools } from "./ai/tools/dbAwareTools";
 import { resolvePolicy, type EffectivePolicy } from "./ai/policy";
 import { serializeAuditExport } from "./ai/auditExport";
 import { registerBrowseCommands } from "./ui/browseCommands";
@@ -1071,20 +1082,46 @@ function commandOpenAiSettings(aiStore: AiConfigStore): void {
 
 function buildAcpDeps(): AcpPanelDeps {
   return {
-    start: async (
+    // TASK-AIX05-103 cancellable construction seam: `create()` returns the
+    // UNSTARTED AcpProcess synchronously via the pinned TASK-AIX05-101
+    // constructor so the panel can call `process.start(...)` and, for a
+    // same-generation Stop during the handshake, `process.cancel()` on
+    // that SAME instance.
+    create: (
       ompPath: string,
       cwd: string,
       mcpServers: ReadonlyArray<Record<string, unknown>> = [],
-    ) => {
-      const proc = new AcpProcess({
+    ) =>
+      new AcpProcess({
         ompPath,
         cwd,
         supportCwdFlag: true,
         mcpServers,
-      });
+      }),
+    // Backward compatibility: `start()` is implemented via `create()` —
+    // one code path only.
+    start: async (
+      ompPath: string,
+      cwd: string,
+      mcpServers?: ReadonlyArray<Record<string, unknown>>,
+    ) => {
+      const proc = buildAcpDepsCreate(ompPath, cwd, mcpServers);
       return await proc.start();
     },
   };
+}
+
+function buildAcpDepsCreate(
+  ompPath: string,
+  cwd: string,
+  mcpServers?: ReadonlyArray<Record<string, unknown>>,
+): AcpProcess {
+  return new AcpProcess({
+    ompPath,
+    cwd,
+    supportCwdFlag: true,
+    mcpServers,
+  });
 }
 async function commandOpenAiChat(
   aiStore: AiConfigStore,
@@ -1162,6 +1199,13 @@ async function commandOpenAiChat(
     // registration — untrusted workspaces get neither.
     isWorkspaceTrusted: () => vscode.workspace.isTrusted,
     acp: choice.engine === "omp" ? buildAcpDeps() : undefined,
+    // TASK-AIX05-103: the resolved OMP route gets the production engine
+    // adapter (one bridge-owned descriptor/runtime); builtin fallback gets
+    // none. See buildOmpChatEngine below for the adapter contract.
+    ompChatEngine:
+      choice.engine === "omp"
+        ? await buildOmpChatEngine(adapterFactory, choice.path ?? "omp")
+        : undefined,
     engineVersion: choice.version,
     engineHint: choice.hint,
     engineOmpPath: choice.path,
@@ -1174,6 +1218,148 @@ async function commandOpenAiChat(
     },
   });
   aiChatPanel.show();
+}
+
+/**
+ * TASK-AIX05-103 — production OMP engine adapter for `commandOpenAiChat`.
+ *
+ * One runtime per panel-open: HostMcp (authoritative standard+curated
+ * registry) → McpBridge composition overload (bearer descriptor owner) →
+ * AcpProcess (create()-captured UNSTARTED) → the engine's `AcpSession`
+ * adapter backed by the process handle's AcpClient → `createOmpChatEngine`
+ * with `mcpServers` threaded VERBATIM (no `headers: []` reconstruction).
+ * Bridge disposal via engine shutdown is the only remote descriptor
+ * deregistration boundary (TASK-AIX05-102).
+ *
+ * The HostMcp permission `gatePost` is deferred: the panel is constructed
+ * AFTER this factory runs, so the sink captures `aiChatPanel` at call time
+ * — permission cards reach the live webview through the same wire message
+ * the panel already owns.
+ */
+async function buildOmpChatEngine(
+  adapterFactory: AdapterFactory,
+  ompPath: string,
+): Promise<OmpChatEngine> {
+  const cwd =
+    vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+  // Standard registry — the SAME adapterFactory-backed DB tools the builtin
+  // engine registers (AgentTool is structurally identical to HostMcpTool).
+  const tools: ReadonlyArray<HostMcpTool> = createDbAwareTools(adapterFactory);
+  const gatePost: Parameters<typeof createHostMcp>[0]["gatePost"] = (msg) => {
+    const panel = aiChatPanel;
+    if (panel !== null) {
+      // Post the card via the panel (registers the answer resolver) and
+      // complete the loop: the user's optionId resolves the gate's pending
+      // promise through hostMcp.respond. Deny/timeout/close → undefined.
+      void panel.requestHostPermission(msg).then((optionId) => {
+        hostMcp.respond(msg.requestId, optionId);
+      });
+    }
+  };
+  const hostMcp = createHostMcp({ gatePost, tools });
+  await hostMcp.start();
+  const bridge = await createMcpBridge(hostMcp);
+  // Bridge owns the descriptor; thread it verbatim — the engine must not
+  // manufacture a headerless fallback for the production route.
+  const mcpServers: ReadonlyArray<Record<string, unknown>> = [bridge.descriptor];
+  // create()-captured UNSTARTED process — the pinned cancellable seam. The
+  // child spawns LAZILY on the engine's first session/new (the handshake);
+  // a same-generation panel Stop before that handshake resolves cancels
+  // the captured instance (AcpPanelDeps.create contract).
+  const acpProcess = buildAcpDepsCreate(ompPath, cwd, mcpServers);
+  let handlePromise: Promise<AcpProcessHandle> | null = null;
+  const ensureHandle = (): Promise<AcpProcessHandle> => {
+    if (handlePromise === null) {
+      handlePromise = acpProcess.start();
+    }
+    return handlePromise;
+  };
+  return createOmpChatEngine({
+    acp: adaptProcessToSession(acpProcess, ensureHandle),
+    hostMcp,
+    cwd,
+    mcpServers,
+  });
+}
+
+/**
+ * TASK-AIX05-103 — map the real `AcpProcess` + its `AcpProcessHandle`
+ * (AcpClient-backed) onto the engine's `AcpSession` surface. Thin 1:1
+ * delegation — no second protocol implementation. The handle materializes
+ * on the FIRST session call (lazy `start()`); `notify` is best-effort and
+ * silently skips before the handshake exists (matching the engine's
+ * contract that cancel() before a session is a no-op latch).
+ */
+function adaptProcessToSession(
+  acpProcess: AcpProcess,
+  ensureHandle: () => Promise<AcpProcessHandle>,
+): AcpSession {
+  const withHandle = async <T>(
+    op: (handle: AcpProcessHandle) => Promise<T>,
+  ): Promise<T> => op(await ensureHandle());
+  return {
+    sessionNew: (params) =>
+      withHandle((h) =>
+        h.acp
+          .request<{ sessionId?: unknown }>("session/new", params)
+          .then((r) => ({
+            sessionId: typeof r.sessionId === "string" ? r.sessionId : "",
+          })),
+      ),
+    sessionPrompt: (sessionId, text) =>
+      withHandle((h) =>
+        h.acp
+          .request<{ stopReason?: unknown }>(
+            "session/prompt",
+            { sessionId, prompt: [{ type: "text", text }] },
+            { timeoutMs: 0 },
+          )
+          .then((r) => ({
+            stopReason:
+              typeof r.stopReason === "string" ? r.stopReason : undefined,
+          })),
+      ),
+    sessionLoad: (sessionId, sessionCwd, mcpServers) =>
+      withHandle((h) =>
+        h.acp
+          .sessionLoad(sessionId, sessionCwd, mcpServers)
+          .then((r) => ({ sessionId, replay: r.replay })),
+      ),
+    onNotification: (handler) => {
+      void ensureHandle().then(
+        (h) => h.acp.onNotification(handler),
+        () => {
+          /* process gone before handshake — no events to forward */
+        },
+      );
+    },
+    onClose: (listener) => {
+      void ensureHandle().then(
+        (h) => h.acp.onClose(listener),
+        () => {
+          /* process gone before handshake — nothing to close */
+        },
+      );
+    },
+    dispose: () => {
+      try {
+        // AcpProcess.dispose is private; the public idempotent cancel() is
+        // the pinned teardown seam — it transitions to "stopped", sends
+        // the terminal signal, and settles the bounded teardown.
+        acpProcess.cancel();
+      } catch {
+        /* best-effort */
+      }
+    },
+    notify: (method, params) => {
+      void ensureHandle().then(
+        (h) => h.acp.notify(method, params),
+        () => {
+          /* process gone — best-effort notify is a no-op */
+        },
+      );
+    },
+  };
 }
 
 // ============================================================================

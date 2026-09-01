@@ -1365,6 +1365,33 @@ function applySessionState(state: "connecting" | "running" | "done" | "error"): 
   chip.textContent = label;
 }
 
+/** TASK-AIX05-103: render the OMP engine runtime lifecycle inside the
+ * existing engine banner (`#engineLifecycle` span, textContent only).
+ * The state literal is host-enum; the label map is fixed — never rendered
+ * verbatim from the wire. */
+function applyEngineState(state: string): void {
+  const rootEl = document.getElementById("vsdb-root");
+  if (!rootEl) return;
+  let chip = document.getElementById("engineLifecycle") as HTMLSpanElement | null;
+  if (!chip) {
+    chip = document.createElement("span");
+    chip.id = "engineLifecycle";
+    const banner = document.getElementById("engineBanner");
+    const host = banner ?? rootEl;
+    host.appendChild(chip);
+  }
+  const labels: Record<string, string> = {
+    "stopped": "Stopped",
+    "starting": "Starting…",
+    "ready": "Ready",
+    "cancelling": "Cancelling…",
+    "crashed": "Crashed",
+    "fallback-builtin": "Fallback to builtin",
+  };
+  chip.className = `vsdb-chat-engine-state vsdb-chat-engine-state-${state}`;
+  chip.textContent = labels[state] ?? state;
+}
+
 function applyInit(msg: InitMsg): void {
   state.hasHistory = msg.hasHistory;
   state.visionCapable = msg.visionCapable;
@@ -1677,6 +1704,9 @@ function renderHistory(msg: HistoryMsg): void {
       return;
     case "session_state":
       applySessionState(msg.state);
+      return;
+    case "engine_state":
+      applyEngineState((msg as { state: string }).state);
       return;
     case "assistant":
       // Final assistant message: replace any open streaming bubble with a

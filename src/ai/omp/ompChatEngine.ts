@@ -145,6 +145,13 @@ export interface OmpChatEngineOptions {
   trace?: TraceRecorder;
   /** Reserved for cycle AB image-attach parity (default false). */
   enablePromptImage?: boolean;
+  /**
+   * TASK-AIX05-103: required bridge-owned ACP `McpServer` descriptor
+   * array (typically a single entry carrying a bearer `Authorization`
+   * header). Forwarded verbatim into `session/new` and `session/load` —
+   * the engine never rebuilds a headerless descriptor.
+   */
+  mcpServers?: ReadonlyArray<Record<string, unknown>>;
 }
 
 // ============================================================================
@@ -329,7 +336,12 @@ async function dispatchNotification(
 export function createOmpChatEngine(opts: OmpChatEngineOptions): OmpChatEngine {
   const { acp, hostMcp, cwd } = opts;
   let trace = opts.trace;
-  const mcpServers = mcpServersDescriptor(hostMcp);
+  // TASK-AIX05-103: bridge-owned descriptor wins. Prefer the caller-supplied
+  // `mcpServers` array verbatim (including bearer headers); fall back to
+  // the legacy default ONLY for backwards-compatible fakes that do not yet
+  // thread a descriptor (e.g. cycle AE TASK-002 baseline tests).
+  const mcpServers: ReadonlyArray<Record<string, unknown>> =
+    opts.mcpServers ?? mcpServersDescriptor(hostMcp);
   // AIX-05: track the active sessionId so cancel() can address the right
   // `session/cancel` notify. Cleared on turn settle. `cancelSent` dedupes
   // double-cancel across a single turn.

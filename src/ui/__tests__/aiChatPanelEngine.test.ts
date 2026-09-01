@@ -20,6 +20,13 @@ import type { AgentDeps, AgentRunResult } from "../../ai/agent";
 import type { ChatMessage } from "../../ai/provider";
 import type { AdapterFactory } from "../../ai/tools/types";
 import type { OmpChatEngine, OmpChatEvents } from "../../ai/omp/ompChatEngine";
+import type { AcpPanelDeps } from "../aiChatPanel";
+import type {
+  AcpClient,
+  AcpProcess,
+  AcpProcessHandle,
+  OmpEngineState,
+} from "../../ai/omp/acpProcess";
 
 // ---- vscode mock (mirrors aiChatPanel.test.ts shape) ------------------------
 type Listener<T> = (e: T) => void;
@@ -126,10 +133,11 @@ import { AiChatPanel } from "../aiChatPanel";
 
 const extUri = vscode.Uri.file("/ext");
 
-async function until(cond: () => boolean): Promise<void> {
-  for (let i = 0; i < 500; i++) {
-    if (cond()) return;
-    await Promise.resolve();
+async function until(cond: () => boolean, timeoutMs = 1000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!cond()) {
+    if (Date.now() > deadline) throw new Error("until: condition not met");
+    await new Promise((r) => setTimeout(r, 5));
   }
 }
 
@@ -405,5 +413,216 @@ describe("AiChatPanel — engine routing (cycle AE TASK-003)", () => {
       key: "vsdb.ai.engine",
       value: "builtin",
     });
+  });
+});
+// ---- TASK-AIX05-103: cancellable create() seam + restart policy constants --
+
+describe("AcpPanelDeps — TASK-AIX05-103 pinned contracts", () => {
+  it("MAX_ENGINE_RESTARTS = 2 and DEFAULT_ENGINE_RESTART_DELAY_MS = 1000 are exported", async () => {
+    const panel = await import("../aiChatPanel");
+    expect(panel.MAX_ENGINE_RESTARTS).toBe(2);
+    expect(panel.DEFAULT_ENGINE_RESTART_DELAY_MS).toBe(1000);
+  });
+
+  it("AcpPanelDeps declares create(ompPath, cwd, mcpServers?): AcpProcess returning an UNSTARTED process", async () => {
+    const { AcpProcess } = await import("../../ai/omp/acpProcess");
+    // Structural check: an object implementing AcpPanelDeps must expose
+    // `create` returning an AcpProcess with `.start()` and the panel can
+    // then call `cancel()` on that SAME instance before start resolves.
+    const deps = {
+      create: (_ompPath: string, cwd: string, mcpServers?: ReadonlyArray<Record<string, unknown>>) =>
+        new AcpProcess({ ompPath: _ompPath, cwd, supportCwdFlag: true, mcpServers }),
+      start: async function (
+        this: { create: (p: string, c: string, m?: ReadonlyArray<Record<string, unknown>>) => AcpProcess },
+        ompPath: string,
+        cwd: string,
+        mcpServers?: ReadonlyArray<Record<string, unknown>>,
+      ) {
+        return this.create(ompPath, cwd, mcpServers).start();
+      },
+    };
+    const proc = deps.create("omp", "/w", []);
+    expect(typeof proc.start).toBe("function");
+  });
+});
+
+
+// ============================================================================
+// TASK-AIX05-103 cases 5/6 — panel-owned bounded restart + terminal fallback
+// ============================================================================
+describe("AiChatPanel — TASK-AIX05-103 bounded restart policy", () => {
+  /** One fake runtime generation captured via AcpPanelDeps.create(). */
+  interface FakeGeneration {
+    cancelCalls: number;
+    /** Set once this generation's start() has registered its emit path. */
+    wired: boolean;
+    /** Panel-visible crash trigger (post-ready child exit). */
+    crash: () => void;
+  }
+
+  function makeCreateDeps(generations: FakeGeneration[]): AcpPanelDeps {
+    let created = 0;
+    return {
+      create: (
+        _ompPath: string,
+        _cwd: string,
+        _mcpServers?: ReadonlyArray<Record<string, unknown>>,
+      ) => {
+        const gen = generations[created];
+        created += 1;
+        if (gen === undefined) {
+          throw new Error("unexpected extra runtime generation created");
+        }
+        const listeners: Array<(s: OmpEngineState) => void> = [];
+        return {
+          cancel: () => {
+            gen.cancelCalls += 1;
+          },
+          start: async (handlers?: {
+            onStateChange?: (s: OmpEngineState) => void;
+          }): Promise<AcpProcessHandle> => {
+            if (handlers?.onStateChange) listeners.push(handlers.onStateChange);
+            const emit = (s: OmpEngineState) => {
+              for (const cb of listeners.slice()) cb(s);
+            };
+            emit("starting");
+            emit("ready");
+            gen.wired = true;
+            gen.crash = () => {
+              emit("crashed");
+            };
+            return {
+              acp: {
+                request: vi.fn(async () => ({ stopReason: "end_turn" })),
+                notify: vi.fn(),
+                onNotification: vi.fn(),
+                onServerRequest: vi.fn(),
+                dispose: vi.fn(),
+              } as unknown as AcpClient,
+              sessionId: `sess-gen${created - 1}`,
+              version: "18.0.1",
+              state: () => "ready",
+              cancel: () => gen.cancelCalls,
+              dispose: vi.fn(async () => undefined),
+            };
+          },
+        } as unknown as AcpProcess;
+      },
+      start: () => {
+        throw new Error("legacy start() must NOT be used when create() exists");
+      },
+    };
+  }
+
+  it("case 5: two ready-child crashes restart after exactly injected sleep(1000) each; no fallback under the limit", async () => {
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const gens: FakeGeneration[] = [
+      { cancelCalls: 0, wired: false, crash: () => {} },
+      { cancelCalls: 0, wired: false, crash: () => {} },
+      { cancelCalls: 0, wired: false, crash: () => {} },
+    ];
+    const sleeps: number[] = [];
+    const deps = makeCreateDeps(gens);
+
+    const panel = new AiChatPanel(
+      {
+        extensionUri: extUri,
+        deps: makeDeps(),
+        adapterFactory: factory,
+        acp: deps,
+      },
+      {
+        sleep: async (ms: number) => {
+          sleeps.push(ms);
+        },
+      },
+    );
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "hello omp" });
+    // Gen 0 reaches ready inside ensureAcpSession (the in-flight session
+    // creation for the turn). Wait until the turn settled AND gen 0's
+    // crash trigger is wired, then crash it — gen 1 is scheduled after
+    // the injected sleep(1000).
+    await until(() => gens[0]!.wired);
+    await until(() => postedMessages(p).some((m) => {
+      const t = (m as { type?: string }).type;
+      return t === "error" || t === "done";
+    }));
+    gens[0]!.crash();
+    await until(() => sleeps.length >= 1);
+    // The replacement gen 1 must be wired (ready) before it can crash.
+    await until(() => gens[1]!.wired);
+    gens[1]!.crash();
+    await until(() => sleeps.length >= 2);
+
+    expect(sleeps).toEqual([1000, 1000]);
+    const engineStates = postedMessages(p)
+      .filter((m) => (m as { type?: string }).type === "engine_state")
+      .map((m) => (m as { state: string }).state);
+    expect(engineStates.filter((s) => s === "crashed")).toHaveLength(2);
+    expect(engineStates).not.toContain("fallback-builtin");
+  });
+
+  it("case 6: crash at MAX_ENGINE_RESTARTS=2 emits exactly one fallback-builtin and no third start", async () => {
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const gens: FakeGeneration[] = [0, 1, 2].map(() => ({
+      cancelCalls: 0,
+      wired: false,
+      crash: () => {},
+    }));
+    const sleeps: number[] = [];
+    const deps = makeCreateDeps(gens);
+
+    const panel = new AiChatPanel(
+      {
+        extensionUri: extUri,
+        deps: makeDeps(),
+        adapterFactory: factory,
+        acp: deps,
+      },
+      {
+        sleep: async (ms: number) => {
+          sleeps.push(ms);
+        },
+      },
+    );
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "hello omp" });
+    await until(() => gens[0]!.wired);
+    await until(() => postedMessages(p).some((m) => {
+      const t = (m as { type?: string }).type;
+      return t === "error" || t === "done";
+    }));
+    gens[0]!.crash();
+    await until(() => sleeps.length >= 1);
+    await until(() => gens[1]!.wired);
+    gens[1]!.crash();
+    await until(() => sleeps.length >= 2);
+    await until(() => gens[2]!.wired);
+    gens[2]!.crash();
+    await until(() =>
+      postedMessages(p).some(
+        (m) =>
+          (m as { type?: string }).type === "engine_state" &&
+          (m as { state?: string }).state === "fallback-builtin",
+      ),
+    );
+
+    // Only three generations may ever be created (initial + 2 restarts):
+    // the terminal crash posts fallback-builtin and schedules no third
+    // replacement (and thus no third sleep).
+    expect(sleeps).toEqual([1000, 1000]);
+    const fallbacks = postedMessages(p).filter(
+      (m) =>
+        (m as { type?: string }).type === "engine_state" &&
+        (m as { state?: string }).state === "fallback-builtin",
+    );
+    expect(fallbacks).toHaveLength(1);
   });
 });

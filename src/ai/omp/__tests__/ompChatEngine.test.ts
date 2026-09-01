@@ -763,3 +763,73 @@ describe("OmpChatEngine trace (TASK-AIX06-002)", () => {
     }
   });
 });
+
+// ---- TASK-AIX05-103: production engine adapter contracts -----------------
+
+describe("OmpChatEngine — TASK-AIX05-103 mcpServers pass-through", () => {
+  it("forwards the user-supplied mcpServers array verbatim (including bearer headers) to session/new", async () => {
+    fakeAcp.sessionNew.mockResolvedValue({ sessionId: "sess-vt-1" });
+    fakeAcp.sessionPrompt.mockResolvedValue({ stopReason: "end_turn" });
+    const bridgeDescriptor = {
+      type: "http",
+      name: "vsdb",
+      url: "http://127.0.0.1:54321",
+      headers: [{ name: "Authorization", value: "Bearer custom-token-xyz" }],
+    };
+    const mcpServers = [bridgeDescriptor];
+
+    const engine = createOmpChatEngine({
+      acp: fakeAcp,
+      hostMcp: fakeHostMcp,
+      cwd: "/workspace",
+      mcpServers,
+    });
+    await engine.send("hi", {});
+
+    expect(fakeAcp.sessionNew).toHaveBeenCalledWith({
+      cwd: "/workspace",
+      mcpServers,
+    });
+    const args = fakeAcp.sessionNew.mock.calls[0]?.[0] as {
+      mcpServers: ReadonlyArray<Record<string, unknown>>;
+    };
+    expect(args.mcpServers[0]).toBe(bridgeDescriptor); // exact reference, not rebuilt
+    expect(args.mcpServers[0]?.["headers"]).toEqual([
+      { name: "Authorization", value: "Bearer custom-token-xyz" },
+    ]);
+
+    // Re-send uses the SAME descriptor reference; the engine never rebuilds it.
+    fakeAcp.sessionNew.mockResolvedValueOnce({ sessionId: "sess-vt-2" });
+    await engine.send("next", {});
+    const secondArgs = fakeAcp.sessionNew.mock.calls[1]?.[0] as {
+      mcpServers: ReadonlyArray<Record<string, unknown>>;
+    };
+    expect(secondArgs.mcpServers[0]).toBe(bridgeDescriptor);
+  });
+
+  it("resume() also threads the same mcpServers verbatim into session/load", async () => {
+    fakeAcp.sessionLoad.mockResolvedValue({
+      sessionId: "resumed-vt-1",
+      replay: { notifications: [], closed: true },
+    });
+    const bridgeDescriptor = {
+      type: "http",
+      name: "vsdb",
+      url: "http://127.0.0.1:54321",
+      headers: [{ name: "Authorization", value: "Bearer token-abc" }],
+    };
+    const engine = createOmpChatEngine({
+      acp: fakeAcp,
+      hostMcp: fakeHostMcp,
+      cwd: "/workspace",
+      mcpServers: [bridgeDescriptor],
+    });
+    await engine.resume("orig-vt-1", {});
+
+    expect(fakeAcp.sessionLoad).toHaveBeenCalledWith(
+      "orig-vt-1",
+      "/workspace",
+      [bridgeDescriptor],
+    );
+  });
+});

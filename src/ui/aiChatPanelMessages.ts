@@ -104,6 +104,23 @@ export interface AiChatPanelSessionState {
   turnId: string;
 }
 
+/** TASK-AIX05-103: one of the six exact OMP engine lifecycle literals,
+ * mirrored verbatim from `AcpProcess`'s `OmpEngineState`. The literal set
+ * is closed — no synonymous state literals exist on the wire. */
+export type OmpEngineLifecycleState =
+  | "stopped"
+  | "starting"
+  | "ready"
+  | "cancelling"
+  | "crashed"
+  | "fallback-builtin";
+
+/** Host → webview: OMP engine runtime lifecycle (banner chip). */
+export interface AiChatPanelEngineState {
+  type: "engine_state";
+  state: OmpEngineLifecycleState;
+}
+
 
 /** A single permission choice the user may grant for an ACP server request.
  * The `requestId` is a host-generated opaque token; the webview must echo it
@@ -197,6 +214,7 @@ export type AiChatPanelHostMessage =
   | AiChatPanelError
   | AiChatPanelSessionState
   | AiChatPanelEngine
+  | AiChatPanelEngineState
   | AiChatPanelDone
   | AiChatPanelPermissionRequest
   | AiChatPanelResumeSessions

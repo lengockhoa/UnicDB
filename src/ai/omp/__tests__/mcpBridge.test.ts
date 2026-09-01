@@ -582,3 +582,136 @@ describe("createMcpBridge — descriptor + handshake shape", () => {
     bridge.dispose();
   });
 });
+
+// ---- TASK-AIX05-103: createMcpBridge(hostMcp) composition overload --------
+// The production OMP runtime composes the bridge with the authoritative
+// HostMcp registry. The authenticated bridge handler must delegate
+// `tools/list` AND `tools/call` to `hostMcp.handle(req)` (the member at
+// hostMcp.ts that owns the standard-plus-curated registry and the
+// standard-wins collision filter) — `call(name, args)` alone cannot
+// implement `tools/list` and MUST NOT be used for delegation.
+
+import type { HostMcp } from "../hostMcp";
+
+describe("createMcpBridge — HostMcp composition overload (TASK-AIX05-103)", () => {
+  /** Minimal HostMcp double that records which member the bridge used. */
+  function makeFakeHostMcp(overrides: Partial<HostMcp> = {}): HostMcp & {
+    handleCalls: Array<{ method: string; params?: unknown; id?: unknown }>;
+    callCalls: Array<{ name: string; args: Record<string, unknown> }>;
+  } {
+    const handleCalls: Array<{ method: string; params?: unknown; id?: unknown }> = [];
+    const callCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const base = {
+      port: 0,
+      url: "http://127.0.0.1:0",
+      sessionId: "hostmcp-test-session",
+      start: async () => undefined,
+      stop: async () => undefined,
+      respond: () => false,
+      handle: async (req: { method: string; params?: unknown; id?: unknown }) => {
+        handleCalls.push(req);
+        if (req.method === "tools/list") {
+          return {
+            result: {
+              tools: [
+                { name: "std_tool", description: "d", inputSchema: { type: "object" } },
+              ],
+            },
+          };
+        }
+        if (req.method === "tools/call") {
+          return {
+            result: { content: [{ type: "text", text: "hostmcp-exec" }] },
+          };
+        }
+        return { result: {} };
+      },
+      call: async (name: string, args: Record<string, unknown>) => {
+        callCalls.push({ name, args });
+        return { result: "should-not-be-used", isError: false };
+      },
+    };
+    return { ...base, ...overrides, handleCalls, callCalls } as HostMcp & {
+      handleCalls: Array<{ method: string; params?: unknown; id?: unknown }>;
+      callCalls: Array<{ name: string; args: Record<string, unknown> }>;
+    };
+  }
+
+  it("overload exists: createMcpBridge(hostMcp) returns a bridge with a bearer descriptor", async () => {
+    const hostMcp = makeFakeHostMcp();
+    const bridge = await createMcpBridge(hostMcp as unknown as HostMcp);
+    expect(typeof bridge.descriptor["url"]).toBe("string");
+    expect(bridge.descriptor["type"]).toBe("http");
+    const headers = bridge.descriptor["headers"] as Array<{ name: string; value: string }>;
+    expect(headers.find((h) => h.name === "Authorization")?.value).toMatch(/^Bearer /);
+    bridge.dispose();
+  });
+
+  it("handleMcpRequest delegates tools/list to hostMcp.handle (NOT call)", async () => {
+    const hostMcp = makeFakeHostMcp();
+    const bridge = await createMcpBridge(hostMcp as unknown as HostMcp);
+    const token = tokenFromDescriptor(bridge);
+
+    const out = await bridge.handleMcpRequest(
+      { method: "tools/list", params: {}, id: 1 },
+      token,
+    );
+
+    expect(out.error).toBeUndefined();
+    expect(hostMcp.handleCalls).toHaveLength(1);
+    expect(hostMcp.handleCalls[0]?.method).toBe("tools/list");
+    expect(hostMcp.callCalls).toHaveLength(0); // call() MUST NOT be used
+    const tools = (out.result as { tools: Array<{ name: string }> }).tools;
+    expect(tools.map((t) => t.name)).toEqual(["std_tool"]);
+
+    bridge.dispose();
+  });
+
+  it("handleMcpRequest delegates tools/call to hostMcp.handle (NOT call)", async () => {
+    const hostMcp = makeFakeHostMcp();
+    const bridge = await createMcpBridge(hostMcp as unknown as HostMcp);
+    const token = tokenFromDescriptor(bridge);
+
+    const out = await bridge.handleMcpRequest(
+      { method: "tools/call", params: { name: "std_tool", arguments: { a: 1 } }, id: 2 },
+      token,
+    );
+
+    expect(out.error).toBeUndefined();
+    expect(hostMcp.handleCalls).toHaveLength(1);
+    expect(hostMcp.handleCalls[0]?.method).toBe("tools/call");
+    expect(hostMcp.callCalls).toHaveLength(0); // call() MUST NOT be used
+    const content = (out.result as { content: Array<{ text: string }> }).content;
+    expect(content[0]?.text).toBe("hostmcp-exec");
+
+    bridge.dispose();
+  });
+
+  it("wrong bearer token still returns 401-equivalent before any HostMcp delegation", async () => {
+    const hostMcp = makeFakeHostMcp();
+    const bridge = await createMcpBridge(hostMcp as unknown as HostMcp);
+
+    const out = await bridge.handleMcpRequest(
+      { method: "tools/list", params: {}, id: 3 },
+      "wrong-token",
+    );
+
+    expect(out).toEqual({ error: { code: 401, message: "Unauthorized" } });
+    expect(hostMcp.handleCalls).toHaveLength(0);
+    bridge.dispose();
+  });
+
+  it("TASK-AIX05-102 terminal disposal carries over: post-dispose delegation returns -32000 without reaching HostMcp", async () => {
+    const hostMcp = makeFakeHostMcp();
+    const bridge = await createMcpBridge(hostMcp as unknown as HostMcp);
+    const token = tokenFromDescriptor(bridge);
+    bridge.dispose();
+
+    const out = await bridge.handleMcpRequest(
+      { method: "tools/list", params: {}, id: 4 },
+      token,
+    );
+    expect(out).toEqual({ error: { code: -32000, message: "MCP bridge is disposed" } });
+    expect(hostMcp.handleCalls).toHaveLength(0);
+  });
+});

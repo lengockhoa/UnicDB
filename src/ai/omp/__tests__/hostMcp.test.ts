@@ -941,4 +941,97 @@ describe("createHostMcp — curated extension containment (TASK-AIX08-002)", () 
       process.off("unhandledRejection", onUnhandled);
     }
   });
+
+  // ---- TASK-AIX05-103 case 9: regression pin — the standard-wins
+  // ---- collision stays authoritative across OMP runtime lifetime.
+  it("R(AIX05-103) collision regression: standard tool remains authoritative across OMP lifetime (before AND after host stop)", async () => {
+    const curatedCalls: number[] = [];
+    const standardCalls: Array<Record<string, unknown>> = [];
+    fixture = await buildFixture({
+      tools: [
+        {
+          name: "catalog-probe",
+          description: "standard tool that wins the name collision",
+          parameters: { type: "object", properties: {} },
+          execute: async (input: Record<string, unknown>) => {
+            standardCalls.push(input);
+            return "standard-wins";
+          },
+        } as unknown as FakeTool,
+      ],
+      extensions: [
+        curatedTool({
+          name: "catalog-probe",
+          handler: async () => {
+            curatedCalls.push(1);
+            return "curated-loses";
+          },
+        }),
+      ],
+      postPermission: (m) => {
+        queueMicrotask(() => fixture!.host.respond(m.requestId, "allow-once"));
+      },
+    });
+
+    // tools/list while live: exactly ONE descriptor, the standard one.
+    const listRes = await probeJson(fixture.host.url, {
+      method: "POST",
+      body: { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} },
+    });
+    const listed = (listRes.body as {
+      result?: { tools?: Array<{ name: string; description?: string }> };
+    }).result?.tools ?? [];
+    expect(listed.filter((t) => t.name === "catalog-probe")).toHaveLength(1);
+    expect(
+      listed.find((t) => t.name === "catalog-probe")?.description,
+    ).toBe("standard tool that wins the name collision");
+
+    // tools/call while live: standard wins, curated handler never runs.
+    const liveOut = await fixture.host.call("catalog-probe", {});
+    expect(standardCalls).toHaveLength(1);
+    expect(curatedCalls).toHaveLength(0);
+    expect(liveOut).toEqual({ result: "standard-wins", isError: false });
+
+    // Simulate OMP bridge/runtime teardown by stopping the host.
+    await fixture.host.stop();
+
+    // After teardown: the pure handle()/call() surface still routes the
+    // colliding name to the STANDARD tool — the standard-wins filter is
+    // structural and must survive runtime exit (no curated resurrection).
+    const outAfterStop = await fixture.host.call("catalog-probe", {});
+    expect(curatedCalls).toHaveLength(0);
+    expect(outAfterStop).toEqual({ result: "standard-wins", isError: false });
+
+    // Build a fresh fixture with the SAME collision fixture: the curated
+    // entry must lose again — proving the filter is structural, not
+    // session-state-bound.
+    await fixture.host.stop();
+    fixture = undefined;
+    fixture = await buildFixture({
+      tools: [
+        {
+          name: "catalog-probe",
+          description: "standard tool that wins the name collision",
+          parameters: { type: "object", properties: {} },
+          execute: async () => "standard-wins-again",
+        } as unknown as FakeTool,
+      ],
+      extensions: [
+        curatedTool({
+          name: "catalog-probe",
+          handler: async () => {
+            throw new Error("curated must never run on a re-built host");
+          },
+        }),
+      ],
+      postPermission: (m) => {
+        queueMicrotask(() => fixture!.host.respond(m.requestId, "allow-once"));
+      },
+    });
+    const out2 = await fixture.host.call("catalog-probe", {});
+    expect(out2).toEqual({ result: "standard-wins-again", isError: false });
+
+    await fixture.host.stop();
+    fixture = undefined;
+  });
 });

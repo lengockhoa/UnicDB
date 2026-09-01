@@ -33,6 +33,7 @@
 import http from "node:http";
 import crypto from "node:crypto";
 import type { ToolRegistry } from "../agent";
+import type { HostMcp } from "./hostMcp";
 
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 
@@ -137,6 +138,49 @@ function makeHandler(
   };
 }
 
+/**
+ * TASK-AIX05-103: build the pure JSON-RPC handler bound to a HostMcp
+ * registry instead of a bare ToolRegistry. `tools/list` AND `tools/call`
+ * delegate to `hostMcp.handle(req)` — the member that owns the
+ * standard-plus-curated registry and the standard-wins collision filter.
+ * `call(name, args)` alone cannot implement `tools/list` and is never
+ * used for delegation.
+ */
+function makeHostMcpHandler(
+  hostMcp: HostMcp,
+  expectedToken: string,
+): McpBridge["handleMcpRequest"] {
+  return async (req, token) => {
+    // Auth gate FIRST — wrong/absent token never reaches tool dispatch.
+    if (!tokensMatch(token, expectedToken)) {
+      return { error: { code: 401, message: "Unauthorized" } };
+    }
+
+    switch (req.method) {
+      case "initialize":
+        return {
+          result: {
+            protocolVersion: MCP_PROTOCOL_VERSION,
+            capabilities: { tools: {} },
+            serverInfo: { name: "vsdb", version: "1.0.0" },
+          },
+        };
+
+      case "notifications/initialized":
+        return { result: {} };
+
+      case "tools/list":
+      case "tools/call":
+        // Delegation boundary — HostMcp owns the authoritative registry
+        // (standard-wins curated filter runs inside hostMcp.handle).
+        return hostMcp.handle(req);
+
+      default:
+        return { error: { code: -32601, message: `Method not found: ${req.method}` } };
+    }
+  };
+}
+
 function extractBearerToken(header: string | string[] | undefined): string {
   const raw = Array.isArray(header) ? header[0] : header;
   if (typeof raw !== "string") return "";
@@ -149,9 +193,25 @@ function extractBearerToken(header: string | string[] | undefined): string {
  * server bound to `127.0.0.1` on an OS-assigned port. Async because the
  * listener must actually be bound (and its port known) before the caller
  * can build a `session/new`-ready `descriptor`.
+ *
+ * TASK-AIX05-103: composition overload — pass a HostMcp registry instead of
+ * a bare ToolRegistry and the bridge delegates `tools/list`/`tools/call` to
+ * `hostMcp.handle(req)`, preserving HostMcp's standard-wins registry.
  */
-export async function createMcpBridge(registry: ToolRegistry): Promise<McpBridge> {
+export function createMcpBridge(registry: ToolRegistry): Promise<McpBridge>;
+export function createMcpBridge(hostMcp: HostMcp): Promise<McpBridge>;
+export async function createMcpBridge(
+  registryOrHostMcp: ToolRegistry | HostMcp,
+): Promise<McpBridge> {
   const token = crypto.randomBytes(24).toString("hex");
+  // HostMcp duck-check: the ToolRegistry surface is {list, get}; HostMcp
+  // additionally exposes `handle(req)`. Anything carrying `handle` is
+  // routed through the HostMcp delegation handler.
+  const isHostMcp =
+    typeof (registryOrHostMcp as Partial<HostMcp>).handle === "function";
+  const dispatch: McpBridge["handleMcpRequest"] = isHostMcp
+    ? makeHostMcpHandler(registryOrHostMcp as HostMcp, token)
+    : makeHandler(registryOrHostMcp as ToolRegistry, token);
   // TASK-AIX05-102: once retired, a bridge is TERMINAL — every later request
   // (even with the bearer token) fails closed before the registry is touched,
   // so a stale descriptor/socket can never list, re-register, or invoke tools.
@@ -160,7 +220,7 @@ export async function createMcpBridge(registry: ToolRegistry): Promise<McpBridge
     if (disposed) {
       return { error: { code: -32000, message: "MCP bridge is disposed" } };
     }
-    return makeHandler(registry, token)(req, tok);
+    return dispatch(req, tok);
   };
 
   const server = http.createServer((req, res) => {

@@ -24,7 +24,7 @@ import {
   AcpClient,
   type AcpTransport,
 } from "../../ai/omp/acp";
-import type { AcpProcessHandle } from "../../ai/omp/acpProcess";
+import type { AcpProcessHandle, AcpProcess } from "../../ai/omp/acpProcess";
 
 const agentState = vi.hoisted(() => ({
   runAgentMock: vi.fn() as Mock,
@@ -1776,3 +1776,65 @@ function isStep(m: unknown): m is { type: "step"; label: string } {
 function isThought(m: unknown): m is { type: "thought"; text: string } {
   return !!m && typeof m === "object" && (m as { type?: string }).type === "thought";
 }
+
+// ---- TASK-AIX05-103 case 4: Start-then-Stop during handshake --------------
+// Stop before the ACP handshake resolves must abort the pending start via
+// the pinned cancellable seam: the fixture captures the
+// `AcpPanelDeps.create(...)` instance and asserts `process.cancel()` on
+// that SAME instance (same generation) is the abort path. The deferred
+// `start(): Promise<AcpProcessHandle>` shape must NOT be used.
+describe("AiChatPanel — TASK-AIX05-103 case 4 (cancellable create() seam)", () => {
+  it("Stop during a deferred handshake calls cancel() on the SAME create()-captured AcpProcess instance", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    // Deferred handshake: create() captures the instance; start() hangs
+    // until the test resolves it (never in this test).
+    const created: Array<{ cancel: () => void; cancelCalls: number }> = [];
+    const deferredDeps = {
+      create: (
+        _ompPath: string,
+        _cwd: string,
+        _mcpServers?: ReadonlyArray<Record<string, unknown>>,
+      ) => {
+        const instance = {
+          cancelCalls: 0,
+          cancel() {
+            instance.cancelCalls += 1;
+          },
+          start: () =>
+            new Promise<never>(() => {
+              /* deferred — never resolves */
+            }),
+        };
+        created.push(instance);
+        return instance as unknown as AcpProcess;
+      },
+      start: () => {
+        throw new Error("legacy start() must NOT be used when create() exists");
+      },
+    };
+
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      acp: deferredDeps,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some((m) => isInit(m)));
+
+    // Start a send — ensureAcpSession() runs create() and awaits start().
+    handler({ type: "send", text: "go" });
+    await until(() => created.length > 0);
+    await flush();
+
+    // Stop during the handshake.
+    handler({ type: "stop" });
+    await flush();
+
+    expect(created).toHaveLength(1);
+    expect(created[0]!.cancelCalls).toBe(1);
+    panel.dispose();
+  });
+});
