@@ -206,7 +206,16 @@ export class AcpProcess {
    * Resolves with `{ acp, sessionId, version, dispose, cancel, state }`.
    */
   async start(handlers: AcpStartHandlers = {}): Promise<AcpProcessHandle> {
-    this.onStateChange = handlers.onStateChange ?? null;
+    // R4.5 fix round 2 (critical_block re-review): do NOT clobber an
+    // observer that was pre-bound via `setOnStateChange(...)`. The
+    // production `buildOmpChatEngine` route uses the same instance
+    // across `setOnStateChange` and the lazy `start()`, so when
+    // `handlers.onStateChange` is undefined we MUST keep the prior
+    // binding. When it IS supplied, it replaces the prior binding
+    // (idempotent rebind by design).
+    if (handlers.onStateChange !== undefined) {
+      this.onStateChange = handlers.onStateChange;
+    }
     this.setState("starting");
 
     const ompPath = this.opts.ompPath ?? "omp";

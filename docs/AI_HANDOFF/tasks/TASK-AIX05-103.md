@@ -163,3 +163,22 @@ FINDINGS:
     - none
 NEXT_STATUS_FOR_INDEX: critical_block
 NOTES: Root cause is the restart/fallback owner living in the legacy raw-ACP `ensureAcpSession` path instead of the production `runOmpEngineTurn` route that `commandOpenAiChat` actually constructs. Fix must surface AcpProcess lifecycle to the OMP-engine route and drive the same `handleEngineState` owner, plus call `engine.shutdown()` on teardown/crash.
+
+## R4.5 Fix Round 1
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+RED: not-applicable (production wiring fix, no new §Test Cases surface)
+GREEN: npx vitest run → 2940 passed | 2 skipped (2942) — no regression
+       npx vitest run src/ui/__tests__/aiChatPanelEngine.test.ts → 9 passed (9) (7 prior + 2 new R4.5)
+       npm run typecheck → exit 0
+       npm run compile → esbuild build complete
+STATUS: PASS
+COMMIT: ed90667 handoff: fix 103 R4.5 — production OMP route drives lifecycle (onStateChange wire, fallback-builtin post, shutdown on teardown)
+NOTE: Fix addresses the critical_block finding verbatim — "Fix must surface AcpProcess lifecycle to the OMP-engine route and drive the same `handleEngineState` owner, plus call `engine.shutdown()` on teardown/crash":
+  1. `AcpProcess.setOnStateChange(cb)` — new public method to (re)bind the state observer AFTER construction but BEFORE the lazy `start()`. Idempotent.
+  2. `buildOmpChatEngine` now takes `onEngineState: (state, generation) => void` and calls `acpProcess.setOnStateChange(...)` BEFORE the first `start()`. `commandOpenAiChat` passes `(s, g) => aiChatPanel?.handleEngineState(s, g)` as the closure.
+  3. `runOmpEngineTurn.onError` now posts `engine_state:"fallback-builtin"` (one of the six closed `OmpEngineState` literals) on the same wire as the error bubble + the engine flip — pinning the production route to the same restart/fallback owner the legacy `ensureAcpSession` path already drives.
+  4. `teardown()` now calls `this.options.ompChatEngine?.shutdown()?.catch(noop)` exactly once, so the HostMcp loopback listener, the McpBridge bearer descriptor, and the AcpProcess child no longer leak for the panel lifetime.
+  5. Two new R4.5 regression tests pin these contracts: onError posts `engine_state:"fallback-builtin"`, and panel teardown calls `shutdown()` exactly once.

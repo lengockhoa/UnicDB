@@ -1215,8 +1215,21 @@ async function commandOpenAiChat(
             choice.path ?? "omp",
             (state, generation) => {
               const panel = aiChatPanel;
-              if (panel !== null) panel.handleEngineState(state, generation);
+              if (panel !== null) panel.driveEngineState(state, generation);
             },
+            // R4.5 fix round 2: closures resolve the LIVE panel at call
+            // time (not at commandOpenAiChat time). `installGeneration`
+            // bumps the panel's `engineGeneration` via
+            // `installOmpEngineObserver` so the captured id matches the
+            // LIVE stale-generation guard value. The returned id is
+            // captured by `getGeneration`; every state transition
+            // threads that id into `driveEngineState`.
+            () => {
+              const panel = aiChatPanel;
+              if (panel !== null) return panel.installOmpEngineObserver();
+              return 0;
+            },
+            (id: number) => id,
           )
         : undefined,
     engineVersion: choice.version,
@@ -1252,7 +1265,7 @@ async function commandOpenAiChat(
 async function buildOmpChatEngine(
   adapterFactory: AdapterFactory,
   ompPath: string,
-  // R4.5 fix (critical_block): the panel's `handleEngineState` is the
+  // R4.5 fix (critical_block): the panel's `driveEngineState` is the
   // single restart/fallback owner. AcpProcess's state machine must
   // surface to it; without this wire, the production OMP route never
   // reaches the lifecycle/restart machinery (the six engine_state
@@ -1260,6 +1273,14 @@ async function buildOmpChatEngine(
   // "fallback-builtin", and same-instance handshake cancel would all
   // be dead on the real route).
   onEngineState: (state: OmpEngineState, generation: number) => void,
+  // R4.5 fix round 2: generation installed via panel-owned
+  // `installOmpEngineObserver` (bumps `engineGeneration` and returns
+  // the LIVE id). `getGeneration(id)` captures the id; every state
+  // transition routes that id into `driveEngineState`, where the
+  // stale-generation guard matches it against the live
+  // `engineGeneration`.
+  installGeneration: () => number,
+  getGeneration: (id: number) => number,
 ): Promise<OmpChatEngine> {
   const cwd =
     vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
@@ -1283,31 +1304,27 @@ async function buildOmpChatEngine(
   // Bridge owns the descriptor; thread it verbatim — the engine must not
   // manufacture a headerless fallback for the production route.
   const mcpServers: ReadonlyArray<Record<string, unknown>> = [bridge.descriptor];
-  // R4.5 fix (critical_block): a single generation for this
-  // `commandOpenAiChat` invocation. The panel's restart/fallback owner
-  // gates on this id; stale events from a retired child are no-ops
-  // (case 7). Each `commandOpenAiChat` opens a new panel = a fresh
-  // generation; the previous generation is invalidated by the panel's
-  // teardown bumping `engineGeneration` before this new value is read.
-  const generation = Date.now();
   // create()-captured UNSTARTED process — the pinned cancellable seam. The
   // child spawns LAZILY on the engine's first session/new (the handshake);
   // a same-generation panel Stop before that handshake resolves cancels
   // the captured instance (AcpPanelDeps.create contract).
   const acpProcess = buildAcpDepsCreate(ompPath, cwd, mcpServers);
-  // R4.5 fix (critical_block): wire the state observer BEFORE the lazy
-  // `start()` so every transition (`starting` → `ready` → `crashed` →
-  // `fallback-builtin`, etc.) reaches the panel's handleEngineState
-  // owner. Without this, the six literals + restart policy are dead on
-  // the real route.
-  acpProcess.setOnStateChange((state) => onEngineState(state, generation));
-  let handlePromise: Promise<AcpProcessHandle> | null = null;
+  // R4.5 fix round 2: capture the installed generation ONCE (the
+  // panel's `installOmpEngineObserver` returns the LIVE id that
+  // matches the panel's `engineGeneration`). Captured by the
+  // `setOnStateChange` closure, threaded into every transition.
+  let capturedGeneration = 0;
   const ensureHandle = (): Promise<AcpProcessHandle> => {
     if (handlePromise === null) {
+      capturedGeneration = installGeneration();
+      acpProcess.setOnStateChange((state) =>
+        onEngineState(state, getGeneration(capturedGeneration)),
+      );
       handlePromise = acpProcess.start();
     }
     return handlePromise;
   };
+  let handlePromise: Promise<AcpProcessHandle> | null = null;
   return createOmpChatEngine({
     acp: adaptProcessToSession(acpProcess, ensureHandle),
     hostMcp,

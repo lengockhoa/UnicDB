@@ -114,3 +114,16 @@ FINDINGS:
     - src/ai/omp/acpProcess.ts:201-208 — `spawnErrored` and `lastSpawnError` are dead state: `spawnErrored` is set (line 311) but never read anywhere; `lastSpawnError` is stored on the instance but only consumed by the immediate `reject(...)` at line 313. The field comments claim the outer catch reuses them to surface the original spawn error, but the catch actually reads the thrown `err` (the real mechanism is `Promise.race([acp.request, startError])`). Drop both fields and correct the comments so they describe the path that actually runs.
 NEXT_STATUS_FOR_INDEX: approved_minor
 NOTES: State machine, protocol-version validation (pinned literal + fallback), cancel/dispose bounded-reap semantics, and the single spawn site are all correct and match the pinned contract. The instance `cancel()` seam and cancel-during-starting path are consumed by TASK-AIX05-103's integration (outside the pinned §Test Cases list) rather than unit-tested here.
+
+## R4.5 Fix Round 1
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+RED: not-applicable (dead-field cleanup, no new test surface)
+GREEN: npx vitest run src/ai/omp/__tests__/acpProcess.test.ts → 27 passed (27)
+       npm run typecheck → exit 0
+       npm run compile → esbuild build complete
+STATUS: PASS
+COMMIT: 9581881 handoff: fix 101 R4.5 — drop dead spawnErrored/lastSpawnError fields
+NOTE: Dropped dead `spawnErrored` (line 311 set, never read) and `lastSpawnError` (stored, only consumed by the immediate `reject(...)` at line 313) instance fields. Corrected the `startError` comment so it describes the actual `Promise.race` mechanism: spawn 'error' rejects directly with the original error, and the immediate `reject()` IS the real path — no stored field is involved. All 7 §Test Cases still pass; the 20 pre-existing tests and 158 other module tests stay green.

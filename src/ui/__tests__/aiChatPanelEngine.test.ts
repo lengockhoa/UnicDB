@@ -717,4 +717,50 @@ describe("AiChatPanel — TASK-AIX05-103 R4.5 production OMP lifecycle", () => {
     await until(() => shutdown.mock.calls.length >= 1);
     expect(shutdown).toHaveBeenCalledTimes(1);
   });
+
+  it("installOmpEngineObserver + driveEngineState: a live generation publishes; a stale one is dropped (case 7)", async () => {
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const engine = makeFakeEngine(() => undefined);
+    state.fakeEngine = engine;
+
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+      ompChatEngine: engine,
+    });
+    panel.show();
+    const { panel: p } = panelHarness();
+
+    // R4.5 fix round 2: the production route (`buildOmpChatEngine`)
+    // calls `installOmpEngineObserver` to bump `engineGeneration` and
+    // returns the LIVE id. The first call returns 1 (the panel starts
+    // at 0); a second call returns 2 (the prior generation is now
+    // stale).
+    const liveGen = panel.installOmpEngineObserver();
+    expect(liveGen).toBeGreaterThan(0);
+
+    // A live transition reaches the webview.
+    panel.driveEngineState("ready", liveGen);
+    await until(() =>
+      postedMessages(p).some(
+        (m) =>
+          (m as { type?: string }).type === "engine_state" &&
+          (m as { state?: string }).state === "ready",
+      ),
+    );
+
+    // A stale-generation transition is a no-op (case 7) — must NOT
+    // post a duplicate "ready" or anything else.
+    const beforeStale = postedMessages(p).filter(
+      (m) => (m as { type?: string }).type === "engine_state",
+    ).length;
+    panel.driveEngineState("ready", liveGen - 1);
+    // Give any (incorrect) post a chance to land.
+    await new Promise((r) => setTimeout(r, 10));
+    const afterStale = postedMessages(p).filter(
+      (m) => (m as { type?: string }).type === "engine_state",
+    ).length;
+    expect(afterStale).toBe(beforeStale);
+  });
 });

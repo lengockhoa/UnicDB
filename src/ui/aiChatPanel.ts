@@ -2357,6 +2357,31 @@ export class AiChatPanel {
   }
 
   /**
+   * TASK-AIX05-103 R4.5 fix round 2: PUBLIC seam for the production OMP
+   * engine route (`buildOmpChatEngine` in `extension.ts`) to install
+   * an `OmpEngineState` observer onto the panel's restart/fallback
+   * owner. Bumps `engineGeneration` so any stale observer from a
+   * prior `buildOmpChatEngine` invocation is dropped by the
+   * stale-generation guard in `handleEngineState`. Returns the
+   * generation id; the caller MUST thread that SAME id into every
+   * transition it routes to `driveEngineState`.
+   */
+  installOmpEngineObserver(): number {
+    return ++this.engineGeneration;
+  }
+
+  /**
+   * TASK-AIX05-103 R4.5 fix round 2: external entry point to the
+   * engine-state owner. Production OMP route forwards every
+   * `acpProcess` state transition here. The `generation` must equal
+   * the value returned by `installOmpEngineObserver` (the LIVE one)
+   * — a mismatch is a stale-generation no-op (case 7).
+   */
+  driveEngineState(state: OmpEngineState, generation: number): void {
+    this.handleEngineState(state, generation);
+  }
+
+  /**
    * Cycle AE TASK-003 §5 — flip the user's `vsdb.ai.engine` setting back
    * to "builtin" so the next handleSend reads the flipped value and routes
    * to the builtin engine. Best-effort: silently swallows any config-store
