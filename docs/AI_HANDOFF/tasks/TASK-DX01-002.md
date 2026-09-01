@@ -60,6 +60,7 @@ npx vitest run src/__tests__/releaseVerify.test.ts
 ## Dependencies
 
 - TASK-DX01-001 (the script entries the runner calls by name)
+- TASK-DX01-003 (the contract test for the runner — TDD-RED-first: 003 writes the test, expects RED on cases 1–3/4, then this task's `scripts/verify-release.sh` write flips it GREEN)
 
 ## Interfaces
 

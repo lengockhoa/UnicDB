@@ -46,14 +46,14 @@ npm run compile
 - [ ] Neither string contains a backtick, `$(`, `;`, `|`, `>`, or `<` (case 3).
 - [ ] Each new script value references only the existing script keys `test`, `typecheck`, `compile` — never a fabricated name (case 4).
 - [ ] `test`, `typecheck`, `compile`, `test:integration` keys remain byte-identical to v1.35.0 (case 5 regression).
-- [ ] `npx vitest run src/__tests__/releaseVerify.test.ts` is green (5 cases pass).
+- [ ] `npx vitest run src/__tests__/releaseVerify.test.ts` is green (9 cases pass — TASK-003 ships all nine contract cases including the mirrored case 4 / 9 fabricated-name edge from this task).
 - [ ] `npm run typecheck` and `npm run compile` exit 0.
 - [ ] `npx vitest run` shows no regression vs. the v1.35.0 baseline.
 - [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
 
 ## Dependencies
 
-- TASK-DX01-003 (the test file that asserts the contract)
+- TASK-DX01-003 (the test file that asserts the contract — TDD-RED-first: 003 writes the test, expects RED, then this task's `package.json` write flips it GREEN)
 
 ## Interfaces
 

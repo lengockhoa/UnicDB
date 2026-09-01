@@ -11,7 +11,7 @@ Add `src/__tests__/releaseVerify.test.ts` — a pure contract test that pins the
 
 ## Target Files
 
-- `src/__tests__/releaseVerify.test.ts` (new) — describe block name `describe("verify-release.sh", ...)` with the eight cases below. Cases 1–3 use `node:child_process.spawnSync` to invoke the script with a temp-dir `bin` of stub executables prepended to `PATH`; cases 4–8 read `package.json` and the runner file via `node:fs`. This file is intentionally separate from the pre-existing `src/__tests__/releaseHygiene.test.ts` (TASK-703, 3 guards: version-lock, README vsix pattern, semver) — that file is NOT touched by this cycle.
+- `src/__tests__/releaseVerify.test.ts` (new) — describe block name `describe("verify-release.sh", ...)` with the nine cases below. Cases 1–3 use `node:child_process.spawnSync` to invoke the script with a temp-dir `bin` of stub executables prepended to `PATH`; cases 4–9 read `package.json` and the runner file via `node:fs`. This file is intentionally separate from the pre-existing `src/__tests__/releaseHygiene.test.ts` (TASK-703, 3 guards: version-lock, README vsix pattern, semver) — that file is NOT touched by this cycle.
 
 ## Test Cases (REQUIRED — TDD)
 
@@ -27,10 +27,11 @@ These cases are written FIRST (RED), then made GREEN by the executor after TASK-
 | 6 | edge | script strings have no shell-injection surface | Neither string contains `` ` ``, `$(`, `;`, `|`, `>`, or `<`; each matches `^npm[^`]*$` | Same |
 | 7 | unit | runner script exists, is executable, has a POSIX shebang | `fs.existsSync("scripts/verify-release.sh") === true`; `stat.mode & 0o111 !== 0`; first line is exactly one of `"#!/bin/sh"`, `"#!/usr/bin/env sh"`, `"#!/usr/bin/env bash"` (set-membership, not regex) | Direct read of the file in the test, no exec |
 | 8 | regression | existing four scripts preserved | `test`, `typecheck`, `compile`, `test:integration` byte-identical to the v1.35.0 fixture (`"vitest run"`, `"vitest run -c vitest.integration.config.ts"`, `"tsc --noEmit"`, `"node esbuild.js"`) | Hard-coded fixture in the test (acceptable for this scope) |
+| 9 | edge | `verify:*` values reference ONLY pre-existing script keys | For each `verify:*` value, split on `&&` → every fragment is exactly `"npm run typecheck"`, `"npm run compile"`, or `"npm test"`; reject any value that contains a substring like `npm run lint` not present as a key in `scripts` | Same |
 
 ## Test Files
 
-- `src/__tests__/releaseVerify.test.ts` (new) — contains the eight cases above. Pure read+exec; no mocked imports, no `vi.mock` of `node:fs`/`node:child_process`. The describe block is named `"verify-release.sh"` so focused `-t` runs from PLAN_DX01 §5 and TASK-002 §Verification Commands actually select cases 1–4 (no 0-test false green).
+- `src/__tests__/releaseVerify.test.ts` (new) — contains the nine cases above. Pure read+exec; no mocked imports, no `vi.mock` of `node:fs`/`node:child_process`. The describe block is named `"verify-release.sh"` so focused `-t` runs from PLAN_DX01 §5 and TASK-002 §Verification Commands actually select cases 1–4 (no 0-test false green).
 
 ## Verification Commands
 
@@ -47,7 +48,7 @@ npx vitest run   # full suite must stay green
 
 ## Acceptance Criteria
 
-- [ ] All eight cases pass on a clean checkout.
+- [ ] All nine cases pass on a clean checkout.
 - [ ] Cases 1–3 use only `node:fs`/`node:child_process`/`node:os`/`node:path` (no real `npm`/`tsc`/`node`/`esbuild` execution, no network, no host-filesystem side effects beyond `os.tmpdir()` cleanup).
 - [ ] Cases 4–8 read `package.json` and `scripts/verify-release.sh` only via `node:fs`; no `import` of any project module (the test is intentionally framework-light).
 - [ ] No file outside the cycle's owned target set (`src/__tests__/releaseVerify.test.ts`) is modified by this task.
