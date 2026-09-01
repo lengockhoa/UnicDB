@@ -63,7 +63,7 @@ Content checklist — the ADR MUST document each of these (check off in the Exec
 
 ## Discussion
 
-(no comments yet)
+- (executor, 2026-09-02) Filename conflict resolved in favor of the task file: Target Files / Verification Commands name `0001-ssh-host-key-identity-policy.md`, but the orchestrator prompt said `0001-tunnel-host-key-policy.md`. Per RULES the task file is authoritative — used `0001-ssh-host-key-identity-policy.md` (the orchestrator's `git status docs/decisions/` evidence requirement still holds: the untracked dir shows both created files).
 
 ---
 
@@ -71,3 +71,38 @@ Content checklist — the ADR MUST document each of these (check off in the Exec
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: N/A — docs task (Test Plan row 1 is N/A per RULES: zero testable behavior; there is no executable test for documentation, so no RED phase applies)
+
+Content checklist (all verified by grep in-turn):
+
+- [x] 1. Supported platforms — §2: darwin/freebsd/openbsd → `lsof`, win32 → `netstat -ano -p tcp`, linux → `ss -ltnp`; OpenSSH-version caveat recorded (Windows bundled `System32\OpenSSH`, distro-patched defaults, user `~/.ssh/config`).
+- [x] 2. Current trust behavior — §3: `buildTunnelArgs` emits no host-key options (cited `src/core/sshTunnel.ts:116-132`); `BatchMode=yes` fails unknown/changed keys at connect (no interactive TOFU); implicit `~/.ssh/known_hosts` + compiled-in default policy; readiness proof = listener line + `listeningPids` PID identity (fail-closed) — labeled **local provenance only, NOT remote-identity proof** (§1).
+- [x] 3. Chosen policy — §4: pin `-o StrictHostKeyChecking=yes` in `buildTunnelArgs`; `-o` overrides `~/.ssh/config` (users who deliberately relaxed to `no`/`ask` now fail — intended fail-closed change, documented precisely incl. the "not stricter for the common case" nuance); NO `UserKnownHostsFile` (users keep their trust store); §8 requires release-notes mention.
+- [x] 4. Rejected alternatives — §5: (a) `accept-new` + VSDB-managed TOFU store (cross-user migration surprise + form/persistence wiring out of charter); (b) per-connection fingerprint pinning (documented upgrade path); (c) any `accept`/`none` relaxation (prohibited by charter).
+- [x] 5. Downgrade/no-go criteria — §6: fires ONLY from manual OpenSSH validation on macOS/Linux/Windows, never from automated pure-argv (001) / fake-ssh-shim (002) tests; break ⇒ revert to implicit-behavior documentation with no new flags; ARP-04.1 shrinks to validation-only hardening and the argv-never-relaxes guarantee still ships.
+- [x] 6. TLS scope note — §7: no remote-DB TLS identity claims without source evidence; charter out-of-scope for ARP-04.
+
+Verification Output:
+
+```
+$ test -f docs/decisions/0001-ssh-host-key-identity-policy.md        → exit 0
+$ grep -qi "StrictHostKeyChecking" docs/decisions/0001-ssh-host-key-identity-policy.md → exit 0
+$ grep -qi "known_hosts" docs/decisions/0001-ssh-host-key-identity-policy.md          → exit 0
+$ grep -qi "downgrade" docs/decisions/0001-ssh-host-key-identity-policy.md            → exit 0
+
+$ git status --short docs/decisions/
+?? docs/decisions/
+$ git status --short src/ | wc -l
+0
+```
+
+Also created: `docs/decisions/README.md` (ADR index: 0001 — SSH host-key identity policy — Accepted, gating ARP-04). No `src/` file created or modified; nothing staged/committed.
+
+Status: PASS
+Note: filename conflict (task file vs orchestrator prompt) resolved per task file — see Discussion.
