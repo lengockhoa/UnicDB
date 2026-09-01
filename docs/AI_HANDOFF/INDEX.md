@@ -13,7 +13,7 @@ Cycle AIX-07 — **Trust, Privacy & Governance**. Active, executable scope cover
 | TASK-DBX07-001 | AIX-06 Trace r3 review fixes | done | none | unic-smart |
 | PORT-RLX-02 | Cross-dialect query lifecycle completion | active — planned in Cycle RLX-02 | RLX-01 | unic-smart |
 | PORT-RLX-03 | Connection, tunnel, and schema-refresh recovery | active — planned in Cycle RLX-03 | RLX-01, PORT-RLX-02 | unic-smart |
-| PORT-DBX-06 | Reviewed PostgreSQL rename workflow | queued — NOT READY | PORT-RLX-03 | - |
+| PORT-DBX-06 | Reviewed PostgreSQL rename workflow | active — expanded plan ready | PORT-RLX-03 | unic-smart |
 | PORT-DBX-08 | Explicit adapter capability parity | superseded (shipped in v1.29.0) | - | unic-smart |
 | PORT-AIX-03 | Read-only database analysis copilot hardening | queued — NOT READY | PORT-RLX-03 | - |
 | PORT-AIX-05 | Optional OMP engine resilience | queued — NOT READY | PORT-AIX-03 | - |
@@ -26,6 +26,21 @@ Graph: TASK-AIX07-001 independent; TASK-AIX07-002 independent; TASK-AIX07-003 in
 - Wave 2 (1): TASK-AIX07-003
 
 No same-wave target-file overlap. Portfolio rows require a new source-grounded plan and task batch before becoming active.
+
+## Cycle DBX-06 — Reviewed PostgreSQL Rename Workflow Expansion
+
+| Task / Portfolio | Title | Status | Dependencies | Reviewer |
+|---|---|---|---|---|
+| TASK-DBX06-005 | Expanded PostgreSQL rename catalog and typed plan | ready | none | - |
+| TASK-DBX06-006 | Expanded rename preview and confirmed execution | ready | TASK-DBX06-005 | - |
+| PORT-DBX-06 | Reviewed PostgreSQL rename workflow | active — expanded plan ready | PORT-RLX-03 | unic-smart |
+
+Graph: TASK-DBX06-005 → TASK-DBX06-006. Historical `TASK-DBX06-001 → TASK-DBX06-002 → TASK-DBX06-003 → TASK-DBX06-004` was approved and released as v1.23.0; its task files remain immutable handoff evidence.
+
+- Wave 1 (1): TASK-DBX06-005
+- Wave 2 (1): TASK-DBX06-006
+
+No same-wave target-file overlap. Current source confirms `registerTableCommands` is imported and activated by `src/extension.ts:34,218`; rename command handlers live in `src/ui/tableCommands.ts:469-534`, not the stale portfolio anchor `src/extension.ts:1231-1368`.
 
 ## Cycle AIX-08 — Extensible MCP Tool Contracts
 
