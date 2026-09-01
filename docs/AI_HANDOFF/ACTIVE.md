@@ -1,6 +1,4 @@
-Cycle: (none — idle)
-Date: 2026-09-02
-Base: main @ 0087d35 (v1.41.0)
-Goal: (awaiting next cycle)
-Tasks: 0 total
-Status: idle — ARP-05 shipped as v1.41.0 (5/5 approved; 001 approved_minor after fix round 1)
+Cycle: ARP-06   Date: 2026-09-02   Base: main @ 6ee4c51 (v1.41.0)
+Goal: AI SQL policy unification + privacy-safe usage visibility
+Tasks: 5 total
+Status: planning_done — ready for executor

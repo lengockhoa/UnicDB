@@ -1,403 +1,390 @@
-# PLAN — ARP-05: Cross-driver timeout, pool, and resilience contract
+# PLAN — ARP-06: AI SQL policy unification and usage visibility
 
-Source: `docs/plans/2026-09-01-vsdb-additive-roadmap.md` §ARP-05 (P1; deps ARP-02 v1.38.0 + ARP-03 v1.39.0 both released; ARP-04 v1.40.0 shipped).
-Base: `main @ 65b9c4f` (v1.40.0). Executor: `unic-code`. Reviewer: `unic-smart`.
-Full-suite baseline: **3025 passed | 2 skipped** (measured fresh on 65b9c4f, `npm test`).
+Source: `docs/plans/2026-09-01-vsdb-additive-roadmap.md` §ARP-06 (lines 277-320; P1; dep ARP-01 read-only enforcement — shipped v1.37.0; must preserve AIX-07/AIX-08 unchanged).
+Base: `main @ 6ee4c51` (v1.41.0). Executor: `unic-code`. Reviewer: `unic-smart`.
+Full-suite baseline: **3025 passed | 2 skipped** measured fresh at `main @ 65b9c4f` (v1.40.0, prior cycle). The executor records the fresh v1.41.0 baseline at commissioning (`npm test`).
 
 ## §1 Intent
 
-**Problem.** The three adapters each pick a bespoke resilience posture with no shared, documented support
-contract:
+**Problem.** Two SQL read-only guards exist side by side with different vocabularies and no
+documented relationship: `parseReadonly` accepts only SELECT/WITH and deliberately over-rejects
+(`src/ai/tools/readonlySqlParser.ts:1-11,197-236`); `isReadOnlySql`/`run_sql` accepts
+SELECT/SHOW/EXPLAIN/WITH with bespoke checks (`src/ai/tools/sqlTool.ts:109-163,226-288`). Provider
+replies already normalize token usage (`src/ai/provider.ts:49-54,209-214,321-325`) and the agent has a
+max-step budget (`src/ai/agent.ts:264-266`), but there is **no documented fail-closed policy decision**
+shared by every AI SQL route, and **no per-turn/bounded-session usage view** for the user.
 
-- PostgreSQL — `PG_POOL_MAX = 4` to isolate metadata from pinned cursor/transaction work (`src/adapters/postgres.ts:107,305-314`); pool `connectionTimeoutMillis: 10_000`; `close()` races cursor ROLLBACK + `pool.end()` against 2s/3s guards (`postgres.ts:323-369`); `cancelActiveQuery` via a **dedicated** one-off `Client` with 5s `connectionTimeoutMillis` so it never queues behind a held pool slot (`postgres.ts:513-546`).
-- MySQL — `connectionLimit: 1`, `waitForConnections: true`, **`queueLimit: 0` (infinite queue)**, `connectTimeout: 10_000` (`mysql.ts:149-158`). A slow/hung checkout can enqueue every later request forever.
-- MSSQL — `connectTimeout: 10_000`, `requestTimeout: 0` (unlimited request time for streaming — deliberate, so paused streams survive load-more), `cancelTimeout: 5_000` (`mssql.ts:547-555`); single in-flight request enforced by an `enqueue` chain (`mssql.ts:574-587`).
+**Success.** (1) ONE documented fail-closed policy decision (ADR `0003-ai-sql-policy.md`) under which
+both guards are named profiles — `parseReadonly` is the strict core profile; `isReadOnlySql` is the
+`run_sql` profile that additionally admits SHOW/EXPLAIN by reducing EXPLAIN to its inner statement and
+re-checking it. Parser uncertainty never admits mutation-capable SQL. (2) A mandatory security parser
+corpus (side-effect tests) proving every mutation-capable construct is denied before any adapter call.
+(3) Usage is reported/unknown, never invented: the provider transport is pinned safe under
+missing/malformed data and streams final usage once; the agent reports exact per-turn accounting and
+keeps `maxSteps` as the ONLY hard stop; the chat panel surfaces policy + usage with no prompt, SQL,
+secret, trace, or tool arguments on the wire.
 
-These may each be correct, but they are **not a common support contract**: no per-driver matrix explains the
-deliberate differences, no measurement proves the failure behavior is finite, and there is no recorded
-decision about mutation/transaction/cursor replay.
-
-**Success.** (1) A decision record (`docs/decisions/`) with a measured per-driver matrix for
-connect/query/stream/cancel/pool/broken-socket and an explicit SLO + no-automatic-replay decision; (2)
-measured finite failure behavior — every path the matrix lists terminates, no unbounded queue can wedge
-forever, cancellation is best-effort and never replayed; (3) host message normalized only where the
-measurement proves a gap; (4) a regression net pinning today's already-correct behaviors so the contract
-stays true.
-
-**Method.** Documentation + test-heavy cycle. Existing behaviors are presumed correct; production changes
-land **only where a measurement proves a gap** (e.g. an unbounded queue wedging, a missing cancel timeout).
-Default output is tests that pin behavior + an ADR that records it. **ARP-05 composes with ARP-02/ARP-03/ARP-04 — it must not weaken their guarantees** (cancel-ownership seam discipline, retained-row budget,
-strict host-key pin).
+**Method.** Documentation + test-heavy cycle. Existing behavior is presumed correct; production code
+changes land **only where a pinned security/privacy corpus test proves a gap** (RED first). The two
+guards are NOT merged — they are two documented profiles of one policy, so ARP-01's
+dialect-aware classifier and guardAdapter coverage are untouched.
 
 ## §2 Scope
 
 **In**
-- ARP-05.0 — measured contract ADR (wave 0, mandatory gate): a decision record in `docs/decisions/` that
-  documents the per-driver connect/query/stream/cancel/pool/broken-socket matrix, cites each config line,
-  records the measured finite-failure behavior (including the infinite `queueLimit: 0` gap), and records
-  the SLO/no-mutation-retry/no-transaction-replay/no-cursor-replay decision.
-- ARP-05.1 — PostgreSQL (wave 1): pin PG pool isolation, failed-connect/close release, cancel recovery with
-  the dedicated-client seam; change production code only where measurement proves a gap.
-- ARP-05.2 — MySQL (wave 1): pin streaming/cancel with a held `connectionLimit: 1` pool; **bound the
-  source-proven wait gap** — `queueLimit: 0` (infinite wait-for-connection queue) is the one production
-  change this cycle is expected to need; keep cancellation terminal (no replay).
-- ARP-05.3 — MSSQL (wave 1): pin paused-stream-not-timed-out and cancellation/late-request-does-not-wedge
-  (single in-flight `enqueue` + 5s cancel timeout); change production code only where measurement proves a gap.
-- ARP-05.4 — host message (wave 2, **conditional**): normalize the connect-failure host message
-  (actionable, non-secret) in `src/core/connectionManager.ts` ONLY if the wave-1 ADR measurement shows the
-  current error UX is the gap (e.g. raw `queueLimit` wait surfaces as a generic pool timeout with no
-  "connection in use" hint). Otherwise closes **not-needed** with evidence (mirrors TASK-ARP04-004).
+- ARP-06.1 (wave 1) — fail-closed policy decision API: ADR `0003-ai-sql-policy.md` (new) documenting
+  the one decision + the allowed/denied construct matrix + the two tool profiles + the
+  over-rejection/EXPLAIN-reduction rules; security parser corpus in `readonlySqlParser.test.ts` pinning
+  SELECT happy / writable CTE / EXPLAIN ANALYZE mutation / SELECT INTO / multi-statement / malformed
+  parens / comment-literal policy; production change in `readonlySqlParser.ts` only if the corpus
+  proves a gap.
+- ARP-06.2 (wave 1) — tool adoption: `sqlTool.ts` executes only what the approved policy admits; denial
+  is stable and non-secret; cursor closes on success AND error; row cap retained. Module header names
+  the `run_sql` profile.
+- ARP-06.3 (wave 1) — usage transport: `provider.ts` missing/malformed usage safe, streaming final
+  usage emitted once, no response body retained for accounting.
+- ARP-06.4 (wave 2) — accounting: `agent.ts` reports exact per-turn usage (sum over steps, unknown when
+  nothing reported, aborted turn never invents), hard stop remains ONLY the approved `maxSteps` budget.
+- ARP-06.5 (wave 3) — panel: `aiChatPanel.ts` + `aiChatPanelMessages.ts` + `webview/aiChatPanelMain.ts`
+  display policy + usage with no prompt, SQL, secret, trace, or tool arguments.
 
-**Out** (explicit, from roadmap + ARP-05 compose rules)
-- Automatic mutation retry, reconnect during transaction/cursor, blanket pool resizing, dependency-heavy
-  circuit breakers.
-- Changing `connectionLimit`, `PG_POOL_MAX`, `requestTimeout`/`connectTimeout`/`cancelTimeout` values,
-  or the cursor-routing predicates, without a measurement proving a gap. Today's deliberate values are
-  pinned by tests, not changed.
-- Weakening ARP-02 cancel-ownership / ARP-03 retained-row cap / ARP-04 host-key pin. All cancel paths stay
-  best-effort, never replayed, never pool/adapter-close-as-cancel.
+**Out** (explicit, from roadmap)
+- AI DML/DDL support; raw prompt/SQL display anywhere in the new UI; cost estimates without pricing;
+  weakening the ARP-01 read-only classifier / AIX-07 policy / AIX-08 MCP / redaction contracts.
+- Merging the two guards into one function (they stay two documented profiles of one decision).
+- Any NEW hard stop beyond the approved `maxSteps` budget (e.g. a token-based kill) — rejected in §3.
 
 **Same-wave file disjointness (absolute)**
-- Wave 0: ARP-05.0 owns `docs/decisions/` only.
-- Wave 1: ARP-05.1 owns `src/adapters/postgres.ts`; ARP-05.2 owns `src/adapters/mysql.ts`; ARP-05.3 owns
-  `src/adapters/mssql.ts`. Disjoint. Each task owns its own pinned test file (see §7). The integration
-  suites are DB-gated and excluded from focused runs — they are exercised by the cycle `npm run test:integration` net.
-- Wave 2: ARP-05.4 owns `src/core/connectionManager.ts` (+ `connectionManager.test.ts`) **only if a host-message gap is found**; otherwise closes as not-needed.
+- Wave 1: ARP-06.1 owns `readonlySqlParser.ts` + `readonlySqlParser.test.ts` + `docs/decisions/0003-ai-sql-policy.md`; ARP-06.2 owns `sqlTool.ts` + `sqlTool.test.ts`; ARP-06.3 owns `provider.ts` + `provider.test.ts`. Disjoint. **No task shares a `src/` file within wave 1.**
+- Wave 2: ARP-06.4 owns `agent.ts` + `agent.test.ts` only.
+- Wave 3: ARP-06.5 owns `aiChatPanelMessages.ts` + `aiChatPanel.ts` + `webview/aiChatPanelMain.ts` + the three named panel test files.
+- `docs/decisions/0003-ai-sql-policy.md` is written by ARP-06.1 ONLY **in wave 1** (no other task appends in
+  the same wave — unlike ARP-05's wave-1 ADR append protocol). The ADR cites `sqlTool.ts`'s **existing
+  run_sql behavior as the source of truth at write time**: it records the decision + principle + the
+  allowed/denied matrix, not guard internals that only ARP-06.2 can verify in the same parallel wave.
+  **Ownership rule:** ARP-06.2 MAY append ADR corrections in wave 2 (or via its own review round) if its
+  pins expose drift between the ADR's documented matrix and the guard's actual behavior — the ADR is
+  authoritative for the decision, the guard is authoritative for behavior, and drift is reconciled through
+  that append, never left as a silent divergence.
 
 ## §3 Approach
 
-Each driver task starts with a **measurement RED probe** (a vitest suite that asserts the finite-failure
-contract on a fake/mocked driver surface), runs it against today's code to record whether it passes, and
-then ships the test as a pin — plus a production change only if the probe proves a gap.
+**The one fail-closed policy decision (ADR 0003).** The decision: *a statement executes only if a
+profile admits it; any uncertainty rejects.* Two documented profiles:
+- **Core profile** (`parseReadonly`, consumed by `dbAwareTools`): admits first-keyword SELECT and WITH
+  only; deliberately over-rejects SHOW, EXPLAIN, forbidden keywords inside string literals / dollar
+  quotes / identifiers (`created_at` contains `create`), INTO, row locks, and any `;` with trailing
+  content. This is the STRICTEST guard; it is fail-closed by construction (over-rejection direction).
+- **run_sql profile** (`isReadOnlySql`, consumed by `createSqlTool`): admits SELECT/SHOW/EXPLAIN/WITH,
+  strips leading comments, reduces `EXPLAIN [ANALYZE|ANALYSE|VERBOSE|(options)]` to its inner statement
+  and re-runs the same guards on it (so `EXPLAIN ANALYZE DELETE` and `EXPLAIN (ANALYZE) DELETE` are
+  rejected — PostgreSQL actually executes the wrapped statement), rejects writable CTE, INTO,
+  row-lock clauses, and multi-statement.
 
-**ARP-05.0 — ADR (`docs/decisions/0002-cross-driver-resilience-contract.md`, new).** Record:
-- Per-driver matrix, each cell citing the exact config line + current value:
-  - **Connect**: PG `connectionTimeoutMillis: 10_000` (`postgres.ts:313`); MySQL `connectTimeout: 10_000`
-    (`mysql.ts:158`); MSSQL `connectTimeout: 10_000` + LoggedIn poll deadline 10s (`mssql.ts:547,152`).
-  - **Query**: PG `max: PG_POOL_MAX = 4` (`postgres.ts:311`); MySQL `connectionLimit: 1` + atomic
-    multi-statement batch on one held connection (`mysql.ts:155,242-304`); MSSQL `requestTimeout: 0` +
-    one-request `enqueue` chain (`mssql.ts:554,574-587`).
-  - **Stream**: PG cursor `BEGIN`/`DECLARE`/`FETCH`/`CLOSE`, pool slot held (`postgres.ts:1086-1180`);
-    MySQL `connectionLimit: 1` held + `timeout: 0` stream (`mysql.ts:653-675`); MSSQL `requestTimeout: 0`
-    so a paused stream survives load-more (`mssql.ts:548-554`).
-  - **Cancel**: PG dedicated one-off `Client` + `pg_cancel_backend`, never through the pool
-    (`postgres.ts:513-546`); MySQL `stream.destroy()`/`connection.destroy()` best-effort
-    (`mysql.ts:343-368`); MSSQL `request.cancel()` best-effort + `cancelTimeout: 5_000` (`mssql.ts:205-211,555`).
-  - **Pool**: PG 4 slots on demand (`postgres.ts:305-314`); MySQL 1 slot + `waitForConnections: true` +
-    **`queueLimit: 0` infinite queue** (`mysql.ts:156-157`); MSSQL no pool — one tedious `Connection`
-    serialized by `enqueue` (`mssql.ts:514-559`).
-  - **Broken socket**: PG `close()` races cursor ROLLBACK/release(true) + `pool.end()` vs 2s/3s guards
-    (`postgres.ts:323-369`); MySQL `close()` = `pool.end()` (`mysql.ts:198-204`); MSSQL `close()` cancels
-    active requests then `connection.close()` (`mssql.ts:198-223`).
-- Measured finite-failure behavior per driver (probe evidence recorded in the ADR) — the matrix must state
-  that every listed path terminates. **The one known gap to probe and record: MySQL `queueLimit: 0` with a
-  held connection is an unbounded wait** — a slow statement pins the single slot and every later
-  connect/query enqueues with no upper bound (the wait is bounded only when the pool acquires/releases).
-- The SLO/no-replay decision: e.g. connect/query failure ≤ 10s surface, cancel ≤ 5s best-effort,
-  **no automatic replay of mutations, transactions, or cursors** — a retry contract belongs to the caller
-  (read-only re-issue is allowed; mutation replay is not).
-- Recorded probes (each RED/GREEN line pasted): slow connect, occupied pool, cancelled stream, broken
-  socket, per driver, matching the roadmap's "Reproduce slow connect, occupied pool, cancelled stream,
-  broken socket per driver" wave-0 acceptance.
+The ADR records the matrix (each construct → admit/deny per profile + the exact guard line that enforces
+it), the "uncertain → reject" principle, and the reject alternative (a full tokenizer: YAGNI — the
+deliberate over-rejection already makes parser-bypass impossible, and relaxing it is explicitly Out).
 
-**ARP-05.1 — PostgreSQL (`postgres.ts`).** Mock the `pg` `Pool`/`Client` (existing pattern in
-`postgres.test.ts`, `adapterQueryShape.test.ts`). RED-probe then pin: metadata work does not queue behind a
-pinned cursor/transaction slot; failed `connect()` releases cleanly; `close()` with open cursors resolves
-< 5s and does not hang `pool.end()`; `cancelActiveQuery` uses a dedicated client even when all pool slots
-are held; a post-cancel/no-op cancel is idempotent. Production change only if a probe proves a gap (e.g. a
-queue that wedges beyond the documented 10s).
+**ARP-06.1 — ADR + security corpus.** Write ADR 0003 (new file, no `src/` change in the ADR write).
+Extend `readonlySqlParser.test.ts` with the mandatory security corpus: parametrized sweep over the
+mutation-capable constructs (DML/DDL keywords, INTO, writable CTE, EXPLAIN-wrapped writes, row locks,
+forbidden-in-literal, forbidden-in-identifier, multi-statement, malformed parens) asserting `parseReadonly`
+returns `{ok:false}` for every one. Production change in `readonlySqlParser.ts` only if a corpus case
+fails (RED). The module header gains a one-line naming: this is the **core profile** of the ARP-06 policy
+decision (ADR 0003). The ADR cites `sqlTool.ts`'s existing run_sql behavior as the source of truth at
+write time — it records the decision + principle + matrix, not guard lines only ARP-06.2 can verify in
+the same parallel wave. Per the §2 ownership rule, ARP-06.2 may append ADR corrections in wave 2 (or via
+its own review round) if its pins expose drift.
 
-**ARP-05.2 — MySQL (`mysql.ts`).** Mock `mysql2/promise` (`createPool`, `PoolConnection`, stream).
-RED-probe then pin: held streaming/batch connection with `connectionLimit: 1` preserves streaming and the
-terminal error path; cancel is terminal (destroy never replays a mutation/cursor); the connect-failure path
-closes the pool and nulls it (`mysql.ts:184-196`). **Expected production change:** bound the unbounded
-wait — add an `acquireTimeout` so a held single connection cannot wedge later requests forever; keep
-`waitForConnections: true`. **The bound must be injectable for the DB-free suite:** the pool factory reads
-it from a module-scoped constant (e.g. `POOL_ACQUIRE_TIMEOUT_MS`, default `10_000` aligning with
-`connectTimeout`) that the test overrides (e.g. to 50ms), so the pinned test asserts termination within the
-injected bound deterministically — never a real 10s wait. The test may combine the injected bound with
-`vi.useFakeTimers`/`vi.advanceTimersByTime` to drive the mocked pool's held second `getConnection()` to
-reject within the bound; the real `10_000` value stays the production default and is recorded in the ADR.
-If the probe shows the current behavior already finite (it is not), no change.
+**ARP-06.2 — tool adoption.** The guard already rejects everything the matrix denies and the tool already
+closes the cursor in `finally`, returns the fixed `ROW_LIMIT = 50` cap, and returns stable non-secret
+reason strings (`READ_ONLY_REASON`, `INTO_REASON`, `WCTE_REASON`, `ROW_LOCK_REASON`,
+`MULTI_STMT_REASON`). This task PINS those behaviors as regression + adds the new "only approved SQL
+executes" side-effect assertion (adapter.runQuery is never called on any denial) + a stable-non-secret
+denial check (the returned string contains no SQL text, no args, no DSN). Module header names the
+**run_sql profile**. Production change only if a pin proves a gap.
 
-**ARP-05.3 — MSSQL (`mssql.ts`).** Fake tedious `Connection`/`Request` (existing pattern in
-`mssql.parameterized.test.ts`). RED-probe then pin: a paused stream is not killed by `requestTimeout: 0`
-(nothing arms a timer); `request.cancel()` on a live request settles within `cancelTimeout: 5_000`;
-a late completion/cancel cannot wedge the `enqueue` chain (a settled request releases the next queued
-operation). Production change only if a probe proves a gap.
+**EXPLAIN reduction — already implemented, the plan only pins it.** The EXPLAIN→inner-statement reduction
+is present in `sqlTool.ts` TODAY: `isReadOnlySql` strips a leading `EXPLAIN` plus optional
+`ANALYZE|ANALYSE|VERBOSE` tokens and an optional parenthesized options list via `stripExplainPrefix`
+(`sqlTool.ts:118-142,172-217`) and re-runs the same guards on the inner statement, so
+`EXPLAIN ANALYZE DELETE` and `EXPLAIN (ANALYZE) DELETE` are already rejected. It is NOT in
+`readonlySqlParser.ts` — `parseReadonly` never admits EXPLAIN at all (over-rejection, core profile).
+This task PINS that behavior as regression; the executor implements a missing piece TDD-first only if a
+pin turns RED.
 
-**ARP-05.4 — host message (`connectionManager.ts`, conditional).** Gate mirrors TASK-ARP04-004: if the
-wave-1 ADR measurement shows the connect-failure UX is already actionable (e.g. `testConnection` at
-`connectionManager.ts:395-402` already rethrows a driver message with a host/port), close as **not-needed**
-with `git diff 65b9c4f -- src/core/connectionManager.ts` evidence. Only if the measurement shows a gap
-(e.g. MySQL's infinite-queue wait surfaces as a bare generic timeout with no actionable hint) does this
-task add a normalization that strips secrets but keeps the actionable diagnostic detail.
+**ARP-06.3 — usage transport.** `parseChatCompletionsResponse`/`parseResponsesResponse` already map
+missing/non-numeric usage to `0`; `streamComplete` already takes usage from stream `usage` events (last
+one wins, never summed). This task pins: missing usage → `{0,0}` (transport-normalized; the semantic
+"unknown" is applied by the accounting layer, ARP-06.4); malformed usage (string/null/negative) → `0`,
+never a throw, never NaN; streaming final usage once (multiple `usage` chunks → last chunk, not the sum);
+streaming abort/error → `{0,0}`, no invented usage; response body never retained for accounting (full
+`raw` string is discarded after parse; `ProviderError` keeps only the scrubbed ≤300-char snippet via
+`scrubApiKey`). Production change only if a pin proves a gap.
 
-**Wave-1 ADR-update protocol (explicit, cross-task).** The ADR
-(`docs/decisions/0002-cross-driver-resilience-contract.md`) is a **docs file, not a code file**. ARP-05.0
-(wave 0) writes the matrix, the known gaps, the SLO/no-replay decision, and the rejected alternatives.
-During wave 1, each driver task appends its measured RED/GREEN probe results to the SAME ADR as a disjoint,
-named section: TASK-ARP05-001 appends `## Probe: PostgreSQL`, TASK-ARP05-002 appends `## Probe: MySQL`,
-TASK-ARP05-003 appends `## Probe: MSSQL`. Because the three wave-1 executors run in parallel and each
-appends only its own section, the sections are disjoint by construction and copy-back merge is trivial
-(append-only, no interleaving with wave-0 content). This does NOT violate the §7 same-wave file-disjointness
-rule, which governs `src/` code files and exists to prevent code merge conflicts — a docs append of disjoint
-sections cannot conflict. The completed ADR measurement (matrix at wave 0 + probe evidence appended in
-wave 1) is what ARP-05.4's gate reads before deciding not-needed vs. change.
+**ARP-06.4 — accounting.** Add to `agent.ts`: `export interface TurnUsageSummary { inputTokens: number;
+outputTokens: number; unknown: boolean; steps: number }` and pure
+`export function summarizeTurnUsage(steps: readonly AgentStep[]): TurnUsageSummary` (sum over steps;
+`unknown: true` iff every step reported `{0,0}`/no usage — never invent cost; `steps` = completed step
+count). `runAgent` computes `usage: summarizeTurnUsage(steps)` on the returned `AgentRunResult` (budget
+exhaustion path included — reflects only the completed steps). **No new hard stop:** `maxSteps`
+(`agent.ts:265`) remains the only termination lever; `stoppedOnBudget` is unchanged. Aborted turns throw
+(no `AgentRunResult`) — the task pins that no fabricated usage is ever returned on abort.
 
-**Rejected alternatives.** Per-driver "fix" of values without measurement (all values are deliberate — see
-`postgres.ts:291-304`, `mysql.ts:159-167`, `mssql.ts:548-554` comments); a shared base-adapter
-abstracting the three (would break lazy-per-dialect + DBX-08 capability matrix); blanket `connectionLimit`
-raising for MySQL (held single connection is the stream/transaction isolation — raising would let metadata
-interleave into a user's open transaction, exactly what `postgres.ts:291-304` fixed for PG);
-a dependency-heavy circuit-breaker (roadmap Out); automatic mutation/transaction/cursor replay (roadmap Out).
+**ARP-06.5 — panel.** Extend `AiChatPanelSessionState`? NO — add a dedicated, privacy-safe host→webview
+message `AiChatPanelUsage { type: "usage"; inputTokens: number; outputTokens: number; unknown: boolean;
+sessionTokens: { inputTokens: number; outputTokens: number }; policyNotice: string }` to
+`aiChatPanelMessages.ts`. The panel posts it once per builtin turn on the `done` path, consuming
+`AgentRunResult.usage` (ARP-06.4) and accumulating the session total in a panel field; the policy notice
+(`EffectivePolicy.notice`, already non-empty on denial) rides the same message and the existing denial
+paths stay. The webview (`webview/aiChatPanelMain.ts`, bundled to `dist/aiChatPanel.js` via esbuild
+`aiChatPanelConfig`) renders a status chip, mirroring the existing `session_state` chip. **Privacy
+invariant:** the message contains ONLY the numeric fields + the notice string — never prompt text, SQL,
+tool names, tool arguments, trace, or secrets. OMP turns have no usage source → the panel posts the
+policy notice only (usage absent, never invented). The webview case is added to the same switch that
+handles `session_state`; the panel tests extend the EXISTING `aiChatPanelPolicy.test.ts` (which already
+has the `SECRET_RE` whole-turn byte-scan pattern, #3) and `aiChatPanel.test.ts`, plus the webview chip
+render test in `aiChatPanelSessionStateWebview.test.ts`.
+
+**Rejected alternatives.** Merging both guards into one function (breaks the two documented profiles and
+would require re-touching ARP-01's `guardAdapter` — Out); a full SQL tokenizer to lift the over-rejection
+(YAGNI, Out: the strict direction is the security property); a token-based hard stop in the agent (Out:
+`maxSteps` is the approved budget; a new kill would change `AgentRunResult` semantics and the roadmap's
+"hard stop only if approved policy requires it"); rendering usage into the `assistant` text (pollutes the
+transcript and risks SQL/secret content — a dedicated numeric-only message is privacy-safe by shape);
+normalizing usage to a "cost" display (Out: cost estimates without pricing).
 
 ## §4 Test Plan
 
-### ARP-05.0 — ADR (docs-gate; verify-only)
+### ARP-06.1 — fail-closed policy decision + security corpus (`src/ai/tools/__tests__/readonlySqlParser.test.ts`, extended)
 
 | # | Type | Test name | Expected |
 |---|---|---|---|
-| 1 | N/A | Docs task — no code | N/A per RULES: zero testable behavior. Verification is the content checklist + grep checks below; no executable test for documentation. |
+| 1 | happy | `parseReadonly` accepts plain SELECT | `{ ok:true, kind:"select" }` for `SELECT * FROM t` (and WITH → `kind:"with"`) |
+| 2 | edge: mutation | writable CTE denied | `WITH x AS (UPDATE t SET a=1) SELECT * FROM x` → `{ ok:false, reason:"non_select" }` |
+| 3 | edge: mutation | EXPLAIN ANALYZE DELETE denied by the core profile | `parseReadonly("EXPLAIN ANALYZE DELETE FROM t")` → `{ ok:false, reason:"non_select" }` (core never admits EXPLAIN; the run_sql profile reduces + re-checks separately) |
+| 4 | edge: mutation | SELECT INTO denied | `SELECT * INTO t2 FROM t` → `non_select` |
+| 5 | edge: structure | multi-statement denied | `SELECT 1; SELECT 2` → `multi_statement` |
+| 6 | edge: structure | malformed parens denied | `SELECT (1` → `unbalanced_parens`; `SELECT 1)` → `unbalanced_parens` |
+| 7 | edge: lexical | comment/literal over-rejection pinned | forbidden keyword inside `-- comment`, inside `'literal'`, and as an identifier substring (`created_at`) each → `non_select` |
+| 8 | security corpus | sweep: no mutation-capable construct is ever admitted | parametrized over the full denied corpus (DML/DDL keywords, INTO, writable CTE, EXPLAIN, row locks, literal-hidden, identifier-substring, multi-statement, unbalanced parens) → every case `{ ok:false }` |
 
-### ARP-05.1 — PostgreSQL (`src/adapters/__tests__/postgres.test.ts`; reuse the pg-mock queue pattern + `adapterQueryShape.test.ts` cursor fixtures)
-
-| # | Type | Test name | Expected |
-|---|---|---|---|
-| 1 | happy (pin) | metadata `pool.query` does not queue behind a pinned cursor/transaction client | with a `pool.connect()` holding all `PG_POOL_MAX` slots, a metadata call reaches its own slot (no `connectionTimeoutMillis` fail) — pins `PG_POOL_MAX = 4` isolation (`postgres.ts:291-314`) |
-| 2 | edge: resource | `connect()` probe fails → no pool leak | `pool.connect()`/`query("SELECT 1")` throws → `pool.end()` called, `this.pool` null; adapter reusable (second `connect()` builds a fresh pool) |
-| 3 | edge: resource | `close()` with an open cursor resolves < 5s | cursor ROLLBACK + `release(true)` fired; `pool.end()` raced vs 3s guard resolves; no hang (pins `postgres.ts:323-369`) |
-| 4 | edge: cancel | `cancelActiveQuery` uses a dedicated client, never the pool | with all pool slots held, cancel issues `pg_cancel_backend` via a one-off `Client` (`connectionTimeoutMillis: 5_000`); pool untouched |
-| 5 | edge: late/cancel | idle/no-PID cancel is a no-op | empty `activeNonCursorPids` → no dedicated client opened, resolves silently (pins `postgres.ts:520`) |
-
-### ARP-05.2 — MySQL (`src/adapters/__tests__/adapterQueryShape.test.ts`; add a `mysql2/promise` mock lane + a new focused unit suite for the queue bound)
+### ARP-06.2 — tool adoption (`src/ai/tools/__tests__/sqlTool.test.ts`, extended)
 
 | # | Type | Test name | Expected |
 |---|---|---|---|
-| 1 | happy (pin) | single-SELECT routes to streaming; multi-statement batch atomic | `singleSelect` → `openStreamingQuery` returns `{ results: [], batched }`; batch holds one connection, `beginTransaction`/`commit`/`release` exactly once (pins `mysql.ts:231-304`) |
-| 2 | edge: resource | held single connection + late request terminates (queue bound) | `connectionLimit: 1` slot held (stream/tx); a second connect/query must fail/throw within a **bounded, injectable** acquire wait — the pool factory reads `acquireTimeout` from a module-scoped constant (`POOL_ACQUIRE_TIMEOUT_MS`, default `10_000`) the test overrides to a short bound (e.g. 50ms) and drives with `vi.useFakeTimers`/`vi.advanceTimersByTime`, so no real 10s wait — **RED on today's code: `queueLimit: 0` + no `acquireTimeout` = unbounded** |
-| 3 | edge: cancel | cancel is terminal — no replay | `cancelActiveQuery` destroys the held connection/stream; a later repeat cancel is a silent no-op; mutation/transaction/cursor never re-issued (pins `mysql.ts:343-368,796-828`) |
-| 4 | edge: late error | stream ends without `fields`/`error` does not hang | `openStreamingQuery` settles on `end`, releases the pool connection (pins `mysql.ts:682-705`) |
-| 5 | edge: connect-fail | `connect()` failure closes the pool and nulls it | `getConnectionWithUtcSession` throws → `pool.end().catch(()=>undefined)`, `this.pool = null` (pins `mysql.ts:184-196`) |
+| 1 | happy | approved SELECT executes through the cursor flow | `run_sql` returns the JSON `SqlResult` shape; `fetchBatch(50)` + `close()` called (pin `sqlTool.ts:226-258`) |
+| 2 | edge: side-effect | only approved SQL executes — adapter NEVER called on denial | for each denial reason (DML, EXPLAIN ANALYZE DELETE, SELECT INTO, writable CTE, multi-statement, row lock) `isReadOnlySql` → `ok:false` AND `adapter.runQuery` is not invoked by `createSqlTool.execute` |
+| 3 | edge: resource | cursor closes on success AND on error | `fetchBatch` throw → `close()` still called; result still resolves (pin `sqlTool.test.ts:414`) |
+| 4 | edge: budget | row cap retained | >50 rows → `truncated:true`, `rows.length === 50`, `rowCount` = full batch length |
+| 5 | edge: non-secret denial | denial string is stable + secret-free | returned denial contains the exact literal reason; contains NO SQL text, NO tool args, NO host/DSN/apiKey fragment |
+| 6 | edge: resource | no-connection path | factory null → `NO_CONNECTION_MSG`; no throw |
 
-### ARP-05.3 — MSSQL (`src/adapters/__tests__/mssql.parameterized.test.ts`; reuse the fake-Connection/`newRequest` pattern)
-
-| # | Type | Test name | Expected |
-|---|---|---|---|
-| 1 | happy (pin) | streaming SELECT not timed out while rows still flow | `requestTimeout: 0` → no timer armed; a long paused stream survives load-more (pins `mssql.ts:548-554`) |
-| 2 | edge: resource | live request cancels within `cancelTimeout` | `request.cancel()` settles the awaiting `runRequest`/stream path within 5s; `activeRequests` drained (pins `mssql.ts:555,205-211`) |
-| 3 | edge: late error | late completion cannot wedge the `enqueue` chain | a settled/failed request resolves `next` in `enqueue` so the following queued operation proceeds; no deadlock, no unhandled rejection (pins `mssql.ts:574-587`) |
-| 4 | edge: connect | `connect()` failure cleans up the connection | fail/error path → `clearConnection` + `connection.close()` best-effort; `connecting` reset in `.finally` (pins `mssql.ts:121-196`) |
-| 5 | edge: late/cancel | cancel after settle is a no-op | `request.cancel()` on an already-completed request swallows; state stays settled (pins `mssql.ts:608-624`) |
-
-### ARP-05.4 — host message (`src/core/__tests__/connectionManager.test.ts`; conditional — see §2 gate)
+### ARP-06.3 — usage transport (`src/ai/__tests__/provider.test.ts`, extended)
 
 | # | Type | Test name | Expected |
 |---|---|---|---|
-| 1 | decision | host-message gate | if wave-1 measurement shows the connect-failure UX already actionable → close as not-needed with `git diff 65b9c4f -- src/core/connectionManager.ts` evidence (mirrors TASK-ARP04-004) |
-| 2 | edge: content (only if gap) | connect failure surfaces an actionable message | the surfaced message keeps host/port/driver + the actionable hint (e.g. "connection in use / pool exhausted"); the hint text is present, not a bare generic timeout |
-| 3 | edge: secret-redaction (only if gap) | no secret/credential leak in the surfaced message | a driver error that embeds the password (e.g. a `mysql.ts` pool error containing the DSN/password) is stripped of the credential before surfacing; the message contains no `password`/DSN fragment |
-| 4 | regression (only if gap) | `testConnection` rethrow preserved | `connectionManager.ts:395-402` still throws the candidate error after closing it; no swallowed error |
+| 1 | happy | chat/completions usage parsed | `usage: { inputTokens: 10, outputTokens: 5 }` from `prompt_tokens`/`completion_tokens` |
+| 2 | edge: missing | absent usage → normalized zeros | both `parseChatCompletionsResponse` and `parseResponsesResponse` → `usage {0,0}` (transport value; semantic "unknown" applied by ARP-06.4) |
+| 3 | edge: malformed | non-numeric/negative usage → 0, never a throw / never NaN | `prompt_tokens:"x"`, `completion_tokens:null`, negative → `{0,0}` / `0`; parse returns, no `ProviderError` |
+| 4 | edge: streaming | final usage emitted once | two `usage` chunks in one stream → result usage = LAST chunk (7/5), NOT the sum |
+| 5 | edge: streaming abort | aborted/malformed stream never invents usage | mid-stream abort or garbage events → `{0,0}`, no hang, no invented number |
+| 6 | edge: retention | response body never retained for accounting | a successful parse result exposes only `text/toolCalls/finishReason/usage`; a `ProviderError` carries only the scrubbed ≤300-char `bodySnippet` (no full raw body) |
+
+### ARP-06.4 — accounting (`src/ai/__tests__/agent.test.ts`, extended)
+
+| # | Type | Test name | Expected |
+|---|---|---|---|
+| 1 | happy | exact cumulative usage across steps | 3 steps (usage 1/1, 2/3, 5/6) → `summarizeTurnUsage` → `{ inputTokens:8, outputTokens:10, unknown:false, steps:3 }`; `runAgent(...).usage` matches |
+| 2 | edge: unknown | all-unknown usage never invented | every step `{0,0}` → `{ 0, 0, unknown:true, steps:N }` — never a fabricated cost |
+| 3 | edge: mixed | partial unknowns are summed, not treated as unknown | steps `{0,0}`, `{5,3}`, `{0,0}` → `{ inputTokens:5, outputTokens:3, unknown:false, steps:3 }` |
+| 4 | edge: empty | budget-capped with zero completed steps | 0 steps → `{ 0, 0, unknown:true, steps:0 }`; `stoppedOnBudget:true` |
+| 5 | edge: aborted | aborted turn returns no invented usage | abort path rethrows (no `AgentRunResult`); assert the resolved-result path never fabricates usage |
+| 6 | edge: budget | hard stop remains ONLY `maxSteps` | budget exhaustion → `stoppedOnBudget:true`, usage reflects completed steps only; no NEW stop mechanism added (assert run completes exactly `maxSteps` steps, no token-based kill) |
+
+### ARP-06.5 — panel (`src/ui/__tests__/aiChatPanelPolicy.test.ts` + `aiChatPanel.test.ts` + `aiChatPanelSessionStateWebview.test.ts`, extended)
+
+| # | Type | Test name | Expected |
+|---|---|---|---|
+| 1 | happy | builtin turn posts usage + policy notice | on `done`, a `{type:"usage"}` frame is posted with the exact summed `inputTokens/outputTokens`, `unknown:false`, session total, and `policyNotice` (non-empty when policy denies) |
+| 2 | edge: unknown | all-unknown usage → `unknown:true`, never invented | provider returns `{0,0}` for every step → posted usage is `{0,0, unknown:true}` + notice |
+| 3 | edge: privacy | whole-turn byte scan stays secret-free | aggregate every webview frame + history of a builtin turn that includes a secret-shaped string in a prompt/tool arg → `SECRET_RE` scan finds nothing (mirror the existing #3 pattern in `aiChatPanelPolicy.test.ts`) |
+| 4 | edge: privacy | usage frame is shape-safe | the `{type:"usage"}` message contains ONLY numeric fields + `policyNotice` string — no prompt text, no SQL, no tool names/arguments, no trace |
+| 5 | edge: denied policy | denied policy → notice shown, chat still completes | denied policy → generic prompt used, `policyNotice` non-empty on the usage frame, no error bubble |
+| 6 | edge: abort | aborted turn never posts fabricated usage | stop mid-turn → no `{type:"usage"}` frame with invented numbers (either none, or `unknown`/partial as actually seen) |
+| 7 | edge: render | webview renders the usage chip | `session_state`-style chip shows tokens/unknown state; `textContent`-only, no child nodes on hostile numeric values |
 
 ## §5 Verification Commands
 
-Run inside a clean worktree on `main @ 65b9c4f`. No real DB required — all suites are mocked (`pg`
-Pool/Client, `mysql2/promise` pool, fake tedious Connection). **No lint script exists** — the static gate is
-`npm run typecheck` (script verified in `package.json`); `npm run compile` is the build gate. Default `npm test`
-excludes `*.integration.test.ts` (`vitest.config.ts`) — the integration suites are DB-gated and run only via
-`npm run test:integration` (the cycle net, NOT per-task).
+Run inside a clean worktree on `main @ 6ee4c51`. No real DB required. **No lint script exists** — the
+static gate is `npm run typecheck` (script verified in `package.json`); `npm run compile` is the build
+gate. Default `npm test` excludes `**/*.integration.test.ts` (`vitest.config.ts`); integration suites run
+only via `npm run test:integration` (cycle net, NOT per-task). Test selection follows RULES resolution
+order from `.cache/index/tests-map.json` (the map is stale for `aiChatPanel.ts` — it omits
+`aiChatPanelPolicy.test.ts` and the session-state webview file, both of which exist and are pinned below).
 
-- **ARP-05.0** (wave 0):
+- **ARP-06.1** (wave 1):
   ```bash
-  test -f docs/decisions/0002-cross-driver-resilience-contract.md
-  grep -qi "queueLimit" docs/decisions/0002-cross-driver-resilience-contract.md
-  grep -qi "no.*replay\|replay" docs/decisions/0002-cross-driver-resilience-contract.md
-  git status --short src/ | wc -l        # must be 0 — docs task, no src/ change
+  test -f docs/decisions/0003-ai-sql-policy.md
+  grep -qi "run_sql" docs/decisions/0003-ai-sql-policy.md && grep -qi "parseReadonly" docs/decisions/0003-ai-sql-policy.md
+  npx vitest run src/ai/tools/__tests__/readonlySqlParser.test.ts
+  npm run typecheck && npm run compile
   ```
-  (Wave-0 scope is the matrix + known gaps + SLO/no-replay decision. The measured RED/GREEN probe sections
-  are appended during wave 1 by TASK-ARP05-001/002/003 per the §3 wave-1 ADR-update protocol, each under
-  its own `## Probe: <driver>` heading — the greps below on each driver task verify its own section.)
-- **ARP-05.1** (wave 1):
+- **ARP-06.2** (wave 1):
   ```bash
-  grep -qi "## Probe: PostgreSQL" docs/decisions/0002-cross-driver-resilience-contract.md
-  npx vitest run src/adapters/__tests__/postgres.test.ts
-  npm run typecheck
-  npm run compile
+  npx vitest run src/ai/tools/__tests__/sqlTool.test.ts
+  npm run typecheck && npm run compile
   ```
-  (Selection per RULES: `postgres.ts` → tests-map `[postgres.test.ts, postgres.integration.test.ts,
-  postgres.sortQuery.test.ts, postgresCatalog.test.ts]`. The pinned new-test target is `postgres.test.ts`;
-  the integration file is DB-gated and excluded; sibling suites run in the wave/cycle `npm test` net.)
-- **ARP-05.2** (wave 1):
+- **ARP-06.3** (wave 1):
   ```bash
-  grep -qi "## Probe: MySQL" docs/decisions/0002-cross-driver-resilience-contract.md
-  grep -qi "acquireTimeout" docs/decisions/0002-cross-driver-resilience-contract.md   # chosen bound recorded
-  npx vitest run src/adapters/__tests__/adapterQueryShape.test.ts
-  npx vitest run src/adapters/__tests__/mysqlQueueBound.test.ts   # new focused unit suite (new)
-  npm run typecheck
-  npm run compile
+  npx vitest run src/ai/__tests__/provider.test.ts
+  npm run typecheck && npm run compile
   ```
-  (The queue-bound test MUST assert termination within the injected bound — override `POOL_ACQUIRE_TIMEOUT_MS`
-  to a short value (e.g. 50ms) and/or use `vi.useFakeTimers`; never wait a real 10s in the DB-free suite.)
-  (Selection per RULES: `mysql.ts` → tests-map `[mysql.integration.test.ts, mysql.sortQuery.test.ts]`.
-  Neither is a DB-free unit file — `mysql.integration.test.ts` is DB-gated; the queue-bound + streaming
-  tests go into a **new** DB-free unit suite `mysqlQueueBound.test.ts` (new) plus the existing
-  `adapterQueryShape.test.ts` (which already mocks the mysql2 `query()` shape). The mandatory non-empty
-  floor is satisfied by the two DB-free files.)
-- **ARP-05.3** (wave 1):
+- **ARP-06.4** (wave 2, after wave 1):
   ```bash
-  grep -qi "## Probe: MSSQL" docs/decisions/0002-cross-driver-resilience-contract.md
-  npx vitest run src/adapters/__tests__/mssql.parameterized.test.ts
-  npm run typecheck
-  npm run compile
+  npx vitest run src/ai/__tests__/agent.test.ts
+  npm run typecheck && npm run compile
   ```
-  (Selection per RULES: `mssql.ts` → tests-map `[mssql.integration.test.ts, mssql.parameterized.test.ts,
-  mssql.sortQuery.test.ts]`. `mssql.parameterized.test.ts` is the DB-free pinned target; the integration
-  file is DB-gated; sibling suites run in the cycle net.)
-- **ARP-05.4** (wave 2, after 001+002+003):
+- **ARP-06.5** (wave 3, after 004):
   ```bash
-  grep -qi "## Probe: PostgreSQL" docs/decisions/0002-cross-driver-resilience-contract.md   # wave-1 evidence present
-  grep -qi "## Probe: MySQL" docs/decisions/0002-cross-driver-resilience-contract.md
-  grep -qi "## Probe: MSSQL" docs/decisions/0002-cross-driver-resilience-contract.md
-  git diff 65b9c4f -- src/core/connectionManager.ts     # gate evidence (empty if closed not-needed)
-  npx vitest run src/core/__tests__/connectionManager.test.ts   # only if a change was produced
-  npm run typecheck
-  npm run compile
+  npx vitest run src/ui/__tests__/aiChatPanelPolicy.test.ts src/ui/__tests__/aiChatPanel.test.ts src/ui/__tests__/aiChatPanelSessionStateWebview.test.ts
+  npm run typecheck && npm run compile
   ```
-- **Wave-2 net (after all tasks)**:
+  (Tests-map for `aiChatPanel.ts` lists 10 files but is stale — it omits `aiChatPanelPolicy.test.ts` and
+  the webview session-state file. The three pinned files are the DB-free targets; the omitted files are
+  covered in the cycle `npm test` net.)
+  **Bundle regeneration:** `npm run compile` runs `node esbuild.js` and rebuilds `dist/`, including
+  `dist/aiChatPanel.js` — the esbuild bundle of `webview/aiChatPanelMain.ts` (`esbuild.js:87-89,171`). The
+  vitest targets exercise only the TS source, so a stale committed bundle would otherwise pass every check
+  yet ship a non-functional panel; the compile step in this sequence confirms the shipped bundle is
+  regenerated from the changed webview source.
+- **Cycle net (after all tasks)**:
   ```bash
   npm test
-  npm run test:integration          # controlled — real fixtures only, per roadmap acceptance
+  npm run test:integration    # controlled — real fixtures only, per roadmap acceptance
   ```
-  Expected: `npm test` ≥ **3025 passed | 2 skipped** (baseline at 65b9c4f). Integration: only where
-  fixtures exist; skip cleanly where they do not.
+  Expected: `npm test` ≥ the fresh v1.41.0 baseline (3025 passed | 2 skipped at v1.40.0; executor
+  records the fresh number at commissioning). Integration: only where fixtures exist.
 
 ## §6 Acceptance Criteria
 
 Every criterion traces to a task.
 
-- [ ] **ARP-05.0** — `docs/decisions/0002-cross-driver-resilience-contract.md` exists with a per-driver
-  connect/query/stream/cancel/pool/broken-socket matrix, each cell source-cited, plus the known gaps and the
-  SLO/no-automatic-replay decision; `grep` checks exit 0; no `src/` file changed. **Wave-0 scope is the
-  matrix + known gaps; the measured finite-failure probe evidence is appended by the wave-1 tasks
-  (TASK-ARP05-001/002/003), each under its own `## Probe: <driver>` section per the §3 wave-1 ADR-update
-  protocol — the measurement is completed in wave 1, before ARP-05.4's gate reads it.**
-- [ ] **ARP-05.0** — the matrix explains the intentional adapter differences (PG slot isolation,
-  MySQL single-slot stream/transaction isolation, MSSQL `requestTimeout: 0` paused-stream survival) and
-  records the MySQL `queueLimit: 0` unbounded-wait gap.
-- [ ] **ARP-05.1** — PG pool isolation, failed-connect/close release, and cancel recovery pinned by tests;
-  RED probe evidence pasted **and appended to the ADR under `## Probe: PostgreSQL`**; `npm run typecheck` +
-  `npm run compile` exit 0.
-- [ ] **ARP-05.2** — streaming preserved with a held single connection; the terminal error/cancel path never
-  replays a mutation/transaction/cursor; **a late request with a held connection now terminates within a
-  bounded, injectable acquire wait** (RED on 65b9c4f: unbounded `queueLimit: 0`; the test asserts termination
-  within an injected short bound via `vi.useFakeTimers`, never a real 10s wait); RED probe evidence appended
-  to the ADR under `## Probe: MySQL`, with the chosen `acquireTimeout` bound recorded there; `npm run
-  typecheck` + `npm run compile` exit 0.
-- [ ] **ARP-05.3** — paused stream not timed out; cancellation and late requests cannot wedge the `enqueue`
-  chain; RED probe evidence appended to the ADR under `## Probe: MSSQL`; `npm run typecheck` + `npm run
-  compile` exit 0.
-- [ ] **ARP-05.4** — gate recorded: closed-as-not-needed (both `connectionManager.ts` diffs empty) OR a
-  host-message normalization shipped with RED-first proof that strips secrets while keeping the actionable
-  diagnostic.
-- [ ] **Compose** — ARP-02 cancel-ownership (dedicated-client PG seam, destroy-terminal MySQL seam,
-  cancel-in-`close()` MSSQL seam), ARP-03 retained-row cap, and ARP-04 host-key pin remain green (regression
-  pins in the driver suites); drivers stay lazily-imported per dialect; no mutation/transaction/cursor
-  automatic replay anywhere.
-- [ ] **Cycle** — `npm test` full suite ≥ **3025 passed | 2 skipped** (no regression); controlled
-  `npm run test:integration` run where fixtures exist.
+- [ ] **ARP-06.1** — `docs/decisions/0003-ai-sql-policy.md` exists and documents the one fail-closed
+  policy decision, the allowed/denied construct matrix, and the two profiles (`parseReadonly` core,
+  `isReadOnlySql` run_sql); the security parser corpus sweep (`readonlySqlParser.test.ts`) passes — every
+  mutation-capable construct is denied and parser uncertainty never admits it; `npm run typecheck` +
+  `npm run compile` exit 0. (TASK-ARP06-001)
+- [ ] **ARP-06.2** — `run_sql` executes only approved SQL; `adapter.runQuery` is never invoked on any
+  denial; cursor closes on success and error; the 50-row cap is retained; denial strings are stable and
+  secret-free; module header names the run_sql profile; typecheck + compile exit 0. (TASK-ARP06-002)
+- [ ] **ARP-06.3** — missing/malformed usage is transport-safe (`{0,0}`, never a throw/NaN); streaming
+  final usage emitted once (last chunk, never summed); the raw response body is never retained for
+  accounting; typecheck + compile exit 0. (TASK-ARP06-003)
+- [ ] **ARP-06.4** — `runAgent` reports exact per-turn usage (`summarizeTurnUsage` + `AgentRunResult.usage`);
+  all-unknown → `unknown:true`, never invented cost; aborted turns never fabricate usage; the ONLY hard
+  stop remains `maxSteps` (`stoppedOnBudget` unchanged, no token-based kill); typecheck + compile exit 0.
+  (TASK-ARP06-004)
+- [ ] **ARP-06.5** — policy + usage displayed for builtin turns via the shape-safe `usage` frame; OMP turns
+  show the policy notice with no invented usage; no prompt, SQL, secret, trace, or tool arguments reach
+  the wire (SECRET_RE scan + shape assertion); webview renders the chip; typecheck + compile exit 0.
+  (TASK-ARP06-005)
+- [ ] **Compose** — ARP-01 dialect-aware read-only enforcement + `guardAdapter` unchanged; AIX-07
+  `EffectivePolicy`/`resolvePolicy` and AIX-08 MCP contracts untouched; redaction (`redact`,
+  `scrubApiKey`, `stripTrailingSqlComments`) not weakened anywhere.
+- [ ] **Cycle** — `npm test` full suite green at the fresh v1.41.0 baseline; controlled
+  `npm run test:integration` where fixtures exist.
+- [ ] **Security review** — the mandatory security parser corpus + redaction review verdict recorded on
+  TASK-ARP06-001/003/005.
 - [ ] **Reviewer** verdict APPROVED or APPROVED-WITH-MINOR on PLAN and on each task.
 
 ## §7 Global Constraints
 
-- Base: `main @ 65b9c4f` (v1.40.0). All work in a fresh worktree; no git commit in P2/P3.
-- Same-wave file disjointness absolute: 000 writes the ADR `docs/decisions/0002-cross-driver-resilience-contract.md` at wave 0; 001 owns `src/adapters/postgres.ts`(+`postgres.test.ts`); 002 owns `src/adapters/mysql.ts`(+`mysqlQueueBound.test.ts`(new)+`adapterQueryShape.test.ts`); 003 owns `src/adapters/mssql.ts`(+`mssql.parameterized.test.ts`); 004 owns `src/core/connectionManager.ts`(+`connectionManager.test.ts`) in wave 2 only. **The wave-1 tasks (001/002/003) each append their disjoint `## Probe: <driver>` section to the ADR file 000 wrote — a docs-file, append-only, section-disjoint exception to the disjointness rule per the §3 wave-1 ADR-update protocol; no `src/` code file is shared within a wave.**
-- TDD mandatory: RED probe output pasted before implementation in every task report (docs task 000 records probes instead).
-- Do NOT weaken ARP-02/ARP-03/ARP-04 guarantees; do NOT change today's deliberate timeout/pool/`requestTimeout` values without a measurement proving a gap; no automatic mutation/transaction/cursor replay; cancel stays best-effort and never pool/adapter-close-as-cancel.
-- Drivers remain lazily-imported per dialect; no new shared base-adapter abstraction; no dependency-heavy circuit breakers; no blanket pool resizing.
-- No lint script exists — the static gate is `npm run typecheck` (MUST be in every task's Verification Commands); `npm run compile` is the build gate. Integration tests run only via `npm run test:integration`, never the default `npm test` net.
-- Verification must be DB-free in a clean worktree; `npm run test:integration` only where fixtures exist.
+- Base: `main @ 6ee4c51` (v1.41.0). All work in a fresh worktree; no git commit in P2/P3.
+- Same-wave file disjointness absolute: 001 owns `readonlySqlParser.ts`(+test) + ADR `0003`; 002 owns
+  `sqlTool.ts`(+test); 003 owns `provider.ts`(+test); 004 owns `agent.ts`(+test); 005 owns
+  `aiChatPanelMessages.ts` + `aiChatPanel.ts` + `webview/aiChatPanelMain.ts` + the three named panel test
+  files. No `src/` or `webview/` file is shared within a wave.
+- TDD mandatory: RED probe/pin output pasted before implementation in every task report; docs/corpus task
+  (001) records its security-corpus evidence instead.
+- Do NOT weaken ARP-01 (dialect-aware classifier + `guardAdapter`), AIX-07 (`resolvePolicy`/`EffectivePolicy`/
+  `notice`), or AIX-08 MCP contracts. Do NOT relax `parseReadonly` over-rejection (it is the fail-closed
+  property). No new hard stop beyond `maxSteps`. No cost estimates without pricing. No raw prompt/SQL in
+  the usage display.
+- No lint script exists — the static gate is `npm run typecheck` (MUST be in every task's Verification
+  Commands); `npm run compile` is the build gate. Integration tests run only via `npm run test:integration`,
+  never the default `npm test` net.
+- Verification DB-free in a clean worktree; the full `npm test` net and controlled
+  `npm run test:integration` run at the cycle boundary.
 
 ---
 
 ## Planner Report
 
-PLANNER_MODEL: claude-opus-5
+PLANNER_MODEL: unic-smart
 
 ## Planner Self-Audit
 
 Checklist: 12/12 pass
 Fixed during audit:
-- Test selection grounded in the real `.cache/index/tests-map.json`: `postgres.ts` → 4 tests (integration excluded — DB-gated, `vitest.config.ts` excludes `*.integration.test.ts`); `mysql.ts` → 2 tests, **neither a DB-free unit file** → added a NEW focused DB-free unit suite `src/adapters/__tests__/mysqlQueueBound.test.ts` (new) to carry the queue-bound/streaming pins, alongside the existing `adapterQueryShape.test.ts`; `mssql.ts` → 3 tests (`mssql.parameterized.test.ts` is the DB-free pinned target). Every task's focused selection is non-empty; full suite runs at wave/cycle boundary.
-- All path/line anchors re-verified against current source: PG `PG_POOL_MAX = 4` at `postgres.ts:107`, pool `postgres.ts:305-314`, `close()` `:323-369`, dedicated-client cancel `:513-546`; MySQL pool `mysql.ts:149-158` (`queueLimit: 0` at `:157`), connect-fail cleanup `:184-196`, batch `:242-304`, cancel `:343-368`, streaming `:648-705`; MSSQL `connect()` `mssql.ts:113-196`, `close()` `:198-223`, `enqueue` `:574-587`, `runRequest` `:589-657`, `createConnection` options `:514-559` (`requestTimeout: 0` `:554`, `cancelTimeout: 5_000` `:555`). Package scripts verified: `typecheck` = `tsc --noEmit`; NO lint script exists (recorded, not silently omitted).
-- The one known production change (ARP-05.2 `acquireTimeout` bound) is scoped to a measurement-proven gap (infinite `queueLimit: 0`); every other value is pinned as regression, matching the cycle's docs+test-first charter.
-- Index normalization done as part of this planning: leftover TASK-AIX07-001/002 `approved` rows set to `done` (cosmetic; no reviewer verdict history lost).
+- **Test selection grounded in the real `.cache/index/tests-map.json` + `ls` of the test dirs**:
+  `provider.ts` → `[provider.test.ts, …]` pin `provider.test.ts` (verified at `src/ai/__tests__/provider.test.ts`); `agent.ts` → `[agent.test.ts, agentStream.test.ts]` pin `agent.test.ts`; `readonlySqlParser.ts` → `[readonlySqlParser.test.ts]`; `sqlTool.ts` → `[sqlTool.test.ts]`. The map is **stale for `aiChatPanel.ts`**: it lists 10 files but omits the EXISTING `aiChatPanelPolicy.test.ts` and `aiChatPanelSessionStateWebview.test.ts` — both verified on disk and pinned for ARP-06.5.
+- **Roadmap citations corrected** (all verified against current source): `readonlySqlParser.ts:1-9,176-210` → `:1-11,197-236` (parseReadonly moved); `sqlTool.ts:99-136` → `:109-163` (guard) + `:226-288` (execute/tool); `provider.ts:51-54,209-214` confirmed accurate; `agent.ts:264-266` confirmed (maxSteps at `:265`); **`aiChatPanelPolicy.test.ts` already exists (34 KB, AIX-07)** — the roadmap lists it as a candidate NEW file; ARP-06.5 EXTENDS it, matching the roadmap's own wording "aiChatPanelPolicy.test.ts; aiChatPanel.test.ts".
+- **Provider/agent test paths verified at commissioning** (roadmap said "verify at commissioning"): both exist and are pinned.
+- **ADR numbering verified**: `docs/decisions/` has 0001 + 0002; next free = **0003** (README table updated by TASK-ARP06-001).
+- **Base corrected**: ACTIVE.md still said `main @ 0087d35`; HEAD is now `6ee4c51` (ARP-05 close-out commit, still v1.41.0) — PLAN + ACTIVE use `6ee4c51`.
+- Wave structure re-derived: the roadmap's wave-2 pair (accounting + panel) is a **real interface chain** — the panel consumes `AgentRunResult.usage`/`TurnUsageSummary` that accounting creates — so it is sequenced 004 → 005 instead of parallel (a parallel panel would have to re-invent the accounting, exactly the drift this pipeline prevents). Wave 1 keeps the roadmap's three disjoint files parallel.
 Known gaps:
-- ARP-05.2's exact bound (recommend `acquireTimeout: 10_000` aligned with `connectTimeout`) is a recommendation; the executor may record the ADR-measured value and adjust to match `connectTimeout` — the RED probe contract (a late request must terminate within a bounded wait) is the invariant, and the chosen number must be recorded in the ADR.
-- ARP-05.1/ARP-05.3 production changes are conditional: no gap is currently known in PG/MSSQL, so these tasks may be pin-only. The planner did NOT change PG/MSSQL values (all deliberate per their comments).
-- ARP-05.4 is gated on the wave-1 ADR measurement exactly like TASK-ARP04-004; whether it ships a change is decided by the recorded probe evidence, not by a predetermined outcome.
+- ARP-06.1/02/03/05 production changes are CONDITIONAL: existing behavior is presumed correct and pinned; a production change ships only where a corpus/privacy pin proves a gap (RED first). The planner did NOT change any guard/parser/provider logic.
+- ARP-06.5 OMP turns have no usage source in `OmpChatEngine`; the panel shows the policy notice only for OMP (usage absent, never invented). If the executor wants usage for OMP it would require a new OMP usage seam — explicitly Out for this cycle.
+- The fresh v1.41.0 full-suite baseline is recorded at commissioning (v1.40.0 measured 3025 passed | 2 skipped).
+
+---
 
 ## Plan Review Log
 
 ### Round 1 — 2026-09-02 · unic-smart
-Verdict: Issues Found
+Status: Issues Found (2 minor, non-blocking — plan is otherwise sound)
 
 COMPLETENESS:
   - none
 CONSISTENCY:
-  1. (§3 vs §4/§5/§7) — ADR measurement protocol is undefined. §3 (lines 99-101) requires ARP-05.0 to record "measured finite-failure behavior per driver (probe evidence recorded in the ADR)" and "each RED/GREEN line pasted", but §4 (line 144) declares ARP-05.0 has "zero testable behavior / no executable test", and §5 (lines 192-198) gives it only `test -f`/`grep`/`git status` checks — no probe commands exist for the wave-0 task to produce measurements. Result: the wave-0 ADR gate cannot satisfy its own §6 acceptance ("measured finite-failure behavior"), and the wave-1 tasks (001/002/003) would have to append evidence to the ADR file that §7 (line 275) assigns exclusively to 000. Fix: state explicitly that 001/002/003 append their RED/GREEN probe lines to the ADR during wave 1 (completing the measurement before ARP-05.4's gate), and reword §6 ARP-05.0 to "matrix + known gaps at wave-0; measured evidence appended by wave-1 tasks".
+  - §2/§3 (ARP-06.1 vs ARP-06.2) — ARP-06.1 (wave 1) writes ADR `0003` documenting the run_sql profile's allowed/denied matrix (EXPLAIN reduction, writable-CTE denial), while the authoritative pin of that exact behavior lives in ARP-06.2 (same wave, parallel) and ADR appends are explicitly disallowed. If 002's pins reveal the guard deviates from the ADR's documented matrix, no wave-1 task may correct the ADR. Fix: have 001's ADR document the decision + principle and cite `sqlTool.ts`'s run_sql profile as the behavioral source of truth (avoid enumerating guard lines only 002 can verify), or explicitly allow 002 to raise ADR corrections to 001.
 CLARITY:
-  2. (§4 ARP-05.2, test 2) — the queue-bound test asserts a late request terminates "within the bounded acquire wait (recommend `acquireTimeout: 10_000`)"; a real 10s wait in a DB-free unit suite is slow/flaky, and no injection mechanism is specified. Fix: make the bound injectable (constructor/config override or `vi.useFakeTimers`) so the pinned test asserts termination within the bound deterministically without a real 10s wait.
-  3. (§4 ARP-05.4) — the gap-found path ships only one edge case (test 2; test 3 is a regression pin), below the >=2-edge-case floor used by the other tasks. Fix: add a second edge case for the normalization path (e.g. a secret-bearing driver error is stripped of the password; or a non-host/port error keeps its actionable hint), or state the conditional waiver explicitly when the task ships a change.
+  - §3 (ARP-06.2) — "The guard already rejects everything the matrix denies" asserts current behavior but does not state whether the EXPLAIN→inner-statement reduction (incl. `EXPLAIN ANALYSE`, `EXPLAIN (ANALYZE)`) is implemented today or must be added by the executor when the pin turns RED. Fix: one sentence — "EXPLAIN reduction is a pin; if RED the executor implements it (TDD); §6-002 'executes only approved SQL' covers both outcomes."
+TESTABILITY:
+  - §5 (ARP-06.5) — Verification never checks that `dist/aiChatPanel.js` (the esbuild bundle of `webview/aiChatPanelMain.ts`) is regenerated/current. All tests target the TS source, so a stale committed bundle would pass every check yet ship a non-functional panel. Fix: state explicitly that `npm run compile` regenerates the bundle, or add a bundle-freshness check (build then compare) to ARP-06.5 verification.
 SCOPE:
-  - none — same-wave file disjointness absolute, no cycles, 004 correctly gated after wave 1.
+  - none
 YAGNI:
-  - none — no circuit breakers, no blanket pool resizing, no replay; the only production change (MySQL `acquireTimeout`) is measurement-proven.
+  - none
 
-NOTES: Dependency graph implementable; every task has a testable test plan (000 has a valid docs-gate N-A with reason); verification commands concrete and runnable; out-of-scope list respected; 004's not-needed close path is properly gated with evidence commands.
+NOTES: Plan passes all six requested checks — wave disjointness and dependency ordering, fail-closed guarantee (parser uncertainty never admits mutation-capable SQL), privacy invariants (numeric-only usage frame, SECRET_RE scan, usage reported/unknown only), testability (≥1 happy + ≥2 distinct edge kinds per task, concrete per-file verification, full suite deferred to cycle boundary), scope/YAGNI discipline, and §2↔task-breakdown↔§6 consistency. Both findings are one-line clarifications that strengthen implementability; neither blocks execution.
 
-#### Revision (Round 1) — 2026-09-02 · unic-smart
-PLANNER_REVISION: The round-1 review returned 3 findings; PLAN.md and TASK-ARP05-000/001/002/003/004 were revised to close them. The Round 1 entry above is preserved as-is.
+#### Revision (Round 1)
 
-PLANNER_REVISION (Finding 1 — wave-1 ADR-update protocol):
-- Added §3 "Wave-1 ADR-update protocol" defining that wave-1 tasks (001/002/003) append measured RED/GREEN
-  probe results to the ADR 000 owns, each as a disjoint `## Probe: <driver>` section (docs file, append-only,
-  copy-back merge trivial; explicitly not a same-wave code-file conflict).
-- §5 now greps each driver task's own `## Probe:` section (and ARP-05.4 pre-gates on all three), and ARP-05.0's
-  block notes that wave-0 scope is matrix + known gaps with probe sections appended in wave 1.
-- §6 reworded ARP-05.0 to "matrix + known gaps at wave-0; measured evidence appended by wave-1 tasks" and
-  added an ADR-append criterion to each of ARP-05.1/05.2/05.3.
-- §7 clarified the ADR file-ownership line: wave-1 appends are the sole docs-file exception to the
-  same-wave disjointness rule.
-- TASK-ARP05-000/001/002/003: Target Files now list the ADR append, Verification Commands add the
-  `grep -qi "## Probe: <driver>"` check, Acceptance Criteria include the append, and Interfaces/Produces
-  note the append direction.
-
-PLANNER_REVISION (Finding 2 — ARP-05.2 test 2 real-10s wait):
-- §3 ARP-05.2, §4 test 2, §5 ARP-05.2 note, §6, and TASK-ARP05-002 now specify an **injectable bound**: the
-  pool factory reads `acquireTimeout` from a module-scoped constant (`POOL_ACQUIRE_TIMEOUT_MS`, default
-  10_000) that the test overrides to a short value and drives with `vi.useFakeTimers`/`vi.advanceTimersByTime`,
-  so the suite asserts termination deterministically with no real 10s wait; the real value stays the
-  production default and is recorded in the ADR.
-
-PLANNER_REVISION (Finding 3 — ARP-05.4 gap-found path below edge-case floor):
-- §4 ARP-05.4 table and TASK-ARP05-004 split the single combined edge case into two edge cases of different
-  kinds — case 2 `edge: content` (actionable message present: host/port/driver + hint) and case 3
-  `edge: secret-redaction` (no credential/DSN leak in the surfaced message) — keeping the `testConnection`
-  rethrow as the regression pin. The gap-found path now ships ≥2 edge cases + 1 regression.
+- PLANNER_REVISION (F1 — §2/§3 ADR ownership): §2 and §3 now state the ADR cites `sqlTool.ts`'s existing run_sql behavior as the source of truth at write time (decision + principle + matrix, not guard internals only 002 can verify), and make the ownership rule explicit — 001 owns the ADR write in wave 1; ARP-06.2 may append ADR corrections in wave 2 or via its own review round if its pins expose drift. Reflected in TASK-ARP06-001 (Interfaces/ownership) and TASK-ARP06-002 (Discussion).
+- PLANNER_REVISION (F2 — §3 EXPLAIN clarity): verified against source — the EXPLAIN→inner-statement reduction is ALREADY implemented in `sqlTool.ts` today (`isReadOnlySql` `:118-142` via `stripExplainPrefix` `:172-217`; `readonlySqlParser.ts` never admits EXPLAIN). §3 now states this explicitly: the plan pins existing behavior; the executor implements TDD-first only if a pin turns RED. Added to TASK-ARP06-002 Discussion.
+- PLANNER_REVISION (F3 — §5 bundle freshness): §5 ARP-06.5 now states `npm run compile` runs `node esbuild.js` and rebuilds `dist/`, including `dist/aiChatPanel.js` (bundle of `webview/aiChatPanelMain.ts`, `esbuild.js:87-89,171`), so the verification sequence confirms the shipped bundle is regenerated from the changed webview source. Noted in TASK-ARP06-005 Verification.
 
 ### Round 2 — 2026-09-02 · unic-smart
 Verdict: Approved
 
-Round-1 findings verified resolved:
-- Finding 1 (ADR-update protocol): RESOLVED. §3 lines 136-146 defines the wave-1 ADR-update protocol (each driver task appends a disjoint `## Probe: <driver>` section to the ADR 000 owns); §5 greps each driver's own probe section (lines 222, 232-233, 248) and ARP-05.4 pre-gates on all three (258-260); §6 rewords ARP-05.0 to "matrix + known gaps at wave-0; measured evidence appended by wave-1 tasks" (278-283) and adds the append criterion to ARP-05.1/05.2/05.3 (288, 293-294, 297); §7 records the docs-append exception (313). No remaining wave-0 measurement obligation.
-- Finding 2 (real-10s wait): RESOLVED. §3 (114-121), §4 test 2 (178), §5 note (239-240), §6 (291-295) all specify `POOL_ACQUIRE_TIMEOUT_MS` default 10_000, overridden to a short bound and driven by `vi.useFakeTimers`/`vi.advanceTimersByTime`; never a real 10s wait; chosen value recorded in the ADR. RED provenance on today's unbounded `queueLimit: 0` is explicit.
-- Finding 3 (ARP-05.4 edge floor): RESOLVED. §4 (195-200) splits into two distinct edge kinds — `edge: content` (actionable message) and `edge: secret-redaction` (no credential/DSN leak) — plus the `testConnection` rethrow regression pin (test 4). Gap-found path ships ≥2 edges + 1 regression.
+Round 1 findings verified (3/3 resolved):
+1. [RESOLVED] §2 (lines 61-68) + §3 (lines 94-97) — ADR 0003 ownership rule is now explicit: 001 writes the ADR in wave 1 citing `sqlTool.ts`'s existing run_sql behavior as the source of truth at write time (decision + principle + matrix, not guard internals only 002 can verify in the parallel wave); ARP-06.2 MAY append ADR corrections in wave 2 or via its own review round if its pins expose drift — the ADR is authoritative for the decision, the guard for behavior, and drift is reconciled through that append, never silent.
+2. [RESOLVED] §3 (lines 107-114) — EXPLAIN→inner-statement reduction is stated as ALREADY implemented today (`isReadOnlySql` `:118-142` via `stripExplainPrefix` `:172-217`; `readonlySqlParser.ts` never admits EXPLAIN, core profile over-rejection). The plan pins existing behavior; the executor implements a missing piece TDD-first only if a pin turns RED. Covered by test ARP-06.1 #3 (core denies EXPLAIN) + ARP-06.2 #2 (run_sql denial sweep incl. EXPLAIN ANALYZE DELETE).
+3. [RESOLVED] §5 (lines 256-260) — bundle regeneration confirmed: `npm run compile` runs `node esbuild.js` and rebuilds `dist/aiChatPanel.js` from `webview/aiChatPanelMain.ts` (`esbuild.js:87-89,171`); the stale-bundle failure mode (vitest passes on TS source while shipped bundle is stale) is explicitly stated, making the compile step load-bearing in the sequence.
 
 Fresh whole-plan pass:
-COMPLETENESS: none — all sections complete, no TODO/TBD; verification commands concrete and runnable; `typecheck`+`compile` gates present and lint absence explicitly documented.
-CONSISTENCY: none — baseline (3025/2) consistent across §0/§5/§6; disjointness rule, ADR-append exception, and ARP-05.4 gate sequencing all agree; the sole production change (acquireTimeout) is consistently scoped as measurement-proven across §2/§3/§6/§7.
-CLARITY: minor — §4 ARP-05.2 does not assign tests 3-5 to a specific file between `adapterQueryShape.test.ts` and the new `mysqlQueueBound.test.ts`; non-blocking since §5 runs both DB-free files and the DB-free floor holds regardless of placement.
-SCOPE: none — waves disjoint per src file, ARP-05.4 correctly gated after wave-1 evidence, out-of-scope list respected.
-YAGNI: none — no circuit breakers, no blanket resizing, no replay; injectable bound + fake timers are justified determinism, not over-engineering.
+COMPLETENESS:
+  - none
+CONSISTENCY:
+  - none
+CLARITY:
+  - none
+SCOPE:
+  - none
+YAGNI:
+  - none
 
-NOTES: All three round-1 findings closed cleanly with no new blockers; plan is implementable as written.
+NOTES: All six checks hold on the revised plan: wave disjointness is absolute, 004→005 sequencing matches the usage interface chain (panel consumes `AgentRunResult.usage`), fail-closed guarantee is corpus-pinned, privacy invariant is shape-safe (numeric-only frame + SECRET_RE scan), every task has ≥1 happy + ≥5 edge/security tests, and §2↔§3↔§5↔§6↔§7 stay aligned. Two cosmetic nits only, non-blocking: ARP-06.3 #3 expected column "negative → {0,0} / 0" is slightly ambiguous (both token fields become 0), and ARP-06.5 #6 abort expectation is deliberately open-ended ("none, or unknown/partial as actually seen") — both are acceptable as written.

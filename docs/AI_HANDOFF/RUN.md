@@ -1,6 +1,6 @@
 Command: handoff-fullstack
-Goal: (none — idle; ARP-05 shipped as v1.41.0)
-Base: main @ 0087d35 (v1.41.0)
-Phase: done
-Cursor: ARP-05 complete — plan 85bf5cb, wave 0 0dd021e, wave 1 636f145, wave 2 5c6b7d7, R2 cd3ffa5, R4.5 48690ed, close c84542e, release 0087d35 (tag v1.41.0, GitHub release + vsix published).
-Next: (none — awaiting next cycle request)
+Goal: Ship ARP-06 AI SQL policy unification and usage visibility — one fail-closed policy decision API for all AI SQL routes, plus privacy-safe per-turn usage/budget display; AIX-07/AIX-08 unchanged.
+Base: main @ 6ee4c51 (v1.41.0)
+Phase: P2.5
+Cursor: P2 done — PLAN.md + TASK-ARP06-001..005 (waves {001,002,003} → {004} → {005}, real 004→005 interface dep), INDEX rows ready, ACTIVE planning_done.
+Next: P2.5 — spawn independent code-reviewer (REVIEW_TARGET_TYPE=plan) on docs/AI_HANDOFF/PLAN.md (round 1).
