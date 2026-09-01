@@ -1,4 +1,4 @@
-// webview/renameFormMain.ts — TASK-DBX06-003
+// webview/renameFormMain.ts — TASK-DBX06-003 + DBX06-006
 // Webview entry cho RenameForm — minimal safe-rename dialog.
 // Vanilla DOM only (textContent/createElement — no innerHTML sinks).
 // Protocol mirror src/ui/renameFormMessages.ts.
@@ -49,6 +49,28 @@ function el(
 
 function line(e: HTMLElement, text: string): void {
   e.appendChild(el("div", "vsdb-rename-line", text));
+}
+
+function humanLabelForStep(kind: string): string {
+  // Typed step label surfaced in the review pane. Match the host-side label
+  // so what the user sees in the preview lines up with the progress/done
+  // report (which uses the raw `kind`).
+  switch (kind) {
+    case "rename":
+      return state.mode === "column" ? "Rename column" : "Rename table";
+    case "views":
+      return "Views to review";
+    case "fks":
+      return "Foreign keys to review";
+    case "routines":
+      return "Routines to review";
+    case "triggers":
+      return "Triggers to review";
+    case "indexes":
+      return "Indexes to review";
+    default:
+      return kind;
+  }
 }
 
 // ---- render ----------------------------------------------------------------
@@ -110,16 +132,26 @@ function renderInit(): void {
   root.appendChild(form);
 }
 
-function renderAnalysis(payload: {
+interface AnalysisPayload {
   report: {
     views: Array<{ name: string; kind: string }>;
     fks: Array<{ constraint: string; fromTable: string }>;
     routines: Array<{ name: string }>;
+    triggers: Array<{ name: string; event: string; timing: string }>;
+    indexes: Array<{
+      name: string;
+      isPrimary: boolean;
+      isUnique: boolean;
+      columns: string[];
+    }>;
     collisions: string[];
   };
   statements: string[];
+  steps: Array<{ kind: string; executable: boolean; statement: string }>;
   errors: string[];
-}): void {
+}
+
+function renderAnalysis(payload: AnalysisPayload): void {
   const box = document.getElementById(
     "vsdb-rename-analysis",
   ) as HTMLDivElement | null;
@@ -137,26 +169,48 @@ function renderAnalysis(payload: {
   }
 
   const r = payload.report;
-  const usage = r.views.length + r.fks.length + r.routines.length;
+  const usage =
+    r.views.length +
+    r.fks.length +
+    r.routines.length +
+    r.triggers.length +
+    r.indexes.length;
   line(box, `Usage: ${usage} object(s) reference this ${state.mode}.`);
   for (const v of r.views) line(box, `View: ${v.name} (${v.kind})`);
   for (const f of r.fks) line(box, `FK: ${f.constraint} from ${f.fromTable}`);
   for (const rt of r.routines) line(box, `Routine: ${rt.name}`);
+  for (const tr of r.triggers) {
+    line(box, `Trigger: ${tr.name} (${tr.timing} ${tr.event})`);
+  }
+  for (const ix of r.indexes) {
+    line(
+      box,
+      `Index: ${ix.name}${ix.isPrimary ? " [PK]" : ""}${ix.isUnique ? " [U]" : ""}`,
+    );
+  }
   for (const c of r.collisions) line(box, `Collision: ${c}`);
 
-  const stmts = el("div", "vsdb-rename-statements");
-  stmts.id = "vsdb-rename-statements";
-  for (const s of payload.statements) line(stmts, s);
-  box.appendChild(stmts);
+  const steps = el("div", "vsdb-rename-steps");
+  steps.id = "vsdb-rename-steps";
+  for (const s of payload.steps) {
+    if (s.executable) {
+      line(steps, `${humanLabelForStep(s.kind)}: ${s.statement}`);
+    } else {
+      line(steps, `${humanLabelForStep(s.kind)} (review only)`);
+    }
+  }
+  box.appendChild(steps);
 
   if (approveBtn) approveBtn.disabled = payload.statements.length === 0;
 }
 
-function renderProgress(payload: {
+interface ProgressPayload {
   index: number;
   total: number;
   statement: string;
-}): void {
+}
+
+function renderProgress(payload: ProgressPayload): void {
   const box = document.getElementById(
     "vsdb-rename-progress",
   ) as HTMLDivElement | null;
@@ -168,35 +222,36 @@ function renderProgress(payload: {
   );
 }
 
-function renderDone(payload: {
-  applied: number;
+interface DonePayload {
+  applied: Array<{ index: number; label: string; sql: string }>;
   total: number;
-  failedAt?: number;
-  failedStatement?: string;
-  error?: string;
-  cancelled?: boolean;
+  failed?: { index: number; label: string; sql: string; error: string };
+  cancelledAfter?: number;
   remaining?: number;
-}): void {
+}
+
+function renderDone(payload: DonePayload): void {
   const box = document.getElementById(
     "vsdb-rename-progress",
   ) as HTMLDivElement | null;
   if (!box) return;
   box.textContent = "";
-  if (payload.error !== undefined) {
+  if (payload.failed) {
+    const f = payload.failed;
     line(
       box,
-      `FAILED after ${payload.applied} applied — statement ${payload.failedStatement ?? ""}: ${payload.error}`,
+      `FAILED after ${payload.applied.length} applied — step ${f.label} (index ${f.index})${f.sql ? `: ${f.sql}` : ""}: ${f.error}`,
     );
     return;
   }
-  if (payload.cancelled === true) {
+  if (payload.cancelledAfter !== undefined) {
     line(
       box,
-      `Cancelled — ${payload.applied} applied, ${payload.remaining ?? 0} remaining.`,
+      `Cancelled — ${payload.applied.length} applied, ${payload.remaining ?? 0} remaining.`,
     );
     return;
   }
-  line(box, `Done — ${payload.applied} statement(s) applied.`);
+  line(box, `Done — ${payload.applied.length} step(s) applied.`);
 }
 
 // ---- host messages -----------------------------------------------------------
@@ -222,19 +277,15 @@ window.addEventListener("message", (event: MessageEvent) => {
     return;
   }
   if (isAnalysis(msg)) {
-    renderAnalysis(
-      msg as unknown as Parameters<typeof renderAnalysis>[0],
-    );
+    renderAnalysis(msg as unknown as AnalysisPayload);
     return;
   }
   if (msg.type === "progress") {
-    renderProgress(
-      msg as unknown as Parameters<typeof renderProgress>[0],
-    );
+    renderProgress(msg as unknown as ProgressPayload);
     return;
   }
   if (msg.type === "done") {
-    renderDone(msg as unknown as Parameters<typeof renderDone>[0]);
+    renderDone(msg as unknown as DonePayload);
     return;
   }
 });

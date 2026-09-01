@@ -1580,4 +1580,20 @@ describe("tableCommands — DBX-08 tableDdl capability gate", () => {
       state.infoMessages.some((m) => /AI not configured/i.test(m)),
     ).toBe(false);
   });
+
+  // DBX06-006 — `vsdb.renameTable` with tableDdl:false emits the exact DBX-08
+  // capability message and performs zero side effects (no panel, no
+  // renameUsage lookup, no listTableDetail, no runQuery).
+  it("vsdb.renameTable with tableDdl:false shows the exact message and no side effects", async () => {
+    const mgr = setup({ driver: "mysql", listTableDetailUnsupported: true });
+    const tableNode = tableNodeMeta(mgr.mgr.cfg);
+    await state.registeredCommands.get("vsdb.renameTable")!(tableNode);
+    expect(
+      state.infoMessages.some((m) => m === expectedMsg("vsdb.renameTable")),
+    ).toBe(true);
+    expect(state.createdPanels.length).toBe(0);
+    expect(mgr.mgr.adapter.runCalls).toHaveLength(0);
+    expect(mgr.mgr.adapter.listTableDetailCalls).toHaveLength(0);
+    expect(mgr.treeView.reveal).not.toHaveBeenCalled();
+  });
 });

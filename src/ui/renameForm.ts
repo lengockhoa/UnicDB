@@ -1,10 +1,13 @@
-// src/ui/renameForm.ts — TASK-DBX06-003
+// src/ui/renameForm.ts — TASK-DBX06-003 + DBX06-006
 // RenameForm — Safe Rename dialog (DBX-06). Host wraps a webview panel:
-//  - analyze: validateNewName → 4 parameterized catalog queries →
-//    buildRenamePlan → posts analysis {report, statements, errors}
-//  - approve: runRenameStatements with per-statement progress; cancel
-//    stops BEFORE the next statement; failure reports applied/failedAt.
-// Mirror NewTableForm (CSP strict, typed messages, dispose pattern).
+//  - analyze: validateNewName → 6 parameterized catalog queries (views, FKs,
+//    routines, collision, triggers, indexes; triggers/indexes pass `""` in
+//    table mode) → buildRenamePlan → posts analysis {report, statements,
+//    steps, errors}
+//  - approve: runRenameSteps on the typed executable plan; cancel stops
+//    BEFORE the next step; failure reports applied/failed with the step's
+//    label. The last analyzed plan is cleared on every error analysis so a
+//    stale plan cannot be approved after a collision.
 import * as vscode from "vscode";
 import type { ConnectionConfig } from "../config/types";
 import type { ConnectionManager } from "../core/connectionManager";
@@ -12,9 +15,16 @@ import {
   validateNewName,
   type RenameCatalogRows,
 } from "../core/ddl/renameAnalysis";
-import { buildRenamePlan } from "../core/ddl/renameCatalog";
+import {
+  buildRenamePlan,
+  type RenamePlanStep,
+} from "../core/ddl/renameCatalog";
 import type { RenameUsageApi } from "../adapters/types";
-import { runRenameStatements, type RunOutcome } from "../core/ddl/renameRunner";
+import {
+  runRenameSteps,
+  type NamedStep,
+  type RunStepsOutcome,
+} from "../core/ddl/renameRunner";
 import type {
   RenameFormWebviewMessage,
   RenameFormHostMessage,
@@ -34,11 +44,18 @@ export interface RenameFormOptions {
   onRenamed?: (newName: string) => void;
 }
 
+export interface RenameAnalysisResult {
+  report: RenameCatalogRows;
+  statements: string[];
+  steps: RenamePlanStep[];
+  errors: string[];
+}
+
 export class RenameForm {
   private panel: vscode.WebviewPanel | null = null;
   private disposables: vscode.Disposable[] = [];
-  /** Statements from the last successful analysis — approve runs these. */
-  private lastStatements: string[] | null = null;
+  /** Typed plan steps from the last successful analysis — approve runs these. */
+  private lastSteps: RenamePlanStep[] | null = null;
   /** Set while a run is in flight → cancel requests flip this flag. */
   private cancelRequested = false;
 
@@ -122,20 +139,16 @@ export class RenameForm {
     return a.renameUsage;
   }
 
-  /** Run the 4 catalog lookups + build the plan. */
-  async analyzeName(newName: string): Promise<{
-    report: RenameCatalogRows;
-    statements: string[];
-    errors: string[];
-  }> {
+  /** Run the 6 catalog lookups + build the typed plan. */
+  async analyzeName(newName: string): Promise<RenameAnalysisResult> {
     const invalid = validateNewName(newName);
     if (invalid !== null) {
-      return { report: EMPTY_ROWS(), statements: [], errors: [invalid] };
+      return { report: EMPTY_ROWS(), statements: [], steps: [], errors: [invalid] };
     }
     const { schema, table, mode, oldName } = this.options;
     try {
       const u = await this.usage();
-      // DBX06-005 — trigger/index lookups take the CURRENT column name in
+      // DBX06-005/006 — trigger/index lookups take the CURRENT column name in
       // column mode and "" in table mode (table-wide usage).
       const columnKey = mode === "table" ? "" : oldName;
       const [viewRows, fkRows, routineRows, collisionRows, triggerRows, indexRows] =
@@ -170,16 +183,29 @@ export class RenameForm {
         newName,
         rows,
       });
-      return { report: rows, statements: plan.statements, errors: plan.errors };
+      return {
+        report: rows,
+        statements: plan.statements,
+        steps: plan.steps,
+        errors: plan.errors,
+      };
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
-      return { report: EMPTY_ROWS(), statements: [], errors: [`Catalog analysis failed: ${m}`] };
+      return {
+        report: EMPTY_ROWS(),
+        statements: [],
+        steps: [],
+        errors: [`Catalog analysis failed: ${m}`],
+      };
     }
   }
 
   private async handleAnalyze(newName: string): Promise<void> {
     const a = await this.analyzeName(newName);
-    this.lastStatements = a.errors.length === 0 ? a.statements : null;
+    // DBX06-006 — only retain the typed plan for approval when the analysis
+    // is clean; an error/collision analysis MUST clear prior executable state
+    // so an older clean plan cannot be approved after a failed analysis.
+    this.lastSteps = a.errors.length === 0 ? a.steps : null;
     this.post({
       type: "analysis",
       report: {
@@ -191,34 +217,39 @@ export class RenameForm {
         collisions: a.report.collisions,
       },
       statements: a.statements,
+      steps: a.steps,
       errors: a.errors,
     });
   }
 
   private async handleApprove(): Promise<void> {
-    const statements = this.lastStatements;
-    if (!statements || statements.length === 0) return;
+    const steps = this.lastSteps;
+    if (!steps || steps.length === 0) return;
     this.cancelRequested = false;
+    const execCount = steps.filter((s) => s.executable).length;
     try {
-      const outcome: RunOutcome = await runRenameStatements(
-        statements,
+      const outcome: RunStepsOutcome = await runRenameSteps(
+        steps,
         async (sql) => {
           const a = await this.options.mgr.getAdapterFor(this.options.conn);
           await a.runQuery(sql);
         },
-        (index, total, statement) => {
-          this.post({ type: "progress", index, total, statement });
+        (step, total) => {
+          this.post({
+            type: "progress",
+            index: step.index,
+            total,
+            statement: step.sql,
+          });
         },
         () => this.cancelRequested,
       );
-      if ("failedAt" in outcome) {
+      if ("failed" in outcome) {
         this.post({
           type: "done",
           applied: outcome.applied,
-          total: statements.length,
-          failedAt: outcome.failedAt,
-          failedStatement: outcome.failedStatement,
-          error: outcome.error,
+          total: execCount,
+          failed: outcome.failed,
         });
         return;
       }
@@ -226,8 +257,8 @@ export class RenameForm {
         this.post({
           type: "done",
           applied: outcome.applied,
-          total: statements.length,
-          cancelled: true,
+          total: execCount,
+          cancelledAfter: outcome.cancelledAfter,
           remaining: outcome.remaining,
         });
         return;
@@ -235,22 +266,32 @@ export class RenameForm {
       this.post({
         type: "done",
         applied: outcome.applied,
-        total: statements.length,
+        total: execCount,
       });
       if (this.options.mode === "table" && this.options.onRenamed) {
-        // Extract the new name from the single statement we just ran.
-        const m = statements[statements.length - 1]!.match(/RENAME TO ("((?:[^"]|"")*)"|.+);$/);
-        if (m && m[2] !== undefined) {
-          this.options.onRenamed(m[2].replace(/""/g, '"'));
+        // Extract the new name from the last applied step's statement.
+        const lastApplied: NamedStep | undefined = outcome.applied[outcome.applied.length - 1];
+        if (lastApplied) {
+          const m = lastApplied.sql.match(
+            /RENAME TO ("((?:[^"]|"")*)"|.+);$/,
+          );
+          if (m && m[2] !== undefined) {
+            this.options.onRenamed(m[2].replace(/""/g, '"'));
+          }
         }
       }
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
       this.post({
         type: "done",
-        applied: 0,
-        total: statements.length,
-        error: m,
+        applied: [],
+        total: execCount,
+        failed: {
+          index: 0,
+          label: "rename",
+          sql: "",
+          error: m,
+        },
       });
     }
   }

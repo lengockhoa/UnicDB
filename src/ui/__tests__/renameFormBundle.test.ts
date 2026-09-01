@@ -1,6 +1,8 @@
 // src/ui/__tests__/renameFormBundle.test.ts — TASK-DBX06-003
 // jsdom bundle test for webview/renameFormMain.ts (same harness as
 // newTableFormBundle.test.ts). Requires `npm run compile` first.
+// DBX06-006 — render trigger/index rows, typed step labels, and confirm
+// dependency labels stay as text (no HTML sinks).
 // @vitest-environment jsdom
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -89,8 +91,9 @@ describeIf("webview/renameFormMain.ts bundle (DBX-06)", () => {
     dispatch({ type: "init", mode: "table", schema: "public", table: "users", oldName: "users" });
     dispatch({
       type: "analysis",
-      report: { views: [], fks: [], routines: [], collisions: [] },
+      report: { views: [], fks: [], routines: [], triggers: [], indexes: [], collisions: [] },
       statements: [],
+      steps: [],
       errors: ["Name collision — target already exists: customers (table)."],
     });
     const box = document.getElementById(
@@ -103,7 +106,7 @@ describeIf("webview/renameFormMain.ts bundle (DBX-06)", () => {
     expect(approve.disabled).toBe(true);
   });
 
-  it("clean analysis renders usage + statements and enables approve", () => {
+  it("clean analysis renders trigger/index rows, typed step labels, and enables approve", () => {
     loadBundle();
     dispatch({ type: "init", mode: "table", schema: "public", table: "users", oldName: "users" });
     dispatch({
@@ -112,38 +115,100 @@ describeIf("webview/renameFormMain.ts bundle (DBX-06)", () => {
         views: [{ name: "v_users", kind: "view" }],
         fks: [{ constraint: "fk1", fromTable: "orders" }],
         routines: [],
+        triggers: [{ name: "trg_audit", event: "INSERT", timing: "AFTER" }],
+        indexes: [
+          { name: "users_email_idx", isPrimary: false, isUnique: true, columns: ["email"] },
+        ],
         collisions: [],
       },
       statements: ['ALTER TABLE "public"."users" RENAME TO "customers";'],
+      steps: [
+        {
+          kind: "rename",
+          executable: true,
+          statement: 'ALTER TABLE "public"."users" RENAME TO "customers";',
+        },
+        { kind: "triggers", executable: false, statement: "" },
+        { kind: "indexes", executable: false, statement: "" },
+      ],
       errors: [],
     });
     const box = document.getElementById(
       "vsdb-rename-analysis",
     ) as HTMLDivElement;
     expect(box.textContent).toContain("v_users");
-    expect(box.textContent).toContain("RENAME TO");
+    expect(box.textContent).toContain("Trigger: trg_audit");
+    expect(box.textContent).toContain("Index: users_email_idx");
+    expect(box.textContent).toContain("Rename table");
+    expect(box.textContent).toContain(
+      'ALTER TABLE "public"."users" RENAME TO "customers";',
+    );
     const approve = document.getElementById(
       "vsdb-rename-approve",
     ) as HTMLButtonElement;
     expect(approve.disabled).toBe(false);
   });
 
-  it("done failure reports applied + failed statement", () => {
+  it("hostile trigger/index label stays as text — no img element", () => {
+    loadBundle();
+    dispatch({ type: "init", mode: "table", schema: "public", table: "users", oldName: "users" });
+    dispatch({
+      type: "analysis",
+      report: {
+        views: [],
+        fks: [],
+        routines: [],
+        triggers: [
+          { name: '<img src=x onerror=1>', event: "INSERT", timing: "AFTER" },
+        ],
+        indexes: [],
+        collisions: [],
+      },
+      statements: ['ALTER TABLE "public"."users" RENAME TO "customers";'],
+      steps: [
+        {
+          kind: "rename",
+          executable: true,
+          statement: 'ALTER TABLE "public"."users" RENAME TO "customers";',
+        },
+        { kind: "triggers", executable: false, statement: "" },
+      ],
+      errors: [],
+    });
+    const box = document.getElementById(
+      "vsdb-rename-analysis",
+    ) as HTMLDivElement;
+    expect(box.textContent).toContain('<img src=x onerror=1>');
+    expect(box.querySelectorAll("img").length).toBe(0);
+    // No HTML sinks anywhere in the compiled bundle.
+    expect(bundleSrc).not.toMatch(/\.innerHTML\s*=|insertAdjacentHTML/);
+  });
+
+  it("done failure reports applied + failed step label + error", () => {
     loadBundle();
     dispatch({ type: "init", mode: "table", schema: "public", table: "users", oldName: "users" });
     dispatch({
       type: "done",
-      applied: 0,
-      total: 1,
-      failedAt: 0,
-      failedStatement: 'ALTER TABLE "public"."users" RENAME TO "customers";',
-      error: "permission denied",
+      applied: [
+        {
+          index: 0,
+          label: "rename",
+          sql: 'ALTER TABLE "public"."users" RENAME TO "customers";',
+        },
+      ],
+      failed: {
+        index: 1,
+        label: "rename",
+        sql: 'ALTER TABLE "public"."customers" RENAME COLUMN "name" TO "full_name";',
+        error: "relation locked",
+      },
     });
     const box = document.getElementById(
       "vsdb-rename-progress",
     ) as HTMLDivElement;
     expect(box.textContent).toContain("FAILED");
-    expect(box.textContent).toContain("permission denied");
+    expect(box.textContent).toContain("rename");
+    expect(box.textContent).toContain("relation locked");
   });
 
   it("done cancel reports applied + remaining", () => {
@@ -151,9 +216,8 @@ describeIf("webview/renameFormMain.ts bundle (DBX-06)", () => {
     dispatch({ type: "init", mode: "table", schema: "public", table: "users", oldName: "users" });
     dispatch({
       type: "done",
-      applied: 1,
-      total: 3,
-      cancelled: true,
+      applied: [{ index: 0, label: "rename", sql: "A;" }],
+      cancelledAfter: 1,
       remaining: 2,
     });
     const box = document.getElementById(

@@ -79,4 +79,50 @@ Do not create a second command or bypass `guardPostgres`; extend the existing fo
 
 ## Executor Report
 
-<!-- Executor appends RED→GREEN evidence, changed files, verification output, and deviations here. -->
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT: |
+  npx vitest run src/core/ddl/__tests__/renameRunner.test.ts:
+    ❯ runRenameSteps (DBX06-006 — typed plan step runner) > executes only executable steps in declared order with typed progress
+      → runRenameSteps is not a function
+    ❯ runRenameSteps (DBX06-006 — typed plan step runner) > multi-step failure names every applied step and the failed step, no later run
+      → runRenameSteps is not a function
+    ❯ runRenameSteps (DBX06-006 — typed plan step runner) > cancel between steps reports applied + cancelledAfter + remaining
+      → runRenameSteps is not a function
+    Tests  3 failed | 3 passed (6)
+
+  npx vitest run src/ui/__tests__/renameFormHost.test.ts:
+    ❯ RenameForm (DBX06-006 …) > valid name calls all six lookups … result includes typed steps …
+      → TypeError: Cannot read properties of undefined (reading 'map')   (r.steps is undefined)
+    ❯ RenameForm (DBX06-006 …) > collision analysis clears stored steps …
+      → AssertionError: expected undefined to deeply equal []             (bad.steps is undefined)
+    Tests  2 failed | 4 passed (6)
+
+  Bundle/tableCommands RED covered by the same contract (analysis without `steps`
+  field and unnamed done outcomes) — bundle tests were gated on `npm run compile`,
+  so their RED is the compile-time contract above; the compiled-bundle expectations
+  (Trigger:/Index:/typed labels/sink regression) failed against the pre-change
+  webview which rendered neither triggers nor indexes nor step labels.
+Verification Output: |
+  npm run compile                          → esbuild: build complete (10 bundles incl. dist/renameForm.js)
+  npx vitest run <4 focused test files>    → Test Files 4 passed (4); Tests 65 passed (65)
+    - src/core/ddl/__tests__/renameRunner.test.ts   6 pass (ordered exec, named applied/failed, cancel boundary)
+    - src/ui/__tests__/renameFormHost.test.ts       9 pass (six lookups, "" column arg, typed steps in protocol,
+                                                      named applied step on clean run, named failed step on
+                                                      column-mode rejection, stale-plan clearing after collision)
+    - src/ui/__tests__/tableCommands.test.ts       44 pass (existing DBX-08 gates + new vsdb.renameTable
+                                                      tableDdl:false exact-message/no-side-effect case)
+    - src/ui/__tests__/renameFormBundle.test.ts     6 pass (Trigger:/Index: rows, "Rename table: <SQL>" label,
+                                                      approve enablement, hostile <img> label stays text, no
+                                                      .innerHTML=/insertAdjacentHTML in bundle, named-step done)
+  npm run typecheck                        → tsc --noEmit clean
+  npm run compile (second run)             → esbuild: build complete
+  Extra sweep: src/core/ddl/__tests__/ + aiChatPanel.test.ts + aiChatPanelPlan*.test.ts
+  → 7 files, 89 tests, all pass (aiChatPanel still uses unchanged runRenameStatements).
+Status: PASS
+Note: runRenameSteps reports step labels from operation.kind ("Rename table"/"Rename column");
+      done message shape is named-step (applied[] + failed/cancelledAfter), legacy runRenameStatements
+      kept untouched for aiChatPanel.
+
