@@ -1,6 +1,6 @@
 # TASK-ARP05-001 — PostgreSQL pool isolation, failed-connect/close release, cancel recovery
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §2–§4 (ARP-05.1)

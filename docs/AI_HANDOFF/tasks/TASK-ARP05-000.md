@@ -1,6 +1,6 @@
 # TASK-ARP05-000 — ADR: cross-driver timeout, pool, and resilience contract (mandatory gate)
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §1–§3
