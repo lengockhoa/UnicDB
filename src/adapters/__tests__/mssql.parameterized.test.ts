@@ -291,3 +291,193 @@ describe("MsSqlAdapter.literal — backward compat (TASK-002)", () => {
     ).toBe("'test'");
   });
 });
+
+// ---- TASK-RLX02-002: cancelActiveQuery — non-cursor cancellation seam -------
+//
+// Same wiring pattern as makeWiredAdapter(), but the fake connection's
+// execSql deliberately does NOT settle the request: the test holds the
+// request callback and decides when (and with what error) the request
+// completes. That exposes the exact window cancelActiveQuery() operates in —
+// a request that is live in `activeRequests` while its caller is still
+// awaiting the result.
+
+function makeDeferredAdapter(): {
+  adapter: MsSqlAdapter;
+  execSql: ReturnType<typeof vi.fn>;
+  closeConnection: ReturnType<typeof vi.fn>;
+  requests: TediousRequest[];
+  settle: (
+    request: TediousRequest,
+    error?: Error | null,
+    rowCount?: number,
+  ) => void;
+  emitMetadata: (request: TediousRequest) => void;
+} {
+  const adapter = new MsSqlAdapter(cfg(), "pw");
+  const requests: TediousRequest[] = [];
+  addParameterSpy = vi.spyOn(TediousRequestCtor.prototype, "addParameter");
+  const originalNewRequest = (
+    MsSqlAdapter.prototype as unknown as {
+      newRequest: (
+        this: MsSqlAdapter,
+        sql: string,
+        params?: unknown,
+      ) => TediousRequest;
+    }
+  ).newRequest;
+  (adapter as unknown as { newRequest: unknown }).newRequest = (
+    sql: string,
+    params?: unknown,
+  ) => {
+    const request = originalNewRequest.call(adapter, sql, params);
+    requests.push(request);
+    return request;
+  };
+  const execSql = vi.fn((_request: TediousRequest) => {
+    // Deferred on purpose — completion is driven by settle() below.
+  });
+  const closeConnection = vi.fn();
+  (adapter as unknown as { connection: unknown }).connection = {
+    execSql,
+    close: closeConnection,
+  };
+  (adapter as unknown as { connected: boolean }).connected = true;
+  const settle = (
+    request: TediousRequest,
+    error: Error | null = null,
+    rowCount = 0,
+  ): void => {
+    (
+      request as unknown as {
+        callback:
+          | ((error: Error | null | undefined, rowCount?: number) => void)
+          | null;
+      }
+    ).callback?.(error, rowCount);
+  };
+  const emitMetadata = (request: TediousRequest): void => {
+    request.emit("columnMetadata", []);
+  };
+  return { adapter, execSql, closeConnection, requests, settle, emitMetadata };
+}
+
+function activeRequestsOf(adapter: MsSqlAdapter): Set<TediousRequest> {
+  return (
+    adapter as unknown as { activeRequests: Set<TediousRequest> }
+  ).activeRequests;
+}
+
+function operationQueueOf(adapter: MsSqlAdapter): Promise<unknown> {
+  return (adapter as unknown as { operationQueue: Promise<unknown> })
+    .operationQueue;
+}
+
+describe("MsSqlAdapter.cancelActiveQuery (TASK-RLX02-002)", () => {
+  it("cancelActiveQuery cancels exactly one deferred non-streaming Request", async () => {
+    const { adapter, requests, settle, closeConnection } =
+      makeDeferredAdapter();
+    const closeAdapterSpy = vi.spyOn(adapter, "close");
+
+    const runPromise = callExecute(adapter, "SELECT 1 AS one");
+    await vi.waitFor(() => expect(requests.length).toBe(1));
+    const request = requests[0];
+    // Pre-state: the deferred request is the one live non-cursor request.
+    expect(activeRequestsOf(adapter).has(request)).toBe(true);
+
+    const cancelSpy = vi.spyOn(request, "cancel");
+    await adapter.cancelActiveQuery();
+
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
+    expect(closeConnection).not.toHaveBeenCalled();
+    expect(closeAdapterSpy).not.toHaveBeenCalled();
+
+    // Completion still settles the caller and removes the exact request.
+    settle(request, null, 0);
+    expect(await runPromise).toMatchObject({ rows: [] });
+    expect(activeRequestsOf(adapter).has(request)).toBe(false);
+  });
+
+  it("request.cancel throw is swallowed and completion still cleans up", async () => {
+    const { adapter, requests, settle } = makeDeferredAdapter();
+
+    const runPromise = callExecute(adapter, "SELECT 1 AS one");
+    await vi.waitFor(() => expect(requests.length).toBe(1));
+    const request = requests[0];
+    const cancelSpy = vi
+      .spyOn(request, "cancel")
+      .mockImplementation(() => {
+        throw new Error("cancel raced with completion");
+      });
+
+    // The seam resolves even though cancel() threw.
+    await expect(adapter.cancelActiveQuery()).resolves.toBeUndefined();
+
+    // Later callback completion removes the exact request.
+    settle(request, null, 0);
+    await runPromise;
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
+    expect(activeRequestsOf(adapter).size).toBe(0);
+
+    // Repeated cancellation after settlement resolves silently.
+    await expect(adapter.cancelActiveQuery()).resolves.toBeUndefined();
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("empty or already-completed activeRequests is a no-op", async () => {
+    const { adapter, execSql, requests, settle, closeConnection } =
+      makeDeferredAdapter();
+
+    // Empty set: no execSql, no close, operationQueue untouched.
+    const queueBefore = operationQueueOf(adapter);
+    await adapter.cancelActiveQuery();
+    expect(execSql).not.toHaveBeenCalled();
+    expect(closeConnection).not.toHaveBeenCalled();
+    expect(operationQueueOf(adapter)).toBe(queueBefore);
+
+    // Already-completed request: it is not re-cancelled.
+    const runPromise = callExecute(adapter, "SELECT 1 AS one");
+    await vi.waitFor(() => expect(requests.length).toBe(1));
+    settle(requests[0], null, 0);
+    await runPromise;
+    expect(execSql).toHaveBeenCalledTimes(1);
+    expect(activeRequestsOf(adapter).size).toBe(0);
+
+    const queueAfterRun = operationQueueOf(adapter);
+    await adapter.cancelActiveQuery();
+    expect(execSql).toHaveBeenCalledTimes(1);
+    expect(closeConnection).not.toHaveBeenCalled();
+    expect(operationQueueOf(adapter)).toBe(queueAfterRun);
+  });
+
+  it("streaming BatchedQuery cancellation remains request-local", async () => {
+    const { adapter, execSql, requests, emitMetadata, closeConnection } =
+      makeDeferredAdapter();
+
+    const runPromise = adapter.runQuery("SELECT * FROM dbo.vsdb_big");
+    await vi.waitFor(() => expect(requests.length).toBe(1));
+    const request = requests[0];
+    emitMetadata(request); // tedious emits columnMetadata before rows flow
+    const run = await runPromise;
+    const batched = run.batched;
+    expect(batched).toBeDefined();
+    expect(activeRequestsOf(adapter).has(request)).toBe(true);
+
+    const cancelSpy = vi.spyOn(request, "cancel");
+    await batched!.cancel();
+
+    // Cursor cancel is request-local: cancels its own request once and
+    // deletes it from activeRequests.
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
+    expect(activeRequestsOf(adapter).has(request)).toBe(false);
+
+    // The adapter-level seam neither re-cancels the cursor request, closes
+    // the connection, nor manufactures new SQL.
+    await adapter.cancelActiveQuery();
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
+    expect(closeConnection).not.toHaveBeenCalled();
+    expect(execSql).toHaveBeenCalledTimes(1);
+
+    // The cancelled stream drains to EOF without pending work.
+    await expect(batched!.fetchBatch()).resolves.toBeNull();
+  });
+});

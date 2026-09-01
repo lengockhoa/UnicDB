@@ -416,3 +416,4 @@ Plan + 4 task contracts (PLAN_AIX05, INDEX_AIX05, 4 tasks). Feature commit 0fe44
 - Files: `docs/AI_HANDOFF/PLAN.md`, `docs/AI_HANDOFF/INDEX.md`, `docs/AI_HANDOFF/ACTIVE.md`, and `docs/AI_HANDOFF/tasks/TASK-RLX-001.md` through `TASK-RLX-003.md`.
 - Quality gate: independent plan review approved the roadmap; the PID-window cancel no-op edge case and package-script evidence anchor were incorporated before finalizing.
 - Verification: handoff structural and task-size checks plus `git diff --check` passed; planning-only work, with no product code, tests, commits, or releases changed.
+- Follow-up planning audit: deferred creating a replacement handoff cycle because `TASK-AIX07-003` remains marked `blocked`; preserve its review trail and close that state before overwriting active planning artifacts.

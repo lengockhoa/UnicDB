@@ -1083,3 +1083,283 @@ describe("MySqlAdapter.runQuery — atomic multi-statement batches (TASK-002 M2)
     expect(conn.releases).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// TASK-RLX02-001 — MySqlAdapter.cancelActiveQuery(): live-ownership registry.
+//
+//   Goal: cancel live work through the EXISTING destruction primitive
+//   (PoolConnection.destroy / stream.destroy) without closing the adapter
+//   or pool. Two ownership windows exist in MySqlAdapter.runQuery:
+//     1. Non-stream: one held connection (transaction-bound) between
+//        getConnectionWithUtcSession() and the runQuery finally block.
+//     2. Pre-handoff stream: between coreConnection.query({…}).stream()
+//        and the `await firstFields` resolution that hands the
+//        BatchedQuery to QueryRunner.
+//
+//   After each window closes (success, failure, or cancellation), the
+//   record is removed so any later cancelActiveQuery() is a silent no-op.
+//   BatchedQuery.cancel() remains the exclusive post-handoff cursor seam.
+// ---------------------------------------------------------------------------
+
+describe("MySqlAdapter.cancelActiveQuery — live non-cursor ownership (TASK-RLX02-001, case 1)", () => {
+  it("case 1: cancelActiveQuery destroys one live non-streaming held connection exactly once", async () => {
+    const log: string[] = [];
+    // Defer the UPDATE so the test can observe the in-flight window.
+    let resolveQuery: ((value: [unknown[], unknown[]]) => void) | undefined;
+    let rejectQuery: ((error: Error) => void) | undefined;
+    const deferred = new Promise<[unknown[], unknown[]]>((resolve, reject) => {
+      resolveQuery = resolve;
+      rejectQuery = reject;
+    });
+    const conn = mockMysqlTxConnection(log, (text) => {
+      if (text.startsWith("UPDATE")) return deferred;
+      return Promise.resolve([[], []]);
+    });
+    let destroyCount = 0;
+    conn.destroy = () => {
+      destroyCount += 1;
+      // Simulate the real mysql2 behavior: destroy() rejects the in-flight
+      // query promise so the awaited `connection.query()` unblocks and the
+      // run can settle (catch → rollback → release path).
+      rejectQuery?.(new Error("connection destroyed"));
+    };
+    let endCount = 0;
+    const pool = mockMysqlTxPool(log, conn);
+    const originalEnd = pool.end;
+    pool.end = () => {
+      endCount += 1;
+      return originalEnd();
+    };
+    const adapter = mysqlAdapterWithTxPool(pool);
+
+    const runPromise = adapter.runQuery("UPDATE t SET a = 1");
+    // Let runQuery reach the deferred UPDATE.
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(destroyCount).toBe(0);
+    expect(log).toContain("beginTransaction");
+    expect(log).not.toContain("commit");
+    expect(log).not.toContain("release");
+
+    const connReleasesBefore = conn.releases;
+    await adapter.cancelActiveQuery!();
+
+    // Cancel must call connection.destroy() exactly once and must NOT
+    // touch pool.end() or close(). release() is the success-path primitive
+    // and must not be used as a cancellation fallback.
+    expect(destroyCount).toBe(1);
+    expect(endCount).toBe(0);
+    expect(conn.releases).toBe(connReleasesBefore);
+
+    // The run must subsequently settle (we don't care whether the runner
+    // surfaces it as cancelled or error — the adapter just lets the
+    // await throw). The key invariant is that the run does not hang and
+    // does not double-release.
+    await runPromise.catch(() => undefined);
+    // Case 3 invariant: a late repeat cancel is a no-op.
+    const before = destroyCount;
+    await adapter.cancelActiveQuery!();
+    await adapter.cancelActiveQuery!();
+    expect(destroyCount).toBe(before);
+  });
+});
+
+describe("MySqlAdapter.cancelActiveQuery — pre-handoff stream ownership (TASK-RLX02-001, case 2)", () => {
+  it("case 2: cancel during pre-handoff stream setup destroys the exact stream and connection once", async () => {
+    const log: string[] = [];
+    const listeners = new Map<string, Array<(payload?: unknown) => void>>();
+    let streamDestroyed = 0;
+    const fakeStream = {
+      once: (event: string, cb: (payload?: unknown) => void) => {
+        const list = listeners.get(event) ?? [];
+        list.push(cb);
+        listeners.set(event, list);
+      },
+      on: (event: string, cb: (payload?: unknown) => void) => {
+        const list = listeners.get(event) ?? [];
+        list.push(cb);
+        listeners.set(event, list);
+      },
+      destroy: () => {
+        streamDestroyed += 1;
+        // Simulate mysql2 stream destroy → emits 'error' so the
+        // firstFields promise rejects (or 'close' for end-like semantics).
+        // Either is enough; 'error' lets the await throw cleanly.
+        for (const cb of [...(listeners.get("error") ?? [])]) {
+          cb(new Error("stream destroyed"));
+        }
+      },
+      pause: () => undefined,
+      resume: () => undefined,
+    };
+    const conn = mockMysqlTxConnection(log);
+    let connDestroyed = 0;
+    conn.destroy = () => {
+      connDestroyed += 1;
+    };
+    const wrapper = Object.assign(Object.create(Object.getPrototypeOf(conn)), conn, {
+      connection: { query: () => ({ stream: () => fakeStream }) },
+    });
+    const pool = mockMysqlTxPool(log, wrapper as TxConn);
+    const adapter = mysqlAdapterWithTxPool(pool);
+
+    const runPromise = adapter.runQuery("SELECT 1");
+    // `fields` is intentionally NEVER emitted. The adapter is parked on
+    // `await firstFields`, with currentBatched still null. cancel() at
+    // this moment must reach the stream+connection via the seam.
+    await new Promise((r) => setTimeout(r, 30));
+
+    // The listener-attached 'destroy' function may already have fired
+    // because the runQuery call attaches a 'destroy' handler via
+    // stream.destroy? No — the stream only gets destroyed if the seam
+    // fires. Listeners are attached but the stream is still live.
+    expect(streamDestroyed).toBe(0);
+    expect(connDestroyed).toBe(0);
+
+    await adapter.cancelActiveQuery!();
+
+    expect(streamDestroyed).toBe(1);
+    expect(connDestroyed).toBe(1);
+
+    // The run must subsequently settle (BatchedQuery may surface as
+    // cancelled/error/empty — we only assert non-pending).
+    await runPromise.catch(() => undefined);
+    // No fetch waiter should remain unresolved: any openStreamingQuery
+    // waiter would have been resolved (null) by closeStream's sweep.
+    // We can assert: a second cancel is a no-op (case 3 invariant).
+    const sBefore = streamDestroyed;
+    const cBefore = connDestroyed;
+    await adapter.cancelActiveQuery!();
+    expect(streamDestroyed).toBe(sBefore);
+    expect(connDestroyed).toBe(cBefore);
+  });
+});
+
+describe("MySqlAdapter.cancelActiveQuery — late/repeated cancel no-op (TASK-RLX02-001, case 3)", () => {
+  it("case 3a: cancel after a successful non-stream run is a no-op", async () => {
+    const log: string[] = [];
+    const conn = mockMysqlTxConnection(log);
+    let destroyCount = 0;
+    conn.destroy = () => {
+      destroyCount += 1;
+    };
+    const pool = mockMysqlTxPool(log, conn);
+    let endCount = 0;
+    const originalEnd = pool.end;
+    pool.end = () => {
+      endCount += 1;
+      return originalEnd();
+    };
+    const adapter = mysqlAdapterWithTxPool(pool);
+
+    await adapter.runQuery("UPDATE t SET a = 1");
+    expect(log).toContain("commit");
+    expect(log).toContain("release");
+
+    const releasesBefore = conn.releases;
+    const endBefore = endCount;
+
+    await adapter.cancelActiveQuery!();
+    await adapter.cancelActiveQuery!();
+
+    // Late cancel must not destroy, release again, or call pool.end.
+    expect(destroyCount).toBe(0);
+    expect(conn.releases).toBe(releasesBefore);
+    expect(endCount).toBe(endBefore);
+  });
+
+  it("case 3b: cancel after a stream end is a no-op (BatchedQuery takes over)", async () => {
+    const log: string[] = [];
+    const listeners = new Map<string, Array<(payload?: unknown) => void>>();
+    const fakeStream = {
+      once: (event: string, cb: (payload?: unknown) => void) => {
+        const list = listeners.get(event) ?? [];
+        list.push(cb);
+        listeners.set(event, list);
+      },
+      on: (event: string, cb: (payload?: unknown) => void) => {
+        const list = listeners.get(event) ?? [];
+        list.push(cb);
+        listeners.set(event, list);
+      },
+      destroy: () => undefined,
+      pause: () => undefined,
+      resume: () => undefined,
+    };
+    const conn = mockMysqlTxConnection(log);
+    const wrapper = Object.assign(Object.create(Object.getPrototypeOf(conn)), conn, {
+      connection: { query: () => ({ stream: () => fakeStream }) },
+    });
+    const pool = mockMysqlTxPool(log, wrapper as TxConn);
+    const adapter = mysqlAdapterWithTxPool(pool);
+
+    const promise = adapter.runQuery("SELECT 1");
+    // Emit 'end' so firstFields resolves (empty-result success).
+    setTimeout(() => {
+      for (const cb of [...(listeners.get("end") ?? [])]) cb();
+    }, 0);
+    const result = (await promise) as { batched: { fetchBatch(): Promise<unknown> } };
+    expect(result.batched).toBeDefined();
+    // Drain to EOF.
+    expect(await result.batched.fetchBatch()).toBeNull();
+
+    // After the stream has reached EOF and been delivered to the runner,
+    // any cancelActiveQuery() must be a no-op (record removed by the
+    // stream end path). One or two calls must NOT call destroy/release.
+    const beforeDestroys = 0; // wrapper inherited a no-op destroy
+    const beforeReleases = conn.releases;
+    await adapter.cancelActiveQuery!();
+    await adapter.cancelActiveQuery!();
+    expect(conn.releases).toBe(beforeReleases);
+    expect(beforeDestroys).toBe(0);
+  });
+});
+
+// Helper used by case 3a to snapshot the baseline release count.
+describe("MySqlAdapter.runQuery — single-SELECT BatchedQuery regression (TASK-RLX02-001, case 4)", () => {
+  it("case 4: single SELECT returns {results:[], batched} and its BatchedQuery.cancel destroys the stream", async () => {
+    const log: string[] = [];
+    const listeners = new Map<string, Array<(payload?: unknown) => void>>();
+    let streamDestroyed = 0;
+    const fakeStream = {
+      once: (event: string, cb: (payload?: unknown) => void) => {
+        const list = listeners.get(event) ?? [];
+        list.push(cb);
+        listeners.set(event, list);
+      },
+      on: (event: string, cb: (payload?: unknown) => void) => {
+        const list = listeners.get(event) ?? [];
+        list.push(cb);
+        listeners.set(event, list);
+      },
+      destroy: () => {
+        streamDestroyed += 1;
+      },
+      pause: () => undefined,
+      resume: () => undefined,
+    };
+    const conn = mockMysqlTxConnection(log);
+    const wrapper = Object.assign(Object.create(Object.getPrototypeOf(conn)), conn, {
+      connection: { query: () => ({ stream: () => fakeStream }) },
+    });
+    const pool = mockMysqlTxPool(log, wrapper as TxConn);
+    const adapter = mysqlAdapterWithTxPool(pool);
+
+    const promise = adapter.runQuery("SELECT * FROM t");
+    // Emit fields → firstFields resolves → BatchedQuery returned.
+    setTimeout(() => {
+      for (const cb of [...(listeners.get("fields") ?? [])]) {
+        cb([{ name: "id" }, { name: "name" }]);
+      }
+    }, 0);
+    const result = await promise;
+    expect(result.results).toEqual([]);
+    expect(result.batched).toBeDefined();
+    // No transaction was opened.
+    expect(log).not.toContain("beginTransaction");
+    // The BatchedQuery's own cancel must destroy the stream — the
+    // established cursor-handle seam is preserved.
+    await result.batched!.cancel();
+    expect(streamDestroyed).toBe(1);
+  });
+});

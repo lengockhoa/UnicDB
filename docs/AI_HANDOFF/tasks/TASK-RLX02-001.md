@@ -64,5 +64,71 @@ Use the existing fake pool and stream fixture in `adapterQueryShape.test.ts`; do
 ---
 
 ## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  npx vitest run src/adapters/__tests__/adapterQueryShape.test.ts (pre-implementation):
 
-(pending)
+   ❯ src/adapters/__tests__/adapterQueryShape.test.ts  (52 tests | 4 failed) 82ms
+   ❯ ... > case 1: cancelActiveQuery destroys one live non-streaming held connection exactly once
+     → adapter.cancelActiveQuery is not a function
+   ❯ ... > case 2: cancel during pre-handoff stream setup destroys the exact stream and connection once
+     → adapter.cancelActiveQuery is not a function
+   ❯ ... > case 3a: cancel after a successful non-stream run is a no-op
+     → adapter.cancelActiveQuery is not a function
+   ❯ ... > case 3b: cancel after a stream end is a no-op (BatchedQuery takes over)
+     → adapter.cancelActiveQuery is not a function
+
+   FAIL  ... > case 1 ... TypeError: adapter.cancelActiveQuery is not a function
+    ❯ src/adapters/__tests__/adapterQueryShape.test.ts:1145:19
+       1145|     await adapter.cancelActiveQuery!();
+
+   Test Files  1 failed (1)
+        Tests  4 failed | 48 passed (52)
+
+  (case 4 regression was green pre-task as expected — it pins existing behavior.)
+Verification Output: |
+  1) npx vitest run src/adapters/__tests__/adapterQueryShape.test.ts src/adapters/__tests__/mysql.integration.test.ts src/adapters/__tests__/mysql.sortQuery.test.ts
+       ✓ src/adapters/__tests__/mysql.sortQuery.test.ts  (7 tests) 2ms
+       ✓ src/adapters/__tests__/adapterQueryShape.test.ts  (52 tests) 82ms
+       Test Files  2 passed (2)
+            Tests  59 passed (59)
+     Note: mysql.integration.test.ts is excluded by the default vitest config
+     (vitest.config.ts excludes **/*.integration.test.ts; it is gated behind
+     VSDB_IT=1 + a live server) — pre-existing behavior, command exits 0.
+
+  2) npm run typecheck
+     > tsc --noEmit   (clean, no output)
+
+  3) npm run compile
+     dist/webview.js 2.2mb / dist/webview.css 34.2kb … esbuild: build complete
+
+  Extra regression net (not a task command): npx vitest run (full suite)
+     Test Files  214 passed | 1 skipped (215)
+          Tests  2830 passed | 2 skipped (2832)
+Status: PASS
+Note: |
+  Implementation notes:
+   - `activeCancelClosures = new Set<() => void>` records exactly two windows:
+     the held non-streaming transaction connection (registered right after
+     getConnectionWithUtcSession, removed in runQuery's finally) and the
+     pre-handoff stream in openStreamingQuery (registered when the stream
+     exists; self-removes on fire, removed when firstFields settles — fields/
+     end = BatchedQuery handoff, error = terminal failure).
+   - `cancelActiveQuery()` snapshots the set and invokes each closure
+     best-effort (individual throws swallowed); destroy-or-release is made
+     exclusive on the held-connection path (`connectionDestroyed` flag) and
+     the terminal catch path skips redundant stream/connection teardown when
+     the pre-handoff record already fired (`preHandoffCancelled`), so
+     destroy() is counted exactly once and never released a second time.
+   - Never calls pool.end(), adapter close(), or any KILL QUERY — only
+     connection.destroy() / stream.destroy() (+ firstFields/waiter settle so
+     the awaiting setup path never hangs).
+   - DbAdapter.runQuery(sql: string): Promise<RunResult> unchanged;
+     BatchedQuery.cancel()/close() untouched (post-handoff seam exclusive).
+   - resolveQuery in test 1 is assigned-but-unused by design (kept for the
+     deferred-promise executor shape); typecheck is clean.
+  Reviewer verdict pending — reviewer session must confirm APPROVED /
+  APPROVED-WITH-MINOR for the final acceptance checkbox.
+

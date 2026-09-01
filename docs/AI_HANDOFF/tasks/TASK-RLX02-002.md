@@ -65,4 +65,62 @@ No `lint` script exists in `package.json`.
 
 ## Executor Report
 
-(pending)
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  npx vitest run src/adapters/__tests__/mssql.parameterized.test.ts (before implementation):
+
+   FAIL  src/adapters/__tests__/mssql.parameterized.test.ts > MsSqlAdapter.cancelActiveQuery (TASK-RLX02-002) > cancelActiveQuery cancels exactly one deferred non-streaming Request
+  TypeError: adapter.cancelActiveQuery is not a function
+   ❯ src/adapters/__tests__/mssql.parameterized.test.ts:384:26
+
+   FAIL  ... > request.cancel throw is swallowed and completion still cleans up
+  TypeError: adapter.cancelActiveQuery is not a function
+   ❯ src/adapters/__tests__/mssql.parameterized.test.ts:413:26
+
+   FAIL  ... > empty or already-completed activeRequests is a no-op
+  TypeError: adapter.cancelActiveQuery is not a function
+   ❯ src/adapters/__tests__/mssql.parameterized.test.ts:432:19
+
+   FAIL  ... > streaming BatchedQuery cancellation remains request-local
+  TypeError: adapter.cancelActiveQuery is not a function
+   ❯ src/adapters/__tests__/mssql.parameterized.test.ts:475:19
+
+   Test Files  1 failed (1)
+        Tests  4 failed | 8 passed (12)
+
+  RED reason is exactly the missing seam (`cancelActiveQuery is not a function`); the 8 pre-existing TASK-002 tests stayed green, so the failures isolate to the new behavior.
+Verification Output: |
+  Command 1 — npx vitest run src/adapters/__tests__/mssql.parameterized.test.ts src/adapters/__tests__/mssql.integration.test.ts src/adapters/__tests__/mssql.sortQuery.test.ts
+
+   ✓ src/adapters/__tests__/mssql.sortQuery.test.ts  (7 tests) 2ms
+   ✓ src/adapters/__tests__/mssql.parameterized.test.ts  (12 tests) 214ms
+   (mssql.integration.test.ts: describe.skipIf(!VSDB_IT) — 0 collected without VSDB_IT=1)
+
+   Test Files  2 passed (2)
+        Tests  19 passed (19)
+
+  Command 2 — npm run typecheck
+
+   > vsdb@1.30.0 typecheck
+   > tsc --noEmit
+   (exit 0, no errors)
+
+  Command 3 — npm run compile
+
+   dist/webview.js.map    4.0mb
+   dist/webview.css.map  65.2kb
+   ⚡ Done in 153ms
+   esbuild: build complete
+   (exit 0)
+
+  Focused file alone (step-2 GREEN gate): 12 passed (12) — 8 pre-existing TASK-002 tests + 4 new TASK-RLX02-002 tests.
+Status: PASS
+Note: |
+  Implementation notes for the reviewer:
+  - `cancelActiveQuery()` snapshots `[...this.activeRequests]` before iterating (a request can complete and remove itself mid-loop), calls `request.cancel()` in a try/catch per entry, and returns early when the set is empty. It never touches `this.connection`, `close()`, `execSql`, `operationQueue`, or any SQL-based cancellation — mirroring the proven shutdown loop in `close()`.
+  - Test #1 uses the file's existing `makeWiredAdapter` wiring pattern extended into `makeDeferredAdapter()`: the fake `execSql` deliberately does NOT auto-settle, so the test holds `request.callback` and drives completion explicitly — this exposes the exact mid-flight window the seam targets. The real tedious `Request` is used (per the established prototype-spy pattern), so `cancel()`/`on()` are real.
+  - Test #4 (regression) drives the real streaming path via `runQuery()` on a single SELECT, asserts `BatchedQuery.cancel()` cancels its own request once and deletes it, and that the adapter seam afterwards is a full no-op (no re-cancel, no `connection.close`, no extra `execSql`).
+  - No `lint` script exists in package.json, per the task file; typecheck + compile are the project gates and both pass.
+  - No commit made — files left as-is in the worktree per instructions. `dist/` artifacts from `npm run compile` are untracked build output.

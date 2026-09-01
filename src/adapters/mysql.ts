@@ -107,6 +107,20 @@ export class MySqlAdapter implements DbAdapter {
    * instead of racing a second `SET time_zone` onto the wire.
    */
   private readonly utcInitializing = new WeakMap<object, Promise<void>>();
+  /**
+   * TASK-RLX02-001 — live non-cursor cancellation records. Each record is a
+   * cancel closure for one ownership window that is open RIGHT NOW:
+   *   - the held non-streaming transaction connection between
+   *     getConnectionWithUtcSession() and runQuery's `finally` release, and
+   *   - the pre-handoff stream between coreConnection.query({…}).stream()
+   *     and the `await firstFields` resolution inside openStreamingQuery.
+   * Each record removes ITSELF in its own terminal path (success, failure,
+   * close, cancellation) so a late or repeated cancelActiveQuery() is a
+   * silent no-op and never touches work that has already settled. The
+   * post-handoff BatchedQuery seam (BatchedQuery.cancel) is exclusive and
+   * never registered here.
+   */
+  private readonly activeCancelClosures = new Set<() => void>();
 
   constructor(
     private readonly cfg: ConnectionConfig,
@@ -237,6 +251,26 @@ export class MySqlAdapter implements DbAdapter {
     // above returns BEFORE this loop and must never be wrapped in a
     // transaction — a held cursor would pin the connectionLimit:1 pool.
     const connection = await this.getConnectionWithUtcSession();
+    // TASK-RLX02-001 — live non-cursor ownership window. The held
+    // transaction connection is cancellable via PoolConnection.destroy()
+    // from the moment it is checked out until the `finally` below closes
+    // the window. destroy-or-release is exclusive (mirrors
+    // openStreamingQuery's `released` flag) so a cancelled connection is
+    // never released a second time after destruction.
+    let connectionDestroyed = false;
+    const cancelHeldConnection = (): void => {
+      // Self-remove first: this closure fires at most once, and removing it
+      // here keeps a late repeat cancel a silent no-op.
+      this.activeCancelClosures.delete(cancelHeldConnection);
+      if (connectionDestroyed) return;
+      connectionDestroyed = true;
+      try {
+        connection.destroy();
+      } catch {
+        // Best-effort — cancellation never masks the awaiting run.
+      }
+    };
+    this.activeCancelClosures.add(cancelHeldConnection);
     try {
       await connection.beginTransaction();
       for (const statement of statements) {
@@ -259,7 +293,12 @@ export class MySqlAdapter implements DbAdapter {
       }
       throw error;
     } finally {
-      connection.release();
+      // TASK-RLX02-001 — exact terminal path: the window closes on BOTH
+      // success and failure, so a later cancelActiveQuery() is a no-op.
+      this.activeCancelClosures.delete(cancelHeldConnection);
+      if (!connectionDestroyed) {
+        connection.release();
+      }
     }
     return { results };
   }
@@ -294,6 +333,38 @@ export class MySqlAdapter implements DbAdapter {
       commit: () => finish("commit"),
       rollback: () => finish("rollback"),
     };
+  }
+
+  /**
+   * TASK-RLX02-001 — DbAdapter.cancelActiveQuery seam (optional). Best-effort
+   * cancel of the LIVE non-cursor ownership windows this adapter currently
+   * holds:
+   *   - the held non-streaming transaction connection (PoolConnection.destroy),
+   *   - the pre-handoff stream inside openStreamingQuery
+   *     (stream.destroy() + promiseConnection.destroy()).
+   *
+   * Contract (mirrors PostgresAdapter.cancelActiveQuery):
+   *  - NEVER closes the adapter or pool — only the current statement's
+   *    connection/stream is destroyed.
+   *  - NEVER touches the BatchedQuery cursor — post-handoff cancellation goes
+   *    exclusively through BatchedQuery.cancel(); the runner only calls this
+   *    seam when no currentBatched exists.
+   *  - Idempotent: an empty live set (window closed / nothing running)
+   *    resolves without doing anything.
+   *  - Best-effort: an individual closure failure is swallowed; cancellation
+   *    must never surface as a new error on top of the in-flight statement.
+   */
+  async cancelActiveQuery(): Promise<void> {
+    // Snapshot first: a closure self-removes when it fires, so iterating a
+    // copy avoids mutating the Set while looping.
+    const closures = [...this.activeCancelClosures];
+    for (const cancel of closures) {
+      try {
+        cancel();
+      } catch {
+        // ignore — best-effort for each record.
+      }
+    }
   }
 
   async listSchemas(includeSystem: boolean): Promise<SchemaInfo[]> {
@@ -603,6 +674,11 @@ export class MySqlAdapter implements DbAdapter {
     // array contract as pg.
     const stream = coreQuery.stream();
     const buffer: MySqlRow[] = [];
+    // TASK-RLX02-001 — assigned inside the firstFields executor below so the
+    // pre-handoff cancellation record can settle the awaiting setup path
+    // deterministically after destroying the stream (a Promise's second
+    // settle call is a no-op, so late 'fields'/'end' cannot double-settle).
+    let rejectFirstFields: ((error: Error) => void) | undefined;
     // TASK-005 (M3) — the promise MUST settle on every terminal stream path.
     // Before this, only `fields` (resolve) and `error` (reject) settled it, so
     // a stream that ended without ever emitting either hung openStreamingQuery
@@ -612,6 +688,10 @@ export class MySqlAdapter implements DbAdapter {
     // columns stay [] and the resolve lets the normal streamDone/deliver
     // machinery finish and release the connection.
     const firstFields = new Promise<void>((resolve, reject) => {
+      // TASK-RLX02-001 — hoisted so the pre-handoff cancellation record can
+      // settle the awaiting setup path deterministically after destroying
+      // the stream (a Promise's second settle call is a no-op).
+      rejectFirstFields = reject;
       stream.once("fields", (fields: FieldPacket[]) => {
         columns = fields.map((field) => field.name);
         resolve();
@@ -633,6 +713,10 @@ export class MySqlAdapter implements DbAdapter {
     let streamDone = false;
     let released = false;
     let lastError: Error | undefined;
+    // TASK-RLX02-001 — set by cancelPreHandoffStream so the terminal catch
+    // path after `await firstFields` never destroys the already-cancelled
+    // stream/connection a second time (destroy is counted exactly once).
+    let preHandoffCancelled = false;
 
     const releaseConnection = (): void => {
       if (released) return;
@@ -706,6 +790,43 @@ export class MySqlAdapter implements DbAdapter {
       destroyConnection();
     };
 
+    // TASK-RLX02-001 — pre-handoff cancellation record (TASK-RLX02 §3.1).
+    // openStreamingQuery has one short ownership window between
+    // coreConnection.query({…}).stream() and the `await firstFields`
+    // resolution that hands the BatchedQuery to QueryRunner. The record is
+    // registered the moment the stream exists and is removed by its EXACT
+    // terminal path:
+    //   - cancel fires (below) → self-remove;
+    //   - firstFields settles (fields/end = BatchedQuery handoff, error =
+    //     terminal failure) → the .then() cleanup removes it, so the window
+    //     is CLOSED the instant the handle reaches the runner and a late
+    //     cancelActiveQuery() can never reach a runner-owned cursor (the
+    //     post-handoff seam stays BatchedQuery.cancel()).
+    const cancelPreHandoffStream = (): void => {
+      this.activeCancelClosures.delete(cancelPreHandoffStream);
+      preHandoffCancelled = true;
+      try {
+        stream.destroy();
+      } catch {
+        // ignore — best-effort.
+      }
+      destroyConnection();
+      // Guarantee the awaiting setup path settles even if the destroyed
+      // stream never emits 'error' (a Promise's second settle is a no-op,
+      // so a real driver error still wins) and no fetch waiter is left
+      // hanging — the sweep mirrors closeStream().
+      rejectFirstFields?.(new Error("MySQL query was cancelled"));
+      while (waiters.length > 0) {
+        const waiter = waiters.shift()!;
+        waiter.resolve(null);
+      }
+    };
+    this.activeCancelClosures.add(cancelPreHandoffStream);
+    firstFields.then(
+      () => this.activeCancelClosures.delete(cancelPreHandoffStream),
+      () => this.activeCancelClosures.delete(cancelPreHandoffStream),
+    );
+
     stream.on("fields", (fields: FieldPacket[]) => {
       columns = fields.map((field) => field.name);
     });
@@ -772,8 +893,14 @@ export class MySqlAdapter implements DbAdapter {
       await firstFields;
     } catch (error) {
       state = "error";
-      stream.destroy();
-      destroyConnection();
+      // TASK-RLX02-001 — if the rejection came from the pre-handoff
+      // cancellation record, the stream/connection were ALREADY destroyed
+      // exactly once; skip the redundant teardown (destroy is counted, and
+      // `released` already guards the double destroy in destroyConnection).
+      if (!preHandoffCancelled) {
+        stream.destroy();
+        destroyConnection();
+      }
       throw error instanceof Error ? error : new Error(String(error));
     }
     return adapter;

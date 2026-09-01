@@ -1,6 +1,6 @@
 Command: handoff-fullstack
 Goal: Ship PORT-RLX-02 Cross-dialect query lifecycle completion (Wave 7)
-Base: main @ 887efe0 — v1.30.0 released, Wave 6 done
-Phase: P3
-Cursor: plan approved (review round 2) — committing PLAN_RLX02.md + TASK-RLX02-001/002/003
-Next: I1 verify clean tree, I2 waves (w1: 001+002, w2: 003), I3 execute
+Base: main @ 496c8b0 — plan committed (3 tasks ready)
+Phase: I3
+Cursor: wave 1 launching — TASK-RLX02-001 (MySQL cancel) + TASK-RLX02-002 (MSSQL cancel) in parallel worktrees
+Next: 3b run wave 1 agents, 3c copy-back, wave commit, then wave 2 (TASK-RLX02-003)

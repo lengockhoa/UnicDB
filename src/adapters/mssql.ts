@@ -222,6 +222,38 @@ export class MsSqlAdapter implements DbAdapter {
     }
   }
 
+  /**
+   * TASK-RLX02-002 — DbAdapter.cancelActiveQuery seam (optional, RLX-01
+   * contract). Best-effort cancel of the non-cursor statement currently in
+   * flight via tedious's own primitive: `Request.cancel()` — the same call
+   * the shutdown loop above already uses.
+   *
+   *  - Targets ONLY requests live in `activeRequests` right now (snapshot
+   *    first: a request may complete and remove itself mid-loop). Tedious
+   *    permits one request at a time, so in practice this is exactly the
+   *    request the caller is awaiting.
+   *  - Never closes the adapter or `this.connection`, never issues `execSql`,
+   *    `KILL`, `sp_cancel`, or any session-ID protocol, and never touches
+   *    `operationQueue` — queued work and the shared connection stay intact.
+   *  - Idempotent: empty/absent set → resolve without side effects. A
+   *    `request.cancel()` throw (completion raced cancellation) is swallowed;
+   *    that request's own terminal path still removes its exact record.
+   *  - Streaming cursors keep their exclusive `BatchedQuery.cancel()` path;
+   *    a cursor that already cancelled itself is no longer live here, so the
+   *    seam never re-cancels it.
+   */
+  async cancelActiveQuery(): Promise<void> {
+    if (this.activeRequests.size === 0) return;
+    for (const request of [...this.activeRequests]) {
+      try {
+        request.cancel();
+      } catch {
+        // Best-effort — the request may have completed between the snapshot
+        // and this call; its terminal path owns the cleanup.
+      }
+    }
+  }
+
   async testConnection(): Promise<void> {
     if (!this.connected || !this.connection) {
       await this.connect();
