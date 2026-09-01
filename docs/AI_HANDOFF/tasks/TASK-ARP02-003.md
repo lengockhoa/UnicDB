@@ -113,8 +113,83 @@ npm run compile
 ## Executor Report
 
 ```
-(write here: STATUS / EXECUTOR_TOOL / EXECUTOR_MODEL / EXECUTOR_SUBAGENT / RED_OUTPUT /
- VERIFICATION output / ISSUES / HANDOFF_TO_REVIEWER)
+STATUS: PASS
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT (base b032b98 == 367cb80 source, TDD step 2, before implementation):
+ ❯ src/core/__tests__/connectionManager.test.ts  (34 tests | 2 failed) 71ms
+   ❯ ... ARP-02.3 passive provenance > case 2 — getAdapterFor(cX) deferred; deleteConnection(cX) commits; late resolves -> candidate discarded
+     → promise resolved "{ connect: [Function spy], …(8) }" instead of rejecting
+   ❯ ... ARP-02.3 passive provenance > case 3 — getAdapterFor(cY) deferred; editConnection(cY,{host:h2}) commits; late resolves -> discarded, next connect uses new config
+     → promise resolved "{ connect: [Function spy], …(8) }" instead of rejecting
+
+ FAIL  ... case 2 — AssertionError: promise resolved (stale adapter object) instead of rejecting
+ ❯ src/core/__tests__/connectionManager.test.ts:1206
+ Test Files  1 failed (1) | Tests  2 failed | 32 passed (34)
+
+=> RED for exactly the expected reason: the late getAdapterFor candidate RESOLVED with the
+   stale adapter (passiveAdapters.set unconditionally at :372) instead of being discarded —
+   matches the probe on 367cb80 (factory stayed 1x; stale cached + reused). Cases 1/4/5/6 were
+   GREEN on base as predicted by the task (1/5/6 regression pins, 4 = RLX-03 pin). No
+   immediately-GREEN case among the new race cases.
+
+IMPLEMENTATION SUMMARY (option (a) + re-resolve composition):
+- Per-connection revision map `connRevisions: Map<string, number>`; `bumpConnRevision(id)`
+  bumped SYNCHRONOUSLY (before any await) in editConnection (:195-200, next to the RLX-03
+  activeGeneration discipline) and deleteConnection (:260-266) — mirrors :205-207 / :267-269.
+- getAdapterFor rewritten: snapshots `rev` at entry; re-resolves the CURRENT persisted config
+  (`currentConfigFor(id) ?? cfg` fallback) and builds the candidate from that, so post-edit
+  reconnects use the new host/port even if the caller passed a stale cfg snapshot (schema-tree).
+- Provenance re-check AFTER every await (same discipline as RLX-03 ACTIVE path :567-580):
+  revision changed OR effective current config no longer the one built from → candidate is
+  closed EXACTLY ONCE (best-effort try/catch, runs against the guardAdapter-wrapped reference
+  returned by resolveAdapter — ARP-01 note honored, idempotent fake close semantics preserved)
+  and NEVER installed into passiveAdapters; throws "không còn hợp lệ — đã bỏ kết nối cũ".
+- No public API changed (getActive/getAdapter/getAdapterFor/setActive/add/edit/delete signatures
+  untouched). No RLX-03/ARP-01 code weakened — guardAdapter (:652-689) untouched.
+
+PROVENANCE TIMELINE (recorded per acceptance criteria):
+- getAdapterFor(cX) in flight (rev snapshot N) × deleteConnection(cX) commits (rev → N+1):
+  late candidate closed ×1, not installed; next request builds FRESH adapter (factory grows).
+- getAdapterFor(cY) in flight (built from OLD persisted cfg) × editConnection(cY,{host:h2})
+  commits (rev → N+1, persisted cfg replaced): late candidate closed ×1, not installed; next
+  request reconnects with host=h2.
+- getAdapter() in flight for A × setActive(B): unchanged RLX-03 ACTIVE path — candidate closed
+  ×1 + throws "không còn active" (case 4 pin, was GREEN on base).
+- No adapter/socket leak: every discarded candidate path calls close() exactly once on the
+  guarded reference; testConnection-failure path keeps its pre-existing close-then-rethrow.
+
+VERIFICATION OUTPUT (fresh, this turn, worktree .worktrees/task-arp02-003):
+1) npx vitest run src/core/__tests__/connectionManager.test.ts
+   ✓ src/core/__tests__/connectionManager.test.ts  (34 tests) 64ms
+   Test Files  1 passed (1)
+   => 34 pass / 0 fail; zero unhandled rejections/warnings (eager .catch pattern in races).
+   New block "ConnectionManager ARP-02.3 passive provenance": 6/6 GREEN (cases 1-6).
+   Existing blocks intact: CRUD §7/7, design §8 fallback, EventEmitter, DBX-05 read-only+tunnel
+   5/5, RLX-03 recovery 7/7, ARP-01 transaction guard 7/7.
+2) npm run typecheck  → tsc --noEmit, exit 0
+3) npm run compile    → esbuild: build complete, exit 0
+
+TESTS_ADDED: 6 cases in src/core/__tests__/connectionManager.test.ts
+  case 1 caching/reuse; case 2 delete-during-flight; case 3 edit-during-flight; case 4
+  switch-during-active-connect (RLX-03 pin); case 5 delete closes cached passive exactly once;
+  case 6 edit closes cached passive + reconnect with new config. New gated-testConnection
+  fixture (makeGatedFactory / makeDeferred gate) + setupProvenanceHarness.
+
+ISSUES:
+- First strict-entry draft of the fix rejected the untracked-cfg calls used by the DBX-05 /
+  ARP-01 blocks (they call getAdapterFor with cfgs never persisted in state). Resolved by the
+  `?? cfg` fallback both at entry and in the re-check — untracked cfgs keep the historical
+  pass-through behavior while mid-flight edit/delete for TRACKED ids is still caught (cases
+  2/3/5/6 prove both sides). No existing test block was modified.
+- One cosmetic note: the vitest tsconfig "ES2024" target warnings pre-exist on this branch
+  (unrelated to this task).
+
+HANDOFF_TO_REVIEWER: yes — reviewer model unic-smart (differs from executor unic-code).
+NEXT: set pending_review in docs/AI_HANDOFF/INDEX.md; reviewer verifies RED reasoning + the
+untracked-cfg fallback semantics.
 ```
 
 ## Reviewer Verdict

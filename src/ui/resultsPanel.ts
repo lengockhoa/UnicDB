@@ -145,6 +145,18 @@ export class ResultsPanel {
    *  (a newer requery already started) drops its result so an out-of-order
    *  slow requery can never overwrite a newer one. */
   private requerySeq = 0;
+  /** TASK-ARP02-002 — session epoch. Bumped synchronously in dispose() and
+   *  in the onDidDispose handler (both paths can run). Every deferred
+   *  continuation captures the epoch before its first await and re-checks
+   *  after EVERY await, before any postMessage / setBusy / toast, returning
+   *  silently when stale. Without this, a deferred completion that settles
+   *  after dispose()+render() posts the OLD results into the RE-CREATED
+   *  panel (this.panel is non-null again) and clears the new session's busy
+   *  state — postMessage's `if (!this.panel) return` guard does not cover
+   *  the re-created panel. Distinct from requerySeq (per-requery ordering)
+   *  and statementGeneration (per-statement-set identity): the epoch is
+   *  per-PANEL-LIFETIME and checked ADDITIONALLY to both. */
+  private sessionEpoch = 0;
   /** Host-derived (schema?, table) per statement index, populated by
    *  render() so handleSaveEdits can derive metadata without trusting the
    *  webview-supplied tableName / pkColumns (Fix R1 critical #1). */
@@ -275,6 +287,9 @@ export class ResultsPanel {
     );
     this.disposables.push(
       this.panel.onDidDispose(() => {
+        // TASK-ARP02-002 — the webview session ended: in-flight deferred
+        // continuations must never write to a LATER panel session.
+        this.sessionEpoch += 1;
         // Closing the webview is a connection lifecycle boundary for its
         // manual transaction. Do not leave an open transaction behind.
         void this.rollbackOpenTransaction();
@@ -399,6 +414,10 @@ export class ResultsPanel {
    * Dispose panel + resources.
    */
   dispose(): void {
+    // TASK-ARP02-002 — end this panel session BEFORE any deferred work can
+    // observe teardown: every continuation that captured the previous epoch
+    // becomes inert from this synchronous point on.
+    this.sessionEpoch += 1;
     // A panel may be disposed while a manual transaction is still open.
     // Fire-and-forget because VS Code's Disposable contract is synchronous;
     // the adapter call is still attempted before connection teardown.
@@ -419,6 +438,17 @@ export class ResultsPanel {
   }
 
   // ---- Private -------------------------------------------------------------
+
+  /**
+   * TASK-ARP02-002 — true when `captured` no longer matches the live epoch,
+   * i.e. the panel was disposed (or its webview was closed) after this
+   * continuation started. Stale continuations must return silently: no
+   * postMessage, no setBusy, no toast — even if a NEWER panel session has
+   * since been created by render().
+   */
+  private isStaleSession(captured: number): boolean {
+    return captured !== this.sessionEpoch;
+  }
 
   /**
    * TASK-007 — attach the browse-derived tab label to a statement that does
@@ -533,6 +563,9 @@ export class ResultsPanel {
     const listColumnTypes = this.saveContext?.listColumnTypes;
     if (!listColumnTypes) return;
     const gen = this.statementGeneration;
+    // TASK-ARP02-002 — checked ADDITIONALLY to the generation guard: a
+    // generation can survive while the panel session it belonged to is gone.
+    const epoch = this.sessionEpoch;
     for (const r of results) {
       if (gen !== this.statementGeneration) return;
       const meta = this.tableByStatement.get(r.index);
@@ -562,6 +595,7 @@ export class ResultsPanel {
     }
     if (
       gen === this.statementGeneration &&
+      !this.isStaleSession(epoch) &&
       this.columnTypesByStatement.size > 0 &&
       this.panel
     ) {
@@ -583,10 +617,16 @@ export class ResultsPanel {
    *  TASK-006 P1-4 — `fromMessage: true` (the webview's Rollback BUTTON)
    *  also requeries the manual window's statement; the two teardown callers
    *  (`onDidDispose`, `dispose`) must NOT issue further queries — the
-   *  connection may already be tearing down and no UI remains to update. */
+   *  connection may already be tearing down and no UI remains to update.
+   *  TASK-ARP02-002 — the rollback itself ALWAYS runs (connection-lifecycle
+   *  boundary, never skipped for a newer session), but the `transactionStatus`
+   *  UI write is epoch-guarded: teardown callers bump the epoch before this
+   *  runs, so their captured epoch is stale by the time the rollback settles
+   *  and the post is suppressed (no write into a re-created panel). */
   private async rollbackOpenTransaction(options?: {
     fromMessage?: boolean;
   }): Promise<void> {
+    const epoch = this.sessionEpoch;
     const transaction = this.transaction;
     if (!transaction) return;
     // Clear first so every error and teardown path has an honest local state.
@@ -596,7 +636,9 @@ export class ResultsPanel {
     } catch {
       // The connection may already have been closed by its owner.
     } finally {
-      this.postTransactionStatus();
+      if (!this.isStaleSession(epoch)) {
+        this.postTransactionStatus();
+      }
       if (options?.fromMessage) {
         // P1-4 — after the rollback lands, the grid still shows the
         // uncommitted values; requery the manual window's statement.
@@ -615,6 +657,7 @@ export class ResultsPanel {
    *  is correct (no pinned session to route through). Best-effort: a failed
    *  refresh is surfaced as a host notification, never rethrows. */
   private async refreshManualStatement(): Promise<void> {
+    const epoch = this.sessionEpoch;
     const index = this.manualStatementIndex;
     this.manualStatementIndex = null;
     if (index === null) return;
@@ -627,7 +670,7 @@ export class ResultsPanel {
       await this.closeStatementCursor(r);
       const refreshed = await this.runner.runSql(r.sql);
       const freshResult = await pickResult(refreshed);
-      if (!freshResult) return;
+      if (!freshResult || this.isStaleSession(epoch)) return;
       const newStmt: StatementResult = {
         ...r,
         result: freshResult,
@@ -649,6 +692,7 @@ export class ResultsPanel {
         busy: this.busy,
       });
     } catch (err) {
+      if (this.isStaleSession(epoch)) return;
       const m = err instanceof Error ? err.message : String(err);
       void vscode.window.showErrorMessage(
         `VSDB: refreshing after transaction close failed: ${m}`,
@@ -657,13 +701,16 @@ export class ResultsPanel {
   }
 
   private async handleCommitTransaction(): Promise<void> {
+    const epoch = this.sessionEpoch;
     const transaction = this.transaction;
     if (!transaction) return;
     this.setBusy(true);
     try {
       await transaction.commit();
       this.transaction = null;
-      this.postTransactionStatus();
+      if (!this.isStaleSession(epoch)) {
+        this.postTransactionStatus();
+      }
       // P1-4 — button-path refresh: the webview has no auto-requery hook
       // for a manual COMMIT click, so the grid would stay stale.
       await this.refreshManualStatement();
@@ -675,11 +722,16 @@ export class ResultsPanel {
       } catch {
         // The connection may already be unusable after a failed commit.
       }
-      this.postTransactionStatus();
-      const message = err instanceof Error ? err.message : String(err);
-      void vscode.window.showErrorMessage(`Commit failed: ${message}`);
+      if (!this.isStaleSession(epoch)) {
+        this.postTransactionStatus();
+        const message = err instanceof Error ? err.message : String(err);
+        void vscode.window.showErrorMessage(`Commit failed: ${message}`);
+      }
     } finally {
-      this.setBusy(false);
+      // TASK-ARP02-002 — clear busy only for the session that started it.
+      if (!this.isStaleSession(epoch)) {
+        this.setBusy(false);
+      }
     }
   }
 
@@ -690,34 +742,47 @@ export class ResultsPanel {
         // bắt đầu fetch qua mạng. finally đảm bảo busy:false kể cả khi reject,
         // tránh kẹt disable vĩnh viễn.
         this.setBusy(true);
-        try {
-          const updated = await this.runner.loadMore(msg.index);
-          this.lastResults = updated;
-          this.postMessage({
-            type: "state",
-            header: this.header,
-            results: updated,
-            busy: this.busy,
-          });
-        } catch (err) {
-          // Cancel-during-loadMore: runner đã hủy cursor (xem queryRunner.ts
-          // loadMoreImpl — currentBatched set trước fetchBatch). Nuốt error
-          // (không toast) và re-post state để webview clear in-flight flag.
-          const cancelled = this.runner.isCancelled?.() === true ||
-            /cancel/i.test(err instanceof Error ? err.message : String(err));
-          if (!cancelled) {
-            void vscode.window.showErrorMessage(
-              `Load more failed: ${err instanceof Error ? err.message : String(err)}`,
-            );
+        {
+          // TASK-ARP02-002 — capture the session epoch before the first await;
+          // re-check after EVERY await so a continuation that outlives the
+          // panel (dispose mid-run) never posts into a re-created session.
+          const epoch = this.sessionEpoch;
+          try {
+            const updated = await this.runner.loadMore(msg.index);
+            if (this.isStaleSession(epoch)) break;
+            this.lastResults = updated;
+            this.postMessage({
+              type: "state",
+              header: this.header,
+              results: updated,
+              busy: this.busy,
+            });
+          } catch (err) {
+            // Cancel-during-loadMore: runner đã hủy cursor (xem queryRunner.ts
+            // loadMoreImpl — currentBatched set trước fetchBatch). Nuốt error
+            // (không toast) và re-post state để webview clear in-flight flag.
+            const cancelled = this.runner.isCancelled?.() === true ||
+              /cancel/i.test(err instanceof Error ? err.message : String(err));
+            if (!cancelled && !this.isStaleSession(epoch)) {
+              void vscode.window.showErrorMessage(
+                `Load more failed: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
+            if (!this.isStaleSession(epoch)) {
+              this.postMessage({
+                type: "state",
+                header: this.header,
+                results: this.lastResults,
+                busy: this.busy,
+              });
+            }
+          } finally {
+            // TASK-ARP02-002 — the stale session's finally must not clear a
+            // NEWER session's busy flag (case 5).
+            if (!this.isStaleSession(epoch)) {
+              this.setBusy(false);
+            }
           }
-          this.postMessage({
-            type: "state",
-            header: this.header,
-            results: this.lastResults,
-            busy: this.busy,
-          });
-        } finally {
-          this.setBusy(false);
         }
         break;
       case "cancel":
@@ -788,6 +853,9 @@ export class ResultsPanel {
     text: string,
   ): Promise<void> {
     const ext = format.startsWith("sql-") ? "sql" : format;
+    // TASK-ARP02-002 — export dialogs/writes outlive the click; the failure
+    // toast must not fire for a session that no longer exists.
+    const epoch = this.sessionEpoch;
     const uri = await vscode.window.showSaveDialog({
       defaultUri: vscode.Uri.file(`results.${ext}`),
       filters:
@@ -802,6 +870,7 @@ export class ResultsPanel {
     try {
       await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(text));
     } catch (err) {
+      if (this.isStaleSession(epoch)) return;
       const msg = err instanceof Error ? err.message : String(err);
       void vscode.window.showErrorMessage(`Failed to write export: ${msg}`);
     }
@@ -899,10 +968,14 @@ export class ResultsPanel {
     // rejected alternative — a `runSql(sql, { noCursor: true })` protocol
     // option — would change QueryRunner + all three adapters (out of scope).
     await this.closeStatementCursor(r);
+    // TASK-ARP02-002 — disposed while closing the cursor: return silently,
+    // no pkColumns query, no saveResult ack into a later panel session.
+    if (this.isStaleSession(this.sessionEpoch)) return;
     const pkColumns =
       edits.length === 0
         ? []
         : await this.saveContext.listPkColumns(parsed.schema ?? "", tableName);
+    if (this.isStaleSession(this.sessionEpoch)) return;
 
     const columns = r.result.columns;
     const serverRows = r.result.rows;
@@ -1037,6 +1110,10 @@ export class ResultsPanel {
     }
 
     this.setBusy(true);
+    // TASK-ARP02-002 — the save continuation awaits beginTransaction / runSql
+    // / refresh SELECT; a dispose mid-save must not post acks, toasts, or
+    // busy writes into a re-created panel session.
+    const epoch = this.sessionEpoch;
     const refreshStart = Date.now();
     const kw = transactionKeywords(driver as Dialect);
     const manualCommit = this.isManualCommitEnabled();
@@ -1064,15 +1141,19 @@ export class ResultsPanel {
           // Explicit invariant: rollback completes before the save error is
           // acknowledged, so a failed manual window is never left dangling.
           await this.rollbackOpenTransaction();
-          this.postMessage({
-            type: "saveResult",
-            index,
-            ok: false,
-            errors: [m],
-          });
+          if (!this.isStaleSession(epoch)) {
+            this.postMessage({
+              type: "saveResult",
+              index,
+              ok: false,
+              errors: [m],
+            });
+          }
           return;
         }
-        this.postTransactionStatus();
+        if (!this.isStaleSession(epoch)) {
+          this.postTransactionStatus();
+        }
       } else {
         // Automatic mode — A15: bundle BEGIN + every generated statement +
         // COMMIT into a SINGLE combined runner.runSql call. The adapter
@@ -1093,12 +1174,14 @@ export class ResultsPanel {
           } catch {
             // The combined call may already have returned the connection clean.
           }
-          this.postMessage({
-            type: "saveResult",
-            index,
-            ok: false,
-            errors: [m],
-          });
+          if (!this.isStaleSession(epoch)) {
+            this.postMessage({
+              type: "saveResult",
+              index,
+              ok: false,
+              errors: [m],
+            });
+          }
           return;
         }
       }
@@ -1124,6 +1207,11 @@ export class ResultsPanel {
         await this.closeStatementCursor(r);
         const refreshed = await this.runner.runSql(r.sql);
         const freshResult = await pickResult(refreshed);
+        if (this.isStaleSession(epoch)) {
+          // Dispose mid-save: skip the ack/state posts entirely (finally
+          // below also skips the busy write). The commit itself already ran.
+          return;
+        }
         if (freshResult) {
           newStmt = {
             ...r,
@@ -1192,6 +1280,12 @@ export class ResultsPanel {
       // auto-requery raced a commit, or beginTransaction() failed because the
       // active driver has no manual-transaction support). Roll back so the
       // window never dangles, then surface the save failure to the webview.
+      if (this.isStaleSession(epoch)) {
+        // TASK-ARP02-002 — the rollback in the manual branch below still ran
+        // via rollbackOpenTransaction's own path; UI acks stay suppressed.
+        if (manualCommit) await this.rollbackOpenTransaction();
+        return;
+      }
       if (manualCommit) {
         const message = err instanceof Error ? err.message : String(err);
         await this.rollbackOpenTransaction();
@@ -1218,7 +1312,11 @@ export class ResultsPanel {
         });
       }
     } finally {
-      this.setBusy(false);
+      // TASK-ARP02-002 — the stale session's finally must not clear a
+      // newer session's busy flag.
+      if (!this.isStaleSession(epoch)) {
+        this.setBusy(false);
+      }
     }
   }
 
@@ -1326,8 +1424,10 @@ export class ResultsPanel {
       );
       return;
     }
-    // Capture identity BEFORE awaiting: index/column/generation.
+    // Capture identity BEFORE awaiting: index/column/generation, plus the
+    // TASK-ARP02-002 session epoch (guarding a panel dispose/recreate race).
     const generation = this.statementGeneration;
+    const epoch = this.sessionEpoch;
     // TASK-006 (cycle Y) — scope the dropdown to the statement's active
     // server-side view: bar WHERE AND every OTHER column's filter predicate,
     // never the requested column's own (its selected values must not narrow
@@ -1386,13 +1486,18 @@ export class ResultsPanel {
       } else {
         rows = (await pickResult(runResult)).rows as unknown[][];
       }
-      // Stale completion (statement replaced while in flight): drop entirely.
-      if (generation !== this.statementGeneration) return;
+      // Stale completion (statement replaced OR panel disposed while in
+      // flight): drop entirely.
+      if (generation !== this.statementGeneration || this.isStaleSession(epoch)) {
+        return;
+      }
       const { values, truncated } = takeDistinctValues(rows);
       this.distinctCache.set(key, { values, truncated });
       reply(values, truncated);
     } catch (err) {
-      if (generation !== this.statementGeneration) return;
+      if (generation !== this.statementGeneration || this.isStaleSession(epoch)) {
+        return;
+      }
       const m = err instanceof Error ? err.message : String(err);
       reply([], false, `Distinct values failed: ${m}`);
     }
@@ -1502,6 +1607,11 @@ export class ResultsPanel {
   }
 
   private async handleRequery(msg: RequeryMessage): Promise<void> {
+    // TASK-ARP02-002 — the requery continuation is deferred across runSql;
+    // if the panel is disposed (and re-created) mid-run, every post/toast
+    // below must be suppressed. requerySeq orders requeries against EACH
+    // OTHER; the epoch guards them against the PANEL being replaced.
+    const epoch = this.sessionEpoch;
     const index = msg.index;
     const where = msg.where ?? "";
     const orderBy = msg.orderBy ?? "";
@@ -1518,6 +1628,9 @@ export class ResultsPanel {
     // timeout. Best-effort — close() alone is sufficient (Fix R2
     // minor); cancel() was redundant.
     await this.closeStatementCursor(r);
+    // TASK-ARP02-002 — dispose landed while the cursor close was pending:
+    // do not start the requery (nor its busy write) for a dead session.
+    if (this.isStaleSession(epoch)) return;
     // Concurrency guard: a stale (slower) in-flight requery must never
     // overwrite a newer one that already started.
     const seq = ++this.requerySeq;
@@ -1569,6 +1682,7 @@ export class ResultsPanel {
           tableMeta.schema ?? "",
           tableMeta.table,
         );
+        if (this.isStaleSession(epoch)) return;
         if (pk.length > 0) {
           const projected = r.result?.columns ?? [];
           if (pk.every((c) => projected.includes(c))) {
@@ -1599,6 +1713,7 @@ export class ResultsPanel {
           tableMeta.schema ?? "",
           tableMeta.table,
         );
+        if (this.isStaleSession(epoch)) return;
       } catch {
         columnTypes = undefined;
       }
@@ -1677,6 +1792,9 @@ export class ResultsPanel {
       // Without this the entry swapped to `{ status:"done", result: undefined }`
       // and the grid blanked.
       const picked = await pickResult(runResult);
+      // TASK-ARP02-002 — panel disposed (and possibly re-created) while the
+      // requery was in flight: drop everything, silently.
+      if (this.isStaleSession(epoch)) return;
       // TASK-004 (cycle Y) — hide the injected PK columns in the displayed
       // result. The FULL row (hidden values included) stays reachable only
       // through this closure for the paging key below; everything posted to
@@ -1763,6 +1881,9 @@ export class ResultsPanel {
         busy: this.busy,
       });
     } catch (err) {
+      // TASK-ARP02-002 — stale session: silent return, no toast, no state
+      // post, no busy write.
+      if (this.isStaleSession(epoch)) return;
       const cancelled =
         this.runner.isCancelled?.() === true ||
         /cancel/i.test(err instanceof Error ? err.message : String(err));
@@ -1792,6 +1913,7 @@ export class ResultsPanel {
         });
       } else {
         // Re-post the prior state so the webview drops its in-flight flag.
+        if (this.isStaleSession(epoch)) return;
         this.postMessage({
           type: "state",
           header: this.header,
@@ -1800,7 +1922,11 @@ export class ResultsPanel {
         });
       }
     } finally {
-      this.setBusy(false);
+      // TASK-ARP02-002 — only the live session clears its own busy flag; a
+      // stale continuation must not unlock a re-created panel's UI.
+      if (!this.isStaleSession(epoch)) {
+        this.setBusy(false);
+      }
     }
   }
 

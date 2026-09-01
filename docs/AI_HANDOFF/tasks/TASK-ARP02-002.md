@@ -113,8 +113,68 @@ No lint script; typecheck + compile are the static gates.)
 ## Executor Report
 
 ```
-(write here: STATUS / EXECUTOR_TOOL / EXECUTOR_MODEL / EXECUTOR_SUBAGENT / RED_OUTPUT /
- VERIFICATION output / ISSUES / HANDOFF_TO_REVIEWER)
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code (claude-sonnet tier; self-reported per harness)
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT (npx vitest run src/ui/__tests__/resultsPanel.test.ts, BEFORE implementation):
+  ❯ case 2: deferred loadMore; dispose; recreate — stale resolution posts NOTHING to the new panel
+    AssertionError: expected [ { type: 'state', … } ] to have a length of +0 but got 1
+    ❯ src/ui/__tests__/resultsPanel.test.ts:1259  (stale `state` with OLD SQL posted into the recreated panel — matches the task's probe on 367cb80)
+  ❯ case 3: deferred requery; dispose; recreate — stale resolution returns SILENTLY
+    AssertionError: expected [ { type: 'state', …(3) } ] to have a length of +0 but got 1
+    ❯ src/ui/__tests__/resultsPanel.test.ts:1309  (same epoch gap)
+  ❯ case 5: dispose mid-loadMore; recreate; setBusy(true) — stale finally never posts busy:false
+    AssertionError: expected [ { type: 'busy', busy: false } ] to have a length of +0 but got 1
+    ❯ src/ui/__tests__/resultsPanel.test.ts:1364  (busy cleared — matches the task's probe)
+  Test Files  1 failed (1) | Tests  3 failed | 36 passed (39)
+  Cases 1, 4, 6 GREEN on base as pinned (regression pins) — expected per test table.
+  RED confirmed for the EXPECTED reasons; no immediately-GREEN anomaly.
+
+IMPLEMENTATION SUMMARY:
+  Added `private sessionEpoch = 0` (per-PANEL-LIFETIME, additive & distinct from requerySeq /
+  statementGeneration) + `private isStaleSession(captured)` helper.
+  Epoch bumped synchronously in BOTH dispose() and the onDidDispose handler (both paths can run).
+  Every deferred continuation now captures the epoch before its first await and re-checks after
+  EVERY await, returning silently when stale — before postMessage, before setBusy, before
+  showErrorMessage — in: handleMessage/loadMore (success + error + finally), handleRequery
+  (cursor-close, listPkColumns, listColumnTypes, post-runSql, error branch, finally),
+  handleSaveEdits (pkColumns, manual runQuery fail ack, postTransactionStatus, refresh SELECT,
+  catch/finally), handleCommitTransaction, rollbackOpenTransaction (rollback itself ALWAYS runs —
+  connection-lifecycle boundary; only the transactionStatus UI post is epoch-guarded),
+  refreshManualStatement, refreshColumnTypes and handleRequestDistinctValues (epoch checked
+  ADDITIONALLY to statementGeneration, per Discussion), handleExportFile.
+  Exactly-once cleanup pinned: rollbackOpenTransaction's `transaction === null` guard untouched
+  (case 4 exercises dispose() ×2 + onDidDispose → rollback exactly 1 call).
+  No signatures changed; render/dispose/setBusy/show public surface unchanged.
+
+VERIFICATION OUTPUT (all run fresh in the worktree, after implementation):
+  1. npx vitest run src/ui/__tests__/resultsPanel.test.ts
+     → Test Files  1 passed (1) | Tests  39 passed (39) | exit 0
+     (all existing blocks still green: BigInt sanitize, postMessage rejection/sync-throw,
+      loadMore message handling, append-aware render, batched wire shape, dialect/columnTypes,
+      A14 header, RLX02-003 cancel path, resultsPlacement — plus 6 new ARP02-002 cases)
+  2. npm run typecheck  → tsc --noEmit, exit 0
+  3. npm run compile    → esbuild build complete, exit 0
+  Boundary: git diff 367cb80 -- src/extension.ts is EMPTY; only resultsPanel.ts +
+  resultsPanel.test.ts modified. Not committed (per instruction).
+
+ISSUES / HOST-SIDE GAPS OBSERVED (recorded for TASK-ARP02-004, NOT fixed here):
+  1. runStatements finally-busy leak (extension.ts): the host calls panel.setBusy(true/false)
+     around runStatements; after dispose+recreate mid-run, the host-side finally targets the SAME
+     ResultsPanel object (which now owns a NEW panel session) and would clear the new session's
+     busy state. Out of this task's boundary (extension.ts untouched).
+  2. Deactivate ordering: ResultsPanel.dispose() fires rollbackOpenTransaction fire-and-forget;
+     during extension deactivation there is no await point guaranteeing the rollback completes
+     before the pool closes — adapter-level concern, same wave-2 ownership.
+  3. Note for reviewer: dispose() bumps the epoch BEFORE rollbackOpenTransaction captures its
+     epoch, so a teardown rollback intentionally posts NO transactionStatus (panel is gone) while
+     still executing the rollback. Message-path rollback (fromMessage:true) captures a live epoch
+     and keeps posting + requeries as before.
+
+HANDOFF_TO_REVIEWER: yes — all 3 verification commands pass with fresh output above; reviewer
+(unic-smart) should rerun the 3 commands and confirm the epoch guard in every continuation.
 ```
 
 ## Reviewer Verdict

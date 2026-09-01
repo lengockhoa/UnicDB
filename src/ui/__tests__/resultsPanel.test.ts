@@ -1149,3 +1149,242 @@ describe("ResultsPanel — resultsPlacement (AI-001)", () => {
     expect(vi.mocked(vscode.commands.executeCommand)).toHaveBeenCalledTimes(1);
   });
 });
+
+
+// =============================================================================
+// TASK-ARP02-002 — session-epoch guard: a deferred continuation whose panel
+// was disposed (and optionally re-created by a later render()) must return
+// silently — no postMessage, no busy write, no toast — into the NEW session.
+// The epoch is bumped in dispose() AND onDidDispose; continuations capture it
+// before their first await and re-check after every await.
+// =============================================================================
+describe("ResultsPanel — TASK-ARP02-002 session epoch (panel-close race)", () => {
+  /** Bounded wait: flush microtasks/timers until a predicate over the given
+   *  fake's postMessage calls holds, or fail. */
+  async function until(
+    fake: FakeWebview,
+    predicate: (msgs: Array<Record<string, unknown>>) => boolean,
+  ): Promise<void> {
+    for (let i = 0; i < 200; i++) {
+      const msgs = fake.webview.postMessage.mock.calls.map(
+        (c) => c[0] as Record<string, unknown>,
+      );
+      if (predicate(msgs)) return;
+      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 1));
+    }
+    throw new Error("timeout in session-epoch test helper");
+  }
+
+  /** Statement result with the OLD SQL — what a stale continuation would
+   *  wrongly post into a recreated panel. */
+  function oldSqlResult(sql: string): StatementResult {
+    return {
+      index: 0,
+      sql,
+      status: "done",
+      result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
+      durationMs: 0,
+    };
+  }
+
+  function panelWith(
+    runner: QueryRunner,
+    results: StatementResult[],
+  ): { panel: ResultsPanel; fake: FakeWebviewPanel } {
+    const panel = new ResultsPanel({ runner });
+    panel.render(results, "hdr");
+    return { panel, fake: lastPanel.current! };
+  }
+
+  const showErrMock = () =>
+    vscode.window.showErrorMessage as unknown as {
+      mockClear: () => void;
+      mock: { calls: unknown[][] };
+    };
+
+  // ---- Case 1 — happy: close idle panel → exactly-once cleanup, no message.
+  it("case 1: close idle panel — rollback no-ops (0 calls), no postMessage, no toast", async () => {
+    const runner = makeRunnerStub();
+    const { panel, fake } = panelWith(runner, [oldSqlResult("SELECT 1")]);
+    fake.webview.postMessage.mockClear();
+    showErrMock().mockClear();
+
+    // Idle panel: no open transaction → dispose() must not attempt a rollback.
+    panel.dispose();
+
+    expect(fake.webview.postMessage).not.toHaveBeenCalled();
+    expect(showErrMock().mock.calls).toHaveLength(0);
+    // Panel is torn down; a later render() recreates a working panel.
+    expect(lastPanel.current).toBe(fake);
+    panel.render([oldSqlResult("SELECT 2")], "hdr");
+    expect(createCalls).toHaveLength(2);
+  });
+
+  // ---- Case 2 — edge: dispose-during-run, deferred loadMore, recreate panel.
+  // RED on base 367cb80: the stale resolution posts the OLD SQL `state` into
+  // the NEW panel.
+  it("case 2: deferred loadMore; dispose; recreate — stale resolution posts NOTHING to the new panel", async () => {
+    const runner = makeRunnerStub();
+    const deferred = Promise.withResolvers<StatementResult[]>();
+    runner.loadMore = vi.fn(() => deferred.promise) as unknown as typeof runner.loadMore;
+    const { panel, fake } = panelWith(runner, [oldSqlResult("SELECT old_sql FROM old_table")]);
+
+    fake.webview.dispatch({ type: "loadMore", index: 0 });
+    // loadMore is pending — flush a bit so setBusy(true) already fired.
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+
+    // Dispose during the deferred run, then recreate the panel session.
+    panel.dispose();
+    const newFake = lastPanel.current; // still the OLD fake — render() recreates.
+    panel.render([oldSqlResult("SELECT new_sql FROM new_table")], "hdr");
+    const recreated = lastPanel.current!;
+    expect(recreated).not.toBe(fake);
+    expect(newFake).toBe(fake);
+    recreated.webview.postMessage.mockClear();
+    showErrMock().mockClear();
+
+    // Stale continuation resolves NOW — after the recreate.
+    deferred.resolve([oldSqlResult("SELECT old_sql FROM old_table")]);
+    for (let i = 0; i < 30; i++) {
+      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 1));
+    }
+
+    // The recreated panel must NOT receive the stale old-SQL state post.
+    const staleState = recreated.webview.postMessage.mock.calls
+      .map((c) => c[0] as { type?: string; results?: Array<{ sql?: string }> })
+      .filter((m) => m.type === "state")
+      .filter((m) => (m.results ?? []).some((r) => r.sql === "SELECT old_sql FROM old_table"));
+    expect(staleState).toHaveLength(0);
+    expect(showErrMock().mock.calls).toHaveLength(0);
+  });
+
+  // ---- Case 3 — edge: dispose-during-run, deferred handleRequery, recreate.
+  // RED on base 367cb80 (same epoch gap): the stale requery resolution toasts
+  // and/or posts into the recreated panel.
+  it("case 3: deferred requery; dispose; recreate — stale resolution returns SILENTLY", async () => {
+    const runner = makeRunnerStub();
+    const deferredRun = Promise.withResolvers<import("../../core/queryRunner").RunResult>();
+    // closeStatementCursor sees no batched cursor (status done, no batched) →
+    // no-op; runSql is the deferred seam.
+    (runner as unknown as { runSql: unknown }).runSql = vi.fn(() => deferredRun.promise);
+    const results = [oldSqlResult("SELECT * FROM users")];
+    const panel = new ResultsPanel({
+      runner,
+      saveContext: { getDriver: () => null, listPkColumns: async () => [] } as never,
+    });
+    panel.render(results, "hdr");
+    const fake = lastPanel.current!;
+
+    fake.webview.dispatch({ type: "requery", index: 0, where: "", orderBy: "" });
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+
+    panel.dispose();
+    panel.render([oldSqlResult("SELECT * FROM users_after")], "hdr");
+    const recreated = lastPanel.current!;
+    recreated.webview.postMessage.mockClear();
+    showErrMock().mockClear();
+
+    deferredRun.resolve({
+      results: [
+        {
+          columns: ["x"],
+          rows: [[9]],
+          rowCount: 1,
+          durationMs: 0,
+        },
+      ],
+    });
+    for (let i = 0; i < 30; i++) {
+      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 1));
+    }
+
+    expect(showErrMock().mock.calls).toHaveLength(0);
+    const staleState = recreated.webview.postMessage.mock.calls
+      .map((c) => c[0] as { type?: string; results?: Array<{ sql?: string }> })
+      .filter((m) => m.type === "state")
+      .filter((m) => (m.results ?? []).some((r) => r.sql === "SELECT * FROM users"));
+    expect(staleState).toHaveLength(0);
+  });
+
+  // ---- Case 4 — edge: rollback runs EXACTLY ONCE across dispose×2 + onDidDispose.
+  it("case 4: dispose twice + onDidDispose — rollback executed exactly once", async () => {
+    const runner = makeRunnerStub();
+    const rollback = vi.fn(async () => undefined);
+    const fakeTx = { runQuery: vi.fn(async () => ({ results: [] })), commit: vi.fn(async () => undefined), rollback } as unknown as import("../../adapters/types").DbTransaction;
+    const { panel, fake } = panelWith(runner, [oldSqlResult("SELECT 1")]);
+    (panel as unknown as { transaction: unknown }).transaction = fakeTx;
+
+    // dispose() #1 → panel.dispose() → FakeWebviewPanel.dispose() fires
+    // onDidDispose handlers → panel=null. dispose() #2 is a no-op teardown.
+    panel.dispose();
+    panel.dispose();
+    // Direct onDidDispose firing again (belt-and-braces: both paths can run).
+    fake.dispose();
+    // Let the fire-and-forget rollback settle.
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(rollback).toHaveBeenCalledTimes(1);
+  });
+
+  // ---- Case 5 — edge: busy — dispose during run; new run setBusy(true);
+  // stale finally must NOT clear the NEW session's busy state.
+  // RED on base 367cb80: the stale continuation's finally posted busy:false
+  // into the recreated panel.
+  it("case 5: dispose mid-loadMore; recreate; setBusy(true) — stale finally never posts busy:false", async () => {
+    const runner = makeRunnerStub();
+    const deferred = Promise.withResolvers<StatementResult[]>();
+    runner.loadMore = vi.fn(() => deferred.promise) as unknown as typeof runner.loadMore;
+    const { panel, fake } = panelWith(runner, [oldSqlResult("SELECT 1")]);
+
+    fake.webview.dispatch({ type: "loadMore", index: 0 });
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+
+    panel.dispose();
+    panel.render([oldSqlResult("SELECT 1")], "hdr");
+    const recreated = lastPanel.current!;
+    recreated.webview.postMessage.mockClear();
+
+    // The NEW session starts a run and marks itself busy.
+    panel.setBusy(true);
+    await until(recreated, (msgs) => msgs.some((m) => m.type === "busy" && m.busy === true));
+
+    // Stale continuation settles NOW.
+    deferred.resolve([oldSqlResult("SELECT 1")]);
+    for (let i = 0; i < 30; i++) {
+      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 1));
+    }
+
+    const busyFalse = recreated.webview.postMessage.mock.calls
+      .map((c) => c[0] as { type?: string; busy?: boolean })
+      .filter((m) => m.type === "busy" && m.busy === false);
+    expect(busyFalse).toHaveLength(0);
+  });
+
+  // ---- Case 6 — regression: postMessage after dispose (panel null) is a
+  // silent no-op; render() after dispose still creates a working panel.
+  it("case 6: postMessage after dispose is a silent no-op; render() recreates a working panel", async () => {
+    const runner = makeRunnerStub();
+    const { panel, fake } = panelWith(runner, [oldSqlResult("SELECT 1")]);
+    const postsBefore = fake.webview.postMessage.mock.calls.length;
+    panel.dispose();
+    expect(fake.webview.postMessage.mock.calls.length).toBe(postsBefore);
+
+    // setBusy posts nothing while panel is null.
+    panel.setBusy(true);
+    panel.setBusy(false);
+    expect(fake.webview.postMessage.mock.calls.length).toBe(postsBefore);
+
+    // render() after dispose recreates a working panel.
+    panel.render([oldSqlResult("SELECT 2")], "hdr");
+    const recreated = lastPanel.current!;
+    expect(recreated).not.toBe(fake);
+    const stateMsg = recreated.webview.postMessage.mock.calls
+      .map((c) => c[0] as { type?: string })
+      .find((m) => m.type === "state");
+    expect(stateMsg).toBeDefined();
+  });
+});

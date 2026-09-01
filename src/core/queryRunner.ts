@@ -64,8 +64,32 @@ export class QueryRunner {
   private readonly batchSize: number;
   private results: StatementResult[] = [];
   private cancelRequested = false;
+  /**
+   * TASK-ARP02-001 — in-flight-scoped cancel ownership. `cancelPending` is
+   * true ONLY while a cancel was issued against LIVE work (a run or an
+   * in-flight loadMore) and that work has not settled yet. A close-origin
+   * cancel (runner idle/settled) leaves `cancelPending` false, so it cannot
+   * poison a later healthy `loadMore` — while legacy `cancelRequested`
+   * keeps its sticky semantics for the run path (`executeAll` re-checks)
+   * and `isCancelled()`.
+   *
+   * `cancelSeq` increments on every `cancel()`; `loadMoreImpl` snapshots it
+   * before its `fetchBatch` await and re-checks after — a cancel landing
+   * DURING the fetch discards the late-settled batch (the load-bearing
+   * post-await re-check; the `run()` finally reset alone cannot cover it
+   * because the cancel arrives after the finally).
+   */
+  private cancelPending = false;
+  private cancelSeq = 0;
   /** Batched handle của statement đang in-flight (cancel target). */
   private currentBatched: BatchedQuery | null = null;
+  /**
+   * TASK-ARP02-001 — delivered-once guard for `BatchedQuery.cancel()` on the
+   * cursor currently referenced by `currentBatched`. A second `cancel()`
+   * while the first is still awaiting the cursor must not re-fire
+   * `batched.cancel()/close()`.
+   */
+  private currentBatchedCancelDelivered = false;
   /**
    * TASK-RLX-001 — adapter đã resolve, giữ CHỈ trong lúc một statement
    * non-batched đang in-flight qua runQuery (PID window). Cancel() khi đó
@@ -74,6 +98,13 @@ export class QueryRunner {
    * cancelled). Batched cursor vẫn đi qua BatchedQuery.cancel() độc quyền.
    */
   private activeAdapter: DbAdapter | null = null;
+  /**
+   * TASK-ARP02-001 — once-only guard for the non-batched seam. A second
+   * `cancel()` while the PID window is still open must NOT re-fire
+   * `adapter.cancelActiveQuery()`. Reset at run() entry (per run) so a
+   * new in-flight run can fire its own seam once.
+   */
+  private seamDelivered = false;
   private currentIndex = -1;
   private running: Promise<void> | null = null;
   /** Per-index in-flight promise — serializes concurrent loadMore cho cùng index. */
@@ -97,6 +128,11 @@ export class QueryRunner {
 
   /**
    * Đã cancel hay chưa.
+   *
+   * TASK-ARP02-001 — semantics UNCHANGED (sticky until the next `run()`):
+   * consumers (resultsPanel error-toast suppression) rely on the legacy
+   * value. The new run-bounded ownership lives in `cancelPending` /
+   * `cancelSeq`, consulted by `loadMoreImpl`.
    */
   isCancelled(): boolean {
     return this.cancelRequested;
@@ -124,8 +160,15 @@ export class QueryRunner {
     const append = opts.append === true;
     const base = append ? this.results.length : 0;
     const runNo = ++this.runCount;
+    // TASK-ARP02-001 — a new run owns its cancel state: clear the sticky
+    // flag (legacy semantics) and open the in-flight cancel window. Any
+    // close-origin cancel from before this run is bounded away.
     this.cancelRequested = false;
+    this.cancelPending = false;
+    this.cancelSeq = 0;
     this.currentBatched = null;
+    this.currentBatchedCancelDelivered = false;
+    this.seamDelivered = false;
     this.loadMoreInFlight.clear();
     // Đóng các batched cursor còn mở từ lần chạy trước (user chạy câu mới
     // mà chưa fetch hết rows cũ). Pool Postgres max=1 — nếu không đóng,
@@ -159,6 +202,13 @@ export class QueryRunner {
     } finally {
       this.running = null;
       this.currentBatched = null;
+      this.currentBatchedCancelDelivered = false;
+      this.seamDelivered = false;
+      // TASK-ARP02-001 — the run settled: close the in-flight cancel window.
+      // (cancelRequested stays sticky for isCancelled(); a cancel arriving
+      // AFTER this finally is close-origin and sets only the sticky flag,
+      // leaving cancelPending=false so a later healthy loadMore still works.)
+      this.cancelPending = false;
       // TASK-RLX-001 — đóng PID window khi run kết thúc (dù success/error).
       this.activeAdapter = null;
     }
@@ -324,14 +374,35 @@ export class QueryRunner {
     if (r.status !== "done") {
       throw new Error(`Statement ${index} is not done (status=${r.status})`);
     }
-    if (this.cancelRequested) {
+    // TASK-ARP02-001 — entry guard, in-flight-scoped (load-bearing per the
+    // plan-review note): a close-origin cancel left `cancelPending=false`
+    // (only the sticky `cancelRequested` is set), so it must NOT poison
+    // this healthy loadMore. Only a cancel issued against LIVE work — i.e.
+    // `cancelRequested && cancelPending` — rejects here. (A cancel landing
+    // mid-loadMore sets currentBatched to THIS cursor and closes it; the
+    // sticky flag then stays true for isCancelled(), matching the run-path
+    // contract.)
+    if (this.cancelRequested && this.cancelPending) {
       throw new Error(`Statement ${index} cancelled`);
     }
     const batched = r.batched;
     // Track currentBatched để cancel mid-fetchBatch reaches đúng cursor.
     this.currentBatched = batched;
+    this.currentBatchedCancelDelivered = false;
+    // Snapshot the cancel sequence before the await; a cancel landing during
+    // the fetch bumps it (see cancel()).
+    const cancelSeqBefore = this.cancelSeq;
     try {
       const batch = await batched.fetchBatch();
+      // TASK-ARP02-001 — post-await re-check (load-bearing): the run()'s
+      // finally reset alone cannot catch a cancel that arrives AFTER the run
+      // settled but DURING this fetch. If the cancel sequence advanced while
+      // we were parked in fetchBatch, cancel() has already cancelled and
+      // closed THIS cursor — the late batch is DISCARDED, never appended
+      // onto a cancelled state.
+      if (this.cancelSeq !== cancelSeqBefore) {
+        return this.results.slice();
+      }
       if (batch === null || batch.length === 0) {
         // EOF — không append gì; rowCount = current rows length.
         if (r.result) {
@@ -372,10 +443,36 @@ export class QueryRunner {
    * đang giữ một adapter cho statement in-flight (PID window mở), gọi seam
    * `adapter.cancelActiveQuery()` (best-effort). Window đóng (statement đã
    * settle) → cancel là no-op: không seam, không false cancelled.
+   *
+   * TASK-ARP02-001 — exactly-once ownership:
+   * - `cancelRequested` (sticky, legacy) + `cancelPending` (in-flight-scoped)
+   *   are both latched here; the sticky flag alone is what made close-origin
+   *   cancels poison later `loadMore` calls — `cancelPending` is the
+   *   load-bearing predicate for those.
+   * - Batched branch: delivered-once guard — a second cancel while the same
+   *   in-flight cursor is being cancelled is a no-op (no double
+   *   `batched.cancel()/close()`).
+   * - Non-batched branch: delivered-once guard on the seam — a second cancel
+   *   while the PID window is still open must not re-fire
+   *   `cancelActiveQuery()`.
+   * - A cancel landing while a loadMore is in flight bumps `cancelSeq` so
+   *   the post-await re-check in `loadMoreImpl` discards the late batch.
+   * - Close-origin cancel (no currentBatched, PID window closed): sets the
+   *   sticky flag only — the seam / cursor channels correctly do nothing.
    */
   async cancel(): Promise<void> {
     this.cancelRequested = true;
+    this.cancelSeq++;
+    const liveCancel = this.currentBatched !== null || this.activeAdapter !== null;
+    if (liveCancel) {
+      this.cancelPending = true;
+    }
     if (this.currentBatched) {
+      if (this.currentBatchedCancelDelivered) {
+        // Idempotent: cancel already delivered for this in-flight cursor.
+        return;
+      }
+      this.currentBatchedCancelDelivered = true;
       try {
         await this.currentBatched.cancel();
       } catch {
@@ -387,17 +484,24 @@ export class QueryRunner {
         // ignore
       }
       this.currentBatched = null;
+      this.cancelPending = false;
       return;
     }
     // TASK-RLX-001 — non-batched in-flight cancellation. Chỉ bắn seam khi
     // runner đang thực sự giữ adapter cho một runQuery đang chờ.
     const adapter = this.activeAdapter;
+    if (this.seamDelivered) {
+      // Idempotent: seam already fired for this run's in-flight statement.
+      return;
+    }
     if (adapter?.cancelActiveQuery) {
+      this.seamDelivered = true;
       try {
         await adapter.cancelActiveQuery();
       } catch {
         // best-effort — seam failure không được làm hỏng cancel flow.
       }
+      this.cancelPending = false;
     }
   }
 

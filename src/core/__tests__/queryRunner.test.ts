@@ -794,6 +794,218 @@ describe("QueryRunner — non-batched cancellation seam (TASK-RLX-001)", () => {
     expect(result[0].status).toBe("cancelled");
   });
 
+  // =============================================================================
+  // TASK-ARP02-001 — Runner ownership: idempotent cancel + run-bounded
+  // close-origin cancellation. Three RED cases (2, 4, 5) + regression pins
+  // (3, 6) added; case 1 is the existing Test #1 above.
+  // =============================================================================
+  it("Test #2 — ARP02-001 case 2: double cancel on a non-batched in-flight run fires the seam exactly once", async () => {
+    // Deferred adapter.runQuery so we can call cancel() twice while the
+    // statement is still in flight. Seam must fire EXACTLY once (not 2x) and
+    // the settled status must be "cancelled".
+    let resolveRun: ((v: RunResult) => void) | null = null;
+    const runQuerySpy = vi.fn(
+      () => new Promise<RunResult>((resolve) => { resolveRun = resolve; }),
+    );
+    const cancelActiveSpy = vi.fn(async () => {});
+    const adapter = {
+      connect: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      runQuery: runQuerySpy,
+      cancelActiveQuery: cancelActiveSpy,
+      listSchemas: vi.fn(async () => []),
+      listTables: vi.fn(async () => []),
+      listViews: vi.fn(async () => []),
+      listRoutines: vi.fn(async () => []),
+      listColumns: vi.fn(async () => []),
+      testConnection: vi.fn(async () => {}),
+    } as unknown as DbAdapter & {
+      runQuery: ReturnType<typeof vi.fn>;
+      cancelActiveQuery: ReturnType<typeof vi.fn>;
+    };
+    const runner = new QueryRunner(async () => adapter);
+
+    const runPromise = runner.run([stmt("SELECT pg_sleep(10)", 0, 18)], () => {});
+    await new Promise((r) => setTimeout(r, 5));
+    expect(runQuerySpy).toHaveBeenCalledTimes(1);
+
+    // Two sequential cancels while runQuery is still deferred.
+    await runner.cancel();
+    await runner.cancel();
+
+    if (resolveRun) {
+      resolveRun({ results: [{ columns: ["x"], rows: [], rowCount: 0, durationMs: 0 }] });
+    }
+    const result = await runPromise;
+
+    // Seam exactly once (idempotent cancel).
+    expect(cancelActiveSpy).toHaveBeenCalledTimes(1);
+    expect(result[0].status).toBe("cancelled");
+  });
+
+  it("Test #3 — ARP02-001 case 3: double cancel on a batched in-flight run → batched.cancel 1x, seam never", async () => {
+    // Regression pin: PID window at executeAll:191 and currentBatched at
+    // executeAll:203 are disjoint — two cancels while a batched cursor is
+    // in flight must call batched.cancel() exactly once and never the seam.
+    const batched = makeBatched(["n"], [null]);
+    let resolveFetch: ((v: any[][] | null) => void) | null = null;
+    batched.fetchBatch.mockImplementation(
+      () => new Promise<any[][] | null>((resolve) => { resolveFetch = resolve; }),
+    );
+    const cancelActiveSpy = vi.fn(async () => {});
+    const adapter = {
+      connect: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      runQuery: vi.fn(async () => ({ results: [], batched })),
+      cancelActiveQuery: cancelActiveSpy,
+      listSchemas: vi.fn(async () => []),
+      listTables: vi.fn(async () => []),
+      listViews: vi.fn(async () => []),
+      listRoutines: vi.fn(async () => []),
+      listColumns: vi.fn(async () => []),
+      testConnection: vi.fn(async () => {}),
+    } as unknown as DbAdapter & {
+      runQuery: ReturnType<typeof vi.fn>;
+      cancelActiveQuery: ReturnType<typeof vi.fn>;
+    };
+    const runner = new QueryRunner(async () => adapter);
+
+    const runPromise = runner.run([stmt("SELECT pg_sleep(10)", 0, 18)], () => {});
+    await new Promise((r) => setTimeout(r, 5));
+    expect(batched.fetchBatch).toHaveBeenCalledTimes(1);
+
+    await runner.cancel();
+    await runner.cancel();
+
+    if (resolveFetch) resolveFetch(null);
+    const result = await runPromise;
+
+    expect(batched.cancel).toHaveBeenCalledTimes(1);
+    expect(cancelActiveSpy).not.toHaveBeenCalled();
+    expect(result[0].status).toBe("cancelled");
+  });
+
+  it("Test #4 — ARP02-001 case 4: cancel on an idle/settled runner must not poison a later loadMore", async () => {
+    // Run a batched SELECT to done (open cursor). Cancel the idle runner
+    // (close-origin cancel). Then loadMore(0) must resolve and append — the
+    // stale cancelRequested flag must NOT cause loadMore to throw.
+    const batched = makeBatched(
+      ["n"],
+      [
+        [[1]], // initial fetch
+        [[2]], // loadMore
+        null,
+      ],
+    );
+    const adapter = makeAdapter(async () => ({ results: [], batched }));
+    const runner = new QueryRunner(async () => adapter);
+
+    const result = await runner.run([stmt("SELECT *", 0, 9)], () => {});
+    expect(result[0].result?.rows).toEqual([[1]]);
+    expect(batched.fetchBatch).toHaveBeenCalledTimes(1);
+
+    // Idle cancel — close-origin, runner is fully settled.
+    await runner.cancel();
+
+    // loadMore must still work; cancelRequested flag must not poison it.
+    const loaded = await runner.loadMore(0);
+    expect(loaded[0].result?.rows).toEqual([[1], [2]]);
+    expect(batched.fetchBatch).toHaveBeenCalledTimes(2);
+  });
+
+  it("Test #5 — ARP02-001 case 5: loadMore in-flight when cancel fires must not append after settle", async () => {
+    // Start loadMore(0) (deferred fetch), call cancel(), then resolve the
+    // deferred fetch with [[42]]. The late-settled batch must NOT be
+    // appended; final rows stay [[1]]; no unhandled rejection.
+    const batched = makeBatched(
+      ["n"],
+      [
+        [[1]], // initial fetch
+        // loadMore — first call hangs, then we resolve with [[42]]
+      ],
+    );
+    const adapter = makeAdapter(async () => ({ results: [], batched }));
+    const runner = new QueryRunner(async () => adapter);
+
+    const result = await runner.run([stmt("SELECT *", 0, 9)], () => {});
+    expect(result[0].result?.rows).toEqual([[1]]);
+
+    // Override the loadMore fetch to be controllable.
+    let resolveLoadMoreFetch: ((v: any[][] | null) => void) | null = null;
+    batched.fetchBatch.mockImplementationOnce(
+      () => new Promise<any[][] | null>((resolve) => { resolveLoadMoreFetch = resolve; }),
+    );
+
+    const loadMorePromise = runner.loadMore(0).catch((err) => err);
+    // Let the loadMore call enter fetchBatch and park.
+    await new Promise((r) => setTimeout(r, 5));
+
+    // Cancel mid-loadMore.
+    await runner.cancel();
+
+    // Now resolve the deferred fetchBatch with [[42]] — this is the
+    // "late settle" path. Per contract, the in-flight loadMore must NOT
+    // append; either reject cleanly OR resolve with rows unchanged.
+    if (resolveLoadMoreFetch) resolveLoadMoreFetch([[42]]);
+    const settled = await loadMorePromise;
+
+    // Acceptable: loadMore rejected with a cancel-shaped error, OR it
+    // resolved but the rows are still [[1]] (no late append). Either way,
+    // rows must NOT include [42].
+    const final = runner.getResults();
+    expect(final[0].result?.rows).toEqual([[1]]);
+    // If loadMore rejected, the rejection must not be unhandled — the
+    // returned value is either the error or the (unchanged) results array.
+    if (settled instanceof Error) {
+      expect(String(settled.message)).toMatch(/cancelled|cancel/i);
+    }
+  });
+
+  it("Test #6 — ARP02-001 case 6: cancel mid-run; deferred settle after → status stays cancelled, never done", async () => {
+    // Regression pin on executeAll post-await re-checks (:206, :225):
+    // a deferred runQuery settling AFTER cancel must yield 'cancelled',
+    // never 'done'.
+    let resolveRun: ((v: RunResult) => void) | null = null;
+    const runQuerySpy = vi.fn(
+      () => new Promise<RunResult>((resolve) => { resolveRun = resolve; }),
+    );
+    const cancelActiveSpy = vi.fn(async () => {});
+    const adapter = {
+      connect: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      runQuery: runQuerySpy,
+      cancelActiveQuery: cancelActiveSpy,
+      listSchemas: vi.fn(async () => []),
+      listTables: vi.fn(async () => []),
+      listViews: vi.fn(async () => []),
+      listRoutines: vi.fn(async () => []),
+      listColumns: vi.fn(async () => []),
+      testConnection: vi.fn(async () => {}),
+    } as unknown as DbAdapter & {
+      runQuery: ReturnType<typeof vi.fn>;
+      cancelActiveQuery: ReturnType<typeof vi.fn>;
+    };
+    const runner = new QueryRunner(async () => adapter);
+
+    const runPromise = runner.run([stmt("SELECT pg_sleep(10)", 0, 18)], () => {});
+    await new Promise((r) => setTimeout(r, 5));
+    expect(runQuerySpy).toHaveBeenCalledTimes(1);
+
+    // Cancel first.
+    await runner.cancel();
+    expect(cancelActiveSpy).toHaveBeenCalledTimes(1);
+
+    // Then resolve the deferred runQuery with a normal successful result.
+    if (resolveRun) {
+      resolveRun({ results: [{ columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 }] });
+    }
+    const result = await runPromise;
+
+    // Status must be 'cancelled' — NOT 'done' — even though runQuery
+    // returned a fully-populated successful result.
+    expect(result[0].status).toBe("cancelled");
+  });
+
   it("Test #5 — regression: batched cursor uses BatchedQuery.cancel() only, seam never called", async () => {
     // The seam is for the NON-cursor branch. If a BatchedQuery is in flight
     // (currentBatched set), cancel() must call batched.cancel() once and must

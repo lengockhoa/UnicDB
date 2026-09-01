@@ -107,6 +107,15 @@ export class ConnectionManager {
    * after the bump would match the bumped generation).
    */
   private disposed = false;
+  /**
+   * ARP-02.3 TASK-ARP02-003 — per-connection revision counter. Bumped
+   * synchronously (BEFORE any await) by add/edit/delete so an in-flight
+   * PASSIVE connect (`getAdapterFor`) can detect that its snapshot is stale
+   * when it resumes — mirroring the RLX-03 `activeGeneration` discipline that
+   * already guards the ACTIVE path.
+   */
+  private connRevisions = new Map<string, number>();
+
   /** Tunnel-exit subscription handle — disposed in dispose(). */
   private tunnelExitSub: { dispose(): void } | null = null;
   /**
@@ -199,6 +208,11 @@ export class ConnectionManager {
     const old = this.state.connections[idx];
     const next: ConnectionConfig = { ...old, ...patch, id: old.id };
 
+    // ARP-02.3: config mutation → bump the revision synchronously BEFORE any
+    // await so an in-flight passive connect for this id aborts instead of
+    // late-installing a candidate built from the OLD config.
+    this.bumpConnRevision(id);
+
     // RLX-03: bump active generation synchronously BEFORE any await when
     // editing the active id — any in-flight recovery for this id must
     // silently abort (the user is mid-edit, recovery is no longer wanted).
@@ -261,6 +275,10 @@ export class ConnectionManager {
     const idx = this.state.connections.findIndex((c) => c.id === id);
     if (idx < 0) return; // idempotent
     const wasActive = this.currentActiveId === id;
+    // ARP-02.3: removal → bump the revision synchronously BEFORE any await so
+    // an in-flight passive connect for this id aborts instead of
+    // late-installing a candidate for a deleted connection.
+    this.bumpConnRevision(id);
     // RLX-03: bump active generation synchronously BEFORE any await when
     // deleting the active id — any in-flight recovery for this id must
     // silently abort.
@@ -347,6 +365,15 @@ export class ConnectionManager {
       return cached;
     }
 
+    // ARP-02.3: snapshot the revision BEFORE the connect awaits. Any
+    // edit/delete committing mid-flight invalidates this candidate.
+    const rev = this.connRevisions.get(cfg.id) ?? 0;
+    // Resolve the CURRENT persisted config — the caller's cfg object may be a
+    // stale snapshot (schema tree captured before an edit). Untracked cfgs
+    // (not in state) keep working exactly as before by falling back to cfg;
+    // a MID-FLIGHT deletion is caught by the provenance re-check below.
+    const current = this.currentConfigFor(cfg.id) ?? cfg;
+
     let password: string | undefined;
     try {
       password = await this.tryGetPassword(cfg.id);
@@ -358,7 +385,12 @@ export class ConnectionManager {
         `Không tìm được password cho connection "${cfg.name}". Vui lòng nhập lại password (edit connection).`,
       );
     }
-    const adapter = this.guardAdapter(await this.resolveAdapter(cfg, password), cfg);
+    // ARP-02.3: build from the CURRENT config so a reconnect after an edit
+    // targets the new host/port, never the stale caller snapshot.
+    const adapter = this.guardAdapter(
+      await this.resolveAdapter(current, password),
+      current,
+    );
     try {
       await adapter.testConnection();
     } catch (err) {
@@ -368,6 +400,27 @@ export class ConnectionManager {
         // ignore
       }
       throw err;
+    }
+    // ARP-02.3 provenance re-check AFTER every await (same discipline as the
+    // RLX-03 ACTIVE path): revision unchanged AND the effective current
+    // config is still the one we built from. `?? cfg` keeps untracked cfgs
+    // (not persisted, e.g. direct caller objects) valid — deletion is only
+    // possible for tracked ids, whose object identity then diverges.
+    // Otherwise the late candidate is closed exactly once and never
+    // installed — the next getAdapterFor reconnects with the then-current
+    // config.
+    if (
+      (this.connRevisions.get(cfg.id) ?? 0) !== rev ||
+      (this.currentConfigFor(cfg.id) ?? cfg) !== current
+    ) {
+      try {
+        await adapter.close();
+      } catch {
+        // ignore
+      }
+      throw new Error(
+        `Connection "${cfg.name}" không còn hợp lệ — đã bỏ kết nối cũ`,
+      );
     }
     this.passiveAdapters.set(cfg.id, adapter);
     return adapter;
@@ -694,6 +747,27 @@ export class ConnectionManager {
   }
 
   // ---- Private -------------------------------------------------------------
+
+  /**
+   * ARP-02.3 TASK-ARP02-003 — bump the revision of connection `id`
+   * synchronously, before any await in the calling mutation. Idempotent per
+   * mutation (a single increment per call site, like activeGeneration).
+   */
+  private bumpConnRevision(id: string): void {
+    this.connRevisions.set(id, (this.connRevisions.get(id) ?? 0) + 1);
+  }
+
+  /**
+   * ARP-02.3 TASK-ARP02-003 — re-resolve the CURRENT persisted config for
+   * `cfg.id` before building a passive candidate. The caller-supplied cfg
+   * (e.g. from a stale schema-tree snapshot) may lag an editConnection commit;
+   * validating against the fresh config lets the stale object fail fast AND
+   * makes the post-edit reconnect use the new host/port. If the connection no
+   * longer exists, the caller handles it (provenance check below).
+   */
+  private currentConfigFor(id: string): ConnectionConfig | null {
+    return this.state.connections.find((c) => c.id === id) ?? null;
+  }
 
   /** Chọn Memento (workspaceState nếu có folder, globalState nếu không). */
   private pickMemento(): vscode.Memento {

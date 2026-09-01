@@ -1099,3 +1099,227 @@ describe("ConnectionManager ARP-01 transaction guard", () => {
     mgr.dispose();
   });
 });
+
+// ---- ARP-02.3 TASK-ARP02-003 — passive adapter provenance --------------------
+// getAdapterFor is the PASSIVE connect path (schema tree expansion). It reads
+// cfg at entry, awaits password/factory/testConnection, then installs into
+// passiveAdapters unconditionally. If edit/delete commits while the connect is
+// in flight, the late candidate must be discarded (closed exactly once) and
+// never installed/reused. Fixture: a factory whose FIRST adapter has a
+// DEFERRED testConnection (gate-releasable) so the race is deterministic.
+//
+// Secrets stub note: `get` always resolves "pw" for vsdb.pass.* even after
+// deleteConnection deletes the secret — deliberate, so the post-delete
+// "later request" can reach the factory instead of failing on password.
+describe("ConnectionManager ARP-02.3 passive provenance", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  interface ProvenanceRecord {
+    adapter: ReturnType<typeof makeFakeAdapter>;
+    cfg: ConnectionConfig;
+  }
+
+  function setupProvenanceHarness(
+    seed: ConnectionConfig[],
+    opts: { active?: string } = {},
+  ) {
+    // pickMemento needs visible workspace folders (same pattern as RLX-03 suite).
+    mockWorkspaceFolders = [{ uri: { toString: () => "f" }, name: "f", index: 0 }];
+    const ws = new FakeMemento();
+    const g = new FakeMemento();
+    const ctx = {
+      secrets: {
+        get: async (k: string) =>
+          k.startsWith("vsdb.pass.") ? "pw" : undefined,
+        store: async () => undefined,
+        delete: async () => undefined,
+      },
+      workspaceState: ws,
+      globalState: g,
+    };
+    // Seed BEFORE constructing the manager — loadState runs in the ctor.
+    ws.update("vsdb.connections", seed);
+    if (opts.active) ws.update("vsdb.activeConnection", opts.active);
+    return { ctx, ws, g };
+  }
+
+  /** Factory whose FIRST created adapter parks in a deferred testConnection. */
+  function makeGatedFixture() {
+    const gate = makeDeferred<void>();
+    const records: ProvenanceRecord[] = [];
+    let call = 0;
+    const factory = vi.fn((cfg: ConnectionConfig) => {
+      call++;
+      const a = makeFakeAdapter();
+      if (call === 1) {
+        a.testConnection.mockImplementation(() => gate.promise);
+      }
+      records.push({ adapter: a, cfg });
+      return a as unknown as DbAdapter;
+    });
+    return { factory, records, gate };
+  }
+
+  /** Drain connect-path microtasks so an in-flight getAdapterFor parks in the gate. */
+  async function settle(): Promise<void> {
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+  }
+
+  it("case 1 — getAdapterFor caches; second call reuses the same adapter", async () => {
+    const cfg = makeCfg({ id: "cA", host: "h1" });
+    const { ctx } = setupProvenanceHarness([cfg]);
+    const { factory, records, gate } = makeGatedFixture();
+    const mgr = new ConnectionManager(ctx as never, factory as never);
+
+    gate.resolve();
+    const a1 = await mgr.getAdapterFor(cfg);
+    const a2 = await mgr.getAdapterFor(cfg);
+    expect(records).toHaveLength(1);
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(a2).toBe(a1);
+    expect(records[0].adapter.close).not.toHaveBeenCalled();
+
+    await mgr.dispose();
+  });
+
+  it("case 2 — getAdapterFor(cX) deferred; deleteConnection(cX) commits; late resolves -> candidate discarded", async () => {
+    const cfg = makeCfg({ id: "cX", host: "h1" });
+    const { ctx } = setupProvenanceHarness([cfg]);
+    const { factory, records, gate } = makeGatedFixture();
+    const mgr = new ConnectionManager(ctx as never, factory as never);
+
+    // In-flight passive connect: past the cache lookup, parked in the gate.
+    // Eagerly attach the rejection handler to avoid unhandled-rejection noise.
+    const pending = mgr.getAdapterFor(cfg).catch((e) => e);
+    await settle();
+    expect(records).toHaveLength(1);
+    expect(records[0].adapter.testConnection).toHaveBeenCalledTimes(1);
+
+    // Delete commits while the candidate is in flight (NOT yet installed).
+    await mgr.deleteConnection("cX");
+
+    // Late resolve: the candidate must be closed exactly once, never installed.
+    gate.resolve();
+    await settle();
+    const err = await pending;
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/không còn hợp lệ|đã bỏ kết nối/);
+    expect(records[0].adapter.close).toHaveBeenCalledTimes(1);
+
+    // A later request for the same (stale) cfg must build a FRESH adapter.
+    const before = factory.mock.calls.length;
+    const a2 = await mgr.getAdapterFor(cfg);
+    expect(factory.mock.calls.length).toBe(before + 1);
+    expect(a2).not.toBe(records[0].adapter);
+
+    await mgr.dispose();
+  });
+
+  it("case 3 — getAdapterFor(cY) deferred; editConnection(cY,{host:h2}) commits; late resolves -> discarded, next connect uses new config", async () => {
+    const cfg = makeCfg({ id: "cY", host: "h1" });
+    const { ctx } = setupProvenanceHarness([cfg]);
+    const { factory, records, gate } = makeGatedFixture();
+    const mgr = new ConnectionManager(ctx as never, factory as never);
+
+    const pending = mgr.getAdapterFor(cfg).catch((e) => e);
+    await settle();
+    expect(records).toHaveLength(1);
+
+    // Edit commits while the candidate is in flight. The edit probe is factory
+    // call #2 (immediate testConnection) and is closed by editConnection.
+    await mgr.editConnection("cY", { host: "h2" });
+
+    gate.resolve();
+    await settle();
+    const err = await pending;
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/không còn hợp lệ|đã bỏ kết nối/);
+    expect(records[0].adapter.close).toHaveBeenCalledTimes(1);
+
+    // Next request — even with the STALE cfg object — reconnects with the
+    // CURRENT persisted config (host h2), not the stale one.
+    const a2 = await mgr.getAdapterFor(cfg);
+    const fresh = records.find((r) => r.adapter === a2);
+    expect(fresh).toBeDefined();
+    expect(fresh!.cfg.host).toBe("h2");
+    expect(a2).not.toBe(records[0].adapter);
+
+    await mgr.dispose();
+  });
+
+  it("case 4 — getAdapter() in flight for A; setActive(B); late A candidate closed + throws (RLX-03 pin)", async () => {
+    const cA = makeCfg({ id: "cA", host: "hA" });
+    const cB = makeCfg({ id: "cB", host: "hB" });
+    const { ctx } = setupProvenanceHarness([cA, cB], { active: "cA" });
+    const { factory, records, gate } = makeGatedFixture();
+    const mgr = new ConnectionManager(ctx as never, factory as never);
+
+    // Active-path connect for cA parked in the gate (factory call #1).
+    // Eagerly attach rejection handler — same discipline as cases 2/3.
+    const pending = mgr.getAdapter().catch((e) => e);
+    await settle();
+    expect(records).toHaveLength(1);
+
+    // Switch active to cB while the connect is mid-await.
+    await mgr.setActive("cB");
+
+    gate.resolve();
+    await settle();
+    // GREEN via RLX-03 ownership re-check — pin, do not regress.
+    const err = await pending;
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/không còn active/);
+    expect(records[0].adapter.close).toHaveBeenCalledTimes(1);
+
+    await mgr.dispose();
+  });
+
+  it("case 5 — deleteConnection closes the cached passive adapter exactly once; later request does NOT reuse it", async () => {
+    const cfg = makeCfg({ id: "cD", host: "h1" });
+    const { ctx } = setupProvenanceHarness([cfg]);
+    const { factory, records, gate } = makeGatedFixture();
+    const mgr = new ConnectionManager(ctx as never, factory as never);
+
+    gate.resolve();
+    const a1 = await mgr.getAdapterFor(cfg);
+    expect(records).toHaveLength(1);
+
+    await mgr.deleteConnection("cD");
+    expect(a1.close).toHaveBeenCalledTimes(1);
+
+    // Later request for the (now deleted) id must not return the cached adapter.
+    const a2 = await mgr.getAdapterFor(cfg);
+    expect(factory).toHaveBeenCalledTimes(2);
+    expect(a2).not.toBe(a1);
+
+    await mgr.dispose();
+  });
+
+  it("case 6 — editConnection closes the cached passive adapter; next getAdapterFor reconnects with the NEW config", async () => {
+    const cfg = makeCfg({ id: "cE", host: "h1" });
+    const { ctx } = setupProvenanceHarness([cfg]);
+    const { factory, records, gate } = makeGatedFixture();
+    const mgr = new ConnectionManager(ctx as never, factory as never);
+
+    gate.resolve();
+    const a1 = await mgr.getAdapterFor(cfg);
+    expect(records).toHaveLength(1);
+
+    await mgr.editConnection("cE", { host: "h2" });
+    expect(a1.close).toHaveBeenCalledTimes(1);
+
+    // Next request reconnects with the NEW config (refreshed persisted cfg,
+    // as a schema-tree caller would after a connections-changed refresh).
+    const current = mgr.listConnections().find((c) => c.id === "cE")!;
+    const a2 = await mgr.getAdapterFor(current);
+    expect(a2).not.toBe(a1);
+    const fresh = records.find((r) => r.adapter === a2);
+    expect(fresh).toBeDefined();
+    expect(fresh!.cfg.host).toBe("h2");
+
+    await mgr.dispose();
+  });
+});
