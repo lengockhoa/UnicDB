@@ -129,3 +129,39 @@ Content checklist — the ADR MUST document each of these (check off in the Exec
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+## Executor Report
+
+- EXECUTOR_TOOL: claude-code
+- EXECUTOR_MODEL: unic-code (claude-sonnet-4-5 class, self-reported per RULES self-report rule)
+- EXECUTOR_SUBAGENT: Claude:feature-implementer
+- RED_OUTPUT: N/A (docs-gate task, no code tests — per task §Test Cases: "Docs task — no code, N/A per RULES: zero testable behavior")
+
+Content checklist — verified present in `docs/decisions/0002-cross-driver-resilience-contract.md`:
+
+- [x] **Per-driver matrix**, every cell source-cited — §2 + §2.1–§2.6 (connect/query/stream/cancel/pool/broken socket per driver; each citation read and verified against current source @ 85bf5cb)
+- [x] **Intentional-difference explanation** — §3 (PG slot isolation `postgres.ts:291-304`, MySQL single-slot rationale `mysql.ts:88-92,250-252`, MSSQL `requestTimeout: 0` paused-stream survival `mssql.ts:548-554`; all stated as deliberate)
+- [ ] **Measured finite-failure behavior with probe evidence pasted** — intentionally NOT written by wave 0, per task wave-0 scope rule and Acceptance Criteria ("this task must NOT pre-fill those measurements"); §7 placeholder + §5 SLO define what wave-1 (TASK-ARP05-001/002/003) must append
+- [x] **Known gap recorded explicitly** — §4 (MySQL `queueLimit: 0` + `connectionLimit: 1` = unbounded wait; TASK-ARP05-002 closes it; recommended `acquireTimeout: 10_000` recorded as recommendation, measured bound to be recorded in §7 by -002)
+- [x] **SLO / no-replay decision** — §5 (connect ≤ 10s, queued acquire bounded per §7, cancel ≤ 5s best-effort; documented no-timer exceptions for MSSQL query / MySQL stream; no automatic replay of mutations/transactions/cursors — binds 001/002/003)
+- [x] **Rejected alternatives** (all 5, each with reason) — §6 (unmeasured value changes; shared base-adapter breaking lazy-per-dialect factory `factory.ts:14-26` + DBX-08 capability matrix `postgres.ts:282-287` / `mysql.ts:137-142`; blanket MySQL `connectionLimit` raise; circuit breakers — roadmap §ARP-05 Out line 248; automatic replay — roadmap Out + acceptance line 271)
+- [x] Trailing `## Measured probe evidence (appended by wave-1 tasks)` placeholder — §7, stable merge point. Reviewer note: the placeholder deliberately does NOT contain the literal strings `## Probe: PostgreSQL` / `## Probe: MySQL` / `## Probe: MSSQL`, because TASK-ARP05-001/002/003 each gate with `grep -qi "## Probe: <driver>"` — spelling them in wave 0 would make those RED gates pass before any append. Verified all three greps currently exit 1.
+
+Verification Output (task §Verification Commands, run in worktree `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-arp05-000`):
+
+```
+$ test -f docs/decisions/0002-cross-driver-resilience-contract.md; echo "cmd1 exit=$?"
+cmd1 exit=0
+$ grep -qi "queueLimit" docs/decisions/0002-cross-driver-resilience-contract.md; echo "cmd2 exit=$?"
+cmd2 exit=0
+$ grep -qi "no.*replay\|replay" docs/decisions/0002-cross-driver-resilience-contract.md; echo "cmd3 exit=$?"
+cmd3 exit=0
+$ git status --short src/ | wc -l
+0
+```
+
+Extra guard checks (not in task, reviewer-relevant): wave-1 grep gates `## Probe: PostgreSQL` / `## Probe: MySQL` / `## Probe: MSSQL` all absent from the ADR (exit 1) — appends are detectable. `git status --short`: `M docs/decisions/README.md` + `?? docs/decisions/0002-cross-driver-resilience-contract.md` only. No `src/` file touched. INDEX.md untouched. No git add/commit/push/worktree run.
+
+- Status: PASS
+- Note: none. All file:line citations given in the task were verified against current source @ 85bf5cb and were accurate as written — no stale citations needed correcting. `docs/decisions/README.md` index updated (it does enumerate ADRs). Test Cases N/A honored (docs task, no token test invented). Scope: only the two target files changed.
+
