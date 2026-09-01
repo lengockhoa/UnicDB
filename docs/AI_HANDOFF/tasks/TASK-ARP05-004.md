@@ -1,6 +1,6 @@
 # TASK-ARP05-004 — Host message normalization (conditional gate)
 
-- Status: `pending_review`
+- Status: `done`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §2–§4 (ARP-05.4)

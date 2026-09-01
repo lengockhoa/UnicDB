@@ -32,11 +32,11 @@ Cycle AIX-07 — **Trust, Privacy & Governance** — complete; shipped in v1.28.
 
 | Task / Portfolio | Title | Status | Dependencies | Reviewer |
 |---|---|---|---|---|
-| TASK-ARP05-000 | ADR: cross-driver resilience contract (measured matrix + SLO/no-replay) | pending_review | none | - |
-| TASK-ARP05-001 | PostgreSQL pool isolation, failed-connect/close release, cancel recovery | pending_review | TASK-ARP05-000 | - |
-| TASK-ARP05-002 | MySQL held-connection streaming + bounded acquire wait | pending_review | TASK-ARP05-000 | - |
-| TASK-ARP05-003 | MSSQL paused-stream survival, cancel timeout, no enqueue wedge | pending_review | TASK-ARP05-000 | - |
-| TASK-ARP05-004 | Host message normalization (conditional gate) | pending_review | TASK-ARP05-000, TASK-ARP05-001, TASK-ARP05-002, TASK-ARP05-003 | - |
+| TASK-ARP05-000 | ADR: cross-driver resilience contract (measured matrix + SLO/no-replay) | done | none | - |
+| TASK-ARP05-001 | PostgreSQL pool isolation, failed-connect/close release, cancel recovery | done | TASK-ARP05-000 | - |
+| TASK-ARP05-002 | MySQL held-connection streaming + bounded acquire wait | done | TASK-ARP05-000 | - |
+| TASK-ARP05-003 | MSSQL paused-stream survival, cancel timeout, no enqueue wedge | done | TASK-ARP05-000 | - |
+| TASK-ARP05-004 | Host message normalization (conditional gate) | done | TASK-ARP05-000, TASK-ARP05-001, TASK-ARP05-002, TASK-ARP05-003 | - |
 
 Graph: TASK-ARP05-000 → TASK-ARP05-001; TASK-ARP05-000 → TASK-ARP05-002; TASK-ARP05-000 → TASK-ARP05-003;
 TASK-ARP05-000, 001, 002, 003 → TASK-ARP05-004.

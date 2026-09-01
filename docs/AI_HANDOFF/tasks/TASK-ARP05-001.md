@@ -1,6 +1,6 @@
 # TASK-ARP05-001 — PostgreSQL pool isolation, failed-connect/close release, cancel recovery
 
-- Status: `pending_review`
+- Status: `done`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §2–§4 (ARP-05.1)
@@ -178,3 +178,23 @@ FINDINGS:
     - file: docs/decisions/0002-cross-driver-resilience-contract.md:50-56 — §2.1 PG citation `:315-320` is now stale after the connect() edit (probe + cleanup is now :315-338).
 NEXT_STATUS_FOR_INDEX: changes_requested
 NOTES: RED evidence is genuine (`expected 19 to be 20` on the pool.end mock count) and the implemented fix for the query-probe path is correct. The blocking item is the unhandled pool.connect() rejection path, which the task's own Test Case 2 names explicitly.
+
+## Reviewer Verdict (fix round 1 re-review)
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/adapters/__tests__/postgres.test.ts && npm run typecheck && npm run compile
+  result: 24 pass / 0 fail; typecheck exit 0; compile exit 0
+FULL_SUITE: npm test — 3043 passed / 0 failed / 2 skipped (217 files passed, 1 skipped)
+TEST_PLAN_COVERAGE: all-followed — cases 1-5 implemented; case 2 now covers BOTH failure surfaces (SELECT 1 probe throws AND pool.connect() rejects)
+PRIOR FINDINGS:
+  F1 (IMPORTANT, postgres.ts:315 pool.connect() rejection left this.pool set): RESOLVED — connect() wraps the checkout (postgres.ts:322-334) with the same cleanup: this.pool nulled BEFORE end(), end() awaited in try/catch (never masks), original error rethrown; probe path (:335-352) unchanged. New test "pool.connect() itself rejects" (postgres.test.ts:756-795) genuinely covers the path — asserts end() called once, error surfaced via rejects.toThrow, next connect() builds a FRESH pool (ctor count +2) whose probe actually runs (a queued SELECT 1 result must be consumed, so no silent short-circuit), and the connect mock is restored in finally (no cross-test pollution).
+  F2 (minor, ADR three identical §8 blocks): RESOLVED — exactly one `## 8. Consequences and bindings` remains (0002-cross-driver-resilience-contract.md:532); the two duplicate blocks were removed in 48690ed; all three `## Probe:` sections intact and append-only (MSSQL:360, PostgreSQL:407, MySQL:458).
+  F3 (minor, ADR §2.1 :315-320 stale): RESOLVED — §2.1 now cites `:315-338`, names both failure surfaces, and points to `## Probe: PostgreSQL`; accurate against the current source (probe+cleanup region starts at :315, both failure-surface entry points lie in range).
+FINDINGS:
+  minor:
+    - docs/AI_HANDOFF/tasks/TASK-ARP05-001.md — no R4.5 fix-round note appended to the task file; the RED evidence (`expected 21 to be 22`) and fix description live in the ADR "Fix round 2 (R4.5...)" note (0002-cross-driver-resilience-contract.md:449-456) instead. Evidence is genuine and consistent with the old code path (pool.connect() rejection fired no end(), so the end() count was unchanged); GREEN independently re-verified.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: The blocking pool.connect()-rejection gap is genuinely closed with a real test, and the fresh-pool-probe assertion proves a retry cannot silently short-circuit as "connected". Only remaining gap is doc placement: the R4.5 note is in the ADR, not appended to the task file. Per re-review instructions INDEX.md was not modified.

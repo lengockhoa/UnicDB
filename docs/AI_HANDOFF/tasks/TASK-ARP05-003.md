@@ -1,6 +1,6 @@
 # TASK-ARP05-003 — MSSQL paused-stream survival, cancel timeout, no enqueue wedge
 
-- Status: `pending_review`
+- Status: `done`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §2–§4 (ARP-05.3)
