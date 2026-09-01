@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.38.0] — 2026-09-02
+
+Cycle ARP-02: Shutdown-safe Query Ownership and Connection Provenance — fault-injection proof that late work cannot leak across panel close, extension deactivate, or connection edit/delete. Four seams, one ownership rule: whoever starts deferred work owns its writes, and stale owners stay silent.
+
+### Fixed
+- **QueryRunner cancel ownership** (`src/core/queryRunner.ts`): `cancel()` is now in-flight-scoped and idempotent — `cancelPending` latches only when work is actually live (`currentBatched !== null || activeAdapter !== null`), the cross-dialect seam and batched-cancel deliver at most once per run (`seamDelivered`/`currentBatchedCancelDelivered` guards), `cancelSeq` is monotonic, `run()` resets all ownership flags at entry and closes the cancel window in its `finally`. `loadMore` on a cancelled cursor throws immediately and a late batch landing after `cancelSeq` advanced is discarded — no late-loadMore resurrection and no stale cancel delivery across the MySQL/MSSQL/Postgres seams. 8 new fault-injection cases.
+- **Panel-close epoch guard** (`src/ui/resultsPanel.ts`): every deferred panel continuation (`loadMore`, `requery`, `save`, `commit`, `rollback`, `distinct values`, `refreshColumnTypes`, `export`) captures the webview session epoch and re-checks it after each await — a panel closed mid-flight can no longer have stale rows, acks, or busy transitions posted into its successor. Rollback/commit database work still always runs; only the UI write is suppressed. Save-flow hardened further in fix round 1: a single epoch snapshot now gates the refusal acks, the manual-mode `saveResult ok:true`, and the pre-try `setBusy(true)` (the earlier `isStaleSession(this.sessionEpoch)` self-comparison was a no-op). 10 new fault-injection cases.
+- **Connection provenance** (`src/core/connectionManager.ts`): `getAdapterFor` re-checks connection identity after every await — an adapter built for a connection that was edited or deleted while `resolveAdapter` was in flight is discarded and closed exactly once (fix round 1 also stops a tunnel already started for the discarded config, so a tunneled connection deleted mid-flight no longer orphans its SSH tunnel). Current-config re-resolution makes an in-flight edit transparently effective. ARP-01 read-only guard and RLX-03 recovery behavior preserved byte-identically. 6 new fault-injection cases.
+- **Host lifecycle ownership** (`src/extension.ts`): `runStatements`'s `finally` no longer lets a stale invocation clear the live run's busy state — an `ownsRun` snapshot taken before `runner.run()` gates the busy-clear (a second invocation overlapping an in-flight run used to switch the panel's busy indicator off while the query was still running). A `deactivating` sentinel, set synchronously at `deactivate()` entry and reset at `activate()`, makes late completions inert: no render into a disposed/recreated webview panel, no busy writes after teardown starts. The RLX-02 `vsdb.cancelQuery` seam-first ordering (`await runner.cancel()` before `panel.setBusy(false)`) is pinned byte-identical. 3 new host-lifecycle tests with a deferred-adapter harness.
+
+### Known follow-ups (out of scope this cycle)
+- `src/ui/browseCommands.ts:169-193` has the same unguarded `finally { panel.setBusy(false) }` shape (different owner module) — flagged by review for a follow-up wave.
+- MSSQL `[insert]` bracket-identifier false positive (deferred from ARP-01).
+
+### Review
+- P2.5 plan review: round 1 Approved by unic-smart (1 minor: run()-finally alone cannot close the idle close-origin case — routed to the executor as a load-bearing constraint; addressed via in-flight-scoped `cancelPending`).
+- R2 per-task review by unic-smart: 001/003/004 APPROVED-WITH-MINOR round 1; 002 changes_requested (epoch self-comparison no-op + unguarded manual-mode save ack) — fixed in R4.5 round 1 with RED→GREEN fault-injection tests, both reviewer minors on 001/003 also applied.
+- Wave-2 gate: TASK-ARP02-004 executor's fault-injection of the wave-1 panel epoch recorded two real host gaps (finally-busy leak, deactivate ordering) — gate correctly OPEN, produced the extension.ts fix rather than a not-needed close.
+- Verification: full suite 2985 passed | 2 skipped (was 2963 | 2 at v1.37.0); `npm run typecheck` and `npm run compile` exit 0; `package-lock.json` both version fields synced to 1.38.0.
+
 ## [1.37.0] — 2026-09-01
 
 Cycle ARP-01: Read-Only Enforcement Completeness — the read-only promise now covers the secondary execution boundary (transactions), and the mutation classifier is formalized with its first documented false-positive fix.
