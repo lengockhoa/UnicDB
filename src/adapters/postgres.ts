@@ -312,12 +312,26 @@ export class PostgresAdapter implements DbAdapter {
       ssl: pgSslOptions(this.cfg),
       connectionTimeoutMillis: 10_000,
     });
-    const probe = await this.pool.connect();
-    // ARP-05.1 (TASK-ARP05-001) — a failed connect probe must leave no
-    // half-open pool behind (mirrors MySqlAdapter.connect, mysql.ts:184-196):
-    // release the probe client, end the pool exactly once, drop the
+    // ARP-05.1 (TASK-ARP05-001) — a failed connect must leave no half-open
+    // pool behind (mirrors MySqlAdapter.connect, mysql.ts:184-196). BOTH
+    // failure surfaces get the same cleanup: pool.connect() itself rejecting
+    // (server unreachable at TCP/auth → connectionTimeoutMillis timeout) and
+    // the SELECT 1 probe failing. End the pool exactly once, drop the
     // reference, and rethrow the original error so a later connect() builds
     // a FRESH pool instead of silently reusing a dead one.
+    let probe: PoolClient;
+    try {
+      probe = await this.pool.connect();
+    } catch (error) {
+      const deadPool = this.pool;
+      this.pool = null;
+      try {
+        await deadPool.end();
+      } catch {
+        // ignore — pool.end failure must never mask the connect error.
+      }
+      throw error;
+    }
     let probeError: unknown = null;
     try {
       await probe.query("SELECT 1");

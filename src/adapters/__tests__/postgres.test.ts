@@ -753,6 +753,47 @@ describe("PostgresAdapter — ARP-05.1 resilience pins (TASK-ARP05-001)", () => 
     await adapter.close();
   });
 
+  it("pool.connect() itself rejects → no pool leak: end() once, pool nulled, next connect() builds a fresh pool", async () => {
+    const poolCtor = Pool as unknown as { mock: { calls: unknown[][] } };
+    new Pool();
+    const sharedPool = lastPool();
+    const endCallsBefore = sharedPool.end.mock.calls.length;
+    const ctorCallsBefore = poolCtor.mock.calls.length;
+
+    // The most common connect failure: pool.connect() itself rejects (server
+    // unreachable at TCP/auth → pg-pool connectionTimeoutMillis timeout).
+    // The cleanup must fire here too — not only on the SELECT 1 probe path.
+    const connectReject = new Error("timeout exceeded when trying to connect");
+    const defaultConnect = sharedPool.connect;
+    sharedPool.connect = vi.fn(() => Promise.reject(connectReject));
+
+    const adapter = new PostgresAdapter(cfg(), "pw");
+    let endCallsAfterReject = endCallsBefore;
+    try {
+      await expect(adapter.connect()).rejects.toThrow(connectReject.message);
+
+      // The half-open pool must have been ended exactly once — no leak.
+      endCallsAfterReject = sharedPool.end.mock.calls.length;
+      expect(endCallsAfterReject).toBe(endCallsBefore + 1);
+    } finally {
+      // Restore the factory default — the mocked Pool is shared file-wide.
+      sharedPool.connect = defaultConnect;
+    }
+
+    // this.pool must be nulled: the next connect() builds a FRESH pool, and
+    // that fresh pool's probe must actually run (a "connected" short-circuit
+    // without a probe is the silent-reuse bug this test forbids).
+    queue.push({ rows: [{ "?column?": 1 }] }); // fresh pool's probe
+    await expect(adapter.connect()).resolves.toBeUndefined();
+    expect(poolCtor.mock.calls.length).toBe(ctorCallsBefore + 2);
+    expect(sharedPool.end.mock.calls.length).toBe(endCallsAfterReject);
+    queue.push({ rows: [{ "?column?": 1 }] }); // fresh pool's probe
+    await expect(adapter.connect()).resolves.toBeUndefined();
+    expect(poolCtor.mock.calls.length).toBe(ctorCallsBefore + 2);
+
+    await adapter.close();
+  });
+
   it("close() with an open cursor resolves < 5s: ROLLBACK + release(true), pool.end() raced vs the 3s guard (pin)", async () => {
     queue.push({ rows: [{ "?column?": 1 }] }); // connect probe
     queue.push({ rows: [] }); // BEGIN

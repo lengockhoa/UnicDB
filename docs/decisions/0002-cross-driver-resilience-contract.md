@@ -51,7 +51,9 @@ Summary matrix — each cell is elaborated with exact citations in §2.1–§2.6
   `connectionTimeoutMillis: 10_000` and `max: PG_POOL_MAX = 4`
   (`src/adapters/postgres.ts:305-314`; `PG_POOL_MAX` declared at `:107`),
   then proves the connection with a `SELECT 1` probe before resolving
-  (`:315-320`). A connect that cannot get a slot or reach the server fails
+  (`:315-338`; both failure surfaces — pool.connect() rejection and probe
+  error — get the same no-half-open-pool cleanup, see `## Probe: PostgreSQL`).
+  A connect that cannot get a slot or reach the server fails
   within the 10 s pg-pool budget ("timeout exceeded when trying to connect" —
   the failure mode named in the isolation comment at `:291-304`).
 - **MySQL.** `MySqlAdapter.connect()` builds a `mysql2` promise pool with
@@ -402,29 +404,6 @@ Verbatim probe output (RED sensitivity mutation `requestTimeout: 0` →
 `npm run typecheck` and `npm run compile` exit 0 on the pin-only tree. No
 gap found; `src/adapters/mssql.ts` untouched by this task.
 
-## 8. Consequences and bindings
-
-- **TASK-ARP05-001 (PostgreSQL):** implements/tests within §2's PG column;
-  must preserve `max: 4` slot isolation (§3.1) and the dedicated-client
-  cancel path (§2.4); appends its probe evidence to §7 under its
-  driver-named section. Expected pin-only unless its probe proves a gap
-  (PLAN.md §3: no PG gap currently known).
-- **TASK-ARP05-002 (MySQL):** closes the §4 gap with a bounded acquire;
-  must preserve `connectionLimit: 1` isolation (§3.2) and streaming; records
-  the measured bound in §7 under its driver-named section.
-- **TASK-ARP05-003 (MSSQL):** pins §2.3/§2.4 (paused-stream survival, cancel
-  + late-request non-wedging); must preserve `requestTimeout: 0` and the
-  `enqueue` chain; appends its probe evidence to §7 under its driver-named
-  section.
-- **TASK-ARP05-004 (host message):** reads §7's measured evidence before
-  deciding closed-as-not-needed vs. a `connectionManager.ts` change; the
-  gate decision is evidence-based, not predetermined (PLAN.md §3).
-- **All tasks:** §5's no-replay rule and the §3 intentional differences are
-  constraints, not suggestions — a probe or implementation that requires
-  relaxing either needs a new ADR.
-- Release notes for the shipping release should mention the MySQL bounded
-  acquire (user-visible behavior change: an occupied-slot wait can now fail
-  fast after the recorded bound instead of waiting indefinitely).
 ## Probe: PostgreSQL
 
 *(Appended by TASK-ARP05-001 — measured RED/GREEN probe results for the PG
@@ -467,29 +446,15 @@ was proven by the RED probe and closed minimally in `src/adapters/postgres.ts`
 Suite result after the fix: `Tests  23 passed (23)` —
 `npx vitest run src/adapters/__tests__/postgres.test.ts`.
 
-## 8. Consequences and bindings
+**Fix round 2 (R4.5, review finding: pool.connect() rejection path).** The
+wave-1 fix covered only the `SELECT 1` probe branch; `pool.connect()` itself
+rejecting (the most common failure — server unreachable at TCP/auth) left
+`this.pool` set, so a retry short-circuited "connected" without probing.
+RED (isolated): `AssertionError: expected 21 to be 22` on the `pool.end`
+call count — no cleanup fired. Fix wraps the checkout in the same
+null-`this.pool` → `end()`-once → rethrow cleanup. GREEN: `Tests  24
+passed (24)`. §2.1 citations updated accordingly (`:315-338`).
 
-- **TASK-ARP05-001 (PostgreSQL):** implements/tests within §2's PG column;
-  must preserve `max: 4` slot isolation (§3.1) and the dedicated-client
-  cancel path (§2.4); appends its probe evidence to §7 under its
-  driver-named section. Expected pin-only unless its probe proves a gap
-  (PLAN.md §3: no PG gap currently known).
-- **TASK-ARP05-002 (MySQL):** closes the §4 gap with a bounded acquire;
-  must preserve `connectionLimit: 1` isolation (§3.2) and streaming; records
-  the measured bound in §7 under its driver-named section.
-- **TASK-ARP05-003 (MSSQL):** pins §2.3/§2.4 (paused-stream survival, cancel
-  + late-request non-wedging); must preserve `requestTimeout: 0` and the
-  `enqueue` chain; appends its probe evidence to §7 under its driver-named
-  section.
-- **TASK-ARP05-004 (host message):** reads §7's measured evidence before
-  deciding closed-as-not-needed vs. a `connectionManager.ts` change; the
-  gate decision is evidence-based, not predetermined (PLAN.md §3).
-- **All tasks:** §5's no-replay rule and the §3 intentional differences are
-  constraints, not suggestions — a probe or implementation that requires
-  relaxing either needs a new ADR.
-- Release notes for the shipping release should mention the MySQL bounded
-  acquire (user-visible behavior change: an occupied-slot wait can now fail
-  fast after the recorded bound instead of waiting indefinitely).
 ## Probe: MySQL
 
 *(appended by TASK-ARP05-002, wave 1 — measured RED/GREEN evidence for §4,
