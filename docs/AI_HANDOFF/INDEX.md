@@ -1,6 +1,6 @@
 # INDEX
 
-Cycle AIX-07 — **Trust, Privacy & Governance** — complete; shipped in v1.28.0. Cycle DX-01 — Release confidence lane — shipped in v1.36.0. Cycle ARP-02 — shutdown-safe query ownership — shipped in v1.38.0. Cycle ARP-03 — retained-result memory budget — shipped in v1.39.0 (2026-09-02). Next commissionable cycle: ARP-04 (tunnel and endpoint identity hardening — investigation-gated) from docs/plans/2026-09-01-vsdb-additive-roadmap.md.
+Cycle AIX-07 — **Trust, Privacy & Governance** — complete; shipped in v1.28.0. Cycle DX-01 — Release confidence lane — shipped in v1.36.0. Cycle ARP-02 — shutdown-safe query ownership — shipped in v1.38.0. Cycle ARP-03 — retained-result memory budget — shipped in v1.39.0 (2026-09-02). Cycle ARP-04 — tunnel and endpoint identity hardening — **planned** (5 tasks ready, planning_done 2026-09-02) from docs/plans/2026-09-01-vsdb-additive-roadmap.md.
 
 | Task / Portfolio | Title | Status | Dependencies | Reviewer |
 |---|---|---|---|---|
@@ -155,3 +155,23 @@ Graph: TASK-ARP03-001 → TASK-ARP03-002 → TASK-ARP03-003; TASK-ARP03-002 → 
 - Wave 3 (2): TASK-ARP03-003, TASK-ARP03-004
 
 No same-wave target-file overlap: TASK-ARP03-001 owns `resultBatcher.ts`/its test; TASK-ARP03-002 owns `queryRunner.ts`/its test; TASK-ARP03-003 owns `resultsPanel.ts`/its test; TASK-ARP03-004 owns `webview/main.ts` + new `src/ui/__tests__/webviewResultLimit.test.ts`. Plan: docs/AI_HANDOFF/PLAN.md.
+
+## Cycle ARP-04 — Tunnel and Endpoint Identity Hardening
+
+| Task / Portfolio | Title | Status | Dependencies | Reviewer |
+|---|---|---|---|---|
+| TASK-ARP04-000 | ADR: SSH host-key identity policy (mandatory gate) | ready | none | - |
+| TASK-ARP04-001 | Identity input: pinned strict host-key checking | ready | TASK-ARP04-000 | - |
+| TASK-ARP04-002 | Lifecycle/race + fail-closed PID proof + spawned-argv strict pin | ready | TASK-ARP04-000, TASK-ARP04-001 | - |
+| TASK-ARP04-003 | Manager integration: intended-key stop + loopback retention | ready | TASK-ARP04-001, TASK-ARP04-002 | - |
+| TASK-ARP04-004 | Form wiring gate (verify-only, expected close not-needed) | ready | TASK-ARP04-003 | - |
+
+Graph: TASK-ARP04-000 → TASK-ARP04-001 → TASK-ARP04-002 → TASK-ARP04-003 → TASK-ARP04-004.
+
+- Wave 0 (1): TASK-ARP04-000 (docs gate — no source change before it)
+- Wave 1 (1): TASK-ARP04-001
+- Wave 2 (1): TASK-ARP04-002 (spawn-path strict pin needs 001's builder change)
+- Wave 3 (1): TASK-ARP04-003
+- Wave 4 (1): TASK-ARP04-004
+
+Chain (no same-wave file sharing): TASK-ARP04-001 owns `sshTunnel.ts`/its test; TASK-ARP04-002 owns `sshTunnelManager.ts`/its test + new fixture `fake-ssh-foreign.mjs`; TASK-ARP04-003 owns `connectionManager.ts`/its test; TASK-ARP04-004 is inspection-only (no files). The tests-map overlap (`sshTunnel.ts`/`sshTunnelManager.ts` → both unit files) is moot for wave disjointness now that 001 and 002 run in separate waves; each task still pins its OWN owned test file. Recorded policy: explicit `-o StrictHostKeyChecking=yes` (overrides `~/.ssh/config` relaxations — intended fail-closed change), no `UserKnownHostsFile`, no relaxing flags, no form input. Plan: docs/AI_HANDOFF/PLAN.md.
