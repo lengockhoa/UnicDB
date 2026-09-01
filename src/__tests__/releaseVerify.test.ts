@@ -92,9 +92,17 @@ describe("verify-release.sh", () => {
   });
 
   it("first non-zero stage aborts and prints FAIL npm-test", () => {
+    const markerDir = mkdtempSync(join(tmpdir(), "verify-release-marker-"));
     const { binDir, cleanup } = makeStubBin((cmd) => {
-      if (cmd === "npm") return "#!/bin/sh\nexit 3\n";
-      return "#!/bin/sh\nexit 0\n";
+      if (cmd === "npm") {
+        return `#!/bin/sh
+touch "${markerDir}/npm-ran"
+exit 3
+`;
+      }
+      if (cmd === "tsc") return `#!/bin/sh\ntouch "${markerDir}/tsc-ran"\nexit 0\n`;
+      if (cmd === "node") return `#!/bin/sh\ntouch "${markerDir}/node-ran"\nexit 0\n`;
+      return `#!/bin/sh\nexit 0\n`;
     });
     try {
       const { status, stdout, stderr } = runRunner({ PATH: `${binDir}:${process.env.PATH ?? ""}` });
@@ -103,9 +111,14 @@ describe("verify-release.sh", () => {
       expect(stdout).toContain("FAIL verify:release");
       expect(stdout).not.toContain("PASS typecheck");
       expect(stdout).not.toContain("PASS compile");
+      // Spec'd marker counter: only npm should have run; later stages must NOT execute.
+      expect(existsSync(join(markerDir, "npm-ran"))).toBe(true);
+      expect(existsSync(join(markerDir, "tsc-ran"))).toBe(false);
+      expect(existsSync(join(markerDir, "node-ran"))).toBe(false);
       expect(stderr).toBe("");
     } finally {
       cleanup();
+      rmSync(markerDir, { recursive: true, force: true });
     }
   });
 
@@ -115,7 +128,7 @@ describe("verify-release.sh", () => {
       const { status, stdout, stderr } = runRunner({ PATH: `${binDir}:${process.env.PATH ?? ""}` });
       expect(status).toBe(0);
       for (const line of stdout.split("\n")) {
-        expect(line).not.toMatch(/[\r]/);
+        expect(line).not.toMatch(/[\r\x1b]/);
         expect(line === line.trimEnd()).toBe(true);
       }
       for (const line of stderr.split("\n")) {
@@ -145,7 +158,7 @@ describe("verify-release.sh", () => {
       const v = pkg.scripts[key];
       expect(v).toBeDefined();
       expect(v).not.toMatch(/[`$]/);  // no backticks, no $(...)
-      expect(v).not.toMatch(/[;|>]/);
+      expect(v).not.toMatch(/[;|><]/);
       expect(v).toMatch(/^npm[^`]*$/);
     }
   });

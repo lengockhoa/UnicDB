@@ -21,7 +21,6 @@ set -u
 stage() {
   label=$1
   shift
-  printf '%s\n' "==== stage: $label ===="
   if "$@"; then
     printf 'PASS %s\n' "$label"
   else
