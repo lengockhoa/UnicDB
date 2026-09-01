@@ -1323,3 +1323,238 @@ describe("ConnectionManager ARP-02.3 passive provenance", () => {
     await mgr.dispose();
   });
 });
+
+// ---- ARP-04.3 TASK-ARP04-003 — intended-key stop + loopback routing ----------
+// Pins the connectionManager↔tunnel contract: edit/delete/add-probe stop ONLY
+// the intended tunnel key (probe-<id> / <id>, never a sibling's key), and
+// loopback routing hands the adapter 127.0.0.1:<handle.localPort> while the
+// persisted ConnectionConfig host/port stay unchanged. No production change is
+// expected — these tests LOCK the existing semantics.
+describe("ConnectionManager ARP-04.3 intended-key stop + loopback routing", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  interface ArpHarness {
+    mgr: ConnectionManager;
+    tunnels: FakeTunnels;
+    secret: FakeSecretStorage;
+    ws: FakeMemento;
+    factory: ReturnType<typeof vi.fn>;
+    factoryCfgs: ConnectionConfig[];
+    adaptersById: Map<string, ReturnType<typeof makeFakeAdapter>[]>;
+    clearTunnelRecords(): void;
+    failNextTest(): void;
+  }
+
+  /** makeFakeTunnels() harness (RLX-03 pattern) + cfg-capturing factory. */
+  function setupArpHarness(
+    seed: ConnectionConfig[],
+    opts: { active?: string } = {},
+  ): ArpHarness {
+    mockWorkspaceFolders = [{ uri: { toString: () => "f" }, name: "f", index: 0 }];
+    const secret = new FakeSecretStorage();
+    const ws = new FakeMemento();
+    const g = new FakeMemento();
+    const tunnels = makeFakeTunnels();
+    const factoryCfgs: ConnectionConfig[] = [];
+    const adaptersById = new Map<string, ReturnType<typeof makeFakeAdapter>[]>();
+    let nextTestFails = false;
+    const factory = vi.fn((cfg: ConnectionConfig) => {
+      factoryCfgs.push(cfg);
+      const a = makeFakeAdapter();
+      if (nextTestFails) {
+        a.testConnection.mockRejectedValueOnce(new Error(`probe fail ${cfg.id}`));
+        nextTestFails = false;
+      }
+      const list = adaptersById.get(cfg.id) ?? [];
+      list.push(a);
+      adaptersById.set(cfg.id, list);
+      return a as unknown as DbAdapter;
+    });
+    const ctx = { secrets: secret, workspaceState: ws, globalState: g };
+    // Seed BEFORE constructing the manager — loadState runs in the ctor.
+    ws.update("vsdb.connections", seed);
+    if (opts.active) ws.update("vsdb.activeConnection", opts.active);
+    for (const c of seed) void secret.store(`vsdb.pass.${c.id}`, `pw-${c.id}`);
+    const mgr = new ConnectionManager(
+      ctx as never,
+      factory as never,
+      tunnels as unknown as SshTunnelManager,
+    );
+    return {
+      mgr,
+      tunnels,
+      secret,
+      ws,
+      factory,
+      factoryCfgs,
+      adaptersById,
+      clearTunnelRecords() {
+        tunnels.startCalls.length = 0;
+        tunnels.stopCalls.length = 0;
+      },
+      failNextTest() {
+        nextTestFails = true;
+      },
+    };
+  }
+
+  /** Tunneled PG cfg: DB reachable only via the bastion. */
+  function tunneled(id: string, host: string): ConnectionConfig {
+    return makeCfg({ id, host, port: 5432, tunnel: { host: "bastion", port: 22 } });
+  }
+
+  const drain = async (): Promise<void> => {
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+  };
+
+  // ----- Test 1: happy — loopback routing -----------------------------------
+  it("ARP-04.3 #1 — loopback routing retains persisted host/port", async () => {
+    const cfg = tunneled("c1", "db.internal");
+    const h = setupArpHarness([cfg], { active: "c1" });
+
+    // Active lazy connect goes through resolveAdapter's tunnel path.
+    await h.mgr.getAdapter();
+
+    // The adapter factory received the LOOPBACK form: 127.0.0.1:<localPort>.
+    expect(h.factoryCfgs).toHaveLength(1);
+    const localPort = h.tunnels.startCalls[0].port;
+    expect(h.factoryCfgs[0].host).toBe("127.0.0.1");
+    expect(h.factoryCfgs[0].port).toBe(localPort);
+    expect(h.factoryCfgs[0].id).toBe("c1");
+
+    // Persisted metadata (state + memento) keeps the ORIGINAL host/port —
+    // never rewritten to the loopback form.
+    const inState = h.mgr.listConnections()[0];
+    expect(inState.host).toBe("db.internal");
+    expect(inState.port).toBe(5432);
+    const persisted = h.ws.get<ConnectionConfig[]>("vsdb.connections")![0];
+    expect(persisted.host).toBe("db.internal");
+    expect(persisted.port).toBe(5432);
+    expect(persisted.tunnel).toEqual({ host: "bastion", port: 22 });
+
+    await h.mgr.dispose();
+  });
+
+  // ----- Test 2: edge — intended key (edit) ----------------------------------
+  it("ARP-04.3 #2 — edit stops only its own probe + old tunnel", async () => {
+    const c1 = tunneled("c1", "db1");
+    const c2 = tunneled("c2", "db2");
+    const h = setupArpHarness([c1, c2]);
+    // A LIVE tunnel for sibling c2 (passive connect starts key "c2").
+    await h.mgr.getAdapterFor(c2);
+    expect(h.tunnels.startCalls.map((s) => s.key)).toEqual(["c2"]);
+    h.clearTunnelRecords();
+
+    await h.mgr.editConnection("c1", { host: "db1-new" });
+
+    // Probe ran under the temp key, never the connection id.
+    expect(h.tunnels.startCalls.map((s) => s.key)).toEqual(["probe-c1"]);
+    // Exact set: probe cleaned, then the replaced old tunnel — and NEVER c2.
+    expect(h.tunnels.stopCalls).toEqual(["probe-c1", "c1"]);
+    expect(h.tunnels.stopCalls.indexOf("probe-c1")).toBeLessThan(
+      h.tunnels.stopCalls.indexOf("c1"),
+    );
+    // Sibling's live tunnel untouched: its adapter was never closed.
+    expect(h.adaptersById.get("c2")![0].close).not.toHaveBeenCalled();
+    // The edit probe adapter itself was closed (validation-only lifecycle).
+    expect(h.adaptersById.get("c1")![0].close).toHaveBeenCalled();
+
+    await h.mgr.dispose();
+  });
+
+  // ----- Test 3: edge — intended key (delete) --------------------------------
+  it("ARP-04.3 #3 — delete stops only the deleted id", async () => {
+    const c1 = tunneled("c1", "db1");
+    const c2 = tunneled("c2", "db2");
+    const h = setupArpHarness([c1, c2]);
+    // Live tunnels for BOTH ids — delete must only tear down c1's.
+    await h.mgr.getAdapterFor(c1);
+    await h.mgr.getAdapterFor(c2);
+    h.clearTunnelRecords();
+
+    await h.mgr.deleteConnection("c1");
+
+    // Exact set: exactly the deleted id's tunnel — never the sibling's.
+    expect(h.tunnels.stopCalls).toEqual(["c1"]);
+    // Sibling untouched at the adapter layer too.
+    expect(h.adaptersById.get("c2")![0].close).not.toHaveBeenCalled();
+
+    await h.mgr.dispose();
+  });
+
+  // ----- Test 4: edge — intended key (add-probe failure) ---------------------
+  it("ARP-04.3 #4 — failed add cleans its own probe only", async () => {
+    const c2 = tunneled("c2", "db2");
+    const h = setupArpHarness([c2]);
+    // Live sibling tunnel before the failing add.
+    await h.mgr.getAdapterFor(c2);
+    h.clearTunnelRecords();
+
+    const c1new = tunneled("c1", "db1");
+    h.failNextTest();
+    await expect(h.mgr.addConnection(c1new, "pw-c1")).rejects.toThrow(/probe fail c1/);
+
+    // Cleanup path stops exactly the failed probe's tunnel key (cfg.id) —
+    // never the sibling's live tunnel.
+    expect(h.tunnels.stopCalls).toEqual(["c1"]);
+    // Nothing was persisted for the failed add.
+    expect(h.mgr.listConnections().map((c) => c.id)).toEqual(["c2"]);
+    expect(h.adaptersById.get("c2")![0].close).not.toHaveBeenCalled();
+
+    await h.mgr.dispose();
+  });
+
+  // ----- Test 5: edge — probe key isolation ----------------------------------
+  it("ARP-04.3 #5 — probe uses probe-<id> so it never reuses a live <id> tunnel", async () => {
+    const c1 = tunneled("c1", "db1");
+    const h = setupArpHarness([c1]);
+    // A LIVE c1 tunnel exists before the re-probe.
+    await h.mgr.getAdapterFor(c1);
+    expect(h.tunnels.startCalls.map((s) => s.key)).toEqual(["c1"]);
+    h.clearTunnelRecords();
+
+    // Same-id edit probe whose validation FAILS — the probe must neither
+    // reuse nor stop the live c1 tunnel; edit aborts before any commit.
+    h.failNextTest();
+    await expect(h.mgr.editConnection("c1", { host: "db1-new" })).rejects.toThrow(
+      /probe fail c1/,
+    );
+
+    // startCalls keys: probe-<id> only — never the live <id> key.
+    expect(h.tunnels.startCalls.map((s) => s.key)).toEqual(["probe-c1"]);
+    // stopCalls: only the probe key — the live c1 tunnel was NOT stopped.
+    expect(h.tunnels.stopCalls).toEqual(["probe-c1"]);
+    // Failed edit committed nothing.
+    expect(h.mgr.listConnections()[0].host).toBe("db1");
+
+    await h.mgr.dispose();
+  });
+
+  // ----- Test 6: regression — recovery gate unchanged -------------------------
+  it("ARP-04.3 #6 — recovery gate unchanged: intentional exit does not recover", async () => {
+    const cfg = tunneled("c1", "db1");
+    const h = setupArpHarness([cfg], { active: "c1" });
+    const events: ConnectionRecoveryStatus[] = [];
+    h.mgr.onDidChangeRecoveryStatus((e) => events.push(e));
+
+    // Open the active tunneled connection.
+    await h.mgr.getAdapter();
+    expect(h.factory).toHaveBeenCalledTimes(1);
+
+    // An INTENTIONAL exit for the active key (manager-issued stop) must be
+    // silently ignored: no recovery, no status events, no reconnect.
+    h.tunnels.emitExitFor("c1", { intentional: true });
+    await drain();
+    await drain();
+
+    expect(events).toEqual([]);
+    expect(h.factory).toHaveBeenCalledTimes(1);
+    expect(h.tunnels.stopCalls).toEqual([]);
+    expect(h.adaptersById.get("c1")![0].close).not.toHaveBeenCalled();
+
+    await h.mgr.dispose();
+  });
+});

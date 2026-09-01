@@ -1,6 +1,6 @@
 # TASK-ARP04-003 — Manager integration: intended-key stop + loopback routing retention
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §1–§4 (ARP-04.3)
@@ -70,3 +70,93 @@ No `lint` script exists in this repo — `typecheck` + `compile` are the static 
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+
+RED_OUTPUT:
+The task spec anticipates GREEN-on-base for wire-pin tests ("No behavioral change is expected unless a test proves a real gap"). GREEN-on-base was observed: all 6 new tests passed immediately on the unmodified base (40/40 total). To prove the tests are not vacuous, I temporarily mutated the pinned wiring in `src/core/connectionManager.ts` (`editConnection`'s probe cleanup changed from `this.stopTunnel(\`probe-${id}\`)` to `this.stopTunnel(id)`), ran the new suite, captured the RED output below, then restored the file byte-for-byte (git confirms only the test file differs). Full RED run output:
+
+```
+ FAIL  src/core/__tests__/connectionManager.test.ts > ConnectionManager ARP-04.3 intended-key stop + loopback routing > ARP-04.3 #2 — edit stops only its own probe + old tunnel
+AssertionError: expected [ 'c1', 'c1' ] to deeply equal [ 'probe-c1', 'c1' ]
+
+- Expected
++ Received
+
+  Array [
+-   "probe-c1",
++   "c1",
+    "c1",
+  ]
+
+ ❯ src/core/__tests__/connectionManager.test.ts:1456:33
+    1454|     expect(h.tunnels.startCalls.map((s) => s.key)).toEqual(["probe-c1"…
+    1455|     // Exact set: probe cleaned, then the replaced old tunnel — and NE…
+    1456|     expect(h.tunnels.stopCalls).toEqual(["probe-c1", "c1"]);
+       |                                 ^
+    1457|     expect(h.tunnels.stopCalls.indexOf("probe-c1")).toBeLessThan(
+    1458|       h.tunnels.stopCalls.indexOf("c1"),
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  src/core/__tests__/connectionManager.test.ts > ConnectionManager ARP-04.3 intended-key stop + loopback routing > ARP-04.3 #5 — probe uses probe-<id> so it never reuses a live <id> tunnel
+AssertionError: expected [ 'c1' ] to deeply equal [ 'probe-c1' ]
+
+- Expected
++ Received
+
+  Array [
+-   "probe-c1",
++   "c1",
+  ]
+
+ ❯ src/core/__tests__/connectionManager.test.ts:1529:33
+    1527|     expect(h.tunnels.startCalls.map((s) => s.key)).toEqual(["probe-c1"…
+    1528|     // stopCalls: only the probe key — the live c1 tunnel was NOT stop…
+    1529|     expect(h.tunnels.stopCalls).toEqual(["probe-c1"]);
+       |                                 ^
+    1530|     // Failed edit committed nothing.
+    1531|     expect(h.mgr.listConnections()[0].host).toBe("db1");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 4 passed | 34 skipped (40)
+```
+
+Tests #2 and #5 failed exactly at the intended-key assertions; after reverting the mutation, all 40 pass. This demonstrates the pinned contract is real and guarded by the new tests.
+
+Verification Output:
+Command 1 — `npx vitest run src/core/__tests__/connectionManager.test.ts`:
+```
+ ✓ src/core/__tests__/connectionManager.test.ts  (40 tests) 74ms
+
+ Test Files  1 passed (1)
+      Tests  40 passed (40)
+   Start at  04:16:59
+   Duration  304ms (transform 99ms, setup 0ms, collect 99ms, tests 74ms, environment 0ms, prepare 40ms)
+```
+
+Command 2 — `npm run typecheck`:
+```
+> vsdb@1.39.0 typecheck
+> tsc --noEmit
+```
+(exit 0, no errors)
+
+Command 3 — `npm run compile`:
+```
+  dist/webview.js.map    4.0mb
+  dist/webview.css.map  65.2kb
+
+⚡ Done in 145ms
+esbuild: build complete
+```
+(exit 0)
+
+Status: PASS
+Note: No production change — `src/core/connectionManager.ts` is byte-identical to base (verified via `git status --porcelain` / `git diff --stat`: only the test file is modified). All 6 new pin tests (ARP-04.3 #1–#6) locked pre-existing semantics: loopback routing retention, per-key stop exact-set assertions for edit/delete/add-probe, probe-key isolation, and the intentional-exit recovery gate. A temporary mutation of the wiring was used solely to capture RED evidence and was reverted byte-for-byte before verification.
