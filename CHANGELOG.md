@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.31.0] — 2026-09-01
+
+Cycle RLX-02: Cross-dialect Query Lifecycle Completion (best-effort, resource-local live-query cancellation extended from PostgreSQL to MySQL and SQL Server, wired end-to-end into the runner and panel state).
+
+### Added
+- **MySQL live-query cancel** (`src/adapters/mysql.ts`): new optional `DbAdapter.cancelActiveQuery` seam implementation for the two ownership windows MySQL actually holds — the non-streaming transaction connection (`PoolConnection.destroy()` from checkout until the terminal `finally` closes the window; destroy-or-release stays exclusive so a destroyed connection is never released twice) and the pre-handoff streaming interval (before a `BatchedQuery` reaches `QueryRunner`, cancellation settles the awaiting setup deterministically after destroying stream + connection; late `fields`/`end` cannot double-settle). Cancellation owns ONLY live records via a self-removing closure set — never `pool.end()`, never `KILL QUERY`, and once an ownership window closes (commit/rollback/rejection/stream EOF) any cancel is a silent no-op.
+- **SQL Server live-request cancel** (`src/adapters/mssql.ts`): `cancelActiveQuery` snapshots `[...activeRequests]` and calls `request.cancel()` best-effort per live Request — an empty or already-settled set is an early-return no-op, per-entry failures never throw, and connection close/`execSql`/operation queues are untouched.
+- **End-to-end cancel wiring** (`src/extension.ts`): the `vsdb.cancelQuery` command now awaits `runner.cancel()` BEFORE clearing panel busy state — previously fire-and-forget, the panel could flip to idle while the adapter seam was still tearing down. The runner (RLX-01 active-adapter window) and ResultsPanel cancel handling were verified contract-correct and locked with regression tests: deferred webview cancel keeps busy true until `runner.cancel()` settles; a cancel arriving after settlement is a silent no-op with no late UI error.
+
+### Review
+- Independent unic-smart review, 3 parallel reviewers: 002 and 003 APPROVED round 1; 001 CHANGES-REQUESTED on test quality only (missing rejected-terminal cleanup fixture; non-observing stream-destroy constant) — both fixed in auto-fix round 1 (natural-rejection DML fixture with double-cancel invariants; real counting `fakeStream.destroy`). Focused 53/53, full suite 2838 passed | 2 skipped | 1 pre-existing flaky perf test (passes in isolation), typecheck + compile clean.
+
 ## [1.30.0] — 2026-09-01
 
 Cycle AIX-08: Extensible MCP Tool Contracts (curated, policy-governed MCP tool contributions with fail-closed validation, least-privilege context, and contained execution).
