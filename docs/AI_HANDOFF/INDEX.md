@@ -21,7 +21,7 @@ Cycle AIX-07 — **Trust, Privacy & Governance**. Active, executable scope cover
 | TASK-AIX05-102 | Terminal MCP bridge disposal guard | done | none | unic-smart |
 | TASK-AIX05-103 | Production OMP engine lifecycle, fallback, and context continuity | done | TASK-AIX05-101, TASK-AIX05-102 | unic-smart |
 | PORT-AIX-06/07 | Redacted agent trace and centralized governance | superseded (shipped in v1.26.0–v1.28.0) | - | unic-smart |
-| PORT-DX-01 | Regression and release confidence lane | active — planned in Cycle DX-01 | shipped contracts | unic-smart |
+| PORT-DX-01 | Regression and release confidence lane | superseded (shipped in v1.36.0) | - | unic-smart |
 
 ## Cycle AIX-03 — Read-only Database Analysis Copilot Hardening
 
