@@ -1,7 +1,24 @@
 // src/core/__tests__/sshTunnel.test.ts
 // DBX-05 TASK-DBX05-002 — pure argv builder + ps parser.
+// TASK-ARP04-001 — pinned strict host-key checking: buildTunnelArgs emits
+// `-o StrictHostKeyChecking=yes` and can NEVER emit a host-key-relaxing
+// option (policy: docs/decisions/0001-ssh-host-key-identity-policy.md §4–§6).
 import { describe, it, expect } from "vitest";
 import { buildTunnelArgs, parseTunnelProcLine, TunnelError } from "../sshTunnel";
+
+/** Relaxing host-key policies that must never appear in generated argv. */
+const RELAXING_HOST_KEY_RE = /StrictHostKeyChecking=(no|ask|accept-new|off)/i;
+
+/** Extract the TunnelError code thrown by fn, failing the test otherwise. */
+function errorCodeOf(fn: () => unknown): string {
+  try {
+    fn();
+  } catch (e) {
+    expect(e).toBeInstanceOf(TunnelError);
+    return (e as TunnelError).code;
+  }
+  throw new Error("expected a TunnelError to be thrown");
+}
 
 describe("buildTunnelArgs", () => {
   it("renders default argv for minimal config", () => {
@@ -60,6 +77,103 @@ describe("buildTunnelArgs", () => {
         "127.0.0.1:15432:127.0.0.1:5432",
       ]),
     );
+  });
+
+  // TASK-ARP04-001 case 1 (RED-first): minimal config pins strict checking.
+  it("pins strict host-key checking on minimal config", () => {
+    const args = buildTunnelArgs({ host: "bastion", port: 5433 });
+    const idx = args.indexOf("StrictHostKeyChecking=yes");
+    expect(idx).toBeGreaterThanOrEqual(0);
+    // The pinned option must travel as its own two tokens: ["-o", value].
+    expect(args[idx - 1]).toBe("-o");
+    // Exactly once — a duplicate pair could let a later override win.
+    expect(args.filter((a) => a === "StrictHostKeyChecking=yes")).toHaveLength(1);
+  });
+
+  // TASK-ARP04-001 case 2 (guard pin — already GREEN before the flag lands;
+  // locks the invariant so no future change can relax host-key checking).
+  it("never emits a relaxing host-key option", () => {
+    const shapes: Array<Parameters<typeof buildTunnelArgs>[0]> = [
+      { host: "bastion" },
+      { host: "bastion", user: "devops", identityFile: "/home/dev/.ssh/id_ed25519" },
+      { host: "bastion", identityFile: "/home/dev/.ssh/id_ed25519" },
+    ];
+    for (const cfg of shapes) {
+      const joined = buildTunnelArgs(cfg).join(" ");
+      expect(joined, `relaxing token in argv for ${JSON.stringify(cfg)}`).not.toMatch(
+        RELAXING_HOST_KEY_RE,
+      );
+      expect(joined, `UserKnownHostsFile in argv for ${JSON.stringify(cfg)}`).not.toContain(
+        "UserKnownHostsFile",
+      );
+    }
+  });
+
+  // TASK-ARP04-001 case 3 (guard): non-relaxing arg layout is unchanged.
+  it("keeps the existing -i/-l/-p/-L layout beside the pin", () => {
+    const args = buildTunnelArgs({
+      host: "jump",
+      user: "devops",
+      port: 2222,
+      identityFile: "/home/dev/.ssh/id_ed25519",
+      targetPort: 5432,
+      localPort: 15432,
+    });
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "-i",
+        "/home/dev/.ssh/id_ed25519",
+        "-l",
+        "devops",
+        "-p",
+        "2222",
+        "-L",
+        "127.0.0.1:15432:127.0.0.1:5432",
+        "-o",
+        "StrictHostKeyChecking=yes",
+      ]),
+    );
+  });
+
+  // TASK-ARP04-001 case 4 (guard): BatchMode coexistence — an unknown host
+  // key cannot fall through to an interactive TOFU prompt.
+  it("keeps BatchMode=yes alongside the strict pin", () => {
+    const args = buildTunnelArgs({ host: "bastion" });
+    expect(args).toEqual(
+      expect.arrayContaining(["-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes"]),
+    );
+    expect(args.indexOf("BatchMode=yes")).toBeLessThan(
+      args.indexOf("StrictHostKeyChecking=yes"),
+    );
+  });
+
+  // TASK-ARP04-001 case 5 (guard): option pairs stay separate tokens.
+  it("emits the pin as a separate -o token pair, never glued", () => {
+    const args = buildTunnelArgs({
+      host: "bastion",
+      user: "devops",
+      identityFile: "/home/dev/.ssh/id_ed25519",
+    });
+    for (const token of args) {
+      expect(token).not.toBe("-oStrictHostKeyChecking=yes");
+      expect(token).not.toBe("-oStrictHostKeyChecking");
+    }
+    // Every -o is followed by exactly one value token.
+    args.forEach((token, i) => {
+      if (token === "-o") {
+        expect(args[i + 1]).toBeDefined();
+        expect(args[i + 1]).not.toBe("-o");
+      }
+    });
+  });
+
+  // TASK-ARP04-001 case 6 (regression): validation behavior is unchanged.
+  it("still rejects malformed identity/port inputs with the same codes", () => {
+    expect(errorCodeOf(() => buildTunnelArgs({ host: "" }))).toBe("emptyHost");
+    expect(
+      errorCodeOf(() => buildTunnelArgs({ host: "h", identityFile: "relative/key" })),
+    ).toBe("badIdentityFile");
+    expect(errorCodeOf(() => buildTunnelArgs({ host: "h", port: 70000 }))).toBe("badPort");
   });
 
   it("rejects empty host", () => {

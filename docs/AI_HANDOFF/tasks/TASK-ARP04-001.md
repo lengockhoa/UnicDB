@@ -67,7 +67,36 @@ No `lint` script exists in this repo (roadmap §portfolio constraint) — `typec
 
 ## Discussion
 
-(no comments yet)
+### 2026-09-02 · executor · claude-code/unic-code
+Implemented per spec. Note: the dispatch prompt's parenthetical ("identity/validation hardening … malformed/missing required identity input rejects; reject any config value that could inject `-o` options") is ALREADY satisfied by the existing `validate()` charset checks (`SAFE_HOST_RE` for host/user, absolute-path rule for identityFile) — host/user cannot contain whitespace/`;`/`$`/`-o` sequences, so no argv element can smuggle an option. Per Target Files ("Nothing else changes — `validate()` and every existing `TunnelError` path stay intact"), no further validation code was added; the new regression test (case 6) pins those paths. RED produced 3 failures, not 1: cases 1, 3, 4 all assert pin PRESENCE (case 4's "both must be present", case 3's arrayContaining includes the pair), so all three legitimately fail pre-implementation; case 2 (relaxation guard) stayed GREEN exactly as the spec predicted.
+
+---
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  npx vitest run src/core/__tests__/sshTunnel.test.ts  (pre-implementation)
+   ❯ src/core/__tests__/sshTunnel.test.ts  (16 tests | 3 failed) 8ms
+   FAIL ... > buildTunnelArgs > pins strict host-key checking on minimal config
+   FAIL ... > buildTunnelArgs > keeps the existing -i/-l/-p/-L layout beside the pin
+   FAIL ... > buildTunnelArgs > keeps BatchMode=yes alongside the strict pin
+   Test Files  1 failed (1)
+        Tests  3 failed | 13 passed (16)
+  Diff excerpt (case 1): arrayReceived has no "StrictHostKeyChecking=yes" token;
+  expected ["-o","StrictHostKeyChecking=yes"] present exactly once.
+Verification Output: |
+  npx vitest run src/core/__tests__/sshTunnel.test.ts
+   ✓ src/core/__tests__/sshTunnel.test.ts  (16 tests) 3ms
+   Test Files  1 passed (1) | Tests  16 passed (16)
+
+  npm run typecheck  → tsc --noEmit, exit 0
+  npm run compile    → esbuild: build complete, exit 0
+  npm test           → Test Files 216 passed | 1 skipped (217)
+                       Tests 3013 passed | 2 skipped (3015), exit 0
+Status: PASS
+Note: none. Only src/core/sshTunnel.ts (+6 lines: pinned "-o","StrictHostKeyChecking=yes" after BatchMode, with ADR 0001 comment) and the test file changed; TunnelConfig untouched; no INDEX/manager files touched; no git add/commit/push. Downgrade criteria (ADR §6) untouched — manual-validation-only trigger, not testable here.
 
 ---
 

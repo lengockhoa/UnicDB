@@ -125,6 +125,12 @@ export function buildTunnelArgs(cfg: TunnelConfig): string[] {
   args.push("-T");
   args.push("-o", "ExitOnForwardFailure=yes");
   args.push("-o", "BatchMode=yes");
+  // ADR 0001 (docs/decisions/0001-ssh-host-key-identity-policy.md §4):
+  // remote identity is fail-closed by construction — the host key must
+  // already be in the user's known_hosts (no UserKnownHostsFile override,
+  // no TOFU/accept-new). Pinned here so platform defaults or ssh_config
+  // drift (§2–§3) can never relax host-key checking for the tunnel.
+  args.push("-o", "StrictHostKeyChecking=yes");
   const local = cfg.localPort !== undefined ? cfg.localPort : 0;
   const target = cfg.targetPort ?? cfg.port ?? 5432;
   args.push("-L", `127.0.0.1:${local}:127.0.0.1:${target}`);
