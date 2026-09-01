@@ -31,8 +31,8 @@ No same-wave target-file overlap. Portfolio rows require a new source-grounded p
 
 | Task / Portfolio | Title | Status | Dependencies | Reviewer |
 |---|---|---|---|---|
-| TASK-DBX06-005 | Expanded PostgreSQL rename catalog and typed plan | ready | none | - |
-| TASK-DBX06-006 | Expanded rename preview and confirmed execution | ready | TASK-DBX06-005 | - |
+| TASK-DBX06-005 | Expanded PostgreSQL rename catalog and typed plan | done | approved round 1 | unic-smart |
+| TASK-DBX06-006 | Expanded rename preview and confirmed execution | done | approved round 1 | TASK-DBX06-005 | unic-smart |
 | PORT-DBX-06 | Reviewed PostgreSQL rename workflow | active — expanded plan ready | PORT-RLX-03 | unic-smart |
 
 Graph: TASK-DBX06-005 → TASK-DBX06-006. Historical `TASK-DBX06-001 → TASK-DBX06-002 → TASK-DBX06-003 → TASK-DBX06-004` was approved and released as v1.23.0; its task files remain immutable handoff evidence.

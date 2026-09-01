@@ -126,3 +126,23 @@ Note: runRenameSteps reports step labels from operation.kind ("Rename table"/"Re
       done message shape is named-step (applied[] + failed/cancelledAfter), legacy runRenameStatements
       kept untouched for aiChatPanel.
 
+
+---
+
+## Reviewer Verdict
+
+VERDICT: approved
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN: PASS
+  command: npm run compile && npx vitest run src/core/ddl/__tests__/renameRunner.test.ts src/ui/__tests__/renameFormHost.test.ts src/ui/__tests__/renameFormBundle.test.ts src/ui/__tests__/tableCommands.test.ts && npm run typecheck
+  result: 4 files passed, 65 tests passed; tsc --noEmit clean; esbuild build complete
+TEST_PLAN_COVERAGE: all-followed
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - file: webview/renameFormMain.ts:64 — `humanLabelForStep` duplicates the host-side `renameStepLabel` (src/core/ddl/renameRunner.ts) for executable-step labels; webview cannot import core, so this is acceptable, but a shared label map would prevent future drift between preview and progress/done wording.
+    - file: src/ui/renameForm.ts:301 — the catch-path `done.failed` fallback uses the placeholder label "rename" instead of a human label ("Rename table"/"Rename column"); this path only fires when runRenameSteps itself throws (adapter resolution failure), not a step failure, and is not covered by the task's pinning tests.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Executor self-reported unic-code vs reviewer unic-smart — models differ, contract satisfied. Legacy `runRenameStatements` consumer aiChatPanel.ts remains untouched (verified by grep; unchanged path). tableDdl:false denial retains the exact DBX-08 literal and shows zero side effects per tableCommands.test.ts.
