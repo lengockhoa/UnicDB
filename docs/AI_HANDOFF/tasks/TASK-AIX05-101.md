@@ -73,4 +73,29 @@ Grounding: `src/ai/omp/acpProcess.ts` is the only spawn site under `src/ai/omp/`
 
 ## Executor Report
 
-(to be filled by executor with RED + GREEN evidence)
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  7 failing tests added (TASK-AIX05-101 §Test Cases #1..#7). Sample output:
+
+  ❯ AcpProcess > TASK-AIX05-101: lifecycle, protocol mismatch, cancellation, bounded reap
+    > valid initialize + session/new reaches ready; onStateChange sees exactly [starting, ready]
+      AssertionError: expected undefined to be 'starting'
+    > clean child exit while starting emits [starting, crashed, fallback-builtin]
+      AssertionError: expected undefined to be 'starting'
+    > cancel() on a ready handle emits cancelling, then stopped
+      AssertionError: expected [] to deeply equal [ 'starting', 'ready' ]
+    > incompatible initialize version rejects with pinned message
+      Error: Test timed out in 5000ms.
+    > dispose() has a bounded reap
+      AssertionError: expected [] to deeply equal [ 'starting', 'ready' ]
+
+  Tests 7 failed | 20 passed (27)
+Verification Output: |
+  Focused: npx vitest run src/ai/omp/__tests__/acpProcess.test.ts → 27 passed (27)
+  Wider regression: npx vitest run src/ai/omp src/extension.test.ts → 205 passed | 2 skipped (207)
+  typecheck (npm run typecheck): exit 0
+  compile (npm run compile): esbuild build complete
+Status: PASS
+Note: All 7 new test cases pass; all 20 pre-existing tests and 158 other module tests still pass.

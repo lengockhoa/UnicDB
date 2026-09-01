@@ -405,6 +405,147 @@ describe("createMcpBridge — dispose closes lingering connections", () => {
   });
 });
 
+// ---- TASK-AIX05-102: terminal disposal — dispose() is idempotent and the
+// ---- pure handler fails closed (-32000 "MCP bridge is disposed") before any
+// ---- registry/tool access once the bridge is retired.
+
+describe("createMcpBridge — terminal disposal (TASK-AIX05-102)", () => {
+  // TC1 (happy): live bridge lists the supplied registry exactly once.
+  it("live bridge: authorized tools/list returns the exact registered names once each and calls registry.list() once", async () => {
+    const tool: AgentTool = {
+      name: "only_tool",
+      description: "sole tool",
+      parameters: { type: "object" },
+      execute: async () => "ok",
+    };
+    const listSpy = vi.fn(() => [tool]);
+    const reg: ToolRegistry = { list: listSpy, get: (n) => (n === "only_tool" ? tool : undefined) };
+    const bridge = await createMcpBridge(reg);
+
+    const out = await bridge.handleMcpRequest(
+      { method: "tools/list", params: {}, id: 101 },
+      tokenFromDescriptor(bridge),
+    );
+
+    expect(out.error).toBeUndefined();
+    const result = out.result as { tools: Array<Record<string, unknown>> };
+    expect(result.tools.map((t) => t["name"])).toEqual(["only_tool"]);
+    expect(listSpy).toHaveBeenCalledTimes(1);
+
+    bridge.dispose();
+  });
+
+  // TC2 (edge): after dispose, tools/list fails closed; registry never reached.
+  it("after dispose, authorized tools/list returns { error: { code: -32000, message: 'MCP bridge is disposed' } }; registry.list() is not called", async () => {
+    const listSpy = vi.fn(() => [] as AgentTool[]);
+    const reg: ToolRegistry = { list: listSpy, get: () => undefined };
+    const bridge = await createMcpBridge(reg);
+    const token = tokenFromDescriptor(bridge);
+
+    bridge.dispose();
+
+    const out = await bridge.handleMcpRequest({ method: "tools/list", params: {}, id: 102 }, token);
+    expect(out).toEqual({ error: { code: -32000, message: "MCP bridge is disposed" } });
+    expect(listSpy).not.toHaveBeenCalled();
+  });
+
+  // TC3 (edge): after dispose, tools/call cannot execute — zero side effects.
+  it("after dispose, authorized tools/call returns -32000 'MCP bridge is disposed'; tool.execute is called zero times", async () => {
+    const executeSpy = vi.fn(async () => "should never run");
+    const tool: AgentTool = {
+      name: "boom",
+      description: "",
+      parameters: { type: "object" },
+      execute: executeSpy,
+    };
+    const reg: ToolRegistry = { list: () => [tool], get: (n) => (n === "boom" ? tool : undefined) };
+    const bridge = await createMcpBridge(reg);
+    const token = tokenFromDescriptor(bridge);
+
+    bridge.dispose();
+
+    const out = await bridge.handleMcpRequest(
+      { method: "tools/call", params: { name: "boom", arguments: {} }, id: 103 },
+      token,
+    );
+    expect(out).toEqual({ error: { code: -32000, message: "MCP bridge is disposed" } });
+    expect(executeSpy).not.toHaveBeenCalled();
+  });
+
+  // TC4 (regression): duplicate dispose must not throw/reopen; the hanging
+  // in-flight socket still closes and new connections stay refused.
+  it("dispose() twice does not throw; the hanging in-flight socket closes and new connection attempts are refused", async () => {
+    const hungTool: AgentTool = {
+      name: "hang",
+      description: "",
+      parameters: { type: "object" },
+      execute: () => new Promise<string>(() => {}),
+    };
+    const reg: ToolRegistry = {
+      list: () => [hungTool],
+      get: (n) => (n === "hang" ? hungTool : undefined),
+    };
+    const bridge = await createMcpBridge(reg);
+    const token = tokenFromDescriptor(bridge);
+    const url = new URL(bridge.descriptor["url"] as string);
+    const port = Number(url.port);
+
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "hang", arguments: {} },
+    });
+
+    let resolveInFlight: () => void = () => {};
+    const inFlight = new Promise<void>((resolve) => {
+      resolveInFlight = resolve;
+    });
+    const socketClosed = new Promise<boolean>((resolve) => {
+      const req = http.request(
+        {
+          host: "127.0.0.1",
+          port,
+          path: "/",
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Content-Length": Buffer.byteLength(body),
+            Authorization: `Bearer ${token}`,
+          },
+        },
+        () => {},
+      );
+      req.on("error", () => resolve(true));
+      req.on("socket", (sock) => {
+        sock.once("close", () => resolve(true));
+        // Let the request actually reach the hung handler first.
+        setTimeout(resolveInFlight, 50);
+        setTimeout(() => resolve(false), 500);
+      });
+      req.write(body);
+      req.end();
+      setTimeout(() => resolve(false), 3000);
+    });
+
+    await inFlight;
+    expect(() => bridge.dispose()).not.toThrow();
+    expect(() => bridge.dispose()).not.toThrow();
+
+    expect(await socketClosed).toBe(true);
+
+    await expect(
+      new Promise<void>((resolve, reject) => {
+        const sock = net.connect(port, "127.0.0.1", () => {
+          sock.end();
+          resolve();
+        });
+        sock.once("error", (err) => reject(err));
+      }),
+    ).rejects.toThrow();
+  });
+});
+
 // ---- bonus: descriptor + MCP handshake shape (regression against drift) ----
 
 describe("createMcpBridge — descriptor + handshake shape", () => {

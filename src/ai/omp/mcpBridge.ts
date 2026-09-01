@@ -152,7 +152,16 @@ function extractBearerToken(header: string | string[] | undefined): string {
  */
 export async function createMcpBridge(registry: ToolRegistry): Promise<McpBridge> {
   const token = crypto.randomBytes(24).toString("hex");
-  const handleMcpRequest = makeHandler(registry, token);
+  // TASK-AIX05-102: once retired, a bridge is TERMINAL — every later request
+  // (even with the bearer token) fails closed before the registry is touched,
+  // so a stale descriptor/socket can never list, re-register, or invoke tools.
+  let disposed = false;
+  const handleMcpRequest: McpBridge["handleMcpRequest"] = async (req, tok) => {
+    if (disposed) {
+      return { error: { code: -32000, message: "MCP bridge is disposed" } };
+    }
+    return makeHandler(registry, token)(req, tok);
+  };
 
   const server = http.createServer((req, res) => {
     if (req.method !== "POST") {
@@ -240,6 +249,11 @@ export async function createMcpBridge(registry: ToolRegistry): Promise<McpBridge
     },
     handleMcpRequest,
     dispose(): void {
+      // TASK-AIX05-102: mark terminal BEFORE touching server resources so no
+      // request that races dispose can reach the registry mid-teardown, and
+      // guard the teardown so a second dispose() is a no-op (idempotent).
+      if (disposed) return;
+      disposed = true;
       // Finding 5 (review): plain `server.close()` only stops accepting NEW
       // connections — a connection with an in-flight request (e.g. a
       // slow/hung tool call) is left open until that request completes,

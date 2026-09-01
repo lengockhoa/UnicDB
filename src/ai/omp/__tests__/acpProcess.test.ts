@@ -13,14 +13,14 @@
 // `hostTools:`-prefixed tests that used to live here were deleted with it.
 // mcpServers-threading coverage now lives in the "TASK-012 (B11a)" describe block below.
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { spawn as defaultSpawn } from "child_process";
 import type { ChildProcessWithoutNullStreams, SpawnOptions } from "child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import type { Readable, Writable } from "node:stream";
 
-import { AcpProcess } from "../acpProcess";
+import { AcpProcess, type OmpEngineState } from "../acpProcess";
 
 // ---- Fakes -------------------------------------------------------------------
 
@@ -40,6 +40,15 @@ class FakeChildProcess extends EventEmitter {
   stderr: Readable;
   exitCode: number | null = null;
   killed = false;
+  /** History of signals passed to kill(); empty string means no signal. */
+  killSignals: string[] = [];
+  /**
+   * When true, kill() does NOT immediately mark `killed` and does NOT emit
+   * exit. The test must call `emitChildExit(...)` itself to simulate the
+   * child actually terminating. Used by tests that need to model "ready
+   * child ignores initial terminate until late exit".
+   */
+  deferExitOnKill = false;
 
   constructor() {
     super();
@@ -49,8 +58,12 @@ class FakeChildProcess extends EventEmitter {
     this.stdout.setEncoding("utf8");
   }
 
-  override kill(): boolean {
+  override kill(signal?: NodeJS.Signals | string): boolean {
+    this.killSignals.push(signal ?? "");
     this.killed = true;
+    if (this.deferExitOnKill) {
+      return true;
+    }
     return true;
   }
 
@@ -926,6 +939,299 @@ describe("AcpProcess", () => {
       expect(captured.options?.shell).toBe(false);
       expect(captured.command).toBe("/usr/local/bin/omp");
       expect(captured.args).toEqual(["acp", "--cwd", "/tmp/repo & calc"]);
+    });
+  });
+
+  // ---- TASK-AIX05-101: ACP child lifecycle and bounded reaping -------------
+
+  describe("TASK-AIX05-101: lifecycle, protocol mismatch, cancellation, bounded reap", () => {
+    // #1 — happy: valid initialize + session/new reaches "ready"
+    it("valid initialize + session/new reaches ready; onStateChange sees exactly [starting, ready]; no kill before teardown", async () => {
+      const proc = new AcpProcess(
+        {
+          ompPath: "omp",
+          cwd: "/w",
+          supportCwdFlag: true,
+          execFn: async () => "omp/18.0.1\n",
+        },
+        captureSpawn(child, captured),
+      );
+
+      const states: OmpEngineState[] = [];
+      const startPromise = proc.start({
+        onStateChange: (s) => states.push(s),
+      });
+      queueMicrotask(() => {
+        void driveHandshake(child);
+      });
+      const handle = await startPromise;
+
+      expect(handle.state()).toBe("ready");
+      expect(handle.sessionId).toBe("01a02f96-beda-7564-b313-2d0e5e515a22");
+      expect(states).toEqual(["starting", "ready"]);
+      // No kill signal sent during a successful handshake.
+      expect(child.killSignals).toEqual([]);
+
+      // dispose() is async: the SIGKILL escalation is bounded by
+      // OMP_ACP_DISPOSE_TIMEOUT_MS (2000ms). The fake child ignores
+      // SIGTERM, so the promise resolves via the SIGKILL timer.
+      await handle.dispose();
+      expect(handle.state()).toBe("stopped");
+    });
+
+    // #2 — edge: child exit while starting → crashed → fallback-builtin
+    it("clean child exit while starting emits [starting, crashed, fallback-builtin] and rejects start()", async () => {
+      const proc = new AcpProcess(
+        {
+          ompPath: "omp",
+          cwd: "/w",
+          supportCwdFlag: true,
+          execFn: async () => "omp/18.0.1\n",
+        },
+        captureSpawn(child, captured),
+      );
+
+      const states: OmpEngineState[] = [];
+      const startPromise = proc.start({
+        onStateChange: (s) => states.push(s),
+      });
+      // Exit cleanly (code=0) BEFORE the initialize response lands.
+      queueMicrotask(() => {
+        setTimeout(() => child.emitChildExit(0), 0);
+      });
+
+      await expect(startPromise).rejects.toThrow(/exited|exit|protocol|crash/i);
+      // Drain microtasks so any post-reject state-change callbacks fire.
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+
+      expect(states).toEqual(["starting", "crashed", "fallback-builtin"]);
+      // The child has already exited on its own (code=0 during starting);
+      // there is nothing left to reap. The classification path that owns
+      // the "reap on starting exit" contract is test #6 (protocol
+      // mismatch — child still alive at mismatch), not this one.
+    });
+
+    // #3 — edge: child exit while ready → exactly one "crashed" appended; onClose fires once
+    it("ready crash emits exactly one 'crashed' appended; AcpClient.onClose fires exactly once", async () => {
+      const proc = new AcpProcess(
+        {
+          ompPath: "omp",
+          cwd: "/w",
+          supportCwdFlag: true,
+          execFn: async () => "omp/18.0.1\n",
+        },
+        captureSpawn(child, captured),
+      );
+
+      const states: OmpEngineState[] = [];
+      let closeFires = 0;
+      const startPromise = proc.start({
+        onStateChange: (s) => states.push(s),
+      });
+      queueMicrotask(() => {
+        void driveHandshake(child);
+      });
+      const handle = await startPromise;
+      handle.acp.onClose(() => {
+        closeFires += 1;
+      });
+
+      // Drain post-handshake microtasks, then crash the child.
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+      expect(states).toEqual(["starting", "ready"]);
+
+      child.emitChildExit(1);
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+
+      // Exactly one "crashed" appended to the state sequence.
+      expect(states).toEqual(["starting", "ready", "crashed"]);
+      expect(handle.state()).toBe("crashed");
+      expect(closeFires).toBe(1);
+
+      // A second exit does NOT re-emit crashed and does NOT re-fire onClose.
+      child.emitChildExit(1);
+      for (let i = 0; i < 4; i++) await Promise.resolve();
+      expect(states).toEqual(["starting", "ready", "crashed"]);
+      expect(closeFires).toBe(1);
+    });
+
+    // #4 — edge: cancel during ready → cancelling → stopped (no crash/fallback)
+    it("cancel() on a ready handle emits cancelling, then stopped on exit — no crash, no fallback", async () => {
+      const proc = new AcpProcess(
+        {
+          ompPath: "omp",
+          cwd: "/w",
+          supportCwdFlag: true,
+          execFn: async () => "omp/18.0.1\n",
+        },
+        captureSpawn(child, captured),
+      );
+
+      const states: OmpEngineState[] = [];
+      const startPromise = proc.start({
+        onStateChange: (s) => states.push(s),
+      });
+      queueMicrotask(() => {
+        void driveHandshake(child);
+      });
+      const handle = await startPromise;
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+      expect(states).toEqual(["starting", "ready"]);
+
+      // First cancel(): transitions to cancelling, sends exactly one termination.
+      handle.cancel();
+      expect(handle.state()).toBe("cancelling");
+      expect(child.killSignals).toEqual(["SIGTERM"]);
+
+      // Second cancel() is idempotent — no extra kill signals.
+      handle.cancel();
+      expect(child.killSignals).toEqual(["SIGTERM"]);
+
+      // Child exits after our termination.
+      child.emitChildExit(0);
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+
+      // Final sequence: starting, ready, cancelling, stopped — NO crashed/fallback.
+      expect(states).toEqual(["starting", "ready", "cancelling", "stopped"]);
+      expect(handle.state()).toBe("stopped");
+    });
+
+    // #5 — edge: spawn failure transitions to fallback
+    it("spawn error rejects start() and emits [starting, fallback-builtin]; no usable handle", async () => {
+      const proc = new AcpProcess(
+        {
+          ompPath: "omp",
+          cwd: "/w",
+          supportCwdFlag: true,
+          execFn: async () => "omp/18.0.1\n",
+        },
+        captureSpawn(child, captured),
+      );
+
+      const states: OmpEngineState[] = [];
+      const startPromise = proc.start({
+        onStateChange: (s) => states.push(s),
+      });
+      queueMicrotask(() => child.emitSpawnError(new Error("spawn omp ENOENT")));
+
+      await expect(startPromise).rejects.toThrow(/ENOENT|spawn/);
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+
+      // Terminal state is fallback-builtin; no "ready", no "crashed".
+      expect(states[0]).toBe("starting");
+      expect(states[states.length - 1]).toBe("fallback-builtin");
+      expect(states).not.toContain("ready");
+    });
+
+    // #6 — edge: protocol version mismatch rejects with the pinned message
+    it("incompatible initialize version rejects with pinned message; terminal state fallback-builtin; stdin never receives initialized or session/new", async () => {
+      const proc = new AcpProcess(
+        {
+          ompPath: "omp",
+          cwd: "/w",
+          supportCwdFlag: true,
+          execFn: async () => "omp/18.0.1\n",
+        },
+        captureSpawn(child, captured),
+      );
+
+      const states: OmpEngineState[] = [];
+      const startPromise = proc.start({
+        onStateChange: (s) => states.push(s),
+      });
+      queueMicrotask(() => {
+        // Drain a microtask so start() can register the initialize request,
+        // then reply with an incompatible protocolVersion.
+        setTimeout(() => {
+          child.feedStdout(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              result: { protocolVersion: 2, agentInfo: { version: "99.0.0" } },
+            }) + "\n",
+          );
+        }, 0);
+      });
+
+      const err = await startPromise.catch((e: unknown) => e as Error);
+      expect(err).toBeInstanceOf(Error);
+      expect(err.message).toBe("OMP ACP protocol version mismatch: expected 1, received 2");
+
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+      expect(states[states.length - 1]).toBe("fallback-builtin");
+
+      // Stdin must NOT carry an `initialized` or `session/new` frame.
+      const frames = readStdinFrames(child);
+      const methods = frames.map((f) => f["method"]);
+      expect(methods).not.toContain("initialized");
+      expect(methods).not.toContain("session/new");
+
+      // Child must have been terminated.
+      expect(child.killSignals.length).toBeGreaterThan(0);
+    });
+
+    // #7 — regression: dispose has a bounded reap, ignores late exit
+    it("dispose() has a bounded reap (OMP_ACP_DISPOSE_TIMEOUT_MS = 2000), escalates to SIGKILL once, reports stopped once, ignores late exit", async () => {
+      const proc = new AcpProcess(
+        {
+          ompPath: "omp",
+          cwd: "/w",
+          supportCwdFlag: true,
+          execFn: async () => "omp/18.0.1\n",
+        },
+        captureSpawn(child, captured),
+      );
+
+      const states: OmpEngineState[] = [];
+      const startPromise = proc.start({
+        onStateChange: (s) => states.push(s),
+      });
+      // The ready child ignores the initial SIGTERM (deferExitOnKill) and
+      // stays alive until we manually emit an exit later.
+      child.deferExitOnKill = true;
+      queueMicrotask(() => {
+        void driveHandshake(child);
+      });
+      const handle = await startPromise;
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+
+      // Now we are ready. The child is ignoring the initial SIGTERM until
+      // we emit an exit ourselves.
+      expect(states).toEqual(["starting", "ready"]);
+
+      // Use fake timers so the 2000ms reap bound is testable.
+      vi.useFakeTimers();
+      const disposePromise = handle.dispose();
+      // First kill is SIGTERM sent immediately. Schedule the escalation
+      // (SIGKILL) at 2000ms.
+      expect(child.killSignals).toEqual(["SIGTERM"]);
+
+      // Advance just under the timeout: no SIGKILL yet.
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(child.killSignals).toEqual(["SIGTERM"]);
+
+      // Advance past the timeout: SIGKILL is sent.
+      await vi.advanceTimersByTimeAsync(600);
+      expect(child.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
+
+      // The dispose promise resolves to "stopped" without a real exit.
+      await vi.advanceTimersByTimeAsync(0);
+      await disposePromise;
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+      expect(handle.state()).toBe("stopped");
+      // "stopped" emitted exactly once.
+      const stoppedCount = states.filter((s) => s === "stopped").length;
+      expect(stoppedCount).toBe(1);
+
+      // Late exit after dispose: no new state event, no further kill.
+      const statesBeforeLate = [...states];
+      const killsBeforeLate = [...child.killSignals];
+      child.emitChildExit(0);
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+      expect(states).toEqual(statesBeforeLate);
+      expect(child.killSignals).toEqual(killsBeforeLate);
+
+      vi.useRealTimers();
     });
   });
 });

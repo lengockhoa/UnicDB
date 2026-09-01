@@ -67,4 +67,27 @@ Grounding: `mcpBridge.ts` already binds only `127.0.0.1`, calls `server.unref()`
 
 ## Executor Report
 
-(to be filled by executor with RED + GREEN evidence)
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  npx vitest run src/ai/omp/__tests__/mcpBridge.test.ts (pre-implementation):
+   FAIL … terminal disposal > after dispose, authorized tools/list returns …
+  AssertionError: expected { result: { tools: [] } } to deeply equal { error: { code: -32000, …(1) } }
+   ❯ src/ai/omp/__tests__/mcpBridge.test.ts:448:17
+   FAIL … terminal disposal > after dispose, authorized tools/call returns -32000 …
+  AssertionError: expected { result: { content: [ { text: "should never run" … } ] } } to deeply equal { error: { code: -32000, …(1) } }
+   ❯ src/ai/omp/__tests__/mcpBridge.test.ts:471:17
+   Test Files  1 failed (1)
+        Tests  2 failed | 13 passed (15)
+  (TC1 happy + TC4 double-dispose passed pre-impl as expected: TC1 asserts existing live behavior; TC4's throw/socket checks hold under the old safe path.)
+Verification Output: |
+  npx vitest run src/ai/omp/__tests__/mcpBridge.test.ts
+   ✓ src/ai/omp/__tests__/mcpBridge.test.ts  (15 tests) 119ms
+   Test Files  1 passed (1) | Tests 15 passed (15)
+  npx vitest run src/ai/omp src/ai/tools  (touched modules + neighbors)
+   Test Files  16 passed | 1 skipped (17) | Tests 269 passed | 2 skipped (271)
+  npm run typecheck  → exit 0 (tsc --noEmit, no errors)
+  npm run compile    → exit 0 (esbuild: build complete)
+Status: PASS
+Note: dispose() now sets a terminal `disposed` flag before closing server resources (idempotent, no re-open/throw); a wrapper around the pure handler returns exactly { error: { code: -32000, message: "MCP bridge is disposed" } } post-disposal before any bearer-auth registry/tool dispatch — TC1-4 all green, pre-disposal semantics untouched (loopback-only, bearer auth, error wording preserved).
