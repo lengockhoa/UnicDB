@@ -7,9 +7,10 @@ Executor: `unic-code` · Reviewer: `unic-smart` (MUST differ)
 
 | Wave | Task | Summary | Status | Depends on | Reviewer |
 |---|---|---|---|---|---|
-| 1 | TASK-ARP01-001 | Classifier matrix: formalize read-only classification by dialect (+ MySQL backtick false-positive fix) | ready | none | unic-smart |
-| 1 | TASK-ARP01-002 | Transaction guard: wrap `beginTransaction`/`DbTransaction.runQuery` in `guardAdapter` | ready | none | unic-smart |
-| 2 | TASK-ARP01-003 | Interface regression: prove no optional-API bypass (decision gate — may close as not-needed) | ready | TASK-ARP01-001, TASK-ARP01-002 | unic-smart |
+| 1 | TASK-ARP01-001 | Classifier matrix: formalize read-only classification by dialect (+ MySQL backtick false-positive fix) | pending_review | none | unic-smart |
+| 1 | TASK-ARP01-002 | Transaction guard: wrap `beginTransaction`/`DbTransaction.runQuery` in `guardAdapter` | pending_review | none | unic-smart |
+| 2 | TASK-ARP01-003 | Interface regression: prove no optional-API bypass (decision gate — may close as not-needed) | pending_review | TASK-ARP01-001, TASK-ARP01-002 | unic-smart |
 
 Graph: TASK-ARP01-001 → TASK-ARP01-003; TASK-ARP01-002 → TASK-ARP01-003.
 Waves: wave 1 = 2 parallel tasks (001 owns `readOnlyIntent.ts`+test [+`dangerousStatement.ts` mask seam], 002 owns `connectionManager.ts`+test — disjoint); wave 2 = 1 verification task (003 owns `types.ts`/`adapterQueryShape.test.ts` only-if-needed).
+Note: wave 1 commit 080462c, wave 2 commit 77da659; review range 7263835..HEAD; ARP-01.3 closed as not-needed with no-bypass evidence.
