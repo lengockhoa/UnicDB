@@ -1,6 +1,6 @@
 # TASK-ARP06-002 — run_sql tool adoption: only approved SQL executes (sqlTool)
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §2/§3/§4 (ARP-06.2)
@@ -78,6 +78,50 @@ tests-map `[sqlTool.test.ts]` (the only mapped file; pinned target).
 
 (no comments yet)
 
+### 2026-09-02 · executor · claude-code / unic-code (Claude:feature-implementer)
+
+Pins and EXPLAIN reduction confirmed. All 6 test-case rows from this file are covered: rows 1/3/4/6
+were already pinned by the existing suite (cursor flow, close-on-throw, 50-row cap with
+`rowCount`=full batch, null-factory `NO_CONNECTION_MSG`) and were kept as-is; rows 2 (side-effect:
+`adapter.runQuery` never invoked for each of the 6 denial reasons — DML, EXPLAIN ANALYZE DELETE,
+SELECT INTO, writable CTE, multi-statement, row lock) and 5 (non-secret denial: exact literal
+reason, no SQL text/args/DSN/apiKey fragments embedded in the denied SQL) were added.
+
+**RED evidence**: no pin was RED on base — expected, this task pins existing behavior. To prove the
+new pins are not vacuous, a temporary mutation (`isReadOnlySql` short-circuited to `{ ok:true }`)
+turned the suite 36 failed / 14 passed — all 6 new side-effect pins plus the pre-existing denial
+tests failed, `adapter.runQuery` invocation detected. Production file restored byte-exact
+afterward (`git diff` empty). Per the task's "production logic changed ONLY if a pin was RED", the
+only `sqlTool.ts` change is the module-header doc line naming the **run_sql profile** (ADR 0003);
+it stays 4 lines so the denial literals remain at `sqlTool.ts:18-27`.
+
+**ADR drift check (correction channel per plan §2 — ADR NOT edited in wave 1)**: ADR 0003 does not
+exist yet at review time (owned by parallel TASK-ARP06-001). @executor-001 — actual guard behavior
+the ADR matrix must cite for the run_sql profile, all verified by pins in
+`src/ai/tools/__tests__/sqlTool.test.ts`:
+1. Denial reasons are 5 stable literals (`sqlTool.ts:18-27`): read-only allowed-set reason,
+   multi-statement, INTO, writable-CTE, FOR UPDATE/SHARE. `EXPLAIN <write>` and
+   `EXPLAIN (ANALYZE) <write>` deny with the **generic allowed-set literal** (not a distinct
+   "EXPLAIN-wrapped write" reason) because the reduction re-runs the same guards on the inner
+   statement. Empty/bare `EXPLAIN` also denies with the allowed-set literal.
+2. EXPLAIN reduction (`sqlTool.ts:118-142,172-217`) strips `EXPLAIN` + repeatable
+   `ANALYZE|ANALYSE|VERBOSE` + an optional parenthesized options list, then re-checks: writable CTE,
+   row-lock (`FOR SHARE`/`FOR KEY SHARE`, TASK-AIX03-101 fix-round-1), INTO, allowed first keyword.
+3. `SHOW` is admitted as a first keyword (`ALLOWED_FIRST` includes `show`) — if ADR 0003 omits SHOW
+   from the run_sql admitted set, that is drift to correct.
+4. The run_sql guard lowercases before scanning and its multi-statement/INTO/row-lock scans are
+   string-level (a forbidden keyword inside a string literal/identifier is a deny-by-overreach for
+   INTO scan: `\binto\b` can match inside a quoted literal, e.g. a column named `into_count` —
+   wait, no: `\b` after `into` fails against `_`, so `into_count` does NOT match; but
+   `SELECT 'into' FROM t` DOES deny — deliberate over-rejection, same direction as the core
+   profile's documented stance).
+
+One self-correction while writing point 4 (kept for honesty of the record): `into_count` is NOT
+over-rejected (`_` is a word char, so `\binto\b` does not match); `SELECT 'into' FROM t` IS
+rejected — quoted-literal over-rejection matches the core profile's documented fail-closed
+direction. The ADR should record the run_sql profile as over-rejecting INTO inside string
+literals.
+
 **EXPLAIN reduction — already implemented, this task only pins it.** The EXPLAIN→inner-statement
 reduction lives in `sqlTool.ts` TODAY: `isReadOnlySql` strips a leading `EXPLAIN` plus optional
 `ANALYZE|ANALYSE|VERBOSE` tokens and an optional parenthesized options list via `stripExplainPrefix`
@@ -97,3 +141,60 @@ correction in wave 2 (or raise it via this task's review round).
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code (Anthropic; session reports itself as powered by unic-code)
+EXECUTOR_SUBAGENT: Claude:feature-implementer
+
+RED_OUTPUT: no pin was RED on base (expected — per task spec, all 6 rows pin existing behavior;
+"GREEN-on-base pins allowed"). Vacuity check via temporary mutation — `isReadOnlySql` short-circuited
+to `return { ok: true }`:
+
+```
+ ❯ sqlTool.test.ts > TASK-ARP06-002 — only approved SQL executes > denies DML and never calls adapter.runQuery
+ ❯ sqlTool.test.ts > TASK-ARP06-002 — only approved SQL executes > denies EXPLAIN ANALYZE DELETE and never calls adapter.runQuery
+ ❯ sqlTool.test.ts > TASK-ARP06-002 — only approved SQL executes > denies SELECT INTO and never calls adapter.runQuery
+ ❯ sqlTool.test.ts > TASK-ARP06-002 — only approved SQL executes > denies writable CTE and never calls adapter.runQuery
+ ❯ sqlTool.test.ts > TASK-ARP06-002 — only approved SQL executes > denies multi-statement and never calls adapter.runQuery
+ ❯ sqlTool.test.ts > TASK-ARP06-002 — only approved SQL executes > denies row lock and never calls adapter.runQuery
+⎯⎯⎯⎯⎯⎯ Failed Tests 36 ⎯⎯⎯⎯⎯⎯⎯
+ Test Files  1 failed (1)
+      Tests  36 failed | 14 passed (50)
+```
+
+All 6 new side-effect pins failed (runQuery WAS invoked → side-effect assertion bites), plus the
+pre-existing denial tests. Production file restored byte-exact after the mutation (`git diff` on
+`sqlTool.ts` empty). Therefore: NO production logic change; the only `sqlTool.ts` edit is the
+module-header doc line naming the **run_sql profile** (ADR 0003), kept at 4 lines so the denial
+literals remain at `sqlTool.ts:18-27` (verified with `sed -n '18,27p'`).
+
+Verification Output (fresh, this turn, in the worktree):
+
+```
+$ npx vitest run src/ai/tools/__tests__/sqlTool.test.ts
+ ✓ src/ai/tools/__tests__/sqlTool.test.ts  (50 tests) 6ms
+ Test Files  1 passed (1)
+      Tests  50 passed (50)
+
+$ npm run typecheck
+> tsc --noEmit
+exit 0
+
+$ npm run compile
+esbuild: build complete
+exit 0
+```
+
+Acceptance criteria check: Test 2 passes for every denial reason (`runQuery` never invoked — 6-row
+`it.each`); cursor closes on success AND error (existing pins + new suite); row cap 50 retained
+(`rows.length===50`, `truncated:true`, `rowCount`=full batch); no-connection →
+`NO_CONNECTION_MSG`; denial strings are the stable literals at `sqlTool.ts:18-27`, secret-free
+(2-row non-secret `it.each` with DSN/apiKey/comment-embedded SQL); module header names the run_sql
+profile; ADR 0003 NOT edited (corrections recorded in Discussion per wave-2 channel).
+
+Status: PASS
+Note: none. ADR drift findings for TASK-ARP06-001 recorded in `## Discussion` (SHOW is admitted by
+run_sql profile; EXPLAIN-wrapped writes deny with the generic allowed-set literal, not a distinct
+reason; INTO inside string literals is over-rejected — deliberate fail-closed).

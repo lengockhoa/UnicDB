@@ -1,7 +1,7 @@
-// src/ai/tools/sqlTool.ts — TASK-002
-// Read-only SQL executor tool + isReadOnlySql guard. Cursor flow per F1:
-// when adapter.runQuery returns a BatchedQuery, fetchBatch(50) + close() in
-// finally; otherwise fall back to run.results. NO vscode import.
+// src/ai/tools/sqlTool.ts — run_sql profile of the ARP-06 policy decision
+// (ADR 0003): only approved SQL executes; any uncertainty rejects. Cursor
+// flow per F1: when adapter.runQuery returns a BatchedQuery, fetchBatch(50)
+// + close() in finally; otherwise fall back to run.results. NO vscode import.
 
 import type { AgentTool } from "../agent";
 import type { AdapterFactory } from "./types";

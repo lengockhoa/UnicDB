@@ -90,7 +90,25 @@ No lint script exists — `npm run typecheck` is the static gate. Selection per 
 
 ## Discussion
 
-(no comments yet)
+### 2026-09-02 · executor · claude-code / unic-code
+
+Production logic WAS changed, per the task's corpus-gap rule (RED first). The corpus
+sweep exposed one genuine over-admission: `parseReadonly` stripped comment bodies
+BEFORE the forbidden/row-lock token scans, so `SELECT 1 -- insert` and
+`SELECT 1 /* delete */` were ADMITTED (Test Case 7 pins them `non_select`).
+Minimal fix in `readonlySqlParser.ts`: the `containsForbidden`/`containsRowLock`
+scans in `parseReadonly` now run against the RAW input text (comment bodies can
+never hide a token), while comment stripping is kept for structural parsing only
+(first keyword, statement counting, paren balance) so all previously pinned reasons
+and happy paths are unchanged. **Exported contract is unchanged** — `parseReadonly`
+/`ParseResult`/`ParseFailReason`/`containsForbidden`/`containsRowLock`/`ROW_LOCK_RE`
+/`stripTrailingSqlComments` keep their exact signatures; only `parseReadonly`'s
+internal scan input changed. `stripTrailingSqlComments` semantics (used by callers
+for downstream scanning) are also untouched. RED output + full verification output
+in the Executor Report below. @reviewer please give the comment-body leg (§5 of the
+ADR) extra scrutiny — it is the only behavior change in this task.
+
+---
 
 ---
 
@@ -98,3 +116,116 @@ No lint script exists — `npm run typecheck` is the static gate. Selection per 
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+## Executor Report
+
+- EXECUTOR_TOOL: claude-code
+- EXECUTOR_MODEL: unic-code
+- EXECUTOR_SUBAGENT: Claude:feature-implementer
+
+### RED_OUTPUT
+
+Tests written FIRST (corpus cases 1–8 of the task Test Plan, incl. the 63-case
+security sweep), then run against today's `parseReadonly`. 3 failed / 57 passed —
+all three failures are ONE root cause: comment bodies were stripped before the
+forbidden-keyword scan, so comment-hidden keywords were admitted while Test Case 7
+pins them denied.
+
+```text
+$ npx vitest run src/ai/tools/__tests__/readonlySqlParser.test.ts
+
+ ❯ src/ai/tools/__tests__/readonlySqlParser.test.ts  (60 tests | 3 failed) 11ms
+   ❯ … > denies a forbidden keyword hidden in a line comment with non_select
+     → expected { ok: true, kind: 'select' } to deeply equal { ok: false, reason: 'non_select' }
+   ❯ … > denies every mutation-capable construct in the corpus sweep
+     → expected [ …(2) ] to deeply equal []
+   ❯ … > reports the pinned reason for each corpus category
+     → expected undefined to be 'non_select' // Object.is equality
+
+ FAIL  src/ai/tools/__tests__/readonlySqlParser.test.ts > ARP-06.1 — fail-closed policy decision API: security parser corpus (ADR 0003) > denies a forbidden keyword hidden in a line comment with non_select
+AssertionError: expected { ok: true, kind: 'select' } to deeply equal { ok: false, reason: 'non_select' }
+      ❯ src/ai/tools/__tests__/readonlySqlParser.test.ts:253:49
+
+# sweep failure detail:
+- Array []
++ Array [
++   "line comment hiding drop: SELECT 1 -- drop table t",
++   "block comment hiding delete: SELECT 1 /* delete */",
++ ]
+ ❯ src/ai/tools/__tests__/readonlySqlParser.test.ts:349:22
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 57 passed (60)
+```
+
+Production change (minimal, per the corpus-gap rule): in `parseReadonly`, the
+`containsForbidden`/`containsRowLock` defense-in-depth scans now run against the
+RAW input text instead of the comment-stripped statement; comment stripping remains
+for structural parsing (first keyword, `;` counting, paren balance). Module header
+gained the required one-line **core profile** naming. No signature changed.
+
+### Verification Output
+
+```text
+$ test -f docs/decisions/0003-ai-sql-policy.md
+V1 exit 0 (ADR exists)
+
+$ grep -qi "run_sql" docs/decisions/0003-ai-sql-policy.md && grep -qi "parseReadonly" docs/decisions/0003-ai-sql-policy.md
+V2 exit 0 (ADR names run_sql + parseReadonly)
+
+$ npx vitest run src/ai/tools/__tests__/readonlySqlParser.test.ts
+ ✓ src/ai/tools/__tests__/readonlySqlParser.test.ts  (60 tests) 5ms
+ Test Files  1 passed (1)
+      Tests  60 passed (60)
+
+$ npm run typecheck
+> vsdb@1.41.0 typecheck
+> tsc --noEmit
+exit 0
+
+$ npm run compile
+  dist/extension.js      5.3mb ⚠️
+  dist/extension.js.map  9.2mb
+⚡ Done in 151ms
+esbuild: build complete
+exit 0
+```
+
+Consumer regression sweep beyond the pinned target (all GREEN):
+
+```text
+$ npx vitest run src/ai/tools/__tests__/dbAwareTools.test.ts src/ai/tools/__tests__/analysisTools.test.ts src/ai/tools/__tests__/sqlTool.test.ts src/ai/omp/__tests__/hostMcp.test.ts src/ai/__tests__/analysisReport.test.ts src/ui/__tests__/aiChatPanelDbAware.test.ts src/ui/__tests__/aiChatPanelDbAwareWebview.test.ts src/ui/__tests__/aiChatPanelPolicy.test.ts
+ Test Files  8 passed (8)
+      Tests  147 passed (147)
+
+$ npx vitest run src/__tests__/dbx06Scaffold.test.ts src/core/ddl/__tests__/renameAnalysis.test.ts src/core/ddl/__tests__/renameCatalog.test.ts
+ Test Files  3 passed (3)
+      Tests  32 passed (32)
+```
+
+### Acceptance Criteria
+
+- [x] `docs/decisions/0003-ai-sql-policy.md` exists — one decision (§2), construct matrix (§4),
+      both profiles named (`parseReadonly` core §3.1, `isReadOnlySql` run_sql §3.2);
+      grep checks exit 0.
+- [x] `docs/decisions/README.md` lists `0003`.
+- [x] Security corpus sweep (test 8, 63 cases) passes — every mutation-capable construct denied.
+- [x] RED evidence pasted above BEFORE any production change; production logic changed ONLY for
+      the corpus-proven comment-body gap (minimal: scan input raw text).
+- [x] No weakening of `parseReadonly` over-rejection (strictly strengthened on comments);
+      ARP-01/`guardAdapter` untouched; `sqlTool.ts` / `provider.ts` / UI files untouched.
+- [x] `npm run typecheck` + `npm run compile` exit 0.
+- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR (pending — Phase 4).
+
+### Status
+
+PASS
+
+### Note
+
+Files changed: `docs/decisions/0003-ai-sql-policy.md` (new),
+`docs/decisions/README.md` (0003 row), `src/ai/tools/readonlySqlParser.ts`
+(core-profile header + comment-body scan fix), `src/ai/tools/__tests__/readonlySqlParser.test.ts`
+(corpus extended, 20 → 60 tests). EXPLAIN reduction (`stripExplainPrefix`) is cited in
+ADR §6 as already-implemented run_sql behavior — pinned, NOT reimplemented; per the
+plan's ownership rule, ADR corrections for any drift ARP-06.2 finds are wave 2.

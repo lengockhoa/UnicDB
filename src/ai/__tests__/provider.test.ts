@@ -666,6 +666,211 @@ describe("provider — streamComplete (CRLF body regression)", () => {
   });
 });
 
+// ---- TASK-ARP06-003: usage transport pins ----------------------------------
+describe("usage transport — happy parse (#T3.1)", () => {
+  it("chat/completions usage parsed → transport-normalized {inputTokens, outputTokens}", () => {
+    const out = parseChatCompletionsResponse({
+      choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "x" } }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 },
+    });
+    expect(out.usage).toEqual({ inputTokens: 10, outputTokens: 5 });
+  });
+});
+
+describe("usage transport — missing usage → normalized zeros (#T3.2)", () => {
+  it("parseChatCompletionsResponse: absent usage → usage {0,0}, no throw", () => {
+    const out = parseChatCompletionsResponse({
+      choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "x" } }],
+    });
+    expect(out.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
+  });
+  it("parseResponsesResponse: absent usage → usage {0,0}, no throw", () => {
+    const out = parseResponsesResponse({ output_text: "x", status: "completed" });
+    expect(out.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
+  });
+});
+
+describe("usage transport — malformed usage → 0, never throw, never NaN (#T3.3)", () => {
+  it("chat parser: string/null/negative/NaN/non-object usage → {0,0}", () => {
+    const base = {
+      choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "x" } }],
+    };
+    const cases: unknown[] = [
+      { ...base, usage: { prompt_tokens: "x", completion_tokens: null } },
+      { ...base, usage: { prompt_tokens: -5, completion_tokens: -2 } },
+      { ...base, usage: { prompt_tokens: Number.NaN, completion_tokens: Number.NaN } },
+      { ...base, usage: { prompt_tokens: Number.POSITIVE_INFINITY } },
+      { ...base, usage: "oops" },
+      { ...base, usage: 42 },
+      { ...base, usage: [] },
+      { ...base, usage: null },
+    ];
+    for (const c of cases) {
+      let out: ReturnType<typeof parseChatCompletionsResponse>;
+      expect(() => {
+        out = parseChatCompletionsResponse(c);
+      }).not.toThrow();
+      expect(out!.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
+      expect(Number.isNaN(out!.usage.inputTokens)).toBe(false);
+      expect(Number.isNaN(out!.usage.outputTokens)).toBe(false);
+    }
+  });
+  it("responses parser: string/negative/null usage → {0,0}, no ProviderError, no NaN", () => {
+    const cases: unknown[] = [
+      { output_text: "x", status: "completed", usage: { input_tokens: "3", output_tokens: null } },
+      { output_text: "x", status: "completed", usage: { input_tokens: -7, output_tokens: -1 } },
+      { output_text: "x", status: "completed", usage: { input_tokens: Number.NaN } },
+      { output_text: "x", status: "completed", usage: "junk" },
+    ];
+    for (const c of cases) {
+      let out: ReturnType<typeof parseResponsesResponse>;
+      expect(() => {
+        out = parseResponsesResponse(c);
+      }).not.toThrow();
+      expect(out!.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
+    }
+  });
+});
+
+describe("usage transport — streaming final usage emitted once (#T3.4)", () => {
+  it("two usage chunks in one stream → result usage = LAST chunk (7/5), NOT the sum (12/9)", async () => {
+    const sseBody =
+      'data: {"choices":[{"delta":{"content":"a"}}],"usage":{"prompt_tokens":5,"completion_tokens":4}}\n\n' +
+      'data: {"choices":[{"delta":{"content":"b"}}],"usage":{"prompt_tokens":7,"completion_tokens":5}}\n\n' +
+      "data: [DONE]\n\n";
+    const fetch: FetchLike = vi.fn(async () => sseResponse(sseBody));
+    const client = createProviderClient({
+      baseUrl: "https://x/v1",
+      apiKey: "sk-1",
+      method: "chat/completions",
+      fetch,
+    });
+    const result = await client.streamComplete(baseReq(), { onText: () => {} });
+    expect(result.text).toBe("ab");
+    expect(result.usage).toEqual({ inputTokens: 7, outputTokens: 5 });
+  });
+});
+
+describe("usage transport — aborted/malformed stream never invents usage (#T3.5)", () => {
+  it("stream ending with a malformed final event (no terminator) → resolves, usage {0,0}, no hang", async () => {
+    const sseBody =
+      'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n' +
+      'data: {"usage":{"prompt_tokens":"garbage",{broken';
+    const fetch: FetchLike = vi.fn(async () => sseResponse(sseBody));
+    const client = createProviderClient({
+      baseUrl: "https://x/v1",
+      apiKey: "sk-1",
+      method: "chat/completions",
+      fetch,
+    });
+    const result = await client.streamComplete(baseReq(), { onText: () => {} });
+    expect(result.text).toBe("ok");
+    expect(result.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
+  });
+  it("stream with garbage usage values (negative/string usage objects) → usage {0,0}", async () => {
+    const sseBody =
+      'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n' +
+      'data: {"choices":[],"usage":{"prompt_tokens":-3,"completion_tokens":null}}\n\n' +
+      'data: {"usage":"junk"}\n\n' +
+      "data: [DONE]\n\n";
+    const fetch: FetchLike = vi.fn(async () => sseResponse(sseBody));
+    const client = createProviderClient({
+      baseUrl: "https://x/v1",
+      apiKey: "sk-1",
+      method: "chat/completions",
+      fetch,
+    });
+    const result = await client.streamComplete(baseReq(), { onText: () => {} });
+    expect(result.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
+  });
+  it("mid-stream caller abort → rejects (bare AbortError); never resolves with an invented usage", async () => {
+    const controller = new AbortController();
+    const abortErr: Error & { name: string } = Object.assign(new Error("stream aborted"), {
+      name: "AbortError",
+    });
+    const fetch: FetchLike = vi.fn(async (_url, init) => {
+      const callerSignal = init.signal;
+      return sseStreamResponse((c) => {
+        c.enqueue(
+          new TextEncoder().encode('data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'),
+        );
+        callerSignal.addEventListener("abort", () => {
+          c.error(abortErr);
+        });
+      });
+    });
+    const client = createProviderClient({
+      baseUrl: "https://x/v1",
+      apiKey: "sk-1",
+      method: "chat/completions",
+      fetch,
+    });
+    const p = client.streamComplete(baseReq(), { onText: () => {}, signal: controller.signal });
+    await Promise.resolve();
+    controller.abort();
+    try {
+      const result = await p;
+      // If it ever resolved instead of rejecting, it must NOT have invented usage.
+      throw new Error(`stream resolved with usage ${JSON.stringify(result.usage)} — invented`);
+    } catch (e) {
+      const err = e as Error;
+      expect(err.message).not.toContain("invented");
+      expect(err.name).toBe("AbortError");
+      expect(err).not.toBeInstanceOf(ProviderError);
+    }
+  });
+});
+
+describe("usage transport — no response body retained for accounting (#T3.6)", () => {
+  it("successful parse result exposes only text/toolCalls/finishReason/usage (no body field)", () => {
+    const out = parseChatCompletionsResponse({
+      id: "resp_1",
+      choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "x" } }],
+      usage: { prompt_tokens: 1, completion_tokens: 2 },
+    });
+    expect(Object.keys(out).sort()).toEqual(["finishReason", "text", "toolCalls", "usage"]);
+    const out2 = parseResponsesResponse({
+      id: "resp_2",
+      output_text: "x",
+      status: "completed",
+      usage: { input_tokens: 1, output_tokens: 2 },
+    });
+    expect(Object.keys(out2).sort()).toEqual(["finishReason", "text", "toolCalls", "usage"]);
+  });
+  it("ProviderError carries only the scrubbed ≤300-char bodySnippet, never the full raw body", async () => {
+    const filler = "A".repeat(500);
+    const rawBody = `Unauthorized for key sk-secret-123 ${filler} TAIL-MARKER`;
+    const fetch: FetchLike = vi.fn(async () => textResponse(rawBody, 401, "Unauthorized"));
+    const client = createProviderClient({
+      baseUrl: "https://x/v1",
+      apiKey: "sk-secret-123",
+      method: "chat/completions",
+      fetch,
+    });
+    try {
+      await client.complete(baseReq());
+      throw new Error("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ProviderError);
+      const pe = e as ProviderError & { rawBody?: unknown };
+      // No full-body field retained on the error object. ("name" is the Error's own
+      // label property, set in the constructor — not response-body retention.)
+      expect(Object.keys(pe).sort()).toEqual([
+        "bodySnippet",
+        "endpoint",
+        "name",
+        "status",
+        "timeout",
+      ]);
+      expect(pe.bodySnippet.length).toBeLessThanOrEqual(300);
+      expect(pe.bodySnippet).not.toContain("TAIL-MARKER");
+      expect(pe.bodySnippet).not.toContain("sk-secret-123");
+      expect(pe.message).not.toContain("TAIL-MARKER");
+      expect(pe.message).not.toContain("sk-secret-123");
+    }
+  });
+});
+
 describe("provider — streamComplete (caller abort during fetch phase)", () => {
   it("rejects with bare AbortError (name 'AbortError', not ProviderError) when caller signal aborts before response headers arrive", async () => {
     const controller = new AbortController();

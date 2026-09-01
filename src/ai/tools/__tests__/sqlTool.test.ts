@@ -424,3 +424,94 @@ describe("createSqlTool — run_sql", () => {
     expect(out).toBe("Tool failed: boom-fetch");
   });
 });
+
+// ---- TASK-ARP06-002: only approved SQL executes (side-effect + non-secret pins)
+
+describe("TASK-ARP06-002 — only approved SQL executes", () => {
+  // Side-effect pin: for EVERY denial reason, the guard denies the statement
+  // AND `adapter.runQuery` is never invoked by `createSqlTool.execute` — no
+  // mutation-capable statement may reach the adapter, period.
+  it.each([
+    [
+      "DML",
+      "DELETE FROM t",
+      "Only SELECT/SHOW/EXPLAIN/WITH…SELECT are allowed (read-only)",
+    ],
+    [
+      "EXPLAIN ANALYZE DELETE",
+      "EXPLAIN ANALYZE DELETE FROM t",
+      "Only SELECT/SHOW/EXPLAIN/WITH…SELECT are allowed (read-only)",
+    ],
+    [
+      "SELECT INTO",
+      "SELECT * INTO t2 FROM t",
+      "Read-only violation: INTO",
+    ],
+    [
+      "writable CTE",
+      "WITH x AS (INSERT INTO a VALUES(1) RETURNING *) SELECT * FROM x",
+      "Read-only violation: writable CTE (INSERT/UPDATE/DELETE/MERGE)",
+    ],
+    [
+      "multi-statement",
+      "SELECT 1; DELETE FROM t",
+      "Multiple statements are not allowed",
+    ],
+    [
+      "row lock",
+      "SELECT * FROM t FOR SHARE",
+      "Read-only violation: FOR UPDATE/SHARE",
+    ],
+  ])("denies %s and never calls adapter.runQuery", async (_label, sql, reason) => {
+    expect(isReadOnlySql(sql).ok).toBe(false);
+    const { adapter, runQuery } = makeCursorAdapter();
+    const tool = createSqlTool(makeFactory(adapter));
+    const out = await tool.execute({ sql });
+    expect(runQuery).not.toHaveBeenCalled();
+    expect(out).toBe(reason);
+  });
+
+  // Non-secret-denial pin: the denial string is the exact stable reason
+  // literal and leaks NO SQL text, NO tool args, NO host/DSN/apiKey
+  // fragment — even when the denied SQL itself embeds secret-shaped strings.
+  it.each([
+    [
+      "DML with apiKey + DSN comment",
+      "DELETE FROM users WHERE api_key='sk-proj-S3CRETvalue42' -- postgres://admin:hunter2@db.prod.internal:5432/vsdb",
+      "Only SELECT/SHOW/EXPLAIN/WITH…SELECT are allowed (read-only)",
+      [
+        "DELETE FROM users",
+        "api_key",
+        "sk-proj",
+        "S3CRETvalue42",
+        "postgres://",
+        "admin",
+        "hunter2",
+        "db.prod.internal",
+        "5432",
+        "vsdb",
+      ],
+    ],
+    [
+      "SELECT INTO with secret in block comment",
+      "SELECT * INTO dump FROM t /* dsn=postgresql://svc:P@ssw0rd@10.0.0.9:5432/prod */",
+      "Read-only violation: INTO",
+      [
+        "SELECT * INTO",
+        "dump",
+        "postgresql://",
+        "P@ssw0rd",
+        "10.0.0.9",
+        "5432",
+      ],
+    ],
+  ])("denial is stable + secret-free for %s", async (_label, sql, reason, fragments) => {
+    const { adapter } = makeCursorAdapter();
+    const tool = createSqlTool(makeFactory(adapter));
+    const out = await tool.execute({ sql });
+    expect(out).toBe(reason);
+    for (const fragment of fragments) {
+      expect(out).not.toContain(fragment);
+    }
+  });
+});

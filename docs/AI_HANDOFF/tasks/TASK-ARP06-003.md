@@ -80,6 +80,79 @@ tests-map `[provider.test.ts, aiSqlCompletionProvider.test.ts, …]` — the pin
 
 (no comments yet)
 
+### Executor decision note (implementation)
+
+- Production change was required: RED pins proved negative/NaN/Infinity usage passed through in
+  `parseChatCompletionsResponse`, `parseResponsesResponse`, and the streaming usage path.
+- Fix: single `tokenCount()` guard (finite + non-negative number, else 0) applied at all 4 usage
+  read sites (2 parsers + 2 stream sites). Streaming semantics unchanged: last valid usage chunk
+  wins (never summed); a malformed usage chunk no longer clobbers an earlier good reading — it is
+  skipped, so usage is `{0,0}` only when no valid usage ever arrived (never invented).
+- One test-side fix during RED triage: `Object.keys(ProviderError)` also lists `name` (the Error
+  label set in the constructor) — the retention pin expectation was adjusted to include it; it is
+  not response-body retention.
+- Retention verified already safe pre-change (no raw body on `ProviderResult`/`ProviderError`).
+- `scrubApiKey` untouched.
+
+---
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: Claude:feature-implementer
+
+RED_OUTPUT: |
+  npx vitest run src/ai/__tests__/provider.test.ts (before production change):
+   Test Files  1 failed (1)
+        Tests  4 failed | 30 passed (34)
+   ❯ usage transport — malformed usage → 0, never throw, never NaN (#T3.3) > chat parser: string/null/negative/NaN/non-object usage → {0,0}
+     → expected { inputTokens: -5, outputTokens: -2 } to deeply equal { inputTokens: +0, outputTokens: +0 }
+     ❯ src/ai/__tests__/provider.test.ts:713:26
+   ❯ usage transport — malformed usage → 0, never throw, never NaN (#T3.3) > responses parser: string/negative/null usage → {0,0}, no ProviderError, no NaN
+     → expected { inputTokens: -7, outputTokens: -1 } to deeply equal { inputTokens: +0, outputTokens: +0 }
+     ❯ src/ai/__tests__/provider.test.ts:730:26
+   ❯ usage transport — aborted/malformed stream never invents usage (#T3.5) > stream with garbage usage values (negative/string usage objects) → usage {0,0}
+     → expected { inputTokens: -3, outputTokens: +0 } to deeply equal { inputTokens: +0, outputTokens: +0 }
+     ❯ src/ai/__tests__/provider.test.ts:784:26
+   ❯ usage transport — no response body retained for accounting (#T3.6) > ProviderError carries only the scrubbed ≤300-char bodySnippet, never the full raw body
+     → expected [ 'bodySnippet', 'endpoint', …(3) ] to deeply equal [ 'bodySnippet', 'endpoint', …(2) ]
+     ❯ src/ai/__tests__/provider.test.ts:857:38
+     (4th failure was a test-side over-strict expectation: `name` is an own property of
+     ProviderError set in its constructor, not a retention gap — expectation corrected, re-confirmed
+     RED on the 3 production gaps before the fix.)
+
+Verification Output: |
+  1) npx vitest run src/ai/__tests__/provider.test.ts
+     RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-arp06-003
+     ✓ src/ai/__tests__/provider.test.ts  (34 tests) 10ms
+     Test Files  1 passed (1)
+          Tests  34 passed (34)
+       Start at  06:11:24
+       Duration  201ms
+     (exit 0)
+
+  2) npm run typecheck
+     > vsdb@1.41.0 typecheck
+     > tsc --noEmit
+     (exit 0)
+
+  3) npm run compile
+       dist/extension.js      5.3mb ⚠️
+       dist/extension.js.map  9.2mb
+     ⚡ Done in 146ms
+     esbuild: build complete
+     (exit 0)
+
+Status: PASS
+Note: |
+  Streaming last-usage-chunk-wins and body-retention were already safe on base (tests 1-2 of RED
+  run passed those pins GREEN-on-base, as the task anticipated for existing coverage). The only
+  production gap was malformed (negative/NaN/Infinity) usage acceptance; fixed via `tokenCount()`
+  guard at all 4 usage read sites in src/ai/provider.ts. Malformed usage chunk now skipped (does
+  not clobber an earlier valid reading; never summed, never invented). scrubApiKey untouched; no
+  new body retention; no files outside Target Files touched; no git commands run.
+
 ---
 
 <!--

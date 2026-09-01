@@ -1,13 +1,18 @@
 // src/ai/tools/readonlySqlParser.ts — cycle AD TASK-001
-// PURE readonly-SQL guard for the DB-aware tools. No vscode, no fs, no net.
+// CORE PROFILE of the ARP-06 AI-SQL policy decision (ADR 0003,
+// docs/decisions/0003-ai-sql-policy.md): parser uncertainty never admits
+// mutation-capable SQL. The run_sql profile (isReadOnlySql in sqlTool.ts)
+// additionally admits SHOW/EXPLAIN by reducing EXPLAIN to its inner
+// statement and re-checking. PURE guard — no vscode, no fs, no net.
 //
 // Deliberately STRICTER than a real SQL parser: a forbidden keyword is
-// rejected even inside a string literal or as a substring of an identifier
-// (`inserted_at` contains `insert`). This over-rejects legitimate SQL but
-// makes parser-bypass impossible without a full tokenizer; the model is
-// told to rename such columns via an alias-free projection or use
-// `list_table_data_sample` instead. A proper literal-aware tokenizer can
-// relax this later without changing the exported contract.
+// rejected even inside a string literal, inside a comment body, or as a
+// substring of an identifier (`inserted_at` contains `insert`). This
+// over-rejects legitimate SQL but makes parser-bypass impossible without a
+// full tokenizer; the model is told to rename such columns via an
+// alias-free projection or use `list_table_data_sample` instead. A proper
+// literal-aware tokenizer can relax this later without changing the
+// exported contract.
 
 export type ParseFailReason =
   | "non_select"
@@ -54,8 +59,10 @@ export function containsRowLock(text: string): boolean {
 
 /**
  * Strip every `-- line` and block comment from `sql`, replacing each with a
- * single space so adjacent tokens never fuse. Comment bodies are dropped
- * before any keyword scan, so a comment can neither hide nor fake a token.
+ * single space so adjacent tokens never fuse. Comment bodies are dropped for
+ * STRUCTURAL parsing only (first keyword, statement counting, paren
+ * balance); the forbidden/row-lock token scans in `parseReadonly` run against
+ * the raw text, so a comment can neither hide nor fake a token there.
  *
  * Lexical context rules (conservative — errs on the safe side):
  *   - Inside a single-quoted string: NO comment stripping. A single quote
@@ -195,7 +202,8 @@ export function stripTrailingSqlComments(sql: string): string {
 
 /** Parse `sql` as a single read-only statement. Never throws. */
 export function parseReadonly(sql: string): ParseResult {
-  const body = stripComments(typeof sql === "string" ? sql : "").trim();
+  const raw = typeof sql === "string" ? sql : "";
+  const body = stripComments(raw).trim();
   if (body.length === 0) return { ok: false, reason: "empty" };
 
   // Multi-statement: a `;` with any non-whitespace content after it. A single
@@ -214,13 +222,16 @@ export function parseReadonly(sql: string): ParseResult {
   }
 
   // Defense in depth: no forbidden keyword anywhere in the statement.
-  if (containsForbidden(statement)) return { ok: false, reason: "non_select" };
+  // ARP-06.1: the token scans run against the RAW text (comments included),
+  // so a forbidden keyword hidden in a comment body is rejected —
+  // `SELECT 1 -- drop table t` never parses. Fail-closed over-rejection.
+  if (containsForbidden(raw)) return { ok: false, reason: "non_select" };
 
   // Defense in depth: no PostgreSQL row-locking clause. Catches the
   // bypass where neither `FOR UPDATE` / `FOR NO KEY UPDATE` is present
   // but a share lock is taken (FOR SHARE / FOR KEY SHARE / FOR NO KEY
-  // SHARE). TASK-AIX03-101.
-  if (containsRowLock(statement)) return { ok: false, reason: "non_select" };
+  // SHARE). TASK-AIX03-101. Also scanned on the raw text (see above).
+  if (containsRowLock(raw)) return { ok: false, reason: "non_select" };
 
   let depth = 0;
   for (const ch of statement) {

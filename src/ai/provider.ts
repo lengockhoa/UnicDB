@@ -105,6 +105,13 @@ function scrubApiKey(s: string, apiKey: string): string {
   return masked.slice(0, SNIPPET_MAX);
 }
 
+// TASK-ARP06-003: usage transport guard. A token count is only trusted when it is a
+// finite, non-negative number; anything else (string, null, negative, NaN, Infinity)
+// normalizes to 0 — never a throw, never NaN, never an invented value.
+function tokenCount(v: unknown): number {
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0;
+}
+
 function buildUrl(baseUrl: string, method: "responses" | "chat/completions"): string {
   const trimmed = baseUrl.replace(/\/+$/, "");
   const path = method === "responses" ? "responses" : "chat/completions";
@@ -207,9 +214,8 @@ export function parseChatCompletionsResponse(json: unknown): ProviderResult {
     : [];
   const finishReason = mapFinishReason(choice?.finish_reason);
   const usage = {
-    inputTokens: typeof j.usage?.prompt_tokens === "number" ? (j.usage!.prompt_tokens as number) : 0,
-    outputTokens:
-      typeof j.usage?.completion_tokens === "number" ? (j.usage!.completion_tokens as number) : 0,
+    inputTokens: tokenCount(j.usage?.prompt_tokens),
+    outputTokens: tokenCount(j.usage?.completion_tokens),
   };
   return { text, toolCalls, finishReason, usage };
 }
@@ -319,9 +325,8 @@ export function parseResponsesResponse(json: unknown): ProviderResult {
   }
 
   const usage = {
-    inputTokens: typeof j.usage?.input_tokens === "number" ? (j.usage!.input_tokens as number) : 0,
-    outputTokens:
-      typeof j.usage?.output_tokens === "number" ? (j.usage!.output_tokens as number) : 0,
+    inputTokens: tokenCount(j.usage?.input_tokens),
+    outputTokens: tokenCount(j.usage?.output_tokens),
   };
 
   return { text, toolCalls, finishReason, usage };
@@ -617,9 +622,11 @@ export function createProviderClient(opts: ProviderOptions): {
             }
           }
           if (j.usage) {
-            if (typeof j.usage.prompt_tokens === "number") inputTokens = j.usage.prompt_tokens;
-            if (typeof j.usage.completion_tokens === "number")
-              outputTokens = j.usage.completion_tokens;
+            // Last usage chunk wins (final usage once, never summed); malformed
+            // values are ignored so they never overwrite a good reading — and if
+            // no valid usage ever arrives, usage stays {0,0} (never invented).
+            inputTokens = tokenCount(j.usage.prompt_tokens) || inputTokens;
+            outputTokens = tokenCount(j.usage.completion_tokens) || outputTokens;
           }
           found = idx();
         }
@@ -660,10 +667,8 @@ export function createProviderClient(opts: ProviderOptions): {
                 }
               }
               if (parsed.usage) {
-                if (typeof parsed.usage.prompt_tokens === "number")
-                  inputTokens = parsed.usage.prompt_tokens;
-                if (typeof parsed.usage.completion_tokens === "number")
-                  outputTokens = parsed.usage.completion_tokens;
+                inputTokens = tokenCount(parsed.usage.prompt_tokens) || inputTokens;
+                outputTokens = tokenCount(parsed.usage.completion_tokens) || outputTokens;
               }
             } catch {
               // ignore trailing garbage
