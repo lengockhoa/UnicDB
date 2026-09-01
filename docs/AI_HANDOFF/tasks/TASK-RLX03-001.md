@@ -195,3 +195,13 @@ Verification Output: |
   npx vitest run src/core/__tests__/connectionManager.test.ts — 20 passed (20)
 Status: PASS
 Note: Fix 1 — new counting-shim fixture (printf 'x' >> counter file; `fail: true` variant execs `exit 1` after counting so every attempt rejects with the existing "exited before becoming ready" literal) proves the post-rejection start() performs a fresh spawn: counter 1 -> 2; a stale `pending` replay would keep it at 1 (mutation-verified). Fix 2 — `start()` is now non-async and returns the stored pending promise directly, so concurrent same-key callers get the identical promise instance (`expect(p2).toBe(p1)` in GREEN); `existing`/invalid-key paths return `Promise.resolve`/`Promise.reject` to preserve the rejected-promise (never sync-throw) contract.
+
+## Reviewer Verdict (fix round 1)
+VERDICT: approved
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN: PASS
+FINDINGS:
+- resolved — `src/core/sshTunnelManager.ts:181-200` makes `start()` non-async and returns the stored `pending` promise directly; `src/core/__tests__/sshTunnelManager.test.ts:131-135` proves concurrent promise identity with `p2 === p1`.
+- resolved — `src/core/__tests__/sshTunnelManager.test.ts:198-243` uses a spawn-counting failing shim and proves the settled rejection is cleared by observing the count grow from 1 to 2 on retry.
+NEXT_STATUS_FOR_INDEX: approved

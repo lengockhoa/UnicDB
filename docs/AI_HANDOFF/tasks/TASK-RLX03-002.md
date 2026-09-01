@@ -189,3 +189,12 @@ npx vitest run (full unit suite, extra safety)
 
 Status: PASS
 Note: Fix = `disposed` flag set synchronously BEFORE any disposal await (before the lifecycle-generation bump) and gating both `handleTunnelExit` and `recoveryOwns()`; the `onDidExit` subscription handle is now retained and disposed inside `dispose()`; new after-dispose-exit regression test asserts zero events, zero factory/sleep/test/close activity post-dispose. Files left uncommitted as instructed.
+
+## Reviewer Verdict (fix round 1)
+VERDICT: approved
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN: PASS
+FINDINGS:
+- resolved — `src/core/connectionManager.ts:589-600` sets `disposed` synchronously before any await, increments lifecycle generation, and disposes the retained tunnel-exit subscription; `handleTunnelExit()` and `recoveryOwns()` gate on `disposed` at lines 422-423 and 525-536. `src/core/__tests__/connectionManager.test.ts:874-920` proves an exit delivered after disposal performs no recovery work or status emission.
+NEXT_STATUS_FOR_INDEX: approved

@@ -1,6 +1,6 @@
 Command: handoff-fullstack
 Goal: Ship PORT-RLX-03 Connection, tunnel, and schema-refresh recovery (Wave 8)
-Base: main @ 65d630a — all waves committed
-Phase: R2-R4
-Cursor: review launch — 3 tasks, plan commit 2f8a0b5, review range 2f8a0b5..65d630a
-Next: 3 parallel unic-smart reviews → R4.5 if needed → R5 push → release v1.32.0
+Base: main @ 79b37e6 — fix round 1 done, all 3 tasks approved
+Phase: R5
+Cursor: all approved — updating INDEX to done, then release v1.32.0 (CHANGELOG + tag + VSIX)
+Next: release v1.32.0 → docs close-out → next cycle PORT-DBX-06

@@ -224,3 +224,15 @@ Note: none — inflight registry is now generation-scoped via the transition
 boundary (invalidate clears it synchronously with the generation bump);
 same-generation single-flight coalescing verified intact by all pre-existing
 coalescing tests; no lint script exists (per task file).
+
+## Reviewer Verdict (fix round 1)
+
+VERDICT: approved
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN: PASS
+FINDINGS:
+  - prior critical resolved — `invalidate()` clears old-generation `inflight` entries synchronously at `src/ui/schemaCache.ts:297-298`; B starts its own request, while the old work's guarded cleanup cannot delete B's entry (`src/ui/schemaCache.ts:382-383`).
+  - prior important resolved — `src/ui/__tests__/schemaCache.test.ts:601-650` holds A unresolved while B begins its same-key lookup, proving no cross-adapter coalescing and no stale write-back.
+  - new finding: none — `fetchEntry()` and `fetchEntryDdl()` retain generation checks before cache writes at `src/ui/schemaCache.ts:374-376` and `src/ui/schemaCache.ts:412-414`; clearing `inflight` does not permit A to commit after the generation bump.
+NEXT_STATUS_FOR_INDEX: approved
