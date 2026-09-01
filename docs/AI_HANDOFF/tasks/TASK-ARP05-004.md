@@ -1,6 +1,6 @@
 # TASK-ARP05-004 — Host message normalization (conditional gate)
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §2–§4 (ARP-05.4)
@@ -76,3 +76,20 @@ npm run compile
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code (orchestrator direct — conditional gate, verify-only closure; no worktree/agent needed)
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+RED_OUTPUT: N/A — closed not-needed per task §Test Cases case 1 (gate branch); cases 2–4 are "only if gap" and no gap was found.
+Verification Output:
+
+Gate evidence (per task §Verification Commands):
+1. `git diff 65b9c4f -- src/core/connectionManager.ts` → EMPTY (exit 0, no hunks, `--stat` empty). Production rethrow path unchanged by the whole cycle.
+2. ADR §7 measured evidence (docs/decisions/0002-cross-driver-resilience-contract.md, `## Probe: MySQL`): the connect/queue failure surface that motivated ARP-05.4 was already made actionable by TASK-ARP05-002's bounded acquire — the late checkout rejects with `MySqlAdapter: acquire timed out after ${POOL_ACQUIRE_TIMEOUT_MS}ms (pool slot held by another query/stream/transaction)` (src/adapters/mysql.ts:688): driver+diagnosis+actionable hint, within the §5 SLO-1 10-second budget, no bare generic timeout.
+3. Secret-redaction concern (task case 3, checked even though no change ships): the surfaced message is a template literal with only the bound and a fixed diagnosis string — no credential/DSN fragment can appear. The rethrow at connectionManager.ts:395-402 surfaces the driver error verbatim after closing the probe adapter (case 4 regression: unchanged, empty diff is the proof).
+4. `npm run typecheck` → exit 0; `npm run compile` → build complete (run at the wave-1 boundary on the exact tree being reviewed).
+
+Status: PASS
+Note: Gate closed **not-needed** (task case 1 branch). The measured error UX is already actionable post-ARP05-002; a connectionManager.ts normalization would be a no-op wrapper. No test file, no production file touched.
