@@ -1,6 +1,6 @@
 Command: handoff-fullstack
-Goal: Ship ARP-01 Read-only enforcement completeness (transaction execution boundary) from the additive roadmap.
-Base: main @ a948b3f (v1.36.0)
-Phase: done
-Cursor: cycle ARP-01 shipped — wave 1 commit 080462c (001 backtick masking + 002 tx guard), wave 2 commit 77da659 (003 closed not-needed + lockfile sync), release commit da52009, tag v1.37.0 pushed, vsdb-1.37.0.vsix packaged. All 3 tasks approved_minor round 1, zero fix rounds.
-Next: cycle complete — next commissionable candidate from the additive roadmap: ARP-02 (shutdown-safe query ownership, gated on released RLX-02) or ARP-03 (retained-result memory budget). On user direction, return to planning.
+Goal: Ship ARP-02 Shutdown-safe query ownership and connection provenance (fault-injection proof that late work cannot leak across close/deactivate/connection-change).
+Base: main @ 367cb80 (v1.37.0)
+Phase: P2 done
+Cursor: PLAN_ARP02.md + TASK-ARP02-001..004 + INDEX_ARP02.md written; probes on 367cb80 confirmed 5 RED cases (runner seam 2x, loadMore close-origin poison, loadMore post-cancel append, panel stale post into recreated panel, manager stale passive re-install)
+Next: P2.5 — plan review (unic-smart, REVIEW_TARGET_TYPE=plan) on docs/AI_HANDOFF/PLAN_ARP02.md; then P3 executor implements TASK-ARP02-001/002/003 (wave 1) → TASK-ARP02-004 (wave 2, conditional gate)
