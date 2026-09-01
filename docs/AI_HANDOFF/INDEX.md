@@ -1,6 +1,6 @@
 # INDEX
 
-Cycle AIX-07 — **Trust, Privacy & Governance** — complete; shipped in v1.28.0. Cycle DX-01 — Release confidence lane — shipped in v1.36.0. Cycle ARP-02 — shutdown-safe query ownership — shipped in v1.38.0. Cycle ARP-03 — retained-result memory budget — shipped in v1.39.0 (2026-09-02). Cycle ARP-04 — tunnel and endpoint identity hardening — **planned** (5 tasks ready, planning_done 2026-09-02) from docs/plans/2026-09-01-vsdb-additive-roadmap.md.
+Cycle AIX-07 — **Trust, Privacy & Governance** — complete; shipped in v1.28.0. Cycle DX-01 — Release confidence lane — shipped in v1.36.0. Cycle ARP-02 — shutdown-safe query ownership — shipped in v1.38.0. Cycle ARP-03 — retained-result memory budget — shipped in v1.39.0 (2026-09-02). Cycle ARP-04 — tunnel and endpoint identity hardening — shipped in v1.40.0 (2026-09-02; 5/5 tasks approved round 1, released).
 
 | Task / Portfolio | Title | Status | Dependencies | Reviewer |
 |---|---|---|---|---|
@@ -25,6 +25,7 @@ Cycle AIX-07 — **Trust, Privacy & Governance** — complete; shipped in v1.28.
 | PORT-ARP-01 | Read-only enforcement completeness | superseded (shipped in v1.37.0) | - | unic-smart |
 | PORT-ARP-02 | Shutdown-safe query ownership and connection provenance | superseded (shipped in v1.38.0) | - | unic-smart |
 | PORT-ARP-03 | Retained-result memory budget | superseded (shipped in v1.39.0) | - | unic-smart |
+| PORT-ARP-04 | Tunnel and endpoint identity hardening | superseded (shipped in v1.40.0) | - | unic-smart |
 
 ## Cycle AIX-03 — Read-only Database Analysis Copilot Hardening
 
