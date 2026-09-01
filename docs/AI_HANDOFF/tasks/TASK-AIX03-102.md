@@ -146,3 +146,17 @@ Verification Output:
 
 Status: PASS
 Note: All 7 test cases green; existing test suite unaffected; build clean.
+
+## Reviewer Verdict
+VERDICT: changes_requested
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN: PASS
+FINDINGS:
+  critical: none
+  important:
+    - src/ui/__tests__/aiChatPanelDbAware.test.ts:553 — case 4 assigns a nonexistent `recoveryHandler` property; the subscribed callback still calls `handleRecoveryStatus`, so no throw reaches its catch wrapper. Invoke a throwing handler through the registered callback and assert `fire()` does not throw and posts nothing.
+    - src/ui/__tests__/aiChatPanelDbAware.test.ts:423 — case 2 only mutates private abort fields; it never creates a pending `DbToolPermissionGate` request or verifies recovery cancels it. Add a deferred builtin turn with a pending gate request and assert the cancelled result.
+    - src/extension.test.ts:1388 — case 5 invokes only a mocked panel's `onDispose` callback and never calls a real panel teardown or checks the event disposable. Exercise real disposal, assert the first subscription disposes exactly once, then assert a new panel registers one fresh listener.
+  minor: none
+NEXT_STATUS_FOR_INDEX: changes_requested

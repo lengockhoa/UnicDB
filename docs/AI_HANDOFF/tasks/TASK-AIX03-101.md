@@ -131,3 +131,14 @@ Verification Output:
 
 Status: PASS
 Note: Closed row-lock bypass via shared `ROW_LOCK_RE` regex; sentinel non-leak pinned to Postgres `DEFAULT_BATCH_SIZE=500` + `QUERY_DEFAULT_MAX_ROWS=100`; pre-existing dist-bundle failures in `extension.test.ts` / `agGridSmoke.test.ts` / `consolePanelBundle.test.ts` are unrelated and reproduced on `808000c` HEAD.
+
+## Reviewer Verdict
+VERDICT: critical_block
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN: PASS
+FINDINGS:
+  critical: src/ai/tools/sqlTool.ts:124-132 — `isReadOnlySql()` returns `{ ok: true }` from the `EXPLAIN` branch before reaching the new `ROW_LOCK_RE` guard at line 146. `EXPLAIN ANALYZE SELECT * FROM t FOR SHARE` and `... FOR KEY SHARE` therefore execute and acquire row locks; reject `ROW_LOCK_RE` on the EXPLAIN inner statement and add regression tests before returning success.
+  important: none
+  minor: none
+NEXT_STATUS_FOR_INDEX: critical_block
