@@ -182,3 +182,43 @@ NOTE: Fix addresses the critical_block finding verbatim — "Fix must surface Ac
   3. `runOmpEngineTurn.onError` now posts `engine_state:"fallback-builtin"` (one of the six closed `OmpEngineState` literals) on the same wire as the error bubble + the engine flip — pinning the production route to the same restart/fallback owner the legacy `ensureAcpSession` path already drives.
   4. `teardown()` now calls `this.options.ompChatEngine?.shutdown()?.catch(noop)` exactly once, so the HostMcp loopback listener, the McpBridge bearer descriptor, and the AcpProcess child no longer leak for the panel lifetime.
   5. Two new R4.5 regression tests pin these contracts: onError posts `engine_state:"fallback-builtin"`, and panel teardown calls `shutdown()` exactly once.
+
+### 2026-09-01 · R4.5 Fix Round 2
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+RED: not-applicable (production wiring correctness fix, no new §Test Cases surface)
+GREEN: npx vitest run → 2942 passed | 2 skipped (2944) — no regression
+       npx vitest run src/ui/__tests__/aiChatPanelEngine.test.ts → 12 passed (12) (9 prior + 3 R4.5 round 2)
+       npm run typecheck → exit 0
+       npm run compile → esbuild build complete
+STATUS: PASS
+COMMIT: 2e70bfd handoff: fix 103 R4.5 round 2 — AcpProcess.start preserves pre-bound observer + public installOmpEngineObserver/driveEngineState seam (production OMP route drives lifecycle)
+NOTE: Round 2 addresses the three R2-R4 re-review findings:
+  1. `AcpProcess.start()` no longer clobbers a pre-bound observer: the `onStateChange = handlers.onStateChange ?? null` line is gated so a `setOnStateChange(...)` binding made BEFORE the lazy `start()` survives the start handshake. Round 1 was clobbering the extension's binding to `null` because the production route never passes `handlers.onStateChange`.
+  2. New PUBLIC seams on AiChatPanel: `installOmpEngineObserver(): number` (bumps the panel's `engineGeneration` and returns the LIVE id) and `driveEngineState(state, generation)` (public wrapper around the private `handleEngineState`). The production route now allocates the generation via the panel's authoritative counter — fabricated ids (e.g. `Date.now()`) are gone.
+  3. `buildOmpChatEngine` accepts `installGeneration` + `getGeneration` closures, calls `installGeneration()` exactly once on the first `ensureHandle` (the lazy `start()` seam), captures the LIVE id, and threads it into `acpProcess.setOnStateChange(...)` so every `acpProcess` transition reaches `panel.driveEngineState(state, LIVE_GENERATION)` — matching the panel's `engineGeneration` value, passing the stale-generation guard, and driving the exact same restart/fallback owner the legacy `ensureAcpSession` path already exercised.
+  4. New R4.5 round 2 regression test pins the public seams: a live `driveEngineState` posts the engine_state; a stale-generation transition is a full no-op (case 7).
+
+## Reviewer Verdict — R4.5 Round 2 Re-review
+
+VERDICT: approved
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npm run typecheck ; npx vitest run ; npm run compile ; npx vitest run src/ui/__tests__/aiChatPanelEngine.test.ts src/ui/__tests__/aiChatPanelAcp.test.ts src/extension.test.ts src/ai/omp/__tests__/acpProcess.test.ts
+  result: typecheck exit 0 ; full suite 2943 pass / 2 skip (2945) ; compile esbuild complete ; targeted 157 pass (panelEngine 12, panelAcp 33, extension 85, acpProcess 27)
+TEST_PLAN_COVERAGE: all-followed
+FINDINGS:
+  critical:
+    - none — all 3 R4.5 round 1 re-review findings are resolved:
+      1. driveEngineState is now PUBLIC at src/ui/aiChatPanel.ts:2380 and delegates to private handleEngineState; extension.ts:1218 calls the public seam (typecheck exit 0, was the round 1 failure).
+      2. AcpProcess.start at src/ai/omp/acpProcess.ts:216-218 only rebinds when handlers.onStateChange !== undefined; a pre-bound setOnStateChange observer survives start({}). Verified empirically with a throwaway AcpProcess test: setOnStateChange(spy) + start({}) → spy received "ready" (test deleted after run).
+      3. Generation is no longer fabricated: extension.ts:1227-1231 installGeneration closure → panel.installOmpEngineObserver (aiChatPanel.ts:2370, ++engineGeneration, returns LIVE id); setOnStateChange closure at extension.ts:1317-1319 threads getGeneration(capturedGeneration) into every transition; stale guard at aiChatPanel.ts:2804 accepts live events. Round 2 test pins both: live driveEngineState posts engine_state:"ready", stale id (liveGen-1) is a full no-op (case 7).
+  important:
+    - none
+  minor:
+    - src/ai/omp/__tests__/acpProcess.test.ts — the round 2 start()-preserves-observer fix has no direct unit test in the committed suite (only my throwaway verified it). A permanent regression test would be a good follow-up, not a blocker.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: All three R2-R4 re-review findings fixed and verified by re-run. Full suite 2943|2 (no regression vs 2940|2 round 1 baseline). Reviewer = config handoff.reviewer.model (unic-smart); executor self-reported unic-code — models differ.
