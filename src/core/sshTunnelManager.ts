@@ -171,13 +171,22 @@ export class SshTunnelManager {
    * listeningPids): the pre-allocated local port's LISTEN socket must be
    * owned by this ssh child before any DB traffic is allowed through.
    */
-  async start(cfg: TunnelConfig, key: string): Promise<TunnelHandle> {
+  /**
+   * NOT async: returning the stored pending promise DIRECTLY is the
+   * coalescing contract — concurrent same-key callers must receive the same
+   * in-flight promise instance (identical settlement), not individually
+   * wrapped variants of it. An `async` method would wrap each return in a
+   * fresh promise and break that identity.
+   */
+  start(cfg: TunnelConfig, key: string): Promise<TunnelHandle> {
     const existing = this.tunnels.get(key);
-    if (existing) return existing;
+    if (existing) return Promise.resolve(existing);
     const inflight = this.pending.get(key);
     if (inflight) return inflight;
     if (!/^[A-Za-z0-9._-]+$/.test(key)) {
-      throw new Error(`invalid tunnel key: ${key}`);
+      // Reject via promise, not sync throw: callers await this method and
+      // must observe the failure as a rejected promise on every path.
+      return Promise.reject(new Error(`invalid tunnel key: ${key}`));
     }
 
     const attempt = this.spawnAndProve(cfg, key);

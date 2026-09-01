@@ -870,6 +870,56 @@ describe("ConnectionManager — RLX-03 TASK-RLX03-002 recovery", () => {
     await mgr.dispose();
   });
 
+  // ----- Fix round 1 regression: exit delivered AFTER dispose -----
+  it("exit delivered after dispose starts no recovery", async () => {
+    const cfg = makeCfg({ id: "cX", tunnel: { host: "bastion", port: 22 } })
+    mockWorkspaceFolders = [{ uri: { toString: () => "f" }, name: "f", index: 0 }];
+    const secret = new FakeSecretStorage();
+    const ws = new FakeMemento();
+    const g = new FakeMemento();
+    const tunnels = makeFakeTunnels();
+    const oldA = makeFakeAdapter();
+    const newA = makeFakeAdapter();
+    const factory = vi.fn()
+      .mockImplementationOnce(() => oldA)
+      .mockImplementationOnce(() => newA);
+    const ctx = { secrets: secret, workspaceState: ws, globalState: g };
+    ws.update("vsdb.connections", [cfg]);
+    ws.update("vsdb.activeConnection", "cX");
+    await secret.store("vsdb.pass.cX", "pw");
+    const sleep = vi.fn(async () => {});
+    const mgr = new ConnectionManager(
+      ctx as never,
+      factory as never,
+      tunnels as unknown as SshTunnelManager,
+      { delayMs: 1_000, sleep },
+    );
+    const events: ConnectionRecoveryStatus[] = [];
+    mgr.onDidChangeRecoveryStatus((e) => events.push(e));
+
+    // Open the original adapter (factory call #1).
+    await mgr.getAdapter();
+    expect(factory).toHaveBeenCalledTimes(1);
+
+    // Shut down, THEN deliver an unexpected exit for the retained active id.
+    await mgr.dispose();
+    const closeAfterDispose = oldA.close.mock.calls.length;
+    tunnels.emitExitFor("cX", { intentional: false });
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    // NO recovery during shutdown: no status events at all, no reconnect
+    // attempt (factory stays at 1), no scheduler call, no extra adapter
+    // close, no replacement-adapter test/close.
+    expect(events).toEqual([]);
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+    expect(oldA.close).toHaveBeenCalledTimes(closeAfterDispose);
+    expect(newA.testConnection).not.toHaveBeenCalled();
+    expect(newA.close).not.toHaveBeenCalled();
+  });
+
   // ----- Recovery options default behavior -----
   it("ConnectionRecoveryOptions default delayMs is 1000 and sleep is setTimeout", async () => {
     // Construct WITHOUT options, ensure default delayMs constant is 1_000.

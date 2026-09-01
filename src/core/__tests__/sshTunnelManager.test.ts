@@ -4,7 +4,7 @@
 // tiny shell shim so `spawn(sshPath, args)` runs the fixture without a shell.
 import { describe, it, expect, afterAll } from "vitest";
 import { join } from "path";
-import { mkdtempSync, writeFileSync, chmodSync } from "fs";
+import { mkdtempSync, writeFileSync, readFileSync, chmodSync } from "fs";
 import { tmpdir } from "os";
 import {
   SshTunnelManager,
@@ -27,6 +27,33 @@ function makeShim(): string {
 }
 
 const shim = makeShim();
+
+/**
+ * A shim variant that appends one byte per spawn invocation to a counter
+ * file, so tests can PROVE a fresh process spawn happened (a stale `pending`
+ * entry replaying a settled promise spawns nothing). Reading the counter
+ * after a full settlement is race-free: the append happens when the child
+ * process runs, strictly before that attempt can settle. The failing variant
+ * counts then exits 1, so every attempt rejects with the existing
+ * "exited before becoming ready" literal while still incrementing the count.
+ */
+function makeCountingShim(counterFile: string, opts?: { fail?: boolean }): string {
+  const dir = mkdtempSync(join(tmpdir(), "vsdb-ssh-count-"));
+  const shim = join(dir, "fake-ssh-count-shim");
+  const tail = opts?.fail ? "exit 1\n" : `exec node "${FAKE_SSH}" "$@"\n`;
+  writeFileSync(
+    shim,
+    `#!/bin/sh\nprintf 'x' >> "${counterFile}"\n${tail}`,
+    { mode: 0o755 },
+  );
+  chmodSync(shim, 0o755);
+  return shim;
+}
+
+function spawnCount(counterFile: string): number {
+  return readFileSync(counterFile, "utf8").length;
+}
+
 const cfg = { host: "bastion", port: 5432 } as const;
 const managers: SshTunnelManager[] = [];
 function freshMgr(): SshTunnelManager {
@@ -98,11 +125,13 @@ describe("SshTunnelManager (fixture ssh)", () => {
     mgr.onDidExit((e) => exits.push(e));
 
     // Two concurrent calls before any readiness — must coalesce to ONE spawn
-    // and resolve to the exact same handle.
-    const [a, b] = await Promise.all([
-      mgr.start(cfg, "c1"),
-      mgr.start(cfg, "c1"),
-    ]);
+    // and resolve to the exact same handle. Coalescing contract: concurrent
+    // callers share the SAME in-flight promise instance, not individually
+    // wrapped variants.
+    const p1 = mgr.start(cfg, "c1");
+    const p2 = mgr.start(cfg, "c1");
+    expect(p2).toBe(p1);
+    const [a, b] = await Promise.all([p1, p2]);
     expect(b).toBe(a);
 
     // After readiness, kill the child externally (unexpected exit) and wait
@@ -164,9 +193,12 @@ describe("SshTunnelManager (fixture ssh)", () => {
 
   // Two concurrent starts against a missing binary both reject with the
   // pre-existing error literal; the in-flight record is cleared so a later
-  // start is a fresh spawn attempt (not the same rejected promise).
+  // start is a FRESH SPAWN (proved via the counting shim), not a replayed
+  // settled rejection from a stale `pending` entry.
   it("coalesces a same-key missing-binary rejection and clears its in-flight record", async () => {
-    const mgr = new SshTunnelManager("/nonexistent/vsdb-missing-ssh");
+    const counterFile = join(mkdtempSync(join(tmpdir(), "vsdb-ssh-cnt-")), "spawns");
+    writeFileSync(counterFile, "");
+    const mgr = new SshTunnelManager(makeCountingShim(counterFile, { fail: true }));
     managers.push(mgr);
 
     const [r1, r2] = await Promise.allSettled([
@@ -187,8 +219,15 @@ describe("SshTunnelManager (fixture ssh)", () => {
       ),
     ).toBe(true);
 
-    // Subsequent start must be a NEW attempt: it must again reject (binary
-    // still missing) but be a distinct promise, NOT the prior settled one.
+    // Concurrent callers coalesced into ONE attempt: a single spawn happened
+    // even though both callers reject with the same reason.
+    expect(spawnCount(counterFile)).toBe(1);
+
+    // Subsequent start must be a NEW attempt: a fresh spawn (counter grows
+    // from 1 to 2) that again rejects (binary still missing). A stale
+    // `pending` entry replaying the first rejection would keep the count at 1.
+    const before = spawnCount(counterFile);
+    expect(before).toBe(1);
     const r3 = await mgr.start(cfg, "bad").then(
       () => ({ ok: true as const }),
       (err: unknown) => ({ ok: false as const, err }),
@@ -201,6 +240,7 @@ describe("SshTunnelManager (fixture ssh)", () => {
         ),
       ).toBe(true);
     }
+    expect(spawnCount(counterFile)).toBe(2);
   });
 
   // Regression: different keys never share state.

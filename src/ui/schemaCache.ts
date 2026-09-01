@@ -287,8 +287,15 @@ export class SchemaCache {
   /** Xoá toàn bộ cached entries — lần gọi kế tiếp fetch fresh. */
   invalidate(): void {
     // TASK-RLX-002: bump generation — response in-flight bắt đầu trước đây
-    // sẽ KHÔNG commit được. Adapter I/O không bị hủy (chỉ bỏ qua commit).
+    // sẽ KHÔNG commit được. Adapter I/O không bị hủy (chỉ bỏ qua commit);
+    // caller gốc vẫn giữ trực tiếp promise của nó nên vẫn settle bình thường.
+    // TASK-RLX03-003 (review round 1): single-flight registry cũng thuộc old
+    // generation — nếu không clear, một lookup cùng key SAU adapter transition
+    // sẽ coalesce vào promise cũ và nhận data của adapter cũ. Bump + clear chạy
+    // đồng bộ trong cùng một lượt, nên không có entry new-generation nào bị
+    // xóa nhầm; coalescing trong MỘT generation vẫn nguyên vẹn.
     this.generation += 1;
+    this.inflight.clear();
     this.schemasEntry = null;
     this.tablesAllEntry = null;
     this.tablesBySchema.clear();

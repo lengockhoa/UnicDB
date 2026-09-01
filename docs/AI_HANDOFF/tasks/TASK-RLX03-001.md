@@ -133,3 +133,65 @@ FINDINGS:
   minor: none
 NEXT_STATUS_FOR_INDEX: changes_requested
 NOTES: Model isolation passed: executor reported unic-code and reviewer is configured/running unic-smart. RED output contains genuine failing assertions.
+
+---
+
+## Executor Report (fix round 1)
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  Two RED proofs against the pre-fix source:
+
+  (a) Finding 2 — promise-identity assertion added to the coalescing test
+  (`expect(p2).toBe(p1)` on the two raw `start()` promises) fails against the
+  `async start()` wrapper:
+
+    FAIL ... > coalesces concurrent same-key starts then returns a fresh handle after unexpected exit
+      → expected Promise{…} to be Promise{…} // Object.is equality
+    Expected: Promise{…}
+    Received: serializes to the same string
+     ❯ src/core/__tests__/sshTunnelManager.test.ts:133:16
+        131|     const p1 = mgr.start(cfg, "c1");
+        132|     const p2 = mgr.start(cfg, "c1");
+        133|     expect(p2).toBe(p1);
+
+    Test Files  1 failed (1)
+         Tests  1 failed | 8 passed (9)
+
+  (b) Finding 1 — the strengthened rejection-cleanup test (counting shim,
+  `expect(spawnCount(counterFile)).toBe(2)`) passes against correct source, so
+  its teeth were proven by MUTATION: temporarily disabling
+  `attempt.then(clear, clear)` in `start()` makes it fail exactly as a stale
+  `pending` entry would:
+
+    FAIL ... > coalesces a same-key missing-binary rejection and clears its in-flight record
+    AssertionError: expected 1 to be 2 // Object.is equality
+     ❯ src/core/__tests__/sshTunnelManager.test.ts:243:37
+        243|     expect(spawnCount(counterFile)).toBe(2);
+
+    Test Files  1 failed (1)
+         Tests  1 failed | 8 skipped (9)
+
+  (Mutation reverted before implementing the source fix.)
+Verification Output: |
+  npx vitest run src/core/__tests__/sshTunnelManager.test.ts src/core/__tests__/sshTunnel.test.ts
+   ✓ src/core/__tests__/sshTunnel.test.ts  (10 tests) 3ms
+   ✓ src/core/__tests__/sshTunnelManager.test.ts  (9 tests) 1959ms
+   Test Files  2 passed (2)
+        Tests  19 passed (19)
+
+  npm run typecheck
+  > tsc --noEmit
+  exit 0 (clean)
+
+  npm run compile
+  ⚡ Done in 156ms
+  esbuild: build complete
+  exit 0
+
+  Extra (consumer regression, not required by task):
+  npx vitest run src/core/__tests__/connectionManager.test.ts — 20 passed (20)
+Status: PASS
+Note: Fix 1 — new counting-shim fixture (printf 'x' >> counter file; `fail: true` variant execs `exit 1` after counting so every attempt rejects with the existing "exited before becoming ready" literal) proves the post-rejection start() performs a fresh spawn: counter 1 -> 2; a stale `pending` replay would keep it at 1 (mutation-verified). Fix 2 — `start()` is now non-async and returns the stored pending promise directly, so concurrent same-key callers get the identical promise instance (`expect(p2).toBe(p1)` in GREEN); `existing`/invalid-key paths return `Promise.resolve`/`Promise.reject` to preserve the rejected-promise (never sync-throw) contract.

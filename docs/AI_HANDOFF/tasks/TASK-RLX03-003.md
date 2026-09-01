@@ -155,3 +155,72 @@ FINDINGS:
     - src/ui/__tests__/schemaCache.test.ts:580 — case #3 resolves A before issuing B's lookup, so the adapter transition/invalidation occurs only at line 594 after A has committed. Start B's lookup while A remains deferred and assert that B does not coalesce onto A's old promise.
   minor: none
 NEXT_STATUS_FOR_INDEX: critical_block
+
+## Executor Report (fix round 1)
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT: |
+  New test #3b `B lookup during A's unresolved refresh starts B's own request
+  instead of A's promise` — run BEFORE the fix (TDD):
+
+   ❯ src/ui/__tests__/schemaCache.test.ts  (20 tests | 1 failed) 11ms
+   ❯ ... > #3b B lookup during A's unresolved refresh starts B's own request instead of A's promise
+     → expected [ { name: 'old', schema: 'public' } ] to be [ { name: 'new', schema: 'public' } ] // Object.is equality
+        - "name": "new",  + "name": "old"
+
+  Test Files  1 failed (1)
+       Tests  1 failed | 19 passed (20)
+
+  Exactly the reviewer-predicted cross-adapter leak: `pendingB` (B's
+  post-transition same-key lookup) resolved with A's pre-transition data
+  (`old`) coalesced from the `inflight` map, instead of B's own `new` data.
+
+Fix (critical):
+- `src/ui/schemaCache.ts` — `invalidate()` now also calls `this.inflight.clear()`
+  right after `this.generation += 1`. The single-flight registry is
+  old-generation coordination state: entries created under the previous
+  generation must not serve a lookup that resolves after the adapter
+  transition. The bump+clear is synchronous in one turn, so no
+  new-generation entry can be present yet — nothing live is stranded.
+  A's original caller keeps its direct promise reference and still settles
+  normally (the promise itself is untouched; only the shared registry is
+  dropped). RLX-01 coalescing WITHIN one generation is unchanged — both
+  existing single-flight suites (RLX-002 #1/#2/#3 and RLX03 #5) pass.
+
+Fix (important):
+- `src/ui/__tests__/schemaCache.test.ts` — new test #3b: start A's lookup
+  (deferred, unresolved), switch provider to B, issue B's same-key lookup
+  while A is STILL in flight. Asserts (a) B's caller receives B-data from
+  B's OWN request (`bTables` called once, resolves `new`), (b) A's original
+  caller still settles on A's own promise (`old`), (c) A's response never
+  commits — the within-TTL read is served from B's committed entry with no
+  extra B call. The existing test #3 already pinned the
+  resolve-A-then-lookup-B ordering and is kept as a separate regression
+  guard.
+
+Verification Output: |
+  1) npx vitest run src/ui/__tests__/schemaCache.test.ts
+     ✓ src/ui/__tests__/schemaCache.test.ts  (20 tests) 7ms
+     Test Files  1 passed (1) | Tests  20 passed (20)
+
+  2) npm run typecheck
+     > tsc --noEmit  (clean, exit 0)
+
+  3) npm run compile
+     ⚡ Done in 163ms — esbuild: build complete (exit 0)
+
+  4) SchemaCache consumer guard (6 files the executor listed):
+     npx vitest run src/ui/__tests__/sqlCompletionProvider.test.ts
+       src/ui/__tests__/sqlSemanticTokens.test.ts src/ui/__tests__/sqlCatalog.test.ts
+       src/ui/__tests__/sqlNavigationProvider.test.ts src/__tests__/dbx01Scaffold.test.ts
+       src/__tests__/dbx03Scaffold.test.ts
+     Test Files  6 passed (6) | Tests  38 passed (38)
+
+Status: PASS
+Note: none — inflight registry is now generation-scoped via the transition
+boundary (invalidate clears it synchronously with the generation bump);
+same-generation single-flight coalescing verified intact by all pre-existing
+coalescing tests; no lint script exists (per task file).

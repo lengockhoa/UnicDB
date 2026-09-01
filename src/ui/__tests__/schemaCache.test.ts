@@ -598,6 +598,57 @@ describe("SchemaCache — TASK-RLX03-003 adapter identity transition", () => {
     expect(b.calls.listTables).toHaveBeenCalledTimes(1);
   });
 
+  it("#3b B lookup during A's unresolved refresh starts B's own request instead of A's promise", async () => {
+    let current = makeInspectableAdapter("A");
+    const provider = vi.fn(() => current.adapter);
+    let clock = 1_000;
+    // Fixed clock keeps a committed entry fresh across the whole test.
+    const cache = new SchemaCache(provider, { now: () => clock });
+
+    // Adapter A's response is held in flight (deferred, unresolved).
+    const aDeferred = deferred<TableInfo[]>();
+    const aTables = current.calls.listTables as ReturnType<typeof vi.fn>;
+    aTables.mockImplementation(() => aDeferred.promise);
+    const pendingA = cache.getTables("public");
+    await flushMicrotasks();
+    expect(aTables).toHaveBeenCalledTimes(1);
+
+    // Adapter transition WHILE A's response is still unresolved — this is
+    // the boundary the single-flight registry must respect.
+    const b = makeInspectableAdapter("B");
+    current = { adapter: b.adapter, calls: b.calls };
+
+    // B's same-key lookup must NOT coalesce onto A's in-flight promise.
+    const bDeferred = deferred<TableInfo[]>();
+    const bTables = b.calls.listTables as ReturnType<typeof vi.fn>;
+    bTables.mockImplementation(() => bDeferred.promise);
+    const pendingB = cache.getTables("public");
+    await flushMicrotasks();
+
+    // Settle A's deferred: in the buggy path this is the only data B's
+    // caller can ever see, because B joined A's in-flight entry.
+    const oldData: TableInfo[] = [{ name: "old", schema: "public" }];
+    aDeferred.resolve(oldData);
+
+    // B's caller must receive B-data from B's OWN request — never A's
+    // pre-transition response coalesced through the shared key.
+    const newData: TableInfo[] = [{ name: "new", schema: "public" }];
+    bDeferred.resolve(newData);
+    await expect(pendingB).resolves.toBe(newData);
+
+    // A's original caller still settles normally on A's own promise.
+    await expect(pendingA).resolves.toBe(oldData);
+
+    // B started its OWN request exactly once; A served only its own caller.
+    expect(bTables).toHaveBeenCalledTimes(1);
+    expect(aTables).toHaveBeenCalledTimes(1);
+
+    // A's pre-transition response never committed — the within-TTL read is
+    // served from B's freshly committed entry, with no extra B call.
+    expect(await cache.getTables("public")).toBe(newData);
+    expect(bTables).toHaveBeenCalledTimes(1);
+  });
+
   it("#4 null and throwing provider keep cached stale data without changing adapter identity", async () => {
     let current = makeInspectableAdapter("A");
     let mode: "adapter" | "null" | "throw" = "adapter";

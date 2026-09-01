@@ -151,3 +151,41 @@ FINDINGS:
     - none
 NEXT_STATUS_FOR_INDEX: changes_requested
 NOTES: Model isolation passed: executor unic-code differs from reviewer unic-smart. Targeted tests, typecheck, and compile pass; the post-disposal exit path violates the shutdown requirement.
+
+## Executor Report (fix round 1)
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT:
+```
+FAIL  src/core/__tests__/connectionManager.test.ts > … > exit delivered after dispose starts no recovery
+AssertionError: expected [ { connectionId: 'cX', …(3) }, …(1) ] to deeply equal []
+- Array []
++ Array [
++   { attempt: 1, connectionId: "cX", maxAttempts: 2, state: "recovering" },
++   { attempt: 1, connectionId: "cX", maxAttempts: 2, state: "recovered" },
++ ]
+ Test Files  1 failed (1)
+      Tests  1 failed | 20 skipped (21)
+```
+RED confirmed for the exact reviewed reason: after dispose(), a delivered exit started a NEW recovery and emitted recovering/recovered during shutdown.
+
+Verification Output:
+```
+npx vitest run src/core/__tests__/connectionManager.test.ts src/ui/__tests__/statusBar.test.ts
+ ✓ src/ui/__tests__/statusBar.test.ts  (5 tests) 20ms
+ ✓ src/core/__tests__/connectionManager.test.ts  (21 tests) 46ms
+ Test Files  2 passed (2)
+      Tests  26 passed (26)
+
+npm run typecheck → tsc --noEmit, exit 0
+npm run compile   → esbuild: build complete, exit 0
+npx vitest run (full unit suite, extra safety)
+ Test Files  214 passed | 1 skipped (215)
+      Tests  2857 passed | 2 skipped (2859)
+```
+
+Status: PASS
+Note: Fix = `disposed` flag set synchronously BEFORE any disposal await (before the lifecycle-generation bump) and gating both `handleTunnelExit` and `recoveryOwns()`; the `onDidExit` subscription handle is now retained and disposed inside `dispose()`; new after-dispose-exit regression test asserts zero events, zero factory/sleep/test/close activity post-dispose. Files left uncommitted as instructed.

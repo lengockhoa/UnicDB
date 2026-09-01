@@ -101,6 +101,15 @@ export class ConnectionManager {
   private activeGeneration = 0;
   private lifecycleGeneration = 0;
   /**
+   * RLX-03 fix round 1 — set synchronously BEFORE any disposal await so an
+   * exit delivered after dispose() can never start a new recovery during
+   * shutdown (the generation bump alone is not enough: an exit captured
+   * after the bump would match the bumped generation).
+   */
+  private disposed = false;
+  /** Tunnel-exit subscription handle — disposed in dispose(). */
+  private tunnelExitSub: { dispose(): void } | null = null;
+  /**
    * Per-active-id recovery loop promise. Duplicate unexpected exits share
    * ONE recovery (no second factory/scheduler/emit). Cleared when the
    * loop settles.
@@ -134,7 +143,7 @@ export class ConnectionManager {
     // recovery for the currently active tunneled connection. Guarded so
     // older injectable fakes without onDidExit keep constructing.
     if (typeof this.tunnels.onDidExit === "function") {
-      this.tunnels.onDidExit((exit) => this.handleTunnelExit(exit));
+      this.tunnelExitSub = this.tunnels.onDidExit((exit) => this.handleTunnelExit(exit));
     }
   }
 
@@ -411,6 +420,7 @@ export class ConnectionManager {
    * recovery already in flight are silently ignored.
    */
   private handleTunnelExit(exit: TunnelExit): void {
+    if (this.disposed) return; // shutdown — never recover after dispose()
     if (exit.intentional) return; // managed stop — never recover
     const active = this.getActive();
     if (!active || active.id !== exit.key) return; // not the active id
@@ -517,6 +527,7 @@ export class ConnectionManager {
     activeGen: number,
     lifecycleGen: number,
   ): boolean {
+    if (this.disposed) return false;
     if (this.lifecycleGeneration !== lifecycleGen) return false;
     if (this.activeGeneration !== activeGen) return false;
     if (this.currentActiveId !== connectionId) return false;
@@ -576,10 +587,16 @@ export class ConnectionManager {
 
   /** Dispose: đóng tất cả adapters (active + passive), clear timer. */
   async dispose(): Promise<void> {
-    // RLX-03: bump lifecycle generation synchronously BEFORE the first await
-    // so any in-flight recovery (even one inside an injected sleep) observes
-    // the change and silently aborts — no later attempt/status/callback.
+    // RLX-03 fix round 1: set the disposed flag synchronously BEFORE any
+    // disposal await, THEN bump the lifecycle generation — both before any
+    // in-flight recovery can observe anything. A tunnel exit delivered after
+    // dispose() must never start a new recovery during shutdown.
+    this.disposed = true;
     this.lifecycleGeneration++;
+    // Dispose the tunnel-exit subscription so late exits stop reaching the
+    // handler at all (belt and suspenders — the disposed flag already gates).
+    this.tunnelExitSub?.dispose();
+    this.tunnelExitSub = null;
     await this.closeCurrentAdapter();
     // Close every cached passive adapter to avoid socket leaks across reloads.
     const ids = Array.from(this.passiveAdapters.keys());
