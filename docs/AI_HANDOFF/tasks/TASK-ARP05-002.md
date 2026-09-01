@@ -227,3 +227,21 @@ declared contract per the task/PLAN spec. See Discussion entry above and ADR
 ## Reviewer Verdict
 
 (pending — Phase 4 appends below)
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/adapters/__tests__/mysqlQueueBound.test.ts src/adapters/__tests__/adapterQueryShape.test.ts && npm run typecheck && npm run compile
+  result: 5 pass / 0 fail + 55 pass / 0 fail; typecheck exit 0; compile exit 0
+TEST_PLAN_COVERAGE: all-followed — cases 1-5 implemented; case 2 RED on base is genuine (2a `expected undefined to be 50`; 2b 2s test-timeout = the unbounded wait); no real 10s wait (50ms injected bound, suite ~89ms)
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - file: docs/decisions/0002-cross-driver-resilience-contract.md — the `## Probe: MySQL` append re-pasted the entire "## 8. Consequences and bindings" section (the ADR now has three identical §8 blocks); insert below the §7 placeholder instead of after §8.
+    - file: docs/decisions/0002-cross-driver-resilience-contract.md:41,155-160,236-237 — wave-0 MySQL line citations are now stale after this task's own source edit (pool config moved :155-157 → :191-194, connectTimeout :158 → :194); the MySQL probe append could have re-cited the new lines.
+    - file: src/adapters/__tests__/mysqlQueueBound.test.ts:229-232 — case 2b exercises the loser-release path (pool.ctl.free() → the abandoned waiter releases the slot) but never asserts it; recommend asserting the connection's release count after free() to lock the no-slot-leak invariant.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: The Promise.race bound is correct: a loser checkout handed out after the timeout is released immediately (:673-678), the timer is cleared on success and unref'd, and the bound only gates acquisition — it is cleared before streaming/transaction work starts, so no mid-stream/mid-transaction abort. The injectable bound is reset per-test (beforeEach saves, afterEach restores). No replay introduced; SLO-1/SLO-2 preserved; connectionLimit: 1 and PG max:4 slot isolation unchanged.

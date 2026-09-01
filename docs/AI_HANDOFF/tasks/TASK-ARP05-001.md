@@ -158,3 +158,23 @@ Additional evidence:
 
 Status: PASS
 Note: Production gap found and fixed: `PostgresAdapter.connect()` left a half-open pool when the `SELECT 1` probe failed (no `pool.end()`, `this.pool` not nulled, retry would reuse a dead pool). Minimal fix mirrors `MySqlAdapter.connect` (mysql.ts:184-196): on probe failure, null `this.pool` then `end()` the dead pool once (best-effort, never masks the probe error) and rethrow the original error. All other cases pin-only GREEN on base. ADR appended under `## Probe: PostgreSQL` (feeds the ARP-05.4 gate). Test-side fix-round disclosure: my first RED run had a second failure from missing dedicated-client mock wiring in my own new case-4 test — corrected in the test file only, before any production change; clean RED run above.
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/adapters/__tests__/postgres.test.ts && npm run typecheck && npm run compile
+  result: 23 pass / 0 fail; typecheck exit 0; compile exit 0
+TEST_PLAN_COVERAGE: partial — cases 1/3/4/5 fully implemented and pinned; case 2 covers only the `query("SELECT 1")` throw branch, not the `pool.connect()` throw branch named in the test-case Expected column
+FINDINGS:
+  critical:
+    - none
+  important:
+    - file: src/adapters/postgres.ts:315 — `const probe = await this.pool.connect();` sits OUTSIDE the new cleanup block (:329-338). When pool.connect() itself rejects (server unreachable at connect → pg-pool `connectionTimeoutMillis` timeout), the half-open pool stays assigned and the new catch never runs; a second connect() then short-circuits at :290 `if (this.pool) return;` and resolves "connected" without ever probing — the no-leak/fresh-pool guarantee of Test Case 2 is unmet for the most common connect failure. Fix: wrap the checkout in the same cleanup (release probe client, null this.pool, end the dead pool best-effort, rethrow the original error) and add a test where pool.connect() itself rejects.
+  minor:
+    - file: docs/decisions/0002-cross-driver-resilience-contract.md — the `## Probe: PostgreSQL` append re-pasted the whole "## 8. Consequences and bindings" section; the ADR now carries three identical §8 blocks (wave-0 + one after each probe merged so far). Content is identical so nothing is wrong, but the governance doc should keep a single §8 — insert the probe below the §7 placeholder instead of after §8.
+    - file: docs/decisions/0002-cross-driver-resilience-contract.md:50-56 — §2.1 PG citation `:315-320` is now stale after the connect() edit (probe + cleanup is now :315-338).
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: RED evidence is genuine (`expected 19 to be 20` on the pool.end mock count) and the implemented fix for the query-probe path is correct. The blocking item is the unhandled pool.connect() rejection path, which the task's own Test Case 2 names explicitly.

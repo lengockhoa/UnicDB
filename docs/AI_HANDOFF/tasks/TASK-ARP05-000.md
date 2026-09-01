@@ -165,3 +165,22 @@ Extra guard checks (not in task, reviewer-relevant): wave-1 grep gates `## Probe
 - Status: PASS
 - Note: none. All file:line citations given in the task were verified against current source @ 85bf5cb and were accurate as written — no stale citations needed correcting. `docs/decisions/README.md` index updated (it does enumerate ADRs). Test Cases N/A honored (docs task, no token test invented). Scope: only the two target files changed.
 
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: test -f docs/decisions/0002-cross-driver-resilience-contract.md; grep -qi "queueLimit" ...; grep -qi "no.*replay\|replay" ...; git status --short src/ | wc -l
+  result: 3/3 greps exit 0; src/ dirty count 0
+TEST_PLAN_COVERAGE: all-followed (docs-only task — Test Case N/A per RULES, zero testable behavior; report justification accepted)
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - none
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Wave-0 ADR is complete and source-anchored; the §7 placeholder deliberately omits the literal `## Probe:` strings so wave-1 grep gates stay RED until appended. Wave-1 source edits (001/002) later shifted the MySQL/PG line citations inside wave-0 §2/§4 (e.g. mysql.ts:155-157 → :191-194) — inherent to the append-only protocol, not a wave-0 defect; re-cite in a future ADR amendment.

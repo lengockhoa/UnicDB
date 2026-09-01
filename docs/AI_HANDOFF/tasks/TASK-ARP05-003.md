@@ -134,3 +134,23 @@ $ git diff 0dd021e --stat                       # ADR +47 (append-only, 0 deleti
 Status: PASS
 
 Note: No production gap found — `src/adapters/mssql.ts` untouched by this task (pin-only, per the task's default expectation). Test details: #1 pins the real tedious constructor options via the adapter's private `createConnection()` (constructor verified pure in tedious 18.6.2 — no socket/timer before `connect()`) plus a behavioral stream probe (600 rows → `pause()`, 50 ms stall, no `Request.setTimeout` calls, drains 500+100 rows → EOF); #2 fakes the cancel round-trip inside `cancelTimeout: 5_000` and asserts `runRequest` rejects + `activeRequests` drains; #3 queues two deferred ops, rejects the first, asserts the second still runs and `operationQueue` returns to idle; #4 emits `error` on a fake EventEmitter connection and asserts `clearConnection` + `close()` + `connecting` reset; #5 settles via callback, then fires a late `error` event and `cancel()`, asserting the `settled` guard keeps state final and nothing wedges. Also ran `mssql.sortQuery.test.ts` (7/7 pass, wave/cycle net lane).
+
+---
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/adapters/__tests__/mssql.parameterized.test.ts && npm run typecheck && npm run compile
+  result: 17 pass / 0 fail (green); typecheck exit 0; compile exit 0
+TEST_PLAN_COVERAGE: all-followed — cases 1-5 present as spec'd. RED produced via sensitivity mutation (requestTimeout 0->5_000), not the initial run — acceptable vacuity exclusion for a declared pin-only task (task spec: "pin cases stay GREEN on today's code"). Independently re-ran the mutation: only #1 fails (16/17 pass), proving the pin is non-tautological.
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - docs/decisions/0002-cross-driver-resilience-contract.md:405,470,567 — `## 8. Consequences and bindings` block is duplicated 3x (byte-identical, 1417 chars) by the wave-1 consolidation merge of the three Probe appends. Wave-0 content is intact (last copy at :567); duplicates are noise, no drift. Deduplicate to a single §8 in a docs pass.
+NOTES: mssql.ts pin-only verified (git diff 85bf5cb..HEAD empty); all 5 pins exercise real adapter paths via the deferred-request helpers; no secrets. Executor model unic-code != reviewer unic-smart (config handoff.reviewer.model=unic-smart) — isolation OK.
