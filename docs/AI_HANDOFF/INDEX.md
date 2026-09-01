@@ -120,3 +120,19 @@ Graph: TASK-RLX02-001 independent; TASK-RLX02-002 independent; TASK-RLX02-001 �
 - Wave 2 (1): TASK-RLX02-003
 
 No same-wave target-file overlap. MySQL and SQL Server own disjoint adapter/test files; the runner, panel, and command integration begins only after both dialect seams are available.
+
+## Cycle ARP-02 — Shutdown-safe Query Ownership and Connection Provenance
+
+| Task / Portfolio | Title | Status | Dependencies | Reviewer |
+|---|---|---|---|---|
+| TASK-ARP02-001 | Cancel ownership: sticky cancel + in-flight-scoped pending + monotonic seq | pending_review | none | unic-smart |
+| TASK-ARP02-002 | Panel-close session-epoch guard for deferred continuations | pending_review | none | unic-smart |
+| TASK-ARP02-003 | Late-completion connection provenance (per-connection revision map) | pending_review | none | unic-smart |
+| TASK-ARP02-004 | Host integration: runStatements busy ownership + deactivate fence | pending_review | TASK-ARP02-001, TASK-ARP02-002 | unic-smart |
+
+Graph: TASK-ARP02-001 independent; TASK-ARP02-002 independent; TASK-ARP02-003 independent; TASK-ARP02-001 → TASK-ARP02-004; TASK-ARP02-002 → TASK-ARP02-004.
+
+- Wave 1 (3): TASK-ARP02-001, TASK-ARP02-002, TASK-ARP02-003
+- Wave 2 (1): TASK-ARP02-004
+
+No same-wave target-file overlap. Plan: docs/AI_HANDOFF/PLAN_ARP02.md.

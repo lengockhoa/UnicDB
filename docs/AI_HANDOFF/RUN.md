@@ -1,6 +1,6 @@
 Command: handoff-fullstack
 Goal: Ship ARP-02 Shutdown-safe query ownership and connection provenance (fault-injection proof that late work cannot leak across close/deactivate/connection-change).
 Base: main @ 367cb80 (v1.37.0)
-Phase: I3
-Cursor: wave 1 done — commit f2d92ff, 110/110 focused cross-verified; all 3 tasks PASS. TASK-ARP02-004 gate OPEN: executor 002 recorded real host gaps (runStatements finally-busy leak, deactivate ordering in extension.ts)
-Next: wave 2 — worktree for TASK-ARP02-004 (host integration), single feature-implementer.
+Phase: I4
+Cursor: wave 2 done — commit f5afd4f; full net 2983 passed | 2 skipped, typecheck 0, compile 0; all 4 tasks PASS (004 produced the gap fix: ownsRun finally gate + deactivating sentinel).
+Next: I4 — INDEX consolidation (all PASS → pending_review), then R2 parallel review on range b032b98..HEAD.
