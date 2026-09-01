@@ -577,6 +577,47 @@ describe("OmpChatEngine.cancel (AIX-05)", () => {
     await sendPromise;
   });
 });
+
+// ---- TASK-AIX03-102 cases 6/7: OMP sessionId invariant pin ----------------
+
+describe("OmpChatEngine sessionId invariant (TASK-AIX03-102 cases 6/7)", () => {
+  it("case 6: send success leaves no stale session id — a later cancel() sends no session/cancel", async () => {
+    fakeAcp.sessionNew.mockResolvedValue({ sessionId: "sess-clean-1" });
+    fakeAcp.sessionPrompt.mockResolvedValue({ stopReason: "end_turn" });
+    const engine = createOmpChatEngine({
+      acp: fakeAcp,
+      hostMcp: fakeHostMcp,
+      cwd: "/workspace",
+    });
+    await engine.send("hi", {});
+    expect(fakeAcp.sessionNew).toHaveBeenCalledTimes(1);
+    expect(fakeAcp.sessionPrompt).toHaveBeenCalledTimes(1);
+    // After settle, currentSessionId must be cleared — cancel() is a no-op.
+    engine.cancel();
+    expect(fakeAcp.notify).not.toHaveBeenCalled();
+  });
+
+  it("case 7: sessionNew rejects mid-turn — onError fires exactly once; currentSessionId is cleared", async () => {
+    fakeAcp.sessionNew.mockRejectedValueOnce(new Error("new-failed"));
+    const engine = createOmpChatEngine({
+      acp: fakeAcp,
+      hostMcp: fakeHostMcp,
+      cwd: "/workspace",
+    });
+    const onError = vi.fn();
+    await engine.send("hi", { onError });
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0]?.[0]).toMatch(/new-failed/);
+    // After the failed sessionNew, no live session — cancel() is a no-op.
+    engine.cancel();
+    expect(fakeAcp.notify).not.toHaveBeenCalled();
+    // Next send opens a fresh session — sessionNew called twice total.
+    fakeAcp.sessionNew.mockResolvedValueOnce({ sessionId: "sess-fresh-1" });
+    fakeAcp.sessionPrompt.mockResolvedValueOnce({ stopReason: "end_turn" });
+    await engine.send("hi-again", {});
+    expect(fakeAcp.sessionNew).toHaveBeenCalledTimes(2);
+  });
+});
 // ---- AIX-06: trace hook ------------------------------------------------------
 
 describe("OmpChatEngine trace (TASK-AIX06-002)", () => {

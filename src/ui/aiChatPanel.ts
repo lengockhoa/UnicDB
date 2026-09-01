@@ -106,6 +106,7 @@ import {
   resolvePolicy,
   type EffectivePolicy,
 } from "../ai/policy";
+import type { ConnectionRecoveryStatus } from "../core/connectionManager";
 
  import { buildPermissionToolInfo } from "./permissionDetail";
  
@@ -592,6 +593,17 @@ export interface AiChatPanelOptions {
    * verbatim instead of deriving one from the probes above.
    */
   policy?: EffectivePolicy;
+  /**
+   * TASK-AIX03-102 — host-to-panel seam for
+   * `ConnectionManager.onDidChangeRecoveryStatus`. The host passes the
+   * activation-scoped event reference (NOT a freshly-created
+   * `ConnectionManager`). The panel owns the subscription, swallows
+   * listener throws, and disposes the subscription in teardown. On
+   * `recovering` or `failed` the panel calls `handleStop()` and posts
+   * the existing `session_state: "error"`; `recovered` is a no-op
+   * (no cancellation, no visible-state mutation, no error bubble).
+   */
+  onDidChangeRecoveryStatus?: vscode.Event<ConnectionRecoveryStatus>;
 }
 
 /**
@@ -1080,6 +1092,14 @@ export function toolShapeSummary(resultText: string): string {
 export class AiChatPanel {
   private panel: vscode.WebviewPanel | null = null;
   private disposables: vscode.Disposable[] = [];
+  /**
+   * TASK-AIX03-102 — owned subscription to the host-supplied
+   * `onDidChangeRecoveryStatus` event. Stored so teardown can dispose
+   * exactly once regardless of which path triggers first (explicit
+   * `dispose()` or webview tab close). Null when the host does not
+   * supply the seam.
+   */
+  private recoverySub: vscode.Disposable | null = null;
   /** In-turn abort flag — flipped by `stop`; checked onStep + on settle. */
   private token: ChatAbortToken | null = null;
   /** History snapshot for replay; never holds apiKey (provider scrubbed). */
@@ -1184,6 +1204,41 @@ export class AiChatPanel {
     this.dbToolGate = new DbToolPermissionGate((m) => this.post(m), {
       timeoutMs: this.permissionTimeoutMs,
     });
+    // TASK-AIX03-102 — own the recovery-status subscription so an
+    // in-flight turn cannot continue against a recovering or failed
+    // connection. The listener body is wrapped in try/catch so any throw
+    // is swallowed at the subscription boundary and never escapes
+    // through `ConnectionManager`'s emitter. `recovered` is a strict
+    // no-op (PLAN §4 — see test case 2b).
+    if (this.options.onDidChangeRecoveryStatus !== undefined) {
+      this.recoverySub = this.options.onDidChangeRecoveryStatus((status) => {
+        try {
+          this.handleRecoveryStatus(status);
+        } catch {
+          /* swallow — listener must never escape this seam */
+        }
+      });
+    }
+  }
+
+  /**
+   * TASK-AIX03-102 — recovery status handler. Fail-closes an in-flight
+   * turn on `recovering`/`failed` by routing through `handleStop()` and
+   * posting the existing visible `session_state: "error"`. `recovered`
+   * is a no-op: the prior error state remains as-is, no cancellation,
+   * no visible-state mutation, no fabricated error text.
+   */
+  private handleRecoveryStatus(status: ConnectionRecoveryStatus): void {
+    if (status.state === "recovered") {
+      // No-op: reconnection succeeded; the panel stays in whatever
+      // visible state it was in (typically the "error" state set by the
+      // earlier `recovering`). The user must initiate a new turn.
+      return;
+    }
+    // `recovering` or `failed` — cancel whatever is in flight using the
+    // existing path, then surface the existing visible error state.
+    this.handleStop();
+    this.postSessionState("error");
   }
 
   /**
@@ -1285,6 +1340,13 @@ export class AiChatPanel {
     this.dbToolGate.cancelAll();
     this.disposeAcpSession();
     this.panel = null;
+    // TASK-AIX03-102 — release the owned recovery-status subscription
+    // exactly once. A later vsdb.aiChat invocation constructs a fresh
+    // panel that subscribes anew against the same host event.
+    if (this.recoverySub !== null) {
+      this.recoverySub.dispose();
+      this.recoverySub = null;
+    }
     for (const d of this.disposables) d.dispose();
     this.disposables = [];
     this.options.onDispose?.();

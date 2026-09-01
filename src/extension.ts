@@ -627,7 +627,11 @@ export async function activate(
   };
   disposables.push(
     vscode.commands.registerCommand("vsdb.aiChat", () =>
-      commandOpenAiChat(aiStore, adapterFactory, aiChatDeps),
+      // TASK-AIX03-102 — thread the activation-scoped `mgr` so the
+      // panel can subscribe to `onDidChangeRecoveryStatus` and fail-close
+      // any in-flight turn against a recovering or failed connection.
+      // Do NOT re-import or re-create a ConnectionManager here.
+      commandOpenAiChat(aiStore, adapterFactory, aiChatDeps, mgr),
     ),
   );
 
@@ -1086,6 +1090,10 @@ async function commandOpenAiChat(
   aiStore: AiConfigStore,
   adapterFactory: AdapterFactory,
   deps: AgentDeps,
+  // TASK-AIX03-102 — activation-scoped ConnectionManager; threaded so
+  // the panel can subscribe to `mgr.onDidChangeRecoveryStatus` and fail-
+  // close any in-flight turn against a recovering or failed connection.
+  mgr: ConnectionManager,
 ): Promise<void> {
   // Cycle AE R4.5/AE.5 — `vsdb.ai.engine` is the user's source of truth.
   // One path: fresh detectOmp() per open; when detection ok, the panel
@@ -1157,6 +1165,10 @@ async function commandOpenAiChat(
     engineVersion: choice.version,
     engineHint: choice.hint,
     engineOmpPath: choice.path,
+    // TASK-AIX03-102 — pass the activation-scoped `mgr` event reference.
+    // The panel owns its subscription; we never re-import or re-create a
+    // ConnectionManager at this site.
+    onDidChangeRecoveryStatus: mgr.onDidChangeRecoveryStatus,
     onDispose: () => {
       aiChatPanel = null;
     },

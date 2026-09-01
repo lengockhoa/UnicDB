@@ -243,6 +243,44 @@ describe("TraceRecorder.dumpAll (TASK-AIX07-002)", () => {
   });
 });
 
+describe("redact toolCallId allowlist (TASK-AIX03-103)", () => {
+  it("tcid:-marked long run bypasses LONG_RUN_RE but keeps key-level scrub", () => {
+    const MARKED = "tcid:call_abcdefghijklmnopqrstuvwxyz";
+    const out = redact({ toolCallId: MARKED }) as Record<string, string>;
+    expect(out.toolCallId).toBe(MARKED);
+  });
+
+  it("unmarked long run remains scrubbed even when stored under toolCallId", () => {
+    const UNMARKED = "call_abcdefghijklmnopqrstuvwxyz";
+    const out = redact({ toolCallId: UNMARKED }) as Record<string, string>;
+    expect(out.toolCallId).toBe("<redacted>");
+  });
+
+  it("tcid: marker without the long run still survives in a string value", () => {
+    const SHORT_MARKED = "tcid:c1";
+    const out = redact({ note: `id=${SHORT_MARKED}` }) as Record<string, string>;
+    expect(out.note).toContain(SHORT_MARKED);
+  });
+
+  it("bearer / kv scrub still wins over the tcid: exemption", () => {
+    const out = redact({ toolCallId: "Bearer abcdefghijklmnop" }) as Record<string, string>;
+    expect(out.toolCallId).toContain("<redacted>");
+    expect(out.toolCallId).not.toContain("abcdefghijklmnop");
+  });
+
+  it("the marker is case-sensitive and prefix-anchored", () => {
+    // Wrong prefix — even with the same body — must NOT take the
+    // marker exemption. The long run body still falls under
+    // LONG_RUN_RE; only the exact lowercase `tcid:` prefix bypasses
+    // the scrub. Result: `TCID:` is preserved, the long-run body is
+    // replaced with `<redacted>`.
+    const out = redact({ toolCallId: "TCID:call_abcdefghijklmnopqrstuvwxyz" }) as Record<string, string>;
+    expect(out.toolCallId).toBe("TCID:<redacted>");
+    expect(out.toolCallId).not.toBe("tcid:<redacted>");
+    expect(out.toolCallId).not.toContain("call_abcdefghijklmnopqrstuvwxyz");
+  });
+});
+
 describe("redact r3 review (AIX-06 / DBX-07)", () => {
   it("scrubs Authorization=<short> (KV_RE alternative covers bare Authorization)", () => {
     // r3 added `authorization` to the KV_RE alternative so the bare

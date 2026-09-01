@@ -1328,6 +1328,82 @@ describe("TASK-011 (B3) — commandOpenAiChat resolves engine via detectOmp() + 
     await fn!();
     expect(panelConstructorCalls.length).toBe(2);
   });
+
+  // ---- TASK-AIX03-102 case 5: dispose + re-subscription ---------------------
+  // After the first panel is disposed (via its onDispose seam), the next
+  // vsdb.aiChat command must construct a SECOND panel that receives the same
+  // ConnectionManager.onDidChangeRecoveryStatus event reference (proves the
+  // host wired the activation-scoped `mgr`, not a fresh closure).
+  it("case 5: panel dispose → next panel receives the same mgr.onDidChangeRecoveryStatus reference", async () => {
+    state.aiEngine = "omp";
+    detectOmpState.impl = async () => ({
+      available: true,
+      ok: true,
+      path: "/usr/bin/omp",
+      version: "18.0.1",
+    });
+    vi.resetModules();
+    // Re-mock the aiChatPanel module here (file-wide vi.mock is hoisted
+    // out of this test) so panelConstructorCalls is captured.
+    vi.doMock("./ui/aiChatPanel", () => ({
+      AiChatPanel: class {
+        constructor(opts: unknown) {
+          panelConstructorCalls.push(opts);
+        }
+        show(): void {}
+        dispose(): void {}
+      },
+    }));
+    // Mock the connection manager module BEFORE importing extension.ts.
+    // Every `new ConnectionManager(...)` is captured here.
+    let liveMgr: { onDidChangeRecoveryStatus: unknown } | null = null;
+    vi.doMock("./core/connectionManager", async () => {
+      const actual = await vi.importActual<typeof import("./core/connectionManager")>(
+        "./core/connectionManager",
+      );
+      const Orig = actual.ConnectionManager;
+      class SpyMgr extends Orig {
+        constructor(...a: unknown[]) {
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+          super(...(a as []));
+          liveMgr = this as unknown as { onDidChangeRecoveryStatus: unknown };
+        }
+      }
+      return { ...actual, ConnectionManager: SpyMgr };
+    });
+    const ext = await import("./extension");
+    const ctx2 = makeCtx();
+    await ext.activate(ctx2 as never);
+    const fn = state.registeredCommands.get("vsdb.aiChat");
+    expect(fn).toBeDefined();
+
+    await fn!();
+    expect(panelConstructorCalls.length).toBe(1);
+    const firstOpts = panelConstructorCalls[0] as {
+      onDidChangeRecoveryStatus?: unknown;
+      onDispose?: () => void;
+    };
+    expect(typeof firstOpts.onDidChangeRecoveryStatus).toBe("function");
+    // First panel teardown via the onDispose seam.
+    firstOpts.onDispose!();
+    await fn!();
+    expect(panelConstructorCalls.length).toBe(2);
+
+    const secondOpts = panelConstructorCalls[1] as {
+      onDidChangeRecoveryStatus?: unknown;
+    };
+    expect(typeof secondOpts.onDidChangeRecoveryStatus).toBe("function");
+    // Both panels received the SAME event reference (host reused the
+    // activation-scoped mgr, not a fresh emitter per construction).
+    expect(secondOpts.onDidChangeRecoveryStatus).toBe(
+      firstOpts.onDidChangeRecoveryStatus,
+    );
+    // The activation-scoped `mgr` instance was captured by the SpyMgr.
+    expect(liveMgr).not.toBeNull();
+    expect(firstOpts.onDidChangeRecoveryStatus).toBe(
+      liveMgr?.onDidChangeRecoveryStatus,
+    );
+  });
 });
 
 // =============================================================================

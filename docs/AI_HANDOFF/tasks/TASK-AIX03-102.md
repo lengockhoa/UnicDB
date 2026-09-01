@@ -115,3 +115,34 @@ Source grounding: `rg -n -C 8 "new AiChatPanel|commandOpenAiChat|onDidChangeReco
 ---
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW. Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT:
+  cases 1..4 (src/ui/__tests__/aiChatPanelDbAware.test.ts):
+    > AiChatPanel — recovery subscription seam (case 1): expected +0 to be 1
+    > AiChatPanel — recovery/builtin turn (case 2): expected "abort" to be called 1 times, but got 0 times
+    > AiChatPanel — recovery/no-op (case 2b): expected "abort" to be called 1 times, but got 0 times
+    > AiChatPanel — recovery/OMP turn (case 3): expected "spy" to be called 1 times, but got 0 times
+  case 5 (src/extension.test.ts):
+    > case 5: expected 'undefined' to be 'function' // Object.is equality
+  cases 6/7 (src/ai/omp/__tests__/ompChatEngine.test.ts):
+    > These two tests pin the existing sessionId-cleared invariant; both passed pre-implementation and continued to pass after — they document the contract being preserved, not a regression being fixed.
+
+Verification Output:
+  npx vitest run src/ui/__tests__/aiChatPanelDbAware.test.ts src/extension.test.ts src/ai/omp/__tests__/ompChatEngine.test.ts
+    129 passed (129) | Test Files: 3 passed (3)
+  npx vitest run src/ui/         (regression sweep)
+    1457 passed (1457) | Test Files: 108 passed (108)
+  npx vitest run src/ai/omp/ src/extension.test.ts  (broader sweep)
+    198 passed | 2 skipped (200) | Test Files: 8 passed | 1 skipped
+  npm run typecheck
+    exit 0 (no errors)
+  npm run compile
+    esbuild: build complete (all dist/*.js emitted, no errors)
+
+Status: PASS
+Note: All 7 test cases green; existing test suite unaffected; build clean.

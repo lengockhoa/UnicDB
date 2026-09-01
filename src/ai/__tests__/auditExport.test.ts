@@ -115,6 +115,56 @@ describe("audit export envelope (TASK-AIX07-002)", () => {
     expect(parsed.turns[0]!.turnId).toBe("turn-a");
   });
 
+  it("TASK-AIX03-103: tcid:-marked OpenAI-format provider id survives audit export", () => {
+    // 31-character realistic OpenAI-shaped provider id (call_ + 26 chars),
+    // prefixed by the audit-correlation marker so LONG_RUN_RE skips it.
+    const MARKED = "tcid:call_abcdefghijklmnopqrstuvwxyz";
+    const r = new TraceRecorder();
+    r.record("turn-a", "tool_start", {
+      name: "demo",
+      argsJson: "{}",
+      toolCallId: MARKED,
+    });
+    r.record("turn-a", "tool_end", {
+      name: "demo",
+      isError: false,
+      toolCallId: MARKED,
+    });
+
+    const json = serializeAuditExport(r.dumpAll());
+    expect(json).toContain(MARKED);
+    // The exact marker-prefixed value must be present, not <redacted>.
+    expect(json).not.toContain('"toolCallId":"<redacted>"');
+
+    const parsed = JSON.parse(json) as {
+      turns: Array<{
+        events: Array<{
+          kind: string;
+          payload: { toolCallId?: string };
+        }>;
+      }>;
+    };
+    const payloads = parsed.turns[0]!.events.map((e) => e.payload);
+    expect(payloads[0]!.toolCallId).toBe(MARKED);
+    expect(payloads[1]!.toolCallId).toBe(MARKED);
+  });
+
+  it("TASK-AIX03-103: unmarked 31-character opaque run stays <redacted>", () => {
+    // Same provider id as above but WITHOUT the tcid: marker — must be
+    // scrubbed by LONG_RUN_RE. The marker is the only exemption.
+    const UNMARKED = "call_abcdefghijklmnopqrstuvwxyz";
+    const r = new TraceRecorder();
+    r.record("turn-a", "tool_start", {
+      name: "demo",
+      argsJson: "{}",
+      toolCallId: UNMARKED,
+    });
+
+    const json = serializeAuditExport(r.dumpAll());
+    expect(json).not.toContain(UNMARKED);
+    expect(json).toContain('"toolCallId":"<redacted>"');
+  });
+
   it("envelope build is copy-safe against consumer mutation", () => {
     const r = new TraceRecorder();
     r.record("t1", "prompt", { x: 1 });

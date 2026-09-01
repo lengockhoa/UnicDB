@@ -98,3 +98,21 @@ all ordinary long runs and secret-shaped arguments redacted.
 ---
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW. Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: ```
+Test Files  3 failed (3)
+Tests  9 failed | 62 passed (71)
+
+Failures (representative):
+- agent.test.ts: tool_start/tool_end payload.toolCallId is undefined; expected "tcid:c1"
+- agent.test.ts: two tool calls -> [undefined, undefined]; expected ["tcid:c1","tcid:c2"]
+- auditExport.test.ts: tcid:call_abcdefghijklmnopqrstuvwxyz scrubbed to "tcid:<redacted>"; marker exemption not in place
+- trace.test.ts: redact({ toolCallId: "tcid:call_abcdefghijklmnopqrstuvwxyz" }) -> "tcid:<redacted>"; marker exemption missing
+```
+Verification Output: focused suites (agent.test.ts + auditExport.test.ts + trace.test.ts) -> 71/71 pass; full src/ai suite -> 505/505 pass (2 skipped, pre-existing); npm run typecheck -> exit 0; npm run compile -> esbuild build complete (dist/extension.js + dist/webview.js + dist/aiChatPanel.js).
+Status: PASS
+Note: Added narrow field-specific redaction allowlist (key="toolCallId" AND value startsWith "tcid:") that skips only LONG_RUN_RE; AUDIT_EXPORT_VERSION unchanged at 1; both duplicate describe blocks in agent.test.ts extended in lockstep.

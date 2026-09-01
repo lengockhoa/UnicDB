@@ -622,6 +622,98 @@ describe("runAgent trace (TASK-AIX06-003)", () => {
     const ts = evs.find((e) => e.kind === "tool_start");
     const args = ts!.payload as { argsJson: string };
     expect(args.argsJson).toContain("<redacted>");
+    // TASK-AIX03-103: tool_start/tool_end carry a stable marked correlation id.
+    const tsPayload = ts!.payload as { toolCallId: string };
+    expect(tsPayload.toolCallId).toBe("tcid:c1");
+    const te = evs.find((e) => e.kind === "tool_end");
+    const tePayload = te!.payload as { toolCallId: string };
+    expect(tePayload.toolCallId).toBe("tcid:c1");
+  });
+
+  it("two tool calls in one turn keep distinct marked correlation ids", async () => {
+    const { TraceRecorder } = await import("../trace");
+    const rec = new TraceRecorder();
+    const tool: AgentTool = {
+      name: "t1",
+      description: "d",
+      parameters: { type: "object", properties: {} },
+      execute: async () => "ok",
+    };
+    const tools = { list: () => [tool], get: (n: string) => (n === "t1" ? tool : undefined) };
+    const deps: AgentDeps = {
+      loadConfig: vi.fn(async () => ({
+        baseUrl: "https://x",
+        apiKey: "test-key-1234567890",
+        method: "chat/completions" as const,
+        models: { work: { modelId: "m1", vision: false }, think: { modelId: "m2", vision: false }, fast: { modelId: "m3", vision: false } },
+        maxSteps: 3,
+      })),
+      complete: vi.fn()
+        .mockResolvedValueOnce({
+          text: "",
+          toolCalls: [
+            { id: "c1", name: "t1", argumentsJson: "{}" },
+            { id: "c2", name: "t1", argumentsJson: "{}" },
+          ],
+        })
+        .mockResolvedValueOnce({ text: "final", toolCalls: [] }),
+    };
+    await runAgent(
+      { messages: [{ role: "user", content: "go" }], tools: tools as never },
+      deps,
+      undefined,
+      undefined,
+      rec,
+    );
+    const evs = rec.events();
+    const starts = evs.filter((e) => e.kind === "tool_start");
+    const ends = evs.filter((e) => e.kind === "tool_end");
+    expect(starts).toHaveLength(2);
+    expect(ends).toHaveLength(2);
+    const startIds = starts.map((e) => (e.payload as { toolCallId: string }).toolCallId);
+    const endIds = ends.map((e) => (e.payload as { toolCallId: string }).toolCallId);
+    expect(startIds).toEqual(["tcid:c1", "tcid:c2"]);
+    expect(endIds).toEqual(["tcid:c1", "tcid:c2"]);
+  });
+
+  it("regression: secret-shaped argsJson is still redacted while marked id stays visible", async () => {
+    const { TraceRecorder } = await import("../trace");
+    const rec = new TraceRecorder();
+    const tool: AgentTool = {
+      name: "t1",
+      description: "d",
+      parameters: { type: "object", properties: {} },
+      execute: async () => "ok",
+    };
+    const tools = { list: () => [tool], get: (n: string) => (n === "t1" ? tool : undefined) };
+    const deps: AgentDeps = {
+      loadConfig: vi.fn(async () => ({
+        baseUrl: "https://x",
+        apiKey: "test-key-1234567890",
+        method: "chat/completions" as const,
+        models: { work: { modelId: "m1", vision: false }, think: { modelId: "m2", vision: false }, fast: { modelId: "m3", vision: false } },
+        maxSteps: 3,
+      })),
+      complete: vi.fn()
+        .mockResolvedValueOnce({
+          text: "",
+          toolCalls: [{ id: "c1", name: "t1", argumentsJson: '{"apiKey":"sk-live-abcdefghijklmnop"}' }],
+        })
+        .mockResolvedValueOnce({ text: "final", toolCalls: [] }),
+    };
+    await runAgent(
+      { messages: [{ role: "user", content: "go" }], tools: tools as never },
+      deps,
+      undefined,
+      undefined,
+      rec,
+    );
+    const evs = rec.events();
+    const ts = evs.find((e) => e.kind === "tool_start");
+    const tsPayload = ts!.payload as { argsJson: string; toolCallId: string };
+    expect(tsPayload.argsJson).toContain("<redacted>");
+    expect(tsPayload.argsJson).not.toContain("sk-live-abcdefghijklmnop");
+    expect(tsPayload.toolCallId).toBe("tcid:c1");
   });
 
   it("no recorder → no calls; existing signature unchanged", async () => {
@@ -677,6 +769,98 @@ describe("runAgent trace (TASK-AIX06-003)", () => {
     const ts = evs.find((e) => e.kind === "tool_start");
     const args = ts!.payload as { argsJson: string };
     expect(args.argsJson).toContain("<redacted>");
+    // TASK-AIX03-103: tool_start/tool_end carry a stable marked correlation id.
+    const tsPayload = ts!.payload as { toolCallId: string };
+    expect(tsPayload.toolCallId).toBe("tcid:c1");
+    const te = evs.find((e) => e.kind === "tool_end");
+    const tePayload = te!.payload as { toolCallId: string };
+    expect(tePayload.toolCallId).toBe("tcid:c1");
+  });
+
+  it("two tool calls in one turn keep distinct marked correlation ids", async () => {
+    const { TraceRecorder } = await import("../trace");
+    const rec = new TraceRecorder();
+    const tool: AgentTool = {
+      name: "t1",
+      description: "d",
+      parameters: { type: "object", properties: {} },
+      execute: async () => "ok",
+    };
+    const tools = { list: () => [tool], get: (n: string) => (n === "t1" ? tool : undefined) };
+    const deps: AgentDeps = {
+      loadConfig: vi.fn(async () => ({
+        baseUrl: "https://x",
+        apiKey: "test-key-1234567890",
+        method: "chat/completions" as const,
+        models: { work: { modelId: "m1", vision: false }, think: { modelId: "m2", vision: false }, fast: { modelId: "m3", vision: false } },
+        maxSteps: 3,
+      })),
+      complete: vi.fn()
+        .mockResolvedValueOnce({
+          text: "",
+          toolCalls: [
+            { id: "c1", name: "t1", argumentsJson: "{}" },
+            { id: "c2", name: "t1", argumentsJson: "{}" },
+          ],
+        })
+        .mockResolvedValueOnce({ text: "final", toolCalls: [] }),
+    };
+    await runAgent(
+      { messages: [{ role: "user", content: "go" }], tools: tools as never },
+      deps,
+      undefined,
+      undefined,
+      rec,
+    );
+    const evs = rec.events();
+    const starts = evs.filter((e) => e.kind === "tool_start");
+    const ends = evs.filter((e) => e.kind === "tool_end");
+    expect(starts).toHaveLength(2);
+    expect(ends).toHaveLength(2);
+    const startIds = starts.map((e) => (e.payload as { toolCallId: string }).toolCallId);
+    const endIds = ends.map((e) => (e.payload as { toolCallId: string }).toolCallId);
+    expect(startIds).toEqual(["tcid:c1", "tcid:c2"]);
+    expect(endIds).toEqual(["tcid:c1", "tcid:c2"]);
+  });
+
+  it("regression: secret-shaped argsJson is still redacted while marked id stays visible", async () => {
+    const { TraceRecorder } = await import("../trace");
+    const rec = new TraceRecorder();
+    const tool: AgentTool = {
+      name: "t1",
+      description: "d",
+      parameters: { type: "object", properties: {} },
+      execute: async () => "ok",
+    };
+    const tools = { list: () => [tool], get: (n: string) => (n === "t1" ? tool : undefined) };
+    const deps: AgentDeps = {
+      loadConfig: vi.fn(async () => ({
+        baseUrl: "https://x",
+        apiKey: "test-key-1234567890",
+        method: "chat/completions" as const,
+        models: { work: { modelId: "m1", vision: false }, think: { modelId: "m2", vision: false }, fast: { modelId: "m3", vision: false } },
+        maxSteps: 3,
+      })),
+      complete: vi.fn()
+        .mockResolvedValueOnce({
+          text: "",
+          toolCalls: [{ id: "c1", name: "t1", argumentsJson: '{"apiKey":"sk-live-abcdefghijklmnop"}' }],
+        })
+        .mockResolvedValueOnce({ text: "final", toolCalls: [] }),
+    };
+    await runAgent(
+      { messages: [{ role: "user", content: "go" }], tools: tools as never },
+      deps,
+      undefined,
+      undefined,
+      rec,
+    );
+    const evs = rec.events();
+    const ts = evs.find((e) => e.kind === "tool_start");
+    const tsPayload = ts!.payload as { argsJson: string; toolCallId: string };
+    expect(tsPayload.argsJson).toContain("<redacted>");
+    expect(tsPayload.argsJson).not.toContain("sk-live-abcdefghijklmnop");
+    expect(tsPayload.toolCallId).toBe("tcid:c1");
   });
 
   it("no recorder -> no calls; existing signature unchanged", async () => {

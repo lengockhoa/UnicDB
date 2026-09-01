@@ -79,6 +79,16 @@ function redactInner(value: unknown, seen: WeakSet<object>): unknown {
     for (const [k, v] of Object.entries(obj)) {
       if (SECRET_KEY_RE.test(k) || HEADER_RE.test(k)) {
         out[k] = "<redacted>";
+      } else if (k === "toolCallId" && typeof v === "string" && v.startsWith(TCID_MARKER)) {
+        // TASK-AIX03-103: narrowly allowlisted audit-correlation field.
+        // A string starting with the exact `tcid:` marker bypasses ONLY
+        // the LONG_RUN_RE pass; every other recursive redaction rule
+        // (bearer, basic, key=value, auth=:, secret/header keys, etc.)
+        // is unaffected. Bearer/KV/basic scrub still wins inside the
+        // marker-prefixed string itself because those rules run before
+        // LONG_RUN_RE in scrubString(). Unmarked long runs under the
+        // `toolCallId` key are scrubbed like any other long run.
+        out[k] = scrubToolCallId(v);
       } else {
         out[k] = redactInner(v, seen);
       }
@@ -86,6 +96,22 @@ function redactInner(value: unknown, seen: WeakSet<object>): unknown {
     return out;
   }
   return value;
+}
+
+const TCID_MARKER = "tcid:";
+
+/**
+ * Strip the long-run pass from a `tcid:`-marked string while leaving
+ * every other recursive redaction rule active. Bearer / KV / basic
+ * scrub still apply; only LONG_RUN_RE is exempted by the marker.
+ */
+function scrubToolCallId(s: string): string {
+  let out = s.replace(BEARER_RE, "Bearer <redacted>");
+  out = out.replace(BASIC_RE, "Basic <redacted>");
+  out = out.replace(KV_RE, (_m, k) => `${k}<redacted>`);
+  out = out.replace(AUTH_KV_RE, "auth<redacted>");
+  // Intentionally skip LONG_RUN_RE — the marker is the narrow exemption.
+  return out;
 }
 
 function scrubString(s: string): string {

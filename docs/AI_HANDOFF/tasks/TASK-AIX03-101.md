@@ -101,3 +101,33 @@ are already first-keyword-rejected and adding them is over-rejection scope creep
 ---
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW. Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT:
+```
+ FAIL  src/ai/tools/__tests__/readonlySqlParser.test.ts > parseReadonly — row-lock clause rejection (TASK-AIX03-101) > rejects FOR SHARE (no update keyword) with reason non_select
+   { ok: true, kind: 'select' } !== { ok: false, reason: 'non_select' }
+ FAIL  src/ai/tools/__tests__/readonlySqlParser.test.ts > parseReadonly — row-lock clause rejection (TASK-AIX03-101) > rejects FOR KEY SHARE with reason non_select
+   { ok: true, kind: 'select' } !== { ok: false, reason: 'non_select' }
+ FAIL  src/ai/tools/__tests__/readonlySqlParser.test.ts > parseReadonly — row-lock clause rejection (TASK-AIX03-101) > rejects FOR NO KEY SHARE
+   { ok: true, kind: 'select' } !== { ok: false, reason: 'non_select' }
+ FAIL  src/ai/tools/__tests__/readonlySqlParser.test.ts > parseReadonly — row-lock clause rejection (TASK-AIX03-101) > rejects row-lock clause case-insensitively
+   undefined !== 'non_select'
+ FAIL  src/ai/tools/__tests__/sqlTool.test.ts > isReadOnlySql > rejects row-lock clause SELECT * FROM t FOR SHARE
+   { ok: true } !== { ok: false, reason: 'Read-only violation: FOR UPDATE/SHARE' }
+ FAIL  src/ai/tools/__tests__/sqlTool.test.ts > isReadOnlySql > rejects row-lock clause SELECT * FROM t FOR KEY SHARE
+ FAIL  src/ai/tools/__tests__/sqlTool.test.ts > isReadOnlySql > rejects row-lock clause SELECT * FROM t for key share
+ FAIL  src/ai/tools/__tests__/sqlTool.test.ts > isReadOnlySql > rejects row-lock clause SELECT * FROM t For Key Share
+ Test Files  3 failed (3)
+      Tests  9 failed | 103 passed (112)
+```
+
+Verification Output:
+- `npx vitest run src/ai/tools/__tests__/readonlySqlParser.test.ts src/ai/tools/__tests__/sqlTool.test.ts src/ai/tools/__tests__/dbAwareTools.test.ts` → 3 files passed, 112/112 tests pass.
+- `npm run typecheck` → 0 errors.
+
+Status: PASS
+Note: Closed row-lock bypass via shared `ROW_LOCK_RE` regex; sentinel non-leak pinned to Postgres `DEFAULT_BATCH_SIZE=500` + `QUERY_DEFAULT_MAX_ROWS=100`; pre-existing dist-bundle failures in `extension.test.ts` / `agGridSmoke.test.ts` / `consolePanelBundle.test.ts` are unrelated and reproduced on `808000c` HEAD.

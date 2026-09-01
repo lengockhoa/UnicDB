@@ -256,6 +256,23 @@ describe("isReadOnlySql", () => {
     expect(r.reason).toBe("Only SELECT/SHOW/EXPLAIN/WITH…SELECT are allowed (read-only)");
   });
 
+  // TASK-AIX03-101 cases 4/4b: row-locking clauses (FOR SHARE / FOR KEY SHARE)
+  // accepted by the first-keyword guard because no DML keyword appears. The
+  // shared row-lock regex must reject both clauses with the new pinned
+  // reason literal. Table-driven so a regression on either clause shows up.
+  it.each([
+    ["SELECT * FROM t FOR SHARE"],
+    ["SELECT * FROM t FOR KEY SHARE"],
+    ["SELECT * FROM t for key share"],
+    ["SELECT * FROM t For Key Share"],
+  ])("rejects row-lock clause %s with FOR UPDATE/SHARE reason", (sql) => {
+    const r = isReadOnlySql(sql);
+    expect(r).toEqual({
+      ok: false,
+      reason: "Read-only violation: FOR UPDATE/SHARE",
+    });
+  });
+
   it("rejects EXPLAIN ANALYZE with -- comment wrapping a write", () => {
     const sql = "-- comment\nEXPLAIN ANALYZE DELETE FROM t";
     const r = isReadOnlySql(sql);
@@ -332,6 +349,8 @@ describe("createSqlTool — run_sql", () => {
     const tool = createSqlTool(makeFactory(adapter));
     const out = await tool.execute({ sql: "SELECT n FROM t" });
     const parsed = JSON.parse(out);
+    // TASK-AIX03-101 case 6: cursor returns 120 rows → ROW_LIMIT cap is 50
+    // and `rowCount` reports the full batch length.
     expect(parsed.rows).toHaveLength(50);
     expect(parsed.truncated).toBe(true);
     expect(parsed.rowCount).toBe(120);

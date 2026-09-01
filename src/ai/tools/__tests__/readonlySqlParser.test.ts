@@ -109,6 +109,53 @@ describe("parseReadonly — structural rejections", () => {
   });
 });
 
+describe("parseReadonly — row-lock clause rejection (TASK-AIX03-101)", () => {
+  // Case 1 (happy)
+  it("accepts plain SELECT 1", () => {
+    expect(parseReadonly("SELECT 1")).toEqual({ ok: true, kind: "select" });
+  });
+
+  // Case 2
+  it("rejects FOR SHARE (no update keyword) with reason non_select", () => {
+    const r = parseReadonly("SELECT * FROM t FOR SHARE");
+    expect(r).toEqual({ ok: false, reason: "non_select" });
+  });
+
+  // Case 3
+  it("rejects FOR KEY SHARE with reason non_select", () => {
+    const r = parseReadonly("SELECT * FROM t FOR KEY SHARE");
+    expect(r).toEqual({ ok: false, reason: "non_select" });
+  });
+
+  // Case 5 (defense — already green, pinned)
+  it("still rejects FOR UPDATE via the update keyword", () => {
+    const r = parseReadonly("SELECT * FROM t FOR UPDATE");
+    expect(r).toEqual({ ok: false, reason: "non_select" });
+  });
+
+  it("rejects FOR NO KEY UPDATE", () => {
+    const r = parseReadonly("SELECT * FROM t FOR NO KEY UPDATE");
+    expect(r).toEqual({ ok: false, reason: "non_select" });
+  });
+
+  it("rejects FOR NO KEY SHARE (no update keyword, only share)", () => {
+    const r = parseReadonly("SELECT * FROM t FOR NO KEY SHARE");
+    expect(r).toEqual({ ok: false, reason: "non_select" });
+  });
+
+  it("rejects row-lock clause case-insensitively", () => {
+    expect(parseReadonly("SELECT * FROM t for share").reason).toBe("non_select");
+    expect(parseReadonly("SELECT * FROM t For Key Share").reason).toBe("non_select");
+  });
+
+  it("accepts SELECT that mentions 'FOR' only as part of an identifier substring (not the clause)", () => {
+    // `FORECAST` contains the letters f-o-r but is NOT a row-lock clause.
+    // The regex uses \bfor\s+<lockmode> so this should pass.
+    const r = parseReadonly("SELECT forecast FROM t");
+    expect(r).toEqual({ ok: true, kind: "select" });
+  });
+});
+
 describe("parseReadonly — defense in depth", () => {
   it("rejects identifiers that merely CONTAIN a forbidden keyword", () => {
     const r = parseReadonly("SELECT inserted_at FROM t");

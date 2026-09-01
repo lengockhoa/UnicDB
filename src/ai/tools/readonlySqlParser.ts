@@ -28,9 +28,28 @@ export type ParseResult =
 const FORBIDDEN_RE =
   /\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|copy|merge|call|exec|into)/i;
 
+/**
+ * PostgreSQL row-locking clause: `FOR <lockmode>`. The lockmodes a read-only
+ * copilot must NEVER accept because they take row-level locks. Used by both
+ * `parseReadonly` (dbAwareTools) and `isReadOnlySql` (sqlTool) — same regex,
+ * same purpose. `\b` ensures `FORECAST` is not matched.
+ *
+ * TASK-AIX03-101 — pin both forms. `FOR UPDATE` / `FOR NO KEY UPDATE` are
+ * already caught by `FORBIDDEN_RE` via the `update` keyword; the remaining
+ * bypass is `FOR SHARE` / `FOR KEY SHARE` / `FOR NO KEY SHARE` which carry
+ * no DML keyword.
+ */
+export const ROW_LOCK_RE =
+  /\bfor\s+(no\s+key\s+update|no\s+key\s+share|key\s+share|update|share)\b/i;
+
 /** True when `text` contains any forbidden keyword (case-insensitive). */
 export function containsForbidden(text: string): boolean {
   return FORBIDDEN_RE.test(text);
+}
+
+/** True when `text` contains a PostgreSQL row-locking clause. */
+export function containsRowLock(text: string): boolean {
+  return ROW_LOCK_RE.test(text);
 }
 
 /**
@@ -196,6 +215,12 @@ export function parseReadonly(sql: string): ParseResult {
 
   // Defense in depth: no forbidden keyword anywhere in the statement.
   if (containsForbidden(statement)) return { ok: false, reason: "non_select" };
+
+  // Defense in depth: no PostgreSQL row-locking clause. Catches the
+  // bypass where neither `FOR UPDATE` / `FOR NO KEY UPDATE` is present
+  // but a share lock is taken (FOR SHARE / FOR KEY SHARE / FOR NO KEY
+  // SHARE). TASK-AIX03-101.
+  if (containsRowLock(statement)) return { ok: false, reason: "non_select" };
 
   let depth = 0;
   for (const ch of statement) {

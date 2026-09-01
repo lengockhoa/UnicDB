@@ -6,6 +6,10 @@
 import type { AgentTool } from "../agent";
 import type { AdapterFactory } from "./types";
 import type { DbAdapter } from "../../adapters/types";
+// TASK-AIX03-101: shared row-lock regex. Imported so both guards (this
+// file's `isReadOnlySql` and `parseReadonly` in readonlySqlParser.ts) use
+// the same pinned pattern.
+import { ROW_LOCK_RE } from "./readonlySqlParser";
 
 const NO_CONNECTION_MSG = "No active database connection.";
 const ROW_LIMIT = 50;
@@ -15,6 +19,12 @@ const READ_ONLY_REASON = "Only SELECT/SHOW/EXPLAIN/WITH…SELECT are allowed (re
 const MULTI_STMT_REASON = "Multiple statements are not allowed";
 const INTO_REASON = "Read-only violation: INTO";
 const WCTE_REASON = "Read-only violation: writable CTE (INSERT/UPDATE/DELETE/MERGE)";
+/**
+ * TASK-AIX03-101 — pinned row-lock rejection literal. Both `parseReadonly`
+ * and `isReadOnlySql` must surface the same machine-readable reason so the
+ * agent can self-correct. Kept identical to the acceptance-criterion literal.
+ */
+const ROW_LOCK_REASON = "Read-only violation: FOR UPDATE/SHARE";
 
 export interface ReadOnlyCheck {
   ok: boolean;
@@ -128,6 +138,14 @@ export function isReadOnlySql(sql: string): ReadOnlyCheck {
   // not as a standalone INTO clause; the more specific reason wins.
   if (kw === "with" && /\b(insert|update|delete|merge)\b/.test(lower)) {
     return { ok: false, reason: WCTE_REASON };
+  }
+
+  // Row-locking clause (TASK-AIX03-101): a SELECT may take a share row
+  // lock with `FOR SHARE` / `FOR KEY SHARE` / `FOR NO KEY SHARE`. Neither
+  // the first-keyword check nor `INTO` nor the writable-CTE scan catch
+  // these — they look like a plain read but they block writers.
+  if (ROW_LOCK_RE.test(lower)) {
+    return { ok: false, reason: ROW_LOCK_REASON };
   }
 
   // INTO scan is unconditional (word-boundary).

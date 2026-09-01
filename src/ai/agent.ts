@@ -311,7 +311,7 @@ export async function runAgent(
 
     for (const call of result.toolCalls) {
       if (trace) {
-        trace.record(turnId, "tool_start", { name: call.name, argsJson: call.argumentsJson });
+        trace.record(turnId, "tool_start", { name: call.name, argsJson: call.argumentsJson, toolCallId: `tcid:${call.id}` });
       }
       callbacks?.onToolCall?.(call);
       const toolMsg = await executeToolCall(call, input.tools, callbacks?.onError);
@@ -319,7 +319,7 @@ export async function runAgent(
       history.push(chatMsg);
       stepMessages.push(chatMsg);
       if (trace) {
-        trace.record(turnId, "tool_end", { name: call.name, isError: outcome.status === "failed" });
+        trace.record(turnId, "tool_end", { name: call.name, isError: outcome.status === "failed", toolCallId: `tcid:${call.id}` });
         if (outcome.status === "failed") {
           trace.record(turnId, "error", { message: outcome.resultText, tool: call.name });
         }

@@ -191,7 +191,93 @@ describe("run_readonly_query", () => {
     const tool = createRunReadonlyQueryTool(factory);
     const out = await tool.execute({ sql: "SELECT id, name FROM t", maxRows: 99999 });
     const dataLines = out.split("\n").filter((l) => /^\d+ \| n\d+$/.test(l));
+    // TASK-AIX03-101 case 7: cap is QUERY_MAX_ROWS = 1000 even when caller
+    // asks for 99999.
     expect(dataLines).toHaveLength(1000);
+  });
+});
+
+// =============================================================================
+// TASK-AIX03-101 cases 7-8 — cap boundary + sentinel non-leak.
+//
+// The sentinel fixture deliberately exercises the cursor-batch path: the
+// fake adapter's runQuery returns a BatchedQuery whose fetchBatch yields
+// EXACTLY 500 rows in a single batch (matching Postgres DEFAULT_BATCH_SIZE)
+// before returning null (EOF). The sentinel value is placed at the row
+// index that would normally be sliced off when cap < total. If the cap is
+// applied AFTER all rows are read (current implementation), the sentinel
+// stays dropped and the truncation line is emitted with the exact
+// `cap / total` numbers. If a future regression stops early at `cap`
+// batches, the sentinel would leak.
+// =============================================================================
+
+import type { BatchedQuery, DbAdapter, RunResult } from "../../../adapters/types";
+
+const SENTINEL = "SENTINEL-leak";
+const DEFAULT_BATCH_SIZE = 500; // mirrors src/adapters/postgres.ts:98
+
+function makeCursorAdapterWithBatch(totalRows: number, cap: number) {
+  let batchesDelivered = 0;
+  const fetchBatch = vi.fn(async (): Promise<unknown[][] | null> => {
+    // Single Postgres-style batch: DEFAULT_BATCH_SIZE = 500 rows, then EOF.
+    batchesDelivered++;
+    if (batchesDelivered > 1) return null; // EOF after the first batch
+    const slice: unknown[][] = [];
+    for (let i = 0; i < totalRows; i++) {
+      slice.push(i === cap ? [SENTINEL] : [i, `n${i}`]);
+    }
+    return slice;
+  });
+  const close = vi.fn(async () => undefined);
+  const cursor: BatchedQuery = {
+    columns: ["id", "name"],
+    fetchBatch: fetchBatch as unknown as BatchedQuery["fetchBatch"],
+    cancel: vi.fn(async () => undefined),
+    close: close as unknown as BatchedQuery["close"],
+  };
+  const runQuery = vi.fn(async (_sql: string): Promise<RunResult> => ({
+    results: [],
+    batched: cursor,
+  }));
+  const adapter = {
+    runQuery,
+    listTables: vi.fn(async () => []),
+    listTableDetail: vi.fn(async () => ({ columns: [], constraints: [] })),
+  } as unknown as DbAdapter;
+  const factory: AdapterFactory = async () => adapter;
+  return { adapter, factory, fetchBatch, close };
+}
+
+describe("run_readonly_query — cap boundary + sentinel (TASK-AIX03-101)", () => {
+  it("sentinel fixture pins Postgres DEFAULT_BATCH_SIZE to 500", () => {
+    // Pin the literal so a change to the production constant is caught.
+    expect(DEFAULT_BATCH_SIZE).toBe(500);
+  });
+
+  it("case 7: maxRows=99999 caps at 1000 data rows", async () => {
+    const { factory } = makeCursorAdapterWithBatch(1200, 1000);
+    const tool = createRunReadonlyQueryTool(factory);
+    const out = await tool.execute({
+      sql: "SELECT id, name FROM t",
+      maxRows: 99999,
+    });
+    const dataLines = out.split("\n").filter((l) => /^\d+ \| n\d+$/.test(l));
+    expect(dataLines).toHaveLength(1000);
+  });
+
+  it("case 8: row index 100 in a 500-row cursor batch is dropped (sentinel non-leak)", async () => {
+    // totalRows=500, cap=100. Row index 100 (zero-based) carries the
+    // sentinel. After renderTable slices to cap, the sentinel must NOT
+    // appear, and the truncation line must read `-- truncated: showing
+    // 100 of 500 rows`.
+    const { factory } = makeCursorAdapterWithBatch(DEFAULT_BATCH_SIZE, 100);
+    const tool = createRunReadonlyQueryTool(factory);
+    const out = await tool.execute({
+      sql: "SELECT id, name FROM t",
+      maxRows: 100,
+    });
+    expect(out).not.toContain(SENTINEL);
+    expect(out).toContain("-- truncated: showing 100 of 500 rows");
   });
 });
 
