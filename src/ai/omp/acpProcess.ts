@@ -192,21 +192,6 @@ export class AcpProcess {
    * session/new resolves successfully.
    */
   private readyReached = false;
-  /**
-   * TASK-AIX05-101: tracks whether a spawn 'error' has been observed.
-   * Handshake-time exits see this and reject with a start-failure rather
-   * than racing a "crashed → fallback-builtin" transition. Cleared once
-   * used so the post-handshake "error" path is a real crash.
-   */
-  private spawnErrored = false;
-  /**
-   * TASK-AIX05-101: the most recent spawn error, captured so start()'s
-   * outer catch can reject with the ORIGINAL spawn error rather than the
-   * generic "exited before handshake" message that the error/exit race
-   * would otherwise pick.
-   */
-  private lastSpawnError: Error | null = null;
-
   constructor(
     opts: AcpProcessOptions,
     spawnFn: AcpSpawnFn = defaultSpawn as unknown as AcpSpawnFn,
@@ -299,18 +284,17 @@ export class AcpProcess {
       }
     });
 
-    // Race: ready handshake vs spawn 'error' / child 'exit' failure. We
-    // record the original spawn error so the outer catch (which would
-    // otherwise race the exit-rejection path) can surface the real cause.
-    // Any pre-handshake exit (clean OR non-zero) is a failure: a clean
-    // exit before `initialize` resolves means the agent never finished
-    // handshaking, and start() must reject — not hang waiting for a
-    // response that will never come.
+    // Race: ready handshake vs spawn 'error' / child 'exit' failure. The
+    // spawn 'error' path rejects directly with the original error (NOT
+    // through a stored instance field — the immediate reject() is the
+    // real mechanism; any later exit on the same child is swallowed
+    // because startError has already settled). Any pre-handshake exit
+    // (clean OR non-zero) is a failure: a clean exit before `initialize`
+    // resolves means the agent never finished handshaking, and start()
+    // must reject — not hang waiting for a response that will never come.
     const startError = new Promise<never>((_, reject) => {
       spawnLike.on("error", (err) => {
-        this.spawnErrored = true;
-        this.lastSpawnError = err instanceof Error ? err : new Error(String(err));
-        reject(this.lastSpawnError);
+        reject(err instanceof Error ? err : new Error(String(err)));
       });
       spawnLike.on("exit", (code) => {
         reject(new Error(`omp acp exited before handshake (code=${code ?? "null"})`));
