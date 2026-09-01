@@ -59,3 +59,31 @@ export function mergeBatchIntoResult(
       totalRowCount !== undefined ? totalRowCount : (query.rowCount ?? 0) + batch.length,
   };
 }
+
+/**
+ * Ghép `batch` vào `current` nhưng giới hạn tổng số rows giữ lại ở `maxRows`
+ * (TASK-ARP03-001 — pure retained-result budget helper).
+ *
+ * - `rows`: prefix deterministic của `current.concat(batch)`, dài ≤ `maxRows`
+ *   (ưu tiên giữ rows của `current` trước, sau đó mới tới đầu `batch`).
+ * - `limited`: `true` iff `current.length + batch.length > maxRows` (đã bị cắt).
+ * - KHÔNG mutate input; trả đúng 1 mảng mới — không build mảng concat trung gian.
+ * - Cap degenerate (`0`, âm, `NaN`) → `rows` rỗng, không throw.
+ * - Constant-free by design: `RETAINED_ROW_CAP` do caller (TASK-ARP03-002) truyền vào.
+ */
+export function appendBatchBounded(
+  current: any[][],
+  batch: any[][],
+  maxRows: number,
+): { rows: any[][]; limited: boolean } {
+  // NaN > 0 → false, âm/0 → 0: mọi cap degenerate đều rơi về 0, không throw.
+  const cap = maxRows > 0 ? Math.floor(maxRows) : 0;
+  const total = current.length + batch.length;
+  const limited = total > cap;
+  const keep = Math.min(total, cap);
+  const rows = new Array<any[]>(keep);
+  for (let i = 0; i < keep; i++) {
+    rows[i] = i < current.length ? current[i] : batch[i - current.length];
+  }
+  return { rows, limited };
+}

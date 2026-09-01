@@ -111,9 +111,59 @@ npm run compile
 ## Executor Report
 
 ```
-(write here: STATUS / EXECUTOR_TOOL / EXECUTOR_MODEL / EXECUTOR_SUBAGENT / RED_OUTPUT /
- IMPLEMENTATION SUMMARY / VERIFICATION OUTPUT / ISSUES / HANDOFF_TO_REVIEWER)
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+
+IMPLEMENTATION SUMMARY:
+Added pure export appendBatchBounded(current, batch, maxRows) → { rows, limited } to
+src/core/resultBatcher.ts. Single fresh rows array of length min(total, cap) — no intermediate
+concat, no re-slice of current; cell refs copied in current-then-batch order. limited === true
+iff total > cap (cap = maxRows > 0 ? floor(maxRows) : 0, so 0/âmal/NaN all clamp to 0, no throw).
+Constant-free per task spec: RETAINED_ROW_CAP is NOT placed here (TASK-ARP03-002 owns it and
+passes it as maxRows). No retained field. Existing appendBatch / batchStats / mergeBatchIntoResult
+untouched. RED-first: tests written before implementation, all 6 failed on base as expected.
+
+RED_OUTPUT (npx vitest run src/core/__tests__/resultBatcher.test.ts, BEFORE implementation):
+ FAIL  src/core/__tests__/resultBatcher.test.ts > appendBatchBounded > Test #5 — empty inputs behave deterministically
+TypeError: appendBatchBounded is not a function
+ ❯ src/core/__tests__/resultBatcher.test.ts:112:12
+ FAIL  ... (same TypeError for all 6 new cases #1-#6)
+ Test Files  1 failed (1)
+      Tests  6 failed | 8 passed (14)   ← 8 existing blocks (3a-3h) stayed green in RED
+
+VERIFICATION OUTPUT (tails, AFTER implementation, all inside the worktree):
+1) npx vitest run src/core/__tests__/resultBatcher.test.ts
+   ✓ src/core/__tests__/resultBatcher.test.ts  (14 tests) 3ms
+   Test Files  1 passed (1)
+        Tests  14 passed (14)          ← 6 new + 8 existing, all green
+   Duration  190ms
+2) npm run typecheck
+   > tsc --noEmit                      ← exit 0, no output
+3) npm run compile
+   ⚡ Done in 128ms
+   dist/extension.js      5.3mb ⚠️
+   ⚡ Done in 154ms
+   esbuild: build complete             ← exit 0
+
+SCOPE: git status shows exactly 2 modified files — src/core/resultBatcher.ts,
+src/core/__tests__/resultBatcher.test.ts. No queryRunner.ts / resultsPanel.ts / webview / INDEX
+changes. No git add/commit/push executed.
+
+ISSUES:
+- Test case 5 was initially written as appendBatchBounded([], []) (2 args) — fixed during RED to
+  pass the required 3rd arg (maxRows) per the load-bearing signature. Fixed pre-implementation;
+  RED evidence above reflects the final test file.
+- Interpretation note: Interfaces §"limited === true iff total > maxRows" is literally false for
+  NaN, but REQUIRED Test Case #4 mandates limited===true with rows present for degenerate caps.
+  Followed the test table: NaN clamps to cap=0 so limited = total > 0. Case 4 green.
+- RETAINED_ROW_CAP intentionally absent from this file (orchestrator prompt mentioned it; the task
+  file overrides: constant-free by design, owned by TASK-ARP03-002).
+
+HANDOFF_TO_REVIEWER: yes
 ```
+
 
 ## Reviewer Verdict
 
