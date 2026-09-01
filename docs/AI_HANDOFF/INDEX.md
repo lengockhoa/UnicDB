@@ -142,10 +142,10 @@ No same-wave target-file overlap. Plan: docs/AI_HANDOFF/PLAN_ARP02.md.
 
 | Task / Portfolio | Title | Status | Dependencies | Reviewer |
 |---|---|---|---|---|
-| TASK-ARP03-001 | Pure retained-result budget helper | ready | none | unic-smart |
-| TASK-ARP03-002 | Runner enforcement: retained-row cap + one-shot cursor close + graceful no-op | ready | TASK-ARP03-001 | unic-smart |
-| TASK-ARP03-003 | Panel state: limited statements ride the wire without an error toast | ready | TASK-ARP03-002 | unic-smart |
-| TASK-ARP03-004 | Webview UX: distinct truncated state + Load More gate closes | ready | TASK-ARP03-002 | unic-smart |
+| TASK-ARP03-001 | Pure retained-result budget helper | pending_review | none | unic-smart |
+| TASK-ARP03-002 | Runner enforcement: retained-row cap + one-shot cursor close + graceful no-op | pending_review | TASK-ARP03-001 | unic-smart |
+| TASK-ARP03-003 | Panel state: limited statements ride the wire without an error toast | pending_review | TASK-ARP03-002 | unic-smart |
+| TASK-ARP03-004 | Webview UX: distinct truncated state + Load More gate closes | pending_review | TASK-ARP03-002 | unic-smart |
 
 Graph: TASK-ARP03-001 → TASK-ARP03-002 → TASK-ARP03-003; TASK-ARP03-002 → TASK-ARP03-004.
 

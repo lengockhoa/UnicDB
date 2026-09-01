@@ -1,6 +1,6 @@
 # TASK-ARP03-001 — Pure retained-result budget helper
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `unic-smart`
 - Executor-model: `unic-code`
