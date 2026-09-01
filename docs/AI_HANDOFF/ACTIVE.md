@@ -1,6 +1,4 @@
 # ACTIVE
 
-Cycle: RLX-03   Date: 2026-09-01   Base: main @ c6d6e36
-Goal: Deliver bounded lazy-adapter recovery, observable SSH child-exit cleanup, and adapter-transition SchemaCache invalidation.
-Tasks: 3 total
-Status: done — all 3 tasks completed; fix round 1 each verified; awaiting release v1.32.0
+Status: shipped v1.32.0 (Cycle RLX-03 Connection/Tunnel/Schema-refresh Recovery, 2026-09-01, main @ de405a5).
+Next planning candidate: PORT-DBX-06 (Reviewed PG rename workflow).

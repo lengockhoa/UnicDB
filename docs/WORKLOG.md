@@ -20,6 +20,13 @@ For each significant action, append:
 - Verification run
 - Outcome
 
+## 2026-09-01 — Wave 8 RLX-03 Connection/Tunnel/Schema-refresh Recovery → v1.32.0 (main @ de405a5)
+- Full handoff cycle: plan (2 rounds) → 3 tasks in 2 waves → unic-smart review (all 3 blocked/changes-requested round 1) → fix round 1 (all 3 approved) → release v1.32.0 (tag + vsdb-1.32.0.vsix).
+- Delivered: typed post-ready SSH tunnel exit with promise-identity coalescing + fresh-spawn-after-rejection; bounded ConnectionManager recovery (`recovering`/`recovered`/`failed`, exactly 2 attempts, injected clock, disposed-flag gating + post-dispose regression); `SchemaCache.invalidate()` clears inflight WITH the generation bump, closing the cross-adapter single-flight leak.
+- Files: `src/core/{sshTunnel,sshTunnelManager,connectionManager,schemaCache}.ts` + tunnel/state/single-flight recovery tests, PLAN_RLX03.md, INDEX_RLX03.md, TASK-RLX03-001/002/003.md, CHANGELOG, STATUS, ACTIVE.
+- Verification: full suite **2858 passed | 2 skipped**; typecheck 0; compile clean at v1.32.0.
+- Lessons: (a) cross-adapter single-flight leak — `invalidate()` must clear inflight WITH the generation bump; the regression test must start B's lookup while A is still deferred (resolve-order matters; resolving A first hides the leak). (b) promise-identity coalescing: an async function that awaits before returning wraps the promise — return the STORED promise instead (`assert p2).toBe(p1)`). (c) review-finding pattern: tests that only check "rejects with same error" cannot distinguish fresh spawn from stale cached rejection — instrument the shim (spawn counter) and mutation-prove the test. (d) disposal ordering: set disposed flag synchronously BEFORE any await; a post-dispose event with the flag checked after an await can still run.
+
 ## 2026-09-01 — Wave 7 RLX-02 Cross-dialect Query Lifecycle → v1.31.0 (main @ cb27b86)
 - Full handoff cycle: plan (review rounds 2) → 3 tasks in 2 waves → unic-smart review (2 APPROVED round 1, TASK-001 fixed round 1) → release v1.31.0 (tag + vsdb-1.31.0.vsix).
 - MySQL: `PoolConnection.destroy()` on cancellation + pre-handoff stream cancel (drain before busy-clear). MSSQL: snapshot `activeRequests` set + per-request `request.cancel()` so cancellation survives adapter handoff. `vsdb.cancelQuery` now `await`s `runner.cancel()` before clearing the busy state, eliminating the race where UI showed idle but the query was still draining.
