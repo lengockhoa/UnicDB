@@ -7,8 +7,8 @@ Cycle AIX-07 — **Trust, Privacy & Governance** — complete; shipped in v1.28.
 | TASK-RLX-001 | Cancel active PostgreSQL non-cursor queries | done | none | unic-smart |
 | TASK-RLX-002 | Coalesce SchemaCache stale refreshes | done | none | unic-smart |
 | TASK-RLX-003 | Fail closed on malformed import execution plans | done | none | unic-smart |
-| TASK-AIX07-001 | Central effective AI policy (pure) | approved | fix round 1 verified | unic-smart |
-| TASK-AIX07-002 | Redacted all-turn audit export primitive | approved | fix round 1 verified | unic-smart |
+| TASK-AIX07-001 | Central effective AI policy (pure) | done | fix round 1 verified | unic-smart |
+| TASK-AIX07-002 | Redacted all-turn audit export primitive | done | fix round 1 verified | unic-smart |
 | TASK-AIX07-003 | Policy and audit command host integration | done | fix round 2 verified | unic-smart |
 | TASK-DBX07-001 | AIX-06 Trace r3 review fixes | done | none | unic-smart |
 | PORT-RLX-02 | Cross-dialect query lifecycle completion | superseded (shipped in v1.31.0) | - | unic-smart |
@@ -26,6 +26,26 @@ Cycle AIX-07 — **Trust, Privacy & Governance** — complete; shipped in v1.28.
 | PORT-ARP-02 | Shutdown-safe query ownership and connection provenance | superseded (shipped in v1.38.0) | - | unic-smart |
 | PORT-ARP-03 | Retained-result memory budget | superseded (shipped in v1.39.0) | - | unic-smart |
 | PORT-ARP-04 | Tunnel and endpoint identity hardening | superseded (shipped in v1.40.0) | - | unic-smart |
+| PORT-ARP-05 | Cross-driver timeout, pool, and resilience contract | active — plan ready (2026-09-02) | - | unic-smart |
+
+## Cycle ARP-05 — Cross-driver timeout, pool, and resilience contract
+
+| Task / Portfolio | Title | Status | Dependencies | Reviewer |
+|---|---|---|---|---|
+| TASK-ARP05-000 | ADR: cross-driver resilience contract (measured matrix + SLO/no-replay) | ready | none | - |
+| TASK-ARP05-001 | PostgreSQL pool isolation, failed-connect/close release, cancel recovery | ready | TASK-ARP05-000 | - |
+| TASK-ARP05-002 | MySQL held-connection streaming + bounded acquire wait | ready | TASK-ARP05-000 | - |
+| TASK-ARP05-003 | MSSQL paused-stream survival, cancel timeout, no enqueue wedge | ready | TASK-ARP05-000 | - |
+| TASK-ARP05-004 | Host message normalization (conditional gate) | ready | TASK-ARP05-000, TASK-ARP05-001, TASK-ARP05-002, TASK-ARP05-003 | - |
+
+Graph: TASK-ARP05-000 → TASK-ARP05-001; TASK-ARP05-000 → TASK-ARP05-002; TASK-ARP05-000 → TASK-ARP05-003;
+TASK-ARP05-000, 001, 002, 003 → TASK-ARP05-004.
+
+- Wave 0 (1): TASK-ARP05-000 (docs gate — no source change before it)
+- Wave 1 (3): TASK-ARP05-001, TASK-ARP05-002, TASK-ARP05-003
+- Wave 2 (1): TASK-ARP05-004 (conditional — closes as not-needed if the ADR measurement shows the host error UX is already actionable)
+
+No same-wave file sharing: 000 owns `docs/decisions/` only; 001 owns `src/adapters/postgres.ts`(+`postgres.test.ts`); 002 owns `src/adapters/mysql.ts`(+ new `mysqlQueueBound.test.ts` + `adapterQueryShape.test.ts`); 003 owns `src/adapters/mssql.ts`(+`mssql.parameterized.test.ts`); 004 owns `src/core/connectionManager.ts`(+`connectionManager.test.ts`) in wave 2 only. Driver suites are DB-free (pg/mysql2/tedious mocked); integration suites are DB-gated and run only via the cycle `npm run test:integration` net. Baseline: 3025 passed | 2 skipped at `main @ 65b9c4f` (v1.40.0). Plan: `docs/AI_HANDOFF/PLAN.md`.
 
 ## Cycle AIX-03 — Read-only Database Analysis Copilot Hardening
 

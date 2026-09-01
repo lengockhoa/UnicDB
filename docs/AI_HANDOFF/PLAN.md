@@ -1,223 +1,403 @@
-# Cycle ARP-04 Plan — Tunnel and Endpoint Identity Hardening
+# PLAN — ARP-05: Cross-driver timeout, pool, and resilience contract
 
-Base: `main` @ `6d8f765` (release v1.39.0). Source roadmap (authoritative): `docs/plans/2026-09-01-vsdb-additive-roadmap.md` → `## ARP-04` (lines 194-233). Mandatory gate: **architecture/security decision before source changes** — satisfied by the Wave-0 ADR task, which all source tasks depend on.
+Source: `docs/plans/2026-09-01-vsdb-additive-roadmap.md` §ARP-05 (P1; deps ARP-02 v1.38.0 + ARP-03 v1.39.0 both released; ARP-04 v1.40.0 shipped).
+Base: `main @ 65b9c4f` (v1.40.0). Executor: `unic-code`. Reviewer: `unic-smart`.
+Full-suite baseline: **3025 passed | 2 skipped** (measured fresh on 65b9c4f, `npm test`).
 
 ## §1 Intent
 
-**Problem.** The tunnel manager proves the *local* listener belongs to the spawned SSH child (`listeningPids` PID proof), but it makes **no policy statement about SSH host-key identity**. Today `buildTunnelArgs` renders no `StrictHostKeyChecking`, no `UserKnownHostsFile`, no fingerprint pinning — the connection trusts whatever the platform's OpenSSH defaults are (implicitly `~/.ssh/known_hosts` plus the binary's compiled-in default policy). `BatchMode=yes` already fails unknown host keys (no interactive TOFU prompt), but the *policy* is implicit and platform-dependent: a platform/binary whose default is `ask` degrades to a BatchMode failure, and a misconfigured default of `no`/`off` would silently accept unknown hosts with no source-level guard. This cycle decides and records a host-identity policy, then makes it explicit and fail-closed at the argv builder.
+**Problem.** The three adapters each pick a bespoke resilience posture with no shared, documented support
+contract:
 
-**Success definition.** An ADR in `docs/decisions/` records the threat model, the supported platforms' current OpenSSH trust behavior, the chosen identity policy, rejected alternatives, and explicit downgrade/no-go criteria — and the decision lands **before** any source change. The generated tunnel argv then makes the policy explicit: `-o StrictHostKeyChecking=yes` is pinned in `buildTunnelArgs` while no flag that relaxes or bypasses host-key checking (`no`/`ask`/`accept-new`/`off`, `UserKnownHostsFile`, fingerprint pinning) can appear. The manager's per-key lifecycle guarantees stay intact (same-key reuse, different-key isolation, late-exit own-handle removal, PID-mismatch fail-closed, idempotent stop), and connectionManager edit/delete/probe stop only the intended key while loopback routing keeps the persisted host/port untouched. The form requires **no new user-facing config** (no host-key input), so the form task closes as not-needed with evidence.
+- PostgreSQL — `PG_POOL_MAX = 4` to isolate metadata from pinned cursor/transaction work (`src/adapters/postgres.ts:107,305-314`); pool `connectionTimeoutMillis: 10_000`; `close()` races cursor ROLLBACK + `pool.end()` against 2s/3s guards (`postgres.ts:323-369`); `cancelActiveQuery` via a **dedicated** one-off `Client` with 5s `connectionTimeoutMillis` so it never queues behind a held pool slot (`postgres.ts:513-546`).
+- MySQL — `connectionLimit: 1`, `waitForConnections: true`, **`queueLimit: 0` (infinite queue)**, `connectTimeout: 10_000` (`mysql.ts:149-158`). A slow/hung checkout can enqueue every later request forever.
+- MSSQL — `connectTimeout: 10_000`, `requestTimeout: 0` (unlimited request time for streaming — deliberate, so paused streams survive load-more), `cancelTimeout: 5_000` (`mssql.ts:547-555`); single in-flight request enforced by an `enqueue` chain (`mssql.ts:574-587`).
 
-**User's recorded decisions (from the commissioning brief, treated as authoritative):** policy = **explicit fail-closed strict checking with the user's default OpenSSH trust store** — add `-o StrictHostKeyChecking=yes` (pinned), do NOT add `UserKnownHostsFile` (users keep `~/.ssh/known_hosts` + system defaults). Rejected alternatives to document in the ADR: (a) `accept-new` + VSDB-managed known_hosts (TOFU pinning store) — rejected this cycle (cross-user migration surprise, requires form/persistence wiring, roadmap excludes secret persistence adjacency); (b) per-connection fingerprint pinning — rejected for the same scope reasons, documented as the **upgrade path**; (c) any `accept`/`none` relaxation — **prohibited by charter**.
+These may each be correct, but they are **not a common support contract**: no per-driver matrix explains the
+deliberate differences, no measurement proves the failure behavior is finite, and there is no recorded
+decision about mutation/transaction/cursor replay.
 
-**In scope.** Threat model/ADR (`docs/decisions/`, new dir); decide known_hosts vs explicit fingerprint policy; if approved, strict validation before spawn; per-key lifecycle tests; argv-level guarantee that generated argv cannot relax host-key checks.
+**Success.** (1) A decision record (`docs/decisions/`) with a measured per-driver matrix for
+connect/query/stream/cancel/pool/broken-socket and an explicit SLO + no-automatic-replay decision; (2)
+measured finite failure behavior — every path the matrix lists terminates, no unbounded queue can wedge
+forever, cancellation is best-effort and never replayed; (3) host message normalized only where the
+measurement proves a gap; (4) a regression net pinning today's already-correct behaviors so the contract
+stays true.
 
-**Out of scope.** SSH client implementation; secret/private-key persistence; disabling host checking; cross-connection tunnel reuse; claims of remote-DB TLS identity (no source evidence exists for it). All per roadmap "Out".
+**Method.** Documentation + test-heavy cycle. Existing behaviors are presumed correct; production changes
+land **only where a measurement proves a gap** (e.g. an unbounded queue wedging, a missing cancel timeout).
+Default output is tests that pin behavior + an ADR that records it. **ARP-05 composes with ARP-02/ARP-03/ARP-04 — it must not weaken their guarantees** (cancel-ownership seam discipline, retained-row budget,
+strict host-key pin).
 
 ## §2 Scope
 
-| Task | Owned files | Wave | Depends on |
-|---|---|---|---|
-| TASK-ARP04-000 — ADR: SSH host-key identity policy | `docs/decisions/` (new dir) + `docs/decisions/0001-ssh-host-key-identity-policy.md` (new) | 0 | none |
-| TASK-ARP04-001 — identity input (pinned strict checking) | `src/core/sshTunnel.ts` (+ `src/core/__tests__/sshTunnel.test.ts`) | 1 | TASK-ARP04-000 |
-| TASK-ARP04-002 — lifecycle/race + fail-closed PID proof | `src/core/sshTunnelManager.ts` (+ `src/core/__tests__/sshTunnelManager.test.ts` + new fixture `src/core/__tests__/fixtures/fake-ssh-foreign.mjs`) | 2 | TASK-ARP04-000, TASK-ARP04-001 |
-| TASK-ARP04-003 — manager integration | `src/core/connectionManager.ts` (+ `src/core/__tests__/connectionManager.test.ts`) | 3 | TASK-ARP04-001, TASK-ARP04-002 |
-| TASK-ARP04-004 — form wiring gate (verify-only) | none — inspection-only (likely closed not-needed) | 4 | TASK-ARP04-003 |
+**In**
+- ARP-05.0 — measured contract ADR (wave 0, mandatory gate): a decision record in `docs/decisions/` that
+  documents the per-driver connect/query/stream/cancel/pool/broken-socket matrix, cites each config line,
+  records the measured finite-failure behavior (including the infinite `queueLimit: 0` gap), and records
+  the SLO/no-mutation-retry/no-transaction-replay/no-cursor-replay decision.
+- ARP-05.1 — PostgreSQL (wave 1): pin PG pool isolation, failed-connect/close release, cancel recovery with
+  the dedicated-client seam; change production code only where measurement proves a gap.
+- ARP-05.2 — MySQL (wave 1): pin streaming/cancel with a held `connectionLimit: 1` pool; **bound the
+  source-proven wait gap** — `queueLimit: 0` (infinite wait-for-connection queue) is the one production
+  change this cycle is expected to need; keep cancellation terminal (no replay).
+- ARP-05.3 — MSSQL (wave 1): pin paused-stream-not-timed-out and cancellation/late-request-does-not-wedge
+  (single in-flight `enqueue` + 5s cancel timeout); change production code only where measurement proves a gap.
+- ARP-05.4 — host message (wave 2, **conditional**): normalize the connect-failure host message
+  (actionable, non-secret) in `src/core/connectionManager.ts` ONLY if the wave-1 ADR measurement shows the
+  current error UX is the gap (e.g. raw `queueLimit` wait surfaces as a generic pool timeout with no
+  "connection in use" hint). Otherwise closes **not-needed** with evidence (mirrors TASK-ARP04-004).
 
-**Wave structure (chain).** 002's spawn-path pin (edge-6) asserts the spawned argv carries `["-o","StrictHostKeyChecking=yes"]`, which only turns green after 001's `buildTunnelArgs` change lands. So 002 depends on 001 as well as 000, and the cycle runs as a chain: wave 0 = 000 (docs gate), wave 1 = 001 (argv builder), wave 2 = 002 (lifecycle + spawn-path pin), wave 3 = 003 (manager integration), wave 4 = 004 (verify-only gate). Each task owns its files outright — no two tasks share a file in any wave. The tests-map overlap (`sshTunnel.ts` → both `sshTunnel.test.ts` and `sshTunnelManager.test.ts`) is now moot for same-wave disjointness (001 and 002 run in separate waves), but each task still pins **its own** owned test file, and the mandated full `npm test` on 001 plus the wave/cycle-boundary full-suite net cover the cross-coverage.
+**Out** (explicit, from roadmap + ARP-05 compose rules)
+- Automatic mutation retry, reconnect during transaction/cursor, blanket pool resizing, dependency-heavy
+  circuit breakers.
+- Changing `connectionLimit`, `PG_POOL_MAX`, `requestTimeout`/`connectTimeout`/`cancelTimeout` values,
+  or the cursor-routing predicates, without a measurement proving a gap. Today's deliberate values are
+  pinned by tests, not changed.
+- Weakening ARP-02 cancel-ownership / ARP-03 retained-row cap / ARP-04 host-key pin. All cancel paths stay
+  best-effort, never replayed, never pool/adapter-close-as-cancel.
 
-Out of scope for this cycle (queued portfolio rows, not planned): ARP-05 (cross-driver resilience), ARP-06 (AI policy/usage), ARP-07 (DDL cache invalidation), ARP-08 (console draft recovery, depends on ARP-03), ARP-09 (diagnostics/profiles).
+**Same-wave file disjointness (absolute)**
+- Wave 0: ARP-05.0 owns `docs/decisions/` only.
+- Wave 1: ARP-05.1 owns `src/adapters/postgres.ts`; ARP-05.2 owns `src/adapters/mysql.ts`; ARP-05.3 owns
+  `src/adapters/mssql.ts`. Disjoint. Each task owns its own pinned test file (see §7). The integration
+  suites are DB-gated and excluded from focused runs — they are exercised by the cycle `npm run test:integration` net.
+- Wave 2: ARP-05.4 owns `src/core/connectionManager.ts` (+ `connectionManager.test.ts`) **only if a host-message gap is found**; otherwise closes as not-needed.
 
 ## §3 Approach
 
-**Design in one paragraph.** 000 writes the ADR first (mandatory gate — no source change before it). 001 makes the policy explicit in the pure argv builder: `buildTunnelArgs` adds `args.push("-o", "StrictHostKeyChecking=yes")` beside the existing `ExitOnForwardFailure=yes`/`BatchMode=yes` pairs, and a test proves the argv can never carry a relaxing token. 002 adds lifecycle/race tests to the manager (reusing the existing `fake-ssh.mjs` shim harness, plus one new `fake-ssh-foreign.mjs` fixture that binds the local port with a *detached* process whose PID differs from the spawned child, so the existing `proveOwnership` fail-closed path can be exercised deterministically), and pins that the spawned argv still carries the strict flag. 003 tests connectionManager's intended-key stop semantics (edit/delete/add-probe) against the existing `makeFakeTunnels` harness and pins that `resolveAdapter` routes the adapter to `127.0.0.1:<localPort>` while the persisted `ConnectionConfig` host/port stay unchanged. 004 verifies the form surface exposes no host-key input and closes not-needed.
+Each driver task starts with a **measurement RED probe** (a vitest suite that asserts the finite-failure
+contract on a fake/mocked driver surface), runs it against today's code to record whether it passes, and
+then ships the test as a pin — plus a production change only if the probe proves a gap.
 
-**Why `StrictHostKeyChecking=yes` and no `UserKnownHostsFile`.** Today the argv has no host-key option; `BatchMode=yes` makes an unknown host key fail at connect (no interactive prompt) and ssh implicitly consults the user's `~/.ssh/known_hosts` + the binary's default policy. Adding `-o StrictHostKeyChecking=yes` **pins** the policy so a platform/binary whose default drifts to `ask`/`no`/`off` cannot silently weaken it. Note the **config-override nuance**: an OpenSSH `-o` command-line option overrides `~/.ssh/config`, so a user who deliberately relaxed `StrictHostKeyChecking=no`/`ask` for the bastion in their config will now fail — this is an **intended, fail-closed behavior change** and the ADR records it explicitly. For the common case it is not stricter: users who already trust their bastion have the key in `~/.ssh/known_hosts` (exactly what `yes` requires), and anyone who has not trusted the bastion already fails under `BatchMode`. NOT adding `UserKnownHostsFile` preserves the user's existing trust store and system defaults, so there is **no first-connect regression** and no VSDB-owned key file to manage. This is the charter's "no disabling host checking" boundary honored in the strict direction.
+**ARP-05.0 — ADR (`docs/decisions/0002-cross-driver-resilience-contract.md`, new).** Record:
+- Per-driver matrix, each cell citing the exact config line + current value:
+  - **Connect**: PG `connectionTimeoutMillis: 10_000` (`postgres.ts:313`); MySQL `connectTimeout: 10_000`
+    (`mysql.ts:158`); MSSQL `connectTimeout: 10_000` + LoggedIn poll deadline 10s (`mssql.ts:547,152`).
+  - **Query**: PG `max: PG_POOL_MAX = 4` (`postgres.ts:311`); MySQL `connectionLimit: 1` + atomic
+    multi-statement batch on one held connection (`mysql.ts:155,242-304`); MSSQL `requestTimeout: 0` +
+    one-request `enqueue` chain (`mssql.ts:554,574-587`).
+  - **Stream**: PG cursor `BEGIN`/`DECLARE`/`FETCH`/`CLOSE`, pool slot held (`postgres.ts:1086-1180`);
+    MySQL `connectionLimit: 1` held + `timeout: 0` stream (`mysql.ts:653-675`); MSSQL `requestTimeout: 0`
+    so a paused stream survives load-more (`mssql.ts:548-554`).
+  - **Cancel**: PG dedicated one-off `Client` + `pg_cancel_backend`, never through the pool
+    (`postgres.ts:513-546`); MySQL `stream.destroy()`/`connection.destroy()` best-effort
+    (`mysql.ts:343-368`); MSSQL `request.cancel()` best-effort + `cancelTimeout: 5_000` (`mssql.ts:205-211,555`).
+  - **Pool**: PG 4 slots on demand (`postgres.ts:305-314`); MySQL 1 slot + `waitForConnections: true` +
+    **`queueLimit: 0` infinite queue** (`mysql.ts:156-157`); MSSQL no pool — one tedious `Connection`
+    serialized by `enqueue` (`mssql.ts:514-559`).
+  - **Broken socket**: PG `close()` races cursor ROLLBACK/release(true) + `pool.end()` vs 2s/3s guards
+    (`postgres.ts:323-369`); MySQL `close()` = `pool.end()` (`mysql.ts:198-204`); MSSQL `close()` cancels
+    active requests then `connection.close()` (`mssql.ts:198-223`).
+- Measured finite-failure behavior per driver (probe evidence recorded in the ADR) — the matrix must state
+  that every listed path terminates. **The one known gap to probe and record: MySQL `queueLimit: 0` with a
+  held connection is an unbounded wait** — a slow statement pins the single slot and every later
+  connect/query enqueues with no upper bound (the wait is bounded only when the pool acquires/releases).
+- The SLO/no-replay decision: e.g. connect/query failure ≤ 10s surface, cancel ≤ 5s best-effort,
+  **no automatic replay of mutations, transactions, or cursors** — a retry contract belongs to the caller
+  (read-only re-issue is allowed; mutation replay is not).
+- Recorded probes (each RED/GREEN line pasted): slow connect, occupied pool, cancelled stream, broken
+  socket, per driver, matching the roadmap's "Reproduce slow connect, occupied pool, cancelled stream,
+  broken socket per driver" wave-0 acceptance.
 
-**Interaction with the existing PID proof (must-not-break).** The host-key flag is orthogonal to the local listener identity proof: `StrictHostKeyChecking` governs *who the remote bastion is*; `proveOwnership` governs *which local process owns the forwarded port*. Both stay fail-closed and both must pass before DB traffic flows. 002's new tests must not perturb the existing readiness sequence (`Local forwarding listening` line → `listeningPids` → identity match).
+**ARP-05.1 — PostgreSQL (`postgres.ts`).** Mock the `pg` `Pool`/`Client` (existing pattern in
+`postgres.test.ts`, `adapterQueryShape.test.ts`). RED-probe then pin: metadata work does not queue behind a
+pinned cursor/transaction slot; failed `connect()` releases cleanly; `close()` with open cursors resolves
+< 5s and does not hang `pool.end()`; `cancelActiveQuery` uses a dedicated client even when all pool slots
+are held; a post-cancel/no-op cancel is idempotent. Production change only if a probe proves a gap (e.g. a
+queue that wedges beyond the documented 10s).
 
-**Cross-platform note for the ADR.** `listeningPids` (`src/core/sshTunnelManager.ts:69-125`) selects the socket-table tool by platform: `lsof` on darwin/freebsd/openbsd, `netstat -ano -p tcp` on win32, `ss -ltnp` on linux. The ADR documents these as the supported platforms and records each platform's OpenSSH availability caveat (e.g. Windows bundled OpenSSH version).
+**ARP-05.2 — MySQL (`mysql.ts`).** Mock `mysql2/promise` (`createPool`, `PoolConnection`, stream).
+RED-probe then pin: held streaming/batch connection with `connectionLimit: 1` preserves streaming and the
+terminal error path; cancel is terminal (destroy never replays a mutation/cursor); the connect-failure path
+closes the pool and nulls it (`mysql.ts:184-196`). **Expected production change:** bound the unbounded
+wait — add an `acquireTimeout` so a held single connection cannot wedge later requests forever; keep
+`waitForConnections: true`. **The bound must be injectable for the DB-free suite:** the pool factory reads
+it from a module-scoped constant (e.g. `POOL_ACQUIRE_TIMEOUT_MS`, default `10_000` aligning with
+`connectTimeout`) that the test overrides (e.g. to 50ms), so the pinned test asserts termination within the
+injected bound deterministically — never a real 10s wait. The test may combine the injected bound with
+`vi.useFakeTimers`/`vi.advanceTimersByTime` to drive the mocked pool's held second `getConnection()` to
+reject within the bound; the real `10_000` value stays the production default and is recorded in the ADR.
+If the probe shows the current behavior already finite (it is not), no change.
 
-**Rejected alternatives (documented in the ADR, mirrored here).** (a) `accept-new` + VSDB-managed `known_hosts` (TOFU pinning store) — rejected: first connect would silently write a host key the user never approved, cross-user migration surprises, and it needs form/persistence wiring that the roadmap excludes (secret-persistence adjacency). (b) Per-connection fingerprint pinning — rejected for the same scope reasons; recorded as the documented **upgrade path** if a stronger claim is ever required. (c) Any `accept`/`none` relaxation — prohibited by charter (never disable host checking).
+**ARP-05.3 — MSSQL (`mssql.ts`).** Fake tedious `Connection`/`Request` (existing pattern in
+`mssql.parameterized.test.ts`). RED-probe then pin: a paused stream is not killed by `requestTimeout: 0`
+(nothing arms a timer); `request.cancel()` on a live request settles within `cancelTimeout: 5_000`;
+a late completion/cancel cannot wedge the `enqueue` chain (a settled request releases the next queued
+operation). Production change only if a probe proves a gap.
 
-**Downgrade/no-go criteria (recorded in the ADR, binding on 001).** The trigger fires **only from MANUAL OpenSSH validation on macOS/Linux/Windows** (real-world, per roadmap acceptance) — it CANNOT fire from the pinned automated commands, because 001's tests are pure argv and 002's use fake-ssh shims, neither of which runs real OpenSSH. So a fresh executor must not wait for an automated RED that cannot occur. If manual validation surfaces a real-world break (e.g. a supported platform's bundled OpenSSH chokes on `StrictHostKeyChecking=yes`), the documented fallback is to **revert to recording the current implicit behavior with no new flags**; in that case 001 shrinks to validation-only hardening — the "argv cannot relax host-key checks" test still ships because it needs no new flag (it asserts absence of relaxing tokens). A no-go is recorded in the ADR and the cycle's acceptance adjusts; the decision and its evidence are the deliverable, not the flag itself.
+**ARP-05.4 — host message (`connectionManager.ts`, conditional).** Gate mirrors TASK-ARP04-004: if the
+wave-1 ADR measurement shows the connect-failure UX is already actionable (e.g. `testConnection` at
+`connectionManager.ts:395-402` already rethrows a driver message with a host/port), close as **not-needed**
+with `git diff 65b9c4f -- src/core/connectionManager.ts` evidence. Only if the measurement shows a gap
+(e.g. MySQL's infinite-queue wait surfaces as a bare generic timeout with no actionable hint) does this
+task add a normalization that strips secrets but keeps the actionable diagnostic detail.
 
-**No form input (04.4 closes not-needed).** Verified at commissioning: `src/ui/connectionFormMessages.ts:34-37` exposes `tunnelHost`, `tunnelPort`, `tunnelUser`, `tunnelIdentityFile` — **no** host-key/strict-checking/fingerprint field; `TunnelConfig` (`src/core/sshTunnel.ts`) gains no new field this cycle; `grep` across `src/` finds zero `StrictHostKeyChecking`/`UserKnownHostsFile`/`known_hosts` references today. The strict-checking policy is argv-level and implicit — no user-facing config is required. 004 therefore runs a verify-only gate: confirm the form + config surface is unchanged, run the existing form suite, and record the evidence. If the policy decision had required input, 004 would have become a real wiring task (strict webview validation + secret-free persistence) — it does not.
+**Wave-1 ADR-update protocol (explicit, cross-task).** The ADR
+(`docs/decisions/0002-cross-driver-resilience-contract.md`) is a **docs file, not a code file**. ARP-05.0
+(wave 0) writes the matrix, the known gaps, the SLO/no-replay decision, and the rejected alternatives.
+During wave 1, each driver task appends its measured RED/GREEN probe results to the SAME ADR as a disjoint,
+named section: TASK-ARP05-001 appends `## Probe: PostgreSQL`, TASK-ARP05-002 appends `## Probe: MySQL`,
+TASK-ARP05-003 appends `## Probe: MSSQL`. Because the three wave-1 executors run in parallel and each
+appends only its own section, the sections are disjoint by construction and copy-back merge is trivial
+(append-only, no interleaving with wave-0 content). This does NOT violate the §7 same-wave file-disjointness
+rule, which governs `src/` code files and exists to prevent code merge conflicts — a docs append of disjoint
+sections cannot conflict. The completed ADR measurement (matrix at wave 0 + probe evidence appended in
+wave 1) is what ARP-05.4's gate reads before deciding not-needed vs. change.
+
+**Rejected alternatives.** Per-driver "fix" of values without measurement (all values are deliberate — see
+`postgres.ts:291-304`, `mysql.ts:159-167`, `mssql.ts:548-554` comments); a shared base-adapter
+abstracting the three (would break lazy-per-dialect + DBX-08 capability matrix); blanket `connectionLimit`
+raising for MySQL (held single connection is the stream/transaction isolation — raising would let metadata
+interleave into a user's open transaction, exactly what `postgres.ts:291-304` fixed for PG);
+a dependency-heavy circuit-breaker (roadmap Out); automatic mutation/transaction/cursor replay (roadmap Out).
 
 ## §4 Test Plan
 
-Test-first (RED) is mandatory per task. Cases below are per-task slices with concrete expectations.
+### ARP-05.0 — ADR (docs-gate; verify-only)
 
-### ARP-04.0 — ADR (`docs/decisions/`)
+| # | Type | Test name | Expected |
+|---|---|---|---|
+| 1 | N/A | Docs task — no code | N/A per RULES: zero testable behavior. Verification is the content checklist + grep checks below; no executable test for documentation. |
 
-| Type | Test name | Expected |
-|---|---|---|
-| N/A | Docs task — no code | Test Plan is N/A per RULES: zero testable behavior. Deliverable is the ADR content; verification is the content checklist in §5 and the acceptance checklist in §6. |
+### ARP-05.1 — PostgreSQL (`src/adapters/__tests__/postgres.test.ts`; reuse the pg-mock queue pattern + `adapterQueryShape.test.ts` cursor fixtures)
 
-### ARP-04.1 — identity input (`sshTunnel.ts`)
+| # | Type | Test name | Expected |
+|---|---|---|---|
+| 1 | happy (pin) | metadata `pool.query` does not queue behind a pinned cursor/transaction client | with a `pool.connect()` holding all `PG_POOL_MAX` slots, a metadata call reaches its own slot (no `connectionTimeoutMillis` fail) — pins `PG_POOL_MAX = 4` isolation (`postgres.ts:291-314`) |
+| 2 | edge: resource | `connect()` probe fails → no pool leak | `pool.connect()`/`query("SELECT 1")` throws → `pool.end()` called, `this.pool` null; adapter reusable (second `connect()` builds a fresh pool) |
+| 3 | edge: resource | `close()` with an open cursor resolves < 5s | cursor ROLLBACK + `release(true)` fired; `pool.end()` raced vs 3s guard resolves; no hang (pins `postgres.ts:323-369`) |
+| 4 | edge: cancel | `cancelActiveQuery` uses a dedicated client, never the pool | with all pool slots held, cancel issues `pg_cancel_backend` via a one-off `Client` (`connectionTimeoutMillis: 5_000`); pool untouched |
+| 5 | edge: late/cancel | idle/no-PID cancel is a no-op | empty `activeNonCursorPids` → no dedicated client opened, resolves silently (pins `postgres.ts:520`) |
 
-| Type | Test name | Expected |
-|---|---|---|
-| happy | minimal config pins strict checking | `buildTunnelArgs({ host: "bastion", port: 5433 })` → argv contains the pair `["-o", "StrictHostKeyChecking=yes"]` (present as its own pair; existing `arrayContaining` assertions unaffected — verified: `sshTunnel.test.ts` uses `arrayContaining`, no exact-argv equality) |
-| edge: cannot relax | argv never contains a relaxing host-key token | across representative configs (minimal, user+identity, identity-only) the argv contains **no** token matching `/StrictHostKeyChecking=(no\|ask\|accept-new\|off)/i` and **no** `UserKnownHostsFile` option (any value) |
-| edge: form preserved | non-relaxing arg layout unchanged | with `user` + `identityFile` + `port` + `targetPort` → `-i <id>`, `-l <user>`, `-p <port>`, `-L 127.0.0.1:<local>:127.0.0.1:<target>` all still present exactly as before the new flag |
-| edge: BatchMode coexistence | no-interactive-TOFU guarantee survives | the argv still contains `-o BatchMode=yes` alongside `-o StrictHostKeyChecking=yes` (an unknown host key cannot fall through to an interactive prompt) |
-| edge: option pair shape | flag is a separate token pair, never glued | no token equals `-oStrictHostKeyChecking=yes` (glued) and no `-oStrictHostKeyChecking` bare token |
-| regression | existing validation unchanged | `emptyHost`, `badIdentityFile` (whitespace/relative), `badPort` rejects still throw `TunnelError` with the same codes |
+### ARP-05.2 — MySQL (`src/adapters/__tests__/adapterQueryShape.test.ts`; add a `mysql2/promise` mock lane + a new focused unit suite for the queue bound)
 
-### ARP-04.2 — lifecycle/race + fail-closed PID proof (`sshTunnelManager.ts`)
+| # | Type | Test name | Expected |
+|---|---|---|---|
+| 1 | happy (pin) | single-SELECT routes to streaming; multi-statement batch atomic | `singleSelect` → `openStreamingQuery` returns `{ results: [], batched }`; batch holds one connection, `beginTransaction`/`commit`/`release` exactly once (pins `mysql.ts:231-304`) |
+| 2 | edge: resource | held single connection + late request terminates (queue bound) | `connectionLimit: 1` slot held (stream/tx); a second connect/query must fail/throw within a **bounded, injectable** acquire wait — the pool factory reads `acquireTimeout` from a module-scoped constant (`POOL_ACQUIRE_TIMEOUT_MS`, default `10_000`) the test overrides to a short bound (e.g. 50ms) and drives with `vi.useFakeTimers`/`vi.advanceTimersByTime`, so no real 10s wait — **RED on today's code: `queueLimit: 0` + no `acquireTimeout` = unbounded** |
+| 3 | edge: cancel | cancel is terminal — no replay | `cancelActiveQuery` destroys the held connection/stream; a later repeat cancel is a silent no-op; mutation/transaction/cursor never re-issued (pins `mysql.ts:343-368,796-828`) |
+| 4 | edge: late error | stream ends without `fields`/`error` does not hang | `openStreamingQuery` settles on `end`, releases the pool connection (pins `mysql.ts:682-705`) |
+| 5 | edge: connect-fail | `connect()` failure closes the pool and nulls it | `getConnectionWithUtcSession` throws → `pool.end().catch(()=>undefined)`, `this.pool = null` (pins `mysql.ts:184-196`) |
 
-Uses the existing `fake-ssh.mjs` shim harness (`src/core/__tests__/sshTunnelManager.test.ts` precedent) + one new fixture.
+### ARP-05.3 — MSSQL (`src/adapters/__tests__/mssql.parameterized.test.ts`; reuse the fake-Connection/`newRequest` pattern)
 
-| Type | Test name | Expected |
-|---|---|---|
-| happy (regression pin) | same-key reuse returns the identical handle | two `start(cfg, "k1")` calls resolve to the **same** handle instance; `mgr.list().length === 1` (pins the coalescing contract already implemented — remains green) |
-| edge: isolation | different-key isolation under stop | `start` keys "a" and "b" → `stop("a")` leaves "b" live (`list()[0].key === "b"`), "b" restarts as a fresh handle after its own stop |
-| edge: late exit | unexpected post-ready exit removes only its own handle | child for key "a" is SIGKILLed externally → `list()` no longer contains "a", the sibling "b" handle survives, exactly one `TunnelExit { key: "a", intentional: false }` fires |
-| edge: PID mismatch fails closed | foreign-held port rejects and kills the child | `fake-ssh-foreign.mjs` binds the target port with a **detached** process whose PID ≠ the spawned child's PID and prints the forward line → `start` rejects with the `port <N> is held by another process (pids …)` literal and the child is SIGKILLed; the detached binder is terminated by the test in `finally` (port released) |
-| edge: stop idempotent | stop on missing / repeated stop is safe | `stop("missing")` returns `false`; `stopAll()` then `stop("gone")` returns `false`; a second `stop("k1")` after a successful one returns `false`; no throw on any path |
-| edge (spawn-path pin) | spawned argv inherits the pinned strict flag | a recording shim logs the spawned argv to a file then execs `fake-ssh.mjs` → `start` succeeds AND the logged argv contains `["-o", "StrictHostKeyChecking=yes"]` and no relaxing token (the manager cannot strip or relax the flag its builder emits) |
+| # | Type | Test name | Expected |
+|---|---|---|---|
+| 1 | happy (pin) | streaming SELECT not timed out while rows still flow | `requestTimeout: 0` → no timer armed; a long paused stream survives load-more (pins `mssql.ts:548-554`) |
+| 2 | edge: resource | live request cancels within `cancelTimeout` | `request.cancel()` settles the awaiting `runRequest`/stream path within 5s; `activeRequests` drained (pins `mssql.ts:555,205-211`) |
+| 3 | edge: late error | late completion cannot wedge the `enqueue` chain | a settled/failed request resolves `next` in `enqueue` so the following queued operation proceeds; no deadlock, no unhandled rejection (pins `mssql.ts:574-587`) |
+| 4 | edge: connect | `connect()` failure cleans up the connection | fail/error path → `clearConnection` + `connection.close()` best-effort; `connecting` reset in `.finally` (pins `mssql.ts:121-196`) |
+| 5 | edge: late/cancel | cancel after settle is a no-op | `request.cancel()` on an already-completed request swallows; state stays settled (pins `mssql.ts:608-624`) |
 
-### ARP-04.3 — manager integration (`connectionManager.ts`)
+### ARP-05.4 — host message (`src/core/__tests__/connectionManager.test.ts`; conditional — see §2 gate)
 
-Uses the existing `makeFakeTunnels()` harness (`connectionManager.test.ts:527-566`) which records `startCalls` (`{key, port}`) and `stopCalls` (`string[]`).
-
-| Type | Test name | Expected |
-|---|---|---|
-| happy | loopback routing retains persisted host/port | tunneled cfg resolved via `getAdapter()`/probe → the adapter `factory` receives `{...cfg, host: "127.0.0.1", port: <handle.localPort>}` while `state.connections` still holds the original `cfg.host`/`cfg.port` unchanged (persisted metadata never rewritten to the loopback form) |
-| edge: intended key (edit) | edit stops only its own probe + old tunnel | `editConnection("c1")` on a tunneled id → `stopCalls` contains `probe-c1` then `c1`, and does **not** contain `c2`; a live tunnel for `c2` is untouched |
-| edge: intended key (delete) | delete stops only the deleted id | `deleteConnection("c1")` → `stopCalls` contains `c1`, not `c2` |
-| edge: intended key (add-probe failure) | failed add cleans its own probe only | `addConnection(c1)` whose `testConnection()` rejects → `stopCalls` contains `c1`, not `c2` (probe cleanup path `connectionManager.ts:181`) |
-| edge: probe key isolation | probe uses `probe-<id>` so it never reuses a live `<id>` tunnel | probe calls `tunnels.start(…, "probe-c1")` and never `"c1"`; a same-id re-probe while a live `c1` tunnel exists does not reuse/stop it |
-| regression | recovery gate unchanged | an **intentional** tunnel exit for the active key does **not** enter recovery (existing `handleTunnelExit` gate — `exit.intentional` short-circuit stays green) |
-
-### ARP-04.4 — form wiring gate (verify-only)
-
-| Type | Test name | Expected |
-|---|---|---|
-| N/A | Verify-only gate — no code | Test Plan is N/A per RULES: the deliverable is recorded evidence. Verification is the inspection + form-suite run in §5 and the acceptance checklist in §6. Expected outcome: gate closes **not-needed** with evidence; if the inspection ever found a host-key input surface, the gate would have been a real wiring task. |
+| # | Type | Test name | Expected |
+|---|---|---|---|
+| 1 | decision | host-message gate | if wave-1 measurement shows the connect-failure UX already actionable → close as not-needed with `git diff 65b9c4f -- src/core/connectionManager.ts` evidence (mirrors TASK-ARP04-004) |
+| 2 | edge: content (only if gap) | connect failure surfaces an actionable message | the surfaced message keeps host/port/driver + the actionable hint (e.g. "connection in use / pool exhausted"); the hint text is present, not a bare generic timeout |
+| 3 | edge: secret-redaction (only if gap) | no secret/credential leak in the surfaced message | a driver error that embeds the password (e.g. a `mysql.ts` pool error containing the DSN/password) is stripped of the credential before surfacing; the message contains no `password`/DSN fragment |
+| 4 | regression (only if gap) | `testConnection` rethrow preserved | `connectionManager.ts:395-402` still throws the candidate error after closing it; no swallowed error |
 
 ## §5 Verification Commands
 
-Repository scripts (verified in `package.json`): `test` (`vitest run`), `test:integration` (DB-gated — NOT used here), `typecheck` (`tsc --noEmit`), `compile` (`node esbuild.js`), `package` (release gate — not used). **No `lint` script exists** (roadmap §portfolio constraint: "No lint script exists"); typecheck + compile are the static gates. There is no `yarn` and no `test:release-core` script in this npm repo — the RULES "test selection" floor is satisfied by the pinned focused vitest runs below plus the mandated full `npm test` on TASK-ARP04-001 and at the wave/cycle boundary.
+Run inside a clean worktree on `main @ 65b9c4f`. No real DB required — all suites are mocked (`pg`
+Pool/Client, `mysql2/promise` pool, fake tedious Connection). **No lint script exists** — the static gate is
+`npm run typecheck` (script verified in `package.json`); `npm run compile` is the build gate. Default `npm test`
+excludes `*.integration.test.ts` (`vitest.config.ts`) — the integration suites are DB-gated and run only via
+`npm run test:integration` (the cycle net, NOT per-task).
 
-Per-task (each task pins its OWN owned test file — see §2 for why):
-
-```bash
-# TASK-ARP04-000  (ADR — content checklist, no vitest)
-test -f docs/decisions/0001-ssh-host-key-identity-policy.md
-grep -qi "StrictHostKeyChecking" docs/decisions/0001-ssh-host-key-identity-policy.md
-grep -qi "known_hosts" docs/decisions/0001-ssh-host-key-identity-policy.md
-grep -qi "downgrade" docs/decisions/0001-ssh-host-key-identity-policy.md
-
-# TASK-ARP04-001  (sshTunnel.ts → tests-map [sshTunnel.test.ts, sshTunnelManager.test.ts];
-#                  pin the OWNED unit file only — sshTunnelManager.test.ts belongs to TASK-ARP04-002,
-#                  which runs in a later wave)
-#                  FULL SUITE mandated here — pure argv builder, lowest flake risk
-npx vitest run src/core/__tests__/sshTunnel.test.ts
-npm run typecheck
-npm run compile
-npm test
-
-# TASK-ARP04-002  (sshTunnelManager.ts → tests-map [sshTunnelManager.test.ts, sshTunnel.test.ts];
-#                  wave 2 — runs AFTER 001 lands, so the tests-map overlap with sshTunnel.test.ts
-#                  is no longer a same-wave conflict; still pin the OWNED manager file only;
-#                  full suite at the wave boundary)
-npx vitest run src/core/__tests__/sshTunnelManager.test.ts
-npm run typecheck
-npm run compile
-
-# TASK-ARP04-003  (connectionManager.ts → tests-map [connectionManager.test.ts])
-npx vitest run src/core/__tests__/connectionManager.test.ts
-npm run typecheck
-npm run compile
-
-# TASK-ARP04-004  (verify-only — inspection + existing form suite)
-# NOTE: src/config/types.ts is READ-DENIED in this environment (confirmed — Read returns permission
-# denied). If the executor also hits the denial, record that ConnectionConfig.tunnel carries the
-# TunnelConfig shape (per connectionManager.ts:692-700) and grep src/core/sshTunnel.ts for host-key
-# tokens instead — the assertion (no host-key input surface) is unaffected.
-grep -nE "StrictHostKeyChecking|UserKnownHostsFile|known_hosts|hostKey|fingerprint" src/ui/connectionForm.ts src/ui/connectionFormMessages.ts src/config/types.ts
-#   expected: no matches (empty output) — the form/config surface exposes no host-key input
-grep -nE "StrictHostKeyChecking|UserKnownHostsFile|known_hosts|hostKey|fingerprint" src/core/sshTunnel.ts   # fallback target if types.ts is read-denied
-npx vitest run src/ui/__tests__/connectionForm.test.ts
-npm run typecheck
-```
-
-Wave/cycle-boundary net: a full `npm test` runs at each wave boundary and before close-out (per RULES regression net); TASK-ARP04-001 already runs it inline as the mandated per-task full suite.
+- **ARP-05.0** (wave 0):
+  ```bash
+  test -f docs/decisions/0002-cross-driver-resilience-contract.md
+  grep -qi "queueLimit" docs/decisions/0002-cross-driver-resilience-contract.md
+  grep -qi "no.*replay\|replay" docs/decisions/0002-cross-driver-resilience-contract.md
+  git status --short src/ | wc -l        # must be 0 — docs task, no src/ change
+  ```
+  (Wave-0 scope is the matrix + known gaps + SLO/no-replay decision. The measured RED/GREEN probe sections
+  are appended during wave 1 by TASK-ARP05-001/002/003 per the §3 wave-1 ADR-update protocol, each under
+  its own `## Probe: <driver>` heading — the greps below on each driver task verify its own section.)
+- **ARP-05.1** (wave 1):
+  ```bash
+  grep -qi "## Probe: PostgreSQL" docs/decisions/0002-cross-driver-resilience-contract.md
+  npx vitest run src/adapters/__tests__/postgres.test.ts
+  npm run typecheck
+  npm run compile
+  ```
+  (Selection per RULES: `postgres.ts` → tests-map `[postgres.test.ts, postgres.integration.test.ts,
+  postgres.sortQuery.test.ts, postgresCatalog.test.ts]`. The pinned new-test target is `postgres.test.ts`;
+  the integration file is DB-gated and excluded; sibling suites run in the wave/cycle `npm test` net.)
+- **ARP-05.2** (wave 1):
+  ```bash
+  grep -qi "## Probe: MySQL" docs/decisions/0002-cross-driver-resilience-contract.md
+  grep -qi "acquireTimeout" docs/decisions/0002-cross-driver-resilience-contract.md   # chosen bound recorded
+  npx vitest run src/adapters/__tests__/adapterQueryShape.test.ts
+  npx vitest run src/adapters/__tests__/mysqlQueueBound.test.ts   # new focused unit suite (new)
+  npm run typecheck
+  npm run compile
+  ```
+  (The queue-bound test MUST assert termination within the injected bound — override `POOL_ACQUIRE_TIMEOUT_MS`
+  to a short value (e.g. 50ms) and/or use `vi.useFakeTimers`; never wait a real 10s in the DB-free suite.)
+  (Selection per RULES: `mysql.ts` → tests-map `[mysql.integration.test.ts, mysql.sortQuery.test.ts]`.
+  Neither is a DB-free unit file — `mysql.integration.test.ts` is DB-gated; the queue-bound + streaming
+  tests go into a **new** DB-free unit suite `mysqlQueueBound.test.ts` (new) plus the existing
+  `adapterQueryShape.test.ts` (which already mocks the mysql2 `query()` shape). The mandatory non-empty
+  floor is satisfied by the two DB-free files.)
+- **ARP-05.3** (wave 1):
+  ```bash
+  grep -qi "## Probe: MSSQL" docs/decisions/0002-cross-driver-resilience-contract.md
+  npx vitest run src/adapters/__tests__/mssql.parameterized.test.ts
+  npm run typecheck
+  npm run compile
+  ```
+  (Selection per RULES: `mssql.ts` → tests-map `[mssql.integration.test.ts, mssql.parameterized.test.ts,
+  mssql.sortQuery.test.ts]`. `mssql.parameterized.test.ts` is the DB-free pinned target; the integration
+  file is DB-gated; sibling suites run in the cycle net.)
+- **ARP-05.4** (wave 2, after 001+002+003):
+  ```bash
+  grep -qi "## Probe: PostgreSQL" docs/decisions/0002-cross-driver-resilience-contract.md   # wave-1 evidence present
+  grep -qi "## Probe: MySQL" docs/decisions/0002-cross-driver-resilience-contract.md
+  grep -qi "## Probe: MSSQL" docs/decisions/0002-cross-driver-resilience-contract.md
+  git diff 65b9c4f -- src/core/connectionManager.ts     # gate evidence (empty if closed not-needed)
+  npx vitest run src/core/__tests__/connectionManager.test.ts   # only if a change was produced
+  npm run typecheck
+  npm run compile
+  ```
+- **Wave-2 net (after all tasks)**:
+  ```bash
+  npm test
+  npm run test:integration          # controlled — real fixtures only, per roadmap acceptance
+  ```
+  Expected: `npm test` ≥ **3025 passed | 2 skipped** (baseline at 65b9c4f). Integration: only where
+  fixtures exist; skip cleanly where they do not.
 
 ## §6 Acceptance Criteria
 
-- [ ] The ADR exists in `docs/decisions/0001-ssh-host-key-identity-policy.md` and records: supported platforms (darwin/freebsd/openbsd → `lsof`; win32 → `netstat`; linux → `ss`), current OpenSSH trust behavior (no host-key flags today, `BatchMode=yes` fails unknown hosts, implicit `~/.ssh/known_hosts`), the chosen policy (explicit `StrictHostKeyChecking=yes`, no `UserKnownHostsFile`), rejected alternatives, and the downgrade/no-go criteria. → TASK-ARP04-000.
-- [ ] No source change landed before the ADR decision (wave order: 000 gates 001/002/003). → TASK-ARP04-000.
-- [ ] `buildTunnelArgs` emits the pinned pair `-o StrictHostKeyChecking=yes`, never emits a relaxing token (`no`/`ask`/`accept-new`/`off`) nor `UserKnownHostsFile`, keeps `-o BatchMode=yes`, and preserves existing validation rejects. → TASK-ARP04-001.
-- [ ] The manager keeps the lifecycle guarantees under test: same-key reuse (identical handle), different-key isolation, unexpected late exit removes only its own handle, a foreign-held port fails closed with the held-by-another-process rejection and child SIGKILL, `stop` is idempotent, and the spawned argv cannot drop or relax the strict flag. → TASK-ARP04-002.
-- [ ] connectionManager edit/delete/add-probe stop only the intended key (`probe-<id>`/`<id>`, never a sibling id), and loopback routing delivers `127.0.0.1:<localPort>` to the adapter while the persisted `ConnectionConfig` host/port stay unchanged. → TASK-ARP04-003.
-- [ ] The form/config surface exposes no host-key input and the existing form suite stays green; the 004 gate closes **not-needed** with recorded evidence. → TASK-ARP04-004.
-- [ ] Focused owned-file tests + `npm run typecheck` + `npm run compile` green per task; full `npm test` green on TASK-ARP04-001 and at each wave/cycle boundary. → all tasks.
-- [ ] Charter out-of-scope untouched: no SSH client implementation, no secret/private-key persistence, no disabling of host checking, no cross-connection tunnel reuse, no remote-DB TLS identity claim. → cycle-wide.
+Every criterion traces to a task.
+
+- [ ] **ARP-05.0** — `docs/decisions/0002-cross-driver-resilience-contract.md` exists with a per-driver
+  connect/query/stream/cancel/pool/broken-socket matrix, each cell source-cited, plus the known gaps and the
+  SLO/no-automatic-replay decision; `grep` checks exit 0; no `src/` file changed. **Wave-0 scope is the
+  matrix + known gaps; the measured finite-failure probe evidence is appended by the wave-1 tasks
+  (TASK-ARP05-001/002/003), each under its own `## Probe: <driver>` section per the §3 wave-1 ADR-update
+  protocol — the measurement is completed in wave 1, before ARP-05.4's gate reads it.**
+- [ ] **ARP-05.0** — the matrix explains the intentional adapter differences (PG slot isolation,
+  MySQL single-slot stream/transaction isolation, MSSQL `requestTimeout: 0` paused-stream survival) and
+  records the MySQL `queueLimit: 0` unbounded-wait gap.
+- [ ] **ARP-05.1** — PG pool isolation, failed-connect/close release, and cancel recovery pinned by tests;
+  RED probe evidence pasted **and appended to the ADR under `## Probe: PostgreSQL`**; `npm run typecheck` +
+  `npm run compile` exit 0.
+- [ ] **ARP-05.2** — streaming preserved with a held single connection; the terminal error/cancel path never
+  replays a mutation/transaction/cursor; **a late request with a held connection now terminates within a
+  bounded, injectable acquire wait** (RED on 65b9c4f: unbounded `queueLimit: 0`; the test asserts termination
+  within an injected short bound via `vi.useFakeTimers`, never a real 10s wait); RED probe evidence appended
+  to the ADR under `## Probe: MySQL`, with the chosen `acquireTimeout` bound recorded there; `npm run
+  typecheck` + `npm run compile` exit 0.
+- [ ] **ARP-05.3** — paused stream not timed out; cancellation and late requests cannot wedge the `enqueue`
+  chain; RED probe evidence appended to the ADR under `## Probe: MSSQL`; `npm run typecheck` + `npm run
+  compile` exit 0.
+- [ ] **ARP-05.4** — gate recorded: closed-as-not-needed (both `connectionManager.ts` diffs empty) OR a
+  host-message normalization shipped with RED-first proof that strips secrets while keeping the actionable
+  diagnostic.
+- [ ] **Compose** — ARP-02 cancel-ownership (dedicated-client PG seam, destroy-terminal MySQL seam,
+  cancel-in-`close()` MSSQL seam), ARP-03 retained-row cap, and ARP-04 host-key pin remain green (regression
+  pins in the driver suites); drivers stay lazily-imported per dialect; no mutation/transaction/cursor
+  automatic replay anywhere.
+- [ ] **Cycle** — `npm test` full suite ≥ **3025 passed | 2 skipped** (no regression); controlled
+  `npm run test:integration` run where fixtures exist.
+- [ ] **Reviewer** verdict APPROVED or APPROVED-WITH-MINOR on PLAN and on each task.
 
 ## §7 Global Constraints
 
-- TypeScript 5.4 / VS Code `^1.75.0` compatibility; no new dependencies; npm only (no `yarn`).
-- **Pinned policy, non-negotiable:** add `-o StrictHostKeyChecking=yes` ONLY; do NOT add `UserKnownHostsFile`, `accept-new`, `no`, `ask`, `off`, or per-connection fingerprint pinning in this cycle (fingerprint pinning is the documented future upgrade path, not implemented).
-- Downgrade/no-go binding on 001: if `strict=yes` breaks a supported platform in verification, revert to documenting the current implicit behavior with no new flags, and 001 shrinks to validation-only hardening (the absence-of-relaxing-token test ships regardless).
-- No user-facing config change: `TunnelConfig` (`src/core/sshTunnel.ts`) gains no new field; `connectionForm.ts`/`connectionFormMessages.ts` are not edited (004 is verify-only).
-- Same-wave tasks must not share a file (see §2); the executor must not open files owned by a different task. Each task's verification pins its own owned test file.
-- Do NOT touch `src/config/types.ts`, `extension.ts`, or the adapter layer in this cycle.
-- `listeningPids` platform mapping (`lsof`/`netstat`/`ss`) is the supported-platform source of truth; the ADR documents it, the code is not changed.
-- No `lint` script exists — do not invent one; static gates are `typecheck` + `compile`.
-- Charter boundaries are cycle-wide constraints: no SSH client implementation, no secret persistence, no host-checking disablement, no cross-connection tunnel reuse, no remote-DB TLS identity claim.
-- `docs/decisions/` is new; ADR file naming is `NNNN-title.md`, this cycle creates `0001-ssh-host-key-identity-policy.md`.
+- Base: `main @ 65b9c4f` (v1.40.0). All work in a fresh worktree; no git commit in P2/P3.
+- Same-wave file disjointness absolute: 000 writes the ADR `docs/decisions/0002-cross-driver-resilience-contract.md` at wave 0; 001 owns `src/adapters/postgres.ts`(+`postgres.test.ts`); 002 owns `src/adapters/mysql.ts`(+`mysqlQueueBound.test.ts`(new)+`adapterQueryShape.test.ts`); 003 owns `src/adapters/mssql.ts`(+`mssql.parameterized.test.ts`); 004 owns `src/core/connectionManager.ts`(+`connectionManager.test.ts`) in wave 2 only. **The wave-1 tasks (001/002/003) each append their disjoint `## Probe: <driver>` section to the ADR file 000 wrote — a docs-file, append-only, section-disjoint exception to the disjointness rule per the §3 wave-1 ADR-update protocol; no `src/` code file is shared within a wave.**
+- TDD mandatory: RED probe output pasted before implementation in every task report (docs task 000 records probes instead).
+- Do NOT weaken ARP-02/ARP-03/ARP-04 guarantees; do NOT change today's deliberate timeout/pool/`requestTimeout` values without a measurement proving a gap; no automatic mutation/transaction/cursor replay; cancel stays best-effort and never pool/adapter-close-as-cancel.
+- Drivers remain lazily-imported per dialect; no new shared base-adapter abstraction; no dependency-heavy circuit breakers; no blanket pool resizing.
+- No lint script exists — the static gate is `npm run typecheck` (MUST be in every task's Verification Commands); `npm run compile` is the build gate. Integration tests run only via `npm run test:integration`, never the default `npm test` net.
+- Verification must be DB-free in a clean worktree; `npm run test:integration` only where fixtures exist.
+
+---
+
+## Planner Report
+
+PLANNER_MODEL: claude-opus-5
 
 ## Planner Self-Audit
 
 Checklist: 12/12 pass
-Fixed during audit: (1) Confirmed via tests-map that `sshTunnel.ts` and `sshTunnelManager.ts` map to BOTH unit test files — pinned each wave-1 task to its OWN owned test file in §2/§5 to keep the executors file-disjoint (running a sibling's test file mid-wave is meaningless coverage). (2) Verified no exact-argv equality assertion exists anywhere (`sshTunnel.test.ts` uses `arrayContaining`), so the new flag cannot break existing tests. (3) Verified the form surface (`connectionFormMessages.ts:34-37`: `tunnelHost`/`tunnelPort`/`tunnelUser`/`tunnelIdentityFile`) exposes no host-key field and `grep` across `src/` finds zero host-key option references — grounding 04.4's verify-only close. (4) Made the downgrade/no-go path a first-class acceptance criterion so the ADR's decision is binding on 001, not advisory. (5) Traced every §6 criterion to its task. `src/config/types.ts` is read-denied in this environment — the tunnel config type is grounded instead via `src/core/sshTunnel.ts` (`TunnelConfig`) and the form message surface; the read-denial fallback for 004 is specified in §5's verification block. (6) Per plan review Round 1, 002 now depends on 001 as well as 000 (its spawn-path pin requires 001's builder change) — the cycle is now a chain (wave 1: 001, wave 2: 002, wave 3: 003, wave 4: 004); §2/§5, INDEX.md, and TASK-ARP04-002/003 updated to match.
-Known gaps: The PID-mismatch test (002) needs a new `fake-ssh-foreign.mjs` fixture that binds the local port from a detached grandchild process — the only new test infrastructure in the cycle, and the only test that depends on the platform socket-table tool (`lsof` on darwin/bsd, `ss` on linux, `netstat` on win32). If a CI platform's socket tool behaves differently (e.g. `netstat` local-address format), the executor must adapt the parsing in the fixture or the assertion to the observed output — the fail-closed CONTRACT (reject + SIGKILL + child killed) is what matters, not the exact tool text. No test covers cross-connection tunnel reuse or remote-DB TLS identity — deliberately out of scope per charter. (The `src/config/types.ts` read-denial fallback for 004 is now specified in §5, not here.)
-
-## Planner Report
-
-PLANNER_MODEL: unic-smart
-PLAN_REVIEW: Approved by unic-smart (Round 2 — all Round 1 findings verified resolved; advisory nits only)
+Fixed during audit:
+- Test selection grounded in the real `.cache/index/tests-map.json`: `postgres.ts` → 4 tests (integration excluded — DB-gated, `vitest.config.ts` excludes `*.integration.test.ts`); `mysql.ts` → 2 tests, **neither a DB-free unit file** → added a NEW focused DB-free unit suite `src/adapters/__tests__/mysqlQueueBound.test.ts` (new) to carry the queue-bound/streaming pins, alongside the existing `adapterQueryShape.test.ts`; `mssql.ts` → 3 tests (`mssql.parameterized.test.ts` is the DB-free pinned target). Every task's focused selection is non-empty; full suite runs at wave/cycle boundary.
+- All path/line anchors re-verified against current source: PG `PG_POOL_MAX = 4` at `postgres.ts:107`, pool `postgres.ts:305-314`, `close()` `:323-369`, dedicated-client cancel `:513-546`; MySQL pool `mysql.ts:149-158` (`queueLimit: 0` at `:157`), connect-fail cleanup `:184-196`, batch `:242-304`, cancel `:343-368`, streaming `:648-705`; MSSQL `connect()` `mssql.ts:113-196`, `close()` `:198-223`, `enqueue` `:574-587`, `runRequest` `:589-657`, `createConnection` options `:514-559` (`requestTimeout: 0` `:554`, `cancelTimeout: 5_000` `:555`). Package scripts verified: `typecheck` = `tsc --noEmit`; NO lint script exists (recorded, not silently omitted).
+- The one known production change (ARP-05.2 `acquireTimeout` bound) is scoped to a measurement-proven gap (infinite `queueLimit: 0`); every other value is pinned as regression, matching the cycle's docs+test-first charter.
+- Index normalization done as part of this planning: leftover TASK-AIX07-001/002 `approved` rows set to `done` (cosmetic; no reviewer verdict history lost).
+Known gaps:
+- ARP-05.2's exact bound (recommend `acquireTimeout: 10_000` aligned with `connectTimeout`) is a recommendation; the executor may record the ADR-measured value and adjust to match `connectTimeout` — the RED probe contract (a late request must terminate within a bounded wait) is the invariant, and the chosen number must be recorded in the ADR.
+- ARP-05.1/ARP-05.3 production changes are conditional: no gap is currently known in PG/MSSQL, so these tasks may be pin-only. The planner did NOT change PG/MSSQL values (all deliberate per their comments).
+- ARP-05.4 is gated on the wave-1 ADR measurement exactly like TASK-ARP04-004; whether it ships a change is decided by the recorded probe evidence, not by a predetermined outcome.
 
 ## Plan Review Log
 
-### Round 1 — 2026-09-02 · code-reviewer (unic-smart)
-VERDICT: Issues Found
+### Round 1 — 2026-09-02 · unic-smart
+Verdict: Issues Found
 
 COMPLETENESS:
-  - none (ARP-04.0 ADR task 000 carries the full gate: platforms via `listeningPids` mapping sshTunnelManager.ts:69-125, current OpenSSH trust behavior, chosen policy, rejected alternatives, downgrade/no-go — all before any source task; dependency graph 000→001/002→003→004 is real and enforced in INDEX.md)
+  - none
 CONSISTENCY:
-  - §2/§7 policy is coherent and fail-closed: `-o StrictHostKeyChecking=yes` pinned, no `UserKnownHostsFile`, and 001 edge-2 pins the "generated argv cannot relax host-key checks" invariant as a test (`/StrictHostKeyChecking=(no|ask|accept-new|off)/i` + no `UserKnownHostsFile`), re-pinned at the spawn path in 002 edge-6. Rejected alternatives (accept-new+TOFU store, fingerprint pinning as upgrade path) documented in §3 and required in the ADR checklist.
-  - Minor: §3/§4.1's "not stricter for any user who already trusts their bastion" is slightly too broad — `-o` command-line flags override `~/.ssh/config`, so a user who deliberately set `StrictHostKeyChecking=no` for the bastion in their config will now fail (intended fail-closed, but a behavior change). ADR checklist should explicitly record the config-override nuance.
+  1. (§3 vs §4/§5/§7) — ADR measurement protocol is undefined. §3 (lines 99-101) requires ARP-05.0 to record "measured finite-failure behavior per driver (probe evidence recorded in the ADR)" and "each RED/GREEN line pasted", but §4 (line 144) declares ARP-05.0 has "zero testable behavior / no executable test", and §5 (lines 192-198) gives it only `test -f`/`grep`/`git status` checks — no probe commands exist for the wave-0 task to produce measurements. Result: the wave-0 ADR gate cannot satisfy its own §6 acceptance ("measured finite-failure behavior"), and the wave-1 tasks (001/002/003) would have to append evidence to the ADR file that §7 (line 275) assigns exclusively to 000. Fix: state explicitly that 001/002/003 append their RED/GREEN probe lines to the ADR during wave 1 (completing the measurement before ARP-05.4's gate), and reword §6 ARP-05.0 to "matrix + known gaps at wave-0; measured evidence appended by wave-1 tasks".
 CLARITY:
-  - Downgrade/no-go criteria are concrete on the fallback side (revert to no-new-flags, 001 shrinks to validation-only hardening, absence-of-relaxing-token test ships regardless, no-go recorded in ADR), but the trigger ("if strict=yes breaks a supported platform in verification") cannot fire from the pinned automated commands (001 tests are pure argv; 002 uses fake-ssh shims, not real OpenSSH). It can only fire from real-world/manual OpenSSH validation per roadmap acceptance. Suggest one line stating the trigger is manual validation on macOS/Linux/Windows, so a fresh executor does not wait for an automated RED that cannot occur.
-  - Minor: §5's 004 verification greps `src/config/types.ts`, which is read-denied in this environment (confirmed — Read returns permission denied). The fallback lives only in the Planner Self-Audit; move it into §5 so a fresh 004 executor sees it in the Verification Commands block.
+  2. (§4 ARP-05.2, test 2) — the queue-bound test asserts a late request terminates "within the bounded acquire wait (recommend `acquireTimeout: 10_000`)"; a real 10s wait in a DB-free unit suite is slow/flaky, and no injection mechanism is specified. Fix: make the bound injectable (constructor/config override or `vi.useFakeTimers`) so the pinned test asserts termination within the bound deterministically without a real 10s wait.
+  3. (§4 ARP-05.4) — the gap-found path ships only one edge case (test 2; test 3 is a regression pin), below the >=2-edge-case floor used by the other tasks. Fix: add a second edge case for the normalization path (e.g. a secret-bearing driver error is stripped of the password; or a non-host/port error keeps its actionable hint), or state the conditional waiver explicitly when the task ships a change.
 SCOPE:
-  - Wave/file disjointness is genuinely disjoint: 001 owns sshTunnel.ts+its test, 002 owns sshTunnelManager.ts+its test+new fake-ssh-foreign.mjs (confirmed tests-map overlap `sshTunnel.ts`→both test files, correctly pinned to owned files).
-  - IMPORTANT: 002's edge-6 spawn-path pin asserts the spawned argv contains `["-o","StrictHostKeyChecking=yes"]`, which only turns green after 001's buildTunnelArgs change lands. But PLAN.md §2 and INDEX.md both record 002 depending on 000 only. If wave-1 runs 001 and 002 in parallel, 002's edge-6 stays RED and the executor cannot make it green without editing 001's file (forbidden by the same-wave disjointness rule) — a stuck-RED risk. Fix: record 002 depends on 001, or state wave-1 executes 001 before 002.
-  - 003 composition with ARP-02/03 leftovers is conflict-free: the stopTunnel calls at connectionManager.ts:263 (edit), :302 (delete), :427 (discard path), probe cleanup :245 and `probe-<id>` key :231, and the recovery `intentional` gate :484 all exist and are covered by 003's intended-key/loopback/recovery-regression tests.
+  - none — same-wave file disjointness absolute, no cycles, 004 correctly gated after wave 1.
 YAGNI:
-  - none — in-scope matches charter exactly; the new `fake-ssh-foreign.mjs` fixture is justified infra to exercise the existing fail-closed PID path deterministically.
+  - none — no circuit breakers, no blanket pool resizing, no replay; the only production change (MySQL `acquireTimeout`) is measurement-proven.
 
-NOTES: Plan is sound on policy, gate ordering (000 before source), and scope. Only actionable item before execution: encode the 001→002 wave-1 ordering (or dependency) so the spawn-path strict-flag test in 002 is not stuck RED under parallel wave execution.
+NOTES: Dependency graph implementable; every task has a testable test plan (000 has a valid docs-gate N-A with reason); verification commands concrete and runnable; out-of-scope list respected; 004's not-needed close path is properly gated with evidence commands.
 
-### P2.5 Revision — Round 1 findings applied
-PLANNER_REVISION: Round 1 findings applied — (1) 002 now depends on 001+000; cycle is a chain (wave 1: 001, wave 2: 002, wave 3: 003, wave 4: 004), INDEX/graph/waves and TASK-ARP04-002/003 updated; (2) ADR checklist + §3 now record that `-o StrictHostKeyChecking=yes` overrides `~/.ssh/config` relaxations — an intended fail-closed behavior change, not uniformly "not stricter"; (3) downgrade trigger stated as MANUAL OpenSSH validation on macOS/Linux/Windows only, not automated fake-ssh verification; (4) `src/config/types.ts` read-denial fallback moved from Self-Audit into §5's 004 verification block.
+#### Revision (Round 1) — 2026-09-02 · unic-smart
+PLANNER_REVISION: The round-1 review returned 3 findings; PLAN.md and TASK-ARP05-000/001/002/003/004 were revised to close them. The Round 1 entry above is preserved as-is.
 
-### Round 2 — 2026-09-02 · code-reviewer (unic-smart)
-VERDICT: Approved
+PLANNER_REVISION (Finding 1 — wave-1 ADR-update protocol):
+- Added §3 "Wave-1 ADR-update protocol" defining that wave-1 tasks (001/002/003) append measured RED/GREEN
+  probe results to the ADR 000 owns, each as a disjoint `## Probe: <driver>` section (docs file, append-only,
+  copy-back merge trivial; explicitly not a same-wave code-file conflict).
+- §5 now greps each driver task's own `## Probe:` section (and ARP-05.4 pre-gates on all three), and ARP-05.0's
+  block notes that wave-0 scope is matrix + known gaps with probe sections appended in wave 1.
+- §6 reworded ARP-05.0 to "matrix + known gaps at wave-0; measured evidence appended by wave-1 tasks" and
+  added an ADR-append criterion to each of ARP-05.1/05.2/05.3.
+- §7 clarified the ADR file-ownership line: wave-1 appends are the sole docs-file exception to the
+  same-wave disjointness rule.
+- TASK-ARP05-000/001/002/003: Target Files now list the ADR append, Verification Commands add the
+  `grep -qi "## Probe: <driver>"` check, Acceptance Criteria include the append, and Interfaces/Produces
+  note the append direction.
 
-COMPLETENESS:
-  - none — all 5 tasks carry Goal/Target Files/Test Cases/Verification/Acceptance/Dependencies/Interfaces; package.json verified (`test`/`typecheck`/`compile` present, no `lint` — §5's claim accurate); ≥2 edge cases per task (001: 5, 002: 5, 003: 5).
-CONSISTENCY:
-  - none — dependency chain 000→001→002→003→004 is consistent across PLAN.md §2 (table + wave structure), INDEX.md (graph/waves/dependency cols), and TASK-ARP04-001/002/003/004 Dependencies sections; config-override nuance, manual-only downgrade trigger, and §5 read-denial fallback match across plan + ADR checklist + task files.
-CLARITY:
-  - none — downgrade trigger now explicitly MANUAL OpenSSH validation on macOS/Linux/Windows (never automated fake-ssh), stated in PLAN.md §3/§7 and TASK-ARP04-000/001; 004's read-denied types.ts fallback is inline in §5 and TASK-ARP04-004.md.
-SCOPE:
-  - none — chain waves file-disjoint; 002's spawn-path pin (edge-6) correctly depends on 001's builder change, resolving the Round 1 stuck-RED risk.
-YAGNI:
-  - none — fake-ssh-foreign.mjs fixture is the only new infra and is justified by the fail-closed PID-mismatch path.
+PLANNER_REVISION (Finding 2 — ARP-05.2 test 2 real-10s wait):
+- §3 ARP-05.2, §4 test 2, §5 ARP-05.2 note, §6, and TASK-ARP05-002 now specify an **injectable bound**: the
+  pool factory reads `acquireTimeout` from a module-scoped constant (`POOL_ACQUIRE_TIMEOUT_MS`, default
+  10_000) that the test overrides to a short value and drives with `vi.useFakeTimers`/`vi.advanceTimersByTime`,
+  so the suite asserts termination deterministically with no real 10s wait; the real value stays the
+  production default and is recorded in the ADR.
 
-NOTES: Advisory-only nits (non-blocking, no action required): (a) PLAN.md §2's "Depends on" for 003 lists 001+002 while TASK-ARP04-003.md lists 000+001+002 — 000 is transitively implied, no execution risk; (b) PLAN.md §6 ADR acceptance line omits the config-override nuance, but TASK-ARP04-000.md's content checklist (the binding place) requires it.
+PLANNER_REVISION (Finding 3 — ARP-05.4 gap-found path below edge-case floor):
+- §4 ARP-05.4 table and TASK-ARP05-004 split the single combined edge case into two edge cases of different
+  kinds — case 2 `edge: content` (actionable message present: host/port/driver + hint) and case 3
+  `edge: secret-redaction` (no credential/DSN leak in the surfaced message) — keeping the `testConnection`
+  rethrow as the regression pin. The gap-found path now ships ≥2 edge cases + 1 regression.
+
+### Round 2 — 2026-09-02 · unic-smart
+Verdict: Approved
+
+Round-1 findings verified resolved:
+- Finding 1 (ADR-update protocol): RESOLVED. §3 lines 136-146 defines the wave-1 ADR-update protocol (each driver task appends a disjoint `## Probe: <driver>` section to the ADR 000 owns); §5 greps each driver's own probe section (lines 222, 232-233, 248) and ARP-05.4 pre-gates on all three (258-260); §6 rewords ARP-05.0 to "matrix + known gaps at wave-0; measured evidence appended by wave-1 tasks" (278-283) and adds the append criterion to ARP-05.1/05.2/05.3 (288, 293-294, 297); §7 records the docs-append exception (313). No remaining wave-0 measurement obligation.
+- Finding 2 (real-10s wait): RESOLVED. §3 (114-121), §4 test 2 (178), §5 note (239-240), §6 (291-295) all specify `POOL_ACQUIRE_TIMEOUT_MS` default 10_000, overridden to a short bound and driven by `vi.useFakeTimers`/`vi.advanceTimersByTime`; never a real 10s wait; chosen value recorded in the ADR. RED provenance on today's unbounded `queueLimit: 0` is explicit.
+- Finding 3 (ARP-05.4 edge floor): RESOLVED. §4 (195-200) splits into two distinct edge kinds — `edge: content` (actionable message) and `edge: secret-redaction` (no credential/DSN leak) — plus the `testConnection` rethrow regression pin (test 4). Gap-found path ships ≥2 edges + 1 regression.
+
+Fresh whole-plan pass:
+COMPLETENESS: none — all sections complete, no TODO/TBD; verification commands concrete and runnable; `typecheck`+`compile` gates present and lint absence explicitly documented.
+CONSISTENCY: none — baseline (3025/2) consistent across §0/§5/§6; disjointness rule, ADR-append exception, and ARP-05.4 gate sequencing all agree; the sole production change (acquireTimeout) is consistently scoped as measurement-proven across §2/§3/§6/§7.
+CLARITY: minor — §4 ARP-05.2 does not assign tests 3-5 to a specific file between `adapterQueryShape.test.ts` and the new `mysqlQueueBound.test.ts`; non-blocking since §5 runs both DB-free files and the DB-free floor holds regardless of placement.
+SCOPE: none — waves disjoint per src file, ARP-05.4 correctly gated after wave-1 evidence, out-of-scope list respected.
+YAGNI: none — no circuit breakers, no blanket resizing, no replay; injectable bound + fake timers are justified determinism, not over-engineering.
+
+NOTES: All three round-1 findings closed cleanly with no new blockers; plan is implementable as written.
