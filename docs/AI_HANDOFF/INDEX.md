@@ -12,7 +12,7 @@ Cycle AIX-07 — **Trust, Privacy & Governance**. Active, executable scope cover
 | TASK-AIX07-003 | Policy and audit command host integration | blocked | none | unic-smart |
 | TASK-DBX07-001 | AIX-06 Trace r3 review fixes | done | none | unic-smart |
 | PORT-RLX-02 | Cross-dialect query lifecycle completion | active — planned in Cycle RLX-02 | RLX-01 | unic-smart |
-| PORT-RLX-03 | Connection, tunnel, and schema-refresh recovery | queued — NOT READY | RLX-01, PORT-RLX-02 | - |
+| PORT-RLX-03 | Connection, tunnel, and schema-refresh recovery | active — planned in Cycle RLX-03 | RLX-01, PORT-RLX-02 | unic-smart |
 | PORT-DBX-06 | Reviewed PostgreSQL rename workflow | queued — NOT READY | PORT-RLX-03 | - |
 | PORT-DBX-08 | Explicit adapter capability parity | superseded (shipped in v1.29.0) | - | unic-smart |
 | PORT-AIX-03 | Read-only database analysis copilot hardening | queued — NOT READY | PORT-RLX-03 | - |
@@ -40,6 +40,21 @@ Graph: TASK-AIX08-001 → TASK-AIX08-002.
 - Wave 2 (1): TASK-AIX08-002
 
 No same-wave target-file overlap. The registry contract is intentionally separate from host transport integration.
+
+## Cycle RLX-03 — Connection, Tunnel, and Schema-Refresh Recovery
+
+| Task / Portfolio | Title | Status | Dependencies | Reviewer |
+|---|---|---|---|---|
+| TASK-RLX03-001 | Make SSH child exit observable and restart-safe | ready | none | - |
+| TASK-RLX03-002 | Bound active tunnel reconnects and surface status | ready | TASK-RLX03-001 | - |
+| TASK-RLX03-003 | Invalidate SchemaCache on adapter replacement | ready | none | - |
+
+Graph: TASK-RLX03-001 → TASK-RLX03-002; TASK-RLX03-003 independent.
+
+- Wave 1 (2): TASK-RLX03-001, TASK-RLX03-003
+- Wave 2 (1): TASK-RLX03-002
+
+No same-wave target-file overlap. Connection recovery is sequenced only behind the real post-ready tunnel-exit interface; cache adapter-identity invalidation remains independent.
 
 ## Cycle RLX-02 — Cross-dialect Query Lifecycle Completion
 

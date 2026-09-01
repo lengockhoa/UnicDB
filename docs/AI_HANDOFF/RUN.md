@@ -1,6 +1,6 @@
 Command: handoff-fullstack
-Goal: Ship PORT-RLX-02 Cross-dialect query lifecycle completion (Wave 7)
-Base: main @ cb27b86 — v1.31.0 released (tag + VSIX)
-Phase: done
-Cursor: RLX-02 cycle COMPLETE — 3/3 tasks approved, released as v1.31.0
-Next: next portfolio row is PORT-RLX-03 (deps RLX-01 + PORT-RLX-02, both now done) — start new cycle
+Goal: Ship PORT-RLX-03 Connection, tunnel, and schema-refresh recovery (Wave 8)
+Base: main @ c6d6e36 — v1.31.0 released, RLX-02 done
+Phase: P3
+Cursor: plan approved round 2 — committing PLAN_RLX03.md + TASK-RLX03-001/002/003
+Next: I3 waves (w1: 001+003, w2: 002), then review + release v1.32.0

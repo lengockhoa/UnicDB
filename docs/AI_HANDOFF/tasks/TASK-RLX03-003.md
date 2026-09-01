@@ -1,0 +1,69 @@
+# TASK-RLX03-003 — Invalidate SchemaCache on adapter replacement
+
+- Status: `ready`
+- Owner: `-`
+- Reviewer: `-`
+- Parent plan: `docs/AI_HANDOFF/PLAN_RLX03.md` §1–§3
+
+## Goal
+
+Make the existing global SchemaCache invalidate before returning any fresh-TTL entry from a newly resolved `DbAdapter`. This prevents stale cross-connection and post-reconnect schema data while retaining stale-on-error/null behavior and RLX-01’s single-flight/generation guarantees.
+
+## Target Files
+
+- `src/ui/schemaCache.ts` — observe resolved non-null adapter identity inside the existing provider-resolution path and invoke the existing generation-based `invalidate(): void` before cache freshness is evaluated for a replacement adapter.
+- `src/ui/__tests__/schemaCache.test.ts` — extend the existing deferred adapter/clock unit suite with adapter-transition, pre-transition in-flight, null/throw fallback, and same-adapter single-flight assertions.
+
+## Test Cases (REQUIRED — TDD)
+
+| # | Type | Test name | Expected | Pre-state / Fixture |
+|---|---|---|---|---|
+| 1 | happy | `adapter B transition replaces fresh schema and table cache families` | After A caches `getSchemas()`, `getTables()`, and `getTables("public")`, changing provider output to B makes each next lookup call its B method exactly once and return B’s distinct values despite A’s TTL still being fresh. This shared case covers `schemasEntry`, `tablesAllEntry`, and `tablesBySchema`. | Two inspectable fake `DbAdapter` objects, fixed injected `now`, provider variable initially A then B. |
+| 2 | edge — cache-ordering/catalog | `adapter B transition replaces every pre-resolve column and catalog/DDL cache family` | After A caches `getColumns("users", "public")`, `getViews("public")`, `getRoutines("public")`, `getSequences("public")`, `getConstraints("public", "users")`, and `getObjectDdl("view", "public", "v_users")`, switching to catalog-and-objectDdl-capable B makes each next lookup call B and return its distinct B value, never A’s fresh value. This shared case covers `columnsByKey`, `viewsBySchema`, `routinesBySchema`, `sequencesBySchema`, `constraintsByKey`, and `ddlByKey`. | A and B advertise the required `catalog` and `objectDdl` capabilities and expose distinct inspection results; fixed injected clock preserves fresh TTL. |
+| 3 | edge — in-flight ordering | `A response begun before adapter B transition cannot commit after invalidation` | Deferred A result still resolves to its original caller, but after provider changes to B, a B read fetches `new`; a later within-TTL read remains `new` and never returns/commits A’s old response. | Existing `deferred<T>()` helper with fixed clock, A and B adapters. |
+| 4 | edge — unavailable provider | `null and throwing provider keep cached stale data without changing adapter identity` | With A’s cached list, provider `null` and provider rejection both resolve to the exact A list; neither clears cache nor calls a replacement adapter. | Provider variable returning A, then null, then a rejected promise. |
+| 5 | regression | `same adapter still coalesces concurrent expired reads` | Two expired `getTables("public")` reads while provider returns the same adapter call `listTables("public")` once and both resolve to the same refreshed list. | Existing RLX-01 deferred/single-flight fixture with `ttlMs: 0`. |
+
+`hasCatalog()` has no cache entry: it resolves the current adapter and returns only its declared capability, so it needs no stale-entry transition fixture. The `inflight` map is coordination state rather than a cached data family; case 3 covers its generation-boundary behavior.
+
+## Test Files
+
+- `src/ui/__tests__/schemaCache.test.ts` — all listed identity-transition and cache-contract tests.
+
+## Verification Commands
+
+```bash
+npx vitest run src/ui/__tests__/schemaCache.test.ts
+npm run typecheck
+npm run compile
+```
+
+No `lint` script exists in `package.json`.
+
+## Acceptance Criteria
+
+- [ ] The first resolved non-null adapter establishes cache identity without a spurious extra fetch; every later different non-null adapter calls the existing `invalidate(): void` before a cache freshness decision.
+- [ ] The existing `generation` guard prevents a pre-transition in-flight result from overwriting entries belonging to the replacement adapter.
+- [ ] A null/throwing provider still follows the source-proven stale-on-error result and does not erase the last resolved identity merely because an adapter is temporarily unavailable.
+- [ ] Existing key-level single-flight, TTL semantics, catalog capability gates, DDL null semantics, and public `SchemaAdapterProvider`/`SchemaCache` method signatures remain unchanged.
+- [ ] All listed tests pass and reviewer verdict is APPROVED or APPROVED-WITH-MINOR.
+
+## Dependencies
+
+- none
+
+## Interfaces
+
+- Consumes: `export type SchemaAdapterProvider = () => Promise<DbAdapter | null> | DbAdapter | null`, `SchemaCache.constructor(adapterProvider: SchemaAdapterProvider, options: SchemaCacheOptions = {})`, `private async resolveAdapter(): Promise<DbAdapter | null>`, `invalidate(): void`, and `getTables(schema?: string): Promise<TableInfo[]>` from `src/ui/schemaCache.ts`; `DbAdapter.listTables(schema?: string): Promise<TableInfo[]>` from `src/adapters/types.ts`.
+- Produces: unchanged public signatures; `SchemaCache` now treats a different resolved non-null `DbAdapter` object identity as an adapter-generation boundary and invokes its existing `invalidate(): void` before serving a fresh cached entry.
+
+---
+
+## Discussion
+
+### 2026-09-01 · planner · unic-smart
+Every public cache lookup already awaits `resolveAdapter()` before it calls `fetchEntry`, and `invalidate()` already increments `generation` before clearing all slots. Put identity observation there so every schema/table/catalog/DDL lookup shares the boundary and no extension-only connection-id convention is invented. Do not invalidate on `null` or provider throw: lines 296–302 intentionally preserve stale completion results when `getAdapter()` cannot currently resolve.
+
+---
+
+## Executor Report
