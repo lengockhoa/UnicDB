@@ -144,3 +144,16 @@ FINDINGS:
     - src/adapters/__tests__/adapterQueryShape.test.ts:1309 — `beforeDestroys` is a constant rather than an observation of `fakeStream.destroy()`, so case 3b passes even if late cancellation destroys a runner-owned stream. Track the fake stream's destroy count and assert it remains unchanged after both calls.
   minor: none
 NEXT_STATUS_FOR_INDEX: changes_requested
+
+## Reviewer Verdict (fix round 1)
+VERDICT: approved
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN: PASS
+FINDINGS:
+  critical: none
+  important:
+    - resolved: src/adapters/__tests__/adapterQueryShape.test.ts:1271 — natural UPDATE-path rejection is followed by two cancels that preserve destroy/release/pool-end counts.
+    - resolved: src/adapters/__tests__/adapterQueryShape.test.ts:1313 — fakeStream.destroy() now increments an observed counter, which remains unchanged after two late cancels.
+  minor: none
+NEXT_STATUS_FOR_INDEX: approved
