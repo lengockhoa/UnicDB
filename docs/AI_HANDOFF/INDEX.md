@@ -45,9 +45,9 @@ No same-wave target-file overlap. The registry contract is intentionally separat
 
 | Task / Portfolio | Title | Status | Dependencies | Reviewer |
 |---|---|---|---|---|
-| TASK-RLX03-001 | Make SSH child exit observable and restart-safe | ready | none | - |
-| TASK-RLX03-002 | Bound active tunnel reconnects and surface status | ready | TASK-RLX03-001 | - |
-| TASK-RLX03-003 | Invalidate SchemaCache on adapter replacement | ready | none | - |
+| TASK-RLX03-001 | Make SSH child exit observable and restart-safe | changes_requested | none | unic-smart |
+| TASK-RLX03-002 | Bound active tunnel reconnects and surface status | changes_requested | TASK-RLX03-001 | unic-smart |
+| TASK-RLX03-003 | Invalidate SchemaCache on adapter replacement | critical_block | none | unic-smart |
 
 Graph: TASK-RLX03-001 → TASK-RLX03-002; TASK-RLX03-003 independent.
 

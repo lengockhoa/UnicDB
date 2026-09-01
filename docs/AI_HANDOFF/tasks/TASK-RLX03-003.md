@@ -141,3 +141,17 @@ Verification Output: |
 
 Status: PASS
 Note: none — no lint script exists (per task file); acceptance criteria all hold: first non-null adapter establishes identity without extra fetch, different adapter invalidates before freshness evaluation, null/throw keeps stale + identity, generation guard blocks pre-transition commit, RLX-01 single-flight/TTL/capability-gate/DDL-null semantics unchanged, public signatures unchanged.
+
+## Reviewer Verdict
+
+VERDICT: critical_block
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN: PASS
+FINDINGS:
+  critical:
+    - src/ui/schemaCache.ts:356 — after an adapter transition invalidates generation, a same-key B lookup still returns A's pre-transition promise from `inflight`; it can return A schema data to B. Clear or generation-scope inflight work at the adapter boundary so B starts its own request while A may only settle its original caller.
+  important:
+    - src/ui/__tests__/schemaCache.test.ts:580 — case #3 resolves A before issuing B's lookup, so the adapter transition/invalidation occurs only at line 594 after A has committed. Start B's lookup while A remains deferred and assert that B does not coalesce onto A's old promise.
+  minor: none
+NEXT_STATUS_FOR_INDEX: critical_block

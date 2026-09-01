@@ -128,3 +128,26 @@ Note:
   `$(check) <name> reconnected`, `$(error) <name> reconnect failed`; normal render, tooltip,
   show/hide, and subscription disposal preserved (both subs disposed via item.dispose override).
 - Worktree files left uncommitted as instructed.
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic-smart (configured: unic-smart)
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/core/__tests__/connectionManager.test.ts src/ui/__tests__/statusBar.test.ts
+  result: 25 pass / 0 fail
+  command: npm run typecheck
+  result: PASS (tsc --noEmit)
+  command: npm run compile
+  result: PASS (esbuild build complete)
+TEST_PLAN_COVERAGE: all-followed
+FINDINGS:
+  critical:
+    - none
+  important:
+    - src/core/connectionManager.ts:413 — `onDidExit` remains subscribed after `dispose()`, while `recoveryOwns()` has no disposed flag. An exit delivered after disposal captures the current lifecycle generation and still matches the retained active id, so it starts a new recovery and emits statuses/reconnects during shutdown. Set a disposed flag synchronously before disposal awaits, gate the exit handler/recovery on it, and dispose the tunnel-exit subscription; add an after-dispose exit regression test.
+  minor:
+    - none
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Model isolation passed: executor unic-code differs from reviewer unic-smart. Targeted tests, typecheck, and compile pass; the post-disposal exit path violates the shutdown requirement.

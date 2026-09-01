@@ -112,3 +112,24 @@ Verification Output: |
   esbuild: build complete
 Status: PASS
 Note: fake-ssh.mjs untouched — unexpected exit driven deterministically by `a.child.kill("SIGKILL")` on the post-ready handle; no fixture change needed. Intentional marking uses a private WeakSet<ChildProcess> (not ad-hoc child props). The task's `stop()`-then-restart and `stopAll()` exit-event assertions use a short settle wait (100ms) after SIGTERM; child exit event ordering is guaranteed by `once("exit", ...)` semantics.
+
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic-smart (configured `handoff.reviewer.model`; running unic-smart)
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN: PASS
+  - `npx vitest run src/core/__tests__/sshTunnelManager.test.ts`: 9 pass / 0 fail
+  - `npx vitest run src/core/__tests__/sshTunnelManager.test.ts src/core/__tests__/sshTunnel.test.ts`: 19 pass / 0 fail
+  - `npm run typecheck`: pass
+  - `npm run compile`: pass
+TEST_PLAN_COVERAGE: partial — rejection-cleanup test does not prove the subsequent call is a fresh spawn rather than the cached rejected attempt.
+FINDINGS:
+  critical: none
+  important:
+    - src/core/__tests__/sshTunnelManager.test.ts:190 — the alleged fresh retry only checks that `r3` rejects with the normal error. A stale `pending` entry returning the first rejected attempt produces the same result, so this required rejection-cleanup assertion passes even when `pending.delete(key)` is absent. Assert a distinct rejection/error or instrument the shim to prove a second spawn.
+    - src/core/sshTunnelManager.ts:174 — `start()` is `async`, so each `return attempt`/`return inflight` is wrapped in a distinct promise. Concurrent callers therefore do not receive the single shared pending promise required by the acceptance criterion; make `start()` non-async and return the stored `Promise<TunnelHandle>` directly, then assert promise identity in the concurrency test.
+  minor: none
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Model isolation passed: executor reported unic-code and reviewer is configured/running unic-smart. RED output contains genuine failing assertions.
