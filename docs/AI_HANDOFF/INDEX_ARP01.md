@@ -14,3 +14,6 @@ Executor: `unic-code` · Reviewer: `unic-smart` (MUST differ)
 Graph: TASK-ARP01-001 → TASK-ARP01-003; TASK-ARP01-002 → TASK-ARP01-003.
 Waves: wave 1 = 2 parallel tasks (001 owns `readOnlyIntent.ts`+test [+`dangerousStatement.ts` mask seam], 002 owns `connectionManager.ts`+test — disjoint); wave 2 = 1 verification task (003 owns `types.ts`/`adapterQueryShape.test.ts` only-if-needed).
 Note: wave 1 commit 080462c, wave 2 commit 77da659; review range 7263835..HEAD; ARP-01.3 closed as not-needed with no-bypass evidence.
+Shipped in v1.37.0 (commit da52009, tag v1.37.0).
+
+PORT-ARP-01: superseded (shipped in v1.37.0).

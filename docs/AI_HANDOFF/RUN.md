@@ -1,6 +1,6 @@
 Command: handoff-fullstack
 Goal: Ship ARP-01 Read-only enforcement completeness (transaction execution boundary) from the additive roadmap.
 Base: main @ a948b3f (v1.36.0)
-Phase: R2
-Cursor: I4 commit 1b366a9 — all 3 tasks pending_review; 3 code-reviewer agents (unic-smart) launched in parallel on review range 7263835..HEAD
-Next: collect verdicts → R4.5 auto-fix if any changes_requested/critical_block → R5 release (CHANGELOG + bump 1.37.0 + tag + push + vsce package).
+Phase: done
+Cursor: cycle ARP-01 shipped — wave 1 commit 080462c (001 backtick masking + 002 tx guard), wave 2 commit 77da659 (003 closed not-needed + lockfile sync), release commit da52009, tag v1.37.0 pushed, vsdb-1.37.0.vsix packaged. All 3 tasks approved_minor round 1, zero fix rounds.
+Next: cycle complete — next commissionable candidate from the additive roadmap: ARP-02 (shutdown-safe query ownership, gated on released RLX-02) or ARP-03 (retained-result memory budget). On user direction, return to planning.

@@ -22,6 +22,7 @@ Cycle AIX-07 — **Trust, Privacy & Governance** — complete; shipped in v1.28.
 | TASK-AIX05-103 | Production OMP engine lifecycle, fallback, and context continuity | done | TASK-AIX05-101, TASK-AIX05-102 | unic-smart |
 | PORT-AIX-06/07 | Redacted agent trace and centralized governance | superseded (shipped in v1.26.0–v1.28.0) | - | unic-smart |
 | PORT-DX-01 | Regression and release confidence lane | superseded (shipped in v1.36.0) | - | unic-smart |
+| PORT-ARP-01 | Read-only enforcement completeness | superseded (shipped in v1.37.0) | - | unic-smart |
 
 ## Cycle AIX-03 — Read-only Database Analysis Copilot Hardening
 
