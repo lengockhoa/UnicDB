@@ -844,9 +844,10 @@ describe("QueryRunner — non-batched cancellation seam (TASK-RLX-001)", () => {
   });
 
   it("Test #3 — ARP02-001 case 3: double cancel on a batched in-flight run → batched.cancel 1x, seam never", async () => {
-    // Regression pin: PID window at executeAll:191 and currentBatched at
-    // executeAll:203 are disjoint — two cancels while a batched cursor is
-    // in flight must call batched.cancel() exactly once and never the seam.
+    // Regression pin: PID window at executeAll:245 (activeAdapter cleared)
+    // and currentBatched at executeAll:253 are disjoint — two cancels while
+    // a batched cursor is in flight must call batched.cancel() exactly once
+    // and never the seam.
     const batched = makeBatched(["n"], [null]);
     let resolveFetch: ((v: any[][] | null) => void) | null = null;
     batched.fetchBatch.mockImplementation(

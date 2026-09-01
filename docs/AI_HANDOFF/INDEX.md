@@ -128,7 +128,7 @@ No same-wave target-file overlap. MySQL and SQL Server own disjoint adapter/test
 | TASK-ARP02-001 | Cancel ownership: sticky cancel + in-flight-scoped pending + monotonic seq | pending_review | none | unic-smart |
 | TASK-ARP02-002 | Panel-close session-epoch guard for deferred continuations | pending_review | none | unic-smart |
 | TASK-ARP02-003 | Late-completion connection provenance (per-connection revision map) | pending_review | none | unic-smart |
-| TASK-ARP02-004 | Host integration: runStatements busy ownership + deactivate fence | pending_review | TASK-ARP02-001, TASK-ARP02-002 | unic-smart |
+| TASK-ARP02-004 | Host integration: runStatements busy ownership + deactivate fence | approved_minor | TASK-ARP02-001, TASK-ARP02-002 | unic-smart |
 
 Graph: TASK-ARP02-001 independent; TASK-ARP02-002 independent; TASK-ARP02-003 independent; TASK-ARP02-001 → TASK-ARP02-004; TASK-ARP02-002 → TASK-ARP02-004.
 

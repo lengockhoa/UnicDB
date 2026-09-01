@@ -198,3 +198,16 @@ untracked-cfg fallback semantics.
 (write here: VERDICT / REVIEWER_MODEL / EXECUTOR_MODEL / VERIFICATION_RERUN / TEST_PLAN_COVERAGE /
  FINDINGS / NEXT_STATUS_FOR_INDEX)
 ```
+
+## Reviewer Report
+REVIEWER_MODEL: unic-smart
+ROUND: 1
+VERDICT: approved_minor
+Findings:
+- src/core/connectionManager.ts:416-423 — the provenance discard path closes the candidate adapter exactly once but does NOT stop a tunnel that `resolveAdapter` already started for `cfg.id` (:688-695). For a TUNNELED connection deleted mid-flight (case 2), the SSH tunnel + local port-forward for the deleted id is orphaned until `dispose()` (deleteConnection's `stopTunnel` at :302 ran BEFORE the in-flight `resolveAdapter` re-started the tunnel). Minimal fix: in the discard branch add best-effort `if (current.tunnel) this.stopTunnel(cfg.id);` before/after the close — mirrors edit/delete tunnel cleanup. Non-blocking edge case; adapter provenance itself is correct.
+- (revision map, re-resolve, and provenance re-check are sound: synchronous bumps pre-await, single-threaded read/re-check with no lost-update window, discarded candidates closed exactly once on the guardAdapter-wrapped reference, RLX-03 getAdapter and ARP-01 guardAdapter untouched. Tests 1-6 pass with real assertions incl. close-count and fresh-config checks.)
+
+Fix round 1 (ARP-02): minor APPLIED — `if (current.tunnel) this.stopTunnel(cfg.id);` added in the
+getAdapterFor provenance-discard branch (connectionManager.ts, after the candidate close) by the
+TASK-ARP02-002 fix-round executor; full suite (npm test 2985 pass / 2 skip), typecheck and compile
+all green. See TASK-ARP02-002.md "Fix Round 1 Report".

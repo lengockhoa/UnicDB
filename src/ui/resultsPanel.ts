@@ -967,15 +967,21 @@ export class ResultsPanel {
     // and the refresh path's displaced-cursor close (P1-5). The audit's
     // rejected alternative — a `runSql(sql, { noCursor: true })` protocol
     // option — would change QueryRunner + all three adapters (out of scope).
+    // TASK-ARP02-002 (fix round 1) — capture the epoch ONCE before the first
+    // await. The previous `isStaleSession(this.sessionEpoch)` checks re-read
+    // the CURRENT epoch (always equal to itself — a no-op that could never
+    // fire), so a dispose during the cursor close / listPkColumns await left
+    // the save running and posted stale acks into a re-created panel.
+    const epoch = this.sessionEpoch;
     await this.closeStatementCursor(r);
     // TASK-ARP02-002 — disposed while closing the cursor: return silently,
     // no pkColumns query, no saveResult ack into a later panel session.
-    if (this.isStaleSession(this.sessionEpoch)) return;
+    if (this.isStaleSession(epoch)) return;
     const pkColumns =
       edits.length === 0
         ? []
         : await this.saveContext.listPkColumns(parsed.schema ?? "", tableName);
-    if (this.isStaleSession(this.sessionEpoch)) return;
+    if (this.isStaleSession(epoch)) return;
 
     const columns = r.result.columns;
     const serverRows = r.result.rows;
@@ -1049,14 +1055,18 @@ export class ResultsPanel {
           ctidRes.reason === "ambiguous_only"
             ? `Cannot save: postgres no-PK + ctid lookup is ambiguous (multiple rows match the dirty cells). Add a PRIMARY KEY or refine edits.`
             : `Cannot save: postgres no-PK + ctid lookup failed for every dirty row.`;
-        this.postMessage({
-          type: "saveResult",
-          index,
-          ok: false,
-          refused: true,
-          reason,
-          errors: [reason],
-        });
+        // TASK-ARP02-002 (fix round 1) — post-await ack: a dispose during the
+        // ctid lookup must not post a refusal into a re-created panel.
+        if (!this.isStaleSession(epoch)) {
+          this.postMessage({
+            type: "saveResult",
+            index,
+            ok: false,
+            refused: true,
+            reason,
+            errors: [reason],
+          });
+        }
         return;
       }
       ctidByRowId = ctidRes.map;
@@ -1073,14 +1083,18 @@ export class ResultsPanel {
         built.reason === "no_pk"
           ? `Cannot save: ${driver} has no PRIMARY KEY for "${tableName}". Switch to UPDATE via raw SQL or define a PRIMARY KEY.`
           : `Save refused: ${built.warnings.join(" ")}`;
-      this.postMessage({
-        type: "saveResult",
-        index,
-        ok: false,
-        refused: true,
-        reason,
-        errors: built.warnings,
-      });
+      // TASK-ARP02-002 (fix round 1) — post-await ack (listPkColumns await
+      // above): stale sessions stay silent.
+      if (!this.isStaleSession(epoch)) {
+        this.postMessage({
+          type: "saveResult",
+          index,
+          ok: false,
+          refused: true,
+          reason,
+          errors: built.warnings,
+        });
+      }
       return;
     }
 
@@ -1091,29 +1105,41 @@ export class ResultsPanel {
         built.warnings.length > 0
           ? built.warnings.join(" ")
           : "Save produced no statements (every row was skipped).";
-      this.postMessage({
-        type: "saveResult",
-        index,
-        ok: false,
-        refused: true,
-        reason: errText,
-        errors: built.warnings,
-      });
+      // TASK-ARP02-002 (fix round 1) — post-await ack: stale sessions stay
+      // silent.
+      if (!this.isStaleSession(epoch)) {
+        this.postMessage({
+          type: "saveResult",
+          index,
+          ok: false,
+          refused: true,
+          reason: errText,
+          errors: built.warnings,
+        });
+      }
       return;
     }
 
     // Empty edits → no-op success (webview's dirtyCount gate should
     // already have prevented this, but be defensive).
     if (built.statements.length === 0) {
-      this.postMessage({ type: "saveResult", index, ok: true });
+      // TASK-ARP02-002 (fix round 1) — post-await ack: stale sessions stay
+      // silent.
+      if (!this.isStaleSession(epoch)) {
+        this.postMessage({ type: "saveResult", index, ok: true });
+      }
       return;
     }
 
+    // TASK-ARP02-002 (fix round 1) — setBusy is a UI write after the
+    // listPkColumns / ctid-lookup awaits: a stale session must not flip a
+    // re-created panel's busy flag (mirrors the stale finally's guard).
+    if (this.isStaleSession(epoch)) return;
     this.setBusy(true);
     // TASK-ARP02-002 — the save continuation awaits beginTransaction / runSql
     // / refresh SELECT; a dispose mid-save must not post acks, toasts, or
-    // busy writes into a re-created panel session.
-    const epoch = this.sessionEpoch;
+    // busy writes into a re-created panel session. The epoch itself is
+    // captured ONCE at the top of this flow (before the first await).
     const refreshStart = Date.now();
     const kw = transactionKeywords(driver as Dialect);
     const manualCommit = this.isManualCommitEnabled();
@@ -1248,15 +1274,22 @@ export class ResultsPanel {
         rowId: s.rowId,
         error: s.reason,
       }));
-      this.postMessage({
-        type: "saveResult",
-        index,
-        ok: true,
-        ...(nonFatalWarnings.length > 0
-          ? { warnings: nonFatalWarnings, errors: nonFatalWarnings }
-          : {}),
-        ...(rowErrors && rowErrors.length > 0 ? { rowErrors } : {}),
-      });
+      // TASK-ARP02-002 (fix round 1) — the success ack is posted after the
+      // manual tx.runQuery (or the auto BEGIN/…/COMMIT + refresh) await. The
+      // auto-mode refresh path had its own guard (:1210 old numbering), but
+      // in MANUAL-commit mode this ack was reached UNguarded — a dispose
+      // during runQuery posted ok:true into a re-created panel session.
+      if (!this.isStaleSession(epoch)) {
+        this.postMessage({
+          type: "saveResult",
+          index,
+          ok: true,
+          ...(nonFatalWarnings.length > 0
+            ? { warnings: nonFatalWarnings, errors: nonFatalWarnings }
+            : {}),
+          ...(rowErrors && rowErrors.length > 0 ? { rowErrors } : {}),
+        });
+      }
       if (newStmt) {
         const next = this.lastResults.slice();
         next[index] = newStmt;

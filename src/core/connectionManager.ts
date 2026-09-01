@@ -418,6 +418,13 @@ export class ConnectionManager {
       } catch {
         // ignore
       }
+      // TASK-ARP02-003 (reviewer minor, fix round 1) — resolveAdapter may
+      // already have started a tunnel for cfg.id while the candidate was in
+      // flight (deleteConnection's own stopTunnel ran BEFORE this re-start).
+      // Without this stop the SSH tunnel + local port-forward for a deleted
+      // (or edited) id is orphaned until dispose(). Idempotent: stop() is a
+      // no-op when no tunnel exists for the key.
+      if (current.tunnel) this.stopTunnel(cfg.id);
       throw new Error(
         `Connection "${cfg.name}" không còn hợp lệ — đã bỏ kết nối cũ`,
       );

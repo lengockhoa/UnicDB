@@ -219,3 +219,22 @@ verdict item itself; task ready for pending_review.
 (write here: VERDICT / REVIEWER_MODEL / EXECUTOR_MODEL / VERIFICATION_RERUN / TEST_PLAN_COVERAGE /
  FINDINGS / NEXT_STATUS_FOR_INDEX)
 ```
+
+## Reviewer Report
+REVIEWER_MODEL: unic-smart
+ROUND: 1
+VERDICT: APPROVED-WITH-MINOR
+EXECUTOR_MODEL: unic-code (differs from reviewer — model isolation check OK)
+VERIFICATION_RERUN:
+  command: npx vitest run src/core/__tests__/queryRunner.test.ts; npm run typecheck; npm run compile
+  result: 37 pass / 0 fail; typecheck exit 0; compile exit 0
+TEST_PLAN_COVERAGE: all-followed — plan §4 ARP-02.1 cases 1-6 all present (cases 2,4,5 RED-proven then fixed; 3,6 pinned GREEN). Edge cases 5 ≥ required 2.
+Findings:
+- minor: src/core/queryRunner.ts:493-495 — second cancel() on an in-flight non-batched run returns early via the seamDelivered guard AFTER the liveCancel latch already set cancelPending=true, so cancelPending stays true until run()'s finally; a single cancel() leaves it false (asymmetric). Harmless today (run entry + finally both reset cancelPending; only consumer is the loadMore entry guard, where rejecting during a cancelled in-flight run is defensible), but inconsistent for future readers. Fix: clear cancelPending=false before the early return (mirror the single-cancel end state) or add a comment documenting the asymmetry.
+- minor: src/core/__tests__/queryRunner.test.ts:847 — comment cites base line refs "executeAll:191/:203"; current source has activeAdapter cleared at :245 and currentBatched assigned at :253. Stale doc drift only; the disjointness claim itself is verified correct.
+NOTES: Ownership model is sound. The in-flight-scoped cancelPending (option b) correctly closes the plan-reviewer's idle close-origin case WITHOUT relying on the run()-finally reset; the cancelSeq post-await re-check is the load-bearing discard and is the only predicate that keeps cases 4 and 5 green together (a plain cancelRequested re-check would break case 4). No cancelPending leak across runs; no late batch/loadMore resurrection path found. RED_OUTPUT in the Executor Report is genuine failing-test output (spy 2x, "Statement 0 cancelled", [[1],[42]] vs [[1]]). Scope clean: only src/core/queryRunner.ts (+106/-1) and its test (+212) touched by this task; no resultsPanel.ts/connectionManager.ts/extension.ts changes attributable to 001.
+
+Fix round 1 (ARP-02): minor APPLIED — stale comment line refs in src/core/__tests__/queryRunner.test.ts:847
+updated executeAll:191/:203 → :245/:253 (doc drift only; queryRunner.ts logic untouched, including the
+judged-harmless cancelPending asymmetry) by the TASK-ARP02-002 fix-round executor; full suite, typecheck
+and compile all green. See TASK-ARP02-002.md "Fix Round 1 Report".

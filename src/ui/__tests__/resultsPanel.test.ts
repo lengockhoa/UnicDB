@@ -1387,4 +1387,148 @@ describe("ResultsPanel — TASK-ARP02-002 session epoch (panel-close race)", () 
       .find((m) => m.type === "state");
     expect(stateMsg).toBeDefined();
   });
+
+  // ---- Case 7 — edge: dispose-during-save; recreate; stale save continuation
+  // must NOT post a saveResult refusal ack into the recreated panel.
+  // RED on base 0652c75: the epoch guards at resultsPanel.ts:973 and :978
+  // read `isStaleSession(this.sessionEpoch)` — the CURRENT epoch — so they
+  // can never detect staleness (Reviewer Round 1 finding 1). A dispose
+  // during `await closeStatementCursor` / `await listPkColumns` leaves the
+  // save flow running, and the no_pk refusal ack at :1076 lands in the
+  // RE-CREATED panel.
+  it("case 7: dispose-during-save; recreate; stale save refusal posts NOTHING to the new panel", async () => {
+    const runner = makeRunnerStub();
+    // mysql + no PK + a cell edit → buildSaveStatements hard-refuses no_pk,
+    // so the post-listPkColumns continuation reaches the :1076 refusal ack
+    // with NO further DB dependency (no fetchPostgresCtids on mysql).
+    const listPk = Promise.withResolvers<string[]>();
+    const saveCtx = {
+      getDriver: () => "mysql" as const,
+      listPkColumns: () => listPk.promise,
+    } as never;
+    const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    panel.render([oldSqlResult("SELECT * FROM app.users")], "hdr");
+    const fake = lastPanel.current!;
+    fake.webview.dispatch({
+      type: "saveEdits",
+      index: 0,
+      tableName: null,
+      pkColumns: [],
+      edits: [{ rowId: 0, colIndex: 0, value: "x" }],
+    });
+    // Flush until the flow parks on the deferred listPk await.
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+
+    // Dispose mid-save, then recreate the panel session.
+    panel.dispose();
+    panel.render([oldSqlResult("SELECT * FROM app.orders")], "hdr");
+    const recreated = lastPanel.current!;
+    expect(recreated).not.toBe(fake);
+    recreated.webview.postMessage.mockClear();
+    showErrMock().mockClear();
+
+    // Stale save continuation resumes NOW — after the recreate.
+    listPk.resolve([]);
+    for (let i = 0; i < 30; i++) {
+      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 1));
+    }
+
+    const staleSaveResults = recreated.webview.postMessage.mock.calls
+      .map((c) => c[0] as { type?: string; ok?: boolean })
+      .filter((m) => m.type === "saveResult");
+    expect(staleSaveResults).toHaveLength(0);
+  });
+
+  // ---- Case 8 — edge: dispose during a MANUAL-commit save; recreate; the
+  // stale continuation must NOT post `saveResult ok:true` into the recreated
+  // panel. RED on base 0652c75: the success ack at resultsPanel.ts:1251-1259
+  // has NO epoch guard in manual-commit mode (the :1210 guard lives inside
+  // the `if (!manualCommit)` auto-refresh branch and is never reached for
+  // manual saves — Reviewer Round 1 finding 2).
+  it("case 8: dispose mid manual-commit save; recreate; stale ok:true posts NOTHING to the new panel", async () => {
+    const runner = makeRunnerStub();
+    const runQueryDef = Promise.withResolvers<unknown>();
+    const fakeTx = {
+      runQuery: vi.fn(() => runQueryDef.promise),
+      commit: vi.fn(async () => undefined),
+      rollback: vi.fn(async () => undefined),
+    } as unknown as import("../../adapters/types").DbTransaction;
+    runner.beginTransaction = vi.fn(
+      async () => fakeTx,
+    ) as unknown as typeof runner.beginTransaction;
+    const saveCtx = {
+      getDriver: () => "postgres" as const,
+      getManualCommit: () => true,
+      listPkColumns: async () => ["id"],
+    } as never;
+    const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT id, name FROM public.users",
+          status: "done",
+          result: {
+            columns: ["id", "name"],
+            rows: [[1, "alice"]],
+            rowCount: 1,
+            durationMs: 0,
+          },
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    const fake = lastPanel.current!;
+    fake.webview.dispatch({
+      type: "saveEdits",
+      index: 0,
+      tableName: null,
+      pkColumns: [],
+      edits: [{ rowId: 0, colIndex: 1, value: "new-alice" }],
+    });
+    // Flush until the save parks inside the deferred tx.runQuery.
+    for (let i = 0; i < 20 && (runner.beginTransaction as ReturnType<typeof vi.fn>).mock.calls.length === 0; i++) {
+      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 1));
+    }
+    expect((runner.beginTransaction as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(0);
+
+    // Dispose mid-save, then recreate the panel session.
+    panel.dispose();
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT id, name FROM public.orders",
+          status: "done",
+          result: {
+            columns: ["id", "name"],
+            rows: [[1, "order-1"]],
+            rowCount: 1,
+            durationMs: 0,
+          },
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    const recreated = lastPanel.current!;
+    expect(recreated).not.toBe(fake);
+    recreated.webview.postMessage.mockClear();
+    showErrMock().mockClear();
+
+    // Stale save continuation resumes NOW — after the recreate.
+    runQueryDef.resolve({ results: [] });
+    for (let i = 0; i < 30; i++) {
+      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 1));
+    }
+
+    const staleSaveResults = recreated.webview.postMessage.mock.calls
+      .map((c) => c[0] as { type?: string; ok?: boolean })
+      .filter((m) => m.type === "saveResult");
+    expect(staleSaveResults).toHaveLength(0);
+  });
 });

@@ -183,3 +183,69 @@ HANDOFF_TO_REVIEWER: yes — all 3 verification commands pass with fresh output 
 (write here: VERDICT / REVIEWER_MODEL / EXECUTOR_MODEL / VERIFICATION_RERUN / TEST_PLAN_COVERAGE /
  FINDINGS / NEXT_STATUS_FOR_INDEX)
 ```
+
+## Reviewer Report
+REVIEWER_MODEL: unic-smart
+ROUND: 1
+VERDICT: changes_requested
+Findings:
+- src/ui/resultsPanel.ts:973 and :978 — `if (this.isStaleSession(this.sessionEpoch)) return;` is a NO-OP: it compares the current epoch to itself so it is always false and never fires. A dispose landing during `await this.closeStatementCursor(r)` (:970) or `await this.saveContext.listPkColumns(...)` (:977) does NOT stop the save continuation; it keeps running and posts stale `saveResult` acks into the re-created panel. Minimal fix: capture `const epoch = this.sessionEpoch;` BEFORE each await and check `isStaleSession(epoch)` — cleanest is a single capture at the top of handleSaveEdits before :970.
+- src/ui/resultsPanel.ts:1251-1259 — the success `saveResult ok:true` post is NOT epoch-guarded in manual-commit mode (the auto-mode guard at :1210 lives inside `if (!manualCommit)` and is never reached for manual). A dispose during `await this.transaction.runQuery(...)` (:1138) still posts `saveResult ok:true` to the re-created panel and leaves `this.transaction` (set at :1134) dangling on the new session. The refusal/no-op acks at :1052/:1076/:1094/:1108 are also unguarded after `await this.fetchPostgresCtids(...)` (:1039). Minimal fix: with the epoch captured at the top, wrap every `saveResult`/`state` post in `if (!this.isStaleSession(epoch))`.
+- (tests 1-6 all pass and RED evidence is genuine; the gap is that no added test exercises the save-dispose path, so the no-op guards and the unguarded manual-mode ack are not caught.)
+
+## Fix Round 1 Report
+
+```
+EXECUTOR_MODEL: unic-code (claude-sonnet tier; self-reported per harness)
+
+RED_OUTPUT (npx vitest run src/ui/__tests__/resultsPanel.test.ts, BEFORE the fix, cases 7+8 added first):
+  ❯ case 7: dispose-during-save; recreate; stale save refusal posts NOTHING to the new panel
+    AssertionError: expected [ { type: 'saveResult', …(5) } ] to have a length of +0 but got 1
+    ❯ src/ui/__tests__/resultsPanel.test.ts:1440  (mysql no-PK refusal ack posted into the RE-CREATED
+      panel after dispose during the listPkColumns await — proves the :973/:978 no-op guards never fire)
+  ❯ case 8: dispose mid manual-commit save; recreate; stale ok:true posts NOTHING to the new panel
+    AssertionError: expected [ { type: 'saveResult', …(2) } ] to have a length of +0 but got 1
+    ❯ src/ui/__tests__/resultsPanel.test.ts:1532  (manual-commit saveResult ok:true posted into the
+      RE-CREATED panel after dispose during tx.runQuery — proves the unguarded :1251-1259 ack)
+  Test Files  1 failed (1) | Tests  2 failed | 39 passed (41)
+  RED confirmed for the EXPECTED reasons (both reviewer findings reproduced).
+
+FIX SUMMARY:
+  1. Finding 1 — `const epoch = this.sessionEpoch` now captured ONCE at the top of handleSaveEdits,
+     before the first await (closeStatementCursor at :970). The two no-op checks
+     (`isStaleSession(this.sessionEpoch)`) now compare the captured epoch: both fire correctly.
+     The now-redundant mid-flow capture (old :1116) was removed; the try-block guards
+     (:1144/:1154/:1177/:1210-era sites), the catch (:1283-era) and the finally (:1317-era) keep
+     using the single top capture — semantics unchanged for them (same value).
+  2. Finding 2 — every post-await ack in the save flow is now guarded with the captured epoch:
+     ctid-lookup refusal (old :1052), build no_pk/invalid refusal (old :1076), all-skipped
+     ok:false (old :1094), empty-edits no-op ok:true (old :1108), and the success ok:true
+     (old :1251-1259 — previously reachable UNguarded in manual-commit mode). Additionally the
+     pre-try `setBusy(true)` is now preceded by a stale return (post-await UI write, mirrors the
+     finally guard). Auto-mode refresh early-return (old :1210) kept as-is (same captured epoch).
+  3. TDD evidence above; both cases GREEN after the fix. Connection-lifecycle invariant kept:
+     the manual-transaction rollback paths still run on stale sessions (only UI writes suppressed).
+
+OPTIONAL MINORS APPLIED (from TASK-ARP02-003 and TASK-ARP02-001, per fix-round instruction):
+  - TASK-ARP02-003 (connectionManager.ts ~:416-423): added
+    `if (current.tunnel) this.stopTunnel(cfg.id);` in the provenance-discard branch after the
+    candidate adapter close — method name verified (`stopTunnel` → `this.tunnels.stop`, no-op when
+    the key is absent). A tunneled connection deleted mid-flight no longer orphans its SSH tunnel.
+  - TASK-ARP02-001 (queryRunner.test.ts:847): comment line refs updated executeAll:191/:203 →
+    :245 (activeAdapter cleared) / :253 (currentBatched assigned). queryRunner.ts logic UNTOUCHED
+    (cancelPending asymmetry left as judged harmless).
+
+VERIFICATION (all fresh in this turn):
+  1. npx vitest run src/ui/__tests__/resultsPanel.test.ts
+     → Test Files  1 passed (1) | Tests  41 passed (41)  (39 prior + case 7 + case 8)
+  2. npm test
+     → Test Files  215 passed | 1 skipped (216) | Tests  2985 passed | 2 skipped (2987)
+       (2983 baseline + 2 new; 2 pre-existing skips unchanged)
+  3. npm run typecheck → tsc --noEmit, exit 0
+  4. npm run compile  → esbuild: build complete, exit 0
+  Scope: only src/ui/resultsPanel.ts, src/ui/__tests__/resultsPanel.test.ts,
+  src/core/connectionManager.ts, src/core/__tests__/queryRunner.test.ts. No git add/commit/push;
+  no INDEX edits; extension.ts untouched (wave-2 boundary respected).
+
+Status: PASS
+```

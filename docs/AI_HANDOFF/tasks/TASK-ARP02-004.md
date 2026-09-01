@@ -192,3 +192,17 @@ from executor unic-code). Set status pending_review in INDEX.
 (write here: VERDICT / REVIEWER_MODEL / EXECUTOR_MODEL / VERIFICATION_RERUN / TEST_PLAN_COVERAGE /
  FINDINGS / NEXT_STATUS_FOR_INDEX)
 ```
+
+## Reviewer Report
+
+REVIEWER_MODEL: unic-smart
+ROUND: 1
+VERDICT: APPROVED-WITH-MINOR
+
+Findings:
+- minor (residual host gap, pre-existing, out of this task's file ownership — recorded for follow-up): `src/ui/browseCommands.ts:169-177` still has the exact unguarded shape this task removed from runStatements — `panel.setBusy(true); await runner.run(...); } catch { toast } finally { panel.setBusy(false); }`. When a browse command overlaps a live runStatements (same shared runner/panel singleton), the browse `finally` still clears the live run's busy (and its `panel.render` at :172 is not gated on the `deactivating` sentinel). The ownsRun fix is correct within extension.ts scope; the same ownership gate (`if (ownsRun) panel.setBusy(false)` + `if (!deactivating) render`) should be applied there in a follow-up wave. Executor already flagged this — not a regression, not blocking this task.
+- minor (test-plan wording nuance): §4 case 2 describes "mid-run dispose+recreate", but the actual extension-level host gap is the overlap of two invocations on the shared singleton runner (dispose+recreate is the panel epoch's domain, ARP-02.2). The implemented Gap #2 test targets the real manifestation and proves the intended invariant (stale finally never clears the live run's busy) — acceptable adaptation, RED-first output is real.
+- Otherwise none.
+
+NOTES: Model isolation passes (executor unic-code != reviewer unic-smart; config `handoff.reviewer.model` = unic-smart). Verification re-run in worktree: `npx vitest run src/extension.test.ts` 88/88 PASS; `npm run typecheck` exit 0; `npm run compile` exit 0; full `npm test` 2983 passed | 2 skipped (baseline ≥2963). RLX-02 `vsdb.cancelQuery` block byte-identical to base (verified via diff). ownsRun snapshot has no await between snapshot and `runner.run()` so it cannot go stale; busy cannot get stuck true via any runStatements overlap (the owning invocation always runs its finally); no path where ownsRun reports live but the run is stale. deactivating sentinel resets at activate() entry, gates only panel writes (render/setBusy), does NOT suppress DB work or error notifications (catch still toasts), and a stale continuation across a re-activation still closes over the OLD disposed panel object so it cannot render into a recreated panel. Gap #2/#1 tests are deterministic (parked adapter + microtask/macrotask flush), not flaky.
+NEXT_STATUS_FOR_INDEX: approved_minor
