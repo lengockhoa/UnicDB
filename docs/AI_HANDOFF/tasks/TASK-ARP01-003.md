@@ -99,30 +99,87 @@ the task pins its own test file — `adapterQueryShape.test.ts` — directly. Th
 ## Executor Report
 
 ```
-STATUS:
+STATUS: PASS
 EXECUTOR_TOOL: claude-code
 EXECUTOR_MODEL: unic-code
-EXECUTOR_SUBAGENT: -
-SUMMARY:
-DECISION: closed-as-not-needed | change-produced   (pick one)
-EVIDENCE:
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: N/A — verification-gate task (close-as-not-needed evidence below). Per task
+  §Test Cases, RED-first applies only if a change is produced; none was.
+DECISION: closed-as-not-needed
+SUMMARY: No code change. Decision gate satisfied: both task-owned files are byte-identical
+  to base a948b3f, and the compile/runtime evidence shows no optional-API bypass exists.
+
+EVIDENCE (decision gate — task case 4):
   command: git diff a948b3f -- src/adapters/types.ts
-  result: <paste — expect empty>
+  result: EMPTY (exit 0, no output)
   command: git diff a948b3f -- src/adapters/__tests__/adapterQueryShape.test.ts
-  result: <paste — expect empty>
-RED_FIRST: <only if a change was produced>
-FILES_CHANGED:
-TESTS_ADDED:
+  result: EMPTY (exit 0, no output)
+  (Diffstat a948b3f..HEAD touches neither file — wave 1 changed only src/core/* and docs.)
+
+EVIDENCE (no-bypass audit — task cases 1-3 + security-review acceptance item):
+  - Optional execution APIs on DbAdapter (src/adapters/types.ts), reviewed one by one:
+      runQuery (required)      → wrapped by guardAdapter under readOnly
+                                 (src/core/connectionManager.ts:654-667, isMutationSql gate).
+      beginTransaction? (:123) → wrapped at :674-687: each call re-wraps tx.runQuery through
+                                 the SAME isMutationSql gate before the driver sees the SQL;
+                                 commit/rollback pass through by design (boundary semantics —
+                                 no SQL channel). Runtime proof already in wave 1:
+                                 connectionManager.test.ts "ConnectionManager ARP-01
+                                 transaction guard" cases 1-7 (mutation throws
+                                 ReadOnlyViolation BEFORE driver; per-call freshness;
+                                 values passthrough; no-tx adapters gain nothing).
+      cancelActiveQuery?       → not a SQL execution channel (destroys the in-flight
+                                 statement; never issues user SQL). No bypass.
+      renameUsage?/catalog?    → introspection/read-only lookups; no user-SQL channel.
+      admin?                   → buildGrantSql/buildRevokeSql are string builders only;
+                                 execution of admin SQL routes through the guarded
+                                 adapter.runQuery behind confirmDangerousStatements
+                                 (src/extension.ts:864-875). No bypass.
+      capabilities?            → declarative matrix; hasAdapterCapability is fail-closed.
+    BatchedQuery (returned by runQuery) exposes fetchBatch/cancel/close — no SQL channel.
+  - Acquisition-path audit: resolveAdapter() is called WITHOUT guardAdapter only at
+    src/core/connectionManager.ts:159 and :214 (add/edit test-connect probes) — both
+    adapters only ever call testConnection() and are closed in finally; no execution API
+    is reachable there. Every consumer-facing path (getAdapter :543, getAdapterFor :343,
+    getAdapterWithPassword :399) returns guardAdapter(...)-wrapped adapters (:361/:399).
+  - Type-level fixtures (task cases 1 & 2, compile-time): a throwaway strict-tsc fixture
+    consuming the exact DbTransaction members and a guarded surface
+    { runQuery; beginTransaction?: () => Promise<DbTransaction> } satisfies DbAdapter
+    compiled with exit 0 (positive), and the same fixture with a corrupted member
+    signature failed with TS2322 (negative control — proof not vacuous). Fixture was
+    throwaway and deleted; owned files remain byte-identical (git status clean).
+  - Runtime fixture proof (task case 3): judged NOT necessary as a new fixture — the
+    property is already pinned at runtime by wave-1 connectionManager.test.ts cases 1-7
+    plus the existing beginTransaction routing coverage in adapterQueryShape.test.ts
+    ("metadata-vs-window" regression) which exercise the real guarded adapter surface.
+
+FILES_CHANGED: none (closed as not-needed)
+TESTS_ADDED: none
 VERIFICATION:
   command: npx vitest run src/adapters/__tests__/adapterQueryShape.test.ts
-  result:
+  result: exit 0 — Test Files 1 passed, Tests 53 passed (53)
   command: npm run typecheck
-  result:
+  result: exit 0 (tsc --noEmit, clean)
   command: npm run compile
-  result:
-ISSUES:
-HANDOFF_TO_REVIEWER:
-NEXT:
+  result: exit 0 (esbuild: build complete)
+  command: npm test
+  result: exit 1 — Test Files 1 failed | 214 passed | 1 skipped; Tests 1 failed |
+          2962 passed | 2 skipped. The single failure is
+          src/__tests__/releaseHygiene.test.ts "lock root version khớp package.json"
+          (package-lock.json root 1.35.0 vs package.json 1.36.0). Verified PRE-EXISTING
+          at base: git show a948b3f:package-lock.json → version 1.35.0, and
+          git diff a948b3f..HEAD -- package.json package-lock.json is EMPTY. Not caused
+          by wave 1 or this task; package-lock.json is not a task-owned file so it was
+          left untouched per constraints. (First npm test run before compile showed 12
+          consolePanelBundle failures — all "dist/consolePanel.js missing — run
+          npm run compile before this test", i.e. ordering-only; gone after compile.)
+
+ISSUES: pre-existing releaseHygiene lockfile-version drift (repo state, outside task
+  scope) — recommend a tiny follow-up task to sync package-lock.json root version to
+  1.36.0 so the full wave-2 regression net is green.
+HANDOFF_TO_REVIEWER: yes — all task Verification Commands pass; decision gate + evidence
+  recorded; reviewer (unic-smart) to confirm APPROVED / APPROVED-WITH-MINOR per acceptance.
+NEXT: ready for review; follow-up: lockfile version sync (non-blocking).
 ```
 
 ## Reviewer Verdict
