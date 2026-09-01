@@ -1,9 +1,8 @@
 # ACTIVE
 
-Cycle: AIX-03   Date: 2026-09-01   Base: main @ 7bc7b75
-Goal: Harden the shipped read-only DB analysis copilot along four axes — parser bypass, rows/secrets leakage, connection loss, attribution.
+Cycle: AIX-05   Date: 2026-09-01   Base: main @ 8639471
+Goal: Ship PORT-AIX-05 optional OMP engine resilience with explicit start/cancel/crash/fallback state.
 Tasks: 3 total
-Status: shipped v1.34.0
+Status: planning_done — ready for executor
 
-Plan: docs/AI_HANDOFF/PLAN_AIX03.md
-Next planning candidate (queued): PORT-AIX-05 (Optional OMP engine resilience) — depends on this row.
+Plan: docs/AI_HANDOFF/PLAN_AIX05.md
