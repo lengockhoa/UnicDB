@@ -32,9 +32,19 @@ import type {
   QueryResult,
   RunResult,
 } from "../adapters/types";
-import { appendBatch } from "./resultBatcher";
+import { appendBatchBounded } from "./resultBatcher";
 
 export type StatementStatus = "running" | "done" | "error" | "cancelled";
+
+/**
+ * TASK-ARP03-002 — conservative, driver-independent primary gate for rows
+ * retained in a StatementResult. When a loadMore batch pushes the retained
+ * rows past this cap, the prefix is kept, the cursor is closed exactly once
+ * and the statement is marked `resultLimited` — the limit is neither an
+ * error nor a false EOF. Tests/consumers can lower it via
+ * `QueryRunnerOptions.maxRetainedRows` without editing the constant.
+ */
+export const RETAINED_ROW_CAP = 10_000;
 
 export interface StatementResult {
   index: number;
@@ -46,6 +56,12 @@ export interface StatementResult {
   durationMs: number;
   /** True when a batched cursor was released before this run completed. */
   cursorClosed?: boolean;
+  /**
+   * TASK-ARP03-002 — true iff the retained-row cap was hit and the cursor
+   * was closed for the budget (NOT by a cancel). A later loadMore is a
+   * graceful no-op: unchanged rows, no throw, no false EOF.
+   */
+  resultLimited?: boolean;
   /** 1-based run ordinal, present only for append-mode entries. */
   runNo?: number;
   /** 1-based statement ordinal within an append-mode run. */
@@ -57,11 +73,18 @@ export interface StatementResult {
 export interface QueryRunnerOptions {
   /** Batch size cho loadMore (mặc định 500). */
   batchSize?: number;
+  /**
+   * TASK-ARP03-002 — retained-row cap (mặc định RETAINED_ROW_CAP). Không
+   * được thread vào StatementResult: marker observable là `resultLimited`.
+   */
+  maxRetainedRows?: number;
 }
 
 export class QueryRunner {
   private readonly adapterProvider: () => Promise<DbAdapter>;
   private readonly batchSize: number;
+  /** TASK-ARP03-002 — retained-row budget (default RETAINED_ROW_CAP). */
+  private readonly maxRetainedRows: number;
   private results: StatementResult[] = [];
   private cancelRequested = false;
   /**
@@ -117,6 +140,7 @@ export class QueryRunner {
   ) {
     this.adapterProvider = adapterProvider;
     this.batchSize = options.batchSize ?? 500;
+    this.maxRetainedRows = options.maxRetainedRows ?? RETAINED_ROW_CAP;
   }
 
   /**
@@ -365,6 +389,14 @@ export class QueryRunner {
     if (!r) {
       throw new Error(`Statement ${index} not found`);
     }
+    // TASK-ARP03-002 — graceful no-op for a limited statement (load-bearing
+    // order): this guard MUST precede the `cursorClosed` throw because a
+    // budget-limited statement has `cursorClosed = true`. Returning the
+    // unchanged rows keeps the limit from surfacing as either an error or a
+    // false EOF.
+    if (r.resultLimited) {
+      return this.results.slice();
+    }
     if (r.cursorClosed) {
       throw new Error(`Statement ${index} cursor closed after its run finished — run this statement alone to page more rows`);
     }
@@ -411,13 +443,34 @@ export class QueryRunner {
         return this.results.slice();
       }
       const currentRows = r.result?.rows ?? [];
-      const merged = appendBatch(currentRows, batch);
+      // TASK-ARP03-002 — retained-row budget. This runs AFTER the `cancelSeq`
+      // re-check above, so a cancel landing mid-fetch already returned (batch
+      // discarded) and the budget close can never race the cancel close on
+      // the same cursor — mutually exclusive by ordering.
+      const { rows: merged, limited } = appendBatchBounded(
+        currentRows,
+        batch,
+        this.maxRetainedRows,
+      );
       if (r.result) {
         r.result = {
           ...r.result,
           rows: merged,
           rowCount: merged.length,
         };
+      }
+      if (limited) {
+        // Budget close — exactly once, same delivered-once shape as the
+        // ARP-02 cancel path. Best-effort: a cursor that is already closed
+        // (or a close() rejection) must not turn the limit into an error.
+        this.currentBatchedCancelDelivered = true;
+        try {
+          await batched.close();
+        } catch {
+          // best-effort — cursor may already be closed.
+        }
+        r.cursorClosed = true;
+        r.resultLimited = true;
       }
       return this.results.slice();
     } finally {

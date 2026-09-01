@@ -1,6 +1,6 @@
 # TASK-ARP03-002 — Runner enforcement: retained-row cap + one-shot cursor close + graceful no-op
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `unic-smart`
 - Executor-model: `unic-code`
@@ -134,8 +134,75 @@ typecheck + compile are the static gates.)
 ## Executor Report
 
 ```
-(write here: STATUS / EXECUTOR_TOOL / EXECUTOR_MODEL / EXECUTOR_SUBAGENT / RED_OUTPUT /
- IMPLEMENTATION SUMMARY / VERIFICATION OUTPUT / ISSUES / HANDOFF_TO_REVIEWER)
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+IMPLEMENTATION SUMMARY:
+- src/core/queryRunner.ts: exported RETAINED_ROW_CAP = 10_000; QueryRunnerOptions
+  gained maxRetainedRows?: number (default RETAINED_ROW_CAP); StatementResult gained
+  optional resultLimited?: boolean; loadMoreImpl got (a) a resultLimited entry guard
+  BEFORE the cursorClosed throw (graceful no-op — returns unchanged rows, no error,
+  no false EOF) and (b) the budget check after the cancelSeq re-check: bare
+  appendBatch replaced by appendBatchBounded(currentRows, batch, this.maxRetainedRows);
+  on limited: sets currentBatchedCancelDelivered = true (same delivered-once guard the
+  ARP-02 cancel path uses), best-effort closes the cursor exactly once, sets
+  cursorClosed = true + resultLimited = true, rowCount = retained prefix length.
+  appendBatch / batchStats / mergeBatchIntoResult untouched; resultBatcher.ts NOT
+  modified (appendBatchBounded consumed as-is from TASK-ARP03-001).
+RED_OUTPUT (npx vitest run src/core/__tests__/queryRunner.test.ts, BEFORE implementation):
+  ❯ src/core/__tests__/queryRunner.test.ts  (41 tests | 2 failed) 191ms
+    ❯ ... > cap-crossing batch → capped prefix, close once, no future fetch, resultLimited
+      → expected [] to have a length of NaN but got +0
+      at :1085  expect(rows).toHaveLength(RETAINED_ROW_CAP - 2)
+      → RETAINED_ROW_CAP is not exported yet (undefined - 2 = NaN)
+    ❯ ... > second loadMore on a limited statement is a graceful no-op
+      → expected undefined to be true // Object.is equality
+      at :1112  expect(limited[0].resultLimited).toBe(true)
+      → resultLimited field does not exist yet; on base the second loadMore
+        would instead throw "cursor closed after its run finished — run this
+        statement alone" (cursorClosed throw at :368-370)
+    (Test Files 1 failed (1) / Tests 2 failed | 39 passed)
+    Case 4 (smaller result unchanged) was GREEN on base pre-implementation —
+    regression pin confirmed (all 39 pre-existing tests also passed in RED run).
+GREEN: same command → "Tests 41 passed (41)".
+CANCEL-VS-LIMIT TIMELINE PROOF (no timeline yields BOTH closes on one cursor):
+- The budget branch sits strictly AFTER the post-await `cancelSeq` re-check.
+- T1 cancel before loadMore entry: entry guard (cancelRequested && cancelPending)
+  or the run-path close throws/closes before any fetch — budget never runs.
+- T2 cancel DURING fetchBatch: cancel() bumps cancelSeq, calls batched.cancel()
+  + close() once, nulls currentBatched; loadMoreImpl resumes, sees
+  cancelSeq !== snapshot, returns early — batch discarded, resultLimited never
+  set, no second close (case 3 asserts close === 1x, cancel === 1x, rows
+  unchanged, resultLimited undefined).
+- T3 cancel AFTER fetch resolves but before the re-check microtask: still
+  caught — cancelSeq advanced before the re-check line executes (JS single
+  thread; cancel() ran to its seq bump synchronously at entry).
+- T4 budget close first, THEN cancel: statement is now resultLimited +
+  cursorClosed; a later cancel sees currentBatched === null (reset in the
+  loadMoreImpl finally) and, being close-origin (runner settled), sets only the
+  sticky flag — cancel() has no currentBatched branch to deliver again and
+  never re-closes. currentBatchedCancelDelivered is also already true.
+- T5 double budget: impossible — after the first limited append, r.resultLimited
+  makes every later loadMoreImpl return at the entry guard; fetchBatch is never
+  reached again (case 2 asserts fetchBatch frozen at 2 calls, close total 1x).
+VERIFICATION OUTPUT:
+  1) npx vitest run src/core/__tests__/queryRunner.test.ts
+     → Test Files  1 passed (1) / Tests  41 passed (41)
+  2) npm test   (fresh worktree; first run had 11 pre-compile dist-missing
+     failures — ran `npm run compile`, reran)
+     → Test Files  215 passed | 1 skipped (216)
+     → Tests  2995 passed | 2 skipped (2997)   [0 failed; the 2 skips are
+       src/ai/omp/__tests__/acpLiveSmoke.test.ts, gated on VSDB_OMP_SMOKE=1 —
+       pre-existing env gate, unrelated; baseline floor (2997 collected, no
+       failures) met. Worktree HEAD == main c136182.]
+  3) npm run typecheck  → exit 0 (tsc --noEmit clean)
+  4) npm run compile    → exit 0 (esbuild build complete)
+  Note: npm test was run twice (before + after compile) — the mid-run re-run was
+  a suite-order fix for the fresh worktree's missing dist/, not a flake.
+ISSUES: none.
+HANDOFF_TO_REVIEWER: yes — status flipped to pending_review; reviewer model must
+  differ from unic-code.
 ```
 
 ## Reviewer Verdict

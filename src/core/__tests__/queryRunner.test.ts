@@ -7,7 +7,12 @@
 //   - Non-SELECT / multi-statement → adapter returns { results: [...] }.
 //   - pickResult() builds QueryResult from batched.columns + initial fetchBatch.
 import { describe, it, expect, vi } from "vitest";
-import { QueryRunner, pickResult, type StatementResult } from "../queryRunner";
+import {
+  QueryRunner,
+  pickResult,
+  RETAINED_ROW_CAP,
+  type StatementResult,
+} from "../queryRunner";
 import type { ParsedStatement } from "../../config/types";
 import type {
   BatchedQuery,
@@ -1049,5 +1054,142 @@ describe("QueryRunner — non-batched cancellation seam (TASK-RLX-001)", () => {
     expect(batched.cancel).toHaveBeenCalledTimes(1);
     expect(cancelActiveSpy).not.toHaveBeenCalled();
     expect(result[0].status).toBe("cancelled");
+  });
+});
+
+// =============================================================================
+// TASK-ARP03-002 — Runner enforcement: retained-row cap + one-shot cursor
+// close + graceful no-op. Uses the REAL RETAINED_ROW_CAP (imported, not a
+// fabricated smaller cap). All four cases use the real makeBatched /
+// makeAdapter fixtures from this file's helper section.
+// =============================================================================
+describe("QueryRunner — retained-row cap (TASK-ARP03-002)", () => {
+  /** Deterministic row factory: row i = [i + 1]. */
+  const row = (i: number): any[] => [i + 1];
+  const rows = (count: number): any[][] => Array.from({ length: count }, (_, i) => row(i));
+
+  it("cap-crossing batch → capped prefix, close once, no future fetch, resultLimited", async () => {
+    // Case 1 — initial fetch holds RETAINED_ROW_CAP - 2 rows; the next batch
+    // of 3 crosses the cap. Expected: rows = RETAINED_ROW_CAP (prior rows +
+    // first batch row), resultLimited = true, cursorClosed = true,
+    // close() exactly 1x, fetchBatch NOT called again.
+    const batched = makeBatched(
+      ["n"],
+      [rows(RETAINED_ROW_CAP - 2), rows(3), rows(1), null],
+    );
+    const adapter = makeAdapter(async () => ({ results: [], batched }));
+    const runner = new QueryRunner(async () => adapter);
+
+    const result = await runner.run([stmt("SELECT * FROM big", 0, 18)], () => {});
+    expect(result[0].status).toBe("done");
+    expect(result[0].result?.rows).toHaveLength(RETAINED_ROW_CAP - 2);
+
+    const updated = await runner.loadMore(0);
+    expect(updated[0].result?.rows).toHaveLength(RETAINED_ROW_CAP);
+    // Deterministic prefix: prior rows first, then the FIRST batch row.
+    expect(updated[0].result?.rows[RETAINED_ROW_CAP - 3]).toEqual(row(RETAINED_ROW_CAP - 3));
+    expect(updated[0].result?.rows[RETAINED_ROW_CAP - 2]).toEqual(row(0));
+    expect(updated[0].resultLimited).toBe(true);
+    expect(updated[0].cursorClosed).toBe(true);
+    expect(batched.close).toHaveBeenCalledTimes(1);
+    // No further fetch after the budget close.
+    expect(batched.fetchBatch).toHaveBeenCalledTimes(2); // initial + the cap-crossing one
+  });
+
+  it("second loadMore on a limited statement is a graceful no-op", async () => {
+    // Case 2 — after the cap-crossing limit, a second loadMore(0) must
+    // RESOLVE (no "run this statement alone" throw) with rows unchanged,
+    // close() still exactly 1x total, and no further fetch.
+    const batched = makeBatched(
+      ["n"],
+      [rows(RETAINED_ROW_CAP - 2), rows(3), rows(1), null],
+    );
+    const adapter = makeAdapter(async () => ({ results: [], batched }));
+    const runner = new QueryRunner(async () => adapter);
+
+    await runner.run([stmt("SELECT * FROM big", 0, 18)], () => {});
+    const limited = await runner.loadMore(0);
+    expect(limited[0].resultLimited).toBe(true);
+    expect(batched.close).toHaveBeenCalledTimes(1);
+
+    const again = await runner.loadMore(0); // must NOT throw
+    expect(again[0].result?.rows).toHaveLength(RETAINED_ROW_CAP);
+    expect(again[0].resultLimited).toBe(true);
+    expect(batched.close).toHaveBeenCalledTimes(1); // still exactly once
+    expect(batched.fetchBatch).toHaveBeenCalledTimes(2); // frozen
+  });
+
+  it("concurrent cancel during the cap-crossing fetch wins — batch discarded, resultLimited NOT set", async () => {
+    // Case 3 — loadMore in flight with a deferred oversized fetch; cancel()
+    // lands mid-fetch. Expected: batch discarded (rows unchanged),
+    // resultLimited undefined, cursor closed exactly once (by the cancel
+    // path), no unhandled rejection.
+    const batched = makeBatched(["n"], [rows(2)]);
+    const adapter = makeAdapter(async () => ({ results: [], batched }));
+    const runner = new QueryRunner(async () => adapter);
+
+    const result = await runner.run([stmt("SELECT * FROM big", 0, 18)], () => {});
+    expect(result[0].result?.rows).toEqual([[1], [2]]);
+
+    // Deferred cap-crossing fetch: resolves an oversized batch AFTER cancel.
+    let resolveFetch: ((v: any[][] | null) => void) | null = null;
+    batched.fetchBatch.mockImplementationOnce(
+      () => new Promise<any[][] | null>((resolve) => { resolveFetch = resolve; }),
+    );
+    const loadMorePromise = runner.loadMore(0).catch((err) => err);
+    await new Promise((r) => setTimeout(r, 5));
+
+    await runner.cancel();
+    if (resolveFetch) resolveFetch(rows(RETAINED_ROW_CAP)); // oversized late batch
+    const settled = await loadMorePromise;
+
+    // Cancel path closed the cursor exactly once; the budget path must NOT
+    // have added a second close.
+    expect(batched.close).toHaveBeenCalledTimes(1);
+    expect(batched.cancel).toHaveBeenCalledTimes(1);
+    const final = runner.getResults();
+    expect(final[0].result?.rows).toEqual([[1], [2]]); // no append
+    expect(final[0].resultLimited).toBeUndefined(); // limit never set
+    // loadMore must not reject with an unhandled error (settled is either
+    // the results array or a cancel-shaped Error).
+    if (settled instanceof Error) {
+      expect(String(settled.message)).toMatch(/cancelled|cancel/i);
+    }
+  });
+
+  it("smaller result unchanged (regression pin)", async () => {
+    // Case 4 — a total far below the cap behaves byte-identically to today:
+    // all rows appended across several loadMore, resultLimited stays
+    // undefined, cursorClosed stays falsy, EOF (null) behaves as before,
+    // close() never called.
+    const batched = makeBatched(["n"], [
+      rows(2),
+      rows(3),
+      rows(1),
+      null,
+    ]);
+    const adapter = makeAdapter(async () => ({ results: [], batched }));
+    const runner = new QueryRunner(async () => adapter);
+
+    const result = await runner.run([stmt("SELECT *", 0, 9)], () => {});
+    expect(result[0].result?.rows).toEqual([[1], [2]]);
+    expect(result[0].resultLimited).toBeUndefined();
+    expect(result[0].cursorClosed).toBeUndefined();
+
+    const once = await runner.loadMore(0);
+    expect(once[0].result?.rows).toEqual([[1], [2], [1], [2], [3]]);
+    expect(once[0].result?.rowCount).toBe(5);
+    expect(once[0].resultLimited).toBeUndefined();
+
+    const eof = await runner.loadMore(0);
+    expect(eof[0].result?.rows).toEqual([[1], [2], [1], [2], [3], [1]]);
+    expect(eof[0].result?.rowCount).toBe(6);
+    expect(eof[0].resultLimited).toBeUndefined();
+    expect(eof[0].cursorClosed).toBeUndefined();
+
+    const done = await runner.loadMore(0);
+    expect(done[0].result?.rows).toEqual([[1], [2], [1], [2], [3], [1]]);
+    expect(done[0].result?.rowCount).toBe(6);
+    expect(batched.close).not.toHaveBeenCalled();
   });
 });
