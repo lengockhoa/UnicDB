@@ -104,3 +104,20 @@ Note: none. Only src/core/sshTunnel.ts (+6 lines: pinned "-o","StrictHostKeyChec
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/core/__tests__/sshTunnel.test.ts; npm run typecheck; npm run compile; npm test
+  result: 16/16 PASS; tsc exit 0; esbuild complete; npm test 3025 passed / 2 skipped (216 files, 1 skipped file)
+TEST_PLAN_COVERAGE: all-followed (6/6 cases; 5 edge cases >= min 2)
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/core/sshTunnel.ts:133 — the pinned pair is emitted after BatchMode and before -L; confirmed it is the ONLY host-key -o option and case 1 asserts it appears exactly once, so no duplicate/override path exists.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: RED evidence real (3 failing tests with assertion diff, not a bare claim). Injection surface closed by construction: host/user SAFE_HOST_RE, identityFile absolute-path-only, port integer — no user value can start with '-' or smuggle an -o option. No UserKnownHostsFile/relaxing token in any config shape (case 2 guard pin). Scope: only sshTunnel.ts + its test file changed.

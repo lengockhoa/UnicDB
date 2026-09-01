@@ -101,3 +101,21 @@ Form message-surface evidence (src/ui/connectionFormMessages.ts:34-37):
 
 Status: PASS
 Note: Gate closed **not-needed** — no form/config wiring exists or is required. No src/ui/ or src/config/ file was modified by this cycle (wave commits touched core only). No follow-up task needed.
+
+---
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: rg -l "StrictHostKeyChecking|UserKnownHostsFile|known_hosts|hostKey" src && rg -l "hostKey" src && grep -rn "fingerprint" src/ui/connectionForm.ts src/ui/connectionFormMessages.ts && npx vitest run src/ui/__tests__/connectionForm.test.ts && npm run typecheck
+  result: host-key tokens only in src/core (sshTunnel.ts + 2 core test files); hostKey zero matches in all of src; fingerprint zero in both form files; form suite 11 pass / 0 fail; typecheck exit 0
+TEST_PLAN_COVERAGE: N/A (verify-only gate — no code per task §Test Cases / PLAN §4.4; deliverable is recorded evidence)
+FINDINGS:
+  critical: none
+  important: none
+  minor: none
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Closure as not-needed is justified and the evidence is honest — every claim re-verified against current source: connectionFormMessages.ts:34-37 exposes only tunnelHost/tunnelPort/tunnelUser/tunnelIdentityFile (no host-key field); no StrictHostKeyChecking/UserKnownHostsFile/known_hosts/hostKey token exists in src/ui/connectionForm.ts, src/ui/connectionFormMessages.ts, or src/config/types.ts (core-only occurrences are sshTunnel.ts + its tests, expected post-ARP-04-001); `git diff 11dbada..HEAD` shows zero src/ui/ or src/config/ changes. RED_OUTPUT N/A is legitimate for a verify-only task.

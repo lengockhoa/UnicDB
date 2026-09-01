@@ -106,3 +106,20 @@ Also created: `docs/decisions/README.md` (ADR index: 0001 — SSH host-key ident
 
 Status: PASS
 Note: filename conflict (task file vs orchestrator prompt) resolved per task file — see Discussion.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: test -f + 3 greps (content checklist re-read in full)
+  result: all exit 0; ADR file read in full — content checklist items 1-6 all present and source-anchored
+TEST_PLAN_COVERAGE: all-followed (N/A — docs task; deliverable is ADR content)
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - none
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: ADR meets every checklist bullet: supported platforms + Windows bundled-OpenSSH caveat, current implicit trust behavior (BatchMode side-effect), chosen policy with the config-override nuance stated precisely, rejected alternatives (accept-new TOFU, fingerprint pinning as upgrade path, prohibited relaxation), manual-only downgrade trigger, TLS no-claim. Commit order verified: wave-0 commit f5c847c contains only docs/decisions/ — no src/ change landed before the decision.

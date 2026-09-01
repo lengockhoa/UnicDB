@@ -126,3 +126,20 @@ Notes:
     this session and were left alone).
 Status: PASS
 Note: none
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/core/__tests__/sshTunnelManager.test.ts; npm run typecheck; npm run compile
+  result: 15/15 PASS (real lsof foreign-port case exercised); tsc exit 0; esbuild complete
+TEST_PLAN_COVERAGE: all-followed (6/6 cases; 5 edge cases >= min 2; manager file unchanged as planned)
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/core/__tests__/sshTunnelManager.test.ts — RED for case 6 was a test-defect (asserted "last -o pair" but the manager legitimately appends -o SetEnv=...); executor corrected it to an adjacent-pair assertion. Not a production gap and not faked — the failure output is a real AssertionError diff, and the GREEN assertion is end-to-end via the recording shim.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Case 4 genuinely proves PID fail-closed: detached grandchild binder with PID != child.pid, real listeningPids mismatch -> SIGKILL + reject(/port N is held by another process/); caught-sigterm control file absence proves the child was SIGKILLed, not SIGTERMed; binder released in finally + 60s failsafe. Spawn-path pin (case 6) proves the manager cannot drop/relax the strict flag. No secrets in fixtures (PID control files only).

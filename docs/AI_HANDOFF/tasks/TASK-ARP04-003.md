@@ -160,3 +160,22 @@ esbuild: build complete
 
 Status: PASS
 Note: No production change — `src/core/connectionManager.ts` is byte-identical to base (verified via `git status --porcelain` / `git diff --stat`: only the test file is modified). All 6 new pin tests (ARP-04.3 #1–#6) locked pre-existing semantics: loopback routing retention, per-key stop exact-set assertions for edit/delete/add-probe, probe-key isolation, and the intentional-exit recovery gate. A temporary mutation of the wiring was used solely to capture RED evidence and was reverted byte-for-byte before verification.
+
+---
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/core/__tests__/connectionManager.test.ts && npm run typecheck && npm run compile
+  result: 40 pass / 0 fail; typecheck exit 0; compile success
+TEST_PLAN_COVERAGE: all-followed (all 6 §ARP-04.3 cases implemented: loopback retention, edit/delete/add-probe intended-key, probe-key isolation, recovery gate)
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - note: the ADD probe path (resolveAdapter without keyOverride, connectionManager.ts:168/701) still starts the tunnel under `cfg.id`, not `probe-<id>`; only the EDIT path uses `probe-<id>` (:231). This is pre-existing behavior the task deliberately locks, and tests #4/#5 assert it faithfully (add-failure stops `c1`; edit-failure stops only `probe-c1`). No action required — recorded so a future reader does not misread row 5's "probe uses probe-<id>" as covering the add path.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Production file claim verified true — `git diff 11dbada..HEAD -- src/core/connectionManager.ts` is empty AND current working tree is byte-identical to 11dbada. Tests are non-tautological: the mutation-based RED evidence is genuine assertion-failure output (`['c1','c1']` vs `['probe-c1','c1']`, `['c1']` vs `['probe-c1']`) and acceptable for wire-pin tests per task §Goal; #2/#5 failed exactly at the intended-key assertions while the 4 unaffected tests passed. Re-ran full owned-file suite green (40/40), typecheck, compile.
