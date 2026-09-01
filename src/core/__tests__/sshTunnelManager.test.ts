@@ -2,9 +2,17 @@
 // DBX-05 TASK-DBX05-002 — lifecycle against a FAKE ssh binary (no network).
 // The manager spawns a single executable; we wrap "node fixture.mjs" behind a
 // tiny shell shim so `spawn(sshPath, args)` runs the fixture without a shell.
+// ARP-04 TASK-ARP04-002 — adds per-key isolation / fail-closed PID-proof /
+// spawned-argv strict-pin cases on top of the existing suite.
 import { describe, it, expect, afterAll } from "vitest";
 import { join } from "path";
-import { mkdtempSync, writeFileSync, readFileSync, chmodSync } from "fs";
+import {
+  mkdtempSync,
+  writeFileSync,
+  readFileSync,
+  chmodSync,
+  existsSync,
+} from "fs";
 import { tmpdir } from "os";
 import {
   SshTunnelManager,
@@ -12,14 +20,27 @@ import {
 } from "../sshTunnelManager";
 
 const FAKE_SSH = join(__dirname, "fixtures", "fake-ssh.mjs");
+const FAKE_SSH_FOREIGN = join(__dirname, "fixtures", "fake-ssh-foreign.mjs");
 
 /** Create a temp wrapper script: execs `node <fixture> "$@"`. */
-function makeShim(): string {
+function makeShim(fixture: string = FAKE_SSH, opts?: {
+  recordArgvTo?: string;
+  env?: Record<string, string>;
+}): string {
   const dir = mkdtempSync(join(tmpdir(), "vsdb-ssh-"));
   const shim = join(dir, "fake-ssh-shim");
+  // CASE 6: recording shim — dumps the spawned "$*" argv string, then execs
+  // the fixture. Mirrors makeCountingShim's append-then-exec pattern (the
+  // append happens when the child runs, strictly before it can settle).
+  const record = opts?.recordArgvTo
+    ? `printf '%s\\n' "$*" >> "${opts.recordArgvTo}"\n`
+    : "";
+  const envLines = Object.entries(opts?.env ?? {})
+    .map(([k, v]) => `${k}="${v}" export ${k}\n`)
+    .join("");
   writeFileSync(
     shim,
-    `#!/bin/sh\nexec node "${FAKE_SSH}" "$@"\n`,
+    `#!/bin/sh\n${envLines}${record}exec node "${fixture}" "$@"\n`,
     { mode: 0o755 },
   );
   chmodSync(shim, 0o755);
@@ -48,6 +69,31 @@ function makeCountingShim(counterFile: string, opts?: { fail?: boolean }): strin
   );
   chmodSync(shim, 0o755);
   return shim;
+}
+
+/** Wait until a file exists (fixture control files), with a deadline. */
+async function waitForFile(
+  path: string,
+  timeoutMs = 8_000,
+): Promise<boolean> {
+  for (let i = 0; i < timeoutMs / 50; i++) {
+    if (existsSync(path)) return true;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return existsSync(path);
+}
+
+/** Poll whether a PID is still alive (SIGKILL contract for case 4). */
+async function isPidAlive(pid: number): Promise<boolean> {
+  for (let i = 0; i < 100; i++) {
+    try {
+      process.kill(pid, 0);
+      await new Promise((r) => setTimeout(r, 50));
+    } catch {
+      return false;
+    }
+  }
+  return true;
 }
 
 function spawnCount(counterFile: string): number {
@@ -262,5 +308,181 @@ describe("SshTunnelManager (fixture ssh)", () => {
     mgr.stopAll();
     await new Promise((r) => setTimeout(r, 100));
     expect(exits.map((e) => e.key).sort()).toEqual(["c4a", "c4b"]);
+  });
+
+  // ── ARP-04 TASK-ARP04-002 ────────────────────────────────────────────
+  // Case 1 (happy/regression pin): same-key reuse returns the IDENTICAL
+  // handle instance — no second spawn, no per-key state leak.
+  it("same-key reuse returns the identical handle", async () => {
+    const mgr = freshMgr();
+    const a = await mgr.start(cfg, "k1");
+    const b = await mgr.start(cfg, "k1");
+    expect(b).toBe(a);
+    expect(mgr.list().length).toBe(1);
+    expect(b.key).toBe("k1");
+    mgr.stopAll();
+  });
+
+  // Case 2 (edge: isolation): different keys stay independent; stop("a")
+  // removes exactly "a" and a post-stopAll start of "b" is a FRESH handle
+  // (new child, fresh port), never a cached/stopped one.
+  it("different-key isolation under stop then fresh handle after stopAll", async () => {
+    const mgr = freshMgr();
+    const a = await mgr.start(cfg, "a");
+    const b = await mgr.start(cfg, "b");
+    expect(mgr.list().length).toBe(2);
+    expect(b).not.toBe(a);
+
+    expect(mgr.stop("a")).toBe(true);
+    expect(mgr.list().length).toBe(1);
+    expect(mgr.list()[0].key).toBe("b");
+
+    mgr.stopAll();
+    expect(mgr.list().length).toBe(0);
+
+    const b2 = await mgr.start(cfg, "b");
+    expect(b2).not.toBe(b);
+    expect(b2.key).toBe("b");
+    expect(b2.localPort).toBeGreaterThan(0);
+    expect(b2.child).not.toBe(b.child);
+    mgr.stopAll();
+  });
+
+  // Case 3 (edge: late exit): an externally SIGKILLed child removes ONLY its
+  // own handle and emits exactly one TunnelExit with intentional:false; the
+  // other key's handle stays live.
+  it("unexpected post-ready exit removes only its own handle", async () => {
+    const mgr = freshMgr();
+    const exits: TunnelExit[] = [];
+    mgr.onDidExit((e) => exits.push(e));
+
+    await mgr.start(cfg, "a");
+    const b = await mgr.start(cfg, "b");
+    expect(mgr.list().length).toBe(2);
+
+    const exited = new Promise<void>((resolve) => {
+      const i = setInterval(() => {
+        if (exits.length > 0) {
+          clearInterval(i);
+          resolve();
+        }
+      }, 5);
+    });
+    // Externally kill child "a" — the manager did not request this.
+    const a = mgr.list().find((h) => h.key === "a")!;
+    a.child.kill("SIGKILL");
+    await exited;
+
+    expect(exits.length).toBe(1);
+    expect(exits[0].key).toBe("a");
+    expect(exits[0].intentional).toBe(false);
+
+    expect(mgr.list().length).toBe(1);
+    expect(mgr.list()[0].key).toBe("b");
+    // "b" must still be a live child process.
+    expect(b.child.killed).toBe(false);
+    expect(b.child.exitCode).toBeNull();
+    mgr.stopAll();
+  });
+
+  // Case 4 (edge: PID mismatch fails closed): the fake-ssh-foreign fixture's
+  // DETACHED grandchild binder wins the pickFreeLocalPort race, so the LISTEN
+  // socket on the pre-allocated port is owned by a PID ≠ child.pid. Today's
+  // proveOwnership (sshTunnelManager.ts:258-282) retries until listeningPids
+  // is non-empty, compares, and must SIGKILL the child + reject — never route
+  // traffic through a foreign listener. Assertion targets the CONTRACT:
+  // rejection matching /port <N> is held by another process/ + child killed.
+  it("rejects and SIGKILLs the child when a foreign process holds the port", async () => {
+    const controlDir = mkdtempSync(join(tmpdir(), "vsdb-foreign-ctl-"));
+    // Hand the fixture its control dir via the shim's environment.
+    const shim = makeShim(FAKE_SSH_FOREIGN, {
+      env: { VSDB_TEST_FOREIGN_DIR: controlDir },
+    });
+    const mgr = new SshTunnelManager(shim);
+    managers.push(mgr);
+
+    let childPid = 0;
+    let binderPid = 0;
+    try {
+      await expect(mgr.start(cfg, "k4")).rejects.toThrow(
+        /port \d+ is held by another process/,
+      );
+
+      expect(await waitForFile(join(controlDir, "child-pid"))).toBe(true);
+      expect(await waitForFile(join(controlDir, "binder-pid"))).toBe(true);
+      childPid = Number(readFileSync(join(controlDir, "child-pid"), "utf8"));
+      binderPid = Number(readFileSync(join(controlDir, "binder-pid"), "utf8"));
+      expect(binderPid).toBeGreaterThan(0);
+      expect(childPid).toBeGreaterThan(0);
+
+      // Fail closed: the impostor child was SIGKILLed (signal, not code).
+      const childUp = await isPidAlive(childPid);
+      expect(childUp).toBe(false);
+      // And never as a managed SIGTERM — SIGKILL cannot be caught.
+      expect(existsSync(join(controlDir, "caught-sigterm"))).toBe(false);
+    } finally {
+      // The test owns the detached binder: terminate it so the port is
+      // released even on failure paths.
+      if (binderPid > 0) {
+        try {
+          process.kill(binderPid, "SIGTERM");
+        } catch {
+          // already gone
+        }
+      }
+    }
+  });
+
+  // Case 5 (edge: idempotent stop): stop on a missing key, a repeat stop,
+  // and a stop after stopAll all return false without throwing.
+  it("stop on missing or repeated keys is a safe false", async () => {
+    const mgr = freshMgr();
+    expect(mgr.stop("missing")).toBe(false);
+
+    await mgr.start(cfg, "k1");
+    mgr.stopAll();
+    expect(mgr.stop("gone")).toBe(false);
+
+    const m2 = freshMgr();
+    await m2.start(cfg, "k1");
+    expect(m2.stop("k1")).toBe(true);
+    expect(m2.stop("k1")).toBe(false);
+    expect(mgr.stop("k1")).toBe(false);
+  });
+
+  // Case 6 (edge, spawn-path pin): the spawned argv INHERITS the pinned
+  // `-o StrictHostKeyChecking=yes` from buildTunnelArgs (TASK-ARP04-001) —
+  // the manager spreads the builder output by construction and must not be
+  // able to strip or relax it. Proved end-to-end: a recording shim logs the
+  // actual spawned argv, `start` succeeds against the fixture, and the logged
+  // argv carries the strict pair with no relaxing token.
+  it("spawned argv inherits the pinned strict host-key flag", async () => {
+    const argvFile = join(mkdtempSync(join(tmpdir(), "vsdb-ssh-argv-")), "argv.log");
+    writeFileSync(argvFile, "");
+    const mgr = new SshTunnelManager(makeShim(FAKE_SSH, { recordArgvTo: argvFile }));
+    managers.push(mgr);
+
+    await mgr.start(cfg, "k6");
+    mgr.stopAll();
+
+    // Race-free read: the shim's append happens when the child runs,
+    // strictly before this start attempt could have settled.
+    const argv = readFileSync(argvFile, "utf8");
+    const tokens = argv.trim().split(/\s+/);
+    expect(tokens.length).toBeGreaterThan(1);
+    expect(tokens).toContain("StrictHostKeyChecking=yes");
+    // The strict pair appears as ADJACENT argv elements somewhere in the
+    // argv (the manager appends its own `-o SetEnv=…` marker pair after the
+    // builder output, so this need not be the last -o pair — but it must
+    // exist as a real `-o StrictHostKeyChecking=yes` option).
+    const strictIdx = tokens.indexOf("StrictHostKeyChecking=yes");
+    expect(strictIdx).toBeGreaterThan(0);
+    expect(tokens.slice(strictIdx - 1, strictIdx + 1)).toEqual([
+      "-o",
+      "StrictHostKeyChecking=yes",
+    ]);
+    // No relaxing variant anywhere in the argv.
+    expect(argv).not.toMatch(/StrictHostKeyChecking=(no|ask|accept-new|off)\b/);
+    expect(argv).not.toMatch(/UserKnownHostsFile/);
   });
 });

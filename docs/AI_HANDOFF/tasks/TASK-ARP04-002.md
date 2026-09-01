@@ -1,7 +1,7 @@
 # TASK-ARP04-002 — Lifecycle/race: per-key isolation + fail-closed PID proof + spawned-argv strict pin
 
-- Status: `ready`
-- Owner: `-`
+- Status: `pending_review`
+- Owner: claude-code / unic-code (feature-implementer)
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §1–§4 (ARP-04.2)
 
@@ -77,3 +77,52 @@ No `lint` script exists in this repo — `typecheck` + `compile` are the static 
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+---
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  First TDD run (tests written first, `src/core/sshTunnelManager.ts` byte-identical to main):
+
+  FAIL  src/core/__tests__/sshTunnelManager.test.ts > SshTunnelManager (fixture ssh) > spawned argv inherits the pinned strict host-key flag
+  AssertionError: expected [ '-o', …(1) ] to deeply equal [ '-o', 'StrictHostKeyChecking=yes' ]
+    Received: [ "-o", "SetEnv=VSDB_TUNNEL=vsdb-tunnel:k6" ]
+
+    Test Files  1 failed (1)
+    Tests  1 failed | 14 passed (15)
+
+  The single failure was a TEST bug, not a production gap: the manager legitimately appends its
+  own `-o SetEnv=VSDB_TUNNEL=<marker>:<key>` pair after the builder output, so "last -o pair"
+  was the wrong assertion. Fixed the test to assert the strict pair exists as ADJACENT elements
+  anywhere in the argv (spec wording: "the logged argv contains [\"-o\",\"StrictHostKeyChecking=yes\"]").
+  After the test fix: 15/15 green with ZERO production changes — the manager already satisfies
+  every case (spec expectation "no production change" held; `proveOwnership` at
+  sshTunnelManager.ts:258-282 fails closed exactly as required).
+Test Plan Followed: task §Test Cases 1–6 (all 6 implemented) + §Test Files + §Verification Commands
+Files Changed:
+  - src/core/__tests__/sshTunnelManager.test.ts — added cases 1–6 (same-key reuse identity; different-key isolation + fresh handle after stopAll; late external SIGKILL removes only its own handle + exactly one TunnelExit{key:"a",intentional:false}; foreign-held-port fail-closed reject + SIGKILL proof; stop/stopAll idempotent-false paths; spawned-argv strict-pin via recording shim). Extended makeShim with fixture/recordArgvTo/env options; added waitForFile + isPidAlive helpers.
+  - src/core/__tests__/fixtures/fake-ssh-foreign.mjs — NEW fixture per task Design Note: parses -L, spawns a DETACHED grandchild binder (net server on 127.0.0.1:port, PID-file handshake, SIGTERM close, 60s failsafe self-exit so a crashed test cannot leak the port), prints `VSDB_BINDER_PID=<pid>` + the exact OpenSSH forward line to stderr, stays alive 60s. Control files under $VSDB_TEST_FOREIGN_DIR: child-pid, binder-pid, caught-sigterm (proves the child was SIGKILLed, not SIGTERMed).
+  - src/core/sshTunnelManager.ts — UNCHANGED (no gap found; see RED_OUTPUT).
+Verification Output: |
+  npx vitest run src/core/__tests__/sshTunnelManager.test.ts
+    ✓ src/core/__tests__/sshTunnelManager.test.ts (15 tests) 3562ms
+    Test Files  1 passed (1) — Tests 15 passed (15)
+  npx vitest run src/core/__tests__/sshTunnelManager.test.ts src/core/__tests__/sshTunnel.test.ts
+    Test Files  2 passed (2) — Tests 31 passed (31)
+  npm run typecheck   → exit 0 (tsc --noEmit clean)
+  npm run compile     → exit 0 (esbuild: build complete)
+  npm test            → Test Files 216 passed | 1 skipped (217); Tests 3019 passed | 2 skipped (3021)
+Notes:
+  - Case 4 runs real `lsof` on darwin (platform gate per task note); assertion targets the
+    contract (/port \d+ is held by another process/ + child SIGKILLed), not tool text.
+  - The detached binder is terminated in the test's finally AND self-expires after 60s
+    (defense in depth against a crashed test run).
+  - postAll hook also stopAll()s every manager; no leaked fixture processes from this run
+    (two pre-existing stale fake-ssh.mjs processes from Mon on the MAIN repo path predate
+    this session and were left alone).
+Status: PASS
+Note: none
