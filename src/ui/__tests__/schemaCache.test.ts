@@ -5,6 +5,9 @@ import { describe, it, expect, vi } from "vitest";
 import type {
   CatalogApi,
   DbAdapter,
+  RoutineInfo,
+  SchemaInfo,
+  SequenceInfo,
   TableConstraintInfo,
   TableInfo,
   ViewInfo,
@@ -39,8 +42,10 @@ describe("SchemaCache — TASK-008 §Test Cases", () => {
   it("#7 SchemaCache returns cached data within TTL", async () => {
     const data: TableInfo[] = [{ name: "users", schema: "public" }];
     const listTables = vi.fn(async () => data);
-    // Default TTL 60s — both calls happen well within it.
-    const cache = new SchemaCache(() => adapterWith(listTables));
+    // Default TTL 60s — both calls happen well within it. Identity is
+    // load-bearing (TASK-RLX03-003): hold ONE adapter across calls.
+    const adapter = adapterWith(listTables);
+    const cache = new SchemaCache(() => adapter);
     const first = await cache.getTables();
     const second = await cache.getTables();
     // Same reference + adapter hit exactly once → served from cache.
@@ -52,7 +57,8 @@ describe("SchemaCache — TASK-008 §Test Cases", () => {
     const data1: TableInfo[] = [{ name: "users", schema: "public" }];
     const data2: TableInfo[] = [{ name: "invoices", schema: "public" }];
     const listTables = vi.fn(async () => data1);
-    const cache = new SchemaCache(() => adapterWith(listTables));
+    const adapter = adapterWith(listTables);
+    const cache = new SchemaCache(() => adapter);
     expect(await cache.getTables()).toBe(data1);
     cache.invalidate();
     listTables.mockImplementation(async () => data2);
@@ -66,7 +72,8 @@ describe("SchemaCache — TASK-008 §Test Cases", () => {
     const listTables = vi.fn(async () => stale);
     // ttlMs 0 → entry always considered expired → refresh attempted on
     // every call, so the second call exercises the failure path.
-    const cache = new SchemaCache(() => adapterWith(listTables), { ttlMs: 0 });
+    const adapter = adapterWith(listTables);
+    const cache = new SchemaCache(() => adapter, { ttlMs: 0 });
     expect(await cache.getTables()).toBe(stale);
     listTables.mockRejectedValue(new Error("connection lost"));
     await expect(cache.getTables()).resolves.toBe(stale);
@@ -164,7 +171,8 @@ describe("SchemaCache — TASK-RLX-002 single-flight coalescing", () => {
     const stale: TableInfo[] = [{ name: "users", schema: "public" }];
     const listTables = vi.fn(async () => stale);
     // ttlMs 0 → entry always expired → every call attempts a refresh.
-    const cache = new SchemaCache(() => adapterWith(listTables), { ttlMs: 0 });
+    const adapter = adapterWith(listTables);
+    const cache = new SchemaCache(() => adapter, { ttlMs: 0 });
     await expect(cache.getTables("public")).resolves.toBe(stale);
     expect(listTables).toHaveBeenCalledTimes(1);
 
@@ -190,7 +198,8 @@ describe("SchemaCache — TASK-RLX-002 single-flight coalescing", () => {
     const first = deferred<TableInfo[]>();
     const listTables = vi.fn(() => first.promise);
     // Fixed clock + default TTL → a successful commit must keep entries fresh.
-    const cache = new SchemaCache(() => adapterWith(listTables), {
+    const adapter = adapterWith(listTables);
+    const cache = new SchemaCache(() => adapter, {
       now: () => clock,
     });
 
@@ -225,7 +234,8 @@ describe("SchemaCache — TASK-RLX-002 single-flight coalescing", () => {
     const listTables = vi.fn((_schema?: string) => {
       throw new Error("boom");
     });
-    const cache = new SchemaCache(() => adapterWith(listTables), { ttlMs: 0 });
+    const adapter = adapterWith(listTables);
+    const cache = new SchemaCache(() => adapter, { ttlMs: 0 });
 
     // (a) First caller settles with the error-handled fallback.
     await expect(cache.getTables("public")).resolves.toEqual([]);
@@ -366,5 +376,279 @@ describe("SchemaCache — TASK-DBX08-002 declared-capability admission", () => {
     } as unknown as DbAdapter;
     const cache = new SchemaCache(() => adapter);
     expect(await cache.getObjectDdl("view", "public", "v")).toBeUndefined();
+  });
+});
+
+// =============================================================================
+// TASK-RLX03-003 — invalidate SchemaCache on resolved adapter identity change.
+// =============================================================================
+
+/** Inspectable fake adapter: every introspection surface records its calls. */
+function makeInspectableAdapter(
+  tag: string,
+  options: { capabilities?: Partial<DbAdapter["capabilities"]> } = {},
+): {
+  adapter: DbAdapter;
+  calls: {
+    listSchemas: ReturnType<typeof vi.fn>;
+    listTables: ReturnType<typeof vi.fn>;
+    listColumns: ReturnType<typeof vi.fn>;
+    listViews: ReturnType<typeof vi.fn>;
+    listRoutines: ReturnType<typeof vi.fn>;
+    listConstraints: ReturnType<typeof vi.fn>;
+    listSequences: ReturnType<typeof vi.fn>;
+    objectDdl: ReturnType<typeof vi.fn>;
+  };
+} {
+  const caps = {
+    catalog: true,
+    objectDdl: true,
+    tableDdl: true,
+    admin: true,
+    ...options.capabilities,
+  };
+  const calls = {
+    listSchemas: vi.fn(async (): Promise<SchemaInfo[]> => [
+      { name: `${tag}_schema` },
+    ]),
+    listTables: vi.fn(async (): Promise<TableInfo[]> => [
+      { name: `${tag}_table`, schema: "public" },
+    ]),
+    listColumns: vi.fn(async () => [{ name: `${tag}_col`, dataType: "text", nullable: true }]),
+    listViews: vi.fn(async (): Promise<ViewInfo[]> => [
+      { name: `${tag}_view`, schema: "public" },
+    ]),
+    listRoutines: vi.fn(async (): Promise<RoutineInfo[]> => [
+      { name: `${tag}_routine`, kind: "function" as const, schema: "public" },
+    ]),
+    listConstraints: vi.fn(async (): Promise<TableConstraintInfo[]> => [
+      {
+        name: `${tag}_constraint`,
+        type: "pk" as const,
+        columns: ["id"],
+      },
+    ]),
+    listSequences: vi.fn(async (): Promise<SequenceInfo[]> => [
+      { name: `${tag}_seq`, schema: "public", dataType: "bigint" },
+    ]),
+    objectDdl: vi.fn(async () => `DDL ${tag}`),
+  };
+  const adapter = {
+    listSchemas: calls.listSchemas,
+    listTables: calls.listTables,
+    listColumns: calls.listColumns,
+    listViews: calls.listViews,
+    listRoutines: calls.listRoutines,
+    catalog: {
+      listIndexes: vi.fn(async () => []),
+      listConstraints: calls.listConstraints,
+      listTriggers: vi.fn(async () => []),
+      listSequences: calls.listSequences,
+      rowCount: vi.fn(async () => 0),
+      objectDdl: calls.objectDdl,
+    },
+    capabilities: caps,
+  } as unknown as DbAdapter;
+  return { adapter, calls };
+}
+
+describe("SchemaCache — TASK-RLX03-003 adapter identity transition", () => {
+  it("#1 adapter B transition replaces fresh schema and table cache families", async () => {
+    let current = makeInspectableAdapter("A");
+    const provider = vi.fn(() => current.adapter);
+    let clock = 1_000;
+    // Default TTL (60s) + fixed clock → A entries stay FRESH the whole test;
+    // only an adapter identity change may justify a refetch.
+    const cache = new SchemaCache(provider, { now: () => clock });
+
+    // Warm all three table/schema families from adapter A.
+    const schemasA = await cache.getSchemas();
+    const tablesAllA = await cache.getTables();
+    const tablesPublicA = await cache.getTables("public");
+    expect(schemasA).toEqual([{ name: "A_schema" }]);
+    expect(tablesAllA).toEqual([{ name: "A_table", schema: "public" }]);
+    expect(tablesPublicA).toEqual([{ name: "A_table", schema: "public" }]);
+    const aCallsAfterWarm = current.calls;
+    expect(aCallsAfterWarm.listSchemas).toHaveBeenCalledTimes(1);
+    expect(aCallsAfterWarm.listTables).toHaveBeenCalledTimes(2);
+
+    // Provider now resolves adapter B while every A entry is still fresh.
+    const b = makeInspectableAdapter("B");
+    current = { adapter: b.adapter, calls: b.calls };
+
+    const schemasB = await cache.getSchemas();
+    const tablesAllB = await cache.getTables();
+    const tablesPublicB = await cache.getTables("public");
+
+    // Each B method called exactly once and returned B's distinct value —
+    // A's fresh-TTL cached value must never be served after the transition.
+    expect(b.calls.listSchemas).toHaveBeenCalledTimes(1);
+    expect(schemasB).toEqual([{ name: "B_schema" }]);
+    expect(schemasB).not.toEqual(schemasA);
+    expect(b.calls.listTables).toHaveBeenCalledTimes(2);
+    expect(tablesAllB).toEqual([{ name: "B_table", schema: "public" }]);
+    expect(tablesAllB).not.toBe(tablesAllA);
+    expect(tablesPublicB).toEqual([{ name: "B_table", schema: "public" }]);
+    expect(tablesPublicB).not.toBe(tablesPublicA);
+
+    // Within TTL the new entries are cached under B's identity.
+    clock = 2_000;
+    expect(await cache.getSchemas()).toBe(schemasB);
+    expect(await cache.getTables()).toBe(tablesAllB);
+    expect(await cache.getTables("public")).toBe(tablesPublicB);
+    expect(b.calls.listSchemas).toHaveBeenCalledTimes(1);
+    expect(b.calls.listTables).toHaveBeenCalledTimes(2);
+  });
+
+  it("#2 adapter B transition replaces every pre-resolve column and catalog/DDL cache family", async () => {
+    let current = makeInspectableAdapter("A");
+    const provider = vi.fn(() => current.adapter);
+    let clock = 1_000;
+    const cache = new SchemaCache(provider, { now: () => clock });
+
+    // Warm the column + catalog/DDL families from adapter A.
+    const columnsA = await cache.getColumns("users", "public");
+    const viewsA = await cache.getViews("public");
+    const routinesA = await cache.getRoutines("public");
+    const sequencesA = await cache.getSequences("public");
+    const constraintsA = await cache.getConstraints("public", "users");
+    const ddlA = await cache.getObjectDdl("view", "public", "v_users");
+    expect(columnsA).toEqual([{ name: "A_col", dataType: "text", nullable: true }]);
+    expect(viewsA).toEqual([{ name: "A_view", schema: "public" }]);
+    expect(routinesA).toEqual([{ name: "A_routine", kind: "function", schema: "public" }]);
+    expect(sequencesA).toEqual([{ name: "A_seq", schema: "public", dataType: "bigint" }]);
+    expect(constraintsA).toEqual([{ name: "A_constraint", type: "pk", columns: ["id"] }]);
+    expect(ddlA).toBe("DDL A");
+
+    // Switch to catalog-and-objectDdl-capable B — all A entries still fresh.
+    const b = makeInspectableAdapter("B");
+    current = { adapter: b.adapter, calls: b.calls };
+
+    const columnsB = await cache.getColumns("users", "public");
+    const viewsB = await cache.getViews("public");
+    const routinesB = await cache.getRoutines("public");
+    const sequencesB = await cache.getSequences("public");
+    const constraintsB = await cache.getConstraints("public", "users");
+    const ddlB = await cache.getObjectDdl("view", "public", "v_users");
+
+    // Every lookup hit B, never A's still-fresh cached value.
+    expect(columnsB).toEqual([{ name: "B_col", dataType: "text", nullable: true }]);
+    expect(columnsB).not.toBe(columnsA);
+    expect(viewsB).toEqual([{ name: "B_view", schema: "public" }]);
+    expect(viewsB).not.toBe(viewsA);
+    expect(routinesB).toEqual([{ name: "B_routine", kind: "function", schema: "public" }]);
+    expect(routinesB).not.toBe(routinesA);
+    expect(sequencesB).toEqual([{ name: "B_seq", schema: "public", dataType: "bigint" }]);
+    expect(sequencesB).not.toBe(sequencesA);
+    expect(constraintsB).toEqual([{ name: "B_constraint", type: "pk", columns: ["id"] }]);
+    expect(constraintsB).not.toBe(constraintsA);
+    expect(ddlB).toBe("DDL B");
+    expect(b.calls.listColumns).toHaveBeenCalledTimes(1);
+    expect(b.calls.listViews).toHaveBeenCalledTimes(1);
+    expect(b.calls.listRoutines).toHaveBeenCalledTimes(1);
+    expect(b.calls.listSequences).toHaveBeenCalledTimes(1);
+    expect(b.calls.listConstraints).toHaveBeenCalledTimes(1);
+    expect(b.calls.objectDdl).toHaveBeenCalledTimes(1);
+
+    // Fresh B entries persist within TTL (cached under the new generation).
+    clock = 2_000;
+    expect(await cache.getColumns("users", "public")).toBe(columnsB);
+    expect(await cache.getViews("public")).toBe(viewsB);
+    expect(await cache.getRoutines("public")).toBe(routinesB);
+    expect(await cache.getSequences("public")).toBe(sequencesB);
+    expect(await cache.getConstraints("public", "users")).toBe(constraintsB);
+    expect(await cache.getObjectDdl("view", "public", "v_users")).toBe(ddlB);
+    expect(b.calls.listColumns).toHaveBeenCalledTimes(1);
+    expect(b.calls.objectDdl).toHaveBeenCalledTimes(1);
+  });
+
+  it("#3 A response begun before adapter B transition cannot commit after invalidation", async () => {
+    let current = makeInspectableAdapter("A");
+    const provider = vi.fn(() => current.adapter);
+    let clock = 1_000;
+    // Fixed clock keeps a committed entry fresh across the whole test.
+    const cache = new SchemaCache(provider, { now: () => clock });
+
+    // Hold adapter A's response in flight for getTables("public").
+    const inFlight = deferred<TableInfo[]>();
+    const aTables = current.calls.listTables as ReturnType<typeof vi.fn>;
+    aTables.mockImplementation(() => inFlight.promise);
+    const pending = cache.getTables("public");
+    await flushMicrotasks();
+    expect(aTables).toHaveBeenCalledTimes(1);
+
+    // Provider switches to B while A's response is still unresolved.
+    const b = makeInspectableAdapter("B");
+    current = { adapter: b.adapter, calls: b.calls };
+
+    // A's deferred result still resolves to its ORIGINAL caller...
+    const oldData: TableInfo[] = [{ name: "old", schema: "public" }];
+    inFlight.resolve(oldData);
+    await expect(pending).resolves.toBe(oldData);
+
+    // ...but the next read fetches from B (`new`), never A's old response.
+    const newData: TableInfo[] = [{ name: "new", schema: "public" }];
+    (b.calls.listTables as ReturnType<typeof vi.fn>).mockImplementation(
+      async () => newData,
+    );
+    expect(await cache.getTables("public")).toBe(newData);
+
+    // Later within-TTL read stays `new` — A's response never became cache.
+    expect(await cache.getTables("public")).toBe(newData);
+    expect(b.calls.listTables).toHaveBeenCalledTimes(1);
+  });
+
+  it("#4 null and throwing provider keep cached stale data without changing adapter identity", async () => {
+    let current = makeInspectableAdapter("A");
+    let mode: "adapter" | "null" | "throw" = "adapter";
+    const provider = vi.fn(() => {
+      if (mode === "null") return null;
+      if (mode === "throw") throw new Error("no active connection");
+      return current.adapter;
+    });
+    const cache = new SchemaCache(provider);
+
+    // Warm the cache from adapter A.
+    const cached: TableInfo[] = [{ name: "A_table", schema: "public" }];
+    expect(await cache.getTables("public")).toEqual(cached);
+    expect(current.calls.listTables).toHaveBeenCalledTimes(1);
+
+    // (a) Provider resolves null → stale A data, no replacement adapter call.
+    mode = "null";
+    await expect(cache.getTables("public")).resolves.toEqual(cached);
+    expect(current.calls.listTables).toHaveBeenCalledTimes(1);
+
+    // (b) Provider throws → still stale A data, cache not erased.
+    mode = "throw";
+    await expect(cache.getTables("public")).resolves.toEqual(cached);
+    expect(current.calls.listTables).toHaveBeenCalledTimes(1);
+
+    // (c) Provider recovers to the SAME adapter A → stale contract intact;
+    // the cached entry was never cleared by the unavailable-provider window.
+    mode = "adapter";
+    expect(await cache.getTables("public")).toEqual(cached);
+    expect(current.calls.listTables).toHaveBeenCalledTimes(1);
+  });
+
+  it("#5 same adapter still coalesces concurrent expired reads", async () => {
+    const refreshed: TableInfo[] = [{ name: "orders", schema: "public" }];
+    const first = deferred<TableInfo[]>();
+    const listTables = vi.fn(() => first.promise);
+    const adapter = adapterWith(listTables);
+    // ttlMs 0 → entry always expired → every call attempts a refresh.
+    const cache = new SchemaCache(() => adapter, { ttlMs: 0 });
+
+    const p1 = cache.getTables("public");
+    const p2 = cache.getTables("public");
+    await flushMicrotasks();
+    // Same identity must not trigger invalidate() — RLX-01 single-flight
+    // coalescing keeps exactly ONE adapter refresh.
+    expect(listTables).toHaveBeenCalledTimes(1);
+    expect(listTables).toHaveBeenCalledWith("public");
+    first.resolve(refreshed);
+
+    await expect(p1).resolves.toBe(refreshed);
+    await expect(p2).resolves.toBe(refreshed);
+    expect(listTables).toHaveBeenCalledTimes(1);
   });
 });

@@ -16,6 +16,24 @@ export interface TunnelHandle {
   readonly child: ChildProcess;
 }
 
+/**
+ * One-time terminal event for a tunnel child that had reached the
+ * returned-handle lifecycle. `intentional` distinguishes manager-issued
+ * stops (SIGTERM via stop/stopAll) from unexpected exits. `code`/`signal`
+ * mirror the underlying ChildProcess exit.
+ */
+export interface TunnelExit {
+  readonly key: string;
+  readonly code: number | null;
+  readonly signal: NodeJS.Signals | null;
+  readonly intentional: boolean;
+}
+
+/** Subscription token returned by {@link SshTunnelManager.onDidExit}. */
+export interface TunnelExitSubscription {
+  dispose(): void;
+}
+
 /** Marker token added to spawned argv so `ps` parsing can identify our tunnels. */
 const MARKER = "vsdb-tunnel";
 
@@ -108,11 +126,41 @@ function listeningPids(port: number): Promise<Set<number>> {
 
 export class SshTunnelManager {
   private readonly tunnels = new Map<string, TunnelHandle>();
+  /** In-flight same-key start() calls — coalesced to one shared promise. */
+  private readonly pending = new Map<string, Promise<TunnelHandle>>();
+  /** TunnelExit listeners registered via onDidExit. */
+  private readonly exitListeners = new Set<(exit: TunnelExit) => void>();
+  /** Children whose exit was requested by stop/stopAll (intentional). */
+  private readonly intentional = new WeakSet<ChildProcess>();
 
   constructor(
     /** Injectable for tests — defaults to the real `ssh` binary on PATH. */
     private readonly sshPath: string = "ssh",
   ) {}
+
+  /**
+   * Subscribe to post-ready tunnel child exits. The listener fires EXACTLY
+   * ONCE per child that reached the returned-handle lifecycle — never for
+   * children that failed readiness (those reject `start()` instead).
+   */
+  onDidExit(listener: (exit: TunnelExit) => void): TunnelExitSubscription {
+    this.exitListeners.add(listener);
+    return {
+      dispose: () => {
+        this.exitListeners.delete(listener);
+      },
+    };
+  }
+
+  private emitExit(exit: TunnelExit): void {
+    for (const listener of this.exitListeners) {
+      try {
+        listener(exit);
+      } catch {
+        // Listener errors must never break the tunnel lifecycle.
+      }
+    }
+  }
 
   /**
    * Resolve once the local forward accepts TCP connections; kill + throw on
@@ -126,9 +174,27 @@ export class SshTunnelManager {
   async start(cfg: TunnelConfig, key: string): Promise<TunnelHandle> {
     const existing = this.tunnels.get(key);
     if (existing) return existing;
+    const inflight = this.pending.get(key);
+    if (inflight) return inflight;
     if (!/^[A-Za-z0-9._-]+$/.test(key)) {
       throw new Error(`invalid tunnel key: ${key}`);
     }
+
+    const attempt = this.spawnAndProve(cfg, key);
+    this.pending.set(key, attempt);
+    // Settlement cleanup: the in-flight record must clear on BOTH outcomes so
+    // a later start() is a fresh attempt rather than a replayed rejection.
+    const clear = () => {
+      if (this.pending.get(key) === attempt) this.pending.delete(key);
+    };
+    attempt.then(clear, clear);
+    return attempt;
+  }
+
+  private async spawnAndProve(
+    cfg: TunnelConfig,
+    key: string,
+  ): Promise<TunnelHandle> {
 
     const localPort = await pickFreeLocalPort();
     const args = [
@@ -227,9 +293,14 @@ export class SshTunnelManager {
 
     const h: TunnelHandle = { key, localPort, child };
     this.tunnels.set(key, h);
-    child.once("exit", () => {
-      // Child died later: drop the handle so a retry can start fresh.
+    child.once("exit", (code: number | null, signal: NodeJS.Signals | null) => {
+      // Terminal event for a child that reached the returned-handle
+      // lifecycle. Drop the handle FIRST so a follow-up start() observes
+      // a clean map and proceeds to a fresh spawn with a new ephemeral
+      // port + listener PID proof. Then emit the typed exit exactly once.
+      const intentional = this.intentional.has(child);
       if (this.tunnels.get(key) === h) this.tunnels.delete(key);
+      this.emitExit({ key, code, signal, intentional });
     });
     return h;
   }
@@ -238,6 +309,9 @@ export class SshTunnelManager {
     const h = this.tunnels.get(key);
     if (!h) return false;
     this.tunnels.delete(key);
+    // Mark intent BEFORE SIGTERM so the post-ready exit handler classifies
+    // this as a managed shutdown, not an unexpected failure.
+    this.intentional.add(h.child);
     h.child.kill("SIGTERM");
     return true;
   }
@@ -248,6 +322,7 @@ export class SshTunnelManager {
 
   stopAll(): void {
     for (const h of this.tunnels.values()) {
+      this.intentional.add(h.child);
       h.child.kill("SIGTERM");
     }
     this.tunnels.clear();

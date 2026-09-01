@@ -72,6 +72,13 @@ export class SchemaCache {
   private readonly inflight = new Map<string, Promise<unknown>>();
   /** Bumped on invalidate — pre-invalidate responses must not commit. */
   private generation = 0;
+  /**
+   * TASK-RLX03-003 — last resolved non-null adapter identity. A DIFFERENT
+   * non-null adapter (reconnect / active-connection switch) is a cache
+   * generation boundary: all cached families belong to the old connection.
+   * Null/throwing provider leaves this untouched (stale-on-error contract).
+   */
+  private adapterIdentity: DbAdapter | null = null;
 
   constructor(
     private readonly adapterProvider: SchemaAdapterProvider,
@@ -132,8 +139,10 @@ export class SchemaCache {
   /** Columns của một table (cached theo TTL, key = schema.table). */
   async getColumns(table: string, schema?: string): Promise<ColumnInfo[]> {
     const key = `${schema ?? ""}.${table}`;
-    const existing = this.columnsByKey.get(key) ?? null;
     const adapter = await this.resolveAdapter();
+    // existing đọc SAU resolveAdapter — invalidate do adapter transition
+    // phải xóa slot trước khi freshness được đánh giá.
+    const existing = this.columnsByKey.get(key) ?? null;
     if (!adapter) return this.stale(existing) ?? [];
     return (
       (await this.fetchEntry(
@@ -156,8 +165,8 @@ export class SchemaCache {
   /** Views for one schema (cached). `undefined` schema → no catalog data. */
   async getViews(schema?: string): Promise<ViewInfo[]> {
     if (schema === undefined) return [];
-    const existing = this.viewsBySchema.get(schema) ?? null;
     const adapter = await this.resolveAdapter();
+    const existing = this.viewsBySchema.get(schema) ?? null;
     if (!adapter) return this.stale(existing) ?? [];
     return (
       (await this.fetchEntry(
@@ -174,8 +183,8 @@ export class SchemaCache {
   /** Routines for one schema (cached). `undefined` schema → no catalog data. */
   async getRoutines(schema?: string): Promise<RoutineInfo[]> {
     if (schema === undefined) return [];
-    const existing = this.routinesBySchema.get(schema) ?? null;
     const adapter = await this.resolveAdapter();
+    const existing = this.routinesBySchema.get(schema) ?? null;
     if (!adapter) return this.stale(existing) ?? [];
     return (
       (await this.fetchEntry(
@@ -199,8 +208,8 @@ export class SchemaCache {
     table: string,
   ): Promise<TableConstraintInfo[]> {
     const key = `${schema}.${table}`;
-    const existing = this.constraintsByKey.get(key) ?? null;
     const adapter = await this.resolveAdapter();
+    const existing = this.constraintsByKey.get(key) ?? null;
     if (!hasAdapterCapability(adapter, "catalog")) {
       return this.stale(existing) ?? [];
     }
@@ -222,8 +231,8 @@ export class SchemaCache {
 
   /** Sequences for one schema (cached). Returns [] if no catalog capability. */
   async getSequences(schema: string): Promise<SequenceInfo[]> {
-    const existing = this.sequencesBySchema.get(schema) ?? null;
     const adapter = await this.resolveAdapter();
+    const existing = this.sequencesBySchema.get(schema) ?? null;
     if (!hasAdapterCapability(adapter, "catalog")) {
       return this.stale(existing) ?? [];
     }
@@ -252,8 +261,8 @@ export class SchemaCache {
     name: string,
   ): Promise<string | undefined> {
     const key = `${kind}:${schema}.${name}`;
-    const existing = this.ddlByKey.get(key) ?? null;
     const adapter = await this.resolveAdapter();
+    const existing = this.ddlByKey.get(key) ?? null;
     // Object DDL is gated by its OWN declaration (DBX-08) — catalog presence
     // alone never admits DDL retrieval.
     if (!hasAdapterCapability(adapter, "objectDdl")) {
@@ -294,13 +303,27 @@ export class SchemaCache {
   // ---- Private ---------------------------------------------------------------
 
   private async resolveAdapter(): Promise<DbAdapter | null> {
+    let adapter: DbAdapter | null;
     try {
-      return await this.adapterProvider();
+      adapter = await this.adapterProvider();
     } catch {
       // getAdapter() throw (no active / missing password) → coi như không
-      // có adapter; stale data (nếu có) vẫn được trả.
+      // có adapter; stale data (nếu có) vẫn được trả. Identity giữ nguyên —
+      // không phải adapter replacement, không invalidate.
       return null;
     }
+    // TASK-RLX03-003 — adapter identity boundary. First non-null adapter only
+    // establishes identity (no spurious invalidate/fetch); a DIFFERENT later
+    // non-null adapter means reconnect or active-connection switch: cached
+    // entries belong to the old generation, so invalidate BEFORE the caller
+    // evaluates freshness or reads any cache slot. Same adapter → no-op, the
+    // single-flight/generation semantics of RLX-01 stay intact. Null is not a
+    // transition (transient unavailable adapter keeps its stale contract).
+    if (adapter && this.adapterIdentity !== adapter) {
+      if (this.adapterIdentity !== null) this.invalidate();
+      this.adapterIdentity = adapter;
+    }
+    return adapter;
   }
 
   private isFresh(entry: CacheEntry<unknown> | null): boolean {

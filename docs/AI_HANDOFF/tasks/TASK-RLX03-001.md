@@ -66,3 +66,49 @@ No `lint` script exists in `package.json`.
 ---
 
 ## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  npx vitest run src/core/__tests__/sshTunnelManager.test.ts
+
+   ❯ src/core/__tests__/sshTunnelManager.test.ts  (9 tests | 3 failed) 884ms
+     ❯ ... > coalesces concurrent same-key starts then returns a fresh handle after unexpected exit
+       → mgr.onDidExit is not a function
+     ❯ ... > stop and stopAll mark child exits intentional before deleting handles
+       → mgr.onDidExit is not a function
+     ❯ ... > different keys retain independent live handles
+       → mgr.onDidExit is not a function
+
+  ⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+  FAIL ... TypeError: mgr.onDidExit is not a function
+   ❯ src/core/__tests__/sshTunnelManager.test.ts:98:9
+
+  Test Files  1 failed (1)
+       Tests  3 failed | 6 passed (9)
+
+  (Test 3 `coalesces a same-key missing-binary rejection` passed immediately at RED:
+   its observable pre-state — both concurrent calls reject with the existing literal —
+   was already satisfied by the pre-existing start(); its NEW assertion, that the
+   in-flight record is cleared and a subsequent start() is a fresh attempt, only
+   becomes distinguishable in combination with the coalescing implementation, verified
+   in GREEN via the shared-promise/`pending` map path.)
+Verification Output: |
+  npx vitest run src/core/__tests__/sshTunnelManager.test.ts src/core/__tests__/sshTunnel.test.ts
+
+   ✓ src/core/__tests__/sshTunnel.test.ts  (10 tests) 4ms
+   ✓ src/core/__tests__/sshTunnelManager.test.ts  (9 tests) 1669ms
+
+   Test Files  2 passed (2)
+        Tests  19 passed (19)
+
+  npm run typecheck
+  > tsc --noEmit
+  (no output — clean exit)
+
+  npm run compile
+  ⚡ Done in 146ms
+  esbuild: build complete
+Status: PASS
+Note: fake-ssh.mjs untouched — unexpected exit driven deterministically by `a.child.kill("SIGKILL")` on the post-ready handle; no fixture change needed. Intentional marking uses a private WeakSet<ChildProcess> (not ad-hoc child props). The task's `stop()`-then-restart and `stopAll()` exit-event assertions use a short settle wait (100ms) after SIGTERM; child exit event ordering is guaranteed by `once("exit", ...)` semantics.

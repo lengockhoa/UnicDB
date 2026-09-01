@@ -67,3 +67,77 @@ Every public cache lookup already awaits `resolveAdapter()` before it calls `fet
 ---
 
 ## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT: |
+  npx vitest run src/ui/__tests__/schemaCache.test.ts — BEFORE implementation:
+
+   ❯ src/ui/__tests__/schemaCache.test.ts  (19 tests | 3 failed) 13ms
+   ❯ ... > TASK-RLX03-003 ... > #1 adapter B transition replaces fresh schema and table cache families
+     → expected "spy" to be called 1 times, but got 0 times
+   ❯ ... > #2 adapter B transition replaces every pre-resolve column and catalog/DDL cache family
+     → expected [ { name: 'A_col', …(2) } ] to deeply equal [ { name: 'B_col', …(2) } ]
+        - "name": "B_col",  + "name": "A_col"
+   ❯ ... > #3 A response begun before adapter B transition cannot commit after invalidation
+     → expected [ { name: 'old', schema: 'public' } ] to be [ { name: 'new', schema: 'public' } ]
+        - "name": "new",  + "name": "old"
+
+  Test Files  1 failed (1)
+       Tests  3 failed | 16 passed (19)
+
+  All three identity-transition tests failed for exactly the expected reasons
+  (A's fresh-TTL entries served instead of calling B; A's stale response
+  returned/committed after transition). #4 null/throw-stale and #5
+  same-adapter single-flight passed immediately — correct, they pin EXISTING
+  behavior as regression guards (task table marks #5 "regression"; #4 asserts
+  the source-proven stale-on-error contract that the plan says must be
+  retained, not introduced).
+
+Implementation summary:
+- `src/ui/schemaCache.ts`: added `private adapterIdentity: DbAdapter | null`
+  and identity observation at the END of the existing `resolveAdapter()`
+  (provider-resolution path): first non-null adapter only records identity
+  (no spurious invalidate); a DIFFERENT later non-null adapter calls the
+  existing `invalidate(): void` BEFORE the caller reads any cache slot or
+  evaluates freshness; null/throw leaves identity untouched.
+- Also moved the `existing` slot read to AFTER `await this.resolveAdapter()`
+  in `getColumns`, `getViews`, `getRoutines`, `getConstraints`,
+  `getSequences`, `getObjectDdl` — these six captured `existing` BEFORE
+  resolution, so a transition-invalidate would have been evaluated against a
+  pre-invalidation snapshot (stale slot leaked into fetchEntry's freshness
+  check). `getSchemas`/`getTables` already read after resolution.
+- `src/ui/__tests__/schemaCache.test.ts`: added inspectable `DbAdapter`
+  factory + 5 tests (§Test Cases #1-#5). Existing fixtures that constructed
+  a NEW adapter object per provider call were normalized to hold ONE stable
+  adapter reference — adapter identity is now load-bearing, and a per-call
+  new object encodes "connection changes every call". Test intent unchanged;
+  production provider (extension.ts) already returns a stable cached ref.
+
+Verification Output: |
+  1) npx vitest run src/ui/__tests__/schemaCache.test.ts
+     ✓ src/ui/__tests__/schemaCache.test.ts  (19 tests) 7ms
+     Test Files  1 passed (1)
+          Tests  19 passed (19)
+
+  2) npm run typecheck
+     > tsc --noEmit   (clean, no output, exit 0)
+
+  3) npm run compile
+     ⚡ Done in 139ms
+       dist/extension.js      5.2mb ⚠️
+       dist/extension.js.map  9.0mb
+     ⚡ Done in 191ms
+     esbuild: build complete
+
+  Extra (touched-module consumers, not required by task):
+  npx vitest run src/ui/__tests__/sqlCompletionProvider.test.ts
+    src/ui/__tests__/sqlSemanticTokens.test.ts src/ui/__tests__/sqlCatalog.test.ts
+    src/ui/__tests__/sqlNavigationProvider.test.ts src/__tests__/dbx01Scaffold.test.ts
+    src/__tests__/dbx03Scaffold.test.ts
+     Test Files  6 passed (6) | Tests  38 passed (38)
+
+Status: PASS
+Note: none — no lint script exists (per task file); acceptance criteria all hold: first non-null adapter establishes identity without extra fetch, different adapter invalidates before freshness evaluation, null/throw keeps stale + identity, generation guard blocks pre-transition commit, RLX-01 single-flight/TTL/capability-gate/DDL-null semantics unchanged, public signatures unchanged.

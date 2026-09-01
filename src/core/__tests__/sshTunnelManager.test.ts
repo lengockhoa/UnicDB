@@ -6,7 +6,10 @@ import { describe, it, expect, afterAll } from "vitest";
 import { join } from "path";
 import { mkdtempSync, writeFileSync, chmodSync } from "fs";
 import { tmpdir } from "os";
-import { SshTunnelManager } from "../sshTunnelManager";
+import {
+  SshTunnelManager,
+  type TunnelExit,
+} from "../sshTunnelManager";
 
 const FAKE_SSH = join(__dirname, "fixtures", "fake-ssh.mjs");
 
@@ -83,5 +86,141 @@ describe("SshTunnelManager (fixture ssh)", () => {
     await expect(mgr.start(cfg, "c5")).rejects.toThrow(
       /failed to start ssh|exited before becoming ready/,
     );
+  });
+
+  // ── RLX-03 TASK-RLX03-001 ────────────────────────────────────────────
+  // Same-key concurrent starts coalesce; a post-ready unexpected exit is a
+  // single observable TunnelExit event with intentional:false; a restart
+  // receives a fresh handle/port proof.
+  it("coalesces concurrent same-key starts then returns a fresh handle after unexpected exit", async () => {
+    const mgr = freshMgr();
+    const exits: TunnelExit[] = [];
+    mgr.onDidExit((e) => exits.push(e));
+
+    // Two concurrent calls before any readiness — must coalesce to ONE spawn
+    // and resolve to the exact same handle.
+    const [a, b] = await Promise.all([
+      mgr.start(cfg, "c1"),
+      mgr.start(cfg, "c1"),
+    ]);
+    expect(b).toBe(a);
+
+    // After readiness, kill the child externally (unexpected exit) and wait
+    // for the typed exit event.
+    const exited = new Promise<void>((resolve) => {
+      const i = setInterval(() => {
+        if (exits.length > 0) {
+          clearInterval(i);
+          resolve();
+        }
+      }, 5);
+    });
+    a.child.kill("SIGKILL");
+    await exited;
+
+    expect(mgr.list().length).toBe(0);
+    expect(exits.length).toBe(1);
+    expect(exits[0].key).toBe("c1");
+    expect(exits[0].intentional).toBe(false);
+
+    // A new start must be a fresh spawn (different handle/child) with a real
+    // local port, NOT the previously cached handle.
+    const c = await mgr.start(cfg, "c1");
+    expect(c).not.toBe(a);
+    expect(c.localPort).toBeGreaterThan(0);
+    expect(c.child).not.toBe(a.child);
+    mgr.stopAll();
+  });
+
+  // stop/stopAll mark intentional:true and remove the handle immediately;
+  // a later start must NOT reuse the stopped handle.
+  it("stop and stopAll mark child exits intentional before deleting handles", async () => {
+    const mgr = freshMgr();
+    const exits: TunnelExit[] = [];
+    mgr.onDidExit((e) => exits.push(e));
+
+    await mgr.start(cfg, "c2a");
+    await mgr.start(cfg, "c2b");
+    expect(mgr.list().length).toBe(2);
+
+    expect(mgr.stop("c2a")).toBe(true);
+    expect(mgr.list().length).toBe(1);
+
+    mgr.stopAll();
+    expect(mgr.list().length).toBe(0);
+
+    // Wait for the exit events to flush (stopAll -> SIGTERM -> exit).
+    await new Promise((r) => setTimeout(r, 100));
+
+    const intentionalKeys = exits.filter((e) => e.intentional).map((e) => e.key).sort();
+    expect(intentionalKeys).toEqual(["c2a", "c2b"]);
+
+    // Restart after stop: must be a fresh handle, not a cached one.
+    const restarted = await mgr.start(cfg, "c2a");
+    expect(restarted.key).toBe("c2a");
+    expect(restarted.localPort).toBeGreaterThan(0);
+    mgr.stopAll();
+  });
+
+  // Two concurrent starts against a missing binary both reject with the
+  // pre-existing error literal; the in-flight record is cleared so a later
+  // start is a fresh spawn attempt (not the same rejected promise).
+  it("coalesces a same-key missing-binary rejection and clears its in-flight record", async () => {
+    const mgr = new SshTunnelManager("/nonexistent/vsdb-missing-ssh");
+    managers.push(mgr);
+
+    const [r1, r2] = await Promise.allSettled([
+      mgr.start(cfg, "bad"),
+      mgr.start(cfg, "bad"),
+    ]);
+    expect(r1.status).toBe("rejected");
+    expect(r2.status).toBe("rejected");
+    expect((r1 as PromiseRejectedResult).reason).toBeInstanceOf(Error);
+    expect(
+      /failed to start ssh|exited before becoming ready/.test(
+        ((r1 as PromiseRejectedResult).reason as Error).message,
+      ),
+    ).toBe(true);
+    expect(
+      /failed to start ssh|exited before becoming ready/.test(
+        ((r2 as PromiseRejectedResult).reason as Error).message,
+      ),
+    ).toBe(true);
+
+    // Subsequent start must be a NEW attempt: it must again reject (binary
+    // still missing) but be a distinct promise, NOT the prior settled one.
+    const r3 = await mgr.start(cfg, "bad").then(
+      () => ({ ok: true as const }),
+      (err: unknown) => ({ ok: false as const, err }),
+    );
+    expect(r3.ok).toBe(false);
+    if (!r3.ok) {
+      expect(
+        /failed to start ssh|exited before becoming ready/.test(
+          (r3.err as Error).message,
+        ),
+      ).toBe(true);
+    }
+  });
+
+  // Regression: different keys never share state.
+  it("different keys retain independent live handles", async () => {
+    const mgr = freshMgr();
+    const a = await mgr.start(cfg, "c4a");
+    const b = await mgr.start(cfg, "c4b");
+    expect(mgr.list().length).toBe(2);
+    expect(a.key).toBe("c4a");
+    expect(b.key).toBe("c4b");
+
+    const exits: TunnelExit[] = [];
+    mgr.onDidExit((e) => exits.push(e));
+
+    mgr.stop("c4a");
+    expect(mgr.list().length).toBe(1);
+    expect(mgr.list()[0].key).toBe("c4b");
+
+    mgr.stopAll();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(exits.map((e) => e.key).sort()).toEqual(["c4a", "c4b"]);
   });
 });
