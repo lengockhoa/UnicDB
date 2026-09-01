@@ -161,10 +161,10 @@ No same-wave target-file overlap: TASK-ARP03-001 owns `resultBatcher.ts`/its tes
 | Task / Portfolio | Title | Status | Dependencies | Reviewer |
 |---|---|---|---|---|
 | TASK-ARP04-000 | ADR: SSH host-key identity policy (mandatory gate) | pending_review | none | - |
-| TASK-ARP04-001 | Identity input: pinned strict host-key checking | ready | TASK-ARP04-000 | - |
-| TASK-ARP04-002 | Lifecycle/race + fail-closed PID proof + spawned-argv strict pin | ready | TASK-ARP04-000, TASK-ARP04-001 | - |
-| TASK-ARP04-003 | Manager integration: intended-key stop + loopback retention | ready | TASK-ARP04-001, TASK-ARP04-002 | - |
-| TASK-ARP04-004 | Form wiring gate (verify-only, expected close not-needed) | ready | TASK-ARP04-003 | - |
+| TASK-ARP04-001 | Identity input: pinned strict host-key checking | pending_review | TASK-ARP04-000 | - |
+| TASK-ARP04-002 | Lifecycle/race + fail-closed PID proof + spawned-argv strict pin | pending_review | TASK-ARP04-000, TASK-ARP04-001 | - |
+| TASK-ARP04-003 | Manager integration: intended-key stop + loopback retention | pending_review | TASK-ARP04-001, TASK-ARP04-002 | - |
+| TASK-ARP04-004 | Form wiring gate (verify-only, expected close not-needed) | pending_review | TASK-ARP04-003 | - |
 
 Graph: TASK-ARP04-000 → TASK-ARP04-001 → TASK-ARP04-002 → TASK-ARP04-003 → TASK-ARP04-004.
 
