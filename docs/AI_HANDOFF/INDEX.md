@@ -15,10 +15,25 @@ Cycle AIX-07 — **Trust, Privacy & Governance**. Active, executable scope cover
 | PORT-RLX-03 | Connection, tunnel, and schema-refresh recovery | active — planned in Cycle RLX-03 | RLX-01, PORT-RLX-02 | unic-smart |
 | PORT-DBX-06 | Reviewed PostgreSQL rename workflow | active — expanded plan ready | PORT-RLX-03 | unic-smart |
 | PORT-DBX-08 | Explicit adapter capability parity | superseded (shipped in v1.29.0) | - | unic-smart |
-| PORT-AIX-03 | Read-only database analysis copilot hardening | queued — NOT READY | PORT-RLX-03 | - |
+| PORT-AIX-03 | Read-only database analysis copilot hardening | active — planned in Cycle AIX-03 | PORT-RLX-03 | unic-smart |
 | PORT-AIX-05 | Optional OMP engine resilience | queued — NOT READY | PORT-AIX-03 | - |
 | PORT-AIX-06/07 | Redacted agent trace and centralized governance | superseded (shipped in v1.26.0–v1.28.0) | - | unic-smart |
 | PORT-DX-01 | Regression and release confidence lane | queued — NOT READY | shipped contracts | - |
+
+## Cycle AIX-03 — Read-only Database Analysis Copilot Hardening
+
+| Task / Portfolio | Title | Status | Dependencies | Reviewer |
+|---|---|---|---|---|
+| TASK-AIX03-101 | Parser hardening + row-cap/sentinel redaction | ready | none | unic-smart |
+| TASK-AIX03-102 | Connection-loss bounded propagation (RLX-03 consumer) | ready | none | unic-smart |
+| TASK-AIX03-103 | Tool-result attribution in the redacted audit trace | ready | none | unic-smart |
+| PORT-AIX-03 | Read-only database analysis copilot hardening | active — planned in Cycle AIX-03 | PORT-RLX-03 | unic-smart |
+
+Graph: TASK-AIX03-101 independent; TASK-AIX03-102 independent; TASK-AIX03-103 independent.
+
+- Wave 1 (3): TASK-AIX03-101, TASK-AIX03-102, TASK-AIX03-103
+
+No same-wave target-file overlap: TASK-AIX03-101 owns `readonlySqlParser.ts`/`sqlTool.ts`/`dbAwareTools.ts`; TASK-AIX03-102 owns `ompChatEngine.ts`/`aiChatPanel.ts`; TASK-AIX03-103 owns `agent.ts` (+ its test only). Plan: `docs/AI_HANDOFF/PLAN_AIX03.md`.
 
 Graph: TASK-AIX07-001 independent; TASK-AIX07-002 independent; TASK-AIX07-003 independent.
 

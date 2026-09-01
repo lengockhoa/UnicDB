@@ -1,0 +1,117 @@
+# TASK-AIX03-102 — Connection-loss bounded propagation (RLX-03 consumer)
+
+- Status: `ready`
+- Owner: `-`
+- Reviewer: `-`
+- Parent plan: `docs/AI_HANDOFF/PLAN_AIX03.md` §3 (connection-loss axis)
+
+## Goal
+
+Close the RLX-03-consumer gap: the panel never observes
+`ConnectionManager.onDidChangeRecoveryStatus`, so an in-flight turn continues
+against a recovering or failed connection. Pass the existing event reference
+from the host into a panel-owned subscription, cancel unsafe turns, and pin the
+existing OMP `session/new` lifecycle invariant.
+
+## Target Files
+
+- `src/ui/aiChatPanel.ts` — add the precisely named optional
+  `onDidChangeRecoveryStatus?: vscode.Event<ConnectionRecoveryStatus>` option,
+  own its subscription, and fail-close an in-flight turn on `recovering` or
+  `failed`.
+- `src/extension.ts` — thread the activation-scoped `mgr` (created at line
+  207) through the `vsdb.aiChat` registration at lines 628–632 into
+  `commandOpenAiChat(aiStore, adapterFactory, aiChatDeps, mgr)`, then at the
+  verified panel construction site, lines 1132–1163 (grep:
+  `rg -n -C 8 "new AiChatPanel|commandOpenAiChat|onDidChangeRecoveryStatus" src/extension.ts` → `1132: aiChatPanel = new AiChatPanel({`), pass
+  `onDidChangeRecoveryStatus: mgr.onDidChangeRecoveryStatus`; never re-import
+  or re-create a `ConnectionManager`.
+- `src/ai/omp/ompChatEngine.ts` — no behavior change; pin the existing
+  `currentSessionId`-cleared invariant with regression tests.
+
+## Test Cases (REQUIRED — TDD)
+
+| # | Type | Test name | Expected | Pre-state / Fixture |
+|---|------|-----------|----------|---------------------|
+| 1 | happy (recovery subscription) | panel subscribes, receives `recovering`, and visibly enters its existing error session state | fake event holds exactly one listener; emitting `{ connectionId:"c1", state:"recovering", attempt:1, maxAttempts:2 }` posts exactly the existing `{ type:"session_state", state:"error" }` shape, produces no rejection and no `error` message bubble, and leaves prior messages uncorrupted | real `AiChatPanel` test harness with fake `vscode.Event`; idle panel |
+| 2 | edge (recovery/builtin) | `recovering` arrives during a builtin turn | the exact status object reaches the panel listener; `handleStop()` aborts the builtin `AbortController`, cancels pending `DbToolPermissionGate` requests, and posts the existing visible `session_state: "error"` rather than a fabricated error message | deferred builtin stream plus recovery fake emits `{ connectionId:"c1", state:"recovering", attempt:1, maxAttempts:2 }` |
+| 2b | edge (recovery/no-op) | `recovered` status arrives after `recovering` | NO new cancellation, NO visible-state mutation, NO error message bubble is posted; the panel's prior error-state remains exactly as it was. Matches plan §4 no-op requirement. | recovery fake emits `{ connectionId:"c1", state:"recovered", attempt:2, maxAttempts:2 }` after a `recovering`; capture all panel side-effect channels |
+| 3 | edge (recovery/OMP) | `failed` arrives during an OMP-engine turn | the exact status object reaches the panel listener; `OmpChatEngine.cancel()` is invoked once and the panel posts existing visible `session_state: "error"` without an extra error bubble | OMP fake plus recovery fake emits `{ connectionId:"c1", state:"failed", attempt:2, maxAttempts:2 }` |
+| 4 | edge (listener containment) | recovery listener throws while handling a status | the listener error is swallowed at the panel subscription boundary; event emission does not throw and no malformed/error message reaches the webview | fake event invokes registered callback around a forced panel handler throw |
+| 5 | edge (dispose/re-subscription) | panel dispose releases its recovery subscription; the next host-created panel subscribes anew | old subscription `dispose()` is called exactly once; a later `vsdb.aiChat` construction receives the same `mgr.onDidChangeRecoveryStatus` event reference and registers one fresh listener | extension constructor mock + disposable fake event |
+| 6 | regression (pin) | OMP `send` success leaves no stale session id | after settle, a later `cancel()` sends no `session/cancel` | fake `AcpSession` with `notify` spy |
+| 7 | regression (pin) | `sessionNew` rejects mid-turn | `onError` fires exactly once; `currentSessionId` is cleared | fake `sessionNew` rejecting |
+
+## Test Files
+
+- `src/ui/__tests__/aiChatPanelDbAware.test.ts` — cases 1–4; reuse its real
+  `AiChatPanel`/`DbToolPermissionGate` harness.
+- `src/extension.test.ts` — case 5; extend the existing mocked
+  `AiChatPanel` constructor-capture tests at the verified chat-command site.
+- `src/ai/omp/__tests__/ompChatEngine.test.ts` — cases 6–7.
+
+## Verification Commands
+
+```bash
+npx vitest run src/ui/__tests__/aiChatPanelDbAware.test.ts src/extension.test.ts src/ai/omp/__tests__/ompChatEngine.test.ts
+npm run typecheck
+npm run compile
+```
+
+## Acceptance Criteria
+
+- [ ] `AiChatPanelOptions` exposes exactly
+      `onDidChangeRecoveryStatus?: vscode.Event<ConnectionRecoveryStatus>`.
+      `ConnectionRecoveryStatus` carries exactly `connectionId`, `state`,
+      `attempt`, and `maxAttempts`; this unchanged status object is delivered
+      to the panel listener.
+- [ ] The panel subscribes with
+      `this.options.onDidChangeRecoveryStatus((status) => { try { ... } catch { ... } })`,
+      owns the returned `vscode.Disposable`, and disposes it during teardown.
+      A newly constructed panel after disposal receives a new subscription.
+- [ ] `src/extension.ts:628–632` threads the existing activation-scoped `mgr`
+      into `commandOpenAiChat`; `src/extension.ts:1132–1163` passes
+      `mgr.onDidChangeRecoveryStatus` as that exact option. It does not
+      re-import or create a manager.
+- [ ] On `recovering` or `failed`, the panel calls the existing `handleStop()`
+      path and posts existing visible `session_state: "error"`; it adds no new
+      webview message shape and emits no fabricated error text. `recovered`
+      cancels nothing and leaves visible state/messages intact.
+- [ ] A thrown recovery listener is swallowed; it cannot escape through the
+      `ConnectionManager` event emitter.
+- [ ] OMP `session/new` exit invariant remains pinned: session id clears on
+      success and failure, preventing stale `session/cancel` addressing.
+- [ ] `npm run typecheck` exits 0 and `npm run compile` succeeds.
+
+## Dependencies
+
+- (none)
+
+## Interfaces
+
+- Consumes:
+  - `ConnectionRecoveryStatus = { readonly connectionId: string; readonly state: "recovering" | "recovered" | "failed"; readonly attempt: number; readonly maxAttempts: number }` from `src/core/connectionManager.ts:56–61`.
+  - `ConnectionManager.onDidChangeRecoveryStatus: vscode.Event<ConnectionRecoveryStatus>` from `src/core/connectionManager.ts:89–91`.
+  - `vscode.Event<T>` subscription shape used by `src/ui/statusBar.ts:80`:
+    `const subRecovery = mgr.onDidChangeRecoveryStatus((s) => renderRecovery(s));`,
+    returning a disposable.
+  - `AiChatPanelOptions` and `AiChatPanel.handleStop(): void`; `handleStop`
+    already aborts builtin turns, cancels `DbToolPermissionGate`, and invokes
+    `OmpChatEngine.cancel(): void` for OMP turns.
+- Produces:
+  - One host-to-panel seam named `onDidChangeRecoveryStatus`, which carries the
+    event reference (not a callback direction ambiguity and not a manager).
+    The panel's one subscription receives the four-field status object, catches
+    listener failures, calls `handleStop()` plus `postSessionState("error")`
+    only for `recovering`/`failed`, and ignores `recovered`.
+
+---
+
+## Discussion
+
+### 2026-09-01 · planner · unic-smart
+Source grounding: `rg -n -C 8 "new AiChatPanel|commandOpenAiChat|onDidChangeRecoveryStatus" src/extension.ts` reports the live constructor at line 1132; the full option object ends at line 1163. The `mgr` needed for wiring is activation-scoped (`const mgr = new ConnectionManager(...)` at line 207), so this task must thread that reference into `commandOpenAiChat` rather than re-importing/reconstructing it. Existing webview protocol supports `session_state: "error"`; no webview file is in scope.
+
+---
+
+<!-- Phase 3 executor appends `## Executor Report` BELOW. Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
