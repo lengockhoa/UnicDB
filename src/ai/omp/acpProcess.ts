@@ -443,6 +443,20 @@ export class AcpProcess {
   }
 
   /**
+   * TASK-AIX05-103 (R4.5 fix): allow consumers to (re)bind the engine
+   * state observer AFTER construction but BEFORE the lazy `start()`. The
+   * production `buildOmpChatEngine` path constructs `AcpProcess` via
+   * `AcpPanelDeps.create()` so it can keep a reference across the
+   * `start()` handshake — but the panel's `handleEngineState` owner isn't
+   * resolvable until the panel exists, so the observer is bound here on
+   * first call. Idempotent; a second call replaces the prior observer
+   * (the prior reference is dropped, never invoked again).
+   */
+  setOnStateChange(cb: ((state: OmpEngineState) => void) | null): void {
+    this.onStateChange = cb;
+  }
+
+  /**
    * TASK-AIX05-101: classify a child-exit event and route it through the
    * state machine. Single-shot (subsequent exits are no-ops). Honours the
    * §Test Cases rules:

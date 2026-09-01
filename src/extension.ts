@@ -48,7 +48,7 @@ import type { AdapterFactory } from "./ai/tools/types";
 import type { AgentDeps } from "./ai/agent";
 import { AiChatPanel, type AcpPanelDeps } from "./ui/aiChatPanel";
 import { ConsolePanel } from "./ui/consolePanel";
-import { AcpProcess, type AcpProcessHandle } from "./ai/omp/acpProcess";
+import { AcpProcess, type AcpProcessHandle, type OmpEngineState } from "./ai/omp/acpProcess";
 import { detectOmp, OMP_INSTALL_HINT, OMP_UPDATE_HINT } from "./ai/omp/detect";
 import { resolveEngine } from "./ai/engineChoice";
 import {
@@ -1202,9 +1202,22 @@ async function commandOpenAiChat(
     // TASK-AIX05-103: the resolved OMP route gets the production engine
     // adapter (one bridge-owned descriptor/runtime); builtin fallback gets
     // none. See buildOmpChatEngine below for the adapter contract.
+    // R4.5 fix (critical_block): the panel's `handleEngineState` is the
+    // single restart/fallback owner — AcpProcess lifecycle events MUST
+    // reach it. The `onEngineState` closure is resolved LAZILY at event
+    // time (not at call time) so the panel reference is valid even
+    // though this `commandOpenAiChat` returns BEFORE the panel finishes
+    // its first `show()`.
     ompChatEngine:
       choice.engine === "omp"
-        ? await buildOmpChatEngine(adapterFactory, choice.path ?? "omp")
+        ? await buildOmpChatEngine(
+            adapterFactory,
+            choice.path ?? "omp",
+            (state, generation) => {
+              const panel = aiChatPanel;
+              if (panel !== null) panel.handleEngineState(state, generation);
+            },
+          )
         : undefined,
     engineVersion: choice.version,
     engineHint: choice.hint,
@@ -1239,6 +1252,14 @@ async function commandOpenAiChat(
 async function buildOmpChatEngine(
   adapterFactory: AdapterFactory,
   ompPath: string,
+  // R4.5 fix (critical_block): the panel's `handleEngineState` is the
+  // single restart/fallback owner. AcpProcess's state machine must
+  // surface to it; without this wire, the production OMP route never
+  // reaches the lifecycle/restart machinery (the six engine_state
+  // literals, MAX_ENGINE_RESTARTS=2 + sleep(1000) restart, terminal
+  // "fallback-builtin", and same-instance handshake cancel would all
+  // be dead on the real route).
+  onEngineState: (state: OmpEngineState, generation: number) => void,
 ): Promise<OmpChatEngine> {
   const cwd =
     vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
@@ -1262,11 +1283,24 @@ async function buildOmpChatEngine(
   // Bridge owns the descriptor; thread it verbatim — the engine must not
   // manufacture a headerless fallback for the production route.
   const mcpServers: ReadonlyArray<Record<string, unknown>> = [bridge.descriptor];
+  // R4.5 fix (critical_block): a single generation for this
+  // `commandOpenAiChat` invocation. The panel's restart/fallback owner
+  // gates on this id; stale events from a retired child are no-ops
+  // (case 7). Each `commandOpenAiChat` opens a new panel = a fresh
+  // generation; the previous generation is invalidated by the panel's
+  // teardown bumping `engineGeneration` before this new value is read.
+  const generation = Date.now();
   // create()-captured UNSTARTED process — the pinned cancellable seam. The
   // child spawns LAZILY on the engine's first session/new (the handshake);
   // a same-generation panel Stop before that handshake resolves cancels
   // the captured instance (AcpPanelDeps.create contract).
   const acpProcess = buildAcpDepsCreate(ompPath, cwd, mcpServers);
+  // R4.5 fix (critical_block): wire the state observer BEFORE the lazy
+  // `start()` so every transition (`starting` → `ready` → `crashed` →
+  // `fallback-builtin`, etc.) reaches the panel's handleEngineState
+  // owner. Without this, the six literals + restart policy are dead on
+  // the real route.
+  acpProcess.setOnStateChange((state) => onEngineState(state, generation));
   let handlePromise: Promise<AcpProcessHandle> | null = null;
   const ensureHandle = (): Promise<AcpProcessHandle> => {
     if (handlePromise === null) {

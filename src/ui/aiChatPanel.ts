@@ -1427,6 +1427,23 @@ export class AiChatPanel {
     this.cancelAllPending();
     this.dbToolGate.cancelAll();
     this.disposeAcpSession();
+    // R4.5 fix (critical_block): dispose the production OMP engine
+    // exactly once on teardown. Without this, the HostMcp loopback
+    // listener, the McpBridge bearer descriptor registration, and the
+    // AcpProcess child all leak for the panel lifetime (no second
+    // `commandOpenAiChat` can ever spin them down). `shutdown()` is
+    // contractually best-effort + never throws; we still guard with
+    // `.catch` to keep teardown idempotent.
+    const engine = this.options.ompChatEngine;
+    if (engine !== undefined) {
+      try {
+        void engine.shutdown().catch(() => {
+          /* best-effort */
+        });
+      } catch {
+        /* best-effort */
+      }
+    }
     this.panel = null;
     // TASK-AIX03-102 — release the owned recovery-status subscription
     // exactly once. A later vsdb.aiChat invocation constructs a fresh
@@ -2187,16 +2204,23 @@ export class AiChatPanel {
           });
         },
         onError: (message) => {
-          // Mid-turn crash. Post ONE error bubble, flip engine back to
-          // builtin in settings, re-post engine so the banner self-
-          // corrects on failover. Subsequent handleSend calls will route
-          // through the builtin engine.
+          // R4.5 fix (critical_block): mid-turn crash on the production
+          // OMP route must post `engine_state:"fallback-builtin"` (the
+          // closed set of six `OmpEngineState` literals) — NOT just
+          // `postEngine("builtin")`. Without the engine_state post, the
+          // webview banner cannot self-correct on the same wire that
+          // posts the error, and the panel's `handleEngineState` owner
+          // (which schedules restart / latches the fallback) is never
+          // driven for the `runOmpEngineTurn` path. We post the literal
+          // here (the engine itself doesn't surface `crashed` to
+          // consumers; the engine only reports the mid-turn error).
           if (postedError) return;
           postedError = true;
           this.postSessionState("error");
           this.post({ type: "error", message });
           this.engine = "builtin";
           this.postEngine("builtin");
+          this.postEngineState("fallback-builtin");
           this.flipEngineToBuiltinInSettings().catch(() => {
             /* best-effort */
           });

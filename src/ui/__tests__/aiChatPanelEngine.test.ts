@@ -626,3 +626,95 @@ describe("AiChatPanel — TASK-AIX05-103 bounded restart policy", () => {
     expect(fallbacks).toHaveLength(1);
   });
 });
+
+// ============================================================================
+// TASK-AIX05-103 R4.5 fix regression — production OMP route drives lifecycle
+// ============================================================================
+// Critical-block finding: `runOmpEngineTurn.onError` must post
+// `engine_state:"fallback-builtin"` (the closed six-literal set), and the
+// panel's teardown must call `ompChatEngine.shutdown()` so the production
+// route stops leaking the loopback listener / bridge / child for the
+// panel lifetime. The restart-policy owner (`ensureAcpSession` legacy
+// path) was already covered above; these two cover the *engine* route.
+// ============================================================================
+describe("AiChatPanel — TASK-AIX05-103 R4.5 production OMP lifecycle", () => {
+  it("onError posts engine_state:fallback-builtin on the same wire (not just postEngine('builtin'))", async () => {
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const engine: OmpChatEngine = {
+      send: vi.fn(async (_text: string, events: OmpChatEvents) => {
+        events.onError?.("omp crashed mid-turn");
+      }),
+      resume: vi.fn(async () => undefined),
+      shutdown: vi.fn(async () => undefined),
+      cancel: vi.fn(() => undefined),
+      attachTrace: vi.fn(() => undefined),
+    };
+    state.fakeEngine = engine;
+
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+      acp: {
+        start: vi.fn(async () => {
+          throw new Error("acp.start must not run when ompChatEngine is provided");
+        }),
+      },
+      ompChatEngine: engine,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "trigger crash" });
+    await until(() => postedMessages(p).some(isError));
+    // The fix: the engine's mid-turn error path posts
+    // `engine_state:"fallback-builtin"` (one of the six closed literals)
+    // alongside the error bubble + the engine flip. Tests 5/6 above
+    // cover the restart-policy path; this pins the onError path on the
+    // production engine route.
+    await until(() =>
+      postedMessages(p).some(
+        (m) =>
+          (m as { type?: string }).type === "engine_state" &&
+          (m as { state?: string }).state === "fallback-builtin",
+      ),
+    );
+    const fallbacks = postedMessages(p).filter(
+      (m) =>
+        (m as { type?: string }).type === "engine_state" &&
+        (m as { state?: string }).state === "fallback-builtin",
+    );
+    expect(fallbacks.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("panel teardown calls ompChatEngine.shutdown() exactly once (no leak)", async () => {
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const shutdown = vi.fn(async () => undefined);
+    const engine: OmpChatEngine = {
+      send: vi.fn(async () => undefined),
+      resume: vi.fn(async () => undefined),
+      shutdown,
+      cancel: vi.fn(() => undefined),
+      attachTrace: vi.fn(() => undefined),
+    };
+    state.fakeEngine = engine;
+
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+      acp: { start: vi.fn(async () => ({})) },
+      ompChatEngine: engine,
+    });
+    panel.show();
+    // Drop the panel tab — this is the production teardown path
+    // (`panel.onDidDispose` → `teardown()`). shutdown() must run exactly
+    // once so the HostMcp loopback listener / McpBridge bearer
+    // descriptor / AcpProcess child do not leak for the panel lifetime.
+    (panel as unknown as { panel: { dispose(): void } | undefined }).panel
+      ?.dispose();
+    await until(() => shutdown.mock.calls.length >= 1);
+    expect(shutdown).toHaveBeenCalledTimes(1);
+  });
+});
