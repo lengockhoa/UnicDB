@@ -20,6 +20,10 @@ For each significant action, append:
 - Verification run
 - Outcome
 
+## 2026-09-01 — Wave 9 DBX-06 Reviewed PG Rename Workflow → v1.33.0 (main @ 3564b69)
+- Full handoff cycle: plan (2 review rounds) → 2 tasks in 2 sequential waves → unic-smart review (both APPROVED round 1) → release v1.33.0 (tag + vsdb-1.33.0.vsix).
+- Lessons: (a) plan-review param-binding discipline — pin the exact $1/$2/$3 contract with table-mode fallback ($3="" + short-circuit) and assert it identically across PLAN §, Interfaces, and Test Cases; reviewers catch "required $3" vs "two-value binding" inconsistencies fast. (b) portfolio anchor drift — PLAN §3 line ranges go stale (src/extension.ts:1231-1368 was wrong for DBX-06); always re-grep before writing the plan. (c) dependency files: when adding a structured step runner, the analysis layer's mappers must populate every field the runner dereferences (e.g. rows.triggers/indexes in DBX-06 case 1); otherwise a focused test passes and an integration test fails. (d) DBX-08 capability pattern is the exact mirror for any new PG table utility — read tableCommands.ts once and copy the gating shape.
+
 ## 2026-09-01 — Wave 8 RLX-03 Connection/Tunnel/Schema-refresh Recovery → v1.32.0 (main @ de405a5)
 - Full handoff cycle: plan (2 rounds) → 3 tasks in 2 waves → unic-smart review (all 3 blocked/changes-requested round 1) → fix round 1 (all 3 approved) → release v1.32.0 (tag + vsdb-1.32.0.vsix).
 - Delivered: typed post-ready SSH tunnel exit with promise-identity coalescing + fresh-spawn-after-rejection; bounded ConnectionManager recovery (`recovering`/`recovered`/`failed`, exactly 2 attempts, injected clock, disposed-flag gating + post-dispose regression); `SchemaCache.invalidate()` clears inflight WITH the generation bump, closing the cross-adapter single-flight leak.
