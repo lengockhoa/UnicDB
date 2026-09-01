@@ -132,3 +132,15 @@ Note: |
   Reviewer verdict pending — reviewer session must confirm APPROVED /
   APPROVED-WITH-MINOR for the final acceptance checkbox.
 
+## Reviewer Verdict
+VERDICT: changes_requested
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN: PASS
+FINDINGS:
+  critical: none
+  important:
+    - src/adapters/__tests__/adapterQueryShape.test.ts:1238 — Required case 3 omits a naturally rejected non-stream or pre-handoff stream fixture followed by two cancel calls, so terminal query-failure cleanup is not verified. Add that fixture and assert no additional destroy/release/pool-end calls after rejection.
+    - src/adapters/__tests__/adapterQueryShape.test.ts:1309 — `beforeDestroys` is a constant rather than an observation of `fakeStream.destroy()`, so case 3b passes even if late cancellation destroys a runner-owned stream. Track the fake stream's destroy count and assert it remains unchanged after both calls.
+  minor: none
+NEXT_STATUS_FOR_INDEX: changes_requested

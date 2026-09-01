@@ -1268,9 +1268,49 @@ describe("MySqlAdapter.cancelActiveQuery — late/repeated cancel no-op (TASK-RL
     expect(endCount).toBe(endBefore);
   });
 
+  it("case 3b-pre: naturally-rejected non-stream run + double cancel: no extra destroy/release/pool-end", async () => {
+    const log: string[] = [];
+    const conn = mockMysqlTxConnection(log, () =>
+      Promise.reject(new Error("simulated query failure")),
+    );
+    let destroyCount = 0;
+    conn.destroy = () => {
+      destroyCount += 1;
+    };
+    const pool = mockMysqlTxPool(log, conn);
+    let endCount = 0;
+    const originalEnd = pool.end;
+    pool.end = () => {
+      endCount += 1;
+      return originalEnd();
+    };
+    const adapter = mysqlAdapterWithTxPool(pool);
+
+    // The main query rejects naturally (SET time_zone still resolves first;
+    // a DML statement keeps the run on the non-stream transaction path), so
+    // the adapter's terminal failure cleanup runs before cancel is called.
+    await expect(adapter.runQuery("UPDATE t SET a = 1")).rejects.toThrow(
+      /simulated query failure/,
+    );
+
+    const destroyBefore = destroyCount;
+    const releasesBefore = conn.releases;
+    const endBefore = endCount;
+
+    await adapter.cancelActiveQuery!();
+    await adapter.cancelActiveQuery!();
+
+    // Terminal query-failure cleanup must not be repeated by either cancel
+    // call: no destroy, no extra release, no pool.end.
+    expect(destroyCount).toBe(destroyBefore);
+    expect(conn.releases).toBe(releasesBefore);
+    expect(endCount).toBe(endBefore);
+  });
+
   it("case 3b: cancel after a stream end is a no-op (BatchedQuery takes over)", async () => {
     const log: string[] = [];
     const listeners = new Map<string, Array<(payload?: unknown) => void>>();
+    let fakeStreamDestroys = 0;
     const fakeStream = {
       once: (event: string, cb: (payload?: unknown) => void) => {
         const list = listeners.get(event) ?? [];
@@ -1282,7 +1322,9 @@ describe("MySqlAdapter.cancelActiveQuery — late/repeated cancel no-op (TASK-RL
         list.push(cb);
         listeners.set(event, list);
       },
-      destroy: () => undefined,
+      destroy: () => {
+        fakeStreamDestroys += 1;
+      },
       pause: () => undefined,
       resume: () => undefined,
     };
@@ -1306,12 +1348,12 @@ describe("MySqlAdapter.cancelActiveQuery — late/repeated cancel no-op (TASK-RL
     // After the stream has reached EOF and been delivered to the runner,
     // any cancelActiveQuery() must be a no-op (record removed by the
     // stream end path). One or two calls must NOT call destroy/release.
-    const beforeDestroys = 0; // wrapper inherited a no-op destroy
+    const beforeDestroys = fakeStreamDestroys;
     const beforeReleases = conn.releases;
     await adapter.cancelActiveQuery!();
     await adapter.cancelActiveQuery!();
     expect(conn.releases).toBe(beforeReleases);
-    expect(beforeDestroys).toBe(0);
+    expect(fakeStreamDestroys).toBe(beforeDestroys);
   });
 });
 

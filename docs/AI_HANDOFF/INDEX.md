@@ -45,9 +45,9 @@ No same-wave target-file overlap. The registry contract is intentionally separat
 
 | Task / Portfolio | Title | Status | Dependencies | Reviewer |
 |---|---|---|---|---|
-| TASK-RLX02-001 | Cancel live MySQL query ownership safely | ready | none | - |
-| TASK-RLX02-002 | Cancel live SQL Server Requests safely | ready | none | - |
-| TASK-RLX02-003 | Surface cross-dialect cancellation through runner and panel | ready | TASK-RLX02-001, TASK-RLX02-002 | - |
+| TASK-RLX02-001 | Cancel live MySQL query ownership safely | changes_requested | none | unic-smart |
+| TASK-RLX02-002 | Cancel live SQL Server Requests safely | approved | none | unic-smart |
+| TASK-RLX02-003 | Surface cross-dialect cancellation through runner and panel | approved | TASK-RLX02-001, TASK-RLX02-002 | unic-smart |
 
 Graph: TASK-RLX02-001 independent; TASK-RLX02-002 independent; TASK-RLX02-001 → TASK-RLX02-003; TASK-RLX02-002 → TASK-RLX02-003.
 
