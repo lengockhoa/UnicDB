@@ -144,3 +144,22 @@ npm run compile     → exit 0 (esbuild: build complete, dist/extension.js emitt
 - No `git add`/`commit`/`push` executed — files left as-is per instructions.
 - `src/extension.test.ts` pre-existing failure `schemaFormBundlePresent` was a stale-dist artifact on the base commit; resolved by `npm run compile` (not a source change).
 - Case 3's one-terminal-cancel is enforced via session-id dedupe latch; case 7 stale-generation is enforced via `engineGeneration` guard on state/close/notification paths; both exercised indirectly through the restart/Stop suites (panel-level tests for cases 3/7 ship in the Acp suite fixtures; engine-level generation guard tested in ompChatEngine suite from wave 1).
+
+## Reviewer Verdict
+
+VERDICT: critical_block
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/aiChatPanelEngine.test.ts src/ui/__tests__/aiChatPanelAcp.test.ts src/ai/omp/__tests__/ompChatEngine.test.ts src/ai/omp/__tests__/hostMcp.test.ts src/extension.test.ts ; npm run typecheck ; npm run compile
+  result: 174 passed / 0 fail ; tsc --noEmit exit 0 ; esbuild build complete
+TEST_PLAN_COVERAGE: all-followed
+FINDINGS:
+  critical:
+    - file: src/extension.ts:1201-1203 + src/ui/aiChatPanel.ts:1786 — the production OMP route never reaches the lifecycle/restart machinery. `commandOpenAiChat` supplies `ompChatEngine` whenever `choice.engine==="omp"`, so `handleSend` routes to `runOmpEngineTurn` and NEVER calls `ensureAcpSession` (the only site wiring `onStateChange` -> `handleEngineState` -> `postEngineState` at aiChatPanel.ts:2652-2657). `buildOmpChatEngine` starts the process with no `onStateChange` (extension.ts:1273). Result: the six `engine_state` literals, MAX_ENGINE_RESTARTS=2 + sleep(1000) restart, terminal `fallback-builtin`, and same-instance handshake cancel (`pendingAcpProcess`) are all dead on the real route. The bridge from `createMcpBridge(hostMcp)` is never disposed because `engine.shutdown()` is never invoked (`rg ompChatEngine.shutdown` returns only `.cancel()` at aiChatPanel.ts:3026). Tests pass because cases 5/6 and case 4 inject the legacy `acp` deps and drive `ensureAcpSession` directly, never constructing an `ompChatEngine` — the production wiring is untested for lifecycle/restart/fallback.
+  important:
+    - file: src/extension.ts:1239-1283 — `buildOmpChatEngine` has no lifecycle-event export and the panel's `runOmpEngineTurn.onError` only posts a plain `{type:"error"}` + `postEngine("builtin")`, not `engine_state:"fallback-builtin"`; on panel teardown the HostMcp/bridge/AcpProcess are never stopped (no `shutdown()` call), leaking the loopback listener and child for the panel lifetime.
+  minor:
+    - none
+NEXT_STATUS_FOR_INDEX: critical_block
+NOTES: Root cause is the restart/fallback owner living in the legacy raw-ACP `ensureAcpSession` path instead of the production `runOmpEngineTurn` route that `commandOpenAiChat` actually constructs. Fix must surface AcpProcess lifecycle to the OMP-engine route and drive the same `handleEngineState` owner, plus call `engine.shutdown()` on teardown/crash.

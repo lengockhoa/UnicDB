@@ -91,3 +91,22 @@ Verification Output: |
   npm run compile    → exit 0 (esbuild: build complete)
 Status: PASS
 Note: dispose() now sets a terminal `disposed` flag before closing server resources (idempotent, no re-open/throw); a wrapper around the pure handler returns exactly { error: { code: -32000, message: "MCP bridge is disposed" } } post-disposal before any bearer-auth registry/tool dispatch — TC1-4 all green, pre-disposal semantics untouched (loopback-only, bearer auth, error wording preserved).
+
+---
+
+## Reviewer Verdict
+
+VERDICT: approved
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/ai/omp/__tests__/mcpBridge.test.ts && npm run typecheck && npm run compile
+  result: 20 tests pass (1 file) / tsc --noEmit clean (exit 0) / esbuild build complete (exit 0)
+TEST_PLAN_COVERAGE: all-followed — TC1 happy (listSpy once, exact names), TC2/TC3 edges (post-dispose -32000 for tools/list and tools/call with zero registry/tool touches, toEqual on the exact pinned envelope), TC4 idempotent dispose with hung-socket + port-release; RED_OUTPUT contains real pre-impl assertion failures at test lines 448/471. AIX-05-103 wave-2 additions reviewed in the same range (HostMcp delegation) — post-dispose delegation also returns the pinned error before hostMcp.handle.
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/ai/omp/__tests__/mcpBridge.test.ts:716 — the wave-2 delegation suite ends without a final bridge.dispose() (bridge already disposed by the test body; no leak, cosmetic asymmetry only).
+NOTES: Terminal-dispose ordering verified — `disposed = true` at mcpBridge.ts:315 runs before closeAllConnections/close:321-322, and the wrapper at 218-223 returns the exact pinned error synchronously before auth/registry dispatch; JS single-thread event-loop ordering leaves no window where a request passes the disposed check into a half-torn registry. Dispose is guarded (314) so second call is a no-op. Descriptor/token surface unchanged; bridge never re-registers descriptors, and HostMcp.handle remains the delegation boundary so curated names still lose to standards inside hostMcp.ts:241-251/298. Note for orchestrator: this scoped range spans two wave commits (2be31db AIX-05-102 + b335ccc AIX-05-103 additions to the same two files), so 103's test/source additions appear in the same diff; the AIX-05-102-specific portions all conform to the pinned contract.
+NEXT_STATUS_FOR_INDEX: approved

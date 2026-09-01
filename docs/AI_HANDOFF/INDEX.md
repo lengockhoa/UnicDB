@@ -17,9 +17,9 @@ Cycle AIX-07 — **Trust, Privacy & Governance**. Active, executable scope cover
 | PORT-DBX-08 | Explicit adapter capability parity | superseded (shipped in v1.29.0) | - | unic-smart |
 | PORT-AIX-03 | Read-only database analysis copilot hardening | superseded (shipped v1.34.0) | - | unic-smart |
 | PORT-AIX-05 | Optional OMP engine resilience | active — planned in Cycle AIX-05 | PORT-AIX-03 | unic-smart |
-| TASK-AIX05-101 | ACP child lifecycle and bounded reaping | ready | none | unic-smart |
+| TASK-AIX05-101 | ACP child lifecycle and bounded reaping | approved_minor | none | unic-smart |
 | TASK-AIX05-102 | Terminal MCP bridge disposal guard | ready | none | unic-smart |
-| TASK-AIX05-103 | Production OMP engine lifecycle, fallback, and context continuity | ready | TASK-AIX05-101, TASK-AIX05-102 | unic-smart |
+| TASK-AIX05-103 | Production OMP engine lifecycle, fallback, and context continuity | critical_block | TASK-AIX05-101, TASK-AIX05-102 | unic-smart |
 | PORT-AIX-06/07 | Redacted agent trace and centralized governance | superseded (shipped in v1.26.0–v1.28.0) | - | unic-smart |
 | PORT-DX-01 | Regression and release confidence lane | queued — NOT READY | shipped contracts | - |
 
@@ -49,9 +49,9 @@ No same-wave target-file overlap. Portfolio rows require a new source-grounded p
 
 | Task / Portfolio | Title | Status | Dependencies | Reviewer |
 |---|---|---|---|---|
-| TASK-AIX05-101 | ACP child lifecycle and bounded reaping | ready | none | unic-smart |
-| TASK-AIX05-102 | Terminal MCP bridge disposal guard | ready | none | unic-smart |
-| TASK-AIX05-103 | Production OMP engine lifecycle, fallback, and context continuity | ready | TASK-AIX05-101, TASK-AIX05-102 | unic-smart |
+| TASK-AIX05-101 | ACP child lifecycle and bounded reaping | approved_minor | none | unic-smart |
+| TASK-AIX05-102 | Terminal MCP bridge disposal guard | approved | none | unic-smart |
+| TASK-AIX05-103 | Production OMP engine lifecycle, fallback, and context continuity | critical_block | TASK-AIX05-101, TASK-AIX05-102 | unic-smart |
 | PORT-AIX-05 | Optional OMP engine resilience | active — planned in Cycle AIX-05 | PORT-AIX-03 | unic-smart |
 
 Graph: TASK-AIX05-101 → TASK-AIX05-103; TASK-AIX05-102 → TASK-AIX05-103.
