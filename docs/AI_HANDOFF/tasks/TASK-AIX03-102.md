@@ -201,3 +201,14 @@ Verification Output:
 
 Status: PASS
 Note: All three IMPORTANT findings fixed as test-only changes (no production edit needed, per reviewer prediction): case 2 now drives a REAL deferred builtin turn with a pending DbToolPermissionGate request and asserts abort + gate-cancel + session_state:error; case 4 provokes a real synchronous throw through the registered callback (throwing gate stub) and asserts fire() swallows it posting nothing; case 5 subclasses the REAL AiChatPanel, exercises real teardown via dispose(), asserts the recovery subscription's dispose() runs exactly once and the next panel registers one fresh listener on the SAME counting-wrapped mgr event reference (doMock restored afterward to prevent leakage).
+
+## Reviewer Verdict (fix round 1)
+VERDICT: approved
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN: PASS
+FINDINGS:
+  - resolved — src/ui/__tests__/aiChatPanelDbAware.test.ts:448-561 drives a real builtin turn to a pending DbToolPermissionGate request and verifies recovery aborts, cancels, and posts session_state:error.
+  - resolved — src/ui/__tests__/aiChatPanelDbAware.test.ts:643-699 induces a synchronous gate throw through the registered recovery callback and verifies the subscription boundary swallows it without a webview post.
+  - resolved — src/extension.test.ts:1339-1462 uses a real AiChatPanel teardown, verifies one recovery-subscription disposal, and verifies the next panel registers a fresh listener on the same event reference.
+NEXT_STATUS_FOR_INDEX: approved

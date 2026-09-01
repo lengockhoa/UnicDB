@@ -24,9 +24,9 @@ Cycle AIX-07 — **Trust, Privacy & Governance**. Active, executable scope cover
 
 | Task / Portfolio | Title | Status | Dependencies | Reviewer |
 |---|---|---|---|---|
-| TASK-AIX03-101 | Parser hardening + row-cap/sentinel redaction | critical_block | none | unic-smart |
-| TASK-AIX03-102 | Connection-loss bounded propagation (RLX-03 consumer) | changes_requested | none | unic-smart |
-| TASK-AIX03-103 | Tool-result attribution in the redacted audit trace | approved | none | unic-smart |
+| TASK-AIX03-101 | Parser hardening + row-cap/sentinel redaction | done | fix round 1 verified | unic-smart |
+| TASK-AIX03-102 | Connection-loss bounded propagation (RLX-03 consumer) | done | fix round 1 verified | unic-smart |
+| TASK-AIX03-103 | Tool-result attribution in the redacted audit trace | done | approved round 1 | unic-smart |
 | PORT-AIX-03 | Read-only database analysis copilot hardening | active — planned in Cycle AIX-03 | PORT-RLX-03 | unic-smart |
 
 Graph: TASK-AIX03-101 independent; TASK-AIX03-102 independent; TASK-AIX03-103 independent.
