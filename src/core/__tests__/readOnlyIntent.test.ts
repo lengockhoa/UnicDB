@@ -72,4 +72,54 @@ describe("readOnlyIntent", () => {
     expect(isMutationSql("WITH x AS (SELECT 1) DELETE FROM t")).toBe(true);
     expect(isMutationSql("WITH x AS (SELECT 1) SELECT * FROM x")).toBe(false);
   });
+
+  // ---- ARP-01.1 TASK-ARP01-001 — dialect + transaction-control matrix ----
+
+  // Case 3 (RED-first driver): a MySQL backtick-quoted identifier that merely
+  // SPELLS a mutation keyword is an identifier, not a statement starter. It
+  // must be masked before the depth-scan, exactly like the `"`-quoted
+  // identifier branch already does for postgres.
+  it("MySQL backtick-quoted keyword identifier is not a mutation", () => {
+    expect(isMutationSql("SELECT `insert` FROM t", "mysql")).toBe(false);
+    expect(isMutationSql("SELECT `update` FROM t", "mysql")).toBe(false);
+    expect(isMutationSql("SELECT `delete` FROM t", "mysql")).toBe(false);
+  });
+
+  // Case 4 (decision pin): transaction control changes session state, never
+  // data/schema/permissions — so it is NOT a mutation on a read-only
+  // connection. Pinned here so a future keyword-table edit cannot silently
+  // flip it.
+  it("Transaction-control statements are not mutations", () => {
+    expect(isMutationSql("COMMIT")).toBe(false);
+    expect(isMutationSql("ROLLBACK")).toBe(false);
+    expect(isMutationSql("BEGIN")).toBe(false);
+    expect(isMutationSql("START TRANSACTION")).toBe(false);
+    expect(isMutationSql("SAVEPOINT x")).toBe(false);
+  });
+
+  // Case 5 (dialect threading): keyword classification itself is
+  // dialect-agnostic — core DML must stay blocked on every supported dialect.
+  it("Core DML classifies identically across postgres/mysql/mssql", () => {
+    const dmls = [
+      "DELETE FROM t",
+      "UPDATE t SET a = 1",
+      "INSERT INTO t VALUES (1)",
+    ];
+    const dialects = ["postgres", "mysql", "mssql"] as const;
+    for (const sql of dmls) {
+      for (const d of dialects) {
+        expect(isMutationSql(sql, d), `${sql} @ ${d}`).toBe(true);
+      }
+    }
+  });
+
+  // Case 6 (batch composition): transaction control mixed into a batch stays
+  // clean; a real DML elsewhere in the same batch is still listed — and only
+  // it, not the surrounding safe statements.
+  it("Batch with transaction-control + safe SELECT stays clean; one real DML still listed", () => {
+    expect(mutationStatements("COMMIT; SELECT 1")).toEqual([]);
+    expect(mutationStatements("SELECT 1; COMMIT; DELETE FROM t")).toEqual([
+      "DELETE FROM t",
+    ]);
+  });
 });

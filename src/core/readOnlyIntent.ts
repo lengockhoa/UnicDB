@@ -27,6 +27,13 @@ export class ReadOnlyViolation extends Error {
  * Leading keywords that mutate data, schema, or permissions. SELECT / WITH
  * (pure CTE select) / EXPLAIN / SHOW / comments-only are NOT mutations.
  * Data-modifying CTEs (WITH ... INSERT/UPDATE/DELETE) ARE mutations.
+ *
+ * TASK-ARP01-001 — transaction-control decision (pinned by tests): COMMIT,
+ * ROLLBACK, BEGIN, START TRANSACTION and SAVEPOINT are deliberately NOT in
+ * this table. They change session/transaction state only — never data,
+ * schema, or permissions — so a read-only connection still allows them. Do
+ * not add them here without revisiting the read-only contract and the
+ * transaction-control test in `readOnlyIntent.test.ts`.
  */
 const MUTATION_KEYWORDS: Record<string, true> = {
   insert: true,
@@ -87,7 +94,18 @@ function statementIsMutation(masked: string): boolean {
   return false;
 }
 
-/** True when ANY statement in `sql` mutates data/schema/permissions. */
+/**
+ * True when ANY statement in `sql` mutates data/schema/permissions.
+ *
+ * TASK-ARP01-001 — dialect contract: the dialect candidates are exactly
+ * `postgres` | `mysql` | `mssql` (optional; omitting it behaves as
+ * postgres-ish). Keyword classification (MUTATION_KEYWORDS above) is
+ * dialect-AGNOSTIC — the same leading-keyword table applies to all three.
+ * Only statement splitting and literal/identifier masking are dialect-DRIVEN
+ * (e.g. MySQL backslash escapes in `'...'`, MySQL backtick identifiers
+ * `` `...` ``, MSSQL `GO` batch separator), via `splitStatements` and
+ * `maskLiteralsAndComments`.
+ */
 export function isMutationSql(sql: string, dialect?: SqlDialect): boolean {
   return mutationStatements(sql, dialect).length > 0;
 }

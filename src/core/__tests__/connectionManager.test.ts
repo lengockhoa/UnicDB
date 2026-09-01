@@ -957,3 +957,145 @@ describe("ConnectionManager — RLX-03 TASK-RLX03-002 recovery", () => {
     expect(factory.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 });
+
+// ---- ARP-01.2 TASK-ARP01-002 — transaction guard -----------------------------
+// A DbTransaction obtained from a read-only adapter must run its runQuery
+// through the same isMutationSql gate as adapter.runQuery: a mutation must be
+// blocked BEFORE the underlying driver is invoked. The fake adapter below
+// tracks every driver-side call in `calls[]` so "driver never called" is
+// directly observable.
+describe("ConnectionManager ARP-01 transaction guard", () => {
+  interface DriverCall {
+    op: "runQuery" | "txRunQuery" | "commit" | "rollback";
+    sql?: string;
+    values?: unknown[];
+  }
+
+  beforeEach(() => {
+    // Earlier describes reassign the shared STUB_CTX getters (DBX-05 tunnel +
+    // edit probes mutate secrets.get / memento getters); restore the pristine
+    // shape for this block.
+    (STUB_CTX as any).secrets.get = async (k: string) => (k.endsWith("cRO") ? "pw" : undefined);
+    (STUB_CTX as any).workspaceState.get = () => undefined;
+    (STUB_CTX as any).globalState.get = () => undefined;
+  });
+
+  function makeTxTrackingAdapter(opts: { withBeginTransaction?: boolean } = {}) {
+    const calls: DriverCall[] = [];
+    // Fresh driver transaction per beginTransaction() — mirrors real adapters
+    // and makes per-call freshness observable.
+    const makeDriverTx = () => ({
+      runQuery: async (sql: string, values?: unknown[]) => {
+        calls.push({ op: "txRunQuery", sql, values });
+        return { results: [] };
+      },
+      commit: async () => {
+        calls.push({ op: "commit" });
+      },
+      rollback: async () => {
+        calls.push({ op: "rollback" });
+      },
+    });
+    const adapter: any = {
+      runQuery: async (sql: string) => {
+        calls.push({ op: "runQuery", sql });
+        return { results: [] };
+      },
+      testConnection: async () => {},
+      close: async () => {},
+    };
+    if (opts.withBeginTransaction !== false) {
+      adapter.beginTransaction = async () => makeDriverTx();
+    }
+    return { adapter: adapter as unknown as DbAdapter, calls };
+  }
+
+  /** Call fn; catch a synchronous throw, swallow a rejected promise. */
+  function trySyncThrow(fn: () => unknown): unknown {
+    try {
+      void Promise.resolve(fn()).catch(() => {});
+      return undefined;
+    } catch (e) {
+      return e;
+    }
+  }
+
+  it("case 1 — readOnly tx SELECT passes to the driver exactly once", async () => {
+    const { adapter, calls } = makeTxTrackingAdapter();
+    const mgr = new (ConnectionManager)(STUB_CTX, () => adapter);
+    const a = await mgr.getAdapterFor(baseCfg);
+    const tx = await a.beginTransaction!();
+    const res = await tx.runQuery("SELECT 1");
+    expect(res).toEqual({ results: [] });
+    expect(calls).toEqual([{ op: "txRunQuery", sql: "SELECT 1" }]);
+    mgr.dispose();
+  });
+
+  it("case 2 — readOnly tx DELETE throws ReadOnlyViolation BEFORE the driver", async () => {
+    const { adapter, calls } = makeTxTrackingAdapter();
+    const mgr = new (ConnectionManager)(STUB_CTX, () => adapter);
+    const a = await mgr.getAdapterFor(baseCfg);
+    const tx = await a.beginTransaction!();
+    const threw = trySyncThrow(() => tx.runQuery("DELETE FROM t"));
+    expect(threw).toBeInstanceOf(ReadOnlyViolation);
+    expect(calls).toEqual([]); // driver never called
+    mgr.dispose();
+  });
+
+  it("case 3 — adapter WITHOUT beginTransaction keeps the optional API undefined", async () => {
+    const { adapter, calls } = makeTxTrackingAdapter({ withBeginTransaction: false });
+    const mgr = new (ConnectionManager)(STUB_CTX, () => adapter);
+    const a = await mgr.getAdapterFor(baseCfg);
+    expect(a.beginTransaction).toBeUndefined();
+    const threw = trySyncThrow(() => a.runQuery("DELETE FROM t"));
+    expect(threw).toBeInstanceOf(ReadOnlyViolation);
+    expect(calls).toEqual([]);
+    mgr.dispose();
+  });
+
+  it("case 4 — two beginTransaction calls each guard their own tx (per-call freshness)", async () => {
+    const { adapter, calls } = makeTxTrackingAdapter();
+    const mgr = new (ConnectionManager)(STUB_CTX, () => adapter);
+    const a = await mgr.getAdapterFor(baseCfg);
+    const tx1 = await a.beginTransaction!();
+    const tx2 = await a.beginTransaction!();
+    expect(tx1).not.toBe(tx2);
+    const threw = trySyncThrow(() => tx2.runQuery("DELETE FROM t"));
+    expect(threw).toBeInstanceOf(ReadOnlyViolation);
+    // tx1 is untouched: commit still resolves and reaches the driver once.
+    await tx1.commit();
+    expect(calls).toEqual([{ op: "commit" }]);
+    mgr.dispose();
+  });
+
+  it("case 5 — non-readOnly tx mutation passes through to the driver", async () => {
+    const { adapter, calls } = makeTxTrackingAdapter();
+    const mgr = new (ConnectionManager)(STUB_CTX, () => adapter);
+    const a = await mgr.getAdapterFor({ ...baseCfg, readOnly: false });
+    const tx = await a.beginTransaction!();
+    await tx.runQuery("DELETE FROM t");
+    expect(calls).toEqual([{ op: "txRunQuery", sql: "DELETE FROM t" }]);
+    mgr.dispose();
+  });
+
+  it("case 6 — tx runQuery forwards (sql, values) unchanged (values passthrough)", async () => {
+    const { adapter, calls } = makeTxTrackingAdapter();
+    const mgr = new (ConnectionManager)(STUB_CTX, () => adapter);
+    const a = await mgr.getAdapterFor(baseCfg);
+    const tx = await a.beginTransaction!();
+    await tx.runQuery("SELECT $1", [1]);
+    expect(calls).toEqual([{ op: "txRunQuery", sql: "SELECT $1", values: [1] }]);
+    mgr.dispose();
+  });
+
+  it("case 7 — commit/rollback pass through to the driver without interception", async () => {
+    const { adapter, calls } = makeTxTrackingAdapter();
+    const mgr = new (ConnectionManager)(STUB_CTX, () => adapter);
+    const a = await mgr.getAdapterFor(baseCfg);
+    const tx = await a.beginTransaction!();
+    await tx.commit();
+    await tx.rollback();
+    expect(calls).toEqual([{ op: "commit" }, { op: "rollback" }]);
+    mgr.dispose();
+  });
+});

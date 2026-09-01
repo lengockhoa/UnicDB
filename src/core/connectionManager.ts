@@ -665,6 +665,26 @@ export class ConnectionManager {
         return original(sql);
       },
     });
+    // ARP-01.2 — secondary execution boundary: a DbTransaction obtained on a
+    // read-only adapter must run through the SAME isMutationSql gate, so a
+    // mutation is blocked BEFORE the driver is invoked. commit()/rollback()
+    // pass through untouched; adapters without beginTransaction gain nothing.
+    // The wrap happens per beginTransaction() call so two concurrent
+    // transactions each get their own guard (per-call freshness).
+    if (typeof adapter.beginTransaction === "function") {
+      const originalBegin = adapter.beginTransaction.bind(adapter);
+      adapter.beginTransaction = async () => {
+        const tx = await originalBegin();
+        const originalTxRun = tx.runQuery.bind(tx);
+        tx.runQuery = (sql: string, values?: unknown[]) => {
+          if (isMutationSql(sql)) {
+            throw new ReadOnlyViolation(mutationStatements(sql));
+          }
+          return originalTxRun(sql, values);
+        };
+        return tx;
+      };
+    }
     return adapter;
   }
 

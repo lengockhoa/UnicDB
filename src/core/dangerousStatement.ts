@@ -3,7 +3,8 @@
 // một statement SQL để extension quyết định modal confirm.
 //
 // Thuật toán:
-//   1. Mask string `'...'`, identifier `"..."`, dollar-quote `$tag$...$tag$`,
+//   1. Mask string `'...'`, identifier `"..."`, MySQL backtick identifier
+//      `` `...` `` (dialect mysql only), dollar-quote `$tag$...$tag$`,
 //      comment `--` và `/* */` thành space (giữ nguyên độ dài) → keyword nằm
 //      trong literal/comment không bị tính.
 //   2. Scan word ở paren-depth 0: bỏ qua `with` (phần CTE nằm trong parens nên
@@ -161,6 +162,34 @@ export function maskLiteralsAndComments(
       while (j < sql.length) {
         if (sql[j] === '"') {
           if (sql[j + 1] === '"') {
+            j += 2;
+            continue;
+          }
+          j += 1;
+          break;
+        }
+        j += 1;
+      }
+      blank(i, j);
+      i = j;
+      continue;
+    }
+
+    // TASK-ARP01-001 — MySQL backtick-quoted identifier `` `...` `` with the
+    // standard doubling escape (``` `` ```). Gated on `dialect === "mysql"`
+    // because a bare backtick is not SQL syntax in postgres/mssql, and
+    // masking it there would desync this masker from `splitStatements`'
+    // tokenizer, which also only understands backticks under mysql. Without
+    // this branch, `` SELECT `insert` FROM t `` leaks the identifier body as
+    // a fake statement keyword into the depth-scan (read-only guard false
+    // positive). Mirrors the `"`-identifier branch above (doubling escape
+    // only; MySQL's backslash escape inside identifiers is intentionally not
+    // handled — same limitation the `"` branch documents).
+    if (ch === "`" && useBackslashEscape) {
+      let j = i + 1;
+      while (j < sql.length) {
+        if (sql[j] === "`") {
+          if (sql[j + 1] === "`") {
             j += 2;
             continue;
           }

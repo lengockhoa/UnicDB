@@ -102,34 +102,97 @@ static gates.)
 
 ## Discussion
 
-(no comments yet)
+### 2026-08-31 · executor · claude-code/unic-code
+
+@reviewer — Advisory Round-1 follow-ups handled: (1) fix path = masking-seam in
+`dangerousStatement.ts` (rationale in Executor Report); its own test file re-run green
+(29/29). (2) MSSQL `[insert]` false positive probed and DEFERRED — evidence + rationale
+in Executor Report ISSUES; recommend a follow-up task rather than expanding this one's
+scope (task Goal scopes exactly the one known backtick false positive; Test Cases table
+has no bracket case; T-SQL needs its own `]`-doubling escape decision). Note:
+`useBackslashEscape` (dialect==="mysql") doubles as the backtick gate — correct today,
+but a future refactor could rename it `isMysqlDialect` if bracket masking ever lands
+alongside.
 
 ---
 
 ## Executor Report
 
 ```
-STATUS:
+STATUS: PASS
 EXECUTOR_TOOL: claude-code
 EXECUTOR_MODEL: unic-code
-EXECUTOR_SUBAGENT: -
-SUMMARY:
-TEST_PLAN_FOLLOWED:
-RED_FIRST:
-  command: npx vitest run src/core/__tests__/readOnlyIntent.test.ts (new backtick case)
-  result: <paste RED here — must be present before implementation>
-FILES_CHANGED:
+EXECUTOR_SUBAGENT: feature-implementer
+TEST_PLAN_FOLLOWED: task §Test Cases — cases 3-6 added; cases 1, 2, 7 pre-existing,
+  kept intact (file diff is purely additive inside the existing describe block).
+FIX_PATH_CHOSEN: masking-seam in dangerousStatement.ts maskLiteralsAndComments — the
+  task's expected target. Rationale: single masking seam shared by readOnlyIntent and
+  postgres.ts:shouldUseCursor, and it mirrors how the `"-identifier branch already
+  solves the same bug class for postgres. The readOnlyIntent-local alternative was NOT
+  used (one fix path only, per task).
+RED_OUTPUT:
+  command: npx vitest run src/core/__tests__/readOnlyIntent.test.ts (before implementation)
+  result: 20 tests | 1 failed — exactly the backtick case; 19 passed.
+    FAIL  src/core/__tests__/readOnlyIntent.test.ts > readOnlyIntent > MySQL backtick-quoted keyword identifier is not a mutation
+    AssertionError: expected true to be false // Object.is equality
+    - Expected
+    + Received
+    - false
+    + true
+    ❯ src/core/__tests__/readOnlyIntent.test.ts:83:62
+      83|     expect(isMutationSql("SELECT `insert` FROM t", "mysql")).toBe(fals…
+    Test Files  1 failed (1)
+    Tests  1 failed | 19 passed (20)
+  (RED validity: the three owned files were byte-identical to base a948b3f at RED
+   time — verified with `git diff a948b3f HEAD` on them: empty.)
 TESTS_ADDED:
+  - src/core/__tests__/readOnlyIntent.test.ts:
+    - "MySQL backtick-quoted keyword identifier is not a mutation" (case 3, RED→GREEN;
+      asserts `insert`, `update`, `delete` variants → false)
+    - "Transaction-control statements are not mutations" (case 4: COMMIT, ROLLBACK,
+      BEGIN, START TRANSACTION, SAVEPOINT → false; pins the decision)
+    - "Core DML classifies identically across postgres/mysql/mssql" (case 5:
+      DELETE FROM t / UPDATE t SET a=1 / INSERT INTO t VALUES(1) × 3 dialects → true)
+    - "Batch with transaction-control + safe SELECT stays clean; one real DML still
+      listed" (case 6: mutationStatements("COMMIT; SELECT 1") → [];
+      mutationStatements("SELECT 1; COMMIT; DELETE FROM t") → ["DELETE FROM t"])
+FILES_CHANGED:
+  - src/core/dangerousStatement.ts: added a dialect-gated MySQL backtick-identifier
+    masking branch to maskLiteralsAndComments (placed after the `"-identifier
+    branch); doubling escape (`` `` ``) only, mirroring the `"` branch; gated on
+    dialect==="mysql" so postgres/mssql masking stays byte-identical (probe-verified);
+    header algorithm comment updated.
+  - src/core/readOnlyIntent.ts: doc comments only, no logic change —
+    transaction-control decision (COMMIT/ROLLBACK/BEGIN/START TRANSACTION/SAVEPOINT
+    are NOT mutations, and why) documented at MUTATION_KEYWORDS; dialect candidates
+    (postgres|mysql|mssql) and the "keyword classification dialect-agnostic, split/
+    mask dialect-driven" contract documented on isMutationSql.
+  - src/core/__tests__/readOnlyIntent.test.ts: 4 new cases appended; nothing removed.
 VERIFICATION:
   command: npx vitest run src/core/__tests__/readOnlyIntent.test.ts
-  result:
+  result: exit 0 — Test Files 1 passed (1); Tests 20 passed (20)
+  command: npx vitest run src/core/__tests__/dangerousStatement.test.ts
+    (advisory Round-1 follow-up, run because dangerousStatement.ts changed)
+  result: exit 0 — Test Files 1 passed (1); Tests 29 passed (29)
   command: npm run typecheck
-  result:
+  result: exit 0 (tsc --noEmit, clean)
   command: npm run compile
-  result:
+  result: exit 0 (esbuild: build complete)
 ISSUES:
-HANDOFF_TO_REVIEWER:
-NEXT:
+  - MSSQL bracket identifier [insert] — PROBED, DEFERRED (advisory Round-1). Probe on
+    this branch: isMutationSql("SELECT [insert] FROM t", "mssql") === true — same
+    false-positive class as the backtick bug;
+    maskLiteralsAndComments("SELECT [insert] FROM t", "mssql") leaves brackets
+    untouched. Deferral rationale: the task Goal scopes exactly the ONE known false
+    positive (backtick); the Test Cases table has no bracket case; a bracket branch
+    needs its own dialect-gating + T-SQL `]`-doubling escape decision and matrix
+    entries — new task material, not scope drift inside this one. Bug direction is a
+    false POSITIVE (over-blocking) — safe direction for a read-only guard. Recommend
+    a follow-up task in the next ARP-01 wave.
+  - No lint script exists in package.json (task §Verification already documents
+    this); typecheck + compile are the static gates, both green.
+HANDOFF_TO_REVIEWER: yes — reviewer unic-smart picks up pending_review.
+NEXT: reviewer verdict; optional follow-up task for MSSQL [identifier] masking.
 ```
 
 ## Reviewer Verdict

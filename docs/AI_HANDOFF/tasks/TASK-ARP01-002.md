@@ -108,32 +108,74 @@ static gates.)
 
 ---
 
+## Discussion (executor decisions)
+
+- Dialect threading: NOT threaded — `isMutationSql(sql)` uses the default postgres path.
+  `cfg.driver` is `string`-typed in `ConnectionConfig` (no shared union with `SqlDialect`
+  without a cast); the task file says the default path is fully acceptable. Recorded here.
+
 ## Executor Report
 
 ```
-STATUS:
+STATUS: DONE
 EXECUTOR_TOOL: claude-code
 EXECUTOR_MODEL: unic-code
-EXECUTOR_SUBAGENT: -
-SUMMARY:
-TEST_PLAN_FOLLOWED:
+EXECUTOR_SUBAGENT: feature-implementer
+SUMMARY: Wrapped adapter.beginTransaction inside guardAdapter so a read-only
+connection's DbTransaction.runQuery passes through the same isMutationSql gate
+(mutation → ReadOnlyViolation BEFORE the driver); commit/rollback untouched,
+optional API preserved, per-call freshness guaranteed (fresh wrap per
+beginTransaction call). Kept the existing runQuery wrap byte-identical.
+
+TEST_PLAN_FOLLOWED: task §Test Cases (7/7 implemented as new describe block)
 RED_FIRST:
-  command: npx vitest run src/core/__tests__/connectionManager.test.ts (new tx-block case)
-  result: <paste RED here — must be present before implementation>
+  command: npx vitest run src/core/__tests__/connectionManager.test.ts -t "ARP-01 transaction guard"
+  result: RED on base 7263835 — 2 failed | 5 passed | 21 skipped (28)
+    FAIL > case 2 — readOnly tx DELETE throws ReadOnlyViolation BEFORE the driver
+      → AssertionError: expected undefined to be an instance of ReadOnlyViolation
+        ❯ src/core/__tests__/connectionManager.test.ts:1040:19
+           1038|     const tx = await a.beginTransaction!();
+           1039|     const threw = trySyncThrow(() => tx.runQuery("DELETE FROM t"));
+           1040|     expect(threw).toBeInstanceOf(ReadOnlyViolation);
+    FAIL > case 4 — two beginTransaction calls each guard their own tx (per-call freshness)
+      → AssertionError: expected undefined to be an instance of ReadOnlyViolation
+        ❯ src/core/__tests__/connectionManager.test.ts:1064:19
+    (Unwrapped tx.runQuery reached the driver instead of throwing — the exact
+    boundary this task closes. Cases 1,3,5,6,7 passed on base as expected:
+    they assert passthrough behavior that already exists.)
+
 FILES_CHANGED:
+  - src/core/connectionManager.ts: guardAdapter — added optional beginTransaction
+    wrap (bind original, per-call wrap of tx.runQuery with isMutationSql gate +
+    values passthrough); existing runQuery wrap unchanged.
+  - src/core/__tests__/connectionManager.test.ts: added describe
+    "ConnectionManager ARP-01 transaction guard" with 7 cases (1 happy, 6 edge/
+    regression) using a tracked-driver calls[] fixture; existing DBX-05/RLX-03
+    describes untouched.
 TESTS_ADDED:
+  - src/core/__tests__/connectionManager.test.ts:
+    case 1 — readOnly tx SELECT passes to the driver exactly once
+    case 2 — readOnly tx DELETE throws ReadOnlyViolation BEFORE the driver
+    case 3 — adapter WITHOUT beginTransaction keeps the optional API undefined
+    case 4 — two beginTransaction calls each guard their own tx (per-call freshness)
+    case 5 — non-readOnly tx mutation passes through to the driver
+    case 6 — tx runQuery forwards (sql, values) unchanged (values passthrough)
+    case 7 — commit/rollback pass through to the driver without interception
 VERIFICATION:
   command: npx vitest run src/core/__tests__/connectionManager.test.ts
-  result:
+  result: exit 0 — Test Files 1 passed (1); Tests 28 passed (28)
+    ✓ src/core/__tests__/connectionManager.test.ts  (28 tests) 49ms
   command: npm run typecheck
-  result:
+  result: exit 0 — tsc --noEmit, no errors
   command: npm run compile
-  result:
+  result: exit 0 — "esbuild: build complete"
   command: git diff a948b3f -- src/adapters/types.ts
-  result:
-ISSUES:
-HANDOFF_TO_REVIEWER:
-NEXT:
+  result: exit 0, EMPTY output — no signature change
+ISSUES: none. (Note: vitest -t filter run still compiles whole file; full-file
+run after wrap confirmed existing DBX-05 + RLX-03 describes stay green.)
+HANDOFF_TO_REVIEWER: yes — status pending_review; reviewer model must differ
+(unic-smart per task header).
+NEXT: ready for review.
 ```
 
 ## Reviewer Verdict
