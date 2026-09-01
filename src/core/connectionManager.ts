@@ -25,6 +25,7 @@ import {
   ReadOnlyViolation,
 } from "./readOnlyIntent";
 import { SshTunnelManager } from "./sshTunnelManager";
+import type { TunnelExit } from "./sshTunnelManager";
 
 const KEY_CONNECTIONS = "vsdb.connections";
 const KEY_ACTIVE = "vsdb.activeConnection";
@@ -32,6 +33,32 @@ const KEY_PASS_PREFIX = "vsdb.pass.";
 
 /** 10 phút idle. */
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000;
+
+/** RLX-03 TASK-RLX03-002 — default inter-attempt recovery delay (ms). */
+export const DEFAULT_RECOVERY_DELAY_MS = 1_000;
+
+/** Pinned max attempts for the bounded recovery loop. */
+const RECOVERY_MAX_ATTEMPTS = 2;
+
+/**
+ * RLX-03 TASK-RLX03-002 — injectable recovery timing. The `sleep` injection
+ * is what makes the recovery loop testable without real time.
+ */
+export interface ConnectionRecoveryOptions {
+  readonly delayMs?: number;
+  readonly sleep?: (ms: number) => Promise<void>;
+}
+
+/**
+ * RLX-03 TASK-RLX03-002 — observable recovery status. `attempt` is 1-based;
+ * `maxAttempts` is always 2 for the bounded loop.
+ */
+export interface ConnectionRecoveryStatus {
+  readonly connectionId: string;
+  readonly state: "recovering" | "recovered" | "failed";
+  readonly attempt: number;
+  readonly maxAttempts: number;
+}
 
 interface InternalState {
   connections: ConnectionConfig[];
@@ -59,17 +86,56 @@ export class ConnectionManager {
   /** Fires khi active connection đổi (set/delete). */
   readonly onDidChangeActive: vscode.Event<ConnectionConfig | null>;
 
+  /** RLX-03 TASK-RLX03-002 — bounded recovery status events. */
+  private readonly _onDidChangeRecoveryStatusEmitter: vscode.EventEmitter<ConnectionRecoveryStatus>;
+  readonly onDidChangeRecoveryStatus: vscode.Event<ConnectionRecoveryStatus>;
+
+  /**
+   * RLX-03 TASK-RLX03-002 — generation guards. `activeGeneration` bumps
+   * synchronously on every active-affecting operation (setActive, edit,
+   * delete) so any in-flight recovery for a stale id silently aborts.
+   * `lifecycleGeneration` bumps synchronously on dispose so any in-flight
+   * recovery (including one mid-sleep) silently aborts. The recovery loop
+   * captures both at entry and re-checks before/after every await.
+   */
+  private activeGeneration = 0;
+  private lifecycleGeneration = 0;
+  /**
+   * Per-active-id recovery loop promise. Duplicate unexpected exits share
+   * ONE recovery (no second factory/scheduler/emit). Cleared when the
+   * loop settles.
+   */
+  private recoveryInFlight: Map<string, Promise<void>> = new Map();
+
+  /** Effective recovery delay (ms) — resolved once from options. */
+  private readonly recoveryDelayMs: number;
+  /** Injected inter-attempt sleep — test seam. */
+  private readonly recoverySleep: (ms: number) => Promise<void>;
+
   constructor(
     private readonly ctx: vscode.ExtensionContext,
     private readonly factory: AdapterFactory,
     /** DBX-05: injectable tunnel manager (tests pass a fake). */
     tunnels?: SshTunnelManager,
+    /** RLX-03 TASK-RLX03-002 — pinned injectable recovery options. */
+    recoveryOptions: ConnectionRecoveryOptions = {},
   ) {
     this.tunnels = tunnels ?? new SshTunnelManager();
     this._onDidChangeActiveEmitter = new vscode.EventEmitter<ConnectionConfig | null>();
     this.onDidChangeActive = this._onDidChangeActiveEmitter.event;
+    this._onDidChangeRecoveryStatusEmitter = new vscode.EventEmitter<ConnectionRecoveryStatus>();
+    this.onDidChangeRecoveryStatus = this._onDidChangeRecoveryStatusEmitter.event;
+    this.recoveryDelayMs = recoveryOptions.delayMs ?? DEFAULT_RECOVERY_DELAY_MS;
+    this.recoverySleep =
+      recoveryOptions.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
     // Load state khi khởi tạo.
     this.loadState();
+    // RLX-03 TASK-RLX03-002 — subscribe to tunnel exits to drive bounded
+    // recovery for the currently active tunneled connection. Guarded so
+    // older injectable fakes without onDidExit keep constructing.
+    if (typeof this.tunnels.onDidExit === "function") {
+      this.tunnels.onDidExit((exit) => this.handleTunnelExit(exit));
+    }
   }
 
   // ---- Public API ----------------------------------------------------------
@@ -123,6 +189,13 @@ export class ConnectionManager {
     }
     const old = this.state.connections[idx];
     const next: ConnectionConfig = { ...old, ...patch, id: old.id };
+
+    // RLX-03: bump active generation synchronously BEFORE any await when
+    // editing the active id — any in-flight recovery for this id must
+    // silently abort (the user is mid-edit, recovery is no longer wanted).
+    if (this.currentActiveId === id) {
+      this.activeGeneration++;
+    }
 
     // Test-connect lại nếu có đổi password HOẶC đổi bất kỳ trường nào khác (driver/host/...).
     // An toàn nhất: luôn test-connect. DBX-05: probe dùng tunnel TEMP KEY —
@@ -179,6 +252,12 @@ export class ConnectionManager {
     const idx = this.state.connections.findIndex((c) => c.id === id);
     if (idx < 0) return; // idempotent
     const wasActive = this.currentActiveId === id;
+    // RLX-03: bump active generation synchronously BEFORE any await when
+    // deleting the active id — any in-flight recovery for this id must
+    // silently abort.
+    if (wasActive) {
+      this.activeGeneration++;
+    }
     this.state.connections.splice(idx, 1);
     await this.persistConnections();
     await this.tryDeletePassword(id);
@@ -228,6 +307,11 @@ export class ConnectionManager {
       await this.persistActive();
       return;
     }
+
+    // RLX-03: bump active generation synchronously BEFORE any await so an
+    // in-flight recovery for the OLD active id observes the change and
+    // silently aborts.
+    this.activeGeneration++;
 
     // Đóng adapter cũ trước khi chuyển.
     await this.closeCurrentAdapter();
@@ -297,6 +381,151 @@ export class ConnectionManager {
   }
 
   /**
+   * RLX-03 TASK-RLX03-002 — resolve + test one candidate adapter through the
+   * SAME lazy-construction path as `getAdapter()` (guardAdapter included).
+   * On test failure the candidate is closed and the error rethrown — the
+   * caller decides whether to retry.
+   */
+  private async buildAdapter(cfg: ConnectionConfig, password: string): Promise<DbAdapter> {
+    const adapter = this.guardAdapter(await this.resolveAdapter(cfg, password), cfg);
+    try {
+      await adapter.testConnection();
+    } catch (err) {
+      // Đóng adapter nếu test-connect fail để tránh leak.
+      try {
+        await adapter.close();
+      } catch {
+        // ignore
+      }
+      throw err;
+    }
+    return adapter;
+  }
+
+  // ---- RLX-03 TASK-RLX03-002 — bounded active-tunnel recovery --------------
+
+  /**
+   * Gate for the recovery loop: only an UNEXPECTED post-ready exit for the
+   * CURRENTLY ACTIVE, tunneled connection enters recovery. Intentional
+   * (manager-issued) stops, non-active keys, and duplicate exits for a
+   * recovery already in flight are silently ignored.
+   */
+  private handleTunnelExit(exit: TunnelExit): void {
+    if (exit.intentional) return; // managed stop — never recover
+    const active = this.getActive();
+    if (!active || active.id !== exit.key) return; // not the active id
+    if (!active.tunnel) return; // non-tunneled — no recovery
+    if (this.recoveryInFlight.has(exit.key)) return; // duplicate shares the ONE loop per id
+    const activeGen = this.activeGeneration;
+    const lifecycleGen = this.lifecycleGeneration;
+    const connectionId = active.id;
+    const promise = this.runRecovery(connectionId, activeGen, lifecycleGen).finally(() => {
+      if (this.recoveryInFlight.get(connectionId) === promise) {
+        this.recoveryInFlight.delete(connectionId);
+      }
+    });
+    this.recoveryInFlight.set(connectionId, promise);
+  }
+
+  private emitRecoveryStatus(
+    connectionId: string,
+    state: ConnectionRecoveryStatus["state"],
+    attempt: number,
+  ): void {
+    this._onDidChangeRecoveryStatusEmitter.fire({
+      connectionId,
+      state,
+      attempt,
+      maxAttempts: RECOVERY_MAX_ATTEMPTS,
+    });
+  }
+
+  /**
+   * One bounded recovery loop for `connectionId`. Ownership is re-checked
+   * BEFORE and AFTER every await (old-adapter close, inter-attempt sleep,
+   * getAdapter/connect path). A failed guard silently ends the loop: no
+   * further attempt, no terminal status, no later listener callback.
+   * A candidate that resolves AFTER ownership changed is closed/discarded
+   * and never installed as `currentAdapter`.
+   */
+  private async runRecovery(
+    connectionId: string,
+    activeGen: number,
+    lifecycleGen: number,
+  ): Promise<void> {
+    // Pre-loop guard.
+    if (!this.recoveryOwns(connectionId, activeGen, lifecycleGen)) return;
+    this.emitRecoveryStatus(connectionId, "recovering", 1);
+
+    for (let attempt = 1; attempt <= RECOVERY_MAX_ATTEMPTS; attempt++) {
+      if (attempt > 1) {
+        // Inter-attempt backoff. Re-check ownership BEFORE and AFTER.
+        if (!this.recoveryOwns(connectionId, activeGen, lifecycleGen)) return;
+        await this.recoverySleep(this.recoveryDelayMs);
+        if (!this.recoveryOwns(connectionId, activeGen, lifecycleGen)) return;
+      }
+
+      // Close/drop the OLD dead adapter before the first connect.
+      if (attempt === 1) {
+        if (!this.recoveryOwns(connectionId, activeGen, lifecycleGen)) return;
+        await this.closeCurrentAdapter();
+        if (!this.recoveryOwns(connectionId, activeGen, lifecycleGen)) return;
+      }
+
+      // Reconnect via the existing lazy path (getAdapter). Any candidate that
+      // resolves after ownership changed is discarded below without install.
+      let candidate: DbAdapter | null = null;
+      try {
+        candidate = await this.getAdapter();
+      } catch {
+        candidate = null;
+      }
+
+      // Post-await ownership re-check.
+      if (!this.recoveryOwns(connectionId, activeGen, lifecycleGen)) {
+        // Discard the late candidate — never install it, never close the
+        // NEW active connection's adapter.
+        if (candidate) {
+          try {
+            await candidate.close();
+          } catch {
+            // ignore
+          }
+        }
+        return;
+      }
+
+      if (candidate) {
+        this.emitRecoveryStatus(connectionId, "recovered", attempt);
+        return;
+      }
+
+      if (attempt === RECOVERY_MAX_ATTEMPTS) {
+        this.emitRecoveryStatus(connectionId, "failed", attempt);
+        return;
+      }
+    }
+  }
+
+  /**
+   * True iff the captured (id, activeGen, lifecycleGen) still owns recovery:
+   * manager not disposed, generations unchanged, and the captured id is
+   * still the installed active connection (both bookkeeping and config).
+   */
+  private recoveryOwns(
+    connectionId: string,
+    activeGen: number,
+    lifecycleGen: number,
+  ): boolean {
+    if (this.lifecycleGeneration !== lifecycleGen) return false;
+    if (this.activeGeneration !== activeGen) return false;
+    if (this.currentActiveId !== connectionId) return false;
+    const active = this.getActive();
+    if (!active || active.id !== connectionId) return false;
+    return true;
+  }
+
+  /**
    * Lấy adapter hiện tại (lazy connect). Reset idle timer 10 phút mỗi lần gọi.
    * Throw nếu không có active hoặc password không lấy được từ SecretStorage.
    */
@@ -306,6 +535,10 @@ export class ConnectionManager {
       throw new Error("Chưa chọn connection active");
     }
     if (!this.currentAdapter || this.currentActiveId !== active.id) {
+      // RLX-03: snapshot ownership so a concurrent setActive/edit/delete/
+      // dispose during the connect path cannot install a stale candidate.
+      const activeGen = this.activeGeneration;
+      const lifecycleGen = this.lifecycleGeneration;
       // Lazy connect: tạo adapter mới.
       let password: string | undefined;
       try {
@@ -318,17 +551,21 @@ export class ConnectionManager {
           `Không tìm được password cho connection "${active.name}". Vui lòng nhập lại password (edit connection).`,
         );
       }
-      const adapter = this.guardAdapter(await this.resolveAdapter(active, password), active);
-      try {
-        await adapter.testConnection();
-      } catch (err) {
-        // Đóng adapter nếu test-connect fail để tránh leak.
+      const adapter = await this.buildAdapter(active, password);
+      // Ownership re-check AFTER every await — never assign a stale candidate.
+      if (
+        this.activeGeneration !== activeGen ||
+        this.lifecycleGeneration !== lifecycleGen ||
+        this.getActive()?.id !== active.id
+      ) {
         try {
           await adapter.close();
         } catch {
           // ignore
         }
-        throw err;
+        throw new Error(
+          `Connection "${active.name}" không còn active — đã bỏ kết nối cũ`,
+        );
       }
       this.currentAdapter = adapter;
       this.currentActiveId = active.id;
@@ -339,6 +576,10 @@ export class ConnectionManager {
 
   /** Dispose: đóng tất cả adapters (active + passive), clear timer. */
   async dispose(): Promise<void> {
+    // RLX-03: bump lifecycle generation synchronously BEFORE the first await
+    // so any in-flight recovery (even one inside an injected sleep) observes
+    // the change and silently aborts — no later attempt/status/callback.
+    this.lifecycleGeneration++;
     await this.closeCurrentAdapter();
     // Close every cached passive adapter to avoid socket leaks across reloads.
     const ids = Array.from(this.passiveAdapters.keys());

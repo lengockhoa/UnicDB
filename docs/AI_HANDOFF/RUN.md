@@ -1,6 +1,6 @@
 Command: handoff-fullstack
 Goal: Ship PORT-RLX-03 Connection, tunnel, and schema-refresh recovery (Wave 8)
-Base: main @ c6d6e36 — v1.31.0 released, RLX-02 done
-Phase: P3
-Cursor: plan approved round 2 — committing PLAN_RLX03.md + TASK-RLX03-001/002/003
-Next: I3 waves (w1: 001+003, w2: 002), then review + release v1.32.0
+Base: main @ a988201 — wave 1 committed (SSH exit lifecycle + SchemaCache adapter-transition invalidation)
+Phase: I3
+Cursor: wave 1 done (001 PASS, 003 PASS) — launching wave 2 TASK-RLX03-002
+Next: wave 2 agent → copy-back → I4 → R2-R4 review → release v1.32.0

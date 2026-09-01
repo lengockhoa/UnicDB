@@ -70,8 +70,32 @@ vi.mock("vscode", () => {
 
 import { ConnectionManager } from "../../core/connectionManager";
 import { createStatusBar } from "../statusBar";
+import type { SshTunnelManager, TunnelExit, TunnelExitSubscription } from "../../core/sshTunnelManager";
 import type { ConnectionConfig } from "../../config/types";
 import type { DbAdapter } from "../../adapters/types";
+
+function makeFakeTunnels() {
+  let counter = 56000;
+  const listeners = new Set<(e: TunnelExit) => void>();
+  return {
+    startCalls: [] as Array<{ key: string }>,
+    async start(_cfg: unknown, key: string) {
+      this.startCalls.push({ key });
+      return { key, localPort: ++counter };
+    },
+    stop: () => true,
+    stopAll: () => {},
+    dispose: () => {},
+    list: () => [],
+    onDidExit(listener: (e: TunnelExit) => void): TunnelExitSubscription {
+      listeners.add(listener);
+      return { dispose: () => listeners.delete(listener) };
+    },
+    emitExit(e: TunnelExit) {
+      for (const l of Array.from(listeners)) l(e);
+    },
+  };
+}
 
 function makeCfg(overrides: Partial<ConnectionConfig> = {}): ConnectionConfig {
   return {
@@ -171,5 +195,112 @@ describe("createStatusBar", () => {
 
     await mgr.setActive("b");
     expect(item.text).toContain("B");
+  });
+
+  // RLX-03 TASK-RLX03-002 — recovery-text literal exact match.
+  it("renders exact recovery literals and returns to normal on next active change", async () => {
+    const secret = new FakeSecretStorage();
+    const ws = new FakeMemento();
+    const g = new FakeMemento();
+    const tunneled = makeCfg({
+      id: "a",
+      name: "Local",
+      driver: "postgres",
+      tunnel: { host: "bastion", port: 22 },
+    });
+    const other = makeCfg({ id: "b", name: "Other", driver: "postgres" });
+    ws.update("vsdb.connections", [tunneled, other]);
+    ws.update("vsdb.activeConnection", "a");
+    await secret.store("vsdb.pass.a", "pwA");
+    await secret.store("vsdb.pass.b", "pwB");
+
+    const oldA = makeAdapter();
+    const newA = makeAdapter();
+    const factory = vi.fn()
+      .mockImplementationOnce(() => oldA)
+      .mockImplementationOnce(() => newA);
+    const tunnels = makeFakeTunnels();
+    const sleep = vi.fn(async () => {});
+    const mgr = new ConnectionManager(
+      { secrets: secret, workspaceState: ws, globalState: g } as never,
+      factory as never,
+      tunnels as unknown as SshTunnelManager,
+      { delayMs: 1_000, sleep },
+    );
+
+    const item = createStatusBar(mgr);
+    expect(item.text).toBe("$(database) Local [postgres]");
+
+    // Record every text assignment so we can assert the EXACT pinned
+    // literals in order (Test Case 6).
+    const textHistory: string[] = [];
+    let currentText = item.text;
+    textHistory.push(currentText);
+    Object.defineProperty(item, "text", {
+      configurable: true,
+      get: () => currentText,
+      set: (v: string) => {
+        currentText = v;
+        textHistory.push(v);
+      },
+    });
+
+    await mgr.getAdapter();
+    // Trigger the recovery loop.
+    tunnels.emitExit({ key: "a", code: 1, signal: null, intentional: false });
+    // Yield several times so the loop can publish each status.
+    for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+
+    // Both pinned recovery literals rendered exactly, in order.
+    expect(textHistory).toContain("$(sync~spin) Local reconnecting (1/2)");
+    expect(textHistory).toContain("$(check) Local reconnected");
+    expect(textHistory[textHistory.length - 1]).toBe("$(check) Local reconnected");
+
+    // Now switch active to a different connection — text should return to normal form.
+    await mgr.setActive("b");
+    expect(item.text).toBe("$(database) Other [postgres]");
+
+    item.dispose();
+    await mgr.dispose();
+  });
+
+  it("renders exact failed text when both attempts fail", async () => {
+    const secret = new FakeSecretStorage();
+    const ws = new FakeMemento();
+    const g = new FakeMemento();
+    const tunneled = makeCfg({
+      id: "f",
+      name: "Local",
+      driver: "postgres",
+      tunnel: { host: "bastion", port: 22 },
+    });
+    ws.update("vsdb.connections", [tunneled]);
+    ws.update("vsdb.activeConnection", "f");
+    await secret.store("vsdb.pass.f", "pwF");
+
+    const oldA = makeAdapter();
+    const failA1 = makeAdapter();
+    const failA2 = makeAdapter();
+    failA1.testConnection.mockRejectedValueOnce(new Error("nope"));
+    failA2.testConnection.mockRejectedValueOnce(new Error("nope"));
+    const factory = vi.fn()
+      .mockImplementationOnce(() => oldA)
+      .mockImplementationOnce(() => failA1)
+      .mockImplementationOnce(() => failA2);
+    const tunnels = makeFakeTunnels();
+    const sleep = vi.fn(async () => {});
+    const mgr = new ConnectionManager(
+      { secrets: secret, workspaceState: ws, globalState: g } as never,
+      factory as never,
+      tunnels as unknown as SshTunnelManager,
+      { delayMs: 1_000, sleep },
+    );
+    const item = createStatusBar(mgr);
+    await mgr.getAdapter();
+    tunnels.emitExit({ key: "f", code: 1, signal: null, intentional: false });
+    for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(item.text).toBe("$(error) Local reconnect failed");
+    item.dispose();
+    await mgr.dispose();
   });
 });

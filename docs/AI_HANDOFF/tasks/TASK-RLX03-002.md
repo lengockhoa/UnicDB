@@ -77,3 +77,54 @@ The existing manager owns the tunnel (`private readonly tunnels`), starts it onl
 ---
 
 ## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT:
+```
+Test Files  1 failed (1)
+      Tests  6 failed (6)  [connectionManager recovery tests]
+TypeError: mgr.onDidChangeRecoveryStatus is not a function   (x5 tests)
+AssertionError: expected undefined to be 1000 — DEFAULT_RECOVERY_DELAY_MS    (x1)
+Test Files  1 failed (1)
+      Tests  2 failed | 3 passed (5)  [statusBar — after manager exports existed]
+AssertionError: expected '$(database) Local [postgres]' to be '$(error) Local reconnect failed'
+```
+RED confirmed for the expected reason (missing recovery API/rendering, not a harness error).
+
+Verification Output:
+```
+npx vitest run src/core/__tests__/connectionManager.test.ts src/ui/__tests__/statusBar.test.ts
+ ✓ src/ui/__tests__/statusBar.test.ts  (5 tests) 20ms
+ ✓ src/core/__tests__/connectionManager.test.ts  (20 tests) 42ms
+ Test Files  2 passed (2)
+      Tests  25 passed (25)
+
+npm run typecheck   → tsc --noEmit, exit 0
+npm run compile     → esbuild: build complete, exit 0
+npx vitest run (full unit suite, extra safety)
+ Test Files  214 passed | 1 skipped (215)
+      Tests  2856 passed | 2 skipped (2858)
+```
+
+Status: PASS
+Note:
+- Test-file placement: the task's Test Files contract pins manager recovery tests inside
+  `src/core/__tests__/connectionManager.test.ts`; the recovery suite was merged into the
+  existing harness (same vscode mock) and no extra test file remains.
+- Recovery design as specified: `ConnectionRecoveryOptions` + `DEFAULT_RECOVERY_DELAY_MS = 1_000`
+  exported; 4th optional constructor arg; per-id in-flight map (duplicate exits share one loop);
+  active/lifecycle generation guards re-checked before AND after every await (old-adapter close,
+  injected sleep, getAdapter/connect); a post-await stale candidate is closed and discarded
+  (getAdapter itself now also guards its install point and never assigns a stale adapter).
+- `getAdapter()`'s new stale-candidate guard changes one behavior: if ownership changes while a
+  lazy connect is in flight, it now throws and closes the candidate instead of installing it.
+  No existing test depended on the old (leaky/racy) behavior; full suite passes.
+- Constructor subscribes `tunnels.onDidExit` guarded by `typeof === "function"` so pre-existing
+  test fakes without that method keep constructing (back-compat, existing tests untouched).
+- Status bar renders pinned literals: `$(sync~spin) <name> reconnecting (attempt/max)`,
+  `$(check) <name> reconnected`, `$(error) <name> reconnect failed`; normal render, tooltip,
+  show/hide, and subscription disposal preserved (both subs disposed via item.dispose override).
+- Worktree files left uncommitted as instructed.
