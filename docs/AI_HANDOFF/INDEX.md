@@ -1,6 +1,6 @@
 # INDEX
 
-Cycle AIX-07 — **Trust, Privacy & Governance** — complete; shipped in v1.28.0. Cycle DX-01 — Release confidence lane — shipped in v1.36.0. Cycle ARP-02 — shutdown-safe query ownership — shipped in v1.38.0. Next commissionable cycle: ARP-03 (retained-result memory budget) from `docs/plans/2026-09-01-vsdb-additive-roadmap.md`.
+Cycle AIX-07 — **Trust, Privacy & Governance** — complete; shipped in v1.28.0. Cycle DX-01 — Release confidence lane — shipped in v1.36.0. Cycle ARP-02 — shutdown-safe query ownership — shipped in v1.38.0. Cycle ARP-03 — retained-result memory budget — planning done, ready for executor (2026-09-02).
 
 | Task / Portfolio | Title | Status | Dependencies | Reviewer |
 |---|---|---|---|---|
@@ -137,3 +137,20 @@ Graph: TASK-ARP02-001 independent; TASK-ARP02-002 independent; TASK-ARP02-003 in
 - Wave 2 (1): TASK-ARP02-004
 
 No same-wave target-file overlap. Plan: docs/AI_HANDOFF/PLAN_ARP02.md.
+
+## Cycle ARP-03 — Retained-Result Memory Budget
+
+| Task / Portfolio | Title | Status | Dependencies | Reviewer |
+|---|---|---|---|---|
+| TASK-ARP03-001 | Pure retained-result budget helper | ready | none | unic-smart |
+| TASK-ARP03-002 | Runner enforcement: retained-row cap + one-shot cursor close + graceful no-op | ready | TASK-ARP03-001 | unic-smart |
+| TASK-ARP03-003 | Panel state: limited statements ride the wire without an error toast | ready | TASK-ARP03-002 | unic-smart |
+| TASK-ARP03-004 | Webview UX: distinct truncated state + Load More gate closes | ready | TASK-ARP03-002 | unic-smart |
+
+Graph: TASK-ARP03-001 → TASK-ARP03-002 → TASK-ARP03-003; TASK-ARP03-002 → TASK-ARP03-004.
+
+- Wave 1 (1): TASK-ARP03-001
+- Wave 2 (1): TASK-ARP03-002
+- Wave 3 (2): TASK-ARP03-003, TASK-ARP03-004
+
+No same-wave target-file overlap: TASK-ARP03-001 owns `resultBatcher.ts`/its test; TASK-ARP03-002 owns `queryRunner.ts`/its test; TASK-ARP03-003 owns `resultsPanel.ts`/its test; TASK-ARP03-004 owns `webview/main.ts` + new `src/ui/__tests__/webviewResultLimit.test.ts`. Plan: docs/AI_HANDOFF/PLAN.md.
