@@ -15,24 +15,25 @@ Add two `package.json` script entries — `verify:fast` (typecheck + compile) an
 
 ## Test Cases (REQUIRED — TDD)
 
-This task adds no own test file. The contract is locked down by `TASK-DX01-003` (`src/__tests__/releaseHygiene.test.ts`) which reads `package.json` and asserts:
+This task adds no own test file. The contract is locked down by `TASK-DX01-003` (`src/__tests__/releaseVerify.test.ts`) which reads `package.json` and asserts:
 
 | # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|-----------|----------|---------------------|
-| 1 | unit | `verify:fast` exists, composed of typecheck + compile only | `scripts["verify:fast"]` matches `/^npm run (typecheck\|compile)( && npm run (typecheck\|compile))?$/` (set membership, order-insensitive) | `src/__tests__/releaseHygiene.test.ts` reads `package.json` from repo root |
-| 2 | unit | `verify:release` exists, exact order test→typecheck→compile | `scripts["verify:release"]` matches exactly `/^npm test && npm run typecheck && npm run compile$/` | Same |
-| 3 | edge | script strings have no shell-injection surface | Neither string contains `` ` ``, `$(`, `;`, `\|`, `>`, or `<`; each matches `^npm[^`]*$` | Same |
-| 4 | regression | existing four scripts unchanged vs. v1.35.0 baseline | `test`, `typecheck`, `compile`, `test:integration` byte-identical to a known fixture | `releaseHygiene.test.ts` fixture string |
+| 1 | unit | `verify:fast` exists, composed of typecheck + compile only | `scripts["verify:fast"]` is exactly one of the two allowed strings: `"npm run typecheck && npm run compile"` OR `"npm run compile && npm run typecheck"` (test uses set-membership, not regex) | `src/__tests__/releaseVerify.test.ts` reads `package.json` from repo root |
+| 2 | unit | `verify:release` exists, exact order test→typecheck→compile | `scripts["verify:release"]` is exactly `"npm test && npm run typecheck && npm run compile"` (single pinned string, no alternation) | Same |
+| 3 | edge | script strings have no shell-injection surface | Neither string contains `` ` ``, `$(`, `;`, `|`, `>`, or `<`; each matches `^npm[^`]*$` | Same |
+| 4 | edge | added script values reference ONLY pre-existing script keys | Each `verify:*` value, when split on `&&`, contains only the substrings `"npm run typecheck"`, `"npm run compile"`, `"npm test"` — never a fabricated name like `npm run lint` that is not a key in `scripts` | Same |
+| 5 | regression | existing four scripts unchanged vs. v1.35.0 baseline | `test`, `typecheck`, `compile`, `test:integration` byte-identical to a known fixture | `releaseVerify.test.ts` fixture string |
 
 ## Test Files
 
-- `src/__tests__/releaseHygiene.test.ts` (added by TASK-DX01-003) — cases 1–4.
+- `src/__tests__/releaseVerify.test.ts` (added by TASK-DX01-003) — cases 1–5.
 
 ## Verification Commands
 
 ```bash
 node -e 'const p=require("./package.json"); for (const k of ["verify:fast","verify:release"]) { if (typeof p.scripts[k] !== "string") process.exit(1); }'
-npx vitest run src/__tests__/releaseHygiene.test.ts
+npx vitest run src/__tests__/releaseVerify.test.ts
 npm run typecheck
 npm run compile
 ```
@@ -43,8 +44,9 @@ npm run compile
 - [ ] `verify:fast` value is exactly `npm run typecheck && npm run compile` (or `npm run compile && npm run typecheck` — the contract test accepts either order; the chosen order is documented in the test fixture).
 - [ ] `verify:release` value is exactly `npm test && npm run typecheck && npm run compile` (exact order pinned by the contract test).
 - [ ] Neither string contains a backtick, `$(`, `;`, `|`, `>`, or `<` (case 3).
-- [ ] `test`, `typecheck`, `compile`, `test:integration` keys remain byte-identical to v1.35.0 (case 4 regression).
-- [ ] `npx vitest run src/__tests__/releaseHygiene.test.ts` is green (3+ cases pass; 4 if the regression test ships in this cycle's test file).
+- [ ] Each new script value references only the existing script keys `test`, `typecheck`, `compile` — never a fabricated name (case 4).
+- [ ] `test`, `typecheck`, `compile`, `test:integration` keys remain byte-identical to v1.35.0 (case 5 regression).
+- [ ] `npx vitest run src/__tests__/releaseVerify.test.ts` is green (5 cases pass).
 - [ ] `npm run typecheck` and `npm run compile` exit 0.
 - [ ] `npx vitest run` shows no regression vs. the v1.35.0 baseline.
 - [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
@@ -56,7 +58,7 @@ npm run compile
 ## Interfaces
 
 - Consumes: (none — pure data change to `package.json`)
-- Produces: two `package.json` script keys `scripts["verify:fast"]` and `scripts["verify:release"]` consumed verbatim by `TASK-DX01-002`'s runner (`scripts/verify-release.sh`) and by `TASK-DX01-003`'s contract test. The values are referenced by name only — never by a magic string inside the runner, so a future rename of either script just requires updating the runner and the test.
+- Produces: two `package.json` script keys `scripts["verify:fast"]` and `scripts["verify:release"]` consumed verbatim by `TASK-DX01-002`'s runner (`scripts/verify-release.sh`) and by `TASK-DX01-003`'s contract test. The values are referenced by name only — never by a magic string inside the runner, so a future rename of either script just requires updating the runner and the test. (Note: `TASK-DX01-002`'s runner does hardcode the three sub-command strings `npm test` / `npm run typecheck` / `npm run compile` to emit per-stage PASS lines; that is intentional and tested in TASK-002 cases 1–3 — TASK-001 owns only the `package.json` contract, while TASK-002 owns the runner's hardcoded command names.)
 
 ---
 
