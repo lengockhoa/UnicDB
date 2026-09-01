@@ -1,6 +1,6 @@
 Command: handoff-fullstack
-Goal: Ship ARP-03 Retained-result memory budget — bounded host row retention with one-shot cursor close and a distinct "limited" UX (no error, no false EOF).
-Base: main @ f17cc6f (v1.38.0)
-Phase: done
-Cursor: v1.39.0 released — tag pushed, vsdb-1.39.0.vsix packaged. All 4 tasks done (002 fixed in round 1). Net 3007 passed | 2 skipped.
-Next: none — cycle closed. Next cycle: ARP-04 (tunnel and endpoint identity hardening, investigation-gated) from the additive roadmap.
+Goal: Ship ARP-04 Tunnel and endpoint identity hardening — recorded host-identity ADR gate, then fail-closed strict host-key checking pinned in the tunnel argv with lifecycle/integration proof.
+Base: main @ 6d8f765 (v1.39.0)
+Phase: I1
+Cursor: P3 done — plan commit 11dbada; PLAN.md Approved round 2; tasks TASK-ARP04-000..004 ready; chain 000→001→002→003→004.
+Next: I3 wave 0 — TASK-ARP04-000 (ADR gate, docs/decisions/) single implementer; no source changes before it lands.
