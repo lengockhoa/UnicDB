@@ -462,9 +462,16 @@ export async function activate(
   );
 
   // 7. vsdb.cancelQuery
+  // TASK-RLX02-003 — AWAIT runner.cancel() before clearing busy state: the
+  // runner's cancel performs best-effort dialect cleanup through
+  // `adapter.cancelActiveQuery()` (MySQL/MSSQL KILL / ATTENTION). A
+  // fire-and-forget here let `panel.setBusy(false)` outrun that cleanup, so
+  // the UI claimed completion while the seam was still in flight.
+  // runner.cancel() never rejects (seam failures are swallowed inside), so
+  // awaiting cannot turn a late cancel into a command error.
   disposables.push(
-    vscode.commands.registerCommand("vsdb.cancelQuery", () => {
-      void runner.cancel();
+    vscode.commands.registerCommand("vsdb.cancelQuery", async () => {
+      await runner.cancel();
       panel.setBusy(false);
     }),
   );

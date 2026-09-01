@@ -844,6 +844,121 @@ describe("ResultsPanel — header (A14)", () => {
 });
 
 
+// =============================================================================
+// TASK-RLX02-003 — runner-aware webview cancel path.
+// =============================================================================
+describe("ResultsPanel — TASK-RLX02-003 cancel path", () => {
+  /** Local bounded wait (same shape as the loadMore helper above). */
+  async function waitForBusyPost(
+    fake: FakeWebviewPanel,
+    busy: boolean,
+  ): Promise<void> {
+    for (let i = 0; i < 200; i++) {
+      const match = fake.webview.postMessage.mock.calls.some(
+        (c) =>
+          (c[0] as { type?: string; busy?: boolean }).type === "busy" &&
+          (c[0] as { type?: string; busy?: boolean }).busy === busy,
+      );
+      if (match) return;
+      await Promise.resolve();
+    }
+    throw new Error(`timeout waiting for busy:${busy} postMessage`);
+  }
+
+  function busyPanel(): {
+    panel: ResultsPanel;
+    runner: QueryRunner;
+    fake: FakeWebviewPanel;
+  } {
+    const runner = makeRunnerStub();
+    const panel = new ResultsPanel({ runner });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT 1",
+          status: "running",
+          result: undefined,
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    // Simulate the host marking the panel busy before the cancel arrives —
+    // mirrors runStatements()'s panel.setBusy(true) call.
+    panel.setBusy(true);
+    return { panel, runner, fake: lastPanel.current! };
+  }
+
+  it("Test #4 — deferred webview cancel keeps busy:true until runner.cancel() settles", async () => {
+    const { panel, runner, fake } = busyPanel();
+    fake.webview.postMessage.mockClear();
+    // runner.cancel() is a DEFERRED promise — must NOT resolve until we let it.
+    let resolveCancel: (() => void) | null = null;
+    const cancelSpy = vi.fn(
+      () => new Promise<void>((resolve) => { resolveCancel = resolve; }),
+    );
+    (runner as unknown as { cancel: () => Promise<void> }).cancel = cancelSpy;
+
+    fake.webview.dispatch({ type: "cancel" });
+    // Yield several microtasks — runner.cancel() must still be pending.
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 5));
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
+    const messages = fake.webview.postMessage.mock.calls
+      .map((c) => c[0] as { type?: string; busy?: boolean });
+    // While the deferred seam is pending, no `busy:false` post is allowed —
+    // and no `state` post is allowed either.
+    expect(messages.some((m) => m.type === "busy" && m.busy === false)).toBe(false);
+
+    // Now resolve the seam — the panel must clear busy exactly once.
+    if (resolveCancel) resolveCancel();
+    await waitForBusyPost(fake, false);
+    const cleared = fake.webview.postMessage.mock.calls
+      .map((c) => c[0] as { type?: string; busy?: boolean })
+      .filter((m) => m.type === "busy" && m.busy === false);
+    expect(cleared).toHaveLength(1);
+  });
+
+  it("Test #2 — post-settlement cancel preserves done state and never toasts a cancellation error", async () => {
+    const runner = makeRunnerStub();
+    const panel = new ResultsPanel({ runner });
+    // Render a settled 'done' result with no in-flight work.
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT 1",
+          status: "done",
+          result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    const fake = lastPanel.current!;
+    const showErr = vscode.window.showErrorMessage as unknown as {
+      mockClear: () => void;
+      mock: { calls: unknown[][] };
+    };
+    showErr.mockClear();
+    fake.webview.postMessage.mockClear();
+    // No seam is even registered — late cancel must NOT touch the adapter.
+    (runner as unknown as { cancel: () => Promise<void> }).cancel = vi.fn(async () => undefined);
+
+    fake.webview.dispatch({ type: "cancel" });
+    await new Promise((r) => setTimeout(r, 20));
+
+    const errors = showErr.mock.calls.map((c) => String(c[0]));
+    const noise = errors.find((m) =>
+      /VSDB:|Load more failed:|VSDB requery failed:/.test(m) &&
+      /cancel/i.test(m),
+    );
+    expect(noise).toBeUndefined();
+  });
+});
+
+
 // ---- AI-001 — resultsPlacement (below default, beside opt-out) -------------
 
 /** Minimal StatementResult fixture for tests that only exercise placement. */

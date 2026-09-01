@@ -734,6 +734,66 @@ describe("QueryRunner — non-batched cancellation seam (TASK-RLX-001)", () => {
     expect(final[0].error).toBeUndefined();
   });
 
+  it("Test #3b — TASK-RLX02-003: cancel awaits an in-flight seam and settles status=cancelled", async () => {
+    // Adapter seam returns a DEFERRED promise. The runner.cancel() promise
+    // must NOT resolve until the seam settles — otherwise the extension's
+    // command path (and panel message path) would clear busy state while
+    // the dialect-level cancel is still mid-flight. After both resolve,
+    // the statement status must be exactly "cancelled".
+    let resolveRun: ((v: RunResult) => void) | null = null;
+    let resolveCancel: (() => void) | null = null;
+    const runQuerySpy = vi.fn(
+      () => new Promise<RunResult>((resolve) => { resolveRun = resolve; }),
+    );
+    const cancelActiveSpy = vi.fn(
+      () => new Promise<void>((resolve) => { resolveCancel = resolve; }),
+    );
+    const adapter = {
+      connect: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      runQuery: runQuerySpy,
+      cancelActiveQuery: cancelActiveSpy,
+      listSchemas: vi.fn(async () => []),
+      listTables: vi.fn(async () => []),
+      listViews: vi.fn(async () => []),
+      listRoutines: vi.fn(async () => []),
+      listColumns: vi.fn(async () => []),
+      testConnection: vi.fn(async () => {}),
+    } as unknown as DbAdapter & {
+      runQuery: ReturnType<typeof vi.fn>;
+      cancelActiveQuery: ReturnType<typeof vi.fn>;
+    };
+    const runner = new QueryRunner(async () => adapter);
+
+    const runPromise = runner.run([stmt("SELECT pg_sleep(10)", 0, 18)], () => {});
+    await new Promise((r) => setTimeout(r, 5));
+    expect(runQuerySpy).toHaveBeenCalledTimes(1);
+
+    // Fire runner.cancel() — it must remain pending until the seam resolves.
+    let cancelSettled = false;
+    const cancelPromise = runner.cancel().then(() => { cancelSettled = true; });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(cancelSettled).toBe(false);
+    expect(cancelActiveSpy).toHaveBeenCalledTimes(1);
+
+    // Now settle both: the deferred seam resolves first (mid-flight); the
+    // deferred runQuery resolves second with a normal result. The cancel
+    // promise should only resolve after the seam settles, and the runner
+    // result should still be "cancelled" because cancelRequested was set
+    // before runQuery settled.
+    if (resolveCancel) resolveCancel();
+    // Let the seam's microtask drain before resolving runQuery.
+    await new Promise((r) => setTimeout(r, 5));
+    if (resolveRun) {
+      resolveRun({ results: [{ columns: ["x"], rows: [], rowCount: 0, durationMs: 0 }] });
+    }
+    await cancelPromise;
+    const result = await runPromise;
+
+    expect(cancelSettled).toBe(true);
+    expect(result[0].status).toBe("cancelled");
+  });
+
   it("Test #5 — regression: batched cursor uses BatchedQuery.cancel() only, seam never called", async () => {
     // The seam is for the NON-cursor branch. If a BatchedQuery is in flight
     // (currentBatched set), cancel() must call batched.cancel() once and must

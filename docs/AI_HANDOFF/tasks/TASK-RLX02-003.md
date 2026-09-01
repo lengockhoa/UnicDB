@@ -73,4 +73,68 @@ The runner’s released seam/window already exists; this task must not redesign 
 
 ## Executor Report
 
-(pending)
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  npx vitest run src/core/__tests__/queryRunner.test.ts src/ui/__tests__/resultsPanel.test.ts src/extension.test.ts
+  (before the src/extension.ts fix)
+
+   ❯ src/extension.test.ts  (82 tests | 2 failed) 466ms
+     ❯ TASK-RLX02-003 — vsdb.cancelQuery awaits runner.cancel before setBusy(false) > Test #1 — deferred seam: panel.setBusy(false) only fires AFTER runner.cancel settles
+       → expected [ [ false ] ] to have a length of +0 but got 1
+   ⎯⎯⎯⎯⎯⎯⎯⎯
+   FAIL  src/extension.test.ts > TASK-RLX02-003 … > Test #1 — deferred seam
+   AssertionError: expected [ [ false ] ] to have a length of +0 but got 1
+    ❯ src/extension.test.ts:2713:35
+       2711|       (c) => c[0] === false,
+       2712|     );
+       2713|     expect(busyFalseDuringCancel).toHaveLength(0);
+          |                                   ^
+   ⎯⎯⎯⎯⎯⎯⎯⎯
+   FAIL  src/extension.test.ts > TASK-003 — vsdb.createSchema extension wiring > npm run compile emits dist/schemaForm.js (esbuild config wired)
+     → expected false to be true   (PRE-EXISTING, environmental: worktree had no dist/ until `npm run compile`; passes in the final GREEN run below)
+   ⎯⎯⎯⎯⎯⎯⎯⎯
+   Test Files  1 failed | 2 passed (3)
+   Tests  2 failed | 145 passed (147)
+
+  Notes on the other new tests:
+  - queryRunner "Test #3b — cancel awaits an in-flight seam and settles
+    status=cancelled" and resultsPanel "Test #4 — deferred webview cancel
+    keeps busy:true until runner.cancel() settles" / "Test #2 —
+    post-settlement cancel preserves done state" passed immediately on first
+    run: the runner (RLX-01 activeAdapter window + awaited seam) and the
+    panel ("cancel" case already awaits runner.cancel() then setBusy(false),
+    silent-cancel suppression) ALREADY implement the contract. Per Target
+    Files these act as regression locks ("adjust only if source tests expose
+    a runner lifecycle gap" — none exposed). The genuinely RED test was the
+    extension command path, matching the planner's Discussion finding.
+Verification Output: |
+  1) npx vitest run src/core/__tests__/queryRunner.test.ts src/ui/__tests__/resultsPanel.test.ts src/extension.test.ts
+     ✓ src/core/__tests__/queryRunner.test.ts  (32 tests) 148ms
+     ✓ src/ui/__tests__/resultsPanel.test.ts  (33 tests) 49ms
+     ✓ src/extension.test.ts  (82 tests) 506ms
+     Test Files  3 passed (3)
+          Tests  147 passed (147)
+     Start at  10:55:19 — Duration  1.35s
+  2) npm run typecheck
+     > vsdb@1.30.0 typecheck
+     > tsc --noEmit
+     (exit 0, no output)
+  3) npm run compile
+     dist/extension.js 5.2mb / dist/webview.js 2.2mb / dist/newTableForm.js /
+     dist/connectionForm.js / dist/aiChatPanel.js …
+     esbuild: build complete  (exit 0)
+  Note: no lint script exists in package.json (as the task states).
+Status: PASS
+Note: The only production change is src/extension.ts `vsdb.cancelQuery` now
+  awaiting runner.cancel() before panel.setBusy(false). Runner + panel seams
+  were already correct from RLX-01/RLX02-001/002 — their new tests are
+  regression locks only. Test-case #1's "MySQL/MSSQL-shaped" requirement is
+  covered via the dialect-agnostic `cancelActiveQuery` seam shape (the same
+  optional DbAdapter method both wave-1 adapters implement); the
+  provider-race regression (test-case #5) stays green via existing
+  "Test #2 — edge / race" and the loadMore silent-cancel panel tests. No
+  git add/commit performed; dist/ artifacts from `npm run compile` remain
+  untracked in the worktree.
+

@@ -7,6 +7,8 @@
 **Baseline examined:** `main` at `496c8b0`; released baseline `v1.30.0`  
 **Immutability:** This is a new, standalone roadmap. It neither changes nor authorizes changes to `docs/AI_HANDOFF/PLAN_RLX02.md`, current `docs/AI_HANDOFF` state/tasks, or historical handoffs.
 
+**BigQuery planning note:** The requested Google BigQuery expansion is being researched as a separate additive roadmap. Its future adapter must integrate through the existing `DbAdapter`/factory, `SchemaTreeProvider`, `QueryRunner`, and `ResultsPanel` seams (`src/adapters/types.ts`, `src/adapters/factory.ts`, `src/ui/schemaTree.ts`, `src/core/queryRunner.ts`) without changing the active RLX-02 plan.
+
 ## Executive recommendation
 
 Recent releases completed connection workspace/tunnels/read-only intent (DBX-05), PostgreSQL reliability foundations (RLX-01), AI governance/contracts (AIX-07/08), Console v2, and dialect capability contracts. The best next investment is not feature breadth: it is closing operational boundaries that create expensive support failures—secondary mutation paths, ownership loss during shutdown, retained-result memory, stale metadata after DDL, driver resource behavior, and privacy-safe diagnostics.

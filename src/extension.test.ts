@@ -2660,3 +2660,65 @@ describe("extension — DBX-08 capability-gated admin host commands", () => {
     expect(state.createdWebviewPanels.length).toBe(0);
   });
 });
+
+// =============================================================================
+// TASK-RLX02-003 — vsdb.cancelQuery command awaits runner.cancel() before the
+// host clears panel busy state, so the command path can never outrun the
+// dialect-level cancel seam (MySQL/MSSQL best-effort cleanup).
+// =============================================================================
+describe("TASK-RLX02-003 — vsdb.cancelQuery awaits runner.cancel before setBusy(false)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+    state.createdWebviewPanels.length = 0;
+  });
+
+  it("Test #1 — deferred seam: panel.setBusy(false) only fires AFTER runner.cancel settles", async () => {
+    // Spy QueryRunner.prototype.cancel with a DEFERRED promise so the test
+    // can prove the extension command awaits it (the old fire-and-forget
+    // `void runner.cancel(); panel.setBusy(false)` would resolve busy-false
+    // first; the awaited version resolves seam-first).
+    const runnerMod = await import("./core/queryRunner");
+    let resolveCancel: (() => void) | null = null;
+    const cancelSpy = vi.fn(
+      () => new Promise<void>((resolve) => { resolveCancel = resolve; }),
+    );
+    vi.spyOn(runnerMod.QueryRunner.prototype, "cancel").mockImplementation(cancelSpy);
+
+    // The ResultsPanel's setBusy(false) call needs to be observable. Spy on
+    // its prototype method — every instance in this test sees the spy.
+    const panelMod = await import("./ui/resultsPanel");
+    const setBusySpy = vi.fn();
+    vi.spyOn(panelMod.ResultsPanel.prototype, "setBusy").mockImplementation(
+      setBusySpy as never,
+    );
+
+    const ctx = makeCtx();
+    const ext = await import("./extension");
+    await ext.activate(ctx as never);
+
+    const cancelCommand = state.registeredCommands.get("vsdb.cancelQuery");
+    expect(cancelCommand).toBeDefined();
+
+    // Fire the command — the awaited cancel() must block busy(false).
+    const commandPromise = (cancelCommand as () => Promise<void>)();
+    // Yield several microtasks + a real-time tick; the deferred cancel has
+    // not resolved yet, so setBusy(false) MUST NOT have been called.
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 5));
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
+    const busyFalseDuringCancel = setBusySpy.mock.calls.filter(
+      (c) => c[0] === false,
+    );
+    expect(busyFalseDuringCancel).toHaveLength(0);
+
+    // Now resolve the deferred seam — the command promise resolves, and
+    // setBusy(false) follows in that same order.
+    if (resolveCancel) resolveCancel();
+    await commandPromise;
+    const busyFalseAfter = setBusySpy.mock.calls.filter(
+      (c) => c[0] === false,
+    );
+    expect(busyFalseAfter).toHaveLength(1);
+  });
+});
