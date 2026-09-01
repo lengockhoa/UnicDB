@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.32.0] — 2026-09-01
+
+Cycle RLX-03: Connection, Tunnel & Schema-Refresh Recovery (typed tunnel-exit lifecycle, bounded active reconnect with ownership guards, and adapter-transition schema-cache invalidation — bounded retries and disposal proven by fake-SSH/injected-clock tests).
+
+### Added
+- **SSH tunnel exit lifecycle** (`src/core/sshTunnelManager.ts`): the post-ready child-exit path now emits a typed exit event only AFTER the tunnel became ready, with intentional stops distinguished from unexpected exits (private WeakSet) so shutdown never masquerades as a failure; `start()` returns the STORED in-flight promise (true promise-identity coalescing — concurrent callers share one settlement, `p2).toBe(p1)` pinned), a rejected attempt is removed from `pending` so the next call performs a fresh spawn (spawn-counting test with a mutation-proven counter), and in-flight records clear on both settle paths.
+- **Bounded active reconnect** (`src/core/connectionManager.ts`): lazy-adapter recovery with pinned states `"recovering"`/`"recovered"`/`"failed"`, exactly 2 attempts, injected `delayMs`/`sleep` (`ConnectionRecoveryOptions`, `DEFAULT_RECOVERY_DELAY_MS = 1_000`) so tests drive the clock; active/lifecycle-generation guards re-check ownership before AND after every await (switch/edit/delete during backoff or connect aborts silently); a synchronous `disposed` flag gates the tunnel-exit handler and recovery entry, the `onDidExit` subscription is disposed with the manager, and a post-dispose exit provably starts nothing. `getAdapter` discards stale candidates after ownership change. `src/ui/statusBar.ts` renders recovery states without leaking stale status.
+- **Adapter-transition cache invalidation** (`src/ui/schemaCache.ts`): invalidation now clears the single-flight `inflight` map synchronously with the generation bump — adapter B can never coalesce onto adapter A's pre-transition request (cross-connection data leak closed by a deferred-ordering regression test that failed RED pre-fix), while RLX-01 same-generation coalescing stays intact; lookups read adapter identity after `resolveAdapter()` so nine cache families invalidate coherently, and null/throwing providers retain stale data by contract.
+
+### Review
+- Independent unic-smart review, 3 parallel reviewers: all three CHANGES-REQUESTED/critical-block in round 1 — 001 (stale-pending rejection indistinguishable from fresh spawn; promise-wrapped coalescing), 002 (post-dispose tunnel exit could start recovery), 003 CRITICAL (adapter B coalescing onto adapter A's in-flight request = cross-connection leak). All fixed in auto-fix round 1 and re-approved. Full suite 2858 passed | 2 skipped, typecheck + compile clean.
+
 ## [1.31.0] — 2026-09-01
 
 Cycle RLX-02: Cross-dialect Query Lifecycle Completion (best-effort, resource-local live-query cancellation extended from PostgreSQL to MySQL and SQL Server, wired end-to-end into the runner and panel state).
