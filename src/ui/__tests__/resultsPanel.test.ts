@@ -1532,3 +1532,253 @@ describe("ResultsPanel — TASK-ARP02-002 session epoch (panel-close race)", () 
     expect(staleSaveResults).toHaveLength(0);
   });
 });
+
+
+// =============================================================================
+// TASK-ARP03-003 — panel state: limited statements ride the wire without an
+// error toast. Three panel-side behaviors:
+//   #1 `resultLimited` is a top-level StatementResult field that MUST survive
+//      sanitizeStatementResult (spread) so the webview can render distinct
+//      limited copy (TASK-ARP03-004 owns the model sync).
+//   #2 a loadMore rejection while the statement is `resultLimited` is
+//      swallowed at the panel boundary (DEFENSIVE/UNIT-LEVEL: the real
+//      runner's limited-entry guard makes loadMore a no-throw no-op; this
+//      pins the panel's own suppression branch, mirroring the cancel branch).
+//   #4 save/refresh of a limited statement strips `resultLimited`/`cursorClosed`
+//      from the `{ ...r }` spread — copying them onto a fresh open cursor
+//      gates loadMore forever (runner's limited-entry guard) and excludes the
+//      fresh cursor from run()'s stale-cursor sweep (pins the pool client).
+// =============================================================================
+describe("ResultsPanel — TASK-ARP03-003 limited statements (wire + silent loadMore + save-refresh leak pin)", () => {
+  /** Bounded wait until a predicate over ALL postMessage calls holds. */
+  async function untilPost(
+    fake: FakeWebview,
+    predicate: (msgs: Array<Record<string, unknown>>) => boolean,
+  ): Promise<void> {
+    for (let i = 0; i < 200; i++) {
+      const msgs = fake.webview.postMessage.mock.calls.map(
+        (c) => c[0] as Record<string, unknown>,
+      );
+      if (predicate(msgs)) return;
+      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 1));
+    }
+    throw new Error("timeout waiting for postMessage predicate (ARP03-003)");
+  }
+
+  function stateMsgsOf(fake: FakeWebview): Array<Record<string, unknown>> {
+    return fake.webview.postMessage.mock.calls
+      .map((c) => c[0] as Record<string, unknown>)
+      .filter((m) => m.type === "state");
+  }
+
+  const showErrMock = () =>
+    vscode.window.showErrorMessage as unknown as {
+      mockClear: () => void;
+      mock: { calls: unknown[][] };
+    };
+
+  function limitedStatement(overrides?: Partial<StatementResult>): StatementResult {
+    return {
+      index: 0,
+      sql: "SELECT * FROM app.users",
+      status: "done",
+      result: {
+        columns: ["id", "name"],
+        rows: [[1, "alice"]],
+        rowCount: 1,
+        durationMs: 0,
+      },
+      resultLimited: true,
+      durationMs: 0,
+      ...overrides,
+    };
+  }
+
+  // ---- Case 1 — happy: the limited marker rides the wire --------------------
+  it("ARP03-003 #1 — limited statement rides every state post (resultLimited survives sanitize), no render-time error", async () => {
+    const runner = makeRunnerStub();
+    const panel = new ResultsPanel({ runner });
+    showErrMock().mockClear();
+    panel.render([limitedStatement()], "hdr");
+    const fake = lastPanel.current!;
+
+    // The render post carries the marker.
+    let states = stateMsgsOf(fake);
+    expect(states.length).toBeGreaterThan(0);
+    for (const m of states) {
+      const posted = (m.results as Array<Record<string, unknown>>)[0];
+      expect(posted.resultLimited).toBe(true);
+    }
+    expect(showErrMock().mock.calls).toHaveLength(0);
+
+    // A LATER re-post (the "ready" handshake re-sends last state) carries it
+    // too — "every state post" is the wire contract for 03.4.
+    fake.webview.postMessage.mockClear();
+    fake.webview.dispatch({ type: "ready" });
+    await untilPost(fake, (msgs) => msgs.some((m) => m.type === "state"));
+    states = stateMsgsOf(fake);
+    for (const m of states) {
+      const posted = (m.results as Array<Record<string, unknown>>)[0];
+      expect(posted.resultLimited).toBe(true);
+    }
+    expect(showErrMock().mock.calls).toHaveLength(0);
+  });
+
+  // ---- Case 2 — edge (DEFENSIVE/UNIT-LEVEL): limited rejection is silent ----
+  it("ARP03-003 #2 (DEFENSIVE/UNIT-LEVEL) — loadMore rejection on a limited statement is silent at the panel boundary, stale state reposted", async () => {
+    const runner = makeRunnerStub();
+    const panel = new ResultsPanel({ runner });
+    // Pre-populate lastResults with a LIMITED statement via an initial render.
+    panel.render([limitedStatement()], "hdr");
+    const fake = lastPanel.current!;
+    fake.webview.postMessage.mockClear();
+    showErrMock().mockClear();
+
+    // Synthetic rejecting stub at the panel boundary. The REAL runner's
+    // limited-entry guard (queryRunner.ts:397-399) makes this a no-throw
+    // no-op; this test pins the panel's OWN suppression branch — reachable
+    // only through this stub.
+    runner.loadMore = vi.fn(async () => {
+      throw new Error(
+        "Statement 0 cursor closed after its run finished — run this statement alone to page more rows",
+      );
+    }) as unknown as typeof runner.loadMore;
+    (runner as unknown as { isCancelled?: () => boolean }).isCancelled = () => false;
+
+    fake.webview.dispatch({ type: "loadMore", index: 0 });
+    await untilPost(
+      fake,
+      (msgs) =>
+        msgs.some((m) => m.type === "busy" && (m as { busy?: boolean }).busy === false),
+    );
+
+    // NO "Load more failed" toast — the limited branch mirrors the cancel
+    // branch's suppression.
+    expect(showErrMock().mock.calls).toHaveLength(0);
+    // The catch still re-posts the (stale) lastResults as state so the
+    // webview clears its in-flight flag.
+    const states = stateMsgsOf(fake);
+    expect(states.length).toBeGreaterThan(0);
+    const last = states[states.length - 1];
+    const posted = (last.results as Array<Record<string, unknown>>)[0];
+    expect(posted.resultLimited).toBe(true);
+  });
+
+  // ---- Case 3 — regression pin: non-limited errors still toast --------------
+  it("ARP03-003 #3 (regression pin) — genuine loadMore error on a NON-limited statement still toasts exactly once", async () => {
+    const runner = makeRunnerStub();
+    const panel = new ResultsPanel({ runner });
+    // NO resultLimited on this statement.
+    panel.render([limitedStatement({ resultLimited: undefined })], "hdr");
+    const fake = lastPanel.current!;
+    fake.webview.postMessage.mockClear();
+    showErrMock().mockClear();
+
+    runner.loadMore = vi.fn(async () => {
+      throw new Error("connection refused");
+    }) as unknown as typeof runner.loadMore;
+    (runner as unknown as { isCancelled?: () => boolean }).isCancelled = () => false;
+
+    fake.webview.dispatch({ type: "loadMore", index: 0 });
+    await untilPost(
+      fake,
+      (msgs) =>
+        msgs.some((m) => m.type === "busy" && (m as { busy?: boolean }).busy === false),
+    );
+
+    expect(showErrMock().mock.calls).toHaveLength(1);
+    expect(String(showErrMock().mock.calls[0][0])).toBe(
+      "Load more failed: connection refused",
+    );
+  });
+
+  // ---- Case 4 — leak pin: save/refresh strips the markers -------------------
+  it("ARP03-003 #4 (leak pin) — save/refresh of a limited statement strips resultLimited + cursorClosed from the fresh statement; a later loadMore reaches the runner", async () => {
+    const runner = makeRunnerStub();
+    // AUTO path (default, no getManualCommit): handleSaveEdits' auto-refresh
+    // (:1234-1250) builds newStmt via `{ ...r, ... }` — the leak seam.
+    // runSql is called twice (save bundle + refresh SELECT); one mock
+    // resolving a FRESH non-limited result covers both.
+    const freshRunResult = {
+      results: [
+        {
+          columns: ["id", "name"],
+          rows: [[42, "fresh-row"]],
+          rowCount: 1,
+          durationMs: 0,
+        },
+      ],
+    };
+    (runner as unknown as { runSql: unknown }).runSql = vi.fn(
+      async () => freshRunResult,
+    );
+    const saveCtx = {
+      getDriver: () => "mysql" as const,
+      listPkColumns: async () => ["id"],
+    } as never;
+    const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    // Limited statement: BOTH markers set (002 sets them together), plus a
+    // (closed) cursor handle so closeStatementCursor has something to close.
+    panel.render(
+      [
+        limitedStatement({
+          cursorClosed: true,
+          batched: {
+            columns: ["id", "name"],
+            fetchBatch: async () => null,
+            close: async () => undefined,
+            cancel: async () => undefined,
+          } as never,
+        }),
+      ],
+      "hdr",
+    );
+    const fake = lastPanel.current!;
+    fake.webview.postMessage.mockClear();
+    showErrMock().mockClear();
+
+    fake.webview.dispatch({
+      type: "saveEdits",
+      index: 0,
+      tableName: null,
+      pkColumns: [],
+      edits: [{ rowId: 0, colIndex: 1, value: "new-alice" }],
+    });
+    // Wait until the auto-refresh state post lands (fresh row visible).
+    await untilPost(
+      fake,
+      (msgs) =>
+        msgs.some(
+          (m) =>
+            m.type === "state" &&
+            ((m as { results?: Array<{ result?: { rows?: unknown[][] } }> })
+              .results?.[0]?.result?.rows?.[0]?.[0] === 42),
+        ),
+    );
+
+    // The LAST state post's refreshed statement must have BOTH markers
+    // stripped. RED on base: the `{ ...r }` spread copies resultLimited=true
+    // and cursorClosed=true onto the fresh cursor.
+    const states = stateMsgsOf(fake);
+    expect(states.length).toBeGreaterThan(0);
+    const last = states[states.length - 1];
+    const posted = (last.results as Array<Record<string, unknown>>)[0];
+    expect(posted.resultLimited).toBeFalsy();
+    expect("resultLimited" in posted).toBe(false);
+    expect(posted.cursorClosed).toBeFalsy();
+    expect("cursorClosed" in posted).toBe(false);
+    expect(showErrMock().mock.calls).toHaveLength(0);
+
+    // The fresh cursor is not gated: a following loadMore dispatch reaches
+    // the runner stub.
+    (runner.loadMore as ReturnType<typeof vi.fn>).mockClear();
+    fake.webview.dispatch({ type: "loadMore", index: 0 });
+    await untilPost(
+      fake,
+      (msgs) =>
+        msgs.some((m) => m.type === "busy" && (m as { busy?: boolean }).busy === false),
+    );
+    expect(runner.loadMore).toHaveBeenCalledWith(0);
+  });
+});

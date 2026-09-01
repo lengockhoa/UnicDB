@@ -671,8 +671,16 @@ export class ResultsPanel {
       const refreshed = await this.runner.runSql(r.sql);
       const freshResult = await pickResult(refreshed);
       if (!freshResult || this.isStaleSession(epoch)) return;
+      // TASK-ARP03-003 (leak pin) — strip the budget markers before the
+      // spread: copying `resultLimited`/`cursorClosed` onto a statement whose
+      // cursor is NEW and open would gate a later loadMore forever (the
+      // runner's limited-entry guard) and exclude the fresh cursor from
+      // run()'s stale-cursor sweep — pinning the pool client. Destructuring
+      // leaves both fields undefined (falsy) on the fresh statement.
+      // handleRequery builds fresh without `...r` and is the correct model.
+      const { resultLimited, cursorClosed, ...rest } = r;
       const newStmt: StatementResult = {
-        ...r,
+        ...rest,
         result: freshResult,
         batched: refreshed.batched,
         durationMs: Date.now() - start,
@@ -747,6 +755,13 @@ export class ResultsPanel {
           // re-check after EVERY await so a continuation that outlives the
           // panel (dispose mid-run) never posts into a re-created session.
           const epoch = this.sessionEpoch;
+          // TASK-ARP03-003 — capture the limited marker BEFORE the await:
+          // a budget-limited statement is a graceful no-op in the runner
+          // (queryRunner.ts loadMoreImpl), so a rejection here is
+          // stale/defensive and must NOT surface as "Load more failed" —
+          // the limit is neither an error nor a false EOF. Mirrors the
+          // cancel branch below.
+          const limited = this.lastResults[msg.index]?.resultLimited === true;
           try {
             const updated = await this.runner.loadMore(msg.index);
             if (this.isStaleSession(epoch)) break;
@@ -761,9 +776,11 @@ export class ResultsPanel {
             // Cancel-during-loadMore: runner đã hủy cursor (xem queryRunner.ts
             // loadMoreImpl — currentBatched set trước fetchBatch). Nuốt error
             // (không toast) và re-post state để webview clear in-flight flag.
+            // TASK-ARP03-003 — a limited statement suppresses the toast the
+            // same way: no "Load more failed" for a budget close.
             const cancelled = this.runner.isCancelled?.() === true ||
               /cancel/i.test(err instanceof Error ? err.message : String(err));
-            if (!cancelled && !this.isStaleSession(epoch)) {
+            if (!cancelled && !limited && !this.isStaleSession(epoch)) {
               void vscode.window.showErrorMessage(
                 `Load more failed: ${err instanceof Error ? err.message : String(err)}`,
               );
@@ -1239,8 +1256,15 @@ export class ResultsPanel {
           return;
         }
         if (freshResult) {
+          // TASK-ARP03-003 (leak pin) — strip the budget markers before the
+          // spread (see refreshManualStatement): a NEW open cursor must not
+          // inherit `resultLimited`/`cursorClosed` from the displaced
+          // statement, or loadMore no-ops on a healthy cursor and the fresh
+          // cursor escapes run()'s stale sweep. handleRequery (fresh object,
+          // no `...r`) is the correct model — do not "fix" it.
+          const { resultLimited, cursorClosed, ...rest } = r;
           newStmt = {
-            ...r,
+            ...rest,
             result: freshResult,
             batched: refreshed.batched,
             // Deferred minor (v1.4.1): elapsed ms of the refresh run — was

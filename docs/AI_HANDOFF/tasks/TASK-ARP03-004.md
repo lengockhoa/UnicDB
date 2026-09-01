@@ -160,8 +160,49 @@ typecheck + compile are the static gates.)
 ## Executor Report
 
 ```
-(write here: STATUS / EXECUTOR_TOOL / EXECUTOR_MODEL / EXECUTOR_SUBAGENT / RED_OUTPUT /
- IMPLEMENTATION SUMMARY / VERIFICATION OUTPUT / ISSUES / HANDOFF_TO_REVIEWER)
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT (base bundle, before webview/main.ts changes):
+> npx vitest run src/ui/__tests__/webviewResultLimit.test.ts
+ FAIL ... > 1. limited state shows truncation copy that REPLACES footerText (precedence)
+   AssertionError: expected '20 of 20  ⏱ 5ms' to match /truncated/i
+   - Expected: /truncated/i
+   + Received: "20 of 20  ⏱ 5ms"
+ FAIL ... > 2. limited statement never posts loadMore (rowCount: null — gate closed by flag)
+   AssertionError: expected [ { type: 'loadMore', index: +0 } ] to have a length of +0 but got 1
+ Test Files  1 failed (1) | Tests  2 failed | 4 passed (6)
+→ exactly the predicted failures: footer "20 of 20" with no marker; loadMore posted
+  despite resultLimited with rowCount null. Pins 3-6 GREEN on base as planned.
+
+IMPLEMENTATION SUMMARY (webview/main.ts only):
+- StatementResult mirror: added `resultLimited?: boolean` (additive, optional).
+- renderGrid model sync (~:1774): `model.sync(..., !!r.batched && !r.resultLimited, ...)` —
+  forces hasMore off for limited statements, closing the gate for both the
+  onBodyScroll trigger and __vsdbCheckLoadMoreForHost even when rowCount is null.
+- updateFooter: short-circuits on `r.resultLimited` BEFORE footerText(...) — footer
+  becomes "result truncated — some rows were not loaded" (+ transaction/duration
+  suffixes), REPLACING footerText's "N of N" / "N rows" output entirely.
+- No changes to resultsGridModel.ts / messages.ts / queryRunner.ts / resultsPanel.ts.
+
+VERIFICATION OUTPUT (all in this worktree, current turn):
+- npm run compile → "esbuild: build complete" (exit 0)
+- npx vitest run src/ui/__tests__/webviewResultLimit.test.ts → Tests 6 passed (6)
+- npm run typecheck → exit 0
+- npm run compile (final) → exit 0
+- Neighboring suites (webviewBundle, webviewEdit, webviewRequery, webviewRetry,
+  webviewExport, webviewFilters, webviewToolbar, webviewTheme, webviewKeybinding,
+  webviewPostCommit, webviewSaveEdits, webviewSetFilter, webviewServerFilter,
+  webviewServerSort, webviewDistinctValues, webviewCommitRefresh, webviewPerTableTabs,
+  webviewSqlHighlight, resultsGridModel, resultsGridModelEdit, resultsGridModelNull,
+  resultsGridModelSetFilter) → Test Files 22 passed (22), Tests 234 passed (234)
+- git status: only webview/main.ts modified + the NEW test file untracked.
+
+ISSUES: none.
+
+HANDOFF_TO_REVIEWER: yes — all acceptance criteria met except the verdict itself.
 ```
 
 ## Reviewer Verdict

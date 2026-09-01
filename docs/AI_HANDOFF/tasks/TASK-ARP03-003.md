@@ -162,8 +162,72 @@ least one task in this cycle — this is that task.** No lint script; typecheck 
 ## Executor Report
 
 ```
-(write here: STATUS / EXECUTOR_TOOL / EXECUTOR_MODEL / EXECUTOR_SUBAGENT / RED_OUTPUT /
- IMPLEMENTATION SUMMARY / VERIFICATION OUTPUT / ISSUES / HANDOFF_TO_REVIEWER)
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+
+IMPLEMENTATION SUMMARY:
+- src/ui/resultsPanel.ts (3 changes, panel only):
+  1. loadMore catch branch: `resultLimited` is captured from
+     `this.lastResults[msg.index]` BEFORE the await and suppresses the
+     "Load more failed" toast in the catch (`!cancelled && !limited && !stale`),
+     mirroring the existing cancel branch. Stale `lastResults` still re-post
+     as `state`. Cancel regex / isCancelled path untouched.
+  2. refreshManualStatement: `const { resultLimited, cursorClosed, ...rest } = r;`
+     then `{ ...rest, result, batched, durationMs }` — markers stripped from
+     the fresh statement (leak pin).
+  3. handleSaveEdits auto-refresh: same destructure-strip before building
+     `newStmt` (leak pin). handleRequery untouched (fresh object, already
+     correct per plan).
+- No changes to queryRunner.ts, resultBatcher.ts, messages.ts, resultsGridModel.ts,
+  webview/ — verified via `git status` (only the 2 owned files modified).
+- No git add/commit/push performed.
+
+RED_OUTPUT (first run, before implementation — `npx vitest run src/ui/__tests__/resultsPanel.test.ts`):
+ ❯ src/ui/__tests__/resultsPanel.test.ts  (45 tests | 2 failed) 276ms
+   ❯ ... > ARP03-003 #2 (DEFENSIVE/UNIT-LEVEL) — loadMore rejection on a limited statement is silent at the panel boundary, stale state reposted
+     → expected [ Array(1) ] to have a length of +0 but got 1
+   ❯ ... > ARP03-003 #4 (leak pin) — save/refresh of a limited statement strips resultLimited + cursorClosed from the fresh statement; a later loadMore reaches the runner
+     → expected true to be falsy
+ ⎯⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL ... #2 — AssertionError: expected [ Array(1) ] to have a length of +0 but got 1
+   ❯ src/ui/__tests__/resultsPanel.test.ts:1658:38
+     1658|     expect(showErrMock().mock.calls).toHaveLength(0);
+ FAIL ... #4 — AssertionError: expected true to be falsy
+   ❯ src/ui/__tests__/resultsPanel.test.ts:1767:34
+     1767|     expect(posted.resultLimited).toBeFalsy();
+ Test Files  1 failed (1)
+      Tests  2 failed | 43 passed (45)
+
+RED DEVIATION (case 1): #1 was GREEN on base, not RED as the task table
+predicted ("resultLimited dropped by the fixture"). The Discussion section's
+own analysis is why: `sanitizeStatementResult` is a plain `{ ...r }` spread,
+so a top-level additive field passes through on base automatically — there is
+no code path on base that strips it, so no honest test of that shape can fail
+on base. #1 is kept as the wire pin for 03.4 (asserts resultLimited survives
+sanitize on the render post AND a later "ready" re-post, with no render-time
+error). The two behavior-changing cases this task owns (#2 toast fires on
+base; #4 markers leak via the { ...r } spread) were both RED as required; #3
+was GREEN on base as pinned.
+
+VERIFICATION OUTPUT (all inside the worktree, compile run before npm test
+per fresh-worktree note):
+1. `npx vitest run src/ui/__tests__/resultsPanel.test.ts`
+   → " ✓ src/ui/__tests__/resultsPanel.test.ts  (45 tests) 259ms
+      Test Files  1 passed (1)
+      Tests  45 passed (45)" — exit 0
+2. `npm run compile`  (run before npm test; fresh worktree had no dist/)
+   → "esbuild: build complete" — exit 0
+3. `npm run typecheck`
+   → "tsc --noEmit" clean, no output — exit 0
+4. `npm test` (release-boundary net, this task)
+   → " Test Files  215 passed | 1 skipped (216)
+      Tests  2999 passed | 2 skipped (3001)" — exit 0
+
+ISSUES: none.
+HANDOFF_TO_REVIEWER: yes — set pending_review; reviewer model must differ
+from unic-code per handoff.reviewer config.
 ```
 
 ## Reviewer Verdict

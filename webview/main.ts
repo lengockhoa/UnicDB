@@ -140,6 +140,11 @@ interface StatementResult {
   runStmtNo?: number;
   /** TASK-AH-001 — cursor was closed after this statement's initial batch. */
   cursorClosed?: boolean;
+  /** TASK-ARP03-004 — host hit the retained-row cap for this statement's
+   *  initial batch: the cursor is closed and no further batches will arrive.
+   *  Drives the dedicated truncation footer copy and closes the Load More
+   *  gate even when rowCount is null (total unknown). */
+  resultLimited?: boolean;
 }
 /** TASK-005 — structural mirror of the host's ColumnFilterModel
  *  (src/ui/queryComposer.ts), defined locally so the webview program never
@@ -1771,10 +1776,20 @@ function renderGrid(): void {
   const columnsChanged = specs.length !== lastColumnCount;
 
   const model = ensureModel(activeTab);
-  const syncResult = model.sync(r.result.rows, activeTab, !!r.batched, {
-    rowCount: r.result.rowCount ?? null,
-    loadedBefore: tabSwitched || statementReset ? 0 : previousRows.length,
-  });
+  // TASK-ARP03-004 — a resultLimited statement has a closed cursor: force
+  // hasMore off at the model sync so neither the scroll trigger
+  // (onBodyScroll) nor the __vsdbCheckLoadMoreForHost hook posts loadMore
+  // again — even when rowCount is null (total unknown), the load-bearing
+  // case where the model's EOF branch cannot close the gate itself.
+  const syncResult = model.sync(
+    r.result.rows,
+    activeTab,
+    !!r.batched && !r.resultLimited,
+    {
+      rowCount: r.result.rowCount ?? null,
+      loadedBefore: tabSwitched || statementReset ? 0 : previousRows.length,
+    },
+  );
 
   if (isFirstRender || tabSwitched) {
     // Fresh grid (new statement OR tab switch) → drop any stale dirty edits
@@ -3251,6 +3266,19 @@ function updateFooter(
   api: GridApi | null,
   r: StatementResult,
 ): void {
+  // TASK-ARP03-004 — truncation is its own accessible state. Short-circuit
+  // BEFORE footerText(...) so this copy REPLACES footerText's output
+  // entirely (e.g. the "10000 of 10000" total branch in
+  // src/ui/resultsGridModel.ts) — never appended onto a count. Distinct
+  // from the plain "N rows" EOF copy, from ".vsdb-empty", and from the
+  // cancelled presentation (which renders no footer at all).
+  if (r.resultLimited) {
+    footer.textContent =
+      "result truncated — some rows were not loaded" +
+      (transactionOpen ? "  Transaction open" : "") +
+      (r.durationMs > 0 ? `  ⏱ ${r.durationMs}ms` : "");
+    return;
+  }
   const state = model.getState();
   const loaded = state.getLoaded();
   const total = state.getTotal();
