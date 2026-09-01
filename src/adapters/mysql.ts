@@ -2,6 +2,7 @@ import mysql, {
   type FieldPacket,
   type Pool as PromisePool,
   type PoolConnection,
+  type PoolOptions,
 } from "mysql2/promise";
 import type { Connection as CoreConnection, Query } from "mysql2";
 import type { ConnectionConfig } from "../config/types";
@@ -34,6 +35,35 @@ const BATCH_SIZE = 500;
 
 /** TASK-005 — one UTC session statement per fresh physical connection. */
 const UTC_SESSION_SQL = "SET time_zone = '+00:00'";
+
+/**
+ * TASK-ARP05-002 — bounded acquire wait for the single-slot pool, in ms.
+ *
+ * The ADR's known gap (§4): `connectionLimit: 1` + `waitForConnections: true`
+ * + `queueLimit: 0` means a held stream/transaction pins the only connection
+ * and every later checkout enqueues FOREVER — nothing bounded the wait. The
+ * chosen bound aligns with the driver's `connectTimeout: 10_000` so both
+ * failure surfaces agree on one 10-second budget (ADR §5 SLO-1).
+ *
+ * Why a `Promise.race` at the checkout choke point instead of an
+ * `acquireTimeout` pool option: mysql2 3.23.4 (the pinned driver) does NOT
+ * support that option — it logs "Ignoring invalid configuration option
+ * passed to Connection: acquireTimeout" and queues forever anyway (measured;
+ * recorded in ADR §7 `## Probe: MySQL`). The wrapper is the real,
+ * driver-agnostic bound; it is injected short by the DB-free suite via
+ * `setPoolAcquireTimeoutMsForTests` so the queue-bound test never waits a
+ * real 10s.
+ */
+export let POOL_ACQUIRE_TIMEOUT_MS = 10_000;
+
+/**
+ * TASK-ARP05-002 — test-only injection seam for `POOL_ACQUIRE_TIMEOUT_MS`.
+ * Never called by production code; the DB-free suite stubs a short bound
+ * (e.g. 50ms) and restores the default afterwards.
+ */
+export function setPoolAcquireTimeoutMsForTests(ms: number): void {
+  POOL_ACQUIRE_TIMEOUT_MS = ms;
+}
 
 type MySqlRow = any[];
 
@@ -146,7 +176,13 @@ export class MySqlAdapter implements DbAdapter {
     this.closed = false;
 
     const ssl = resolveSslOptions(this.cfg);
-    const pool = mysql.createPool({
+    // TASK-ARP05-002 — the declared pool acquire bound. mysql2 3.23.4 does
+    // not implement the option (one console warning at createPool, measured;
+    // see ADR §7 `## Probe: MySQL`); the ENFORCED bound is the
+    // Promise.race at getConnectionWithUtcSession() below. The option stays
+    // on the factory so the declared contract is greppable and future
+    // mysql2 versions that honour it converge with the wrapper.
+    const poolOptions = {
       host: this.cfg.host,
       port: this.cfg.port,
       user: this.cfg.user,
@@ -165,6 +201,12 @@ export class MySqlAdapter implements DbAdapter {
       // The adapter splits scripts itself, so server-side multi-statements are
       // intentionally not enabled.
       multipleStatements: false,
+      // TASK-ARP05-002 — declared acquire bound (see
+      // POOL_ACQUIRE_TIMEOUT_MS). The enforced bound is the Promise.race
+      // inside getConnectionWithUtcSession(); mysql2 3.23.4 ignores this
+      // option (one console warning at createPool) and future drivers that
+      // honour it will converge with the wrapper.
+      acquireTimeout: POOL_ACQUIRE_TIMEOUT_MS,
       // ssl shape mysql2 SSLOptions: { ca, cert, key, rejectUnauthorized,
       // checkServerIdentity }. checkHostname là field nội bộ — strip.
       ...(ssl
@@ -178,7 +220,10 @@ export class MySqlAdapter implements DbAdapter {
             },
           }
         : {}),
-    });
+    } satisfies PoolOptions & Record<string, unknown>;
+    const pool = mysql.createPool(
+      poolOptions as Parameters<typeof mysql.createPool>[0],
+    );
     this.pool = pool;
 
     try {
@@ -614,7 +659,41 @@ export class MySqlAdapter implements DbAdapter {
     if (!this.pool) {
       throw new Error("MySqlAdapter: connect() chưa được gọi");
     }
-    const connection = await this.pool.getConnection();
+    // TASK-ARP05-002 — bounded acquire wait (ADR §4 known gap). mysql2 3.23.4
+    // has no working acquire-timeout knob, so the wait is bounded HERE, at
+    // the single checkout choke point, by racing the raw checkout against a
+    // timer of POOL_ACQUIRE_TIMEOUT_MS ms. A late request against the held
+    // `connectionLimit: 1` slot now surfaces an error within the bound
+    // instead of queueing forever. The losing checkout (if the pool hands
+    // one out after the timeout won the race) is released back immediately
+    // so the slot is not leaked by an abandoned waiter.
+    let timedOut = false;
+    let clearAcquireTimer: (() => void) | undefined;
+    const connection = await Promise.race([
+      this.pool.getConnection().then((conn) => {
+        if (timedOut) {
+          // The timer already rejected this acquire; hand the slot straight
+          // back so the pool's queue bookkeeping stays consistent.
+          conn.release();
+          throw new Error("MySqlAdapter: acquire already timed out");
+        }
+        clearAcquireTimer?.();
+        return conn;
+      }),
+      new Promise<never>((_resolve, reject) => {
+        const timer = setTimeout(() => {
+          timedOut = true;
+          reject(
+            new Error(
+              `MySqlAdapter: acquire timed out after ${POOL_ACQUIRE_TIMEOUT_MS}ms (pool slot held by another query/stream/transaction)`,
+            ),
+          );
+        }, POOL_ACQUIRE_TIMEOUT_MS);
+        // Never keep the process alive for a bookkeeping timer.
+        (timer as unknown as { unref?: () => void }).unref?.();
+        clearAcquireTimer = () => clearTimeout(timer);
+      }),
+    ]);
     try {
       await this.ensureUtcSession(connection);
       return connection;

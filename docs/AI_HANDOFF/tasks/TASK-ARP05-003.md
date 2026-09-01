@@ -1,6 +1,6 @@
 # TASK-ARP05-003 — MSSQL paused-stream survival, cancel timeout, no enqueue wedge
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §2–§4 (ARP-05.3)
@@ -87,3 +87,50 @@ mssql.sortQuery.test.ts]`. The pinned target is `mssql.parameterized.test.ts` (D
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+
+RED_OUTPUT: All 5 probe cases went GREEN on the first run against base — **this is the expected pin-only posture the task spec itself declares** ("pin cases stay GREEN on today's code", Goal: "expected to be pin-only"; PLAN.md §3: probe "runs it against today's code to record whether it passes, and then ships the test as a pin"). Because GREEN-on-base cannot distinguish "contract holds" from "test is vacuous", I ran a sensitivity mutation probe to produce actual RED evidence: temporarily mutated `requestTimeout: 0` → `5_000` in `src/adapters/mssql.ts` and re-ran the suite. Actual failing output:
+
+```
+ ❯ src/adapters/__tests__/mssql.parameterized.test.ts  (17 tests | 1 failed) 378ms
+   ❯ src/adapters/__tests__/mssql.parameterized.test.ts > MsSqlAdapter ARP-05.3 — paused-stream survival (requestTimeout: 0) > #1 pin: streaming SELECT is not timed out — requestTimeout 0, no request timer armed, long paused load-more survives
+ FAIL  src/adapters/__tests__/mssql.parameterized.test.ts > MsSqlAdapter ARP-05.3 — paused-stream survival (requestTimeout: 0) > #1 pin: streaming SELECT is not timed out — requestTimeout 0, no request timer armed, long paused load-more survives
+ ❯ src/adapters/__tests__/mssql.parameterized.test.ts:521:39
+ Test Files  1 failed (1)
+      Tests  1 failed | 16 passed (17)
+```
+
+The pristine source was then restored (`git diff 65b9c4f -- src/adapters/mssql.ts` verified empty) and the suite returned GREEN. RED/GREEN probe evidence appended to ADR §7 under `## Probe: MSSQL`.
+
+Verification Output:
+
+```
+$ grep -qi "## Probe: MSSQL" docs/decisions/0002-cross-driver-resilience-contract.md   # exit 0 (before append: exit 1)
+
+$ npx vitest run src/adapters/__tests__/mssql.parameterized.test.ts
+ ✓ src/adapters/__tests__/mssql.parameterized.test.ts  (17 tests) 493ms
+ Test Files  1 passed (1)
+      Tests  17 passed (17)
+
+$ npm run typecheck
+> vsdb@1.40.0 typecheck
+> tsc --noEmit          # exit 0
+
+$ npm run compile
+dist/extension.js      5.3mb ⚠️
+dist/extension.js.map  9.2mb
+⚡ Done in 133ms
+esbuild: build complete  # exit 0
+
+$ git diff 65b9c4f -- src/adapters/mssql.ts    # empty — pin-only, acceptance #3
+$ git diff 0dd021e --stat                       # ADR +47 (append-only, 0 deletions), test file +206
+```
+
+Status: PASS
+
+Note: No production gap found — `src/adapters/mssql.ts` untouched by this task (pin-only, per the task's default expectation). Test details: #1 pins the real tedious constructor options via the adapter's private `createConnection()` (constructor verified pure in tedious 18.6.2 — no socket/timer before `connect()`) plus a behavioral stream probe (600 rows → `pause()`, 50 ms stall, no `Request.setTimeout` calls, drains 500+100 rows → EOF); #2 fakes the cancel round-trip inside `cancelTimeout: 5_000` and asserts `runRequest` rejects + `activeRequests` drains; #3 queues two deferred ops, rejects the first, asserts the second still runs and `operationQueue` returns to idle; #4 emits `error` on a fake EventEmitter connection and asserts `clearConnection` + `close()` + `connecting` reset; #5 settles via callback, then fires a late `error` event and `cancel()`, asserting the `settled` guard keeps state final and nothing wedges. Also ran `mssql.sortQuery.test.ts` (7/7 pass, wave/cycle net lane).

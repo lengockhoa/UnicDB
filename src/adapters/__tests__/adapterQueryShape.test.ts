@@ -1357,6 +1357,82 @@ describe("MySqlAdapter.cancelActiveQuery — late/repeated cancel no-op (TASK-RL
   });
 });
 
+// ---------------------------------------------------------------------------
+// TASK-ARP05-002 case 1 — runQuery routing/shape regression (DB-free, pure
+// routing assertion via the monkeypatched private openStreamingQuery/query
+// seam, same instance-level shadowing pattern as above; no mysql2 mock).
+//   - a single SELECT routes to the streaming arm → { results: [], batched };
+//   - a multi-statement batch holds ONE connection atomically (existing M2
+//     pins above cover the call order; here we pin the ROUTING split).
+// ---------------------------------------------------------------------------
+
+describe("MySqlAdapter.runQuery — routing/shape (TASK-ARP05-002 case 1)", () => {
+  it("case 1a: single-SELECT routes to streaming → {results: [], batched}, never materialized via query()", async () => {
+    const adapter = new MySqlAdapter(cfg("mysql"), "pw");
+    // runQuery guards on the pool field; inject a stand-in so the guard
+    // passes (the routing seams below bypass it entirely).
+    (adapter as unknown as { pool: unknown }).pool = {};
+    // Monkeypatch BOTH private seams: `openStreamingQuery` (the streaming arm)
+    // and `query` (the materializing arm) — the routing assertion is that a
+    // bare single SELECT reaches ONLY the streaming arm.
+    const openStreaming = vi.fn(() =>
+      Promise.resolve({
+        columns: ["id"],
+        fetchBatch: () => Promise.resolve(null),
+        cancel: () => Promise.resolve(),
+        close: () => Promise.resolve(),
+      }),
+    );
+    const materializingQuery = vi.fn(() => {
+      throw new Error("routing bug: single SELECT must never materialize");
+    });
+    (adapter as unknown as { openStreamingQuery: unknown }).openStreamingQuery =
+      openStreaming;
+    (adapter as unknown as { query: unknown }).query = materializingQuery;
+
+    const result = await adapter.runQuery("SELECT * FROM t");
+
+    expect(result.results).toEqual([]);
+    expect(result.batched).toBeDefined();
+    expect(openStreaming).toHaveBeenCalledTimes(1);
+    expect(materializingQuery).not.toHaveBeenCalled();
+  });
+
+  it("case 1b: a multi-statement batch routes to the atomic transaction arm (batched undefined)", async () => {
+    const adapter = new MySqlAdapter(cfg("mysql"), "pw");
+    // runQuery guards on the pool field; inject a stand-in so the guard
+    // passes (the checked-out connection below is monkeypatched anyway).
+    (adapter as unknown as { pool: unknown }).pool = {};
+    // The atomic arm runs on a checked-out PoolConnection (not this.query).
+    // Monkeypatch runQueryOnConnection to observe the statements on the one
+    // held connection without needing mysql2.
+    const runOnConn = vi.fn(() =>
+      Promise.resolve({ results: [{ columns: [], rows: [], rowCount: 1, durationMs: 0 }] }),
+    );
+    (adapter as unknown as { runQueryOnConnection: unknown }).runQueryOnConnection =
+      runOnConn;
+    // getConnectionWithUtcSession must hand back a minimal transactional
+    // connection: beginTransaction/commit/rollback/release once each.
+    const txConn = {
+      beginTransaction: vi.fn(() => Promise.resolve()),
+      commit: vi.fn(() => Promise.resolve()),
+      rollback: vi.fn(() => Promise.resolve()),
+      release: vi.fn(),
+    };
+    (adapter as unknown as { getConnectionWithUtcSession: unknown }).getConnectionWithUtcSession =
+      vi.fn(() => Promise.resolve(txConn));
+
+    const result = await adapter.runQuery("UPDATE t SET a=1; DELETE FROM t;");
+
+    expect(result.batched).toBeUndefined();
+    expect(result.results.length).toBe(2);
+    expect(txConn.beginTransaction).toHaveBeenCalledTimes(1);
+    expect(txConn.commit).toHaveBeenCalledTimes(1);
+    expect(txConn.release).toHaveBeenCalledTimes(1);
+    expect(runOnConn).toHaveBeenCalledTimes(2);
+  });
+});
+
 // Helper used by case 3a to snapshot the baseline release count.
 describe("MySqlAdapter.runQuery — single-SELECT BatchedQuery regression (TASK-RLX02-001, case 4)", () => {
   it("case 4: single SELECT returns {results:[], batched} and its BatchedQuery.cancel destroys the stream", async () => {

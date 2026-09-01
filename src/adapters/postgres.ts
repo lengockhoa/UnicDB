@@ -313,10 +313,28 @@ export class PostgresAdapter implements DbAdapter {
       connectionTimeoutMillis: 10_000,
     });
     const probe = await this.pool.connect();
+    // ARP-05.1 (TASK-ARP05-001) — a failed connect probe must leave no
+    // half-open pool behind (mirrors MySqlAdapter.connect, mysql.ts:184-196):
+    // release the probe client, end the pool exactly once, drop the
+    // reference, and rethrow the original error so a later connect() builds
+    // a FRESH pool instead of silently reusing a dead one.
+    let probeError: unknown = null;
     try {
       await probe.query("SELECT 1");
+    } catch (error) {
+      probeError = error;
     } finally {
       probe.release();
+    }
+    if (probeError !== null) {
+      const deadPool = this.pool;
+      this.pool = null;
+      try {
+        await deadPool.end();
+      } catch {
+        // ignore — pool.end failure must never mask the probe error.
+      }
+      throw probeError;
     }
   }
 

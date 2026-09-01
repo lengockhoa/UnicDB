@@ -14,6 +14,7 @@
 //    SQL shape (@schema/@table placeholders, no quoted literal values) plus
 //    the params array passed alongside.
 import { describe, expect, it, afterEach, vi } from "vitest";
+import { EventEmitter } from "node:events";
 import { TYPES, Request as TediousRequestCtor } from "tedious";
 import type { Request as TediousRequest } from "tedious";
 import { MsSqlAdapter } from "../mssql";
@@ -479,5 +480,210 @@ describe("MsSqlAdapter.cancelActiveQuery (TASK-RLX02-002)", () => {
 
     // The cancelled stream drains to EOF without pending work.
     await expect(batched!.fetchBatch()).resolves.toBeNull();
+  });
+});
+
+// ---- TASK-ARP05-003 — MSSQL finite-failure contract pins --------------------
+//
+// Wave-1 measurement probes for the cross-driver resilience contract
+// (docs/decisions/0002-cross-driver-resilience-contract.md §2.3/§2.4/§2.5,
+// SLO-1/SLO-2). Expected posture on today's code is GREEN (pin-only): these
+// tests ship as pins unless a probe proves a gap in mssql.ts.
+//
+// Fixtures reuse the instance-level newRequest shadow + fake deferred
+// connection patterns above. Test #1 additionally calls the adapter's private
+// createConnection() directly so the REAL tedious Connection constructor runs
+// and the adapter's exact options are read at the driver boundary — the
+// tedious 18.x constructor is pure (it copies config; no socket or timer is
+// armed until connect() is called), so this is DB-free and side-effect free.
+
+function createConnectionOptionsOf(
+  adapter: MsSqlAdapter,
+): Record<string, unknown> {
+  const connection = (
+    adapter as unknown as {
+      createConnection: () => {
+        config: { options: Record<string, unknown> };
+      };
+    }
+  ).createConnection();
+  return connection.config.options;
+}
+
+describe("MsSqlAdapter ARP-05.3 — paused-stream survival (requestTimeout: 0)", () => {
+  it("#1 pin: streaming SELECT is not timed out — requestTimeout 0, no request timer armed, long paused load-more survives", async () => {
+    // (a) Driver-boundary pin: the real tedious Connection is constructed
+    // with requestTimeout: 0 (mssql.ts:554), so execSql can arm NO wall-clock
+    // request timer — a paused load-more stream cannot be killed by a
+    // timeout. cancelTimeout: 5_000 and connectTimeout: 10_000 stay pinned
+    // alongside (mssql.ts:555, :547).
+    const options = createConnectionOptionsOf(new MsSqlAdapter(cfg(), "pw"));
+    expect(options["requestTimeout"]).toBe(0);
+    expect(options["cancelTimeout"]).toBe(5_000);
+    expect(options["connectTimeout"]).toBe(10_000);
+
+    // (b) Behavioral pin: a streaming request that pauses mid-flow (rows
+    // buffered, no fetcher) stays alive across a load-more stall far longer
+    // than any finite query timeout and still drains afterwards. The adapter
+    // never arms a per-request timer (never calls Request.setTimeout).
+    const { adapter, requests, settle, emitMetadata } = makeDeferredAdapter();
+    const setTimeoutSpy = vi
+      .spyOn(TediousRequestCtor.prototype, "setTimeout")
+      .mockClear();
+
+    const runPromise = adapter.runQuery("SELECT * FROM dbo.vsdb_big");
+    await vi.waitFor(() => expect(requests.length).toBe(1));
+    const request = requests[0];
+    const pauseSpy = vi.spyOn(request, "pause");
+
+    emitMetadata(request); // tedious emits columnMetadata before rows flow
+    const run = await runPromise;
+    const batched = run.batched!;
+    expect(batched).toBeDefined();
+
+    // 600 rows: BATCH_SIZE=500 → first batch parked in readyBatch, request
+    // paused; remaining 100 stay buffered mid-flow.
+    for (let i = 0; i < 600; i++) {
+      request.emit("row", { c0: { value: i } });
+    }
+    expect(pauseSpy).toHaveBeenCalled();
+
+    const firstBatch = await batched.fetchBatch();
+    expect(firstBatch).toHaveLength(500);
+
+    // Paused mid-flow "load-more" stall: with any finite requestTimeout this
+    // window is where tedious would kill the request. Under requestTimeout: 0
+    // the paused stream just waits.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(setTimeoutSpy).not.toHaveBeenCalled(); // no per-request timer armed
+
+    // The stream survived the stall and completes normally end-to-end.
+    settle(request, null, 600);
+    const lastBatch = await batched.fetchBatch();
+    expect(lastBatch).toHaveLength(100);
+    await expect(batched.fetchBatch()).resolves.toBeNull(); // EOF
+    expect(setTimeoutSpy).not.toHaveBeenCalled();
+    setTimeoutSpy.mockRestore();
+  });
+});
+
+describe("MsSqlAdapter ARP-05.3 — cancel within cancelTimeout", () => {
+  it("#2 edge: live request cancels within cancelTimeout — runRequest settles and activeRequests drains", async () => {
+    const { adapter, requests, settle } = makeDeferredAdapter();
+
+    const runPromise = callExecute(adapter, "SELECT 1 AS one");
+    await vi.waitFor(() => expect(requests.length).toBe(1));
+    const request = requests[0];
+    expect(activeRequestsOf(adapter).has(request)).toBe(true);
+
+    // Fake the tedious cancel round-trip: request.cancel() drives the
+    // driver's error/completion path well inside cancelTimeout: 5_000
+    // (mssql.ts:555).
+    const cancelSpy = vi.spyOn(request, "cancel").mockImplementation(() => {
+      request.emit("error", new Error("Canceled."));
+      settle(request, new Error("Canceled."));
+    });
+
+    const startedAt = Date.now();
+    await adapter.cancelActiveQuery();
+    await expect(runPromise).rejects.toThrow("Canceled.");
+    const elapsedMs = Date.now() - startedAt;
+
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
+    // Bounded by the 5s cancel SLO (ADR §5 SLO-1, cancel row).
+    expect(elapsedMs).toBeLessThan(5_000);
+    expect(activeRequestsOf(adapter).has(request)).toBe(false);
+    expect(activeRequestsOf(adapter).size).toBe(0);
+  });
+});
+
+describe("MsSqlAdapter ARP-05.3 — late failure cannot wedge the enqueue chain", () => {
+  it("#3 edge: first queued operation rejects; the second queued operation still runs — no deadlock, no unhandled rejection", async () => {
+    const { adapter, requests, settle } = makeDeferredAdapter();
+
+    // Queue two operations through execute() → enqueue(); both deferred.
+    const first = callExecute(adapter, "SELECT 1 AS one");
+    const second = callExecute(adapter, "SELECT 2 AS two");
+    await vi.waitFor(() => expect(requests.length).toBe(1));
+
+    // The first operation's request fails terminally.
+    settle(requests[0], new Error("first failed"));
+    await expect(first).rejects.toThrow("first failed");
+
+    // The chain advanced: enqueue released the second operation even though
+    // the first rejected (the chain link resolves in `finally`).
+    await vi.waitFor(() => expect(requests.length).toBe(2));
+    settle(requests[1], null, 0);
+    await expect(second).resolves.toMatchObject({ rows: [] });
+
+    // The queue returned to its idle resolved state — nothing wedged.
+    await expect(operationQueueOf(adapter)).resolves.toBeUndefined();
+  });
+});
+
+describe("MsSqlAdapter ARP-05.3 — connect() failure cleanup", () => {
+  it("#4 edge: connect failure clears the connection, closes it best-effort, and resets connecting", async () => {
+    const adapter = new MsSqlAdapter(cfg(), "pw");
+    const connection = new EventEmitter() as unknown as {
+      state: { name: string };
+      connect: ReturnType<typeof vi.fn>;
+      close: ReturnType<typeof vi.fn>;
+      emit: EventEmitter["emit"];
+    };
+    connection.state = { name: "Initialized" };
+    connection.connect = vi.fn();
+    connection.close = vi.fn();
+    (adapter as unknown as { createConnection: () => unknown })
+      .createConnection = () => connection;
+
+    const connectPromise = adapter.connect();
+    // The fake connection signals the failure through the `error` event —
+    // how tedious surfaces handshake/login failures.
+    await Promise.resolve();
+    connection.emit("error", new Error("login failed"));
+
+    await expect(connectPromise).rejects.toThrow("login failed");
+
+    // fail() path: clearConnection dropped the reference, close() ran
+    // best-effort, `connecting` was reset in `.finally`, `connected` false.
+    expect(
+      (adapter as unknown as { connection: unknown }).connection,
+    ).toBeNull();
+    expect(connection.close).toHaveBeenCalledTimes(1);
+    expect(
+      (adapter as unknown as { connecting: Promise<void> | null }).connecting,
+    ).toBeNull();
+    expect((adapter as unknown as { connected: boolean }).connected).toBe(
+      false,
+    );
+  });
+});
+
+describe("MsSqlAdapter ARP-05.3 — cancel after settle is a no-op", () => {
+  it("#5 edge: late error/cancel on an already-settled request is swallowed — settled guard keeps state final", async () => {
+    const { adapter, requests, settle } = makeDeferredAdapter();
+
+    const runPromise = callExecute(adapter, "SELECT 1 AS one");
+    await vi.waitFor(() => expect(requests.length).toBe(1));
+    const request = requests[0];
+
+    // Settle via the request callback (the final completion signal).
+    settle(request, null, 7);
+    const result = (await runPromise) as QueryResultLike;
+    expect(result.rowCount).toBe(7);
+    expect(activeRequestsOf(adapter).size).toBe(0);
+
+    // Late error event + cancel after settle: the settled guard inside
+    // runRequest's finish() ignores both — the promise stays resolved with
+    // rowCount 7, finish is never re-invoked, and no unhandled rejection
+    // surfaces (vitest fails the suite on any).
+    request.emit("error", new Error("late error after settle"));
+    expect(() => request.cancel()).not.toThrow();
+    request.cancel(); // tedious re-cancel guard: no-op second time
+
+    await expect(runPromise).resolves.toMatchObject({ rowCount: 7 });
+    // Adapter seam on an already-drained set: silent no-op.
+    await expect(adapter.cancelActiveQuery()).resolves.toBeUndefined();
+    expect(activeRequestsOf(adapter).size).toBe(0);
   });
 });

@@ -666,3 +666,234 @@ describe("PostgresAdapter — cancelActiveQuery overlap race (TASK-RLX-001 fix r
     await adapter.close();
   });
 });
+
+// =============================================================================
+// TASK-ARP05-001 — ARP-05.1 pool isolation, failed-connect release, close
+// recovery, dedicated-client cancel.
+//
+// Contract under test (ADR 0002 §2 PG column, §5 SLO):
+//  - PIN: PG_POOL_MAX = 4 — metadata traffic never queues behind a pinned
+//    cursor/transaction client (postgres.ts:291-314); the Pool must be built
+//    with max: 4 and the metadata path rides pool.query, not a held client.
+//  - GAP (fixed in this task): a failed connect() probe must release cleanly
+//    — pool.end() once, this.pool nulled, next connect() builds a fresh pool
+//    (mirrors mysql.ts:184-196). Today's connect() leaves the half-open pool.
+//  - PIN: close() with an open cursor resolves < 5s — cursor ROLLBACK +
+//    release(true) fired, pool.end() raced vs the 3s guard
+//    (postgres.ts:323-369).
+//  - PIN: cancelActiveQuery() with every pool slot held opens ONE one-off
+//    Client (connectionTimeoutMillis: 5_000), issues pg_cancel_backend($1)
+//    per tracked PID, end()s it, and never touches the pool
+//    (postgres.ts:513-548, ARP-02 semantics).
+//  - PIN: idle/no-PID cancel is a silent no-op — no dedicated Client.
+// =============================================================================
+describe("PostgresAdapter — ARP-05.1 resilience pins (TASK-ARP05-001)", () => {
+  it("metadata does not queue behind a pinned cursor/transaction client (PG_POOL_MAX=4, pin)", async () => {
+    queue.push({ rows: [{ "?column?": 1 }] }); // connect probe
+    const adapter = new PostgresAdapter(cfg(), "pw");
+    await adapter.connect();
+
+    // The pool must be built with the documented slot budget (max: 4) —
+    // this is the value that guarantees metadata gets its own session.
+    const poolCtor = Pool as unknown as { mock: { calls: unknown[][] } };
+    const lastCtorCall = poolCtor.mock.calls[poolCtor.mock.calls.length - 1];
+    const poolConfig = lastCtorCall[0] as { max?: number };
+    expect(poolConfig.max).toBe(4);
+
+    const pool = lastPool();
+    // Pin every pool slot the way a held cursor/transaction client would:
+    // checked out and never released. The fake connect() keeps succeeding on
+    // demand, mirroring pg-pool's on-demand slot opening.
+    const held: FakeClient[] = [];
+    pool.connect = vi.fn(() =>
+      Promise.resolve({
+        query: vi.fn(() => popNext()),
+        release: vi.fn(),
+        processID: 1000 + held.length,
+      } as FakeClient),
+    );
+    for (let i = 0; i < 4; i += 1) {
+      held.push(await pool.connect());
+    }
+    expect(held.length).toBe(4);
+
+    // Metadata rides pool.query on its own slot — it must resolve (never
+    // queue into a connectionTimeoutMillis fail) while ALL slots are pinned.
+    queue.push({ rows: [{ nspname: "public" }, { nspname: "qas" }] });
+    const schemas = await adapter.listSchemas(false);
+    expect(schemas.map((s) => s.name)).toEqual(["public", "qas"]);
+
+    await adapter.close();
+  });
+
+  it("connect() probe fails → no pool leak: end() once, pool nulled, next connect() builds a fresh pool", async () => {
+    const poolCtor = Pool as unknown as { mock: { calls: unknown[][] } };
+    // Register the shared mock pool instance up front so lastPool() works
+    // even under `vitest -t` filtering of just this case.
+    new Pool();
+    const sharedPool = lastPool();
+    const endCallsBefore = sharedPool.end.mock.calls.length;
+    const ctorCallsBefore = poolCtor.mock.calls.length;
+
+    queue.push(new Error("probe: connection refused")); // SELECT 1 probe rejects
+    const adapter = new PostgresAdapter(cfg(), "pw");
+    await expect(adapter.connect()).rejects.toThrow(
+      "probe: connection refused",
+    );
+
+    // The half-open pool must have been ended exactly once — no leak.
+    expect(sharedPool.end.mock.calls.length).toBe(endCallsBefore + 1);
+
+    // this.pool must be nulled: the next connect() builds a FRESH pool
+    // (a second Pool construction), it must not silently reuse the dead one.
+    queue.push({ rows: [{ "?column?": 1 }] }); // fresh pool's probe
+    await expect(adapter.connect()).resolves.toBeUndefined();
+    expect(poolCtor.mock.calls.length).toBe(ctorCallsBefore + 2);
+
+    await adapter.close();
+  });
+
+  it("close() with an open cursor resolves < 5s: ROLLBACK + release(true), pool.end() raced vs the 3s guard (pin)", async () => {
+    queue.push({ rows: [{ "?column?": 1 }] }); // connect probe
+    queue.push({ rows: [] }); // BEGIN
+    queue.push({ rows: [] }); // DECLARE CURSOR
+    queue.push({ rows: [] }); // FETCH 0 (column discovery)
+    const adapter = new PostgresAdapter(cfg(), "pw");
+    await adapter.connect();
+
+    const pool = lastPool();
+    // The cursor client stays checked out after runQuery returns (held until
+    // close/fetch-eof), so its record is open when close() runs.
+    const cursorClient: FakeClient = {
+      query: vi.fn(() => popNext()),
+      release: vi.fn(),
+      processID: 777,
+    };
+    pool.connect = vi.fn(() => Promise.resolve(cursorClient));
+
+    const batched = await adapter.runQuery("SELECT * FROM big_table");
+    expect(batched.batched).toBeDefined();
+
+    // pool.end() hangs forever — only the 3s guard can get close() out.
+    const originalEnd = pool.end;
+    pool.end = vi.fn(() => new Promise<void>(() => {}));
+    try {
+      const startedAt = Date.now();
+      await expect(adapter.close()).resolves.toBeUndefined();
+      const elapsed = Date.now() - startedAt;
+      // Every open cursor was ROLLBACKed and force-released…
+      expect(cursorClient.query).toHaveBeenCalledWith("ROLLBACK");
+      expect(cursorClient.release).toHaveBeenCalledWith(true);
+      // …and close() beat the hang via the guard: ≥ 3s (the guard fired, not
+      // an instant resolve) but < 5s (SLO — close must never hang past 5s).
+      expect(elapsed).toBeGreaterThanOrEqual(2_900);
+      expect(elapsed).toBeLessThan(5_000);
+    } finally {
+      // Don't leak the hanging end() into later tests sharing this mock.
+      pool.end = originalEnd;
+    }
+  }, 15_000);
+
+  it("cancelActiveQuery uses a dedicated client, never the pool (all slots held) (pin)", async () => {
+    queue.push({ rows: [{ "?column?": 1 }] }); // connect probe
+    queue.push({ rows: [] }); // pid client statement #1 (released by gate)
+    queue.push({ rows: [] }); // pid client statement #2
+    const dedicated = {
+      connect: vi.fn(() => Promise.resolve()),
+      query: vi.fn(() => Promise.resolve({ rows: [] })),
+      end: vi.fn(() => Promise.resolve()),
+      release: vi.fn(),
+    };
+    const adapter = new PostgresAdapter(cfg(), "pw");
+    await adapter.connect();
+    // Route every later `new Client(...)` to the inspectable dedicated client.
+    clientCtor().mockImplementation(() => dedicated);
+
+    const pool = lastPool();
+    // First rewired connect() hands the run's PID client (first statement
+    // hangs → PID window open); every later connect() is a held slot.
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let statements = 0;
+    const pidClient: FakeClient = {
+      query: vi.fn(() => {
+        statements += 1;
+        if (statements === 1) return firstGate.then(() => popNext());
+        return popNext();
+      }),
+      release: vi.fn(),
+      processID: 4242,
+    };
+    const heldClients: FakeClient[] = [];
+    let pidHandedOut = false;
+    pool.connect = vi.fn(() => {
+      if (!pidHandedOut) {
+        pidHandedOut = true;
+        heldClients.push(pidClient);
+        return Promise.resolve(pidClient);
+      }
+      const held: FakeClient = {
+        query: vi.fn(() => popNext()),
+        release: vi.fn(),
+      };
+      heldClients.push(held);
+      return Promise.resolve(held);
+    });
+
+    const runPromise = adapter.runQuery("SELECT 1; SELECT 2");
+    await new Promise((r) => setTimeout(r, 5));
+    expect(pidClient.query).toHaveBeenCalledTimes(1);
+    // Hold every remaining pool slot on top of the pinned run — a cancel that
+    // tried to go through the pool would queue behind these.
+    for (let i = 0; i < 4; i += 1) await pool.connect();
+    expect(heldClients.length).toBe(5); // pid client + 4 held slots
+
+    const poolConnectCalls = pool.connect.mock.calls.length;
+    const poolQueryCalls = pool.query.mock.calls.length;
+    const poolEndCalls = pool.end.mock.calls.length;
+    const clientCtorMock = clientCtor();
+    const ctorCallsBefore = clientCtorMock.mock.calls.length;
+
+    await adapter.cancelActiveQuery!();
+
+    // Exactly ONE dedicated one-off Client, with the 5s cancel budget.
+    expect(clientCtorMock.mock.calls.length).toBe(ctorCallsBefore + 1);
+    const clientConfig = clientCtorMock.mock.calls[ctorCallsBefore][0] as {
+      connectionTimeoutMillis?: number;
+    };
+    expect(clientConfig.connectionTimeoutMillis).toBe(5_000);
+    expect(dedicated.connect).toHaveBeenCalledTimes(1);
+    expect(dedicated.query).toHaveBeenCalledTimes(1);
+    const [sql, params] = dedicated.query.mock.calls[0] as [string, number[]];
+    expect(sql).toMatch(/pg_cancel_backend/i);
+    expect(params).toEqual([4242]);
+    expect(dedicated.end).toHaveBeenCalledTimes(1);
+    expect(dedicated.release).not.toHaveBeenCalled();
+    // The pool was untouched: no slot request, no pooled query, no end.
+    expect(pool.connect.mock.calls.length).toBe(poolConnectCalls);
+    expect(pool.query.mock.calls.length).toBe(poolQueryCalls);
+    expect(pool.end.mock.calls.length).toBe(poolEndCalls);
+
+    // Drain the run — release stays exactly-once (cancel owns nothing).
+    releaseFirst();
+    await runPromise;
+    expect(pidClient.release).toHaveBeenCalledTimes(1);
+
+    await adapter.close();
+  });
+
+  it("idle/no-PID cancel is a no-op: no dedicated client opened, resolves silently (pin)", async () => {
+    queue.push({ rows: [{ "?column?": 1 }] }); // connect probe
+    const adapter = new PostgresAdapter(cfg(), "pw");
+    await adapter.connect();
+
+    const clientCtorMock = clientCtor();
+    const ctorCallsBefore = clientCtorMock.mock.calls.length;
+    await expect(adapter.cancelActiveQuery!()).resolves.toBeUndefined();
+    expect(clientCtorMock.mock.calls.length).toBe(ctorCallsBefore);
+
+    await adapter.close();
+  });
+});

@@ -355,6 +355,215 @@ paused stream not timed out; cancellation and late request cannot wedge the
 Until those appends land, no measured evidence exists; the §2/§4/§5
 statements above are the source-derived contract the probes measure against.
 
+## Probe: MSSQL
+
+*(appended by TASK-ARP05-003, worktree `task-arp05-003`, base `0dd021e`; pins
+live in `src/adapters/__tests__/mssql.parameterized.test.ts`, describe blocks
+`MsSqlAdapter ARP-05.3 — …`; DB-free fake tedious surface per the existing
+`makeDeferredAdapter` pattern.)*
+
+**Measured result: contract already holds on base `65b9c4f` — pin-only, no
+production change** (`git diff 65b9c4f -- src/adapters/mssql.ts` is empty).
+The five probe cases below went GREEN on the first run against today's code,
+as the task expected (`requestTimeout: 0` at `mssql.ts:554`,
+`cancelTimeout: 5_000` at `:555`, `enqueue` `finally`-release at
+`:574-587`, `settled` guard at `:608-624`, connect `fail()` cleanup at
+`:124-136` + `connecting` reset at `:191-193`). To prove the pin is not
+vacuous, a sensitivity mutation probe flipped `requestTimeout: 0` →
+`5_000` and the pin caught it (RED), then the pristine source was restored
+and the suite went GREEN again.
+
+| # | Path probed (ADR §2 row) | Measured behavior on base | SLO |
+|---|---|---|---|
+| 1 | Stream — paused SELECT not timed out (`requestTimeout: 0`) | `createConnection()` options read at the real tedious constructor: `requestTimeout 0`, `cancelTimeout 5000`, `connectTimeout 10000`; 600-row stream parks a 500-row batch, `request.pause()` fires, a 50 ms mid-flow stall passes with **zero** `Request.setTimeout` calls, stream then drains 100 rows → EOF | deliberate no-timer exception (§5 SLO-1); cancel is the bounded path |
+| 2 | Cancel — live request cancels within `cancelTimeout` | `request.cancel()` drives the error path; awaiting `runRequest` rejects "Canceled." in < 5 s; `activeRequests` drained to 0 | ≤ 5 s best-effort cancel (§5 SLO-1) — met |
+| 3 | Query — late failure cannot wedge the `enqueue` chain | 2 queued `execute()` ops; first request rejects; `enqueue`'s `finally` still releases the chain → second request issued and resolves; `operationQueue` back to idle resolved | serialized, no queue growth (§2.5); no automatic replay (§5 SLO-2) |
+| 4 | Connect — failure cleans up | `error` event → `clearConnection` (reference null, `connected` false) + best-effort `connection.close()` (1 call) + `connecting` reset in `.finally` → later `connect()` retries cleanly | ≤ 10 s surface (§5 SLO-1; driver `connectTimeout` 10 s) — met |
+| 5 | Cancel — cancel/late error after settle is a no-op | settled request: late `error` event and `request.cancel()` swallowed by the `settled` guard; promise stays resolved (`rowCount 7`), `finish` never re-invoked, adapter seam on empty set resolves silently | state final; no duplicate settle |
+
+Verbatim probe output (RED sensitivity mutation `requestTimeout: 0` →
+`5_000`, then restored GREEN):
+
+```text
+# RED (sensitivity mutation — requestTimeout: 5_000):
+ ❯ src/adapters/__tests__/mssql.parameterized.test.ts  (17 tests | 1 failed) 378ms
+   ❯ src/adapters/__tests__/mssql.parameterized.test.ts > MsSqlAdapter ARP-05.3 — paused-stream survival (requestTimeout: 0) > #1 pin: streaming SELECT is not timed out — requestTimeout 0, no request timer armed, long paused load-more survives
+ FAIL  src/adapters/__tests__/mssql.parameterized.test.ts > MsSqlAdapter ARP-05.3 — paused-stream survival (requestTimeout: 0) > #1 pin: streaming SELECT is not timed out — requestTimeout 0, no request timer armed, long paused load-more survives
+ ❯ src/adapters/__tests__/mssql.parameterized.test.ts:521:39
+ Test Files  1 failed (1)
+      Tests  1 failed | 16 passed (17)
+
+# GREEN (base source restored — pin-only, git diff 65b9c4f -- src/adapters/mssql.ts empty):
+ ✓ src/adapters/__tests__/mssql.parameterized.test.ts  (17 tests) 493ms
+ Test Files  1 passed (1)
+      Tests  17 passed (17)
+```
+
+`npm run typecheck` and `npm run compile` exit 0 on the pin-only tree. No
+gap found; `src/adapters/mssql.ts` untouched by this task.
+
+## 8. Consequences and bindings
+
+- **TASK-ARP05-001 (PostgreSQL):** implements/tests within §2's PG column;
+  must preserve `max: 4` slot isolation (§3.1) and the dedicated-client
+  cancel path (§2.4); appends its probe evidence to §7 under its
+  driver-named section. Expected pin-only unless its probe proves a gap
+  (PLAN.md §3: no PG gap currently known).
+- **TASK-ARP05-002 (MySQL):** closes the §4 gap with a bounded acquire;
+  must preserve `connectionLimit: 1` isolation (§3.2) and streaming; records
+  the measured bound in §7 under its driver-named section.
+- **TASK-ARP05-003 (MSSQL):** pins §2.3/§2.4 (paused-stream survival, cancel
+  + late-request non-wedging); must preserve `requestTimeout: 0` and the
+  `enqueue` chain; appends its probe evidence to §7 under its driver-named
+  section.
+- **TASK-ARP05-004 (host message):** reads §7's measured evidence before
+  deciding closed-as-not-needed vs. a `connectionManager.ts` change; the
+  gate decision is evidence-based, not predetermined (PLAN.md §3).
+- **All tasks:** §5's no-replay rule and the §3 intentional differences are
+  constraints, not suggestions — a probe or implementation that requires
+  relaxing either needs a new ADR.
+- Release notes for the shipping release should mention the MySQL bounded
+  acquire (user-visible behavior change: an occupied-slot wait can now fail
+  fast after the recorded bound instead of waiting indefinitely).
+## Probe: PostgreSQL
+
+*(Appended by TASK-ARP05-001 — measured RED/GREEN probe results for the PG
+column of §2. Pins stayed GREEN on base commit `0dd021e`; one production gap
+was proven by the RED probe and closed minimally in `src/adapters/postgres.ts`
+`connect()`.)*
+
+- **Pool isolation (§2.5, pin — GREEN on base).** With all `PG_POOL_MAX = 4`
+  slots held by a `pool.connect()` client, a metadata `pool.query` still ran
+  on its own slot and resolved (no `connectionTimeoutMillis` fail). `Pool`
+  constructed with `max: 4`. Probe line:
+  `✓ metadata does not queue behind a pinned cursor/transaction client (PG_POOL_MAX=4, pin)`
+- **Failed connect → release (§2.1 — RED on base, gap proven, fixed).** RED
+  probe on base: after the `SELECT 1` probe rejected, the half-open `Pool`
+  was never ended (`expect(sharedPool.end.mock.calls.length).toBe(...)` →
+  `AssertionError: expected 19 to be 20`) — `this.pool` stayed set, so a
+  retry would have reused a dead pool. GREEN after the fix: `pool.end()`
+  called exactly once, `this.pool` nulled, the next `connect()` builds a
+  fresh `Pool` (constructor call count +2 across both connects). Probe lines:
+  `✕ connect() probe fails → no pool leak: end() once, pool nulled, next connect() builds a fresh pool` (RED)
+  `✓ connect() probe fails → no pool leak: end() once, pool nulled, next connect() builds a fresh pool` (GREEN)
+- **Close with open cursor < 5s (§2.6, pin — GREEN on base).** With a
+  registered open cursor and a hanging `pool.end()`, every open cursor got
+  `ROLLBACK` + `release(true)` and `close()` resolved via the guard:
+  measured elapsed ≥ 3s (the 3s pool.end guard fired, not an instant
+  resolve) and < 5s. Probe line:
+  `✓ close() with an open cursor resolves < 5s: ROLLBACK + release(true), pool.end() raced vs the 3s guard (pin)`
+- **Cancel via dedicated client, pool untouched (§2.4, pin — GREEN on
+  base).** With all pool slots held and one tracked PID, `cancelActiveQuery()`
+  opened exactly ONE one-off `Client` with `connectionTimeoutMillis: 5_000`,
+  issued `SELECT pg_cancel_backend($1)` with `[pid]`, `end()`ed it, and made
+  zero pool calls (`connect`/`query`/`end` counts unchanged) — ARP-02
+  semantics preserved. Probe line:
+  `✓ cancelActiveQuery uses a dedicated client, never the pool (all slots held) (pin)`
+- **Idle/no-PID cancel no-op (§2.4, pin — GREEN on base).** Empty
+  `activeNonCursorPids` → zero `new Client(...)` constructions,
+  `cancelActiveQuery()` resolved silently. Probe line:
+  `✓ idle/no-PID cancel is a no-op: no dedicated client opened, resolves silently (pin)`
+
+Suite result after the fix: `Tests  23 passed (23)` —
+`npx vitest run src/adapters/__tests__/postgres.test.ts`.
+
+## 8. Consequences and bindings
+
+- **TASK-ARP05-001 (PostgreSQL):** implements/tests within §2's PG column;
+  must preserve `max: 4` slot isolation (§3.1) and the dedicated-client
+  cancel path (§2.4); appends its probe evidence to §7 under its
+  driver-named section. Expected pin-only unless its probe proves a gap
+  (PLAN.md §3: no PG gap currently known).
+- **TASK-ARP05-002 (MySQL):** closes the §4 gap with a bounded acquire;
+  must preserve `connectionLimit: 1` isolation (§3.2) and streaming; records
+  the measured bound in §7 under its driver-named section.
+- **TASK-ARP05-003 (MSSQL):** pins §2.3/§2.4 (paused-stream survival, cancel
+  + late-request non-wedging); must preserve `requestTimeout: 0` and the
+  `enqueue` chain; appends its probe evidence to §7 under its driver-named
+  section.
+- **TASK-ARP05-004 (host message):** reads §7's measured evidence before
+  deciding closed-as-not-needed vs. a `connectionManager.ts` change; the
+  gate decision is evidence-based, not predetermined (PLAN.md §3).
+- **All tasks:** §5's no-replay rule and the §3 intentional differences are
+  constraints, not suggestions — a probe or implementation that requires
+  relaxing either needs a new ADR.
+- Release notes for the shipping release should mention the MySQL bounded
+  acquire (user-visible behavior change: an occupied-slot wait can now fail
+  fast after the recorded bound instead of waiting indefinitely).
+## Probe: MySQL
+
+*(appended by TASK-ARP05-002, wave 1 — measured RED/GREEN evidence for §4,
+the chosen acquire bound, and the mysql2 option-support measurement.)*
+
+**Chosen bound (recorded per §4/§5): `acquireTimeout` = `10_000` ms**
+(module-scoped `POOL_ACQUIRE_TIMEOUT_MS` in `src/adapters/mysql.ts`, default
+`10_000`, aligned with the driver's `connectTimeout: 10_000` so both failure
+surfaces share one 10-second budget, per §5 SLO-1). Overridable for the
+DB-free suite via `setPoolAcquireTimeoutMsForTests` (test stubs 50 ms; the
+suite never waits a real 10 s).
+
+**Measured RED (base `65b9c4f` — `queueLimit: 0` + no acquire bound; the late
+request waits forever and the probe dies at the test timeout):**
+
+```
+FAIL  src/adapters/__tests__/mysqlQueueBound.test.ts > MySqlAdapter — bounded acquire wait (TASK-ARP05-002 case 2) > case 2b: a late request against a held single slot rejects within the injected bound
+Error: Test timed out in 2000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+
+FAIL  src/adapters/__tests__/mysqlQueueBound.test.ts > MySqlAdapter — bounded acquire wait (TASK-ARP05-002 case 2) > case 2a: pool factory options include acquireTimeout = the injected POOL_ACQUIRE_TIMEOUT_MS
+AssertionError: expected undefined to be 50 // Object.is equality
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 3 passed (5)
+```
+
+(The 3 passing tests on the pre-state are the streaming/cancel/terminal pins —
+existing behavior, pinned unchanged.)
+
+**Measured GREEN (bounded acquire landed; same suite, 50 ms injected bound):**
+
+```
+ ✓ src/adapters/__tests__/mysqlQueueBound.test.ts  (5 tests) 88ms
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Duration  309ms
+```
+
+Case 2b asserts BOTH surfaces: the pool factory options now carry
+`acquireTimeout = POOL_ACQUIRE_TIMEOUT_MS`, and a second checkout against the
+held `connectionLimit: 1` slot rejects with
+`MySqlAdapter: acquire timed out after 50ms (pool slot held by another
+query/stream/transaction)` well under the 1.5 s ceiling — termination within
+the bound, deterministically, with no real 10 s wait.
+
+**Driver-support measurement (why the bound is also enforced in the
+adapter):** mysql2 3.23.4 (pinned `^3.10.0`) does **not** implement the
+`acquireTimeout` pool option — passing it is ignored with a console warning
+and the underlying queue still waits forever:
+
+```
+$ node -e "require('mysql2/promise').createPool({...,acquireTimeout:50})"
+Ignoring invalid configuration option passed to Connection: acquireTimeout.
+This is currently a warning, but in future versions of MySQL2, an error will
+be thrown if you pass an invalid configuration option to a Connection
+```
+
+(the warning fires once per `createPool`, not per physical connection —
+measured: `warnings during createPool: 1`). `mysql2/lib/pool_config.js`
+recognizes only `waitForConnections/connectionLimit/maxIdle/idleTimeout/
+queueLimit/resetOnRelease`; `mysql2/lib/base/pool.js getConnection()` enqueues
+with no timeout when the limit is reached. Therefore the adapter enforces the
+bound itself with a `Promise.race` at its single checkout choke point
+(`getConnectionWithUtcSession`, `src/adapters/mysql.ts`), and a late checkout
+that loses the race but is handed a connection afterwards releases it
+immediately so the slot is not leaked. The option stays on the factory as the
+declared contract; future mysql2 versions that honour it will converge with
+the wrapper. §4's gap is closed with this bounded acquire; `connectionLimit:
+1`, `waitForConnections: true`, `timeout: 0` streaming, atomic batches, and
+the terminal (no-replay) cancel semantics are preserved and pinned unchanged
+(§3.2, §5 SLO-1/SLO-2 respected).
+
 ## 8. Consequences and bindings
 
 - **TASK-ARP05-001 (PostgreSQL):** implements/tests within §2's PG column;

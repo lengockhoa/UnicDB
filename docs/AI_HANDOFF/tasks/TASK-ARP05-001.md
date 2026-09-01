@@ -88,3 +88,73 @@ exercised by the wave/cycle `npm test` net.)
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: (step-1 TDD run on base code `0dd021e`, after writing the 5 cases from §Test Cases; first run had a second failure caused by my own case-4 test wiring — missing `clientCtor().mockImplementation(() => dedicated)` — fixed in the TEST only, production untouched; the clean RED below shows exactly the one expected production-gap failure. First-run tail included at the end for transparency.)
+
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-arp05-001
+
+ ❯ src/adapters/__tests__/postgres.test.ts  (23 tests | 1 failed) 3048ms
+   ❯ src/adapters/__tests__/postgres.test.ts > PostgresAdapter — ARP-05.1 resilience pins (TASK-ARP05-001) > connect() probe fails → no pool leak: end() once, pool nulled, next connect() builds a fresh pool
+     → expected 19 to be 20 // Object.is equality
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/adapters/__tests__/postgres.test.ts > PostgresAdapter — ARP-05.1 resilience pins (TASK-ARP05-001) > connect() probe fails → no pool leak: end() once, pool nulled, next connect() builds a fresh pool
+AssertionError: expected 19 to be 20 // Object.is equality
+
+- Expected
++ Received
+
+- 20
++ 19
+
+ ❯ src/adapters/__tests__/postgres.test.ts:745:46
+    744|     // The half-open pool must have been ended exactly once — no leak.
+    745|     expect(sharedPool.end.mock.calls.length).toBe(endCallsBefore + 1);
+       |                                              ^
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 22 passed (23)
+```
+
+Meaning: the RED case is §Test Cases #2 — on base, after the `SELECT 1` probe rejected, the half-open `Pool` was never `end()`ed (count unchanged) and `this.pool` stayed set. A production gap was proven, exactly the §Goal contingency. Cases 1/3/4/5 were GREEN on base (pin-only, as §Goal expected).
+
+Verification Output: (all four §Verification Commands run fresh in this turn, in order)
+
+```
+$ grep -qi "## Probe: PostgreSQL" docs/decisions/0002-cross-driver-resilience-contract.md
+grep exit 0 (section found)
+
+$ npx vitest run src/adapters/__tests__/postgres.test.ts
+ ✓ src/adapters/__tests__/postgres.test.ts  (23 tests) 3043ms
+
+ Test Files  1 passed (1)
+      Tests  23 passed (23)
+ Start at  05:01:55 / Duration  3.29s
+
+$ npm run typecheck
+> vsdb@1.40.0 typecheck
+> tsc --noEmit
+typecheck exit 0
+
+$ npm run compile
+  dist/extension.js      5.3mb ⚠️
+  dist/extension.js.map  9.2mb
+⚡ Done in 150ms
+esbuild: build complete
+compile exit 0
+```
+
+Additional evidence:
+- `git diff --stat -- src/`: `postgres.test.ts +231`, `postgres.ts +18` — production change confined to `connect()`'s probe block (see ADR §Probe: PostgreSQL for the diff rationale; signatures `PG_POOL_MAX`, `close()`, `cancelActiveQuery()` untouched).
+- ADR diff: 0 removed lines — pure append of `## Probe: PostgreSQL` below the wave-0 merge point; wave-0 content and (future) other tasks' sections untouched.
+- ARP-02 regression: existing TASK-RLX-001 cancel suites (tests #4a/#4b/#4c, O1/O2/O3) all pass within the 23 — dedicated-client cancel semantics preserved; the seam still never closes the pool/adapter.
+
+Status: PASS
+Note: Production gap found and fixed: `PostgresAdapter.connect()` left a half-open pool when the `SELECT 1` probe failed (no `pool.end()`, `this.pool` not nulled, retry would reuse a dead pool). Minimal fix mirrors `MySqlAdapter.connect` (mysql.ts:184-196): on probe failure, null `this.pool` then `end()` the dead pool once (best-effort, never masks the probe error) and rethrow the original error. All other cases pin-only GREEN on base. ADR appended under `## Probe: PostgreSQL` (feeds the ARP-05.4 gate). Test-side fix-round disclosure: my first RED run had a second failure from missing dedicated-client mock wiring in my own new case-4 test — corrected in the test file only, before any production change; clean RED run above.

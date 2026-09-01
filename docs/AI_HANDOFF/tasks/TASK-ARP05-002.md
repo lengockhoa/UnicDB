@@ -1,6 +1,6 @@
 # TASK-ARP05-002 — MySQL held-connection streaming + bounded acquire wait
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §2–§4 (ARP-05.2)
@@ -96,7 +96,24 @@ the full suite runs at the wave/cycle boundary.)
 
 ## Discussion
 
-(no comments yet)
+### 2026-09-02 · executor · claude-code / unic-code
+Design decision (resolved per task §Interfaces + ADR §4, recorded for the
+reviewer): the task/PLAN spec expected `acquireTimeout` as a mysql2 pool
+option. **Measured: mysql2 3.23.4 does not implement that option** — passing
+it logs `Ignoring invalid configuration option passed to Connection:
+acquireTimeout` (once per `createPool`) and the underlying queue still waits
+forever (`mysql2/lib/pool_config.js` knows only `waitForConnections/
+connectionLimit/maxIdle/idleTimeout/queueLimit/resetOnRelease`; no timeout in
+`base/pool.js getConnection()`). Implementation therefore does BOTH: (1) the
+option `acquireTimeout: POOL_ACQUIRE_TIMEOUT_MS` stays on the factory as the
+declared contract (case 2a pins it; future drivers converge), and (2) the
+ENFORCED bound is a `Promise.race` at the single checkout choke point
+`getConnectionWithUtcSession()` — driver-agnostic, and a late loser checkout
+that the pool hands out after the timeout is released immediately (no slot
+leak). The bound is injectable via `setPoolAcquireTimeoutMsForTests` (suite
+stubs 50ms; production default 10_000 aligned with `connectTimeout`). No
+change to `connectionLimit: 1`, `timeout: 0` streaming, batch/cancel paths.
+Full evidence in ADR §7 `## Probe: MySQL`.
 
 ---
 
@@ -104,3 +121,109 @@ the full suite runs at the wave/cycle boundary.)
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: Claude:feature-implementer
+Status: PASS
+
+RED_OUTPUT (step 1, base 0dd021e == 65b9c4f content for mysql.ts):
+
+```
+$ npx vitest run src/adapters/__tests__/mysqlQueueBound.test.ts
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-arp05-002
+
+ ❯ src/adapters/__tests__/mysqlQueueBound.test.ts  (5 tests | 2 failed) 2047ms
+   ❯ ... > case 2a: pool factory options include acquireTimeout = the injected POOL_ACQUIRE_TIMEOUT_MS
+     → expected undefined to be 50 // Object.is equality
+   ❯ ... > case 2b: a late request against a held single slot rejects within the injected bound
+     → Test timed out in 2000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+
+ FAIL  src/adapters/__tests__/mysqlQueueBound.test.ts > MySqlAdapter — bounded acquire wait (TASK-ARP05-002 case 2) > case 2a: pool factory options include acquireTimeout = the injected POOL_ACQUIRE_TIMEOUT_MS
+AssertionError: expected undefined to be 50 // Object.is equality
+
+- Expected:
+50
+
++ Received:
+undefined
+
+ ❯ src/adapters/__tests__/mysqlQueueBound.test.ts:190:41
+    189|     const pool = lastPool();
+    190|     expect(pool.options.acquireTimeout).toBe(50);
+
+ FAIL  src/adapters/__tests__/mysqlQueueBound.test.ts > MySqlAdapter — bounded acquire wait (TASK-ARP05-002 case 2) > case 2b: a late request against a held single slot rejects within the injected bound
+Error: Test timed out in 2000ms.
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 3 passed (5)
+   Duration  2.32s
+```
+
+Exactly the expected RED: today `queueLimit: 0` + no `acquireTimeout` = the
+late request waits forever (case 2b hits the 2s test timeout, i.e. unbounded)
+and the factory options carry no `acquireTimeout` (case 2a). The 3 pins
+(streaming/cancel/terminal) pass on the pre-state — existing behavior,
+pinned unchanged.
+
+Verification Output (all six task commands, fresh in this turn):
+
+```
+$ grep -qi "## Probe: MySQL" docs/decisions/0002-cross-driver-resilience-contract.md
+PASS exit 0
+$ grep -qi "acquireTimeout" docs/decisions/0002-cross-driver-resilience-contract.md
+PASS exit 0
+
+$ npx vitest run src/adapters/__tests__/adapterQueryShape.test.ts
+ Test Files  1 passed (1)
+      Tests  55 passed (55)   [includes new case 1a/1b routing pins]
+
+$ npx vitest run src/adapters/__tests__/mysqlQueueBound.test.ts
+ ✓ src/adapters/__tests__/mysqlQueueBound.test.ts  (5 tests) 88ms
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+
+$ npm run typecheck
+> tsc --noEmit            (exit 0)
+
+$ npm run compile
+⚡ Done in 141ms
+esbuild: build complete   (exit 0)
+```
+
+Additional (beyond the task's six, regression net): full `npm test` after the
+change = `217 passed | 1 skipped (218)`, `3032 passed | 2 skipped (3034)`,
+0 failures; on the stashed base the same run gives 3025 passed — the 7 new
+tests (5 queue-bound + 2 routing) are the only delta. `docs/decisions/0002…`
+wave-0 content untouched; only the `## Probe: MySQL` section appended under
+§7's merge point (before §8), with the chosen bound `acquireTimeout = 10_000`
+recorded there.
+
+### Acceptance criteria
+
+- [x] Cases 1–5 pass; case 2 RED on base (paste above) before the fix.
+- [x] Case 2 asserts termination within a bounded, injectable wait
+      (`setPoolAcquireTimeoutMsForTests(50)` + elapsed < 1500ms ceiling); the
+      suite runs in ~88ms — never a real 10s.
+- [x] Streaming, atomic batches, cancel/terminal paths preserved (pins pass
+      on base AND after the change); only the acquire wait is bounded.
+- [x] RED/GREEN probe results appended to the ADR under `## Probe: MySQL`;
+      chosen bound `acquireTimeout = 10_000` recorded (both greps exit 0);
+      wave-0 content and other sections untouched.
+- [x] `npm run typecheck` + `npm run compile` exit 0.
+- [x] No mutation/transaction/cursor automatic replay (case 3 pins the
+      statement is issued exactly once, cancel destroys exactly once, repeat
+      cancel is a no-op); ARP-02 destroy-terminal semantics preserved.
+
+Note: mysql2 3.23.4 ignores the `acquireTimeout` pool option (measured,
+recorded in ADR §7), so the enforced bound is the adapter-side `Promise.race`
+at `getConnectionWithUtcSession()`; the option remains on the factory as the
+declared contract per the task/PLAN spec. See Discussion entry above and ADR
+`## Probe: MySQL` for the full measurement. No other issues.
+
+## Reviewer Verdict
+
+(pending — Phase 4 appends below)
