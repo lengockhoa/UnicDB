@@ -1,5 +1,34 @@
 # Changelog
 
+## [1.36.0] — 2026-09-01
+
+Cycle DX-01: Release Confidence Lane (PORT-DX-01) — deterministic, locally-runnable "is this release trustworthy?" gate that composes the existing `npm test && npm run typecheck && npm run compile` pipeline into a one-command runner plus a contract test that pins every new script entry and runner behaviour.
+
+### Added
+- **`package.json` script entries** (composed strictly from existing commands, no new field, no new dependency):
+  - `verify:fast` = `"npm run typecheck && npm run compile"` — maintainer-only quick local sanity check (no test run).
+  - `verify:release` = `"npm test && npm run typecheck && npm run compile"` — the release-confidence lane. Integration suite is intentionally NOT included; that boundary is owned by ARP-09 and stays explicit.
+- **`scripts/verify-release.sh`** — portable POSIX (`/bin/sh`) runner, mode 0755, no `set -e`. Runs the three stages in fixed order with pinned labels `npm-test` → `typecheck` → `compile`. After each success, prints `PASS <stage>`; on a non-zero exit, prints `FAIL <stage>` then `FAIL verify:release` to stdout and propagates the failing exit code unchanged. Final line on success: `OK verify:release`. No ANSI escapes, no trailing whitespace per line, no carriage returns.
+- **`src/__tests__/releaseVerify.test.ts`** — 9-case Vitest contract that pins the new script entries, the runner behaviour, and the runner's executable/shebang contract. Describe block literally named `"verify-release.sh"`. Cases 1–3 exercise the runner via `child_process.spawnSync` with a PATH-stubbed temp `bin/{npm,tsc,node,esbuild}` (real binaries are never required); cases 4–9 read `package.json` and the runner file via `node:fs`. No `vi.mock`, no project imports, no host-filesystem side effects beyond `os.tmpdir()`. This file is intentionally separate from the pre-existing `src/__tests__/releaseHygiene.test.ts` (TASK-703 version-lock).
+
+### How to verify a release
+
+After a fresh checkout of this tag (`v1.36.0`), a maintainer or CI run can do:
+
+```bash
+npm ci                                  # or npm install
+npm run verify:release                  # runs `npm test && npm run typecheck && npm run compile`
+# or, equivalently, for the portable POSIX script (useful on hosts without npm node-modules):
+bash scripts/verify-release.sh
+```
+
+Both paths exit 0 on full success and exit N (the failing stage's exit code) on the first failure, with a `PASS <stage>` line per stage on success or a `FAIL <stage>` + `FAIL verify:release` line on failure. The contract test (`npx vitest run src/__tests__/releaseVerify.test.ts`) verifies both the script entries and the runner's behaviour. The contract test never embeds any secret, raw SQL, prompt, connection string, token, or credential.
+
+### Review
+- P2.5 plan review: round 1 returned ISSUES_FOUND (file collision with the pre-existing `releaseHygiene.test.ts`; weak `verify:fast` regex accepting a single-command value; anchor gap between §1's promise of an extension activation/command smoke and §2's "no `src/extension.ts` touch" — fixed by renaming to `releaseVerify.test.ts`, pinning the exact `verify:fast` set-membership, and dropping the §1 promise since the cycle stays "without runtime feature scope"). Round 2 returned ISSUES_FOUND (the §1 promise was not dropped in round 1; TASK-001 case 4 edge not mirrored in TASK-003; PLAN §4 row 7 shebang regex still broken; per-task verification order created a 001↔003 dependency cycle; §6 lower bound was inaccurate). Round 2 follow-up applied the remaining findings directly per the P2.5 loop cap and proceeded to P3.
+- R2 per-task review: 001 APPROVED; 002 APPROVED-WITH-MINOR (unsolicited `==== stage:` header line + missing EOF newline); 003 APPROVED-WITH-MINOR (case 3 missing `\x1b` ANSI assertion, case 6 missing `<` banned-char, case 2 used PASS-line absence instead of a spec'd marker counter). All 5 minors were applied in commit `94087ad` (R4.5).
+- Verification: full suite 2952 passed | 2 skipped (was 2943 | 2 at v1.35.0; +9 cases from `releaseVerify.test.ts`); `npm run typecheck` and `npm run compile` both exit 0; `bash scripts/verify-release.sh` exit 0; `npm run verify:release` exit 0.
+
 ## [1.35.0] — 2026-09-01
 
 Cycle AIX-05: Optional OMP Engine Resilience (ACP child lifecycle with bounded reaping, terminal MCP bridge disposal, and the production OMP route that drives the restart/fallback machinery).
