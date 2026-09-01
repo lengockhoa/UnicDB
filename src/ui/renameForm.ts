@@ -135,20 +135,28 @@ export class RenameForm {
     const { schema, table, mode, oldName } = this.options;
     try {
       const u = await this.usage();
-      const [viewRows, fkRows, routineRows, collisionRows] = await Promise.all([
-        u.dependentViews(schema, table),
-        u.referencingFks(schema, table),
-        u.routines(schema, table),
-        // Column renames cannot collide (same relation); table renames check
-        // the candidate name across the schema.
-        mode === "table"
-          ? u.nameCollision(schema, newName)
-          : Promise.resolve([] as Array<{ name: string; kind: string }>),
-      ]);
+      // DBX06-005 — trigger/index lookups take the CURRENT column name in
+      // column mode and "" in table mode (table-wide usage).
+      const columnKey = mode === "table" ? "" : oldName;
+      const [viewRows, fkRows, routineRows, collisionRows, triggerRows, indexRows] =
+        await Promise.all([
+          u.dependentViews(schema, table),
+          u.referencingFks(schema, table),
+          u.routines(schema, table),
+          // Column renames cannot collide (same relation); table renames check
+          // the candidate name across the schema.
+          mode === "table"
+            ? u.nameCollision(schema, newName)
+            : Promise.resolve([] as Array<{ name: string; kind: string }>),
+          u.triggers(schema, table, columnKey),
+          u.indexes(schema, table, columnKey),
+        ]);
       const rows: RenameCatalogRows = {
         dependentViews: viewRows,
         referencingFks: fkRows,
         routines: routineRows,
+        triggers: triggerRows,
+        indexes: indexRows,
         collisions:
           mode === "table"
             ? collisionRows.map((r) => `${r.name} (${r.kind})`)
@@ -178,6 +186,8 @@ export class RenameForm {
         views: a.report.dependentViews,
         fks: a.report.referencingFks,
         routines: a.report.routines,
+        triggers: a.report.triggers,
+        indexes: a.report.indexes,
         collisions: a.report.collisions,
       },
       statements: a.statements,
@@ -280,6 +290,8 @@ function EMPTY_ROWS(): RenameCatalogRows {
     dependentViews: [],
     referencingFks: [],
     routines: [],
+    triggers: [],
+    indexes: [],
     collisions: [],
   };
 }

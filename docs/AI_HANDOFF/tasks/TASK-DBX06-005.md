@@ -75,4 +75,41 @@ The original DBX-06 flow is already shipped and approved. This task is intention
 
 ## Executor Report
 
-<!-- Executor appends RED→GREEN evidence, changed files, verification output, and deviations here. -->
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT: |
+  npx vitest run src/core/ddl/__tests__/renameAnalysis.test.ts src/core/ddl/__tests__/renameCatalog.test.ts src/adapters/__tests__/postgresCatalog.test.ts
+  → Test Files 3 failed (3); Tests 13 failed | 17 passed (30)
+  Key failures (all for the expected "missing DBX06-005 surface" reason):
+  - renameAnalysis: `expected undefined to deeply equal [...]` on report.triggers/report.indexes; usageCount did not include trigger/index rows (TypeError reading 'length' on undefined).
+  - renameCatalog: `TRIGGERS_SQL`/`INDEXES_SQL` not exported → import-time failures; `p.steps` undefined → "Cannot read properties of undefined (reading 'filter')"; pinned collision diagnostic assertion failed.
+  - postgresCatalog: `expected [] to deeply equal [...]` — adapter.renameUsage.triggers/.indexes undefined (TypeError 'u.triggers is not a function' surfaced in the host test likewise).
+  Full captured output on record; 13/13 failures are the missing new API, no pre-existing test regressed at RED time.
+
+Files changed (all inside .worktrees/task-dbx06-005):
+  - src/core/ddl/renameAnalysis.ts — added RenameTriggerRow/RenameIndexRow; RenameCatalogRows/RenameReport gain triggers/indexes; analyzeUsage includes both in report + usageCount (pure, additive).
+  - src/core/ddl/renameCatalog.ts — added TRIGGERS_SQL/INDEXES_SQL (pure $1/$2/$3 templates; $3 = column || ""; tgattr + tgqual word-boundary, indkey + indexprs + indpred word-boundary; no pg_proc/prosrc/pg_get_functiondef); added RenameOperation, RenamePlanStep, RenamePlan.steps; operations?: RenameOperation[] drives ordered multi-step plans; statements stays the executable-only surface in order; collision/same-name keep steps: [] + statements: [] + pinned diagnostic; added pure mappers mapRenameTriggerRows (tgtype bit decode, mirrors pgCatalog) and mapRenameIndexRows (is_primary/is_unique flags + indexdef column parse).
+  - src/adapters/types.ts — RenameUsageApi gains triggers(schema, table, column) and indexes(schema, table, column) with typed returns (column required string; "" in table mode).
+  - src/adapters/postgres.ts — implemented both lookups through this.query<T>(SQL, [schema, table, column]) and mapped raw pg rows to camel-case public types.
+  - src/ui/renameForm.ts — analyzeName now also calls u.triggers/u.indexes (columnKey = "" in table mode, oldName in column mode) and posts the two new report fields; EMPTY_ROWS extended. (Required: analyzeUsage reads the new arrays.)
+  - src/ui/__tests__/renameFormHost.test.ts — fakeUsage + inline stub extended with triggers/indexes (mock-only; existing assertions unchanged and still pass).
+  - src/core/ddl/__tests__/renameAnalysis.test.ts — trigger/index usage aggregation + collision interaction tests; EMPTY fixture extended.
+  - src/core/ddl/__tests__/renameCatalog.test.ts — §Test Cases 1/3/4/5: expanded step plan, SQL membership contract (tgattr/tgqual/indkey/indexprs/indpred, \m..\M, function-body exclusion), collision → steps:[]/statements:[]/exact diagnostic, ordered 2-operation plan.
+  - src/adapters/__tests__/postgresCatalog.test.ts — §Test Case 2: triggers/indexes bind exactly ['public','users',''] (table) and ['public','users','full_name'] / ['public','users','email'] (column); snake_case rows map to {name,event,timing} / {name,isPrimary,isUnique,columns}.
+
+Verification Output (§Verification Commands, fresh in this turn):
+  1. npx vitest run <3 focused files> → Test Files 3 passed (3); Tests 30 passed (30)
+  2. npm run typecheck → tsc --noEmit, exit 0, no errors
+  3. npm run compile → esbuild: build complete, exit 0
+  Extra (not required): npx vitest run (full unit suite) → 214 files passed | 1 skipped; 2868 tests passed | 2 skipped; 0 failed. pgCatalog tests stay green.
+
+Deviations / notes:
+  - renameForm.ts touched beyond the listed target files: mandatory — analyzeUsage dereferences rows.triggers/rows.indexes, so the host must populate them; without it every rename analysis errored ("Cannot read properties of undefined"). Kept to the smallest addition (two lookups + two report fields).
+  - renameFormHost.test.ts fake extended for the same reason (interface grew by 2 required methods); no assertion semantics changed.
+  - TABLE_FKS_SQL and all pre-existing SQL/tests untouched; statements surface byte-identical to DBX06-001/002 for single-operation requests.
+  - No git add/commit/push performed, per instructions.
+
+Status: PASS
+Note: RED confirmed (13 failing for missing-new-API reasons) → GREEN 30/30 focused, typecheck + compile clean, full unit suite 2868/2868 green.

@@ -10,6 +10,8 @@ const EMPTY: RenameCatalogRows = {
   dependentViews: [],
   referencingFks: [],
   routines: [],
+  triggers: [],
+  indexes: [],
   collisions: [],
 };
 
@@ -60,12 +62,57 @@ describe("analyzeUsage", () => {
         { constraint: "fk_audit", fromTable: "audit" },
       ],
       routines: [{ name: "sync_users" }],
+      triggers: [],
+      indexes: [],
       collisions: [],
     };
     const r = analyzeUsage(rows);
     expect(r.usageCount).toBe(4);
     expect(r.safe).toBe(true);
     expect(r.report.fks).toHaveLength(2);
+  });
+
+  it("counts triggers + indexes in usage and surfaces them in report (DBX06-005)", () => {
+    const rows: RenameCatalogRows = {
+      dependentViews: [],
+      referencingFks: [],
+      routines: [],
+      triggers: [
+        { name: "trg_audit", event: "INSERT", timing: "BEFORE" },
+        { name: "trg_notify", event: "UPDATE", timing: "AFTER" },
+      ],
+      indexes: [
+        { name: "idx_users_name", isPrimary: false, isUnique: true, columns: ["name"] },
+        { name: "idx_users_email", isPrimary: false, isUnique: false, columns: ["email", "tenant_id"] },
+      ],
+      collisions: [],
+    };
+    const r = analyzeUsage(rows);
+    expect(r.usageCount).toBe(4);
+    expect(r.safe).toBe(true);
+    expect(r.report.triggers).toEqual([
+      { name: "trg_audit", event: "INSERT", timing: "BEFORE" },
+      { name: "trg_notify", event: "UPDATE", timing: "AFTER" },
+    ]);
+    expect(r.report.indexes).toEqual([
+      { name: "idx_users_name", isPrimary: false, isUnique: true, columns: ["name"] },
+      { name: "idx_users_email", isPrimary: false, isUnique: false, columns: ["email", "tenant_id"] },
+    ]);
+  });
+
+  it("triggers + indexes + collisions all still surface safely", () => {
+    const rows: RenameCatalogRows = {
+      dependentViews: [{ name: "v_users", kind: "view" }],
+      referencingFks: [],
+      routines: [],
+      triggers: [{ name: "trg_a", event: "INSERT", timing: "AFTER" }],
+      indexes: [{ name: "idx_x", isPrimary: true, isUnique: true, columns: ["id"] }],
+      collisions: ["x (table)"],
+    };
+    const r = analyzeUsage(rows);
+    expect(r.safe).toBe(false);
+    expect(r.usageCount).toBe(3);
+    expect(r.report.collisions).toEqual(["x (table)"]);
   });
 
   it("collisions → unsafe", () => {

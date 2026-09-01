@@ -166,4 +166,136 @@ describe("PostgresAdapter — catalog (TASK-AF-001 tests 10-12)", () => {
     expect(lastCall[0]).toContain("pg_indexes");
     await adapter.close();
   });
+
+  // ---- DBX06-005 — renameUsage.triggers + renameUsage.indexes --------------
+
+  it("renameUsage.triggers (table mode) binds [schema, table, ''] and maps rows", async () => {
+    queue.push({ rows: [{ "?column?": 1 }] }); // probe
+    queue.push({
+      rows: [
+        {
+          tgname: "trg_audit",
+          tgtype: 7, // ROW | BEFORE | INSERT
+          tgrelid: "public.users",
+        },
+      ],
+    });
+    const adapter = new PostgresAdapter(cfg(), "pw");
+    await adapter.connect();
+    const out = await adapter.renameUsage!.triggers("public", "users", "");
+    expect(out).toEqual([
+      { name: "trg_audit", event: "INSERT", timing: "BEFORE" },
+    ]);
+    const lastCall = lastPool().query.mock.calls.at(-1) as unknown as [
+      string,
+      string[],
+    ];
+    expect(lastCall[1]).toEqual(["public", "users", ""]);
+    expect(lastCall[0]).toMatch(/\$1/);
+    expect(lastCall[0]).toMatch(/\$2/);
+    expect(lastCall[0]).toMatch(/\$3/);
+    expect(lastCall[0]).toContain("tgattr");
+    await adapter.close();
+  });
+
+  it("renameUsage.triggers (column mode) binds [schema, table, column]", async () => {
+    queue.push({ rows: [{ "?column?": 1 }] }); // probe
+    queue.push({
+      rows: [
+        {
+          tgname: "trg_full",
+          tgtype: 19, // ROW | BEFORE | UPDATE
+          tgrelid: "public.users",
+        },
+      ],
+    });
+    const adapter = new PostgresAdapter(cfg(), "pw");
+    await adapter.connect();
+    const out = await adapter.renameUsage!.triggers(
+      "public",
+      "users",
+      "full_name",
+    );
+    expect(out[0]).toMatchObject({
+      name: "trg_full",
+      event: "UPDATE",
+      timing: "BEFORE",
+    });
+    const lastCall = lastPool().query.mock.calls.at(-1) as unknown as [
+      string,
+      string[],
+    ];
+    expect(lastCall[1]).toEqual(["public", "users", "full_name"]);
+    await adapter.close();
+  });
+
+  it("renameUsage.indexes (table mode) binds [schema, table, ''] and maps rows", async () => {
+    queue.push({ rows: [{ "?column?": 1 }] }); // probe
+    queue.push({
+      rows: [
+        {
+          indexname: "idx_users_name",
+          is_primary: false,
+          is_unique: false,
+          indexdef:
+            "CREATE INDEX idx_users_name ON public.users USING btree (name)",
+        },
+        {
+          indexname: "idx_users_pkey",
+          is_primary: true,
+          is_unique: true,
+          indexdef:
+            "CREATE UNIQUE INDEX idx_users_pkey ON public.users USING btree (id)",
+        },
+      ],
+    });
+    const adapter = new PostgresAdapter(cfg(), "pw");
+    await adapter.connect();
+    const out = await adapter.renameUsage!.indexes("public", "users", "");
+    expect(out).toEqual([
+      { name: "idx_users_name", isPrimary: false, isUnique: false, columns: ["name"] },
+      { name: "idx_users_pkey", isPrimary: true, isUnique: true, columns: ["id"] },
+    ]);
+    const lastCall = lastPool().query.mock.calls.at(-1) as unknown as [
+      string,
+      string[],
+    ];
+    expect(lastCall[1]).toEqual(["public", "users", ""]);
+    expect(lastCall[0]).toMatch(/\$1/);
+    expect(lastCall[0]).toMatch(/\$2/);
+    expect(lastCall[0]).toMatch(/\$3/);
+    expect(lastCall[0]).toContain("indkey");
+    await adapter.close();
+  });
+
+  it("renameUsage.indexes (column mode) binds [schema, table, column]", async () => {
+    queue.push({ rows: [{ "?column?": 1 }] }); // probe
+    queue.push({
+      rows: [
+        {
+          indexname: "idx_email",
+          is_primary: false,
+          is_unique: true,
+          indexdef:
+            "CREATE UNIQUE INDEX idx_email ON public.users USING btree (email)",
+        },
+      ],
+    });
+    const adapter = new PostgresAdapter(cfg(), "pw");
+    await adapter.connect();
+    const out = await adapter.renameUsage!.indexes(
+      "public",
+      "users",
+      "email",
+    );
+    expect(out).toEqual([
+      { name: "idx_email", isPrimary: false, isUnique: true, columns: ["email"] },
+    ]);
+    const lastCall = lastPool().query.mock.calls.at(-1) as unknown as [
+      string,
+      string[],
+    ];
+    expect(lastCall[1]).toEqual(["public", "users", "email"]);
+    await adapter.close();
+  });
 });

@@ -1,7 +1,22 @@
-// src/core/ddl/renameAnalysis.ts — TASK-DBX06-001
+// src/core/ddl/renameAnalysis.ts — TASK-DBX06-001 + DBX06-005
 // PURE rename-usage analysis for the DBX-06 Safe Rename Refactor.
 // NO vscode, NO fs, NO net. Consumers: renameCatalog plan builder and the
 // rename form host.
+
+/** Trigger that references the table (and optionally the column). */
+export interface RenameTriggerRow {
+  name: string;
+  event: string;
+  timing: string;
+}
+
+/** Index that references the table (and optionally the column). */
+export interface RenameIndexRow {
+  name: string;
+  isPrimary: boolean;
+  isUnique: boolean;
+  columns: string[];
+}
 
 export interface RenameCatalogRows {
   /** Views + materialized views whose rule depends on the table. */
@@ -10,6 +25,10 @@ export interface RenameCatalogRows {
   referencingFks: Array<{ constraint: string; fromTable: string }>;
   /** Routines whose body mentions the table (advisory only). */
   routines: Array<{ name: string }>;
+  /** Triggers on the table (DBX06-005 — advisory). */
+  triggers: RenameTriggerRow[];
+  /** Indexes on the table (DBX06-005 — advisory). */
+  indexes: RenameIndexRow[];
   /** Target-name collisions, pre-labeled (e.g. "users_bk (table)"). */
   collisions: string[];
 }
@@ -18,12 +37,14 @@ export interface RenameReport {
   views: Array<{ name: string; kind: string }>;
   fks: Array<{ constraint: string; fromTable: string }>;
   routines: Array<{ name: string }>;
+  triggers: RenameTriggerRow[];
+  indexes: RenameIndexRow[];
   collisions: string[];
 }
 
 export interface RenameUsageSummary {
   report: RenameReport;
-  /** views + fks + routines — objects the user should review. */
+  /** views + fks + routines + triggers + indexes — objects the user should review. */
   usageCount: number;
   /** False only when the rename would collide with an existing relation. */
   safe: boolean;
@@ -64,6 +85,8 @@ export function analyzeUsage(rows: RenameCatalogRows): RenameUsageSummary {
     views: rows.dependentViews,
     fks: rows.referencingFks,
     routines: rows.routines,
+    triggers: rows.triggers,
+    indexes: rows.indexes,
     collisions: rows.collisions,
   };
   return {
@@ -71,7 +94,9 @@ export function analyzeUsage(rows: RenameCatalogRows): RenameUsageSummary {
     usageCount:
       rows.dependentViews.length +
       rows.referencingFks.length +
-      rows.routines.length,
+      rows.routines.length +
+      rows.triggers.length +
+      rows.indexes.length,
     safe: rows.collisions.length === 0,
   };
 }

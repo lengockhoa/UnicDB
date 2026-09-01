@@ -83,6 +83,14 @@ import {
   TABLE_FKS_SQL,
   ROUTINES_SQL,
   NAME_COLLISION_SQL,
+  TRIGGERS_SQL,
+  INDEXES_SQL,
+  mapRenameTriggerRows,
+  mapRenameIndexRows,
+} from "../core/ddl/renameCatalog";
+import type {
+  RawRenameTriggerRow,
+  RawRenameIndexRow,
 } from "../core/ddl/renameCatalog";
 import { splitStatements } from "../core/statementParser";
 import { maskLiteralsAndComments } from "../core/dangerousStatement";
@@ -846,6 +854,22 @@ export class PostgresAdapter implements DbAdapter {
         schema,
         candidate,
       ]).then((r) => r.rows),
+
+    // DBX06-005 — typed trigger/index lookups. Both always bind exactly
+    // [schema, table, column]; table mode passes column === "".
+    triggers: (schema, table, column) =>
+      this.query<RawRenameTriggerRow>(TRIGGERS_SQL(), [
+        schema,
+        table,
+        column,
+      ]).then((r) => mapRenameTriggerRows(r.rows)),
+
+    indexes: (schema, table, column) =>
+      this.query<RawRenameIndexRow>(INDEXES_SQL(), [
+        schema,
+        table,
+        column,
+      ]).then((r) => mapRenameIndexRows(r.rows)),
   };
 
   // ---- Helpers --------------------------------------------------------------

@@ -34,6 +34,8 @@ function fakeUsage(
       Promise.resolve([{ constraint: "fk_orders_users", fromTable: "orders" }]),
     routines: () => Promise.resolve([]),
     nameCollision: () => Promise.resolve([]),
+    triggers: () => Promise.resolve([]),
+    indexes: () => Promise.resolve([]),
     ...overrides,
   };
 }
@@ -94,6 +96,14 @@ describe("RenameForm.analyzeName (host logic)", () => {
       },
       nameCollision: (schema, candidate) => {
         calls.push(`collision:${schema}:${candidate}`);
+        return Promise.resolve([]);
+      },
+      triggers: (schema, table, column) => {
+        calls.push(`triggers:${schema}.${table}:${column}`);
+        return Promise.resolve([]);
+      },
+      indexes: (schema, table, column) => {
+        calls.push(`indexes:${schema}.${table}:${column}`);
         return Promise.resolve([]);
       },
     };

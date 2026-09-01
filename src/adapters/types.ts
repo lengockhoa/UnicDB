@@ -213,7 +213,7 @@ export function hasAdapterCapability(
 }
 
 /**
- * DBX-06 — all four lookups MUST be $n-parameterized (never interpolate
+ * DBX-06 — all lookups MUST be $n-parameterized (never interpolate
  * user identifiers into SQL text).
  */
 export interface RenameUsageApi {
@@ -221,6 +221,26 @@ export interface RenameUsageApi {
   referencingFks(schema: string, table: string): Promise<Array<{ constraint: string; fromTable: string }>>;
   routines(schema: string, table: string): Promise<Array<{ name: string }>>;
   nameCollision(schema: string, candidate: string): Promise<Array<{ name: string; kind: string }>>;
+  /**
+   * DBX06-005 — triggers on (schema, table) referencing `column` (pass
+   * `""` in table mode). Returns `{ name, event, timing }` records
+   * derived from `pg_trigger.tgtype`.
+   */
+  triggers(
+    schema: string,
+    table: string,
+    column: string,
+  ): Promise<Array<{ name: string; event: string; timing: string }>>;
+  /**
+   * DBX06-005 — indexes on (schema, table) referencing `column` (pass
+   * `""` in table mode). Returns `{ name, isPrimary, isUnique, columns }`
+   * records derived from `pg_index` and `pg_get_indexdef`.
+   */
+  indexes(
+    schema: string,
+    table: string,
+    column: string,
+  ): Promise<Array<{ name: string; isPrimary: boolean; isUnique: boolean; columns: string[] }>>;
 }
 
 /**
