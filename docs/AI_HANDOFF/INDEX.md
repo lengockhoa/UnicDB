@@ -1,6 +1,6 @@
 # INDEX
 
-Cycle AIX-07 — **Trust, Privacy & Governance**. Active, executable scope covers the central effective AI policy (TASK-AIX07-001), the redacted all-turn audit export primitive (TASK-AIX07-002), and their policy + audit command host integration (TASK-AIX07-003). All three tasks complete and pending review.
+Cycle AIX-07 — **Trust, Privacy & Governance** — complete; shipped in v1.28.0. Cycle DX-01 — Release confidence lane — shipped in v1.36.0. Next commissionable cycle: ARP-01 (read-only enforcement completeness) from `docs/plans/2026-09-01-vsdb-additive-roadmap.md`.
 
 | Task / Portfolio | Title | Status | Dependencies | Reviewer |
 |---|---|---|---|---|
@@ -9,11 +9,11 @@ Cycle AIX-07 — **Trust, Privacy & Governance**. Active, executable scope cover
 | TASK-RLX-003 | Fail closed on malformed import execution plans | done | none | unic-smart |
 | TASK-AIX07-001 | Central effective AI policy (pure) | approved | fix round 1 verified | unic-smart |
 | TASK-AIX07-002 | Redacted all-turn audit export primitive | approved | fix round 1 verified | unic-smart |
-| TASK-AIX07-003 | Policy and audit command host integration | blocked | none | unic-smart |
+| TASK-AIX07-003 | Policy and audit command host integration | done | fix round 2 verified | unic-smart |
 | TASK-DBX07-001 | AIX-06 Trace r3 review fixes | done | none | unic-smart |
-| PORT-RLX-02 | Cross-dialect query lifecycle completion | active — planned in Cycle RLX-02 | RLX-01 | unic-smart |
-| PORT-RLX-03 | Connection, tunnel, and schema-refresh recovery | active — planned in Cycle RLX-03 | RLX-01, PORT-RLX-02 | unic-smart |
-| PORT-DBX-06 | Reviewed PostgreSQL rename workflow | active — expanded plan ready | PORT-RLX-03 | unic-smart |
+| PORT-RLX-02 | Cross-dialect query lifecycle completion | superseded (shipped in v1.31.0) | - | unic-smart |
+| PORT-RLX-03 | Connection, tunnel, and schema-refresh recovery | superseded (shipped in v1.32.0) | - | unic-smart |
+| PORT-DBX-06 | Reviewed PostgreSQL rename workflow | superseded (shipped in v1.33.0) | - | unic-smart |
 | PORT-DBX-08 | Explicit adapter capability parity | superseded (shipped in v1.29.0) | - | unic-smart |
 | PORT-AIX-03 | Read-only database analysis copilot hardening | superseded (shipped v1.34.0) | - | unic-smart |
 | PORT-AIX-05 | Optional OMP engine resilience | superseded (shipped v1.35.0) | - | unic-smart |
