@@ -2943,3 +2943,266 @@ describe("TASK-AIX05-103 — commandOpenAiChat production OMP engine wiring", ()
     expect(opts.ompChatEngine).toBeUndefined();
   });
 });
+
+// ============================================================================
+// TASK-ARP02-004 — host integration: runStatements finally-busy ownership +
+// deactivate-during-run continuation ordering.
+//
+// Wave-1 closed the ResultsPanel-INTERNAL session epoch (TASK-ARP02-002) and
+// the QueryRunner cancel-ownership surface (TASK-ARP02-001). Two HOST-side
+// gaps remain in `src/extension.ts`:
+//
+// Gap #2 (runStatements finally, ~:1713-1726): the host drives
+//   panel.setBusy(true); try { await runner.run(...) } finally
+//   { panel.setBusy(false); }
+// The shared QueryRunner throws "already running" when a second invocation
+// overlaps an in-flight one; the SECOND invocation's finally still fires
+// `panel.setBusy(false)` WHILE the first run is in flight — clearing the
+// live session's busy state. The panel epoch guard (wave-1) does not cover
+// this call: it is extension code calling INTO the panel, not a panel
+// continuation.
+//
+// Gap #1 (deactivate ordering, ~:1012-1040): deactivate() disposes module
+// disposables but nothing bounds an in-flight runStatements: a late
+// completion still calls `panel.render(...)` (host call — again outside the
+// panel-internal epoch guard) and `panel.setBusy(false)` after teardown
+// started.
+//
+// Regression #4: RLX-02 command await semantics (extension.ts ~:476-486) —
+// `await runner.cancel()` BEFORE `panel.setBusy(false)` — must stay intact.
+// This case is GREEN by design on a correct tree; it locks the invariant.
+// ============================================================================
+describe("TASK-ARP02-004 — host-integration: runStatements finally + deactivate ordering", () => {
+  /** Parked/released per-test to hold a statement mid-flight. */
+  let runGate: Promise<void>;
+  let releaseRun: (() => void) | null;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
+    state.registeredCommands.clear();
+    state.createdWebviewPanels.length = 0;
+    state.workspaceFolders = undefined; // ⇒ ConnectionManager dùng globalState
+    state.activeEditor = undefined;
+    runGate = Promise.resolve();
+    releaseRun = null;
+  });
+
+  /**
+   * Poll a condition with macrotask yields (each setTimeout flushes all
+   * pending microtasks), failing after `maxMs`. Deterministic for deeply
+   * async command paths where a fixed microtask drain is fragile.
+   */
+  async function until(cond: () => boolean, what: string, maxMs = 2000): Promise<void> {
+    const start = Date.now();
+    while (!cond()) {
+      if (Date.now() - start > maxMs) {
+        throw new Error(`TASK-ARP02-004 harness: timed out waiting for ${what}`);
+      }
+      await new Promise((r) => setTimeout(r, 2));
+    }
+  }
+
+  function setSqlEditor(sql: string): void {
+    state.activeEditor = {
+      document: {
+        languageId: "sql",
+        getText: () => sql,
+        offsetAt: (p: unknown) => (p as { character: number }).character,
+      },
+      selection: {
+        isEmpty: false,
+        active: { line: 0, character: sql.length },
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: sql.length },
+      },
+      insertSnippet: vi.fn().mockResolvedValue(undefined),
+    };
+  }
+
+  /**
+   * Same dynamic-import seam as activateFresh606: vi.resetModules() drops the
+   * module cache, so the extension must be imported fresh and any prototype
+   * spy attached to the freshly-loaded class. `ConnectionManager.prototype
+   * .getAdapter` is the only fake layer — the REAL QueryRunner, REAL
+   * runStatements and REAL ResultsPanel execute.
+   */
+  async function activateFresh004() {
+    const ctx = makeCtx();
+    ctx.globalState.get = vi.fn((key: string) => {
+      if (key === "vsdb.connections") {
+        return [
+          {
+            id: "c1",
+            name: "c",
+            driver: "postgres",
+            host: "h",
+            port: 5432,
+            user: "u",
+            database: "d",
+          },
+        ];
+      }
+      if (key === "vsdb.activeConnection") return "c1";
+      return undefined;
+    }) as never;
+
+    const runQueryCalls: Array<{ sql: string }> = [];
+    const adapterStub = {
+      // Honours the current `runGate` AT CALL TIME so each test parks or
+      // releases the statement without re-spying.
+      runQuery: vi.fn(async (sql: string) => {
+        runQueryCalls.push({ sql });
+        await runGate;
+        return {
+          results: [
+            {
+              columns: ["?column?"],
+              rows: [["1"]],
+              rowCount: 1,
+              commandTag: "SELECT 1",
+              durationMs: 0,
+            },
+          ],
+        };
+      }),
+      listTables: vi.fn(async () => []),
+      listColumns: vi.fn(async () => []),
+      testConnection: vi.fn(async () => undefined),
+      close: vi.fn(async () => undefined),
+    };
+    const connMod = await import("./core/connectionManager");
+    vi.spyOn(connMod.ConnectionManager.prototype, "getAdapter").mockResolvedValue(
+      adapterStub as never,
+    );
+
+    const ext = await import("./extension");
+    await ext.activate(ctx as never);
+    return { ext, runQueryCalls };
+  }
+
+  it("Gap #2 — overlapping runQuery: the stale invocation's finally must NOT clear the live run's busy state", async () => {
+    const { runQueryCalls } = await activateFresh004();
+    setSqlEditor("SELECT 1;");
+
+    const panelMod = await import("./ui/resultsPanel");
+    const setBusySpy = vi.fn();
+    vi.spyOn(panelMod.ResultsPanel.prototype, "setBusy").mockImplementation(
+      setBusySpy as never,
+    );
+
+    // Park the adapter so run #1 stays in flight (runner.isRunning() === true).
+    runGate = new Promise<void>((r) => { releaseRun = r; });
+
+    const runQuery = state.registeredCommands.get("vsdb.runQuery")!;
+    const p1 = (runQuery as () => Promise<void>)();
+    // Run #1 is parked inside adapter.runQuery ⇒ its setBusy(true) already
+    // fired and the shared QueryRunner is owned by run #1.
+    await until(() => runQueryCalls.length >= 1, "run #1 to reach the adapter");
+
+    // Overlapping invocation #2: the shared runner REJECTS its run() with
+    // "QueryRunner is already running". Its runStatements finally is the
+    // stale one: it fires while run #1 still owns the runner.
+    const p2 = (runQuery as () => Promise<void>)();
+    await until(
+      () => setBusySpy.mock.calls.filter((c) => c[0] === true).length >= 2,
+      "run #2 to fire setBusy(true)",
+    );
+    // Let invocation #2 settle completely (catch + finally included) before
+    // judging: p2's promise resolves only after its finally ran.
+    await expect(p2).resolves.toBeUndefined();
+
+    // THE GAP: with the stale finally unguarded, setBusy(false) has fired
+    // while run #1 is still in flight — the live session's busy state was
+    // cleared by a dead invocation.
+    const falseDuringRun1 = setBusySpy.mock.calls.filter((c) => c[0] === false);
+    expect(falseDuringRun1).toHaveLength(0);
+
+    // Release run #1; its OWN finally is the live one and must clear busy
+    // exactly once.
+    if (releaseRun) releaseRun();
+    await expect(p1).resolves.toBeUndefined();
+
+    const falseTotal = setBusySpy.mock.calls.filter((c) => c[0] === false);
+    expect(falseTotal).toHaveLength(1);
+  });
+
+  it("Gap #1 — deactivate() during an in-flight run: late completion must not render into the disposed panel", async () => {
+    const { ext, runQueryCalls } = await activateFresh004();
+    setSqlEditor("SELECT 1;");
+
+    const panelMod = await import("./ui/resultsPanel");
+    const renderSpy = vi.fn();
+    vi.spyOn(panelMod.ResultsPanel.prototype, "render").mockImplementation(
+      renderSpy as never,
+    );
+    const setBusySpy = vi.fn();
+    vi.spyOn(panelMod.ResultsPanel.prototype, "setBusy").mockImplementation(
+      setBusySpy as never,
+    );
+
+    runGate = new Promise<void>((r) => { releaseRun = r; });
+
+    const runQuery = state.registeredCommands.get("vsdb.runQuery")!;
+    const p1 = (runQuery as () => Promise<void>)();
+    await until(() => runQueryCalls.length >= 1, "run to reach the adapter");
+
+    const rendersAtDeactivate = renderSpy.mock.calls.length;
+
+    // Teardown starts while the run is in flight. VS Code disposes
+    // context.subscriptions (which holds the shared ResultsPanel) around
+    // deactivate(); the host-side continuation that settles later must not
+    // write into that disposed panel.
+    await ext.deactivate();
+
+    // Late completion: the statement resolves AFTER teardown started.
+    if (releaseRun) releaseRun();
+    await expect(p1).resolves.toBeUndefined();
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 5));
+
+    // No render may escape into the disposed panel after deactivate, and
+    // the stale finally must not clear busy after teardown either.
+    const rendersAfter = renderSpy.mock.calls.length - rendersAtDeactivate;
+    expect(rendersAfter).toBe(0);
+    expect(
+      setBusySpy.mock.calls.filter((c) => c[0] === false).length,
+    ).toBe(0);
+  });
+
+  it("Regression #4 — RLX-02 command await semantics: vsdb.cancelQuery awaits runner.cancel() BEFORE panel.setBusy(false)", async () => {
+    const runnerMod = await import("./core/queryRunner");
+    let resolveCancel: (() => void) | null = null;
+    const cancelSpy = vi.fn(
+      () => new Promise<void>((resolve) => { resolveCancel = resolve; }),
+    );
+    vi.spyOn(runnerMod.QueryRunner.prototype, "cancel").mockImplementation(
+      cancelSpy,
+    );
+    const panelMod = await import("./ui/resultsPanel");
+    const setBusySpy = vi.fn();
+    vi.spyOn(panelMod.ResultsPanel.prototype, "setBusy").mockImplementation(
+      setBusySpy as never,
+    );
+
+    await activateFresh004();
+    const cancelCommand = state.registeredCommands.get("vsdb.cancelQuery");
+    expect(cancelCommand).toBeDefined();
+
+    const commandPromise = (cancelCommand as () => Promise<void>)();
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 5));
+    // The deferred cancel has not resolved ⇒ busy(false) MUST NOT have fired.
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
+    expect(
+      setBusySpy.mock.calls.filter((c) => c[0] === false),
+    ).toHaveLength(0);
+
+    if (resolveCancel) resolveCancel();
+    await expect(commandPromise).resolves.toBeUndefined();
+    // After cancel settles: exactly one busy(false), seam-first ordering kept.
+    expect(
+      setBusySpy.mock.calls.filter((c) => c[0] === false),
+    ).toHaveLength(1);
+  });
+});

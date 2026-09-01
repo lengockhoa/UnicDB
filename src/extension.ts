@@ -83,6 +83,14 @@ import { createSchemaContextCache, type SchemaContextCache } from "./ai/schemaCo
 import { registerSqlAutocomplete, type AutocompleteRegistration } from "./extensionAutocomplete";
 let disposables: vscode.Disposable[] = [];
 let state: ExtensionState | null = null;
+/**
+ * TASK-ARP02-004 — teardown sentinel. Set synchronously at deactivate()
+ * entry and reset at activate() entry (reload ⇒ new session), so any
+ * in-flight `runStatements` continuation that settles after teardown
+ * started short-circuits its panel writes (render/setBusy) instead of
+ * rendering into a disposed panel or resurrecting the webview.
+ */
+let deactivating = false;
 /** Cached single-instance AiSettingsForm (TASK-004). Reused across calls. */
 let aiSettingsForm: AiSettingsForm | null = null;
 /** Cached single-instance AiChatPanel (TASK-004). Reused across calls. */
@@ -195,6 +203,9 @@ export async function activate(
   context: vscode.ExtensionContext,
 ): Promise<void> {
   disposables = [];
+  // TASK-ARP02-004 — a reload re-activates in the same JS realm: clear the
+  // teardown sentinel set by the previous deactivate().
+  deactivating = false;
   extensionUriForForm = context.extensionUri;
 
   // AIX-02: keep the grounding allowlist fresh on workspace structure
@@ -1010,6 +1021,11 @@ export async function activate(
 }
 
 export async function deactivate(): Promise<void> {
+  // TASK-ARP02-004 — post-RLX-02 ordering: in-flight runner work is NOT
+  // awaited here (cancel stays user/command-scoped), but every runStatements
+  // continuation that settles from this synchronous point on must not write
+  // into a disposed panel (render → show() would even recreate the webview).
+  deactivating = true;
   for (const d of disposables) {
     try {
       d.dispose();
@@ -1710,19 +1726,45 @@ async function applyKeywordQualify(
   const rewritten = await applyKeywordQualify(mgr, statements);
   const header = `Run at ${new Date().toISOString()} — ${active ? `${active.driver}@${active.host}/${active.database}` : "no connection"}`;
   const appendBase = runner.getResults().length;
+  // TASK-ARP02-004 — host-side ownership gates. Two gaps the panel-internal
+  // session epoch (TASK-ARP02-002) cannot close, because these calls are
+  // extension code calling INTO the panel, not panel continuations:
+  //   1. Overlap: the shared QueryRunner rejects a second concurrent run()
+  //      with "already running"; this invocation's finally would still fire
+  //      panel.setBusy(false) WHILE the first run is in flight — clearing
+  //      the live session's busy state (the re-created/newest panel then
+  //      renders as not-busy while a query is still running). Snapshot the
+  //      runner's in-flight state BEFORE this invocation claims busy: only
+  //      an invocation that found the runner idle — and therefore owns this
+  //      run — may clear busy in its finally. There is no await between the
+  //      snapshot and runner.run(), so the snapshot cannot go stale before
+  //      run() validates it again internally.
+  //   2. Deactivate: a run settling after teardown started must not render
+  //      into / restyle the panel VS Code is disposing (a late render would
+  //      even resurrect a webview via ResultsPanel.show()).
+  const ownsRun = !runner.isRunning();
   panel.setBusy(true);
   try {
     const results = await runner.run(rewritten, () => {
-      // Each onUpdate re-render the panel.
-      panel.render(runner.getResults(), header, { appendBase });
+      // Each onUpdate re-render the panel (skip after teardown started).
+      if (!deactivating) {
+        panel.render(runner.getResults(), header, { appendBase });
+      }
     }, { append: true });
-    panel.render(results, header, { appendBase });
+    if (!deactivating) {
+      panel.render(results, header, { appendBase });
+    }
   } catch (err) {
     void vscode.window.showErrorMessage(
       `VSDB: ${err instanceof Error ? err.message : String(err)}`,
     );
   } finally {
-    panel.setBusy(false);
+    // TASK-ARP02-004 — gates above: a stale invocation's finally must NOT
+    // clear the live run's busy state (the live run's own finally does);
+    // after deactivate() started, no panel write at all.
+    if (ownsRun && !deactivating) {
+      panel.setBusy(false);
+    }
   }
 }
 

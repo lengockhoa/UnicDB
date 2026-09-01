@@ -1,6 +1,6 @@
 # TASK-ARP02-004 — Host integration: post-RLX-02 deactivate/command ordering (may close as not-needed)
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `unic-smart`
 - Executor-model: `unic-code`
@@ -102,9 +102,88 @@ pinned test target is `src/extension.test.ts`. No lint script; typecheck + compi
 ## Executor Report
 
 ```
-(write here: STATUS / EXECUTOR_TOOL / EXECUTOR_MODEL / EXECUTOR_SUBAGENT / RED_OUTPUT (if a change was
- produced) / DECISION (closed-as-not-needed evidence OR gap-fix summary) / VERIFICATION output /
- ISSUES / HANDOFF_TO_REVIEWER)
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+
+DECISION: gap-fix produced (NOT closed-as-not-needed).
+
+The decision gate found TWO real host gaps that Wave 1 (panel-internal session epoch,
+TASK-ARP02-002) cannot close, because the offending calls are extension code calling INTO
+ResultsPanel, not panel continuations:
+
+  Gap #2 — runStatements finally-busy leak (src/extension.ts ~:1726-1759 now):
+  the shared QueryRunner rejects a second concurrent run() with
+  "QueryRunner is already running"; the overlapping invocation's
+  `finally { panel.setBusy(false) }` still fired WHILE the first run was in
+  flight — clearing the live session's busy state (and, after a mid-run
+  dispose+recreate, the newest panel would read not-busy while a query is
+  still running).
+
+  Gap #1 — deactivate() ordering (src/extension.ts ~:1023-1035 now):
+  deactivate() disposed module disposables but nothing bounded an in-flight
+  runStatements: a late completion still called panel.render(...) after
+  teardown started (2 escaping renders proven in RED), which can even
+  resurrect the webview via ResultsPanel.show() into a disposed context.
+
+RED_OUTPUT (npx vitest run src/extension.test.ts -t "TASK-ARP02-004", before implementation):
+    ❯ src/extension.test.ts  (88 tests | 2 failed | 85 skipped) 101ms
+   ❯ Gap #2 — overlapping runQuery: the stale invocation's finally must NOT clear the live run's busy state
+     → expected [ [ false ] ] to have a length of +0 but got 1
+   ❯ Gap #1 — deactivate() during an in-flight run: late completion must not render into the disposed panel
+     → expected 2 to be +0 // Object.is equality
+    Test Files  1 failed (1)
+         Tests  2 failed | 1 passed | 85 skipped (88)
+Both failures are for the EXPECTED reasons (a setBusy(false) escaping mid-run; two
+renders escaping past deactivate). Case #4 (RLX-02 regression lock) is GREEN by design —
+it is an invariant lock, not a bug repro, so its immediate GREEN is correct, not suspicious.
+
+IMPLEMENTATION (src/extension.ts only, +3 gates, no flow change):
+  1. `const ownsRun = !runner.isRunning();` snapshotted synchronously right
+     before `panel.setBusy(true)` — no await between snapshot and runner.run(),
+     so it cannot go stale before run() validates internally. Only the
+     invocation that found the runner idle (and therefore owns this run) may
+     clear busy in its finally: `if (ownsRun && !deactivating) panel.setBusy(false)`.
+  2. Module-level `let deactivating = false;` sentinel — set synchronously at
+     deactivate() entry, reset at activate() entry (reload ⇒ new session, same
+     discipline as `disposables`).
+  3. `runStatements` panel writes (both renders + the finally busy-clear) are
+     gated on `!deactivating`, so a run settling after teardown started never
+     renders into (or resurrects) a disposed panel.
+
+  Test-plan note: cases 2 and 3 from §Test Cases were implemented as overlap
+  and deactivate tests against the real QueryRunner/ResultsPanel via a
+  deferred-adapter seam (only ConnectionManager.getAdapter is stubbed — the
+  REAL QueryRunner, REAL runStatements, REAL ResultsPanel execute).
+
+VERIFICATION OUTPUT (all run fresh in this turn, in the worktree):
+  git diff 367cb80 -- src/extension.ts      → NON-EMPTY (gap-fix diff above), exit 0
+  git diff 367cb80 -- src/extension.test.ts → NON-EMPTY (266 added test lines), exit 0
+  npx vitest run src/extension.test.ts      → Tests 88 passed (88), exit 0
+  npm test                                  → Tests 2983 passed | 2 skipped (2985),
+                                              215 files passed | 1 skipped, exit 0
+                                              (baseline 2974 + 3 new = 2977 floor; 2983 ✓)
+  npm run typecheck                         → exit 0
+  npm run compile                           → exit 0
+
+  Regression #4 (RLX-02 await semantics): byte-compared the vsdb.cancelQuery
+  block (extension.ts:486-496) against `git show 367cb80:src/extension.ts` —
+  byte-identical ("RLX02_BLOCK_BYTE_IDENTICAL"), plus locked by a live test
+  proving runner.cancel() is awaited BEFORE panel.setBusy(false).
+
+ISSUES:
+  - One pre-existing, environmental failure observed mid-run before `npm run
+    compile` had ever run in this fresh worktree: "npm run compile emits
+    dist/schemaForm.js" reads dist/ at module-init. Resolved by running the
+    task's own compile gate; final full-suite run is 100% green.
+  - Out-of-scope observation (NOT changed, different file owner):
+    src/ui/browseCommands.ts:181-193 has the same unguarded
+    finally { panel.setBusy(false) } shape around the shared runner. It is
+    outside this task's Target Files; flagged for a future wave.
+
+HANDOFF_TO_REVIEWER: yes — reviewer verdict pending (unic-smart must differ
+from executor unic-code). Set status pending_review in INDEX.
 ```
 
 ## Reviewer Verdict
