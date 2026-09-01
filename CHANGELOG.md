@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.34.0] — 2026-09-01
+
+Cycle AIX-03: Read-Only Database Analysis Copilot Hardening (parser row-lock closure with EXPLAIN coverage, connection-loss bounded propagation into the AI panel, and tool-call attribution in the redacted audit trail).
+
+### Added
+- **Parser row-lock closure** (`src/ai/tools/readonlySqlParser.ts`, `src/ai/tools/sqlTool.ts`): the one residual read-only bypass — PostgreSQL row-locking clauses WITHOUT the `update` keyword (`FOR SHARE`, `FOR KEY SHARE`, `FOR NO KEY SHARE`) — is now rejected by BOTH guards via a shared pinned regex `/\bfor\s+(no\s+key\s+update|no\s+key\s+share|key\s+share|update|share)\b/i`; sqlTool emits the pinned literal `Read-only violation: FOR UPDATE/SHARE`. The EXPLAIN branch runs the row-lock guard against the stripped INNER statement before returning success (`EXPLAIN ANALYZE SELECT … FOR SHARE` can no longer execute and acquire row locks). FORBIDDEN_RE is deliberately NOT widened (VACUUM/REFRESH/COPY/MERGE remain first-keyword-rejected without over-rejection).
+- **Row-cap + sentinel pins** (`src/ai/tools/dbAwareTools.ts`): `ROW_LIMIT=50` (sqlTool) and `QUERY_MAX_ROWS=1000` / `QUERY_DEFAULT_MAX_ROWS=100` (dbAwareTools) caps locked with boundary tests, including a deterministic sentinel fixture pinned to Postgres `DEFAULT_BATCH_SIZE=500` that proves a `SENTINEL-leak` marker placed at the truncation boundary NEVER reaches the output (exact `-- truncated: showing 100 of 500 rows` line asserted).
+- **Connection-loss bounded propagation** (`src/ui/aiChatPanel.ts`, `src/extension.ts`): the panel now owns one subscription to `ConnectionManager.onDidChangeRecoveryStatus` (passed as an event reference through `AiChatPanelOptions` — never a re-imported manager). `recovering`/`failed` during any turn call the existing `handleStop()` and post the existing visible `session_state: "error"` (no fabricated message shapes); `recovered` is a strict no-op. Listener throws are swallowed at the subscription boundary; panel teardown disposes the subscription exactly once and the next panel subscribes fresh (real-teardown regression). OMP `session/new` cleared-id invariant pinned (no stale `session/cancel` addressing).
+- **Tool-call attribution** (`src/ai/agent.ts`, `src/ai/trace.ts`): `tool_start`/`tool_end` payloads now carry `toolCallId: "tcid:<call.id>"`; the trace redaction adds a narrow field-specific allowlist (key `toolCallId` AND value prefix `tcid:` skips ONLY the long-token rule — all other redaction including secrets stays active), so realistic 31-character provider call ids survive into the redacted all-turn audit export. `AUDIT_EXPORT_VERSION` stays 1 (additive).
+
+### Review
+- Independent unic-smart review, 3 parallel reviewers: 103 APPROVED round 1; 101 CRITICAL (EXPLAIN-wrapped FOR SHARE bypassed the new row-lock guard — inner-statement guard added with 2 regression tests) and 102 CHANGES-REQUESTED (3 test-coverage gaps: listener containment invoked a nonexistent property, recovery/builtin never created a pending gate request, dispose case never exercised real teardown) — all fixed in auto-fix round 1 with mutation-proven RED evidence and re-approved. Full suite 2914 passed | 2 skipped, typecheck + compile clean.
+
 ## [1.33.0] — 2026-09-01
 
 Cycle DBX-06: Reviewed PostgreSQL Rename Workflow (catalog usage analysis, pure rename-plan builder, and host preview/confirmation integration with DBX-08 capability gating and partial-failure reporting).
