@@ -188,3 +188,18 @@ esbuild: build complete
 
 Status: PASS
 Note: Re-anchored test #7 in `src/adapters/__tests__/bigqueryPackage.test.ts` per R2 reviewer finding. Method/host map corrected: `getQueryResults` and `cancel` now anchor to `job.d.ts` (they live on `Job.prototype`, not `BigQuery.prototype`); `query` and `createQueryJob` remain on `bigquery.d.ts` (`BigQuery.prototype`). Regex tightened from loose `\bNAME\s*\(` to declaration-shaped `^[ ]{3,}(?:public\s+|private\s+|protected\s+)?NAME\s*\(` (line starts with class-body indent + optional TS modifier + identifier + open paren) — this anchors to method signatures and ignores `*`-prefixed JSDoc example text (which is how the previous version false-positively asserted `getQueryResults` lived on `BigQuery`). Choice justified in a code comment above the assertion loop. `docs/decisions/_bq00-evidence.md` updated with an R4.5 fix note documenting the regex tightening; the existing per-method `file:line` refs were already correct (`getQueryResults` at `job.d.ts:234`, `cancel` at `job.d.ts:158`, `query` at `bigquery.d.ts:1119`, `createQueryJob` at `bigquery.d.ts:782`).
+
+## Reviewer Verdict (R4.5 re-review)
+VERDICT: approved_minor
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: sonnet/unic-code (from Executor Report fix round 1)
+VERIFICATION_RERUN: PASS
+  - focused: npx vitest run src/adapters/__tests__/bigqueryPackage.test.ts — 7/7 pass
+  - npm run typecheck — clean; npm run compile — clean
+  - npm test — 3209 passed | 2 skipped (floor 3189|2 preserved)
+FINDINGS:
+  critical: none
+  important: none
+  minor: src/adapters/__tests__/bigqueryPackage.test.ts:236 — DECL_RE is defined but never used (the loops at lines 240/245 build per-name regexes); remove the constant or reuse it in the loops
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: All five fix-scope items verified. `getQueryResults`+`cancel` anchor to job.d.ts, `query`+`createQueryJob` to bigquery.d.ts; declaration-shaped regex `^[ ]{3,}(?:public\s+|private\s+|protected\s+)?NAME\s*\(` cannot match `*`-prefixed JSDoc example lines. All four evidence-file line refs re-verified against the installed 9.0.3 .d.ts: getQueryResults job.d.ts:234-236, cancel job.d.ts:158-159, query bigquery.d.ts:1119-1124, createQueryJob bigquery.d.ts:782-783. R4.5 fix note present in docs/decisions/_bq00-evidence.md.

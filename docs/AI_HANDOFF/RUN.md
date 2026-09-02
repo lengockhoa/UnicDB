@@ -1,6 +1,6 @@
 Command: handoff-fullstack
 Goal: Ship BQ-00 BigQuery provider feasibility + adapter contract spike (no real ADC).
-Base: main @ 89d6b56 (post-wave-3)
-Phase: R1
-Cursor: All 3 waves implemented + committed (89d6b56). Suite 3209 passed | 2 skipped (floor 3189|2 preserved). Files: package.json + lockfile + 3 new src/adapters/{bigqueryTypes,bigqueryAdc}.ts + 3 new tests + docs/decisions/{_bq00-evidence.md, 0004-...md, README.md update}. No read-only file touched. 4 of 4 tasks PASS.
-Next: I4 (consolidate INDEX to pending_review) → R1 verify clean → R2-R4 review (4 parallel code-reviewers, opus/unic-smart, MUST differ from executor sonnet/unic-code) → R4.5 auto-fix if needed → R5 (commit + push + version bump + vsce + gh release for v1.46.0).
+Base: main @ 0ab34e2 (post-R4.5)
+Phase: R5
+Cursor: All 4 tasks approved (3 in R2 round 1, 2 re-reviewed approved_minor in R4.5 after critical fixes). 1 critical_block + 1 changes_requested from R2 → R4.5 round 1 fixes applied → re-review approved. Suite 3209|2 (floor 3189|2 preserved). No handoff branches/worktrees; main worktree clean.
+Next: R5 — version bump 1.45.0 → 1.46.0 (CHANGELOG entry + package.json + lockfile dual sync), run npm run verify:release + hygiene, commit, tag v1.46.0, push main+tag, vsce package, gh release create v1.46.0 vsdb-1.46.0.vsix.
