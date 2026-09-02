@@ -251,3 +251,22 @@ FINDINGS:
     - executor RED note claims "63-case sweep"; committed corpus has 64 entries (cosmetic count only).
 NEXT_STATUS_FOR_INDEX: changes_requested
 NOTES: Comment-body fix verified sound: raw-text scans strictly strengthen (raw ⊇ stripped ⇒ deny set only grows), 22 adversarial bypass probes all denied (nested/unterminated/CRLF comments, string-embedded keywords, comment-split keyword fusion, FOR SHARE/INTO hidden in comments, leading-comment smuggling), happy paths + consumer suites green. One ADR matrix cell must be corrected before merge.
+
+## Fix Round 1 (R4.5) — ADR matrix correction
+
+Orchestrator-direct fix (docs-only; the finding is an ADR wording error, not a code
+gap — reviewer's own probes confirmed the parser/comment fix is sound and strictly
+strengthening).
+
+- ADR 0003 §4 matrix row "Forbidden keyword inside string literal / dollar-quote /
+  comment body / identifier substring" no longer claims run_sql "deny via its keyword
+  scans". Corrected to state run_sql admits read-only statements mentioning forbidden
+  words in literals/identifiers (its residual scans — writable-CTE, row-lock, INTO —
+  are false-positive-free on those shapes) and points to new §6.1 for the narrower
+  run_sql guarantee: allow-listed first keyword + single statement + no residual
+  mutation surface. Mutation capability remains inexpressible in BOTH profiles;
+  only the core profile over-rejects benign mentions (policy, unchanged).
+- Evidence basis: isReadOnlySql (src/ai/tools/sqlTool.ts:109-170) admits
+  `SELECT 'insert'` / `SELECT 'drop table x'` / `SELECT created_at FROM t` (reviewer
+  probe-verified; consistent with TASK-ARP06-002's Discussion drift notes).
+- No source file, no test file touched. Focused suites unaffected (docs-only diff).

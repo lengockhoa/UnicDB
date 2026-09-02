@@ -104,7 +104,7 @@ reason class only — never SQL text, tool arguments, or connection material.
 | Writable CTE (`WITH x AS (INSERT/UPDATE/DELETE/MERGE …)`) | deny (`non_select`) | deny (`WCTE_REASON`) | forbidden-token scan (core) / `\b(insert\|update\|delete\|merge)\b` scan (run_sql) |
 | Row locks (`FOR UPDATE`/`NO KEY UPDATE`/`SHARE`/`KEY SHARE`/`NO KEY SHARE`) | deny (`non_select`) | deny (`ROW_LOCK_REASON`) | shared `ROW_LOCK_RE` (TASK-AIX03-101), imported by both guards |
 | Session/utility (`SET`, `RESET`, `VACUUM`, `ANALYZE`, `LISTEN`, `NOTIFY`, `LOCK`, `PREPARE`, `DISCARD`, …) | deny (`non_select`) | deny | first-keyword check (not in either allow-set) |
-| Forbidden keyword inside string literal / dollar-quote / comment body / identifier substring (`'insert'`, `-- drop table t`, `created_at`) | **deny** — over-rejection is policy (§5) | deny via its keyword scans | lexical over-rejection rules |
+| Forbidden keyword inside string literal / dollar-quote / comment body / identifier substring (`'insert'`, `-- drop table t`, `created_at`) | **deny** — over-rejection is policy (§5) | **admit when reads-only** — run_sql has no literal/comment scanner; `SELECT 'insert'`, `SELECT 'drop table x'`, `SELECT created_at FROM t` are admitted because its residual scans (writable-CTE, row-lock, INTO) are false-positive-free on these shapes. Over-rejection is a core-profile-only policy (§5); run_sql's narrower guarantee is stated in §6. | lexical over-rejection rules (core column); run_sql: literal-transparent residual scans (R2 review correction) |
 | Multi-statement (`SELECT 1; SELECT 2`, stacked writes) | deny (`multi_statement`) | deny (`MULTI_STMT_REASON`) | statement counting, literal-aware |
 | Unbalanced parens | deny (`unbalanced_parens`) | deny | paren balance / parse shape |
 | Empty / comment-only input | deny (`empty`) | deny | trivially not a statement |
@@ -148,6 +148,20 @@ mutation carrier, not a read. The rule, already implemented in `sqlTool.ts`
 
 The core profile needs no reduction because it never admits EXPLAIN in the first
 place; the run_sql profile's extra SHOW/EXPLAIN surface exists only inside this rule.
+
+### 6.1 run_sql profile guarantee (narrower than core, still fail-closed)
+
+The `run_sql` guard does **not** implement the core profile's literal/comment
+over-rejection: it has no forbidden-keyword literal scanner, and its residual scans
+(writable-CTE DML, row locks, INTO) are word-boundary matches that are
+false-positive-free on literal/comment/identifier shapes (`SELECT 'insert'`,
+`SELECT 'drop table x'`, `SELECT created_at FROM t` — all admitted, all reads).
+The run_sql guarantee is therefore: **every admitted statement begins with an
+allow-listed first keyword, is a single statement, and carries no residual
+mutation surface** — mutation capability is still impossible to express; only the
+stricter core profile additionally denies benign reads that merely mention
+forbidden words. (R2 review correction: the matrix previously claimed run_sql
+denied literal/comment keywords, which its guard does not do.)
 
 ## 7. Rejected alternatives
 
