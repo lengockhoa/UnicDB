@@ -187,3 +187,266 @@ describe("suggestSaveFileName — zero padding", () => {
     expect(groups?.[6]).toBe("05"); // second -> 05
   });
 });
+
+// ---- ARP-08 TASK-ARP08-001 — draft snapshot codec + clearDrafts wire --------
+//
+// Pure-unit coverage for the versioned, bounded ConsoleDraftSnapshot codec:
+//   - parse is FAIL-CLOSED: malformed JSON, wrong/missing version, bad shape,
+//     unknown activeTabId, empty/over-cap payloads all return null (no throw).
+//   - parse REBUILDS a fresh object with exactly the declared fields, so
+//     unknown extra fields are tolerated on the wire but stripped from the
+//     result ("tolerated-and-stripped") and no caller can mutate the
+//     persisted payload through the parsed value.
+//   - encode is a verbatim JSON serialization — clamping to the caps is the
+//     host's job (TASK-ARP08-002), never the codec's.
+//   - `clearDrafts` joins the webview→host union; its guard is type-only,
+//     mirroring `historyList`.
+
+import {
+  CONSOLE_DRAFTS_KEY,
+  CONSOLE_DRAFT_SNAPSHOT_VERSION,
+  CONSOLE_DRAFTS_MAX_BUFFER_CHARS,
+  CONSOLE_DRAFTS_MAX_TABS,
+  encodeConsoleDraftSnapshot,
+  parseConsoleDraftSnapshot,
+} from "../consolePanelMessages";
+import type { ConsoleDraftSnapshot } from "../consolePanelMessages";
+
+function makeValidSnapshot(): ConsoleDraftSnapshot {
+  return {
+    version: 1,
+    tabs: [
+      { id: "tab-1", name: "Users", buffer: "SELECT * FROM users;" },
+      { id: "tab-2", name: "Orders", buffer: "SELECT * FROM orders;" },
+    ],
+    activeTabId: "tab-1",
+  };
+}
+
+describe("CONSOLE_DRAFTS_* constants (ARP-08)", () => {
+  it("exports the persisted-draft storage key, schema version, and caps", () => {
+    expect(CONSOLE_DRAFTS_KEY).toBe("vsdb.consoleDrafts");
+    expect(CONSOLE_DRAFT_SNAPSHOT_VERSION).toBe(1);
+    expect(CONSOLE_DRAFTS_MAX_TABS).toBe(20);
+    expect(CONSOLE_DRAFTS_MAX_BUFFER_CHARS).toBe(64_000);
+  });
+});
+
+// ---- #1 — encode→parse round-trip -------------------------------------------
+
+describe("encodeConsoleDraftSnapshot / parseConsoleDraftSnapshot — happy path", () => {
+  it("#1 round-trips a valid 2-tab snapshot losslessly", () => {
+    const snapshot = makeValidSnapshot();
+    const encoded = encodeConsoleDraftSnapshot(snapshot);
+    const parsed = parseConsoleDraftSnapshot(encoded);
+    expect(parsed).toEqual(snapshot);
+    expect(parsed?.version).toBe(1);
+    // Exactly the declared top-level shape — unknown fields never survive.
+    expect(Object.keys(parsed ?? {}).sort()).toEqual([
+      "activeTabId",
+      "tabs",
+      "version",
+    ]);
+  });
+});
+
+// ---- #2 — malformed input is rejected, never thrown -------------------------
+
+describe("parseConsoleDraftSnapshot — malformed input", () => {
+  it("#2 returns null (no throw) on non-JSON and primitive carriers", () => {
+    expect(parseConsoleDraftSnapshot("not-json")).toBeNull();
+    expect(parseConsoleDraftSnapshot("42")).toBeNull();
+    expect(
+      parseConsoleDraftSnapshot(undefined as unknown as string),
+    ).toBeNull();
+    expect(parseConsoleDraftSnapshot(null as unknown as string)).toBeNull();
+  });
+});
+
+// ---- #3 — version gate -------------------------------------------------------
+
+describe("parseConsoleDraftSnapshot — version gate", () => {
+  it("#3 rejects a future version and a missing version", () => {
+    const future = JSON.stringify({
+      version: 2,
+      tabs: [{ id: "tab-1", name: "Users", buffer: "SELECT 1;" }],
+      activeTabId: "tab-1",
+    });
+    expect(parseConsoleDraftSnapshot(future)).toBeNull();
+    const versionless = JSON.stringify({
+      tabs: [{ id: "tab-1", name: "Users", buffer: "SELECT 1;" }],
+      activeTabId: "tab-1",
+    });
+    expect(parseConsoleDraftSnapshot(versionless)).toBeNull();
+  });
+});
+
+// ---- #4 — shape gate ---------------------------------------------------------
+
+describe("parseConsoleDraftSnapshot — shape gate", () => {
+  it("#4 rejects non-array tabs, non-string tab fields, and non-string activeTabId", () => {
+    const tabsJson =
+      '[{"id":"tab-1","name":"Users","buffer":"SELECT 1;"}]';
+    // tabs not an array.
+    expect(
+      parseConsoleDraftSnapshot(
+        JSON.stringify({ version: 1, tabs: {}, activeTabId: "tab-1" }),
+      ),
+    ).toBeNull();
+    // Tab with a non-string buffer (JSON numbers survive postMessage/memento).
+    expect(
+      parseConsoleDraftSnapshot(
+        JSON.stringify({
+          version: 1,
+          tabs: [{ id: "tab-1", name: "Users", buffer: 7 }],
+          activeTabId: "tab-1",
+        }),
+      ),
+    ).toBeNull();
+    // Tab with a null id.
+    expect(
+      parseConsoleDraftSnapshot(
+        JSON.stringify({
+          version: 1,
+          tabs: [{ id: null, name: "Users", buffer: "SELECT 1;" }],
+          activeTabId: "tab-1",
+        }),
+      ),
+    ).toBeNull();
+    // Non-string tab name.
+    expect(
+      parseConsoleDraftSnapshot(
+        JSON.stringify({
+          version: 1,
+          tabs: [{ id: "tab-1", name: 9, buffer: "SELECT 1;" }],
+          activeTabId: "tab-1",
+        }),
+      ),
+    ).toBeNull();
+    // activeTabId not a string.
+    expect(
+      parseConsoleDraftSnapshot(
+        JSON.stringify({ version: 1, tabs: JSON.parse(tabsJson), activeTabId: 1 }),
+      ),
+    ).toBeNull();
+  });
+
+  it("#4b rejects an empty tabs array (a restored panel must have a tab)", () => {
+    const empty = JSON.stringify({ version: 1, tabs: [], activeTabId: "tab-1" });
+    expect(parseConsoleDraftSnapshot(empty)).toBeNull();
+  });
+});
+
+// ---- #5 — deterministic bounds -----------------------------------------------
+
+describe("parseConsoleDraftSnapshot — bounds", () => {
+  it("#5 rejects over-cap tabs and over-cap buffers, accepts the exact caps", () => {
+    expect(CONSOLE_DRAFTS_MAX_TABS).toBe(20);
+    expect(CONSOLE_DRAFTS_MAX_BUFFER_CHARS).toBe(64_000);
+    // 21 tabs (cap + 1) — corrupt → null.
+    const manyTabs = Array.from({ length: CONSOLE_DRAFTS_MAX_TABS + 1 }, (_, i) => ({
+      id: `tab-${i}`,
+      name: `T${i}`,
+      buffer: "SELECT 1;",
+    }));
+    expect(
+      parseConsoleDraftSnapshot(
+        JSON.stringify({
+          version: 1,
+          tabs: manyTabs,
+          activeTabId: "tab-0",
+        }),
+      ),
+    ).toBeNull();
+    // One 64_001-char buffer — corrupt → null.
+    const overBuffer = "x".repeat(CONSOLE_DRAFTS_MAX_BUFFER_CHARS + 1);
+    expect(
+      parseConsoleDraftSnapshot(
+        JSON.stringify({
+          version: 1,
+          tabs: [{ id: "tab-1", name: "Users", buffer: overBuffer }],
+          activeTabId: "tab-1",
+        }),
+      ),
+    ).toBeNull();
+    // Exactly 64_000 chars — parses.
+    const exactBuffer = "x".repeat(CONSOLE_DRAFTS_MAX_BUFFER_CHARS);
+    const exact = JSON.stringify({
+      version: 1,
+      tabs: [{ id: "tab-1", name: "Users", buffer: exactBuffer }],
+      activeTabId: "tab-1",
+    });
+    const parsed = parseConsoleDraftSnapshot(exact);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.tabs[0]?.buffer).toHaveLength(CONSOLE_DRAFTS_MAX_BUFFER_CHARS);
+  });
+});
+
+// ---- #6 — active-tab integrity ------------------------------------------------
+
+describe("parseConsoleDraftSnapshot — active-tab integrity", () => {
+  it("#6 rejects an activeTabId that matches no tab", () => {
+    const ghost = JSON.stringify({
+      version: 1,
+      tabs: [{ id: "tab-1", name: "Users", buffer: "SELECT 1;" }],
+      activeTabId: "ghost",
+    });
+    expect(parseConsoleDraftSnapshot(ghost)).toBeNull();
+  });
+});
+
+// ---- #7 — forward compatibility: tolerated-and-stripped -----------------------
+
+describe("parseConsoleDraftSnapshot — forward compat", () => {
+  it("#7 strips unknown top-level fields and re-encodes without them", () => {
+    const withExtra = JSON.stringify({
+      ...makeValidSnapshot(),
+      extra: { x: 1 },
+    });
+    const parsed = parseConsoleDraftSnapshot(withExtra);
+    // Tolerated (parses) and stripped (clean object, no `extra`).
+    expect(parsed).toEqual(makeValidSnapshot());
+    expect(parsed).not.toHaveProperty("extra");
+    // Re-encoding the parsed value omits the unknown field forever.
+    expect(encodeConsoleDraftSnapshot(parsed as ConsoleDraftSnapshot)).not.toContain(
+      "extra",
+    );
+  });
+});
+
+// ---- #8/#9/#10 — clearDrafts wire member --------------------------------------
+
+describe("clearDrafts wire (ARP-08)", () => {
+  it("#8 accepts the type-only clearDrafts message and narrows it", () => {
+    const raw: unknown = { type: "clearDrafts" };
+    expect(isConsoleToHostMessage(raw)).toBe(true);
+    if (isConsoleToHostMessage(raw)) {
+      expect(raw.type).toBe("clearDrafts");
+      expect(Object.keys(raw).sort()).toEqual(["type"]);
+    }
+  });
+
+  it("#9 keeps the guard type-only (extra fields ignored) and rejects the singular typo", () => {
+    expect(isConsoleToHostMessage({ type: "clearDrafts", junk: 42 })).toBe(true);
+    expect(isConsoleToHostMessage({ type: "clearDrafts", tabId: "x" })).toBe(true);
+    expect(isConsoleToHostMessage({ type: "clearDraft" })).toBe(false);
+  });
+
+  it("#10 does not disturb pre-existing message families", () => {
+    expect(
+      isConsoleToHostMessage({ type: "runConsole", sql: "SELECT 1" }),
+    ).toBe(true);
+    expect(
+      isConsoleToHostMessage({ type: "updateBuffer", tabId: "t", buffer: "SELECT 1" }),
+    ).toBe(true);
+    expect(
+      isConsoleToHostMessage({
+        type: "requestAutocomplete",
+        tabId: "t",
+        requestId: "r",
+        cursorOffset: 0,
+        documentText: "SELECT 1",
+      }),
+    ).toBe(true);
+  });
+});

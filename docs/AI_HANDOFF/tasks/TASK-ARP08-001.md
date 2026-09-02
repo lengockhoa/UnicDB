@@ -74,6 +74,7 @@ npm run typecheck
 
 ## Discussion
 
+- @executor decision (ARP08-001): the orchestrator's instruction summary said unknown extra fields should be REJECTED (strict), but this task file — the contract — requires tolerated-and-stripped in THREE places (Test Case 7, Acceptance Criteria, and the Snapshot-shape note below). Per the task file (higher priority), unknown extra root/tab fields are tolerated on the wire and stripped from the rebuilt result. Test Case 7 asserts this and passes.
 - Snapshot-shape note for @executor: keep the codec pure and defensive. `parse` must rebuild a NEW object (never return the raw parsed value by reference) so the tolerated-and-stripped contract is literal — a later consumer mutating a tab must not mutate the memento payload, and unknown fields must never survive.
 - Over-cap handling is deliberately two-sided and deterministic: `parse` REJECTS over-cap (corrupt → one empty tab at the host in 002), while the host `persistDrafts()` (002) CLAMPS to the caps before encoding so our own writer can never emit a snapshot its own parse rejects. Do NOT add clamp logic to `encode` — keep encode a pure verbatim JSON serialization; clamping is the host's job.
 - `case "clearDrafts": return true;` is intentionally type-only (no field checks) — the host ignores any extra payload, mirroring how `historyList` is accepted with no fields.
@@ -82,7 +83,37 @@ npm run typecheck
 
 ## Executor Report
 
-<!-- Phase 3 executor appends below. -->
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: Claude:feature-implementer
+SUMMARY: Added the pure versioned/bounded ConsoleDraftSnapshot codec (encode + fail-closed parse, tolerated-and-stripped extras), the four CONSOLE_DRAFTS_* constants, the `clearDrafts` webview→host message (type-only guard case) and the `draftsCleared` host→webview message, plus the ARP-08 header line.
+TEST_PLAN_FOLLOWED: task §Test Cases (all 10 rows) as tests #1–#10 in the new describe blocks.
+FILES_CHANGED:
+  - src/ui/consolePanelMessages.ts: ARP-08 header line; `clearDrafts` union member + guard case; `draftsCleared` host→webview member; CONSOLE_DRAFTS_KEY / CONSOLE_DRAFT_SNAPSHOT_VERSION / CONSOLE_DRAFTS_MAX_TABS / CONSOLE_DRAFTS_MAX_BUFFER_CHARS; ConsoleDraftSnapshot; encodeConsoleDraftSnapshot; parseConsoleDraftSnapshot (fail-closed, rebuilds fresh object, strips unknown root/tab fields, rejects over-cap).
+  - src/ui/__tests__/consolePanelMessages.test.ts: appended ARP-08 describe blocks (constants, round-trip, malformed, version gate, shape gate, bounds, active-tab integrity, forward-compat strip, clearDrafts wire, regression).
+TESTS_ADDED:
+  - src/ui/__tests__/consolePanelMessages.test.ts: CONSOLE_DRAFTS_* constants; #1 round-trip; #2 malformed input; #3 version gate; #4/#4b shape gate + empty tabs; #5 bounds (21 tabs, 64_001 chars rejected, 64_000 accepted); #6 ghost activeTabId; #7 tolerated-and-stripped extras; #8 clearDrafts accept+narrow; #9 type-only guard + `clearDraft` typo rejected; #10 pre-existing families regression.
+VERIFICATION:
+command: npx vitest run src/ui/__tests__/consolePanelMessages.test.ts && npm run typecheck && npx vitest run
+result: 26/26 target file pass; typecheck exit 0; full suite 3132 pass / 0 fail (2 skipped, pre-existing) / 218 files passed + 1 skipped
+output_excerpt: |
+  RED (before implementation):
+   ❯ src/ui/__tests__/consolePanelMessages.test.ts:422:41 clearDrafts wire > #8 accepts the type-only clearDrafts message and narrows it
+   AssertionError: expected false to be true
+   Test Files  1 failed (1)
+        Tests  11 failed | 15 passed (26)
+  GREEN (after implementation):
+   ✓ src/ui/__tests__/consolePanelMessages.test.ts  (26 tests) 4ms
+   Test Files  1 passed (1)
+        Tests  26 passed (26)
+   npm run typecheck > tsc --noEmit  (no output, exit 0)
+   Full suite: Test Files  218 passed | 1 skipped (219)
+               Tests  3132 passed | 2 skipped (3134)
+ISSUES: none. One contract note: the orchestrator message summary said unknown extras should be strict-REJECTED, but this task file requires tolerated-and-stripped (Test Case 7 + Acceptance Criteria + Discussion) — implemented tolerated-and-stripped per the task file; decision recorded in Discussion. Also note `parse` additionally rejects an empty tabs array (task §Test Plan edge + host 002 must seed ≥1 tab) — this was listed in my instruction summary and is consistent with the task's acceptance criteria ("corrupt → one empty tab at the host").
+HANDOFF_TO_REVIEWER: yes — STATUS DONE, handoff gate applies; reviewer model must differ from unic-code.
+NEXT: ready for review; TASK-ARP08-002/003/004 can consume the exported codec/constants.
+
 
 ---
 
