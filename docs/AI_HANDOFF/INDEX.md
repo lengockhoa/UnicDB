@@ -27,7 +27,7 @@ Cycle AIX-07 — **Trust, Privacy & Governance** — complete; shipped in v1.28.
 | PORT-ARP-03 | Retained-result memory budget | superseded (shipped in v1.39.0) | - | unic-smart |
 | PORT-ARP-04 | Tunnel and endpoint identity hardening | superseded (shipped in v1.40.0) | - | unic-smart |
 | PORT-ARP-05 | Cross-driver timeout/pool resilience contract | superseded (shipped in v1.41.0) | - | unic-smart |
-| PORT-ARP-06 | AI SQL policy unification and usage visibility | active — plan ready | ARP-01 | unic-smart |
+| PORT-ARP-06 | AI SQL policy unification and usage visibility | superseded (shipped in v1.42.0) | - | unic-smart |
 
 ## Cycle ARP-05 — Cross-driver timeout, pool, and resilience contract
 
