@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.43.0] — 2026-09-02
+
+Cycle ARP-07: Successful-DDL Cache/Context Invalidation — a successful DDL now invalidates the schema caches automatically. A new pure dialect-aware schema-impact classifier decides when a completed run changes schema, both schema caches are proven safe under invalidate-during-fetch/hydrate races, and the execution path fires invalidation through an explicit host seam — while failed or cancelled runs leave everything untouched.
+
+### Added
+- **Schema-impact classifier** (`src/core/schemaImpact.ts`, new): pure `hasSchemaImpact(sql, dialect?)` / `completedSchemaImpact(completed[], dialect?)` decide whether SQL (or completed statements) change schema — reusing the `dangerousStatement` literal/comment masking so DDL hidden in comments or literals never counts, DML never triggers (invalidation is schema-scoped, out of scope for data changes), and dialect quirks (MSSQL bracket identifiers — the known `[insert]` false-positive class) are handled. Pinned by 11 tests including reconciliation pins against `dangerousStatement`/read-only intent.
+- **Schema cache race safety (verify-first)** (TASK-ARP07-002): the existing invalidate-during-fetch race in `src/ui/schemaCache.ts` is pinned by 3 new tests in `schemaCache.test.ts` (single- and multi-family invalidate-during-fetch) proving cached schema never contains the torn pre/post-invalidate mix; production file byte-identical to the v1.42.0 base (verified empty diff). Sensitivity excluded by a temporary guard mutation (3 failed before restore).
+- **AI schema context stale-commit fix** (`src/ai/schemaContextCache.ts`): `hydrate()` used to commit unconditionally, so an `invalidate()` landing during hydration left a freshly-fetched-but-stale entry in cache. A generation guard at the commit point plus an ownership-checked inflight drop closes the race — a stale fetch can no longer commit, a hydrate started after invalidate is not clobbered by the old finally, and normal coalescing/TTL re-hydration is unchanged. RED evidence: 2 failed tests before the fix.
+- **Success-only execution wiring** (`src/extension.ts`): a module-level seam assigned in `activate` fires schema-impact invalidation inside the existing `!deactivating` block in `runStatements`, feeding only `status === "done"` statements (with their real SQL text and the active driver) to `completedSchemaImpact`. Failed, cancelled, or rejected-confirmation runs never invalidate; cancelled-before-first-completion is a no-op; DML-only runs are a no-op. ARP-02's ownsRun/finally gates are byte-untouched; `deactivate` nulls the seam (no post-deactivation writes); invalidation triggers the standard cache/context refresh with no automatic tree expansion.
+
+### Review
+- P2.5 plan review: Round 1 Approved by unic-smart (minors applied).
+- R2 per-task review by unic-smart: all 4 tasks approved round 1, zero blocking findings (001 approved_minor with non-blocking notes: documented single-statement precondition for `completedSchemaImpact`, COMMENT ON exclusion rationale). Reviewers re-ran the focused suites (11+23+15+97 tests), typecheck, and the full `npm test` (3120 passed) independently.
+- Verification: full suite 3120 passed | 2 skipped (was 3094 | 2 at v1.42.0); `npm run typecheck` and `npm run compile` exit 0; `package-lock.json` both version fields synced to 1.43.0.
+
 ## [1.42.0] — 2026-09-02
 
 Cycle ARP-06: AI SQL Policy Unification and Usage Visibility — the two parallel AI read-only guards are now documented profiles of one fail-closed policy (ADR 0003), a security corpus pins the parser against adversarial bypasses (and closed one real hole), and AI Chat shows per-turn token usage that can never leak a prompt, SQL text, or secret.
