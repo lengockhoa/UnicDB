@@ -76,7 +76,51 @@ npm run typecheck
 
 ## Executor Report
 
-<!-- Phase 3 executor appends below. -->
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code (claude-sonnet-4-5)
+EXECUTOR_SUBAGENT: Claude:feature-implementer
+
+RED_OUTPUT (TDD step 1 — `npx vitest run src/core/__tests__/schemaImpact.test.ts` before impl):
+```
+ FAIL  src/core/__tests__/schemaImpact.test.ts [ src/core/__tests__/schemaImpact.test.ts ]
+Error: Failed to load url ../schemaImpact (resolved id: ../schemaImpact) in
+/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-arp07-001/src/core/__tests__/schemaImpact.test.ts. Does the file exist?
+
+ Test Files  1 failed (1)
+      Tests  no tests
+```
+RED confirmed: fails for the expected reason — module `../schemaImpact` does not exist yet.
+
+Verification Output (TDD step 3 — §Verification Commands, fresh in worktree):
+
+Command 1: `npm test src/core/__tests__/schemaImpact.test.ts`
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-arp07-001
+
+ ✓ src/core/__tests__/schemaImpact.test.ts  (11 tests) 2ms
+
+ Test Files  1 passed (1)
+      Tests  11 passed (11)
+   Start at  08:18:47
+   Duration  173ms (transform 22ms, setup 0ms, collect 23ms, tests 2ms, environment 0ms, prepare 35ms)
+```
+
+Command 2: `npm run typecheck`
+```
+> vsdb@1.42.0 typecheck
+> tsc --noEmit
+```
+(exit 0, no errors)
+
+Status: PASS
+
+Note:
+- Acceptance criteria: 11/11 corpus tests pass; `dangerousStatement.ts` and `readOnlyIntent.ts` untouched (git status shows only the 2 new files); module header documents the reconciliation (strict subset of readOnlyIntent's DDL keywords + `rename`; DML/data-only/maintenance → false; `drop` overlaps dangerousStatement's red tier); no `vscode` import; pure functions.
+- Exact exported signatures for TASK-ARP07-004 wiring:
+  - `export function hasSchemaImpact(sql: string, dialect?: SqlDialect): boolean`
+  - `export function completedSchemaImpact(completed: readonly string[], dialect?: SqlDialect): boolean`
+  - `SqlDialect` re-exported type source: `./statementParser` (`"postgres" | "mysql" | "mssql"`).
+- Repo eslint is not runnable standalone (legacy `.eslintrc` format, migration-guide error) — pre-existing condition, not introduced by this task; `tsc --noEmit` is the enforced gate and is clean.
 
 ## Reviewer Verdict
 

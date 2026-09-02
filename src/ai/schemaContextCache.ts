@@ -138,10 +138,15 @@ export function createSchemaContextCache(
   // Promise dedupe: if a hydration is in flight, callers await the same
   // promise instead of triggering parallel listTables/listColumns storms.
   let inflight: Promise<SchemaContext> | null = null;
+  // Generation guard: invalidate() bumps this so a hydration that started
+  // BEFORE the invalidate can no longer commit its (stale, pre-DDL) entry
+  // when it eventually settles — mirroring the resolver's identity/race
+  // guard discipline (stale result must never leak into fresh state).
+  let generation = 0;
 
   const resolver = createSchemaContextResolver(deps);
 
-  async function hydrate(): Promise<SchemaContext> {
+  async function hydrate(startGen: number): Promise<SchemaContext> {
     // Fetch tables via the race-safe resolver.
     const ctx = await resolver.resolve("");
     const active = deps.getActive();
@@ -172,11 +177,15 @@ export function createSchemaContextCache(
       connectionName: ctx.connectionName,
       tables,
     };
-    entry = {
-      connectionId: active.id,
-      context: hydrated,
-      fetchedAt: now(),
-    };
+    // Commit only if no invalidate() landed while this hydration was in
+    // flight — otherwise the entry is stale (pre-DDL) and must be dropped.
+    if (generation === startGen) {
+      entry = {
+        connectionId: active.id,
+        context: hydrated,
+        fetchedAt: now(),
+      };
+    }
     return hydrated;
   }
 
@@ -207,15 +216,26 @@ export function createSchemaContextCache(
 
       // Connection change OR stale → re-hydrate. Coalesce concurrent calls
       // onto a single in-flight hydration (prevents N keystrokes each
-      // firing their own listTables during a burst).
+      // firing their own listTables during a burst) — but ONLY when that
+      // hydration is still current (not invalidated mid-flight).
       if (inflight) return inflight;
-      inflight = hydrate().finally(() => {
-        inflight = null;
+      const startGen = generation;
+      const p = hydrate(startGen).finally(() => {
+        // Ownership check: null the reference only if this hydration still
+        // owns `inflight`. After invalidate() dropped it, a NEW promise may
+        // be installed — the old hydration's finally must not clear that one.
+        if (inflight === p) inflight = null;
       });
-      return inflight;
+      inflight = p;
+      return p;
     },
     invalidate(): void {
       entry = null;
+      // Drop the in-flight reference so post-invalidate resolves start a
+      // FRESH hydration instead of coalescing onto the stale one, and bump
+      // the generation so the stale hydration cannot commit its entry later.
+      generation++;
+      inflight = null;
     },
   };
 }

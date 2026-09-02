@@ -74,6 +74,118 @@ npm run typecheck
 
 <!-- Phase 3 executor appends below. -->
 
+### RED — confirmed (before fix)
+
+Command: `npx vitest run src/ai/__tests__/schemaContextResolver.test.ts`
+
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-arp07-003
+
+ ❯ src/ai/__tests__/schemaContextResolver.test.ts  (15 tests | 2 failed) 1116ms
+   ❯ src/ai/__tests__/schemaContextResolver.test.ts > schemaContextCache — invalidate during in-flight hydration (ARP-07) > does NOT commit an entry for a hydration invalidated mid-flight (next resolve re-hydrates)
+     → expected "spy" to be called 2 times, but got 1 times
+   ❯ src/ai/__tests__/schemaContextResolver.test.ts > schemaContextCache — invalidate during in-flight hydration (ARP-07) > resolve() AFTER invalidate() starts a FRESH hydration instead of returning the stale in-flight one
+     → expected "spy" to be called 2 times, but got 1 times
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/ai/__tests__/schemaContextResolver.test.ts > schemaContextCache — invalidate during in-flight hydration (ARP-07) > does NOT commit an entry for a hydration invalidated mid-flight (next resolve re-hydrates)
+AssertionError: expected "spy" to be called 2 times, but got 1 times
+ ❯ src/ai/__tests__/schemaContextResolver.test.ts:368:24
+
+ FAIL  src/ai/__tests__/schemaContextResolver.test.ts > schemaContextCache — invalidate during in-flight hydration (ARP-07) > resolve() AFTER invalidate() starts a FRESH hydration instead of returning the stale in-flight one
+AssertionError: expected "spy" to be called 2 times, but got 1 times
+ ❯ src/ai/__tests__/schemaContextResolver.test.ts:400:47
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 13 passed (15)
+   Start at  08:18:09
+   Duration  1.30s (transform 29ms, setup 0ms, collect 28ms, tests 1.12s, environment 0ms, prepare 41ms)
+```
+
+Both regression tests fail exactly on the unconditional-commit gap: after invalidate()
+during an in-flight hydration, the stale entry is committed / the stale in-flight
+promise is returned, so no second adapter call happens. Edge test #3 (idempotent
+invalidate on empty cache) passes pre-fix as expected; all 13 pre-existing tests pass.
+
+### Fix implemented
+
+`src/ai/schemaContextCache.ts` (only source file touched):
+- Added `generation` counter (starts 0).
+- `hydrate(startGen)` commits `entry` only `if (generation === startGen)` — an
+  `invalidate()` landing mid-flight makes the stale hydration's commit a no-op
+  (mirrors the resolver's identity/race-guard discipline).
+- `invalidate()` now does `entry = null; generation++; inflight = null;` — a
+  post-invalidate `resolve()` no longer coalesces onto the stale in-flight promise.
+- The old hydration's `finally` uses an ownership check
+  (`if (inflight === p) inflight = null;`) so it cannot null a NEW promise
+  installed after invalidate() dropped the reference.
+- Public interface unchanged: `resolve(scope): Promise<SchemaContext>`,
+  `invalidate(): void`. Resolver identity/race guard untouched.
+
+One test-fixture iteration during GREEN: the first version of test #1's gated
+`listColumns` returned `stale_col` on EVERY call, so the post-fix assertion
+(`columns[0].name === "id"`) could not distinguish fresh data; fixture now
+returns gated stale data for call 1 and immediate fresh data for call 2+.
+(RED assertions and call-count expectations were unchanged by this adjustment.)
+
+### Verification Output (after fix)
+
+Command: `npm test src/ai/__tests__/schemaContextResolver.test.ts` (worktree)
+
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-arp07-003
+
+ ✓ src/ai/__tests__/schemaContextResolver.test.ts  (15 tests) 162ms
+
+ Test Files  1 passed (1)
+      Tests  15 passed (15)
+   Start at  08:20:07
+   Duration  330ms (transform 24ms, setup 0ms, collect 23ms, tests 162ms, environment 0ms, prepare 43ms)
+```
+
+Command: `npm run typecheck`
+
+```
+> vsdb@1.42.0 typecheck
+> tsc --noEmit
+
+(no errors, exit 0)
+```
+
+Extra (beyond task commands, shared-scope confidence): `npm test` (full suite)
+
+```
+ Test Files  217 passed | 1 skipped (218)
+      Tests  3097 passed | 2 skipped (3099)
+   Duration  17.39s
+```
+
+### Acceptance Criteria check
+
+- [x] Regression tests #1 and #2 FAIL on current commit (RED output above), PASS after fix.
+- [x] `SchemaContextCache` public interface unchanged.
+- [x] Resolver identity/race guard untouched; existing cache tests (#4) pass (all 13 pre-existing pass).
+- [x] No other source file touched (git diff: only schemaContextCache.ts, schemaContextResolver.test.ts, this task file).
+- [ ] Reviewer verdict — pending (Phase 4).
+
+### Summary block
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: Claude:feature-implementer
+RED_OUTPUT: confirmed — 2 failed | 13 passed (15): both ARP-07 regression tests failed with
+`expected "spy" to be called 2 times, but got 1 times` (schemaContextResolver.test.ts:368 and :400),
+i.e. the stale hydration committed and the post-invalidate resolve coalesced onto it, so no second
+adapter call ever ran. Full output captured above.
+Verification Output: `npm test src/ai/__tests__/schemaContextResolver.test.ts` → 15 passed (15);
+`npm run typecheck` → exit 0, no errors; bonus `npm test` full suite → 3097 passed | 2 skipped, 0 failed.
+Status: PASS
+Note: none — one in-lane test-fixture refinement during GREEN (stale-data stub now scoped to call 1
+only so the fresh-data assertion is meaningful); RED assertions unchanged. Boundaries respected:
+no extension.ts / schemaCache.ts / schemaImpact.ts changes; no git operations; INDEX.md untouched.
+
+
 ## Reviewer Verdict
 
 <!-- Phase 4 reviewer appends below. -->

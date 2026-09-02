@@ -1,6 +1,6 @@
 # TASK-ARP07-002 — Schema cache race: invalidate-during-fetch (verify-first)
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §1, §2, §4, §5, §6
@@ -65,7 +65,61 @@ npm run typecheck
 
 ## Executor Report
 
-<!-- Phase 3 executor appends below. -->
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code (claude-sonnet-4-5)
+EXECUTOR_SUBAGENT: Claude:feature-implementer
+
+**Approach note.** Task file Test Cases are marked REQUIRED, and Acceptance Criterion 2 ("If no
+source change was needed … regression pinned") requires the DDL-named regression pins to exist —
+so the 3 test-only pins were added to the harness (test file only, explicitly in Target Files).
+Expected outcome held: GREEN against current `schemaCache.ts` with zero source change.
+Mutation-sensitivity probe run per cycle brief to prove non-tautology.
+
+**Probe method.** Temporarily replaced the commit gate `if (this.generation === startGen)`
+(schemaCache.ts:374, fetchEntry) with `if (true)` — the exact guard the invariant rests on —
+ran the suite, captured RED, then restored the line. Restore proven byte-identical:
+sha256 before probe `1e64e63589cf60a2a052ce8924efc8b44f878db4bb8a1f2c2369046fd27234ad` ==
+after probe `1e64e63589cf60a2a052ce8924efc8b44f878db4bb8a1f2c2369046fd27234ad`;
+`git status --porcelain src/ui/schemaCache.ts` → empty.
+
+RED_OUTPUT (probe — guard mutated off, expected failures on all stale-commit pins):
+```
+ FAIL  src/ui/__tests__/schemaCache.test.ts > SchemaCache — TASK-RLX-002 single-flight coalescing > #3 invalidate defeats a refresh that started before it
+AssertionError: expected "spy" to be called 2 times, but got 1 times
+ FAIL  src/ui/__tests__/schemaCache.test.ts > SchemaCache — TASK-ARP07-002 DDL invalidation race > #1 DDL-shaped: invalidate lands while a completion lookup is in flight → stale response never commits; next getTables refetches fresh
+AssertionError: expected "spy" to be called 2 times, but got 1 times
+ FAIL  src/ui/__tests__/schemaCache.test.ts > SchemaCache — TASK-ARP07-002 DDL invalidation race > #3 invalidate during CONCURRENT tables + columns fetches → neither family commits stale data; both keys refetch
+AssertionError: expected "spy" to be called 2 times, but got 1 times
+ Test Files  1 failed (1)
+      Tests  3 failed | 20 passed (23)
+```
+Probe RED analysis: with the gate off, the stale pre-invalidate response commits into the cache
+slot, so the post-invalidate "refetch" is served from the stale commit and the fresh-refetch
+`toHaveBeenCalledTimes(2)` assertions fail — exactly the invariant these pins defend. ARP-07
+`#2` (invalidate BEFORE fetch) correctly stays green under this mutation: it never has an
+in-flight fetch, so it does not exercise the commit gate.
+
+Verification Output (Verification Commands, fresh, after restore):
+```
+> vsdb@1.42.0 test
+> vitest run src/ui/__tests__/schemaCache.test.ts
+ ✓ src/ui/__tests__/schemaCache.test.ts  (23 tests) 7ms
+ Test Files  1 passed (1)
+      Tests  23 passed (23)
+
+> vsdb@1.42.0 typecheck
+> tsc --noEmit
+typecheck exit: 0
+```
+Full-suite regression net (wave boundary): `npm test` → 217 passed | 1 skipped (218 files),
+3097 passed | 2 skipped (skips pre-existing on base).
+
+Status: PASS
+
+Note: verify-only closed no-change — generation guard (schemaCache.ts:74, 288-308, 374) already
+covers DDL-invalidation; DDL-scenario regression pinned. No source file touched; only
+schemaCache.test.ts (3 new pins in a new `TASK-ARP07-002` describe block) + this task file
+changed. Gap test not needed — no gap found.
 
 ## Reviewer Verdict
 

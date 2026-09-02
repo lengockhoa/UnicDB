@@ -4,6 +4,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type {
   CatalogApi,
+  ColumnInfo,
   DbAdapter,
   RoutineInfo,
   SchemaInfo,
@@ -246,6 +247,135 @@ describe("SchemaCache — TASK-RLX-002 single-flight coalescing", () => {
     listTables.mockImplementation(async () => fresh);
     await expect(cache.getTables("public")).resolves.toBe(fresh);
     expect(listTables).toHaveBeenCalledTimes(2);
+  });
+});
+
+// =============================================================================
+// TASK-ARP07-002 — successful-DDL cache invalidation seam: the exact race the
+// DDL wiring will drive is `invalidate()` landing while a completion lookup is
+// in flight. Expected outcome against CURRENT code: the pre-invalidate response
+// still settles its own caller but NEVER becomes cache state; the next lookup
+// refetches fresh. VERIFY-FIRST — these pins are expected GREEN without any
+// schemaCache.ts change (generation guard at schemaCache.ts:74, 288-308, 374).
+// =============================================================================
+describe("SchemaCache — TASK-ARP07-002 DDL invalidation race", () => {
+  it("#1 DDL-shaped: invalidate lands while a completion lookup is in flight → stale response never commits; next getTables refetches fresh", async () => {
+    const oldData: TableInfo[] = [{ name: "orders", schema: "public" }];
+    const newData: TableInfo[] = [{ name: "invoices", schema: "public" }];
+    let clock = 1_000;
+    const first = deferred<TableInfo[]>();
+    const listTables = vi.fn(() => first.promise);
+    // Fixed clock + default TTL → a successful commit must keep entries fresh,
+    // so any post-invalidate cache hit could only come from a stale commit.
+    const adapter = adapterWith(listTables);
+    const cache = new SchemaCache(() => adapter, {
+      now: () => clock,
+    });
+
+    // A completion provider lookup starts and hangs on the adapter response…
+    const inflight = cache.getTables("public");
+    await flushMicrotasks();
+    // …then a successful DDL fires invalidate() mid-flight.
+    cache.invalidate();
+    // The pre-invalidate response still resolves — to its OWN caller only.
+    first.resolve(oldData);
+    await expect(inflight).resolves.toBe(oldData);
+
+    // Cache slot stayed empty → the next completion lookup refetches fresh.
+    clock = 2_000;
+    const second = deferred<TableInfo[]>();
+    listTables.mockImplementation(() => second.promise);
+    const next = cache.getTables("public");
+    await flushMicrotasks();
+    expect(listTables).toHaveBeenCalledTimes(2);
+    second.resolve(newData);
+    await expect(next).resolves.toBe(newData);
+
+    // Third read within TTL serves newData from cache with NO extra adapter
+    // call — proof the pre-invalidate response never became cache state.
+    const third = await cache.getTables("public");
+    expect(third).toBe(newData);
+    expect(listTables).toHaveBeenCalledTimes(2);
+  });
+
+  it("#2 invalidate BEFORE a fetch starts → plain fresh fetch, cached entry is the fresh adapter data", async () => {
+    const fresh: TableInfo[] = [{ name: "invoices", schema: "public" }];
+    const listTables = vi.fn(async () => fresh);
+    let clock = 1_000;
+    const adapter = adapterWith(listTables);
+    const cache = new SchemaCache(() => adapter, { now: () => clock });
+
+    // DDL lands on a cold cache — nothing stale exists yet, invalidation is a
+    // no-op on entries; the subsequent lookup is an ordinary fresh fetch.
+    cache.invalidate();
+    const tables = await cache.getTables("public");
+    expect(tables).toBe(fresh);
+    expect(listTables).toHaveBeenCalledTimes(1);
+
+    // The committed entry is the fresh adapter data (same reference within
+    // TTL) — no phantom stale window opened by the pre-fetch invalidate.
+    clock = 2_000;
+    expect(await cache.getTables("public")).toBe(fresh);
+    expect(listTables).toHaveBeenCalledTimes(1);
+  });
+
+  it("#3 invalidate during CONCURRENT tables + columns fetches → neither family commits stale data; both keys refetch", async () => {
+    const oldTables: TableInfo[] = [{ name: "orders", schema: "public" }];
+    const oldColumns: ColumnInfo[] = [
+      { name: "id", dataType: "integer", nullable: false },
+    ];
+    const newTables: TableInfo[] = [{ name: "invoices", schema: "public" }];
+    const newColumns: ColumnInfo[] = [
+      { name: "id", dataType: "integer", nullable: false },
+      { name: "total", dataType: "numeric", nullable: true },
+    ];
+    let clock = 1_000;
+    const tablesDef = deferred<TableInfo[]>();
+    const columnsDef = deferred<ColumnInfo[]>();
+    const listTables = vi.fn(() => tablesDef.promise);
+    const listColumns = vi.fn(() => columnsDef.promise);
+    const adapter = {
+      listTables,
+      listColumns,
+    } as unknown as DbAdapter;
+    const cache = new SchemaCache(() => adapter, { now: () => clock });
+
+    // Two DIFFERENT cache families are in flight when the DDL invalidates.
+    const pendingTables = cache.getTables("public");
+    const pendingColumns = cache.getColumns("users", "public");
+    await flushMicrotasks();
+    expect(listTables).toHaveBeenCalledTimes(1);
+    expect(listColumns).toHaveBeenCalledTimes(1);
+    cache.invalidate();
+
+    // Each pre-invalidate response settles its own caller…
+    tablesDef.resolve(oldTables);
+    columnsDef.resolve(oldColumns);
+    await expect(pendingTables).resolves.toBe(oldTables);
+    await expect(pendingColumns).resolves.toBe(oldColumns);
+
+    // …but BOTH cache slots stayed empty → both families refetch fresh.
+    clock = 2_000;
+    const secondTables = deferred<TableInfo[]>();
+    const secondColumns = deferred<ColumnInfo[]>();
+    listTables.mockImplementation(() => secondTables.promise);
+    listColumns.mockImplementation(() => secondColumns.promise);
+    const nextTables = cache.getTables("public");
+    const nextColumns = cache.getColumns("users", "public");
+    await flushMicrotasks();
+    expect(listTables).toHaveBeenCalledTimes(2);
+    expect(listColumns).toHaveBeenCalledTimes(2);
+    secondTables.resolve(newTables);
+    secondColumns.resolve(newColumns);
+    await expect(nextTables).resolves.toBe(newTables);
+    await expect(nextColumns).resolves.toBe(newColumns);
+
+    // Within-TTL reads are served from the fresh commits — neither stale
+    // family ever became cache state.
+    expect(await cache.getTables("public")).toBe(newTables);
+    expect(await cache.getColumns("users", "public")).toBe(newColumns);
+    expect(listTables).toHaveBeenCalledTimes(2);
+    expect(listColumns).toHaveBeenCalledTimes(2);
   });
 });
 

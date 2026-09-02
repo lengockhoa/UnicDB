@@ -330,3 +330,106 @@ describe("schemaContextCache — bounded cache (Issue #2)", () => {
     expect(listTables).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("schemaContextCache — invalidate during in-flight hydration (ARP-07)", () => {
+  it("does NOT commit an entry for a hydration invalidated mid-flight (next resolve re-hydrates)", async () => {
+    // Hydration: listTables resolves immediately, listColumns is gated —
+    // the test releases the gate AFTER invalidate(), so the hydration
+    // resolves with stale (pre-DDL) data post-invalidation. A successful
+    // DDL is simulated by the caller calling invalidate() at that moment.
+    const listTables = vi.fn(async () => [{ name: "users", schema: "public" }]);
+    let releaseColumns!: () => void;
+    const columnsSettled = new Promise<
+      Array<{ name: string; dataType: string; nullable: boolean }>
+    >((resolve) => {
+      releaseColumns = () =>
+        resolve([{ name: "stale_col", dataType: "text", nullable: true }]);
+    });
+    // Call 1 (pre-DDL hydration) parks on the gate and yields stale data;
+    // call 2 (post-invalidate re-hydration) resolves immediately with fresh data.
+    const listColumns = vi.fn(() =>
+      listColumns.mock.calls.length <= 1
+        ? columnsSettled
+        : Promise.resolve([{ name: "id", dataType: "int", nullable: false }]),
+    );
+    const adapter = adapterWith({ listTables, listColumns });
+    const deps: ResolverDeps = {
+      getActive: () => cfg("db-A", "alpha"),
+      getAdapter: async () => adapter,
+    };
+    const cache = createSchemaContextCache(deps, { ttlMs: 60_000 });
+
+    const p1 = cache.resolve("scope-A");
+    // Wait until hydration is parked on the gated listColumns call.
+    await vi.waitFor(() => expect(listColumns).toHaveBeenCalledTimes(1));
+    // Invalidate while the hydration is still in flight.
+    cache.invalidate();
+    // Let the stale hydration finish.
+    releaseColumns();
+    await p1;
+
+    // The stale entry must NOT have been committed → the next resolve
+    // re-issues listTables/listColumns.
+    const ctx2 = await cache.resolve("scope-A");
+    expect(listTables).toHaveBeenCalledTimes(2);
+    expect(listColumns).toHaveBeenCalledTimes(2);
+    expect(ctx2.tables[0]?.columns[0]?.name).toBe("id");
+  });
+
+  it("resolve() AFTER invalidate() starts a FRESH hydration instead of returning the stale in-flight one", async () => {
+    // First listTables call is gated; later calls settle immediately, so a
+    // fresh hydration can complete while the stale one is still parked.
+    let releaseFirstTables!: () => void;
+    const firstTablesReady = new Promise<void>((r) => (releaseFirstTables = r));
+    const listTables = vi.fn(async () => {
+      if (listTables.mock.calls.length <= 1) await firstTablesReady;
+      return [{ name: "users", schema: "public" }];
+    });
+    const listColumns = vi.fn(async () => [
+      { name: "id", dataType: "int", nullable: false },
+    ]);
+    const adapter = adapterWith({ listTables, listColumns });
+    const deps: ResolverDeps = {
+      getActive: () => cfg("db-A", "alpha"),
+      getAdapter: async () => adapter,
+    };
+    const cache = createSchemaContextCache(deps, { ttlMs: 60_000 });
+
+    const stale = cache.resolve("scope-A");
+    await vi.waitFor(() => expect(listTables).toHaveBeenCalledTimes(1));
+    // Invalidate while the pre-invalidate hydration is still pending.
+    cache.invalidate();
+    // Post-invalidate resolve must NOT coalesce onto the stale hydration.
+    const freshP = cache.resolve("scope-A");
+    expect(freshP).not.toBe(stale);
+    // A NEW listTables invocation must have begun before the old one settled.
+    await vi.waitFor(() => expect(listTables).toHaveBeenCalledTimes(2));
+    const freshCtx = await freshP;
+    releaseFirstTables();
+    await stale;
+
+    expect(freshCtx.connectionName).toBe("alpha");
+    expect(freshCtx.tables).toHaveLength(1);
+  });
+
+  it("invalidate() is idempotent on an empty cache (no throw; next resolve hydrates exactly once)", async () => {
+    const listTables = vi.fn(async () => [{ name: "users", schema: "public" }]);
+    const listColumns = vi.fn(async () => [
+      { name: "id", dataType: "int", nullable: false },
+    ]);
+    const adapter = adapterWith({ listTables, listColumns });
+    const deps: ResolverDeps = {
+      getActive: () => cfg("db-A", "alpha"),
+      getAdapter: async () => adapter,
+    };
+    const cache = createSchemaContextCache(deps, { ttlMs: 60_000 });
+
+    expect(() => cache.invalidate()).not.toThrow();
+    expect(() => cache.invalidate()).not.toThrow();
+
+    const ctx = await cache.resolve("scope-A");
+    expect(listTables).toHaveBeenCalledTimes(1);
+    expect(listColumns).toHaveBeenCalledTimes(1);
+    expect(ctx.tables).toHaveLength(1);
+  });
+});
