@@ -1,8 +1,8 @@
 {
   "name": "vsdb",
-  "displayName": "VSDB — Run SQL from VS Code",
+  "displayName": "VSDB \u2014 Run SQL from VS Code",
   "description": "Run SQL against PostgreSQL, MySQL/MariaDB and SQL Server directly from VS Code. Cmd+Enter (macOS) / Ctrl+Enter (Win/Linux) executes the selected statement.",
-  "version": "1.46.0",
+  "version": "1.47.0",
   "publisher": "lengockhoa",
   "engines": {
     "vscode": "^1.75.0"
@@ -158,25 +158,25 @@
       },
       {
         "command": "vsdb.newTable",
-        "title": "New Table…",
+        "title": "New Table\u2026",
         "category": "VSDB",
         "icon": "$(add)"
       },
       {
         "command": "vsdb.modifyTable",
-        "title": "Modify Table…",
+        "title": "Modify Table\u2026",
         "category": "VSDB",
         "icon": "$(edit)"
       },
       {
         "command": "vsdb.renameTable",
-        "title": "Rename Table…",
+        "title": "Rename Table\u2026",
         "category": "VSDB",
         "icon": "$(replace)"
       },
       {
         "command": "vsdb.renameColumn",
-        "title": "Rename Column…",
+        "title": "Rename Column\u2026",
         "category": "VSDB",
         "icon": "$(replace)"
       },
@@ -188,7 +188,7 @@
       },
       {
         "command": "vsdb.generateSampleData",
-        "title": "Generate Sample Data…",
+        "title": "Generate Sample Data\u2026",
         "category": "VSDB",
         "icon": "$(file-text)"
       },
@@ -206,7 +206,7 @@
       },
       {
         "command": "vsdb.openAiSettings",
-        "title": "Open AI Settings…",
+        "title": "Open AI Settings\u2026",
         "category": "VSDB",
         "icon": "$(gear)"
       },
@@ -284,7 +284,7 @@
       },
       {
         "command": "vsdb.consoleNewTab",
-        "title": "VSDB: Console — New Tab",
+        "title": "VSDB: Console \u2014 New Tab",
         "category": "VSDB",
         "icon": "$(add)"
       },
@@ -553,7 +553,7 @@
         "vsdb.showRunLens": {
           "type": "boolean",
           "default": true,
-          "description": "Hiển thị CodeLens ▶ Run phía trên mỗi SQL statement trong file .sql."
+          "description": "Hi\u1ec3n th\u1ecb CodeLens \u25b6 Run ph\u00eda tr\u00ean m\u1ed7i SQL statement trong file .sql."
         },
         "vsdb.import.batchSize": {
           "type": "number",
@@ -565,24 +565,24 @@
         "vsdb.showRunLensSh": {
           "type": "boolean",
           "default": true,
-          "description": "Hiển thị CodeLens ▶ Run ở đầu file .sh (shellscript)."
+          "description": "Hi\u1ec3n th\u1ecb CodeLens \u25b6 Run \u1edf \u0111\u1ea7u file .sh (shellscript)."
         },
         "vsdb.batchSize": {
           "type": "number",
           "default": 500,
           "minimum": 50,
           "maximum": 10000,
-          "description": "Số rows tải về mỗi lần (Load 500 more)."
+          "description": "S\u1ed1 rows t\u1ea3i v\u1ec1 m\u1ed7i l\u1ea7n (Load 500 more)."
         },
         "vsdb.admin.confirmGrant": {
           "type": "boolean",
           "default": true,
-          "description": "TASK-AHL-004 — ask for confirmation before running GRANT/REVOKE/KILL/TERMINATE statements (admin DCL). Always ON by default; set to false to skip the confirm modal at your own risk."
+          "description": "TASK-AHL-004 \u2014 ask for confirmation before running GRANT/REVOKE/KILL/TERMINATE statements (admin DCL). Always ON by default; set to false to skip the confirm modal at your own risk."
         },
         "vsdb.confirmDestructive": {
           "type": "boolean",
           "default": true,
-          "description": "Hỏi xác nhận trước khi chạy câu lệnh phá hoại (DELETE/UPDATE không WHERE, TRUNCATE, DROP)."
+          "description": "H\u1ecfi x\u00e1c nh\u1eadn tr\u01b0\u1edbc khi ch\u1ea1y c\u00e2u l\u1ec7nh ph\u00e1 ho\u1ea1i (DELETE/UPDATE kh\u00f4ng WHERE, TRUNCATE, DROP)."
         },
         "vsdb.hideSystemSchemas": {
           "type": "boolean",
@@ -596,7 +596,7 @@
             "omp"
           ],
           "default": "builtin",
-          "description": "Cycle AE — chat engine selection. \"omp\" routes the AI Chat panel through the in-process OmpChatEngine (requires the `omp` CLI installed and >= 17.0.0). \"builtin\" runs runAgent against the configured OpenAI-compatible provider. When \"omp\" is selected but the binary is missing or too old, VSDB silently degrades to \"builtin\" and shows a one-time install/update notice."
+          "description": "Cycle AE \u2014 chat engine selection. \"omp\" routes the AI Chat panel through the in-process OmpChatEngine (requires the `omp` CLI installed and >= 17.0.0). \"builtin\" runs runAgent against the configured OpenAI-compatible provider. When \"omp\" is selected but the binary is missing or too old, VSDB silently degrades to \"builtin\" and shows a one-time install/update notice."
         },
         "vsdb.resultsPlacement": {
           "type": "string",
@@ -605,7 +605,7 @@
             "beside"
           ],
           "default": "below",
-          "description": "AI-001 — vị trí của panel VSDB Results cho các lần chạy MỚI: \"below\" mở vertical split ngay dưới editor đang active, \"beside\" mở side-by-side bên cạnh. Setting chỉ áp dụng khi panel được tạo mới; panel đang mở không bao giờ bị di chuyển (reveal giữ nguyên group người dùng đã kéo)."
+          "description": "AI-001 \u2014 v\u1ecb tr\u00ed c\u1ee7a panel VSDB Results cho c\u00e1c l\u1ea7n ch\u1ea1y M\u1edaI: \"below\" m\u1edf vertical split ngay d\u01b0\u1edbi editor \u0111ang active, \"beside\" m\u1edf side-by-side b\u00ean c\u1ea1nh. Setting ch\u1ec9 \u00e1p d\u1ee5ng khi panel \u0111\u01b0\u1ee3c t\u1ea1o m\u1edbi; panel \u0111ang m\u1edf kh\u00f4ng bao gi\u1edd b\u1ecb di chuy\u1ec3n (reveal gi\u1eef nguy\u00ean group ng\u01b0\u1eddi d\u00f9ng \u0111\u00e3 k\u00e9o)."
         }
       }
     },
