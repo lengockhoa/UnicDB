@@ -111,3 +111,16 @@ Verification Output: |
 
 Status: PASS
 Note: All 11 test cases (#1-#11) pass; 116 total core tests green; typecheck exits 0. Implementation: (a) `dangerousStatement.ts` adds a `dialect === "mssql"`-gated bracket branch mirroring the mysql backtick branch (doubling escape, unterminated → EOF blanking); (b) `connectionManager.ts:guardAdapter` narrows `cfg.driver` to `SqlDialect | undefined` (bigquery → undefined) via a local ternary helper (no import from extension.ts), and threads the dialect through BOTH `isMutationSql`/`mutationStatements` call sites (:813/:814 and :831/:832). Per-task scope respected; BQ-00 frozen surface untouched. Test expectations adjusted for byte-exact length preservation: `[insert]` is 8 chars → 8 spaces (test #1 was off-by-one on character count, not a masking bug). Full suite has 20 unrelated `dist/*.js missing` failures (bundle gate, runs at cycle close, not per task).
+
+## Reviewer Verdict
+VERDICT: approved
+REVIEWER_MODEL: unic-smart (configured: unic-smart)
+EXECUTOR_MODEL: claude-sonnet-4-6
+VERIFICATION_RERUN: PASS
+TEST_PLAN_COVERAGE: all-followed — cases #1–#11 implemented; 2+ edge cases covered (#5–#7)
+FINDINGS:
+  critical: none
+  important: none
+  minor: none
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Model isolation verified: executor claude-sonnet-4-6 differs from reviewer unic-smart. Re-ran the specified 4-file suite (116 passing) and npm run typecheck; complete core suite also passes (413 tests).

@@ -131,3 +131,21 @@ Verification Output:
   result: 1 test file, 169/170 passed (1 pre-existing schemaFormBundlePresent dist artifact failure unrelated to this task — confirmed by `git stash` re-run on clean tree)
 Status: PASS
 Note: All §Test Cases wired and pinned. The `runDdl` helper now also fires the seam for ANALYZE/VACUUM paths since they share the helper; this is safe because the host closure's `completedSchemaImpact` filter (extension.ts:877) returns false for non-DDL statements so the cache invalidation is a no-op. The seam is optional — every existing test that constructs `RegisterDeps` without `onSchemaDdl` continues to pass without changes.
+
+## Reviewer Verdict
+
+VERDICT: approved
+REVIEWER_MODEL: unic-smart (opus tier)
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/tableCommands.test.ts src/ui/__tests__/aiChatPanelPlan.test.ts
+  result: 61/61 pass (2 files); npm run typecheck exit 0; npx vitest run src/extension.test.ts 109/109 pass
+TEST_PLAN_COVERAGE: all-followed — §Test Cases #1–#9 all implemented with real assertions; RED_OUTPUT contains genuine failing-test excerpts (7 failures on unmodified source); existing tests untouched (0 deleted lines in both test files).
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/ui/tableCommands.ts:133 — Note only: executor's report claim "runDdl helper now also fires seam for ANALYZE/VACUUM paths" is inaccurate in the safer direction — call sites at :463/:484 still pass 3 args (no onSchemaDdl), so the seam never fires for them. Independently verified safe: completedSchemaImpact (schemaImpact.ts:129) filters non-DDL keywords anyway. No action required.
+    - src/ui/tableCommands.ts:133-141 — toLocalSqlDialect duplicates extension.ts toSqlDialect (:131-135) exactly; acceptable per plan's boundary rationale (avoids crossing module seam per DDL), but the two now must stay in sync manually.
+NOTES: Closure-order hazard (registerTableCommands at extension.ts:372 vs closure assignment at :876) is correctly handled — the thunk reads the module-private binding at fire time, not registration time; `?.` guards null before assignment and after deactivate (:1265). Plan-apply per-statement firing verified against runRenameStatements (renameRunner.ts:65): throw → applied=i, so failed statement and remaining tail never reach the seam. BQ-00 frozen surface (bigqueryTypes.ts, bigqueryAdc.ts) untouched in range. Model isolation confirmed: executor unic-code (sonnet) != reviewer unic-smart (opus).
+NEXT_STATUS_FOR_INDEX: approved

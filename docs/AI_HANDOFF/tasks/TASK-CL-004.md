@@ -94,3 +94,23 @@ Verification Output:
 
 Status: PASS
 Note: bigqueryPackage test count is 7, not the 14 mentioned in the task's stale reference — the existing test file has 7 `it(...)` blocks; behavior identical, all 7 green. Re-grep found BigQueryValue union at bigqueryTypes.ts:90 (planner's note confirmed — was :63 in older drafts). No inline `import("./types")` annotations found (the planner estimated 7; actual is 6 in bigquery.ts).
+
+---
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/adapters/__tests__/bigquery.test.ts src/adapters/__tests__/bigqueryPackage.test.ts
+  result: 20 pass / 0 fail (13 + 7); `npm run typecheck` exit 0; sanity net 32/32 pass
+TEST_PLAN_COVERAGE: all-followed — tests #1-#9 all present/green (file tests #10-#12 + untouched #3/#6 + ADR greps); inline-import count confirmed 6 (planner's "7" was an estimate; grep at fe7e0b8 = 6); bigqueryPackage count confirmed 7 it() blocks, not 14 (task's stale figure)
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - docs/decisions/0004-bq-00-feasibility-contract.md:110-112 — "TASTE NOTE" parenthetical is process commentary inside an ADR body; the :90 cite itself is correct (verified `export type BigQueryValue` sits at bigqueryTypes.ts:90), strip the parenthetical in a later doc pass
+    - docs/AI_HANDOFF/tasks/TASK-CL-004.md:18 — task text still says "seven inline import annotations"; actual pre-state count is 6 (executor note already documents this; planner-side estimate drift, no code action)
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: `requireClient()` (bigquery.ts:322-335) checks `closed` first then `client === null`, so NotConnected fires only for never-connected; BigQueryClosedError message/path unchanged (tests #3/#6 verbatim green). durationMs measured with Date.now() delta tightly around the `client.query` await (bigquery.ts:252-254). DECL_RE is now the single pattern source via declReFor() — concatenation is byte-identical to the old inline regexes. Frozen surface clean in both range diff and worktree. Remaining ADR `types.ts` cites (:85 → BatchedQuery.cancel at types.ts:65, :331 → RunResult at types.ts:76) verified accurate.

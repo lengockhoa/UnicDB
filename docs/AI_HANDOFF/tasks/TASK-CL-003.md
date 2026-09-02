@@ -117,3 +117,16 @@ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-cl-003
 
 Status: PASS
 Note: One small test-design adaptation for test #14 — the writer-clamp test mutates host state via the public `panel.renameTab(tabId, longName)` method instead of going through the message handler, because the existing `isConsoleToHostMessage` guard does not list `renameTab` (pre-existing latent gap, not in the task's scope to fix). The clamp itself is exercised by the same `buildDraftSnapshot` path triggered by an `updateBuffer` write.
+
+## Reviewer Verdict
+
+VERDICT: approved
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: claude-sonnet-4-6
+VERIFICATION_RERUN: PASS
+FINDINGS:
+  critical: none
+  important: none
+  minor: none
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Verified pre-existing isConsoleToHostMessage guard gap — union lists renameTab (consolePanelMessages.ts:40) but switch has no case, hits default:false; guard body untouched by this diff, correctly out of scope. Test #14 exercises the clamp through the real updateBuffer→debounced persistDrafts→buildDraftSnapshot path (renameTab alone schedules no persist), so the writer clamp is genuinely covered.
