@@ -1,8 +1,8 @@
 # TASK-BQ01-001 — Safe BigQuery connection config (pure)
 
-- Status: `ready`
+- Status: `approved_minor`
 - Owner: `-`
-- Reviewer: `-`
+- Reviewer: `unic-smart`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §3 (Config model)
 
 ## Goal
@@ -175,3 +175,28 @@ discipline (`totalBytesBilled: string` in `bigqueryTypes.ts`).
 **HANDOFF_TO_REVIEWER:** yes — task implementation complete; all 6 test cases pass; typecheck clean; BQ-00 surfaces + factory unchanged.
 
 **NEXT:** Ready for review. BQ01-003 (factory + connectionManager) will replace factory.ts `case "bigquery"` with the real adapter case, and may want to revisit extension.ts / resultsPanel.ts narrowing helpers if BQ connections are expected to be active before BQ01-002 lands.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: claude-sonnet-4-5
+VERIFICATION_RERUN:
+  command: npx vitest run src/adapters/__tests__/bigqueryConfig.test.ts
+  result: 13 pass / 0 fail (exit 0)
+  command: npm run typecheck
+  result: clean (exit 0)
+  command: npx vitest run (full suite — diff touched shared code, wave-boundary net)
+  result: 3245 pass / 0 fail / 1 skipped (226 files)
+TEST_PLAN_COVERAGE: all-followed — §Test Cases #1-#6 present (13 tests); RED_OUTPUT is real failing output (11 failed, TypeError: validateBigQueryConnection is not a function), not a bare claim
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - src/config/types.ts (validator) + 4 ripple files — scope exceeded "No other change" Target Files, but the ripple is forced by the task's own typecheck gate (exhaustive never arms in factory.ts/browseCommands.ts; DriverType crossing SqlDialect/Dialect boundaries in extension.ts/resultsPanel.ts) and is behavior-preserving for pg/mysql/mssql (toSqlDialect/toDialect are identity for existing drivers). Logged, handoff allowed.
+    - src/adapters/__tests__/bigqueryConfig.test.ts:157 — redaction tests #4a/#4b pin the fixture serialization + BigQueryConnectionFields field set; a FUTURE top-level credential field on ConnectionConfig would not be caught unless a fixture sets it. Acceptable per plan; revisit if ConnectionConfig grows credential-adjacent fields.
+    - src/ui/browseCommands.ts:63 — quoteForDriver bigquery throw becomes REACHABLE once TASK-BQ01-003 admits live bigquery connections; owner is BQ-02 wiring, not this task — flagging for the BQ01-003 reviewer to confirm a guard exists upstream.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: All caller hard checks pass: validator pure (types.ts has zero imports), DriverType+="bigquery" with pg/mysql/mssql suites green, case-insensitive JSON redaction asserted, maxBytesBilled rejects ""/abc/-5/0 (regex /^[1-9]\d*$/), ripples compile clean, connectionForm SecretStorage tests 15/15 green. Executor's out-of-scope ripple resolution is transparently documented in ISSUES #1 and is the correct minimal resolution.

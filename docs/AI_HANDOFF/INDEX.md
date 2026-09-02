@@ -4,10 +4,10 @@
 
 | Task / Portfolio | Title | Status | Dependencies | Reviewer |
 |---|---|---|---|---|
-| TASK-BQ01-001 | Safe BigQuery connection config (pure validator + DriverType) | pending_review | none | - |
-| TASK-BQ01-002 | BigQuery adapter / client lifecycle (`bigquery.ts`, BQ-00 seam) | pending_review | TASK-BQ01-001 | - |
-| TASK-BQ01-003 | Factory + ConnectionManager admission for bigquery | pending_review | TASK-BQ01-001, TASK-BQ01-002 | - |
-| TASK-BQ01-004 | Connection form + diagnostics for bigquery | pending_review | TASK-BQ01-001 | - |
+| TASK-BQ01-001 | Safe BigQuery connection config (pure validator + DriverType) | approved_minor | none | unic-smart |
+| TASK-BQ01-002 | BigQuery adapter / client lifecycle (`bigquery.ts`, BQ-00 seam) | approved_minor | TASK-BQ01-001 | unic-smart |
+| TASK-BQ01-003 | Factory + ConnectionManager admission for bigquery | approved_minor | TASK-BQ01-001, TASK-BQ01-002 | unic-smart |
+| TASK-BQ01-004 | Connection form + diagnostics for bigquery | approved_minor | TASK-BQ01-001 | unic-smart |
 | PORT-BQ-01 | BigQuery connection foundation (active — 4/4 tasks committed, pending_review) | active | PORT-BQ-00 | - |
 
 Graph: TASK-BQ01-001 independent; TASK-BQ01-001 → TASK-BQ01-002; TASK-BQ01-001, TASK-BQ01-002 → TASK-BQ01-003; TASK-BQ01-001 → TASK-BQ01-004.

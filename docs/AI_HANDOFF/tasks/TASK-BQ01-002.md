@@ -397,3 +397,28 @@ FINDINGS:
     - src/adapters/bigquery.ts:211-245 — (round-1, still open) inline import("./types") return annotations.
 NEXT_STATUS_FOR_INDEX: critical_block
 NOTES: Hard checks verified good: default factory now uses the createBigQueryClient seam's return value (single client, location flows — bigqueryAdc.ts:176-177 returns the impl-built instance) and BQ-00 surface is byte-untouched. But the prescribed TUPLE fix is insufficient: verified empirically that element[2] never carries rows unless skipParsing is set. Re-run the probe fixture (real client + stubbed transport) as the new regression test shape after adding skipParsing.
+
+## Reviewer Verdict (fix round 2)
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart (matches handoff.reviewer.model in .ukit/storage/config.json)
+EXECUTOR_MODEL: unic-code (fix round 2, R4.5) — differs from reviewer; isolation OK
+VERIFICATION_RERUN:
+  command: npx vitest run src/adapters/__tests__/bigquery.test.ts
+  result: 10 pass / 0 fail / exit 0
+  command: npm run typecheck
+  result: exit 0 (no errors)
+  command (sanity): npx vitest run bigqueryAdc + bigqueryTypes + bigqueryConfig + bigqueryPackage + factory tests
+  result: 39 pass / 0 fail / exit 0
+TEST_PLAN_COVERAGE: all-followed — tests #1-#6 plus regression #7/#7b/#8/#9; RED output for all 4 new tests is genuine (per-test assertion failure text, not bare claims); independently rerun GREEN.
+FINDINGS:
+  critical:
+    - none — hard check 1 verified at src/adapters/bigquery.ts:225 (`client.query(sql, { skipParsing: true })` unconditional) and against installed @google-cloud/bigquery 9.0.3 source: bigquery.js and job.js both do `if (options.skipParsing) { rows = res.rows; } else { mergeSchemaWithRows_...; delete res.rows; }`, so with the option forwarded, wire element[2] keeps raw `f[].v` cells and `skipParsing?: boolean` exists at bigquery.d.ts:71 as the diff claims.
+  important:
+    - none — BQ-00 surface byte-untouched (`git diff 0d4ee67..a348848` on bigqueryAdc.ts/bigqueryTypes.ts is empty; range touches only bigquery.ts, bigquery.test.ts, task file); test fakes' `query` accept `(sql, opts?)` matching the widened seam (typecheck confirms); single `new BigQuery(` inside the default factory's impl callback (bigquery.ts:339-344) with the seam's return value used directly; no 1-element fallback remains; precision pinned end-to-end by #8 (INT64 "9007199254740993") and #9 (BIGNUMERIC "12345678901234567890") with skipParsing-gated fakes so both a forwarding regression and an element-routing regression flip RED.
+  minor:
+    - src/adapters/bigquery.ts:299-308 — (carried from round 1) never-connected state still throws `BigQueryClosedError`; a distinct not-connected error would read better. Non-blocking.
+    - src/adapters/bigquery.ts:236-237 — (carried) `durationMs: 0` hardcoded, `commandTag: undefined`; other adapters measure both. Defer to BQ-02 wiring.
+    - src/adapters/bigquery.ts:244-279 — (carried) inline `import("./types").X` return annotations; top-level type imports would match lines 39-44. Style only.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: The skipParsing fix is mechanically correct and empirically anchored — verified directly in the installed client's source that element[2] retains rows only when skipParsing is set, which is exactly what the new fake contract models. All three remaining findings are carried minors explicitly deferred to BQ-02; handoff allowed.

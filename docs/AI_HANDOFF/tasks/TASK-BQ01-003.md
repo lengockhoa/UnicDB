@@ -367,3 +367,21 @@ $ npm run typecheck
 ### Next
 
 Ready for re-review.
+
+## Reviewer Verdict (fix round 1)
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/core/__tests__/connectionManager.test.ts && npx vitest run src/adapters/__tests__/factory.test.ts && npm run typecheck
+  result: 43 pass + 6 pass = 49 pass / 0 fail; tsc --noEmit clean (exit 0)
+TEST_PLAN_COVERAGE: all-followed — both round-1 findings addressed (test strengthening + docstring correction); all hard checks pass (see NOTES)
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - src/core/__tests__/connectionManager.test.ts:1668 — comment says "ALL three admission paths" but the test (correctly) exercises four (getAdapterFor, getAdapter, editConnection, addConnection); fix the count to "all four"
+NOTES: Hard check 1 — Test #4 imports `ConnectionManagerDisposedError` and asserts all four admission paths reject with it; executor's RED evidence shows `getAdapterFor` resolving to a fake adapter when `requireNotDisposed()` was neutered, so deleting the guard breaks the test (and the factory-call-count assertion proves no client rebuild). Hard check 2 — `dispose()` docstring now matches source: `BigQueryAdapter` constructor is `(cfg, clientFactory?)` with no disposed flag (src/adapters/bigquery.ts:116), and the docstring explicitly says so. Hard check 3 — guard is the first statement of all four paths (src/core/connectionManager.ts:188, 231, 400, 650); existing tests stay green fresh.

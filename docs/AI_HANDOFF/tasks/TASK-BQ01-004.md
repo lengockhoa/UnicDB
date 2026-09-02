@@ -236,3 +236,24 @@ FINDINGS:
     - webview/connectionFormMain.ts:47,50 — BQ-00 already ships `datasetProject` in the config shape (`FormConfig.bigquery.datasetProject`), but the form neither renders nor forwards it; if that field is intentionally deferred, note it in the task discussion so 003's mapping does not assume the form owns it.
 NEXT_STATUS_FOR_INDEX: changes_requested
 NOTES: All 5 task hard checks pass on the bigquery path (verified against the real bundle): BQ fields render only for bigquery with SQL group structurally removed from DOM, gating blocks empty billingProject / "0" maxBytesBilled with no submit post, remediation renders verbatim via textContent. But the port reset in updateDriverVisibility breaks the pre-existing edit flow for SQL drivers with custom ports — a regression introduced by this diff, caught by bundle reproduction, not by the added tests.
+
+## Reviewer Verdict (fix round 1)
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run src/ui/__tests__/connectionForm.test.ts src/ui/__tests__/connectionFormBigqueryBundle.test.ts src/ui/__tests__/connectionFormManualCommitBundle.test.ts && npm run typecheck
+  result: PASS — compile clean; 15 + 10 + 5 = 30 pass / 0 fail; tsc --noEmit clean
+TEST_PLAN_COVERAGE: all-followed — §Test Cases #1-#5 green; fix round added #6/#6b (edit-open port preservation on mysql:6544 and mssql:1434), asserted against the real built bundle (dist/connectionForm.js) with true-failing RED evidence (expected '3306' to be '6544') captured pre-fix
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none — R4.5 both importants resolved: (1) `updateDriverVisibility({resetPort})` gate at webview/connectionFormMain.ts:191/224-227/579 preserves stored custom port on edit-open (applyInit passes resetPort:false; user change + initial add-render pass true), regression-proven by bundle tests #6/#6b; (2) RED_OUTPUT now on file in both the original Executor Report and the fix-round report, with honest provenance disclosure (reconstructed via isolation re-run on 8a5ac37)
+  minor:
+    - webview/connectionFormMain.ts:15 — `SqlDriver` still declared and unused (carried over from round 1; clean up in a later pass)
+    - src/ui/__tests__/connectionFormBigqueryBundle.test.ts:89 — `FIXED_ADC_REMEDIATION` still a hand-typed duplicate of BQ-00's `REMEDIATION.missing_adc` (carried over; import or cross-pin later)
+    - webview/connectionFormMain.ts:41 — `FormConfig.bigquery.datasetProject` still not rendered/forwarded by the form; if intentionally deferred to TASK-BQ01-003, record that in the plan discussion so 003's mapping does not assume the form owns it
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Hard checks all verified fresh: custom-port edit-open (mysql:6544) preserves the port through updateDriverVisibility and Save posts port 6544 on the real bundle; BQ render-only-for-bigquery, ADC verbatim copy, submit gate, and manualCommit regression all green in the same rerun.
