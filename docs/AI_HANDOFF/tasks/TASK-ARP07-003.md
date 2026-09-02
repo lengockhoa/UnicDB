@@ -188,4 +188,21 @@ no extension.ts / schemaCache.ts / schemaImpact.ts changes; no git operations; I
 
 ## Reviewer Verdict
 
-<!-- Phase 4 reviewer appends below. -->
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npm test src/ai/__tests__/schemaContextResolver.test.ts
+  result: 15 pass / 0 fail
+  command: npm run typecheck
+  result: exit 0, no errors
+  command: npm test (full suite)
+  result: 3120 pass / 2 skip / 0 fail
+TEST_PLAN_COVERAGE: all-followed
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/ai/__tests__/schemaContextResolver.test.ts:432 — file ends without trailing newline; cosmetic only.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Generation guard (commit iff generation===startGen) + inflight drop + ownership-checked finally (`if (inflight === p)`) closes the invalidate-during-hydrate race and the post-invalidate coalescing gap; no new leak path (invalidate nulls inflight directly; stale finally no-ops against a newer promise). Resolver untouched; TTL re-hydration and normal coalescing preserved. INDEX.md not updated per run instruction.

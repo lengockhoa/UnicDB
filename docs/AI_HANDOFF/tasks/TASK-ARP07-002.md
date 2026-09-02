@@ -124,3 +124,20 @@ changed. Gap test not needed — no gap found.
 ## Reviewer Verdict
 
 <!-- Phase 4 reviewer appends below. -->
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code (claude-sonnet-4-5)
+VERIFICATION_RERUN:
+  command: npm test src/ui/__tests__/schemaCache.test.ts && npm run typecheck
+  result: 23 pass / 0 fail; typecheck exit 0
+TEST_PLAN_COVERAGE: all-followed (3 pins added in new TASK-ARP07-002 describe block)
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - none
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: git diff 76e4bac..HEAD -- src/ui/schemaCache.ts is EMPTY (verified independently — byte-identical, no diff); sha256 before==after + clean git status corroborate the probe-restore claim. Sensitivity probe genuine: with the commit gate `if (this.generation === startGen)` replaced by `if (true)`, pins #1 and #3 fail with real assertion output (`expected "spy" to be called 2 times, but got 1`); pin #2 correctly stays green under the mutation (no in-flight fetch at invalidate time) exactly as documented. The 3 pins are non-tautological and cover the DDL invalidation races: stale response settles its own caller but never commits, both single- and multi-family (tables + columns) refetch fresh, invalidate-before-fetch opens no phantom stale window. Verify-only task closed no-change as required.

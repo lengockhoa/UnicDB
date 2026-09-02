@@ -125,3 +125,22 @@ Note:
 ## Reviewer Verdict
 
 <!-- Phase 4 reviewer appends below. -->
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code (claude-sonnet-4-5)
+VERIFICATION_RERUN:
+  command: npm test src/core/__tests__/schemaImpact.test.ts && npm run typecheck
+  result: 11 pass / 0 fail; typecheck exit 0
+TEST_PLAN_COVERAGE: all-followed (11/11 corpus tests; edge cases 4-8 + 10-11 exceed min 2)
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - src/core/schemaImpact.ts:129-137 — completedSchemaImpact does not document that every element must be a single pre-split statement. hasSchemaImpact("SELECT 1; DROP TABLE x") returns false (only the first depth-0 keyword decides; the DROP after `;` is never reached). Safe today because the seam at extension.ts:1788-1791 feeds split per-statement r.sql, but a future feeder that passes raw multi-statement batches would silently stale the cache (the false-NEGATIVE this cycle fears). Add a one-line precondition note in the module header or defensively split like readOnlyIntent.mutationStatements.
+    - src/core/schemaImpact.ts:40-45 — `comment` sits in readOnlyIntent's MUTATION_KEYWORDS but is deliberately excluded here; correct for the name-only cache today (COMMENT ON changes metadata, not table/column names), but the reconciliation header should state why COMMENT ON is not schema-impact so a future comment-aware cache does not silently regress.
+    - src/core/schemaImpact.ts:115 — JSDoc continuation line missing leading space after `*` (cosmetic only).
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Model isolation OK (reviewer unic-smart != executor unic-code). Adversarial probes re-run independently and all pass: /* create */ SELECT and literal/backtick/bracket masking all false; DML (INSERT/UPDATE/DELETE/MERGE/TRUNCATE) all false; CREATE/ALTER/DROP/RENAME true incl. CREATE OR REPLACE and DROP ... IF EXISTS; the known MSSQL [insert] false-positive class does NOT affect this classifier (first-keyword scan; bracket identifiers never open a statement). Pure module: no vscode import, no I/O, inputs unmutated. RED evidence genuine (module-not-found error with stack, non-zero exit).

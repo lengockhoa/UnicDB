@@ -170,4 +170,21 @@ Full suite cross-check: `npm test` → `Test Files 218 passed | 1 skipped (219)`
 
 ## Reviewer Verdict
 
-<!-- Phase 4 reviewer appends below. -->
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npm test src/extension.test.ts
+  result: 97 pass / 0 fail
+  command: npm run typecheck
+  result: exit 0, no errors
+  command: npm test (full suite)
+  result: 3120 pass / 2 skip / 0 fail
+TEST_PLAN_COVERAGE: all-followed
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/extension.test.ts:3522 — test #9 pins the seam payload indirectly (asserts invalidate fired + the runner's input SQL, not a direct capture of the seam's `completed` argument). Functionally adequate: a wrong field name would yield `undefined` -> completedSchemaImpact false -> no invalidate -> test fails. Cosmetic.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Seam fires inside the existing `if (!deactivating)` block after panel.render (extension.ts:1781-1791), feeding only status==="done" results via r.sql with active?.driver; ARP-02 ownsRun/finally/!deactivating gates byte-identical (additive lines only). deactivate nulls seam + state (double protection vs post-teardown writes). refresh() clears caches + onDidChangeTreeData only — no auto tree expansion (plan Known gap). Scope: extension.ts + extension.test.ts only. INDEX.md not updated per run instruction.
