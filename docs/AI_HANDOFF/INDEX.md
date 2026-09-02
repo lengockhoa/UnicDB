@@ -30,7 +30,7 @@ Cycle AIX-07 — **Trust, Privacy & Governance** — complete; shipped in v1.28.
 | PORT-ARP-06 | AI SQL policy unification and usage visibility | superseded (shipped in v1.42.0) | - | unic-smart |
 | PORT-ARP-07 | Successful-DDL cache/context invalidation | superseded (shipped in v1.43.0) | ARP-01 | unic-smart |
 | PORT-ARP-08 | Console draft recovery | superseded (shipped in v1.44.0) | ARP-03 | unic-smart |
-| PORT-ARP-09 | Redacted support diagnostics + release-confidence profiles | queued — plan + 5 tasks ready | ARP-02, ARP-05, ARP-06 | unic-smart |
+| PORT-ARP-09 | Redacted support diagnostics + release-confidence profiles | active — implementation done, pending review | ARP-02, ARP-05, ARP-06 | unic-smart |
 
 ## Cycle ARP-05 — Cross-driver timeout, pool, and resilience contract
 
@@ -266,12 +266,12 @@ Source: `docs/plans/2026-09-01-vsdb-additive-roadmap.md` §ARP-09 (lines ~399-43
 
 | Task / Portfolio | Title | Status | Dependencies | Reviewer |
 |---|---|---|---|---|
-| TASK-ARP09-001 | Pure redacted diagnostics formatter (new `src/core/diagnostics.ts`) | ready | none | - |
-| TASK-ARP09-002 | Release-confidence profiles: `profile:fast` / `profile:release` + hygiene pins | ready | none | - |
-| TASK-ARP09-003 | Lazy redacted Output Channel wiring + reveal/clear commands | ready | TASK-ARP09-001 | - |
-| TASK-ARP09-004 | Redaction-reuse gate (verify-first, expected not-needed) | ready | TASK-ARP09-001 | - |
-| TASK-ARP09-005 | Runner gate (conditional, expected not-needed) | ready | TASK-ARP09-002 | - |
-| PORT-ARP-09 | Redacted support diagnostics + release-confidence profiles | queued — plan + 5 tasks ready | ARP-02, ARP-05, ARP-06 | unic-smart |
+| TASK-ARP09-001 | Pure redacted diagnostics formatter (new `src/core/diagnostics.ts`) | pending_review | none | - |
+| TASK-ARP09-002 | Release-confidence profiles: `profile:fast` / `profile:release` + hygiene pins | pending_review | none | - |
+| TASK-ARP09-003 | Lazy redacted Output Channel wiring + reveal/clear commands | pending_review | TASK-ARP09-001 | - |
+| TASK-ARP09-004 | Redaction-reuse gate (verify-first, expected not-needed) | pending_review | TASK-ARP09-001 | - |
+| TASK-ARP09-005 | Runner gate (conditional, expected not-needed) | pending_review | TASK-ARP09-002 | - |
+| PORT-ARP-09 | Redacted support diagnostics + release-confidence profiles | active — implementation done, pending review | ARP-02, ARP-05, ARP-06 | unic-smart |
 
 Graph: TASK-ARP09-001 independent; TASK-ARP09-002 independent; TASK-ARP09-001 → TASK-ARP09-003; TASK-ARP09-001 → TASK-ARP09-004; TASK-ARP09-002 → TASK-ARP09-005.
 

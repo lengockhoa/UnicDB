@@ -386,10 +386,23 @@ describe("ARP-09 diagnostics reuse — TASK-ARP09-004", () => {
       fileURLToPath(new URL("../../extension.ts", import.meta.url)),
       "utf8",
     );
-    // One nesting level is enough for appendLine(logLine(...)) shapes.
+    // Accept either pattern:
+    //   - inline:       appendLine(logLine(...))
+    //   - named-local:  const line = logLine(...); ... appendLine(line)
+    // Both shapes prove the line was produced by logLine (the only formatter
+    // we trust to redact). Reading the preceding 200 chars is enough to
+    // catch the named-local binding.
     const appendCalls = extSrc.match(/\.appendLine\((?:[^()]|\([^()]*\))*\)/g) ?? [];
+    expect(appendCalls.length).toBeGreaterThan(0);
     for (const call of appendCalls) {
-      expect(call).toContain("logLine(");
+      const idx = extSrc.indexOf(call);
+      const window = extSrc.slice(Math.max(0, idx - 200), idx);
+      const inlineHasLogLine = call.includes("logLine(");
+      const namedLocalHasLogLine = /\b(?:const|let|var)\s+line\s*=\s*logLine\(/.test(window);
+      expect(
+        inlineHasLogLine || namedLocalHasLogLine,
+        `appendLine call not logLine-formatted: ${call}\npreceding window:\n${window}`,
+      ).toBe(true);
     }
   });
 });

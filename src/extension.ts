@@ -153,6 +153,9 @@ function ensureDiagChannel(): void {
     const pending = diagPendingLines;
     diagPendingLines = [];
     for (const line of pending) {
+      // `line` was produced by logLine at the write site (see logDiagnostic);
+      // the source-level pin in src/ai/__tests__/trace.test.ts covers this
+      // pattern (`appendLine(line)` after `const line = logLine(...)`).
       diagOutputChannel.appendLine(line);
     }
   }

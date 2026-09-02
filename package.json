@@ -357,12 +357,14 @@
       {
         "command": "vsdb.diagnostics.show",
         "title": "VSDB: Show Diagnostics",
-        "category": "VSDB"
+        "category": "VSDB",
+        "icon": "$(output)"
       },
       {
         "command": "vsdb.diagnostics.clear",
         "title": "VSDB: Clear Diagnostics",
-        "category": "VSDB"
+        "category": "VSDB",
+        "icon": "$(clear-all)"
       }
     ],
     "keybindings": [
