@@ -28,6 +28,7 @@ Cycle AIX-07 — **Trust, Privacy & Governance** — complete; shipped in v1.28.
 | PORT-ARP-04 | Tunnel and endpoint identity hardening | superseded (shipped in v1.40.0) | - | unic-smart |
 | PORT-ARP-05 | Cross-driver timeout/pool resilience contract | superseded (shipped in v1.41.0) | - | unic-smart |
 | PORT-ARP-06 | AI SQL policy unification and usage visibility | superseded (shipped in v1.42.0) | - | unic-smart |
+| PORT-ARP-07 | Successful-DDL cache/context invalidation | active — plan ready | ARP-01 | unic-smart |
 
 ## Cycle ARP-05 — Cross-driver timeout, pool, and resilience contract
 
@@ -218,3 +219,22 @@ Graph: TASK-ARP04-000 → TASK-ARP04-001 → TASK-ARP04-002 → TASK-ARP04-003 �
 - Wave 4 (1): TASK-ARP04-004
 
 Chain (no same-wave file sharing): TASK-ARP04-001 owns `sshTunnel.ts`/its test; TASK-ARP04-002 owns `sshTunnelManager.ts`/its test + new fixture `fake-ssh-foreign.mjs`; TASK-ARP04-003 owns `connectionManager.ts`/its test; TASK-ARP04-004 is inspection-only (no files). The tests-map overlap (`sshTunnel.ts`/`sshTunnelManager.ts` → both unit files) is moot for wave disjointness now that 001 and 002 run in separate waves; each task still pins its OWN owned test file. Recorded policy: explicit `-o StrictHostKeyChecking=yes` (overrides `~/.ssh/config` relaxations — intended fail-closed change), no `UserKnownHostsFile`, no relaxing flags, no form input. Plan: docs/AI_HANDOFF/PLAN.md.
+
+## Cycle ARP-07 — Successful-DDL cache/context invalidation
+
+Source: `docs/plans/2026-09-01-vsdb-additive-roadmap.md` §ARP-07 (lines 320-358). Dep: ARP-01 (shipped v1.37.0); preserve ARP-02 ownsRun/deactivate sentinel, ARP-03 row cap, ARP-04 tunnel identity, ARP-06 AI policy. Base: `main @ aa01a78` (v1.42.0). No lint script — static gate is `npm run typecheck`. No ADR (additive cache hygiene wiring existing invalidate() seams; `0004` free but unused).
+
+| Task / Portfolio | Title | Status | Dependencies | Reviewer |
+|---|---|---|---|---|
+| TASK-ARP07-001 | Schema-impact classifier (pure core, dialect-aware) | ready | none | unic-smart |
+| TASK-ARP07-002 | Schema cache race: invalidate-during-fetch (verify-first) | ready | none | unic-smart |
+| TASK-ARP07-003 | AI schema cache: invalidate-during-hydration stale-commit fix | ready | none | unic-smart |
+| TASK-ARP07-004 | Execution wiring: successful-DDL invalidation via host seam | ready | TASK-ARP07-001, TASK-ARP07-002, TASK-ARP07-003 | unic-smart |
+
+Graph: TASK-ARP07-001 independent; TASK-ARP07-002 independent; TASK-ARP07-003 independent;
+TASK-ARP07-001, 002, 003 → TASK-ARP07-004.
+
+- Wave 1 (3): TASK-ARP07-001, TASK-ARP07-002, TASK-ARP07-003 (parallel — disjoint `src/` files)
+- Wave 2 (1): TASK-ARP07-004 (wiring imports 001's classifier; 002/003 prove the invalidate() seams are safe before the host uses them)
+
+No same-wave file sharing: 001 owns `src/core/schemaImpact.ts`(+new `schemaImpact.test.ts`) — new core file sanctioned by the roadmap; 002 owns `schemaCache.ts`(verify-only, expected no change) + `schemaCache.test.ts`; 003 owns `schemaContextCache.ts` + `schemaContextResolver.test.ts` (the tests-map entry for `schemaContextCache.ts` is stale — resolves to `formatSchemaContext` tests; pin the resolver file); 004 owns `extension.ts` + `extension.test.ts` in wave 2 only. Roadmap's `extension.ts:294-312,492-499,657-687,1433-1470` citations are stale — actual wiring: `schemaCache.invalidate()` at `331-333`, `vsdb.refreshSchema` at `521-526`, `acSchemaCache.invalidate()` at `718-721`, `runStatements` at `1705-1769`. Known gap (PLAN.md Self-Audit): form-view DDL (`tableCommands.ts` `runDdl`) and AI plan-apply (`aiChatPanel.ts`) run `adapter.runQuery` directly and are NOT wired this cycle (files outside the roadmap candidate set); the module-level seam is the designed follow-up consumption point. Plan: `docs/AI_HANDOFF/PLAN.md`.
