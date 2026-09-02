@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.44.0] — 2026-09-02
+
+Cycle ARP-08: Console Draft Recovery — multi-tab Console scratch work survives close/reopen and VS Code reload. Drafts persist versioned and bounded in workspaceState with a debounced flush, the singleton close no longer loses what you typed, and the long-standing host/webview buffer divergence (switch away and back and your edits vanished) is fixed.
+
+### Added
+- **Draft snapshot codec** (`src/ui/consolePanelMessages.ts`): pure, fail-closed `ConsoleDraftSnapshot` { version: 1, tabs[{id,name,buffer}], activeTabId } with `encodeConsoleDraftSnapshot`/`parseConsoleDraftSnapshot` — malformed JSON, wrong version, missing/non-string fields, empty tab list, and over-cap payloads (>20 tabs, >64 000-char buffers) are rejected to `null`; unknown extra fields are tolerated and stripped. New `clearDrafts` webview→host message and `draftsCleared` host→webview ack. Persisted payload is ids/names/buffers only — never results, history, or connection data.
+- **Host draft restore** (`src/ui/consolePanel.ts`): new `draftMemento` option (in-memory only when omitted); `hydrateDrafts()` mirrors `hydrateHistory()` and corrupt input falls back to one fresh empty "Query 1" tab without throwing. Buffers persist through a 500 ms trailing-edge debounce on `updateBuffer`; `flushDrafts()` runs exactly once (idempotent) on both dispose paths (explicit `dispose()` and panel-close `onDidDispose`) so reload keeps the last keystrokes. Clear is durable: after Clear Drafts, a later dispose cannot resurrect the old draft; restore never fires `onRun` (pinned at zero calls). One-tab/two-tab restore, deterministic caps, and payload privacy (exact key-set assertion) are pinned.
+- **Webview flush UX** (`webview/consolePanelMain.ts`): the editor now posts debounced `updateBuffer` (per-tab dirty set, latest-wins, trailing edge) plus immediate flush on `visibilitychange→hidden` and `beforeunload`. The switch-clobber divergence is fixed: a pending edit is flushed before any tab switch, so the host state echo can no longer overwrite it (regression-pinned). A Clear Drafts toolbar button posts `clearDrafts` (the explicit click is the confirmation — no dialog); `draftsCleared` resets to one fresh empty tab. AIC-004 ghost-text behavior is byte-preserved.
+- **Extension wiring** (`src/extension.ts`): `commandOpenConsole` now passes `context.workspaceState` as `draftMemento` (workspace-scoped drafts) while query history stays on `context.globalState`; the distinction is pinned by test and the singleton/history/deactivate guarantees are unchanged.
+
+### Review
+- P2.5 plan review: Round 1 Approved by unic-smart (two citation minors applied directly).
+- R2 per-task review by unic-smart: all 4 tasks approved round 1, zero blocking findings (001 approved_minor: PLAN §4 had marked `draftsCleared` redundant while the implementation adds it back as the webview reset ack — documented; snapshot `name` field has no byte cap — noted, tabs/buffers are capped). Reviewers re-ran focused suites (55+55+27+101 tests), typecheck, compile, and probes independently.
+- Verification: full suite 3160 passed | 2 skipped (was 3120 | 2 at v1.43.0); `npm run typecheck` and `npm run compile` exit 0; `package-lock.json` both version fields synced to 1.44.0.
+
 ## [1.43.0] — 2026-09-02
 
 Cycle ARP-07: Successful-DDL Cache/Context Invalidation — a successful DDL now invalidates the schema caches automatically. A new pure dialect-aware schema-impact classifier decides when a completed run changes schema, both schema caches are proven safe under invalidate-during-fetch/hydrate races, and the execution path fires invalidation through an explicit host seam — while failed or cancelled runs leave everything untouched.
