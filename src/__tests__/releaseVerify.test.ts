@@ -152,6 +152,21 @@ exit 3
     expect(pkg.scripts["verify:release"]).toBe("npm test && npm run typecheck && npm run compile");
   });
 
+  it("profile:release is the npm-routed string (not a raw bash invocation)", () => {
+    // ARP-09.5 runner gate (TASK-ARP09-005): profile:release must reference ONLY
+    // an existing npm script name so it runs on Windows/macOS/Linux npm unchanged.
+    // The Windows-portability reason: `npm run verify:release` works on every
+    // platform that ships npm, whereas `bash scripts/verify-release.sh` would
+    // require bash (and WSL on Windows). Verifies both:
+    //   (a) profile:release === "npm run verify:release" (npm-routed, byte-identical)
+    //   (b) verify:release value is the same pinned string from case #31
+    const pkg = JSON.parse(readFileSync(packageJsonPath, "utf8")) as { scripts: Record<string, string> };
+    expect(pkg.scripts["profile:release"]).toBe("npm run verify:release");
+    // Re-pin the referenced target so any future drift in verify:release is
+    // caught by the same test, not silently bypassed.
+    expect(pkg.scripts["verify:release"]).toBe("npm test && npm run typecheck && npm run compile");
+  });
+
   it("script strings have no shell-injection surface", () => {
     const pkg = JSON.parse(readFileSync(packageJsonPath, "utf8")) as { scripts: Record<string, string> };
     for (const key of ["verify:fast", "verify:release"] as const) {

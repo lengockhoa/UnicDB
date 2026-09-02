@@ -66,3 +66,51 @@ test -x scripts/verify-release.sh && echo "runner executable"
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+## Executor Report
+
+```
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+SUMMARY: Verify-first task confirmed NOT-NEEDED. scripts/verify-release.sh exists, is POSIX (`#!/bin/sh`), executable (-rwxr-xr-x, mode & 0o111), stages npm-test → typecheck → compile (lines 34-36), prints PASS/FAIL per stage, propagates first non-zero exit code verbatim (lines 27-31). Added one new evidence pin in src/__tests__/releaseVerify.test.ts asserting profile:release === "npm run verify:release" (npm-routed, byte-identical) and that the referenced verify:release string is the same pinned string from case #31.
+TEST_PLAN_FOLLOWED: task §Test Cases #30-#33
+FILES_CHANGED:
+  - src/__tests__/releaseVerify.test.ts: new it("profile:release is the npm-routed string (not a raw bash invocation)") after the existing verify:release pin
+TESTS_ADDED:
+  - src/__tests__/releaseVerify.test.ts: profile:release is the npm-routed string (not a raw bash invocation)
+VERIFICATION:
+  command: npx vitest run src/__tests__/releaseVerify.test.ts src/__tests__/releaseHygiene.test.ts
+  result: 20 pass / 0 fail / exit 0
+  output_excerpt: |
+    ✓ src/__tests__/releaseHygiene.test.ts  (10 tests) 4ms
+    ✓ src/__tests__/releaseVerify.test.ts  (10 tests) 664ms
+    Test Files  2 passed (2)
+    Tests  20 passed (20)
+  command: npx tsc --noEmit
+  result: exit 0 (no output)
+  command: node -e 'const p=require("./package.json"); if(p.scripts["profile:release"]!=="npm run verify:release")process.exit(1); console.log("profile:release ok")'
+  result: exit 0
+  output_excerpt: profile:release ok
+  command: test -x scripts/verify-release.sh && echo "runner executable"
+  result: exit 0
+  output_excerpt: runner executable
+ISSUES: none
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for review
+```
+
+### Evidence citations
+
+- scripts/verify-release.sh exists (906 bytes), executable (-rwxr-xr-x), POSIX shebang `#!/bin/sh` (line 1).
+- Stage order (lines 34-36): `stage npm-test npm test`, `stage typecheck npm run typecheck`, `stage compile npm run compile` — npm-test → typecheck → compile.
+- PASS/FAIL emission (lines 24-31): `printf 'PASS %s\n' "$label"`; on failure `printf 'FAIL %s\n' "$label"`, `printf 'FAIL verify:release\n'`, `exit "$rc"` — first non-zero stage aborts, exit code propagated verbatim.
+- package.json: `profile:release` = `"npm run verify:release"`; `verify:release` = `"npm test && npm run typecheck && npm run compile"` (byte-identical to releaseVerify.test.ts pin at line 152).
+- No `bash`/`sh`/`.sh` token in any `profile:*` or `verify:*` npm-script value — Windows-portability satisfied.
+- Existing releaseVerify.test.ts pins consumed unchanged: runner file existence + executable + POSIX shebang (line 166-172); PASS-per-stage + final OK (lines 72-92); first-non-zero stage aborts + FAIL npm-test (lines 94-123); verify:fast allowed-string set (lines 145-148); verify:release byte-identical (lines 150-153); no shell-injection surface (lines 155-164); existing four baseline scripts preserved (lines 174-179); verify:* reference only pre-existing script keys (lines 181-202).
+- New evidence pin (added in releaseVerify.test.ts): asserts `profile:release === "npm run verify:release"` AND re-pins `verify:release` so any future drift is caught by the same test.
+
+### Verdict
+
+NOT-NEEDED. No new runner script (Windows `.cmd` wrapper made moot by `profile:release = npm run verify:release` — npm on Windows does not require bash). No `scripts/*` change. No package.json script change beyond wave-1 lands.
