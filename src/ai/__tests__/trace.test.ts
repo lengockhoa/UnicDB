@@ -1,11 +1,14 @@
 // src/ai/__tests__/trace.test.ts — TASK-AIX06-001
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   TraceRecorder,
   redact,
   MAX_ENTRIES_PER_TURN,
   MAX_TURNS,
 } from "../trace";
+import { logLine } from "../../core/diagnostics";
 
 describe("redact (TASK-AIX06-001)", () => {
   it("scrubs apiKey literal", () => {
@@ -316,5 +319,77 @@ describe("redact r3 review (AIX-06 / DBX-07)", () => {
     // (e.g. discussion text) is untouched when there is no delimiter.
     const out = redact({ s: "we discuss auth in the next section" }) as Record<string, string>;
     expect(out.s).toBe("we discuss auth in the next section");
+  });
+});
+
+describe("ARP-09 diagnostics reuse — TASK-ARP09-004", () => {
+  // Read-only source-shape evidence: ARP-09's diagnostics formatter must
+  // REUSE trace.ts redaction, never re-implement or bypass it. Mirrors the
+  // source-reading pin pattern of policy.test.ts (pure — no vscode).
+  const diagSrc = readFileSync(
+    fileURLToPath(new URL("../../core/diagnostics.ts", import.meta.url)),
+    "utf8",
+  );
+
+  // Case 25 — happy: redact is imported from trace.ts and actually called
+  // from the logLine path (applied, not an import-only dead reference).
+  it("diagnostics.ts imports redact from ../ai/trace and calls it in logLine's path", () => {
+    expect(diagSrc).toMatch(/import\s*\{\s*redact\s*\}\s*from\s*["']\.\.\/ai\/trace["']/);
+    // The single redact( call lives in toRedactedSingleLine, which logLine
+    // calls — prove reachability from logLine's body.
+    expect(diagSrc).toMatch(/function logLine\(/);
+    expect(diagSrc).toMatch(/toRedactedSingleLine\(message\)/);
+    expect(diagSrc).toMatch(/redact\(raw\)/);
+  });
+
+  // Case 26 — edge: NO local copy of the secret scrubber. The only
+  // replace() calls in the file must be line-break stripping, not
+  // secret-shaped token replacement.
+  it("diagnostics.ts contains no re-implemented secret scrubber", () => {
+    expect(diagSrc).not.toMatch(/Bearer\s+[A-Za-z0-9._\-+/=]+/);
+    expect(diagSrc).not.toMatch(/Basic\s+[A-Za-z0-9._\-+/=]+/);
+    expect(diagSrc).not.toMatch(/new RegExp\(/);
+    expect(diagSrc).not.toMatch(/SECRET_KEY_RE|BEARER_RE|BASIC_RE|KV_RE|AUTH_KV_RE|LONG_RUN_RE/);
+    // The lone replace() uses strip ONLY line breaks (diagnostics.ts:47,53).
+    const replaces = diagSrc.match(/\.replace\([^)]*\)/g) ?? [];
+    expect(replaces.length).toBeGreaterThan(0);
+    for (const r of replaces) {
+      expect(r).toMatch(/\\r|\\n/);
+    }
+  });
+
+  // Case 27 — edge: the import is APPLIED — a secret-shaped payload driven
+  // through the diagnostics formatter comes out byte-identical to what
+  // redact() produces directly for the same input (same marker shape).
+  it("logLine output carries exactly the marker redact() produces", () => {
+    const secret = "provider failed: Authorization: Bearer eyJhbGciOiJFUzI1NiIsInRlc3Q";
+    const direct = redact(secret) as string;
+    const viaLogLine = logLine("ai", "error", secret, undefined, new Date(0));
+    // Same scrub result inside the formatted line.
+    expect(viaLogLine).toContain(direct);
+    // No secret residue anywhere on the line.
+    expect(viaLogLine).not.toContain("eyJhbGciOiJFUzI1NiIsInRlc3Q");
+    // Same holds for the key=value form (PLAN §4 rows 3-4 fixtures).
+    const kv = "password = 'hunter2'";
+    expect(logLine("general", "warn", kv, undefined, new Date(0))).toContain(
+      redact(kv) as string,
+    );
+  });
+
+  // Case 29 — edge: no unredacted write path. Every appendLine argument in
+  // extension.ts must be logLine-formatted (REDACTED). Today 003 has not
+  // landed (no appendLine at all — vacuously true, gated per the task's
+  // Dependencies note); when 003 lands, its flush site must keep the
+  // `appendLine(logLine(...))` shape — `appendLine(<raw>)` fails this pin.
+  it("every appendLine argument in extension.ts is logLine-formatted", () => {
+    const extSrc = readFileSync(
+      fileURLToPath(new URL("../../extension.ts", import.meta.url)),
+      "utf8",
+    );
+    // One nesting level is enough for appendLine(logLine(...)) shapes.
+    const appendCalls = extSrc.match(/\.appendLine\((?:[^()]|\([^()]*\))*\)/g) ?? [];
+    for (const call of appendCalls) {
+      expect(call).toContain("logLine(");
+    }
   });
 });

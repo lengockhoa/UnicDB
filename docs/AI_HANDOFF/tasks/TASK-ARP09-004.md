@@ -60,7 +60,14 @@ grep -n "appendLine" src/extension.ts   # matches at 003's flush site are EXPECT
 
 ## Discussion
 
-(no comments yet)
+**Executor (TASK-ARP09-004, verify-first) — 2026-09-02.** Closed NOT-NEEDED: no source change; evidence pins appended to `src/ai/__tests__/trace.test.ts` (`describe("ARP-09 diagnostics reuse — TASK-ARP09-004")`, 4 tests; existing redact/TraceRecorder tests untouched; pure — no vscode import; source-reading pattern mirrors `policy.test.ts`). Evidence:
+
+- **#25**: `src/core/diagnostics.ts` line 11 `import { redact } from "../ai/trace";`; line 45 `const scrubbed = redact(raw);` inside `toRedactedSingleLine` (line 29), which `logLine` (line 64) calls at line 74 — redaction is reachable from `logLine`, applied (not dead).
+- **#26**: source scan of `diagnostics.ts` found NO secret scrubber copy — no `/Bearer\s+/` or `/Basic\s+/` regex literal, no `new RegExp(`, no `SECRET_KEY_RE`-style definitions. The only `.replace()` calls (lines 47, 53) strip `\r\n|\r|\n` line breaks — not secret-shaped tokens.
+- **#27**: equivalence pin — `logLine("ai","error","Authorization: Bearer eyJhbGciOi…")` output contains exactly what `redact()` returns directly for the same input (same `<redacted>` marker shape); key=value fixture `password = 'hunter2'` likewise. (Owned runtime cases also live in `src/core/__tests__/diagnostics.test.ts` cases 3-4.)
+- **#28**: `git diff --stat src/ai/auditExport.ts src/ai/trace.ts` → empty (exit 0). `auditExport.ts` line 101 `return JSON.stringify(redact(buildAuditEnvelope(dumps, exportedAt)));` intact; final-pass redact comment at lines 94-95 unchanged.
+- **#29 — GATED on 003 per Dependencies**: at execution time 003 had NOT landed (branch `handoff/task-arp09-003` sits at the same wave-1 commit `6bbce53`; `git diff main...handoff/task-arp09-003` empty; `grep appendLine src/extension.ts` → no matches, `logDiagnostic` absent). Evidence recorded: there is no unredacted write path today because there is no channel write path at all; the pin asserting "every `.appendLine(` argument contains `logLine(`" is future-proof — it passes vacuously now and, when 003 lands its expected flush site, forces `appendLine(logLine(...))` shape (`appendLine(<raw>)` fails the pin).
+- No bypass found anywhere → no fix required; `trace.ts` and `auditExport.ts` untouched by this task.
 
 ---
 
@@ -68,3 +75,64 @@ grep -n "appendLine" src/extension.ts   # matches at 003's flush site are EXPECT
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+## Executor Report
+
+- Status: `done` — closed **NOT-NEEDED** (verify-first; no source change; expected close per ARP-04-004 / ARP-05-004 precedent)
+- Executor model: `unic-code` (claude-code, feature-implementer subagent)
+- Date: 2026-09-02
+
+### RED phase
+
+N/A — verify-first task (no behavior change to RED-test). The 4 evidence pins are read-only source-shape assertions appended to an existing green suite; they passed on first run against the landed wave-1 state, which is the expected outcome for an evidence gate (a pin failing here would have meant a real bypass, which was not found).
+
+### Evidence (Test Cases 25-29)
+
+| # | Result | Evidence |
+|---|--------|----------|
+| 25 | PASS | `src/core/diagnostics.ts:11` `import { redact } from "../ai/trace";`; `:45` `redact(raw)` inside `toRedactedSingleLine` (`:29`); reachable from `logLine` (`:64`, call at `:74`). Pinned by test "diagnostics.ts imports redact from ../ai/trace and calls it in logLine's path". |
+| 26 | PASS | Source scan: no `/Bearer\s+/` or `/Basic\s+/` regex literal, no `new RegExp(`, no `SECRET_KEY_RE`/`BEARER_RE`/`BASIC_RE`/`KV_RE`/`AUTH_KV_RE`/`LONG_RUN_RE` identifiers. Only `.replace()` calls (lines 47, 53) strip `\r\n|\r|\n`. Pinned by "diagnostics.ts contains no re-implemented secret scrubber". |
+| 27 | PASS | `logLine("ai","error","Authorization: Bearer eyJhbGciOiJFUzI1NiIsInRlc3Q")` output contains exactly `redact()`'s direct output for the same input; `password = 'hunter2'` fixture likewise. Runtime cases 3-4 also covered by `src/core/__tests__/diagnostics.test.ts` (owned by 001). |
+| 28 | PASS | `git diff --stat src/ai/auditExport.ts src/ai/trace.ts` → empty, exit 0. `auditExport.ts:101` still `return JSON.stringify(redact(buildAuditEnvelope(dumps, exportedAt)));`; final-pass comment at `:94-95` intact. |
+| 29 | PASS (gated on 003 per Dependencies) | 003 NOT landed at execution time: branch `handoff/task-arp09-003` = same commit `6bbce53` as HEAD; `git diff main...handoff/task-arp09-003` empty; `grep -n appendLine src/extension.ts` → no matches; `logDiagnostic` absent. No channel write path exists → no unredacted write path. Pin "every appendLine argument in extension.ts is logLine-formatted" passes vacuously now and enforces `appendLine(logLine(...))` shape when 003 lands. |
+
+### Verification Commands (fresh, this turn)
+
+```text
+$ npx vitest run src/ai/__tests__/trace.test.ts src/core/__tests__/diagnostics.test.ts
+ Test Files  2 passed (2)
+      Tests  50 passed (50)   [trace.test.ts: 41 (was 37, +4 evidence pins); diagnostics.test.ts: 9]
+   Duration  178ms
+
+$ npm run typecheck          → exit 0 (tsc --noEmit, clean)
+
+$ git diff --stat src/ai/auditExport.ts src/ai/trace.ts
+(empty output, exit 0 — no source change)
+
+$ grep -n "redact" src/core/diagnostics.ts
+11:import { redact } from "../ai/trace";
+45:  const scrubbed = redact(raw);
+(+ doc-comment mentions at lines 2, 5, 6, 28, 43, 59)
+
+$ grep -n "appendLine" src/extension.ts
+(no matches — 003 wiring not landed; exit 1)
+```
+
+### Files changed
+
+- `src/ai/__tests__/trace.test.ts` — +4 evidence tests in new `describe("ARP-09 diagnostics reuse — TASK-ARP09-004")` block + imports (`readFileSync`, `fileURLToPath`, `logLine` from `../../core/diagnostics`). Existing 37 tests untouched. Pure: no vscode import.
+- `docs/AI_HANDOFF/tasks/TASK-ARP09-004.md` — Discussion evidence note + this report.
+
+No source change to `src/core/diagnostics.ts`, `src/ai/trace.ts`, `src/ai/auditExport.ts`, or `src/extension.ts` (no bypass found → no fix needed).
+
+### Test Plan Followed
+
+Task §Test Cases 25-29 as evidence matrix; §Dependencies gate applied for #29 (003 not landed → gated on 003's diff, recorded in Discussion). RED phase N/A (verify-first; documented above).
+
+### Issues
+
+- None blocking. Note for 003's executor/reviewer: the new case-29 pin will actively enforce `appendLine(logLine(...))` shape once 003's flush site exists — any `appendLine(<raw>)` write will fail `trace.test.ts`.
+
+### Handoff to reviewer
+
+Yes — task closed NOT-NEEDED with recorded evidence; review verdict requested per acceptance criteria.

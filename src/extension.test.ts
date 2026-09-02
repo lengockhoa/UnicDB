@@ -65,6 +65,22 @@ const state = {
     dispose: Mock;
     exitStatus: { code: number } | undefined;
   }>,
+  // TASK-ARP09-003: recording fake OutputChannel instances returned by
+  // `vscode.window.createOutputChannel("VSDB")`. Every `appendLine` argument
+  // is captured so the privacy byte-scan can assert no raw secret / SQL /
+  // connection config ever reaches the channel.
+  createdOutputChannels: [] as Array<{
+    name: string;
+    appendLine: Mock;
+    append: Mock;
+    show: Mock;
+    reveal: Mock;
+    clear: Mock;
+    hide: Mock;
+    dispose: Mock;
+    /** captured appendLine arguments in append order */
+    lines: string[];
+  }>,
 };
 
 vi.mock("vscode", () => {
@@ -120,6 +136,31 @@ vi.mock("vscode", () => {
         };
         state.createdTerminals.push(term);
         return term;
+      }),
+      // TASK-ARP09-003: recording fake OutputChannel. `appendLine` stores its
+      // argument in `lines`; the rest are no-op vi.fn() so test asserts can
+      // count invocations. The host wiring is expected to call
+      // `createOutputChannel("VSDB")` exactly once on the first real
+      // diagnostic write (NEVER on plain activate, NEVER twice).
+      createOutputChannel: vi.fn((name: string) => {
+        const lines: string[] = [];
+        const ch = {
+          name,
+          appendLine: vi.fn((line: string) => {
+            lines.push(String(line));
+          }),
+          append: vi.fn(),
+          show: vi.fn(),
+          reveal: vi.fn(),
+          clear: vi.fn(() => {
+            lines.length = 0;
+          }),
+          hide: vi.fn(),
+          dispose: vi.fn(),
+          lines,
+        };
+        state.createdOutputChannels.push(ch);
+        return ch;
       }),
       createTreeView: vi.fn().mockImplementation((id: string) => {
         const tv = { id, dispose: vi.fn() };
@@ -309,6 +350,7 @@ describe("extension.activate — wiring smoke", () => {
     state.workspaceFolders = undefined;
     state.activeEditor = undefined;
     state.createdTerminals.length = 0;
+    state.createdOutputChannels.length = 0;
   });
 
   it("register đủ command theo package.json (17 cũ + các cycle sau)", () => {
@@ -438,6 +480,7 @@ describe("Spec test #5 — runQuery without connection prompts QuickPick with 'A
     state.workspaceFolders = undefined;
     state.activeEditor = undefined;
     state.createdTerminals.length = 0;
+    state.createdOutputChannels.length = 0;
   });
 
   it("vsdb.runQuery với editor .sql và manager active=null → showQuickPick được gọi với option 'Add Connection'", async () => {
@@ -531,6 +574,7 @@ describe("TASK-303 — filter command + view/title menu", () => {
     state.workspaceFolders = undefined;
     state.activeEditor = undefined;
     state.createdTerminals.length = 0;
+    state.createdOutputChannels.length = 0;
   });
 
   it("package.json contributes khai báo 2 command mới với icon + menu entries đúng when", () => {
@@ -607,6 +651,7 @@ describe("TASK-505 — runScript command + terminal reuse", () => {
     state.workspaceFolders = undefined;
     state.activeEditor = undefined;
     state.createdTerminals.length = 0;
+    state.createdOutputChannels.length = 0;
     // Reset module để drop module-level `runScriptTerminal` từ test trước.
     vi.resetModules();
   });
@@ -849,6 +894,7 @@ describe("TASK-606 — destructive confirm guard", () => {
     state.workspaceFolders = undefined; // ⇒ ConnectionManager dùng globalState
     state.activeEditor = undefined;
     state.createdTerminals.length = 0;
+    state.createdOutputChannels.length = 0;
     state.confirmDestructive = undefined; // default → true
     vi.resetModules();
   });
@@ -1760,6 +1806,7 @@ describe("TASK-007 — runStatement rewrites reserved-keyword tables to public s
     state.workspaceFolders = undefined;
     state.activeEditor = undefined;
     state.createdTerminals.length = 0;
+    state.createdOutputChannels.length = 0;
     state.confirmDestructive = undefined;
     vi.resetModules();
   });
@@ -1925,6 +1972,7 @@ describe("TASK-005 — runQueryFromEditor cursor mode", () => {
     state.workspaceFolders = undefined;
     state.activeEditor = undefined;
     state.createdTerminals.length = 0;
+    state.createdOutputChannels.length = 0;
     state.confirmDestructive = undefined;
     vi.resetModules();
   });
@@ -2067,6 +2115,7 @@ describe("TASK-003 — vsdb.openConsole wiring", () => {
     state.workspaceFolders = undefined;
     state.activeEditor = undefined;
     state.createdTerminals.length = 0;
+    state.createdOutputChannels.length = 0;
     state.confirmDestructive = undefined;
     vi.resetModules();
   });
@@ -2252,6 +2301,7 @@ describe("TASK-AIX07-003 — vsdb.ai.showPolicy / exportTrace / clearTrace host 
     state.workspaceFolders = undefined;
     state.activeEditor = undefined;
     state.createdTerminals.length = 0;
+    state.createdOutputChannels.length = 0;
     detectOmpState.impl = async () => ({
       available: true,
       ok: true,
@@ -2492,6 +2542,7 @@ describe("TASK-001 — manualCommit forwarded into connection config (add + edit
     state.createdWebviewPanels.length = 0;
     state.createdTreeViews.length = 0;
     state.createdTerminals.length = 0;
+    state.createdOutputChannels.length = 0;
     addSpy = vi.fn().mockResolvedValue(undefined);
     editSpy = vi.fn().mockResolvedValue(undefined);
   });
@@ -3566,6 +3617,7 @@ describe("ARP-08 — console draft memento wiring", () => {
     state.workspaceFolders = undefined;
     state.activeEditor = undefined;
     state.createdTerminals.length = 0;
+    state.createdOutputChannels.length = 0;
     state.confirmDestructive = undefined;
     vi.resetModules();
   });
@@ -3765,3 +3817,288 @@ describe("ARP-08 — console draft memento wiring", () => {
     expect(consoleCalls.length).toBe(2);
   });
 });
+
+// =============================================================================
+// TASK-ARP09-003 — Lazy redacted Output Channel wiring
+//   * `vsdb.window.createOutputChannel("VSDB")` is created LAZILY on the
+//     FIRST real diagnostic write (or on `vsdb.diagnostics.show` invocation).
+//     A plain `activate()` must create ZERO output channels.
+//   * The activate-end lifecycle `info` line is BUFFERED (pending) and
+//     flushed exactly once when the channel is created.
+//   * Every captured `appendLine` argument matches the `logLine` prefix
+//     shape (`/^\[\d{4}-\d{2}-\d{2}T/`) and is byte-scan-clean of any
+//     raw secret, bearer/basic auth, opaque long run, or SQL fixture text.
+//   * `deactivate()` disposes the channel EXACTLY ONCE; a post-deactivate
+//     `logDiagnostic` is a no-op (no create, no append, no second dispose).
+//   * `vsdb.diagnostics.show` reveals; `vsdb.diagnostics.clear` clears.
+//   * Connection/AI summary lines land at the real existing seams; the
+//     connection handler never receives a `ConnectionConfig` literal in
+//     its log line (config privacy pin).
+//
+// Test strategy: `vi.doMock("./core/connectionManager")` with a `SpyMgr`
+// wrapper that captures the live manager instance; the test fires the
+// manager's private `_onDidChangeActiveEmitter` to drive a REAL diagnostic
+// write at the host's seam. Same dynamic-import pattern used by
+// TASK-ARP07-004 and TASK-AIX07-003.
+// =============================================================================
+describe("TASK-ARP09-003 — lazy redacted Output Channel wiring", () => {
+  /** Live ConnectionManager captured by the SpyMgr wrapper. */
+  let liveMgr: {
+    _onDidChangeActiveEmitter?: { fire(cfg: unknown): void };
+  } | null = null;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+    state.createdOutputChannels.length = 0;
+    liveMgr = null;
+    vi.resetModules();
+  });
+
+  afterEach(async () => {
+    liveMgr = null;
+    await deactivate();
+  });
+
+  /**
+   * Same dynamic-import + SpyMgr pattern as TASK-AIX07-003 case 5: reset
+   * modules, replace `./core/connectionManager` with a wrapper that
+   * captures the live instance, import the fresh extension, activate.
+   * Resetting is necessary so each test sees a clean module state — the
+   * lazy `diagOutputChannel` singleton is module-level and must start null.
+   */
+  async function activateFresh() {
+    vi.doMock("./core/connectionManager", async () => {
+      const actual = await vi.importActual<typeof import("./core/connectionManager")>(
+        "./core/connectionManager",
+      );
+      const Orig = actual.ConnectionManager;
+      class SpyMgr extends Orig {
+        constructor(...a: unknown[]) {
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+          super(...(a as []));
+          liveMgr = this as unknown as typeof liveMgr;
+        }
+      }
+      return { ...actual, ConnectionManager: SpyMgr };
+    });
+    const ext = await import("./extension");
+    const ctx = makeCtx();
+    await ext.activate(ctx as never);
+    return ext;
+  }
+
+  /** Drive the host's connection-change diagnostic write. Fires the
+   *  ConnectionManager's real emitter — extension.ts's listener is
+   *  called with the supplied `cfg` and that is what triggers
+   *  `logDiagnostic("connection", "info", ...)`. */
+  function fireConnectionChange(cfg: unknown): void {
+    expect(liveMgr, "liveMgr must be captured during activate").not.toBeNull();
+    const mgr = liveMgr as unknown as {
+      _onDidChangeActiveEmitter?: { fire(cfg: unknown): void };
+    };
+    expect(mgr._onDidChangeActiveEmitter, "manager emitter must exist").toBeDefined();
+    mgr._onDidChangeActiveEmitter!.fire(cfg);
+  }
+
+  /** All captured appendLine args flattened across the most-recent channel. */
+  function capturedLines(): string[] {
+    return state.createdOutputChannels[0]?.lines ?? [];
+  }
+
+  it("#20 strict pin: plain activate() with no events/commands creates ZERO output channels", async () => {
+    await activateFresh();
+    expect(state.createdOutputChannels.length).toBe(0);
+    // The lifecycle line is buffered (pending), not appended to a channel.
+    expect(capturedLines()).toEqual([]);
+  });
+
+  it("#17 happy/lazy-create: first real diagnostic write (fire onDidChangeActive) creates the channel exactly once with name 'VSDB' and flushes the pending lifecycle line", async () => {
+    await activateFresh();
+    expect(state.createdOutputChannels.length).toBe(0);
+
+    // Drive a real write via the host's connection listener.
+    fireConnectionChange({
+      id: "c1",
+      name: "test",
+      driver: "postgres",
+      host: "h",
+      port: 5432,
+      user: "u",
+      database: "d",
+    });
+
+    expect(state.createdOutputChannels.length).toBe(1);
+    expect(state.createdOutputChannels[0]!.name).toBe("VSDB");
+
+    // Captured lines: lifecycle (flushed) first, then the connection line.
+    const lines = capturedLines();
+    expect(lines.length).toBe(2);
+    expect(lines[0]).toMatch(
+      /^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\] \[lifecycle\] \[info\] VSDB activated$/,
+    );
+    expect(lines[1]).toMatch(
+      /^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\] \[connection\] \[info\] connection changed$/,
+    );
+    // Every captured line matches the logLine prefix shape.
+    for (const line of lines) {
+      expect(line).toMatch(/^\[\d{4}-\d{2}-\d{2}T/);
+    }
+  });
+
+  it("#18 happy/show: invoking vsdb.diagnostics.show creates the channel lazily and calls show()", async () => {
+    await activateFresh();
+    expect(state.createdOutputChannels.length).toBe(0);
+
+    const fn = state.registeredCommands.get("vsdb.diagnostics.show");
+    expect(fn).toBeDefined();
+    await fn!();
+
+    expect(state.createdOutputChannels.length).toBe(1);
+    const ch = state.createdOutputChannels[0]!;
+    expect(ch.name).toBe("VSDB");
+    expect(ch.show).toHaveBeenCalledTimes(1);
+  });
+
+  it("#19 happy/clear: invoking vsdb.diagnostics.clear calls clear() on the channel", async () => {
+    await activateFresh();
+    // Drive a real write so the channel exists.
+    fireConnectionChange({ id: "c1", name: "x", driver: "postgres" });
+    expect(state.createdOutputChannels.length).toBe(1);
+
+    const fn = state.registeredCommands.get("vsdb.diagnostics.clear");
+    expect(fn).toBeDefined();
+    await fn!();
+
+    expect(state.createdOutputChannels[0]!.clear).toHaveBeenCalledTimes(1);
+  });
+
+  it("#21 privacy byte-scan: connection event with secret + bearer + SQL fixture near the seam → channel output contains none of them; the connection handler received NO config object", async () => {
+    await activateFresh();
+
+    // Fire the connection listener with a config whose body NEVER reaches
+    // the log line. The handler signature is `(cfg) => logDiagnostic(
+    // "connection", "info", cfg ? "connection changed" : "connection closed")`
+    // — only the truthiness of `cfg` is read. The config object is never
+    // appended.
+    const secretCfg = {
+      id: "c1",
+      name: "x",
+      driver: "postgres",
+      host: "h",
+      port: 5432,
+      user: "u",
+      database: "d",
+      password: "s3cr3t-p4ss",
+      token: "s3cr3t-t0k",
+      authHeader: "Bearer eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.payload.sig",
+      sqlFixture:
+        "SELECT * FROM secret_table WHERE password = 's3cr3t-p4ss' AND id > 0",
+    };
+    fireConnectionChange(secretCfg);
+
+    // Channel was created once, named "VSDB".
+    expect(state.createdOutputChannels.length).toBe(1);
+    const ch = state.createdOutputChannels[0]!;
+
+    // Also drive a SECOND write that itself carries a SQL fixture fragment
+    // through the public command path so the formatter's `redact()` is
+    // exercised end-to-end (defense in depth — privacy holds at the
+    // formatter boundary, not just at the handler's call site).
+    const { logDiagnostic } = await import("./extension");
+    logDiagnostic(
+      "general",
+      "warn",
+      "SELECT * FROM secret_table WHERE password = 's3cr3t-p4ss'",
+    );
+
+    const lines = ch.lines;
+    expect(lines.length).toBeGreaterThan(0);
+
+    // The connection line is the literal "connection changed" — proves
+    // the handler never appended the config object. It is the SECOND
+    // captured line: lifecycle (flushed from the buffer) is first.
+    const connectionLine = lines.find((l) => /\[connection\] /.test(l));
+    expect(connectionLine).toBeDefined();
+    expect(connectionLine).toMatch(/\[connection\] \[info\] connection changed$/);
+    // No raw secret in any captured line.
+    for (const line of lines) {
+      expect(line).not.toContain("s3cr3t-p4ss");
+      expect(line).not.toContain("s3cr3t-t0k");
+      expect(line).not.toContain("Bearer eyJ");
+      // Bearer / Basic scrub (formatter does it on EVERY message).
+      expect(line).not.toMatch(/Bearer\s+[A-Za-z0-9._\-+/=]+/);
+      expect(line).not.toMatch(/Basic\s+[A-Za-z0-9._\-+/=]+/);
+      // No opaque long-run (≥24 chars alphanumeric/base64) — `redact()` in
+      // trace.ts LONG_RUN_RE collapses these to `<redacted>` before
+      // logLine() bounds the line.
+      expect(line).not.toMatch(/[A-Za-z0-9_+/=-]{24,}/);
+      // SQL fixture secret-shaped content must not survive (the formatter
+      // scrubs the `password=...` value; the SQL keywords + identifier
+      // names are NOT secrets, so the table name itself is allowed).
+      expect(line).not.toMatch(/password\s*=\s*['"]?s3cr3t-p4ss/i);
+    }
+  });
+
+  it("#22 exactly-once dispose: deactivate() calls dispose() exactly once; post-deactivate logDiagnostic is a no-op (no create, no append, no second dispose)", async () => {
+    const ext = await activateFresh();
+    // Drive a real write so the channel exists.
+    fireConnectionChange({ id: "c1", name: "x", driver: "postgres" });
+    expect(state.createdOutputChannels.length).toBe(1);
+    const ch = state.createdOutputChannels[0]!;
+    expect(ch.dispose).not.toHaveBeenCalled();
+
+    // First deactivate disposes the channel exactly once.
+    await ext.deactivate();
+    expect(ch.dispose).toHaveBeenCalledTimes(1);
+    const createCountAfterDeactivate = state.createdOutputChannels.length;
+    const linesAtDeactivate = ch.lines.length;
+
+    // Post-deactivate: the exported logDiagnostic helper must be a no-op.
+    // It is exported from src/extension.ts so external hosts / future
+    // cycles can drive the channel without re-importing module state.
+    const { logDiagnostic: postDeactivateLog } = await import("./extension");
+    postDeactivateLog("general", "info", "after-deactivate");
+
+    // No new channel created, no new line appended, no second dispose.
+    expect(state.createdOutputChannels.length).toBe(createCountAfterDeactivate);
+    expect(ch.lines.length).toBe(linesAtDeactivate);
+    expect(ch.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("#24 happy/AI summary: invoking vsdb.ai.showPolicy appends an [ai]-category line to the channel", async () => {
+    await activateFresh();
+    // Drive a real write so the channel exists.
+    fireConnectionChange({ id: "c1", name: "x", driver: "postgres" });
+    expect(state.createdOutputChannels.length).toBe(1);
+
+    const fn = state.registeredCommands.get("vsdb.ai.showPolicy");
+    expect(fn).toBeDefined();
+    await fn!();
+
+    const lines = capturedLines();
+    // One of the captured lines is the [ai] summary emitted by the
+    // vsdb.ai.showPolicy handler.
+    const aiLine = lines.find((l) => /\[ai\] \[info\]/.test(l));
+    expect(aiLine, "expected an [ai] [info] line after vsdb.ai.showPolicy").toBeDefined();
+  });
+
+  it("package.json contributes vsdb.diagnostics.show + vsdb.diagnostics.clear with activationEvents", () => {
+    interface CmdEntry { command: string; title?: string; category?: string }
+    const commands = pkgJson.contributes.commands as CmdEntry[];
+    const show = commands.find((c) => c.command === "vsdb.diagnostics.show");
+    const clear = commands.find((c) => c.command === "vsdb.diagnostics.clear");
+    expect(show).toBeDefined();
+    expect(show!.title).toMatch(/Show Diagnostics/i);
+    expect(show!.category).toBe("VSDB");
+    expect(clear).toBeDefined();
+    expect(clear!.title).toMatch(/Clear Diagnostics/i);
+    expect(clear!.category).toBe("VSDB");
+    const evts = pkgJson.activationEvents as string[];
+    expect(evts).toContain("onCommand:vsdb.diagnostics.show");
+    expect(evts).toContain("onCommand:vsdb.diagnostics.clear");
+  });
+});
+// Quiet the unused-import warning for the helper used inside the new
+// describe block (it was defined above all uses).
+void detectOmpState;

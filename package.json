@@ -72,7 +72,9 @@
     "onCommand:vsdb.importCsv",
     "onCommand:vsdb.importJson",
     "onCommand:vsdb.openFormView",
-    "onCommand:vsdb.editLargeValue"
+    "onCommand:vsdb.editLargeValue",
+    "onCommand:vsdb.diagnostics.show",
+    "onCommand:vsdb.diagnostics.clear"
   ],
   "contributes": {
     "commands": [
@@ -351,6 +353,16 @@
         "title": "Relationship Explorer (FK Diagram)",
         "category": "VSDB",
         "icon": "$(circuit-board)"
+      },
+      {
+        "command": "vsdb.diagnostics.show",
+        "title": "VSDB: Show Diagnostics",
+        "category": "VSDB"
+      },
+      {
+        "command": "vsdb.diagnostics.clear",
+        "title": "VSDB: Clear Diagnostics",
+        "category": "VSDB"
       }
     ],
     "keybindings": [

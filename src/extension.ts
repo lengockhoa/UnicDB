@@ -82,6 +82,11 @@ import { writeVsdbAiConfig } from "./extensionConfigExport";
 import { SqlAutocompleteService, type ProviderFn, type SchemaContext } from "./ai/sqlAutocomplete";
 import { createSchemaContextCache, type SchemaContextCache } from "./ai/schemaContextCache";
 import { registerSqlAutocomplete, type AutocompleteRegistration } from "./extensionAutocomplete";
+import {
+  logLine,
+  type DiagCategory,
+  type DiagSeverity,
+} from "./core/diagnostics";
 let disposables: vscode.Disposable[] = [];
 let state: ExtensionState | null = null;
 /**
@@ -112,6 +117,103 @@ let runScriptTerminal: vscode.Terminal | null = null;
 let invalidateAfterSchemaDdl:
   | ((completed: readonly string[], dialect?: SqlDialect) => void)
   | null = null;
+
+// =====================================================================
+// TASK-ARP09-003 — Lazy redacted Output Channel wiring.
+// The diagnostic channel is module-level, LAZY (no createOutputChannel at
+// activate), and the activate-end lifecycle `info` line is BUFFERED so a
+// plain activation never allocates a channel. The first REAL diagnostic
+// write (any non-lifecycle line, OR a lifecycle `warn`/`error`) creates
+// the channel exactly once, flushes the pending buffer, and appends
+// subsequent lines directly. `deactivate()` disposes the channel exactly
+// once and clears the singleton so a second deactivate is a no-op.
+// =====================================================================
+
+/** Hard cap on the bounded pending buffer (drop-oldest when full). */
+const DIAG_PENDING_MAX = 100;
+
+/** Lazy Output Channel singleton. Null before first real write + after deactivate. */
+let diagOutputChannel: vscode.OutputChannel | null = null;
+
+/** Bounded pending buffer of pre-create log lines. Drop-oldest on overflow. */
+let diagPendingLines: string[] = [];
+
+/**
+ * Lazy channel creation + pending buffer flush. Idempotent — calling after
+ * the channel already exists is a no-op (apart from flushing the pending
+ * buffer, which is also a no-op once it is empty). No-op after deactivate
+ * so a post-deactivate `logDiagnostic` cannot resurrect the channel.
+ */
+function ensureDiagChannel(): void {
+  if (deactivating) return;
+  if (diagOutputChannel === null) {
+    diagOutputChannel = vscode.window.createOutputChannel("VSDB");
+  }
+  if (diagPendingLines.length > 0) {
+    const pending = diagPendingLines;
+    diagPendingLines = [];
+    for (const line of pending) {
+      diagOutputChannel.appendLine(line);
+    }
+  }
+}
+
+/**
+ * Host-side helper: write one redacted diagnostic line to the VSDB Output
+ * Channel. Public so other modules / future cycles can drive the same
+ * channel without re-importing `logLine` or knowing about the lazy holder.
+ *
+ * Routing:
+ *   - After deactivate (`deactivating === true`): no-op.
+ *   - Channel already created: appendLine directly.
+ *   - Channel absent + the line is the activate-end lifecycle `info`
+ *     signal (the only lifecycle line the host emits at activation time):
+ *     buffer it (drop-oldest when full), do NOT create the channel.
+ *   - Channel absent + ANY other line (real diagnostic OR lifecycle
+ *     `warn`/`error`): ensureDiagChannel() creates it exactly once, then
+ *     appends the line directly.
+ *
+ * Byte-scan invariant: the message is formatted through `logLine`, which
+ * runs the imported `redact()` (secrets / bearer / basic / long-runs)
+ * BEFORE assembly and bounds the final line to MAX_DIAG_LINE_CHARS. The
+ * formatter never throws and never emits a raw secret, SQL fragment, or
+ * long opaque run; the test suite pins this at the channel boundary.
+ */
+export function logDiagnostic(
+  category: DiagCategory,
+  severity: DiagSeverity,
+  message: unknown,
+  correlationId?: string,
+): void {
+  if (deactivating) return;
+  const line = logLine(category, severity, message, correlationId);
+  if (diagOutputChannel !== null) {
+    diagOutputChannel.appendLine(line);
+    return;
+  }
+  // Channel absent. The ONLY line we buffer (no-create) is the
+  // activate-end lifecycle `info` signal — every other write is a real
+  // diagnostic, which must create the channel exactly once and flush
+  // whatever was buffered.
+  const isActivateEndLifecycle =
+    category === "lifecycle" && severity === "info";
+  if (isActivateEndLifecycle) {
+    if (diagPendingLines.length >= DIAG_PENDING_MAX) {
+      diagPendingLines.shift();
+    }
+    diagPendingLines.push(line);
+    return;
+  }
+  ensureDiagChannel();
+  diagOutputChannel!.appendLine(line);
+}
+
+/** Get-or-create the diagnostic channel (for the show/clear commands). */
+function getDiagChannel(): vscode.OutputChannel | null {
+  if (deactivating) return null;
+  ensureDiagChannel();
+  return diagOutputChannel;
+}
 
 interface ExtensionState {
   mgr: ConnectionManager;
@@ -1050,6 +1152,47 @@ export async function activate(
   // TASK-003 cycle Z — console panel teardown with activation.
   context.subscriptions.push({ dispose: () => consolePanel?.dispose() });
 
+  // TASK-ARP09-003 — connection lifecycle seam. Subscribe to the live
+  // mgr event AFTER the schema/autocomplete invalidators so our log
+  // listener is the one that takes the `cfg` argument. The log message
+  // is the literal "connection changed" / "connection closed" — the
+  // config object itself is NEVER appended (privacy pin). The severity
+  // `info` is a REAL diagnostic write → first such fire creates the
+  // Output Channel exactly once, flushes the buffered activate-end
+  // lifecycle line, then appends the connection summary directly.
+  context.subscriptions.push(
+    mgr.onDidChangeActive((cfg) =>
+      logDiagnostic(
+        "connection",
+        "info",
+        cfg ? "connection changed" : "connection closed",
+      ),
+    ),
+  );
+
+  // TASK-ARP09-003 — register the lazy diagnostic-channel commands. Both
+  // are palette-only and lazy: they flush the pending buffer and reveal
+  // / clear the channel on first invocation, creating it if absent.
+  // (No new callback plumbing into modules owned by other tasks.)
+  disposables.push(
+    vscode.commands.registerCommand("vsdb.diagnostics.show", () => {
+      getDiagChannel()?.show();
+    }),
+  );
+  disposables.push(
+    vscode.commands.registerCommand("vsdb.diagnostics.clear", () => {
+      getDiagChannel()?.clear();
+    }),
+  );
+
+  // TASK-ARP09-003 — buffer the activate-end lifecycle line. The lazy
+  // holder treats this single line as the "no-create" signal: it sits
+  // in the bounded pending buffer until the first real diagnostic write
+  // (or a `vsdb.diagnostics.show` invocation) flushes it through the
+  // freshly-created channel. Strict pin #20 — a plain activation with
+  // no events/commands never calls `createOutputChannel`.
+  logDiagnostic("lifecycle", "info", "VSDB activated");
+
   disposables.forEach((d) => context.subscriptions.push(d));
 }
 
@@ -1088,6 +1231,20 @@ export async function deactivate(): Promise<void> {
   }
   // TASK-ARP07-004 — drop the DDL-invalidation seam with its caches.
   invalidateAfterSchemaDdl = null;
+  // TASK-ARP09-003 — exactly-once dispose of the lazy diagnostic channel.
+  // Additive: runs after every other disposal. A second `deactivate()`
+  // (or a post-deactivate `logDiagnostic`) sees `diagOutputChannel === null`
+  // and is a no-op. The `deactivating` flag set at function entry keeps
+  // `logDiagnostic`/`getDiagChannel` from recreating the channel.
+  if (diagOutputChannel) {
+    try {
+      diagOutputChannel.dispose();
+    } catch {
+      /* best-effort */
+    }
+    diagOutputChannel = null;
+  }
+  diagPendingLines = [];
 }
 
 /**
@@ -1517,6 +1674,8 @@ function formatPolicySummary(policy: EffectivePolicy): string {
 async function commandShowPolicy(aiStore: AiConfigStore): Promise<void> {
   const policy = await deriveEffectivePolicy(aiStore);
   void vscode.window.showInformationMessage(formatPolicySummary(policy));
+  // TASK-ARP09-003 — AI summary seam: read-only command, engine name only.
+  logDiagnostic("ai", "info", "policy reported");
 }
 
 /**
