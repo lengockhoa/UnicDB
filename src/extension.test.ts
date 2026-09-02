@@ -3206,3 +3206,327 @@ describe("TASK-ARP02-004 — host-integration: runStatements finally + deactivat
     ).toHaveLength(1);
   });
 });
+
+// =============================================================================
+// TASK-ARP07-004 — Successful-DDL cache invalidation via the host seam in
+// `runStatements` (~extension.ts:1754). Only statements that ACTUALLY
+// completed with `status === "done"` feed the ARP-07.1 classifier; if any
+// has schema impact, the seam invalidates `SchemaCache` + AI schema context
+// cache and refreshes the tree. Failed/cancelled/rejected-confirmation runs
+// and post-teardown (`deactivating`) continuations never invalidate.
+//
+// Test strategy: doMock `./ui/schemaCache` + `./ai/schemaContextCache` AFTER
+// `vi.resetModules()` so the seam is wired against `vi.fn()` spies. The real
+// `QueryRunner.run` is also replaced (via `prototype.run`) so the test
+// controls the `StatementResult[]` it returns — including the exact field
+// names from `queryRunner.ts:49-52` (`.status` + `.sql`).
+// =============================================================================
+describe("TASK-ARP07-004 — successful-DDL cache invalidation seam", () => {
+  let schemaCacheSpy: ReturnType<typeof vi.fn>;
+  let acSchemaCacheSpy: ReturnType<typeof vi.fn>;
+  let treeRefreshSpy: ReturnType<typeof vi.fn>;
+  let runSpy: ReturnType<typeof vi.fn>;
+
+  /** `vscode.window.showWarningMessage` (return value drives the confirm gate). */
+  let warnMock: ReturnType<typeof vi.fn>;
+
+  /**
+   * Active adapter fake — satisfies `ConnectionManager.getAdapter()` enough
+   * to clear the catalog cache; the real runner is mocked at the prototype
+   * so this never actually runs a query.
+   */
+  const adapterStub = {
+    listTables: vi.fn(async () => []),
+    listColumns: vi.fn(async () => []),
+    testConnection: vi.fn(async () => undefined),
+    close: vi.fn(async () => undefined),
+  } as const;
+
+  /**
+   * Pin the seam behaviour: `doMock` AFTER `resetModules`, then `import` so
+   * extension.ts re-evaluates with the mock SchemaCache / schemaContextCache
+   * factories returning spies. `vi.resetModules()` is called again on every
+   * test so each test gets a fresh module instance + fresh spies.
+   */
+  async function activateSeam() {
+    // Spies — must be created BEFORE the modules import so the factories
+    // can close over them.
+    schemaCacheSpy = vi.fn();
+    acSchemaCacheSpy = vi.fn();
+    const acResolveSpy = vi.fn(async () => ({
+      dialect: "postgres" as const,
+      connectionName: "c1",
+      tables: [],
+    }));
+    treeRefreshSpy = vi.fn();
+
+    // Replace `./ui/schemaCache` — extension.ts imports `SchemaCache` (class)
+    // and `new SchemaCache(provider)`. The mock returns a thin instance whose
+    // `invalidate()` is the spy. The constructor is irrelevant to the seam;
+    // the only call the seam makes is `invalidate()`.
+    vi.doMock("./ui/schemaCache", () => {
+      const SchemaCache = vi.fn().mockImplementation(() => ({
+        invalidate: schemaCacheSpy,
+      }));
+      return { SchemaCache };
+    });
+    // Replace `./ai/schemaContextCache` — extension.ts imports
+    // `createSchemaContextCache` (factory) and the `SchemaContextCache` type.
+    vi.doMock("./ai/schemaContextCache", () => {
+      const createSchemaContextCache = vi.fn(() => ({
+        resolve: acResolveSpy,
+        invalidate: acSchemaCacheSpy,
+      }));
+      return { createSchemaContextCache };
+    });
+
+    // Seed an active connection so the host seam runs past the QuickPick gate.
+    const ctx = makeCtx();
+    ctx.globalState.get = vi.fn((key: string) => {
+      if (key === "vsdb.connections") {
+        return [
+          {
+            id: "c1",
+            name: "c",
+            driver: "postgres",
+            host: "h",
+            port: 5432,
+            user: "u",
+            database: "d",
+          },
+        ];
+      }
+      if (key === "vsdb.activeConnection") return "c1";
+      return undefined;
+    }) as never;
+
+    const connectionMgrMod = await import("./core/connectionManager");
+    vi.spyOn(
+      connectionMgrMod.ConnectionManager.prototype,
+      "getAdapter",
+    ).mockResolvedValue(adapterStub as never);
+
+    // Spy the schema-tree refresh BEFORE dynamic import so the prototype
+    // method is the one instance the host seam calls via `state?.tree`.
+    const treeMod = await import("./ui/schemaTree");
+    vi.spyOn(treeMod.SchemaTreeProvider.prototype, "refresh").mockImplementation(
+      treeRefreshSpy as never,
+    );
+
+    const ext = await import("./extension");
+    await ext.activate(ctx as never);
+    return { ext };
+  }
+
+  function makeResult(sql: string, status: "done" | "error" | "cancelled" | "running") {
+    return { index: 0, sql, status, durationMs: 0 };
+  }
+
+  /**
+   * Override `QueryRunner.prototype.run` AFTER `activate()` (and AFTER the
+   * shared runner instance is constructed). Each test pins its own return
+   * value to drive the seam with the exact `StatementResult` shape from
+   * `queryRunner.ts:49-52`. The spy is (re)created against the CURRENT
+   * module instance — `vi.resetModules()` in beforeEach drops the module
+   * cache, so a prototype spy from a previous test points at a dead class.
+   */
+  async function setRunnerResults(results: ReturnType<typeof makeResult>[]) {
+    const runnerMod = await import("./core/queryRunner");
+    runSpy = vi
+      .spyOn(runnerMod.QueryRunner.prototype, "run")
+      .mockResolvedValue(results as never);
+  }
+
+  async function driveRunStatement(
+    ext: { deactivate: () => Promise<void> },
+    sql: string,
+    opts: { handler?: () => unknown } = {},
+  ): Promise<void> {
+    const stmt: ParsedStatement = { text: sql, start: 0, end: sql.length };
+    // A pre-captured handler (used by the deactivating test) survives
+    // deactivate() — that is the point: the in-flight continuation still
+    // holds the closure with concrete mgr/runner/panel refs.
+    const fn = opts.handler ?? state.registeredCommands.get("vsdb.runStatement");
+    expect(fn).toBeDefined();
+    await fn!(stmt);
+    // Let the seam's microtask chain settle before assertions.
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 2));
+    void ext; // deactivating test uses the parameter to call deactivate()
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+    state.createdTreeViews.length = 0;
+    state.workspaceFolders = undefined;
+    state.activeEditor = undefined;
+    state.confirmDestructive = undefined;
+    // Default warn mock: returns undefined (user dismisses). Tests that drive
+    // DDL with a red tier must override per-call via `mockResolvedValueOnce`.
+    warnMock = vi.fn().mockResolvedValue(undefined);
+    const win = vscodeMock.window as unknown as Record<string, unknown>;
+    win.showWarningMessage = warnMock;
+    vi.resetModules();
+  });
+
+  it("#1 happy: successful CREATE TABLE through shared run path → seam fires (invalidate ×2, tree.refresh)", async () => {
+    const { ext } = await activateSeam();
+    await setRunnerResults([
+      makeResult("CREATE TABLE t (id int)", "done"),
+    ]);
+    await driveRunStatement(ext, "CREATE TABLE t (id int)");
+
+    expect(schemaCacheSpy).toHaveBeenCalledTimes(1);
+    expect(acSchemaCacheSpy).toHaveBeenCalledTimes(1);
+    expect(treeRefreshSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("#2 happy: mixed batch (SELECT done + CREATE done) — seam fires on the CREATE", async () => {
+    const { ext } = await activateSeam();
+    await setRunnerResults([
+      makeResult("SELECT 1", "done"),
+      makeResult("CREATE TABLE t (id int)", "done"),
+    ]);
+    await driveRunStatement(ext, "SELECT 1; CREATE TABLE t (id int);");
+
+    expect(schemaCacheSpy).toHaveBeenCalledTimes(1);
+    expect(acSchemaCacheSpy).toHaveBeenCalledTimes(1);
+    expect(treeRefreshSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("#3 edge: failed DDL (adapter throws) — runner marks statement error + remainder cancelled → seam NOT called", async () => {
+    const { ext } = await activateSeam();
+    // When `runner.run` throws, the host catches and the seam is inside
+    // the `try` block AFTER `runner.run` resolves — so we simulate the
+    // "completed with non-done statuses" path (error + cancelled).
+    await setRunnerResults([
+      makeResult("CREATE TABLE t (id int)", "error"),
+      makeResult("INSERT INTO t VALUES (1)", "cancelled"),
+    ]);
+    await driveRunStatement(ext, "CREATE TABLE t (id int); INSERT INTO t VALUES (1);");
+
+    expect(schemaCacheSpy).not.toHaveBeenCalled();
+    expect(acSchemaCacheSpy).not.toHaveBeenCalled();
+    expect(treeRefreshSpy).not.toHaveBeenCalled();
+  });
+
+  it("#4 edge: rejected confirmation (DROP + dismiss) → early-return BEFORE runner.run → seam NOT called", async () => {
+    const { ext } = await activateSeam();
+    // `DROP TABLE t` triggers the red confirm tier; showWarningMessage
+    // returning undefined means the user dismissed (rejected). The host
+    // returns early before `runner.run` is invoked.
+    warnMock.mockResolvedValueOnce(undefined);
+    await driveRunStatement(ext, "DROP TABLE t;");
+
+    expect(runSpy).not.toHaveBeenCalled();
+    expect(schemaCacheSpy).not.toHaveBeenCalled();
+    expect(acSchemaCacheSpy).not.toHaveBeenCalled();
+    expect(treeRefreshSpy).not.toHaveBeenCalled();
+  });
+
+  it("#5 edge: cancelled run (all results cancelled before any done) → seam NOT called", async () => {
+    const { ext } = await activateSeam();
+    await setRunnerResults([
+      makeResult("CREATE TABLE t (id int)", "cancelled"),
+    ]);
+    await driveRunStatement(ext, "CREATE TABLE t (id int);");
+
+    expect(schemaCacheSpy).not.toHaveBeenCalled();
+    expect(acSchemaCacheSpy).not.toHaveBeenCalled();
+    expect(treeRefreshSpy).not.toHaveBeenCalled();
+  });
+
+  it("#6 edge: deactivate-during-run (deactivating=true at success time) → seam NOT called (ARP-02)", async () => {
+    const { ext } = await activateSeam();
+    // Capture the handler BEFORE deactivate(): disposables are disposed
+    // during teardown and drop the registeredCommands entries, but the
+    // in-flight continuation still holds the closure with concrete
+    // mgr/runner/panel refs — exactly the ARP-02 resurrected-write shape.
+    const handler = state.registeredCommands.get(
+      "vsdb.runStatement",
+    ) as (stmt: ParsedStatement) => Promise<void>;
+    // Deactivate flips the `deactivating` sentinel to true AND nulls the
+    // module `state` (so `state?.tree` is unreachable too).
+    await ext.deactivate();
+    await setRunnerResults([
+      makeResult("CREATE TABLE t (id int)", "done"),
+    ]);
+    await driveRunStatement(ext, "CREATE TABLE t (id int);", {
+      handler: () => handler({ text: "CREATE TABLE t (id int)", start: 0, end: 23 }),
+    });
+
+    expect(schemaCacheSpy).not.toHaveBeenCalled();
+    expect(acSchemaCacheSpy).not.toHaveBeenCalled();
+    expect(treeRefreshSpy).not.toHaveBeenCalled();
+  });
+
+  it("#7 edge: DML-only successful run (INSERT / UPDATE+WHERE / TRUNCATE) → seam NOT called (classifier false)", async () => {
+    const { ext } = await activateSeam();
+    // INSERT — kind "other" → tier "none" → no confirm prompt.
+    await setRunnerResults([
+      makeResult("INSERT INTO t VALUES (1)", "done"),
+    ]);
+    await driveRunStatement(ext, "INSERT INTO t VALUES (1);");
+    expect(schemaCacheSpy).not.toHaveBeenCalled();
+    expect(acSchemaCacheSpy).not.toHaveBeenCalled();
+    expect(treeRefreshSpy).not.toHaveBeenCalled();
+
+    // UPDATE with WHERE — tier "none" → no confirm.
+    await setRunnerResults([
+      makeResult("UPDATE t SET c = 1 WHERE id = 1", "done"),
+    ]);
+    await driveRunStatement(ext, "UPDATE t SET c = 1 WHERE id = 1;");
+    expect(schemaCacheSpy).not.toHaveBeenCalled();
+    expect(acSchemaCacheSpy).not.toHaveBeenCalled();
+    expect(treeRefreshSpy).not.toHaveBeenCalled();
+
+    // TRUNCATE — red tier; showWarningMessage must return "Vẫn chạy (nguy hiểm)".
+    warnMock.mockResolvedValueOnce("Vẫn chạy (nguy hiểm)");
+    await setRunnerResults([
+      makeResult("TRUNCATE TABLE t", "done"),
+    ]);
+    await driveRunStatement(ext, "TRUNCATE TABLE t;");
+    expect(schemaCacheSpy).not.toHaveBeenCalled();
+    expect(acSchemaCacheSpy).not.toHaveBeenCalled();
+    expect(treeRefreshSpy).not.toHaveBeenCalled();
+  });
+
+  it("#8 happy: successful SELECT run → caches untouched (classifier false on non-DDL)", async () => {
+    const { ext } = await activateSeam();
+    await setRunnerResults([
+      makeResult("SELECT 1", "done"),
+    ]);
+    await driveRunStatement(ext, "SELECT 1;");
+
+    expect(schemaCacheSpy).not.toHaveBeenCalled();
+    expect(acSchemaCacheSpy).not.toHaveBeenCalled();
+    expect(treeRefreshSpy).not.toHaveBeenCalled();
+  });
+
+  it("#9 edge: seam payload — completed list receives the REAL statement text from StatementResult.sql (never undefined)", async () => {
+    const { ext } = await activateSeam();
+    // Pin the original SQL with the exact whitespace/casing the user wrote
+    // so we can assert the seam receives that string (not undefined, not
+    // a normalized form). The mocked result record uses `.status` + `.sql`
+    // (queryRunner.ts:49-52) — NOT a stand-in field.
+    const originalSql = "CREATE TABLE t (id int)";
+    await setRunnerResults([
+      makeResult(originalSql, "done"),
+    ]);
+    await driveRunStatement(ext, originalSql);
+
+    expect(schemaCacheSpy).toHaveBeenCalledTimes(1);
+    // The classifier consumes the SQL string. The contract pin is on the
+    // input to the classifier (`completedSchemaImpact`). The seam is
+    // implemented in extension.ts using `r.sql` from the StatementResult;
+    // we assert the surface by driving the public observable (invalidate
+    // called) AND the SQL the runner saw — that SQL is exactly the text
+    // the seam classifier fed. If the seam had read `.statementText`
+    // (or any other name) it would be undefined, completedSchemaImpact
+    // would return false, and the seam would NOT invalidate.
+    expect(runSpy).toHaveBeenCalled();
+    const passedToRunner = runSpy.mock.calls[0]?.[0] as ParsedStatement[];
+    expect(passedToRunner[0]?.text).toBe(originalSql);
+  });
+});

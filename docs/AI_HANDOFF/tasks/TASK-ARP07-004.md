@@ -88,6 +88,86 @@ npm run typecheck
 
 <!-- Phase 3 executor appends below. -->
 
+### RED (TDD step 1) — actual failing output
+
+Command: `npx vitest run src/extension.test.ts -t "TASK-ARP07-004"`
+
+```
+ FAIL  src/extension.test.ts > TASK-ARP07-004 — successful-DDL cache invalidation seam > #1 happy: successful CREATE TABLE through shared run path → seam fires (invalidate ×2, tree.refresh)
+AssertionError: expected "spy" to be called 1 times, but got 0 times
+ ❯ src/extension.test.ts:3380:28
+    3378|     await driveRunStatement(ext, "CREATE TABLE t (id int)");
+    3380|     expect(schemaCacheSpy).toHaveBeenCalledTimes(1);
+
+ FAIL  src/extension.test.ts > TASK-ARP07-004 — successful-DDL cache invalidation seam > #2 happy: mixed batch (SELECT done + CREATE done) — seam fires on the CREATE
+AssertionError: expected "spy" to be called 1 times, but got 0 times
+ ❯ src/extension.test.ts:3393:28
+    3391|     await driveRunStatement(ext, "SELECT 1; CREATE TABLE t (id int);");
+    3393|     expect(schemaCacheSpy).toHaveBeenCalledTimes(1);
+
+ FAIL  src/extension.test.ts > TASK-ARP07-004 — successful-DDL cache invalidation seam > #9 edge: seam payload — completed list receives the REAL statement text from StatementResult.sql (never undefined)
+AssertionError: expected "spy" to be called 1 times, but got 0 times
+ ❯ src/extension.test.ts:3519:28
+    3517|     await driveRunStatement(ext, originalSql);
+    3519|     expect(schemaCacheSpy).toHaveBeenCalledTimes(1);
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 6 passed | 88 skipped (97)
+```
+
+RED analysis: the 3 happy-path tests (#1, #2, #9) fail because the seam does
+not exist yet — `runStatements` never invalidates the caches. The 6
+negative-path tests (#3-#8) are GREEN-on-base by design (asserting the seam
+does NOT fire; there is nothing to fire before implementation). Test #9
+additionally pins the `.status` / `.sql` field names from `queryRunner.ts:49-52`
+in its mocked `StatementResult` records.
+
+### Implementation (GREEN)
+
+`src/extension.ts`:
+1. Import `completedSchemaImpact` from `./core/schemaImpact` (wave-1 API).
+2. Module-level seam `invalidateAfterSchemaDdl: ((completed: readonly string[], dialect?: SqlDialect) => void) | null = null` next to the other singletons.
+3. Assigned in `activate()` right after the `acSchemaCache` `onDidChangeActive` block: guards on `completedSchemaImpact(completed, dialect)`, then `schemaCache.invalidate()` + `acSchemaCache.invalidate()` + `state?.tree.refresh()` (lazy `state?.` read so a deactivate between run-start and seam-fire cannot resurrect the tree).
+4. Called from `runStatements` INSIDE the existing `if (!deactivating) { panel.render(...) }` success block, feeding only `results.filter(r => r.status === "done").map(r => r.sql)` with `active?.driver` (captured at the top of `runStatements`). `runStatements` signature UNCHANGED — all three callers untouched. ARP-02 `ownsRun` snapshot / finally busy gate / `!deactivating` gate byte-identical in behavior.
+5. `deactivate()` nulls the seam alongside the caches it closes over.
+
+Tests: new describe block `TASK-ARP07-004 — successful-DDL cache invalidation seam` in `src/extension.test.ts` (9 tests, one per §Test Cases row). Harness: `vi.resetModules()` + `vi.doMock("./ui/schemaCache")` / `vi.doMock("./ai/schemaContextCache")` scoped to the block, dynamic re-import; `QueryRunner.prototype.run` mocked to return controlled `StatementResult[]` records built with the REAL field names `.status` / `.sql` (queryRunner.ts:49-52); `SchemaTreeProvider.prototype.refresh` spied; driven through the real `vsdb.runStatement` command so `confirmDangerousStatements`, `runStatements`, and the seam all execute for real.
+
+### Verification Output (GREEN)
+
+Command: `npm test src/extension.test.ts` (worktree)
+
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-arp07-004
+
+ ✓ src/extension.test.ts  (97 tests) 719ms
+
+ Test Files  1 passed (1)
+      Tests  97 passed (97)
+   Start at  09:00:18
+   Duration  1.48s
+```
+
+Command: `npm run typecheck` (worktree)
+
+```
+> vsdb@1.42.0 typecheck
+> tsc --noEmit
+EXIT=0
+```
+
+Full suite cross-check: `npm test` → `Test Files 218 passed | 1 skipped (219)`, `Tests 3120 passed | 2 skipped (3122)`. No regressions.
+
+## Executor Report
+
+- EXECUTOR_TOOL: claude-code
+- EXECUTOR_MODEL: unic-code
+- EXECUTOR_SUBAGENT: Claude:feature-implementer
+- RED_OUTPUT: see "RED (TDD step 1)" section above — 3 failed (#1, #2, #9: `expected "spy" to be called 1 times, but got 0 times`), 6 passed (negative paths GREEN-on-base by design), full command `npx vitest run src/extension.test.ts -t "TASK-ARP07-004"`.
+- Verification Output: see "Verification Output (GREEN)" section above — `npm test src/extension.test.ts` 97/97 pass; `npm run typecheck` exit 0; full `npm test` 3120 passed / 2 skipped.
+- Status: PASS
+- Note: none.
+
 ## Reviewer Verdict
 
 <!-- Phase 4 reviewer appends below. -->

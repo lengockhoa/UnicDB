@@ -38,6 +38,7 @@ import {
   createKeywordTableCache,
   qualifyKeywordTables,
 } from "./core/keywordQualify";
+import { completedSchemaImpact } from "./core/schemaImpact";
 
 import { analyzeStatement, guardTier } from "./core/dangerousStatement";
 import { truncateAtBoundary } from "./core/text";
@@ -101,6 +102,16 @@ let autocompleteService: SqlAutocompleteService | null = null;
 let autocompleteRegistration: AutocompleteRegistration | null = null;
 let extensionUriForForm: vscode.Uri = vscode.Uri.file("/");
 let runScriptTerminal: vscode.Terminal | null = null;
+/**
+ * TASK-ARP07-004 — host seam for successful-DDL cache invalidation. Assigned
+ * in `activate()` after `schemaCache` + `acSchemaCache` are constructed; the
+ * shared `runStatements` path calls it from the success branch ONLY after the
+ * run settled and ONLY under `!deactivating` (composes with the ARP-02
+ * teardown sentinel). Null before activation / after deactivate → no-op.
+ */
+let invalidateAfterSchemaDdl:
+  | ((completed: readonly string[], dialect?: SqlDialect) => void)
+  | null = null;
 
 interface ExtensionState {
   mgr: ConnectionManager;
@@ -721,6 +732,20 @@ export async function activate(
     }),
   );
 
+  // TASK-ARP07-004 — successful-DDL invalidation seam. Fired by the shared
+  // `runStatements` path after a run settles with at least one COMPLETED
+  // (`status === "done"`) schema-impacting statement: drop both schema-aware
+  // caches (completion SchemaCache + AIC schema context cache) and refresh
+  // the tree in one place. DML-only runs classify false → no-op (no tree
+  // churn for data changes). The closure reads `state?.tree` lazily so a
+  // deactivate between run-start and seam-fire cannot resurrect the tree.
+  invalidateAfterSchemaDdl = (completed, dialect) => {
+    if (!completedSchemaImpact(completed, dialect)) return;
+    schemaCache.invalidate();
+    acSchemaCache.invalidate();
+    state?.tree.refresh();
+  };
+
   // 17. vsdb.openConsole — TASK-003 cycle Z: DataGrip-style SQL Console.
   // TASK-AF-004 cycle AF: passes `globalState` Memento so query history
   // (capped at 200 entries) persists across panel reloads.
@@ -1053,6 +1078,8 @@ export async function deactivate(): Promise<void> {
     }
     runScriptTerminal = null;
   }
+  // TASK-ARP07-004 — drop the DDL-invalidation seam with its caches.
+  invalidateAfterSchemaDdl = null;
 }
 
 /**
@@ -1753,6 +1780,15 @@ async function applyKeywordQualify(
     }, { append: true });
     if (!deactivating) {
       panel.render(results, header, { appendBase });
+      // TASK-ARP07-004 — feed ONLY the statements that actually completed
+      // (`status === "done"`, original text on `.sql` per queryRunner.ts:49-52)
+      // to the classifier; failed/cancelled statements must not invalidate.
+      // Inside the `!deactivating` gate: a run settling after teardown must
+      // not invalidate either (no post-deactivation resurrected writes).
+      const completed = results
+        .filter((r) => r.status === "done")
+        .map((r) => r.sql);
+      invalidateAfterSchemaDdl?.(completed, active?.driver);
     }
   } catch (err) {
     void vscode.window.showErrorMessage(
