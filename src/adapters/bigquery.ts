@@ -76,15 +76,86 @@ export interface BigQueryQueryOptions {
  * Kept loose (`unknown`) — the mapper un-nests `f[].v` into a flat tuple via
  * `toBigQueryPage`. BQ-00's `BigQueryValue` is the contract, but the seam
  * stays `unknown` so test fakes don't have to brand every cell.
+ *
+ * TASK-BQ02-001: the seam is WIDENED here for real enumeration. The legacy
+ * members (`query`, `getQueryResults`, `createQueryJob`, `cancel`,
+ * `listDatasets`, `getDataset`, `getTable`) are KEPT so BQ-01 tests keep
+ * compiling; the runtime instance satisfies BOTH sets structurally (verified
+ * at runtime against `@google-cloud/bigquery@9.0.3`).
+ *
+ * New members mirror the real client's instance shape:
+ *   - `getDatasets(opts?)` → PagedResponse of dataset objects with metadata
+ *   - `dataset(id)` → handle exposing `getTables(opts?)`, `getRoutines(opts?)`,
+ *     `table(id)` (sub-handle with `getMetadata(opts?)`).
+ *
+ * The widened `table` handle carries `getMetadata()` ONLY — no `getRows`
+ * member (no MVP caller; `getRows` Number-coerces INT64; re-evaluate in BQ-03).
  */
+
+// ---- Widened seam additions (BQ-02) --------------------------------------
+
+/** Raw row of the `ITableList.tables[]` array (types.d.ts:5983..6045). */
+export interface RawTableListItem {
+  clustering?: { fields?: string[] };
+  creationTime?: string;
+  expirationTime?: string;
+  friendlyName?: string;
+  id?: string;
+  kind?: string;
+  labels?: Record<string, string>;
+  rangePartitioning?: unknown;
+  requirePartitionFilter?: boolean;
+  tableReference?: { projectId?: string; datasetId?: string; tableId?: string };
+  timePartitioning?: { type?: string; field?: string; expirationMs?: string; requirePartitionFilter?: boolean };
+  type?: string;
+  view?: unknown;
+}
+
+/** Raw `ITable` metadata (subset relevant to BQ-02 introspection). */
+export interface RawTableMetadata {
+  schema?: { fields?: Array<{ name?: string; type?: string; mode?: string; fields?: unknown[] }> };
+  numRows?: string;
+  numBytes?: string;
+  creationTime?: string;
+  timePartitioning?: { type?: string; field?: string; expirationMs?: string; requirePartitionFilter?: boolean };
+  clustering?: { fields?: string[] };
+  type?: string;
+  tableReference?: { projectId?: string; datasetId?: string; tableId?: string };
+  labels?: Record<string, string>;
+  requirePartitionFilter?: boolean;
+}
+
+/** Raw `IDataset` metadata subset. */
+export interface RawDatasetMetadata {
+  id?: string;
+  datasetReference?: { datasetId?: string; projectId?: string };
+  location?: string;
+  friendlyName?: string;
+}
+
+/** Dataset handle (mirrors `Dataset` instance surface used by BQ-02). */
+export interface BigQueryDatasetHandle {
+  getTables(opts?: { maxResults?: number }): Promise<[Array<{ id?: string; metadata?: RawTableListItem }>, unknown, unknown]>;
+  getRoutines(opts?: { maxResults?: number }): Promise<[Array<{ id?: string; metadata?: { routineReference?: { routineId?: string } } }>, unknown, unknown]>;
+  table(id: string): { getMetadata(opts?: unknown): Promise<[RawTableMetadata, unknown]> };
+}
+
 export interface BigQueryClient {
   query(sql: string, opts?: BigQueryQueryOptions): Promise<unknown>;
   getQueryResults(jobId: string, opts?: unknown): Promise<unknown>;
   createQueryJob(sql: string): Promise<unknown>;
   cancel(jobId: string): Promise<unknown>;
+  // Legacy seam members (BQ-01). The real client's `listDatasets`/`dataset`
+  // names satisfy both old and new call sites — see comment above.
   listDatasets(projectId?: string): Promise<Array<{ id?: string }>>;
   getDataset(id: string): Promise<unknown>;
   getTable(datasetId: string, tableId: string): Promise<unknown>;
+  // Widened seam members (BQ-02). Real client method names (verified against
+  // @google-cloud/bigquery@9.0.3 — see task Discussion #1).
+  getDatasets(
+    opts?: { maxResults?: number; pageToken?: string },
+  ): Promise<[Array<{ id?: string; metadata?: RawDatasetMetadata }>, unknown, unknown]>;
+  dataset(id: string): BigQueryDatasetHandle;
 }
 
 /**
@@ -264,43 +335,273 @@ export class BigQueryAdapter implements DbAdapter {
     return { results: [result] };
   }
 
-  // ----- introspection (BQ-02 scope — throw NotImplementedError) ----------
+  // ----- introspection (BQ-02 — real enumeration) --------------------------
 
+  /**
+   * Datasets-as-schemas: list datasets via the widened seam
+   * `client.getDatasets({})`. The flag `includeSystem` is accepted but
+   * ignored — BigQuery's `getDatasets` returns user-visible datasets only;
+   * there is no separate "system datasets" list scope.
+   */
   async listSchemas(_includeSystem: boolean): Promise<SchemaInfo[]> {
-    throw new NotImplementedError("bigquery");
+    const client = this.requireClient();
+    const [datasets] = await client.getDatasets({});
+    const out: SchemaInfo[] = [];
+    for (const ds of datasets ?? []) {
+      // Prefer `metadata.datasetReference.datasetId`; fall back to top-level
+      // `id` ("project:datasetId") split, or to the object id verbatim.
+      const refName =
+        ds?.metadata?.datasetReference?.datasetId ??
+        (typeof ds?.id === "string" && ds.id.includes(":")
+          ? ds.id.split(":")[1]
+          : ds?.id) ??
+        "";
+      if (refName) {
+        out.push({ name: refName });
+      }
+    }
+    return out;
   }
-  async listTables(_schema?: string): Promise<TableInfo[]> {
-    throw new NotImplementedError("bigquery");
+
+  /**
+   * `getTables` returns a PagedResponse `[tableObjs, nextQuery, apiResponse]`.
+   * Each `tableObj` carries `{ id, metadata: ITableList.tables[] element }`.
+   * `type` selects the slice: `TABLE` only.
+   */
+  async listTables(schema?: string): Promise<TableInfo[]> {
+    const client = this.requireClient();
+    const ds = client.dataset(schema ?? "");
+    const [tableObjs] = await ds.getTables({ maxResults: 1000 });
+    const out: TableInfo[] = [];
+    for (const t of tableObjs ?? []) {
+      const ttype = t?.metadata?.type;
+      const tid = t?.metadata?.tableReference?.tableId ?? t?.id ?? "";
+      if (ttype === "TABLE" && tid) {
+        out.push({ name: tid, schema: schema ?? "" });
+      }
+    }
+    return out;
   }
-  async listViews(_schema?: string): Promise<ViewInfo[]> {
-    throw new NotImplementedError("bigquery");
+
+  /** Same fixture; `VIEW` and `MATERIALIZED_VIEW` only (excludes TABLE + EXTERNAL). */
+  async listViews(schema?: string): Promise<ViewInfo[]> {
+    const client = this.requireClient();
+    const ds = client.dataset(schema ?? "");
+    const [tableObjs] = await ds.getTables({ maxResults: 1000 });
+    const out: ViewInfo[] = [];
+    for (const t of tableObjs ?? []) {
+      const ttype = t?.metadata?.type;
+      const tid = t?.metadata?.tableReference?.tableId ?? t?.id ?? "";
+      if ((ttype === "VIEW" || ttype === "MATERIALIZED_VIEW") && tid) {
+        out.push({ name: tid, schema: schema ?? "" });
+      }
+    }
+    return out;
   }
-  async listRoutines(_schema?: string): Promise<RoutineInfo[]> {
-    throw new NotImplementedError("bigquery");
+
+  /**
+   * Map `dataset.getRoutines({})` PagedResponse. Each routine carries
+   * `metadata.routineReference.routineId`. `kind` is hardcoded `"function"`
+   * per task Discussion #5 (roadmap defers routine depth to BQ-07b).
+   */
+  async listRoutines(schema?: string): Promise<RoutineInfo[]> {
+    const client = this.requireClient();
+    const ds = client.dataset(schema ?? "");
+    const [routineObjs] = await ds.getRoutines({ maxResults: 1000 });
+    const out: RoutineInfo[] = [];
+    for (const r of routineObjs ?? []) {
+      const rid = r?.metadata?.routineReference?.routineId;
+      if (rid) {
+        out.push({ name: rid, kind: "function", schema: schema ?? "" });
+      }
+    }
+    return out;
   }
-  async listColumns(_table: string, _schema?: string): Promise<ColumnInfo[]> {
-    throw new NotImplementedError("bigquery");
+
+  /**
+   * `client.dataset(s).table(t).getMetadata()` resolves
+   * `[metadata, apiResponse]` (ServiceObject shape — service-object.d.ts:167).
+   * Map the `metadata.schema.fields` into `ColumnInfo[]`. REPEATED gets
+   * `<type> REPEATED` suffix per task spec §3; nested RECORD kept as one
+   * `RECORD` column (NOT flattened).
+   */
+  async listColumns(table: string, schema?: string): Promise<ColumnInfo[]> {
+    const client = this.requireClient();
+    const ds = client.dataset(schema ?? "");
+    const [metadata] = await ds.table(table).getMetadata();
+    const fields = metadata?.schema?.fields ?? [];
+    return fields.map((f) => {
+      const name = f?.name ?? "";
+      const type = f?.type ?? "";
+      const mode = f?.mode ?? "NULLABLE";
+      // Compose the dataType: REPEATED gets the suffix; other modes use type only.
+      const dataType = mode === "REPEATED" ? `${type} REPEATED` : type;
+      const nullable = mode !== "REQUIRED";
+      return {
+        name,
+        dataType,
+        nullable,
+        isPrimaryKey: false,
+      };
+    });
   }
+
+  /**
+   * `listRoutineParams` deferred — no MVP consumer (roadmap §9 sub-cycle
+   * BQ-07b). The `routineType` is not exposed by BigQuery's `Routines.list`
+   * response, so we cannot map to `kind: "procedure"` without widening the
+   * shared `RoutineInfo` type. Re-evaluate when BQ-07b lands.
+   */
   async listRoutineParams(
     _schema: string,
     _routine: string,
   ): Promise<Array<{ name: string | null; dataType: string }>> {
     throw new NotImplementedError("bigquery");
   }
-  async estimateTableRows(_schema: string, _table: string): Promise<number | null> {
-    throw new NotImplementedError("bigquery");
+
+  /**
+   * Single-table row estimate: read `table.getMetadata()` and parse `numRows`
+   * (a STRING on the wire). Parse with `Number()` ONLY if ≤ MAX_SAFE_INTEGER;
+   * past-safe-integer values resolve to `null` ("unknown") per the
+   * DbAdapter contract.
+   */
+  async estimateTableRows(schema: string, table: string): Promise<number | null> {
+    const client = this.requireClient();
+    const ds = client.dataset(schema ?? "");
+    const [metadata] = await ds.table(table).getMetadata();
+    const v = metadata?.numRows;
+    if (typeof v !== "string" || v.length === 0) return null;
+    const n = Number(v);
+    if (!Number.isFinite(n)) return null;
+    if (!Number.isSafeInteger(n)) return null;
+    return n;
   }
+
+  /**
+   * Batch row estimate. Per DbAdapter contract (types.ts:151-154):
+   *   - empty `tables` -> empty Map, NO client calls
+   *   - dropped tables are OMITTED (never null, never throw)
+   *   - per-table failure (e.g. table not found) -> OMIT
+   *
+   * The mssql adapter follows the same best-effort pattern.
+   */
   async estimateTableRowsBatch(
-    _schema: string,
-    _tables: readonly string[],
+    schema: string,
+    tables: readonly string[],
   ): Promise<Map<string, number | null>> {
-    throw new NotImplementedError("bigquery");
+    const out = new Map<string, number | null>();
+    if (tables.length === 0) return out;
+    const client = this.requireClient();
+    const ds = client.dataset(schema ?? "");
+    // Concurrent metadata reads — independent I/O.
+    const results = await Promise.allSettled(
+      tables.map(async (t) => {
+        const [metadata] = await ds.table(t).getMetadata();
+        const v = metadata?.numRows;
+        if (typeof v !== "string" || v.length === 0) return null;
+        const n = Number(v);
+        if (!Number.isFinite(n) || !Number.isSafeInteger(n)) return null;
+        return n;
+      }),
+    );
+    tables.forEach((t, i) => {
+      const r = results[i];
+      if (r.status === "fulfilled" && r.value !== null) {
+        out.set(t, r.value);
+      }
+      // rejected or null-valued: OMIT (drop, never null in Map)
+    });
+    return out;
   }
-  async listTableDetail(
-    _schema: string,
-    _table: string,
-  ): Promise<TableDetail> {
-    throw new NotImplementedError("bigquery");
+
+  /**
+   * `listTableDetail`: returns `TableDetail.columns` (mapped from
+   * `metadata.schema.fields`) + `TableDetail.constraints` (stringly-typed
+   * metadata facts: `timePartitioning`, `clustering`, `numRows`,
+   * `numBytes`, `creationTime`). The `numRows` fact is preserved VERBATIM
+   * when the wire string is past MAX_SAFE_INTEGER (never coerced via Number)
+   * — pins §1 success definition 3 "without BigInt precision loss".
+   */
+  async listTableDetail(schema: string, table: string): Promise<TableDetail> {
+    const client = this.requireClient();
+    const ds = client.dataset(schema ?? "");
+    const [metadata] = await ds.table(table).getMetadata();
+    const fields = metadata?.schema?.fields ?? [];
+    const columns: TableDetail["columns"] = fields.map((f) => {
+      const name = f?.name ?? "";
+      const type = f?.type ?? "";
+      const mode = f?.mode ?? "NULLABLE";
+      const is_nullable: "YES" | "NO" = mode === "REQUIRED" ? "NO" : "YES";
+      return {
+        column_name: name,
+        format_type: type,
+        is_nullable,
+        column_default: null,
+      };
+    });
+    const constraints: TableDetail["constraints"] = [];
+    const tp = metadata?.timePartitioning;
+    if (tp) {
+      // Partitioning fact: e.g. "DAY(ts)" or "DAY(_PARTITIONTIME)" if no field.
+      const tpType = tp.type ?? "";
+      const tpField = tp.field ?? "";
+      const tpExpr = tpField ? `${tpType}(${tpField})` : tpType;
+      constraints.push({
+        conname: "partitioning",
+        consrc: tpExpr,
+        contype: "meta",
+        conkey: [],
+        confrelidname: null,
+        confkeycols: null,
+      });
+    }
+    const cl = metadata?.clustering;
+    if (cl?.fields && cl.fields.length > 0) {
+      constraints.push({
+        conname: "clustering",
+        consrc: `(${cl.fields.join(", ")})`,
+        contype: "meta",
+        conkey: [],
+        confrelidname: null,
+        confkeycols: null,
+      });
+    }
+    // numRows: verbatim string OR "unknown" past MAX_SAFE_INTEGER.
+    // NEVER Number()-coerced past safe integer (success def 3).
+    if (typeof metadata?.numRows === "string" && metadata.numRows.length > 0) {
+      const v = metadata.numRows;
+      const n = Number(v);
+      const safe = Number.isFinite(n) && Number.isSafeInteger(n);
+      constraints.push({
+        conname: "numRows",
+        consrc: safe ? v : "unknown",
+        contype: "meta",
+        conkey: [],
+        confrelidname: null,
+        confkeycols: null,
+      });
+    }
+    if (typeof metadata?.numBytes === "string" && metadata.numBytes.length > 0) {
+      constraints.push({
+        conname: "numBytes",
+        consrc: metadata.numBytes,
+        contype: "meta",
+        conkey: [],
+        confrelidname: null,
+        confkeycols: null,
+      });
+    }
+    if (typeof metadata?.creationTime === "string" && metadata.creationTime.length > 0) {
+      constraints.push({
+        conname: "creationTime",
+        consrc: metadata.creationTime,
+        contype: "meta",
+        conkey: [],
+        confrelidname: null,
+        confkeycols: null,
+      });
+    }
+    return { columns, constraints };
   }
 
   // ----- testConnection ----------------------------------------------------

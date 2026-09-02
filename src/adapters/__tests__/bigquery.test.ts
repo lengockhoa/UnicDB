@@ -18,6 +18,7 @@ import type { ConnectionConfig } from "../../config/types";
 import type { BigQueryConnectionFields } from "../../config/types";
 import type { BigQueryPage, BigQueryRawQueryResponse } from "../bigqueryTypes";
 import type { BigQueryClientLike } from "../bigqueryAdc";
+import { NotImplementedError } from "../types";
 import {
   BigQueryAdapter,
   BigQueryConnectError,
@@ -665,5 +666,485 @@ describe("TASK-CL-004 BigQueryAdapter — durationMs measured (R4.5)", () => {
     expect(typeof dur).toBe("number");
     expect(Number.isFinite(dur)).toBe(true);
     expect(dur).toBeGreaterThanOrEqual(0);
+  });
+});
+
+// ===========================================================================
+// TASK-BQ02-001 — BigQuery resource metadata adapter (real enumeration)
+//
+// The adapter-owned `BigQueryClient` seam is widened with:
+//   - `getDatasets(opts?)` → PagedResponse of dataset objects with metadata
+//   - `dataset(id)` → { getTables(opts?), getRoutines(opts?), table(id) }
+//   - `table(id).getMetadata(opts?)` → ServiceObject [metadata, apiResponse]
+//
+// `listRoutineParams` keeps its NotImplementedError (no MVP consumer).
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Fixtures for enumeration tests (BQ-02 widened surface)
+// ---------------------------------------------------------------------------
+
+/**
+ * A fake client that satisfies the widened BigQueryClient seam. The dataset
+ * handle returns a sub-object exposing `getTables`, `getRoutines`, `table()`.
+ * Tests can override the inner methods via `vi.fn()` replacements.
+ */
+function makeEnumerationFakeClient(opts?: {
+  datasetTables?: Array<unknown>;
+  datasetRoutines?: Array<unknown>;
+  tableMetadata?: unknown;
+  apiResponse?: unknown;
+}): BigQueryClient & {
+  getDatasets: ReturnType<typeof vi.fn>;
+  dataset: ReturnType<typeof vi.fn>;
+} {
+  const tablesDefault = opts?.datasetTables ?? [];
+  const routinesDefault = opts?.datasetRoutines ?? [];
+  const metadataDefault = opts?.tableMetadata ?? { schema: { fields: [] } };
+  const apiResp = opts?.apiResponse ?? {};
+  const tableHandle = {
+    getMetadata: vi.fn(async () => [metadataDefault, apiResp]),
+  };
+  const datasetHandle = (id: string) => ({
+    getTables: vi.fn(async () => [tablesDefault, null, {}]),
+    getRoutines: vi.fn(async () => [routinesDefault, null, {}]),
+    table: vi.fn((_tid: string) => tableHandle),
+    id,
+  });
+  return {
+    listDatasets: vi.fn(async () => [{ id: "ds1" }]),
+    query: vi.fn(async () => [[{ f: [{ v: "x" }] }], null, DEFAULT_PAGE]),
+    getQueryResults: vi.fn(async () => DEFAULT_PAGE),
+    createQueryJob: vi.fn(async () => ({ id: "job_xyz" })),
+    cancel: vi.fn(async () => undefined),
+    getDataset: vi.fn(async () => ({ id: "ds1" })),
+    getTable: vi.fn(async () => ({ id: "t1" })),
+    getDatasets: vi.fn(async () => [[], null, {}]),
+    dataset: vi.fn((id: string) => datasetHandle(id)),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Test #1 — listSchemas returns dataset ids; includeSystem flag accepted
+// (BigQuery has no system datasets in list scope — flag is a no-op).
+// ---------------------------------------------------------------------------
+describe("TASK-BQ02-001 BigQueryAdapter — listSchemas", () => {
+  it("1. listSchemas maps dataset PagedResponse into SchemaInfo[]", async () => {
+    const datasetObjs = [
+      {
+        id: "p:ds1",
+        metadata: { id: "p:ds1", datasetReference: { datasetId: "ds1" } },
+      },
+      { metadata: { datasetReference: { datasetId: "ds2" } } },
+    ];
+    const fakeClient = makeEnumerationFakeClient();
+    fakeClient.getDatasets = vi.fn(async () => [datasetObjs, null, {}]);
+    const factory = vi.fn(
+      (_opts: { projectId: string; location?: string }): BigQueryClient => fakeClient,
+    );
+
+    const adapter = new BigQueryAdapter(bqCfg({}), factory);
+    await adapter.connect();
+    const schemas = await adapter.listSchemas(false);
+
+    expect(schemas).toEqual([{ name: "ds1" }, { name: "ds2" }]);
+    expect(fakeClient.getDatasets).toHaveBeenCalledTimes(1);
+    // includeSystem is accepted but ignored
+    await adapter.listSchemas(true);
+    expect(fakeClient.getDatasets).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test #2 — listTables("ds") returns only type === "TABLE" entries.
+// ---------------------------------------------------------------------------
+describe("TASK-BQ02-001 BigQueryAdapter — listTables", () => {
+  it("2. listTables returns only type === 'TABLE'", async () => {
+    const tableObjs = [
+      { id: "p:ds.t1", metadata: { type: "TABLE", tableReference: { tableId: "t1" } } },
+      { id: "p:ds.v1", metadata: { type: "VIEW", tableReference: { tableId: "v1" } } },
+      {
+        id: "p:ds.mv1",
+        metadata: { type: "MATERIALIZED_VIEW", tableReference: { tableId: "mv1" } },
+      },
+      { id: "p:ds.ext1", metadata: { type: "EXTERNAL", tableReference: { tableId: "ext1" } } },
+    ];
+    const fakeClient = makeEnumerationFakeClient({ datasetTables: tableObjs });
+    const factory = vi.fn(
+      (_opts: { projectId: string; location?: string }): BigQueryClient => fakeClient,
+    );
+
+    const adapter = new BigQueryAdapter(bqCfg({}), factory);
+    await adapter.connect();
+    const tables = await adapter.listTables("ds");
+
+    expect(tables).toEqual([{ name: "t1", schema: "ds" }]);
+    // dataset("ds").getTables was called.
+    expect(fakeClient.dataset).toHaveBeenCalledWith("ds");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test #3 — listViews("ds") returns VIEW + MATERIALIZED_VIEW, excludes TABLE + EXTERNAL.
+// ---------------------------------------------------------------------------
+describe("TASK-BQ02-001 BigQueryAdapter — listViews", () => {
+  it("3. listViews returns VIEW + MATERIALIZED_VIEW, excludes TABLE + EXTERNAL", async () => {
+    const tableObjs = [
+      { id: "p:ds.t1", metadata: { type: "TABLE", tableReference: { tableId: "t1" } } },
+      { id: "p:ds.v1", metadata: { type: "VIEW", tableReference: { tableId: "v1" } } },
+      {
+        id: "p:ds.mv1",
+        metadata: { type: "MATERIALIZED_VIEW", tableReference: { tableId: "mv1" } },
+      },
+      { id: "p:ds.ext1", metadata: { type: "EXTERNAL", tableReference: { tableId: "ext1" } } },
+    ];
+    const fakeClient = makeEnumerationFakeClient({ datasetTables: tableObjs });
+    const factory = vi.fn(
+      (_opts: { projectId: string; location?: string }): BigQueryClient => fakeClient,
+    );
+
+    const adapter = new BigQueryAdapter(bqCfg({}), factory);
+    await adapter.connect();
+    const views = await adapter.listViews("ds");
+
+    expect(views).toEqual([
+      { name: "v1", schema: "ds" },
+      { name: "mv1", schema: "ds" },
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test #4 — listColumns maps metadata.schema.fields with REPEATED mode
+// suffix; nested RECORD kept as one RECORD column.
+// ---------------------------------------------------------------------------
+describe("TASK-BQ02-001 BigQueryAdapter — listColumns", () => {
+  it("4. listColumns maps schema fields incl. REPEATED/RECORD", async () => {
+    const tableMetadata = {
+      schema: {
+        fields: [
+          { name: "id", type: "INT64", mode: "REQUIRED" },
+          { name: "v", type: "STRING", mode: "NULLABLE" },
+          { name: "tags", type: "STRING", mode: "REPEATED" },
+          {
+            name: "r",
+            type: "RECORD",
+            mode: "NULLABLE",
+            fields: [{ name: "a", type: "INT64", mode: "NULLABLE" }],
+          },
+        ],
+      },
+    };
+    const fakeClient = makeEnumerationFakeClient({ tableMetadata });
+    const factory = vi.fn(
+      (_opts: { projectId: string; location?: string }): BigQueryClient => fakeClient,
+    );
+
+    const adapter = new BigQueryAdapter(bqCfg({}), factory);
+    await adapter.connect();
+    const cols = await adapter.listColumns("t1", "ds");
+
+    expect(cols).toEqual([
+      { name: "id", dataType: "INT64", nullable: false, isPrimaryKey: false },
+      { name: "v", dataType: "STRING", nullable: true, isPrimaryKey: false },
+      { name: "tags", dataType: "STRING REPEATED", nullable: true, isPrimaryKey: false },
+      { name: "r", dataType: "RECORD", nullable: true, isPrimaryKey: false },
+    ]);
+  });
+
+  // Test #5 — edge: field missing type/mode -> defaults
+  it("5. malformed field falls back to dataType:'' and nullable:true", async () => {
+    const tableMetadata = {
+      schema: { fields: [{ name: "x" }] },
+    };
+    const fakeClient = makeEnumerationFakeClient({ tableMetadata });
+    const factory = vi.fn(
+      (_opts: { projectId: string; location?: string }): BigQueryClient => fakeClient,
+    );
+
+    const adapter = new BigQueryAdapter(bqCfg({}), factory);
+    await adapter.connect();
+    const cols = await adapter.listColumns("t1", "ds");
+    expect(cols).toEqual([
+      { name: "x", dataType: "", nullable: true, isPrimaryKey: false },
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test #6 — empty dataset -> listTables = [] and listViews = [].
+// ---------------------------------------------------------------------------
+describe("TASK-BQ02-001 BigQueryAdapter — empty dataset", () => {
+  it("6. getTables resolves [[], null, {}] -> listTables = [] AND listViews = []", async () => {
+    const fakeClient = makeEnumerationFakeClient({ datasetTables: [] });
+    const factory = vi.fn(
+      (_opts: { projectId: string; location?: string }): BigQueryClient => fakeClient,
+    );
+
+    const adapter = new BigQueryAdapter(bqCfg({}), factory);
+    await adapter.connect();
+    expect(await adapter.listTables("ds")).toEqual([]);
+    expect(await adapter.listViews("ds")).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test #7 — permission edge: getTables rejects 403 -> listTables REJECTS.
+// ---------------------------------------------------------------------------
+describe("TASK-BQ02-001 BigQueryAdapter — permission edge", () => {
+  it("7. getTables rejects 403 -> listTables REJECTS (no swallow)", async () => {
+    const fakeClient = makeEnumerationFakeClient();
+    fakeClient.dataset = vi.fn((id: string) => ({
+      getTables: vi.fn(async () => {
+        const e: unknown = { code: 403, errors: [{ message: "access denied" }] };
+        throw e;
+      }),
+      getRoutines: vi.fn(async () => [[], null, {}]),
+      table: vi.fn((_tid: string) => ({
+        getMetadata: vi.fn(async () => [{}, {}]),
+      })),
+      id,
+    }));
+    const factory = vi.fn(
+      (_opts: { projectId: string; location?: string }): BigQueryClient => fakeClient,
+    );
+
+    const adapter = new BigQueryAdapter(bqCfg({}), factory);
+    await adapter.connect();
+
+    let captured: unknown;
+    try {
+      await adapter.listTables("ds");
+    } catch (e) {
+      captured = e;
+    }
+    // Should NOT swallow to []. The original 403-shaped error must propagate.
+    expect(captured).toBeDefined();
+    expect(captured).not.toBeInstanceOf(Array);
+    const obj = captured as { code?: number };
+    expect(obj.code).toBe(403);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test #8 — estimateTableRows: past-safe-int numRows returns null.
+// ---------------------------------------------------------------------------
+describe("TASK-BQ02-001 BigQueryAdapter — estimateTableRows", () => {
+  it("8. numRows past MAX_SAFE_INTEGER -> null; small numRows -> number", async () => {
+    const metaBig = {
+      schema: { fields: [] },
+      numRows: "9007199254740993",
+    };
+    const fakeClient = makeEnumerationFakeClient({ tableMetadata: metaBig });
+    const factory = vi.fn(
+      (_opts: { projectId: string; location?: string }): BigQueryClient => fakeClient,
+    );
+    const adapter = new BigQueryAdapter(bqCfg({}), factory);
+    await adapter.connect();
+    expect(await adapter.estimateTableRows("ds", "t1")).toBeNull();
+
+    // Now small numRows
+    const fakeClient2 = makeEnumerationFakeClient({
+      tableMetadata: { schema: { fields: [] }, numRows: "42" },
+    });
+    const factory2 = vi.fn(
+      (_opts: { projectId: string; location?: string }): BigQueryClient => fakeClient2,
+    );
+    const adapter2 = new BigQueryAdapter(bqCfg({}), factory2);
+    await adapter2.connect();
+    expect(await adapter2.estimateTableRows("ds", "t1")).toBe(42);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test #9 — estimateTableRowsBatch: drops omitted tables; empty input
+// short-circuits (no client call).
+// ---------------------------------------------------------------------------
+describe("TASK-BQ02-001 BigQueryAdapter — estimateTableRowsBatch", () => {
+  it("9. batch: ['a','b'] with a metadata numRows='42', b omitted -> Map {a->42}; empty input -> empty Map, 0 client calls", async () => {
+    const tableObjs = [
+      { id: "p:ds.a", metadata: { type: "TABLE", tableReference: { tableId: "a" } } },
+      { id: "p:ds.b", metadata: { type: "TABLE", tableReference: { tableId: "b" } } },
+    ];
+    // First getTables returns both. Then table('a').getMetadata returns
+    // numRows=42; table('b').getMetadata throws (dropped).
+    const fakeClient = makeEnumerationFakeClient({ datasetTables: tableObjs });
+    fakeClient.dataset = vi.fn((id: string) => {
+      const tableHandle = (tid: string) => ({
+        getMetadata: vi.fn(async () => {
+          if (tid === "a") {
+            return [{ schema: { fields: [] }, numRows: "42" }, {}];
+          }
+          // b: omit (drop, do not throw)
+          throw new Error("not found");
+        }),
+      });
+      return {
+        getTables: vi.fn(async () => [tableObjs, null, {}]),
+        getRoutines: vi.fn(async () => [[], null, {}]),
+        table: vi.fn((tid: string) => tableHandle(tid)),
+        id,
+      };
+    });
+    const factory = vi.fn(
+      (_opts: { projectId: string; location?: string }): BigQueryClient => fakeClient,
+    );
+    const adapter = new BigQueryAdapter(bqCfg({}), factory);
+    await adapter.connect();
+
+    const result = await adapter.estimateTableRowsBatch("ds", ["a", "b"]);
+    expect(result).toBeInstanceOf(Map);
+    expect(result.size).toBe(1);
+    expect(result.get("a")).toBe(42);
+    expect(result.has("b")).toBe(false);
+
+    // Empty input -> no client calls, empty Map
+    const fakeClient2 = makeEnumerationFakeClient();
+    const factory2 = vi.fn(
+      (_opts: { projectId: string; location?: string }): BigQueryClient => fakeClient2,
+    );
+    const adapter2 = new BigQueryAdapter(bqCfg({}), factory2);
+    await adapter2.connect();
+    const callsBefore = (fakeClient2.dataset as ReturnType<typeof vi.fn>).mock.calls.length;
+    const result2 = await adapter2.estimateTableRowsBatch("ds", []);
+    expect(result2.size).toBe(0);
+    const callsAfter = (fakeClient2.dataset as ReturnType<typeof vi.fn>).mock.calls.length;
+    expect(callsAfter).toBe(callsBefore);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test #10 — not-connected / closed guards compose on new methods.
+// ---------------------------------------------------------------------------
+describe("TASK-BQ02-001 BigQueryAdapter — not-connected / closed guards", () => {
+  it("10. listSchemas before connect() -> BigQueryNotConnectedError; after close() -> BigQueryClosedError", async () => {
+    const fakeClient = makeEnumerationFakeClient();
+    const factory = vi.fn(
+      (_opts: { projectId: string; location?: string }): BigQueryClient => fakeClient,
+    );
+    const adapter = new BigQueryAdapter(bqCfg({}), factory);
+    await expect(adapter.listSchemas(false)).rejects.toBeInstanceOf(
+      BigQueryNotConnectedError,
+    );
+    await adapter.connect();
+    await adapter.close();
+    await expect(adapter.listSchemas(false)).rejects.toBeInstanceOf(
+      BigQueryClosedError,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test #12 — listTableDetail returns columns + constraints (stringly-typed).
+// ---------------------------------------------------------------------------
+describe("TASK-BQ02-001 BigQueryAdapter — listTableDetail", () => {
+  it("12. listTableDetail maps metadata to columns + constraints (partitioning/clustering/row count)", async () => {
+    const tableMetadata = {
+      schema: {
+        fields: [{ name: "id", type: "INT64", mode: "REQUIRED" }],
+      },
+      timePartitioning: { type: "DAY", field: "ts" },
+      clustering: { fields: ["a"] },
+      numRows: "10",
+      numBytes: "2048",
+    };
+    const fakeClient = makeEnumerationFakeClient({ tableMetadata });
+    const factory = vi.fn(
+      (_opts: { projectId: string; location?: string }): BigQueryClient => fakeClient,
+    );
+    const adapter = new BigQueryAdapter(bqCfg({}), factory);
+    await adapter.connect();
+    const detail = await adapter.listTableDetail("ds", "t1");
+    expect(detail.columns.length).toBe(1);
+    expect(detail.columns[0].column_name).toBe("id");
+    expect(detail.columns[0].format_type).toBe("INT64");
+    expect(detail.columns[0].is_nullable).toBe("NO");
+    expect(detail.constraints.length).toBeGreaterThanOrEqual(1);
+    // Constraint string keys: at least one constraint mentions partitioning/clustering.
+    const constraintKeys = detail.constraints.map((c) => c.conname);
+    const hasPartition = constraintKeys.some((k) =>
+      /partition/i.test(k),
+    );
+    const hasCluster = constraintKeys.some((k) => /cluster/i.test(k));
+    expect(hasPartition).toBe(true);
+    expect(hasCluster).toBe(true);
+  });
+
+  // Test #13 — never coerces past safe integer for row count.
+  it("13. listTableDetail preserves numRows string verbatim when past MAX_SAFE_INTEGER", async () => {
+    const tableMetadata = {
+      schema: {
+        fields: [{ name: "id", type: "INT64", mode: "REQUIRED" }],
+      },
+      timePartitioning: { type: "DAY", field: "ts" },
+      clustering: { fields: ["a"] },
+      numRows: "1234567890123456789", // > Number.MAX_SAFE_INTEGER
+    };
+    const fakeClient = makeEnumerationFakeClient({ tableMetadata });
+    const factory = vi.fn(
+      (_opts: { projectId: string; location?: string }): BigQueryClient => fakeClient,
+    );
+    const adapter = new BigQueryAdapter(bqCfg({}), factory);
+    await adapter.connect();
+    const detail = await adapter.listTableDetail("ds", "t1");
+
+    // Find the row-count constraint. It must surface as either the verbatim
+    // string or "unknown" — NEVER a Number()-coerced value that has lost
+    // precision past MAX_SAFE_INTEGER.
+    const rowCons = detail.constraints.find((c) => /numRows|rows/i.test(c.conname));
+    expect(rowCons).toBeDefined();
+    const v = rowCons!.consrc;
+    if (v === "unknown") {
+      // acceptable: surfaced as null per the estimator contract
+      expect(v).toBe("unknown");
+    } else {
+      // acceptable: surfaced verbatim
+      expect(v).toBe("1234567890123456789");
+    }
+    // The Number.MAX_SAFE_INTEGER+1 rounded value is 1234567890123456768.
+    // If we ever coerced via Number(), we'd see that (or some nearby rounded
+    // value). Pin that the lossless string OR 'unknown' is the only path.
+    expect(v).not.toBe("1234567890123456768");
+    expect(v).not.toBe("1234567890123456800");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test #14 — listRoutines maps routineReference.routineId to name.
+// ---------------------------------------------------------------------------
+describe("TASK-BQ02-001 BigQueryAdapter — listRoutines", () => {
+  it("14. listRoutines maps routineReference.routineId with hardcoded kind:'function'", async () => {
+    const routineObjs = [
+      { id: "r1", metadata: { routineReference: { routineId: "fn1" } } },
+      { metadata: { routineReference: { routineId: "proc1" } } },
+    ];
+    const fakeClient = makeEnumerationFakeClient({ datasetRoutines: routineObjs });
+    const factory = vi.fn(
+      (_opts: { projectId: string; location?: string }): BigQueryClient => fakeClient,
+    );
+    const adapter = new BigQueryAdapter(bqCfg({}), factory);
+    await adapter.connect();
+    const routines = await adapter.listRoutines("ds");
+    expect(routines).toEqual([
+      { name: "fn1", kind: "function", schema: "ds" },
+      { name: "proc1", kind: "function", schema: "ds" },
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test #11 — listRoutineParams STAYS NotImplementedError.
+// ---------------------------------------------------------------------------
+describe("TASK-BQ02-001 BigQueryAdapter — listRoutineParams stays NotImplementedError", () => {
+  it("11. listRoutineParams throws NotImplementedError(\"bigquery\")", async () => {
+    const fakeClient = makeEnumerationFakeClient();
+    const factory = vi.fn(
+      (_opts: { projectId: string; location?: string }): BigQueryClient => fakeClient,
+    );
+    const adapter = new BigQueryAdapter(bqCfg({}), factory);
+    await adapter.connect();
+    await expect(adapter.listRoutineParams("ds", "fn1")).rejects.toBeInstanceOf(
+      NotImplementedError,
+    );
   });
 });

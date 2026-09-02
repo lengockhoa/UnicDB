@@ -23,6 +23,7 @@ import type { QueryRunner, StatementResult } from "../core/queryRunner";
 import type { ResultsPanel } from "./resultsPanel";
 import type { ConnectionManager } from "../core/connectionManager";
 import type { DbAdapter } from "../adapters/types";
+import { buildBigQueryPreviewSql } from "./bigQueryPreview";
 
 /** Adapter surface used by qualifyKeywordTables. */
 type AdapterWithTables = Pick<DbAdapter, "listTables" | "listColumns">;
@@ -43,6 +44,14 @@ export function buildBrowseSelect(
   schema: string,
   table: string,
 ): string {
+  // TASK-BQ02-002 — BigQuery preview is a full bounded statement built by the
+  // pure module (backtick quoting, LIMIT-clamped). The browse command never
+  // has a `project` argument here (the tree node carries schema + objectName
+  // only), so we delegate with no project — TASK-BQ02-003's preview dispatch
+  // adds the project arg.
+  if (driver === "bigquery") {
+    return buildBigQueryPreviewSql({ dataset: schema, table });
+  }
   const qualifiedTable = quoteForDriver(driver, table);
   const qualifiedSchema = schema ? quoteForDriver(driver, schema) : "";
   const tableRef = schema ? `${qualifiedSchema}.${qualifiedTable}` : qualifiedTable;
@@ -61,9 +70,10 @@ function quoteForDriver(
     case "mssql":
       return '[' + id.replace(/]/g, "]]") + ']';
     case "bigquery":
-      // BQ01-001 — keep the `never` exhaustiveness arm valid. BigQuery quoting
-      // semantics live with TASK-BQ01-002/004 (form + adapter wiring); this
-      // path is unreachable until that lands.
+      // TASK-BQ02-002 — BigQuery preview is routed through buildBrowseSelect's
+      // explicit bigquery branch → buildBigQueryPreviewSql, NOT through this
+      // per-identifier helper. This case is unreachable from the public
+      // surface; kept only so the `never` exhaustiveness check stays valid.
       throw new Error(`Unsupported driver: bigquery (BQ-02 wiring pending)`);
     default: {
       const _exhaustive: never = driver;
@@ -156,12 +166,16 @@ export function registerBrowseCommands(deps: RegisterBrowseDeps): void {
         // qualifier works on the already-qualified raw SQL — the inner
         // SELECT * FROM "<schema>"."<table>" is recognized as qualified, so
         // no rewrite happens.
+        // TASK-BQ02-002 — Skip qualifyKeywordTables for bigquery: PG reserved-
+        // keyword rules do not apply to GoogleSQL, and the preview SQL is
+        // already fully backtick-quoted by buildBigQueryPreviewSql.
         const adapter = await maybeGetAdapter(mgr);
-        const sql = adapter
-          ? (await qualifyKeywordTables(rawSql, (s) =>
-              adapter.listTables(s).then((rows) => rows.map((r) => r.name)),
-            )).sql
-          : rawSql;
+        const sql =
+          adapter && conn.driver !== "bigquery"
+            ? (await qualifyKeywordTables(rawSql, (s) =>
+                adapter.listTables(s).then((rows) => rows.map((r) => r.name)),
+              )).sql
+            : rawSql;
         const stmt: ParsedStatement = { text: sql, start: 0, end: sql.length };
         const qualified = schema ? `${schema}.${table}` : table;
         const activeConnection = mgr.getActive();
