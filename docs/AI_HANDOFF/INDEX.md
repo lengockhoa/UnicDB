@@ -29,6 +29,7 @@ Cycle AIX-07 — **Trust, Privacy & Governance** — complete; shipped in v1.28.
 | PORT-ARP-05 | Cross-driver timeout/pool resilience contract | superseded (shipped in v1.41.0) | - | unic-smart |
 | PORT-ARP-06 | AI SQL policy unification and usage visibility | superseded (shipped in v1.42.0) | - | unic-smart |
 | PORT-ARP-07 | Successful-DDL cache/context invalidation | superseded (shipped in v1.43.0) | ARP-01 | unic-smart |
+| PORT-ARP-08 | Console draft recovery | active — cycle planned (ready for executor) | ARP-03 | unic-smart |
 
 ## Cycle ARP-05 — Cross-driver timeout, pool, and resilience contract
 
@@ -238,3 +239,22 @@ TASK-ARP07-001, 002, 003 → TASK-ARP07-004.
 - Wave 2 (1): TASK-ARP07-004 (wiring imports 001's classifier; 002/003 prove the invalidate() seams are safe before the host uses them)
 
 No same-wave file sharing: 001 owns `src/core/schemaImpact.ts`(+new `schemaImpact.test.ts`) — new core file sanctioned by the roadmap; 002 owns `schemaCache.ts`(verify-only, expected no change) + `schemaCache.test.ts`; 003 owns `schemaContextCache.ts` + `schemaContextResolver.test.ts` (the tests-map entry for `schemaContextCache.ts` is stale — resolves to `formatSchemaContext` tests; pin the resolver file); 004 owns `extension.ts` + `extension.test.ts` in wave 2 only. Roadmap's `extension.ts:294-312,492-499,657-687,1433-1470` citations are stale — actual wiring: `schemaCache.invalidate()` at `331-333`, `vsdb.refreshSchema` at `521-526`, `acSchemaCache.invalidate()` at `718-721`, `runStatements` at `1705-1769`. Known gap (PLAN.md Self-Audit): form-view DDL (`tableCommands.ts` `runDdl`) and AI plan-apply (`aiChatPanel.ts`) run `adapter.runQuery` directly and are NOT wired this cycle (files outside the roadmap candidate set); the module-level seam is the designed follow-up consumption point. Plan: `docs/AI_HANDOFF/PLAN.md`.
+
+## Cycle ARP-08 — Console draft recovery
+
+Source: `docs/plans/2026-09-01-vsdb-additive-roadmap.md` §ARP-08 (lines 361-393). Dep: ARP-03 (shipped v1.39.0); preserve ARP-02 ownsRun/deactivate sentinel + AIC-004 ghost-text seams byte-untouched. Base: `main @ 8dca6d2` (v1.43.0). Baseline: 3120 passed | 2 skipped. No lint script — static gate `npm run typecheck`; bundle gate `npm run compile`. Workspace-scoped (workspaceState) versioned bounded draft recovery; history stays globalState; corrupt→one empty tab; clear is durable; never runs SQL. Plan: `docs/AI_HANDOFF/PLAN.md`.
+
+| Task / Portfolio | Title | Status | Dependencies | Reviewer |
+|---|---|---|---|---|
+| TASK-ARP08-001 | Persisted draft model: snapshot codec + clearDrafts wire (pure) | ready | none | - |
+| TASK-ARP08-002 | Host draft restore: hydrate, debounced flush, dispose flush, durable clear | ready | TASK-ARP08-001 | - |
+| TASK-ARP08-003 | Webview draft UX: debounced flush, flush-before-switch, Clear drafts, restore pre-input | ready | TASK-ARP08-001 | - |
+| TASK-ARP08-004 | Extension wiring: workspaceState as draftMemento + retained singleton/history guarantees | ready | TASK-ARP08-001, TASK-ARP08-002 | - |
+
+Graph: TASK-ARP08-001 → TASK-ARP08-002; TASK-ARP08-001 → TASK-ARP08-003; TASK-ARP08-001, TASK-ARP08-002 → TASK-ARP08-004.
+
+- Wave 1 (1): TASK-ARP08-001 (pure codec + clearDrafts guard — nothing else can land before it)
+- Wave 2 (2): TASK-ARP08-002, TASK-ARP08-003 (parallel — disjoint files)
+- Wave 3 (1): TASK-ARP08-004 (consumes 001's constants + 002's `draftMemento` option)
+
+No same-wave file sharing: 001 owns `consolePanelMessages.ts`(+`consolePanelMessages.test.ts`); 002 owns `consolePanel.ts`(+`consolePanel.test.ts`); 003 owns `webview/consolePanelMain.ts` + `consolePanelBundle.test.ts` + `consoleTabs.test.ts` (neighbor pin); 004 owns `extension.ts`(+`extension.test.ts`) in wave 3 only. Citation corrections (roadmap anchors stale): constructor seeds `Query 1` at `consolePanel.ts:143-144`, `hydrateHistory` at `310-318`; singleton `extension.ts:99`, `commandOpenConsole` at `1584-1633`, registration `753-754` passes `context.globalState`, deactivate dispose at `1067-1068`; webview NEVER posts updateBuffer (`consolePanelMain.ts:157-160`) — the debounced flush is both the draft-flush mechanism and the switch-clobber divergence fix. Known gap (PLAN.md Self-Audit): ~500ms debounce can lose the last keystrokes on abrupt webview death (flush-on-hidden/unload/dispose narrows it); jsdom `visibilityState` override may be needed for the hidden-flush pin (beforeunload covers the same flush function). Plan: `docs/AI_HANDOFF/PLAN.md`.

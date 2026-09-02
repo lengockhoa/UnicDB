@@ -1,222 +1,185 @@
-# PLAN — ARP-07: Successful-DDL cache/context invalidation
+# PLAN — ARP-08: Console draft recovery
 
-Source: `docs/plans/2026-09-01-vsdb-additive-roadmap.md` §ARP-07 (lines 320-358; P1; dep ARP-01 — shipped v1.37.0; preserve ARP-02 ownsRun/deactivate sentinel, ARP-03 row cap, ARP-04 tunnel identity, ARP-06 AI policy).
-Base: `main @ aa01a78` (v1.42.0). Executor: `unic-code`. Reviewer: `unic-smart`. No lint script — static gate is `npm run typecheck`.
+Source: `docs/plans/2026-09-01-vsdb-additive-roadmap.md` §ARP-08 (lines 361-393; P2; dep ARP-03 — shipped v1.39.0; preserve ARP-02 ownsRun/deactivate sentinel, AIC-004 ghost-text seams, ARP-06 AI policy untouched).
+Base: `main @ 8dca6d2` (v1.43.0). Executor: `unic-code`. Reviewer: `unic-smart`. No lint script — static gate is `npm run typecheck`; bundle gate `npm run compile`.
 
 **Citation corrections (roadmap line anchors are stale — verified against HEAD):**
-- Roadmap cites `src/extension.ts:294-312,492-499,657-687,1433-1470` as "connection change and manual refresh" wiring. Actual wiring: `schemaCache.invalidate()` on `mgr.onDidChangeActive` at **`extension.ts:331-333`**; manual refresh `vsdb.refreshSchema` at **`521-526`**; `acSchemaCache.invalidate()` on `onDidChangeActive` at **`718-721`**. The cited lines are NOT schema wiring (294-312 CodeLens/browse, 492-499 `vsdb.cancelQuery`, 657-687 AI command surface, 1433-1470 AIX-07 policy derivation).
-- `src/ui/schemaCache.ts:277-324` ≈ actual: `invalidate()` (generation bump + inflight clear) at **`288-308`**; generation guard + commit gate at **`74, 356-387`** (commit `if (this.generation === startGen)` at **`374`**).
-- `src/ai/schemaContextCache.ts:116-127,217-219` — accurate: `SchemaContextCache` interface at **`115-119`**, `invalidate()` at **`217-219`**.
-- Shared execution seam: `runStatements` at **`extension.ts:1705-1769`** (success path `1748-1756`), called from console run (**`1597`**), editor runQuery (**`1656`**), codelens run (**`1670`**). `commandRunScript` uses a terminal, not `runStatements`.
+- Roadmap cites `src/ui/consolePanel.ts:137-145` for "constructor seeds empty Query 1". Actual: constructor seeds the single `Query 1` empty tab at **`consolePanel.ts:143-144`** and calls `hydrateHistory()` at **`145`**; `hydrateHistory()` itself is at **`310-318`**. Roadmap cites `src/extension.ts:1274-1278,1325-1330` for singleton close — those lines are NOT the console wiring. Actual: `consolePanel` module singleton at **`extension.ts:99`**, `commandOpenConsole` at **`1584-1633`** (`new ConsolePanel` at **`1591-1630`**, `onDispose` → `consolePanel = null` at **`1627-1629`**), registration `vsdb.openConsole` → `commandOpenConsole(mgr, runner, panel, context.globalState)` at **`753-754`**, deactivate disposes + nulls at **`1067-1068`**, `deactivating` sentinel at **`94`**.
+- `updateBuffer` wire contract confirmed: `ConsoleToHostMessage` member at **`consolePanelMessages.ts:37`**, guard at **`92-95`**, host handles it via `setBuffer` **silently with NO postState** at **`consolePanel.ts:401-403`** (setBuffer at **`231-234`**). This silence is load-bearing: it is why a webview-side flush can never create a render loop.
+- Webview confirmed to NEVER post `updateBuffer` (zero hits): the `input` handler at **`webview/consolePanelMain.ts:157-160`** only mutates the local `activeTab().buffer`; the `state` handler at **`327-341`** does `tabs = msg.tabs` — so host buffers go stale and a host `state` push (switch/close/create) clobbers local edits made since the last flush. This is the latent divergence bug the flush fixes.
+- Tests-map (`.cache/index/tests-map.json`): `consolePanelMessages.ts` → `[consolePanelMessages.test.ts, consolePanel.test.ts]`; `consolePanel.ts` → `[consolePanel.test.ts, consolePanelBundle.test.ts, consolePanelMessages.test.ts, tests/consolePanelWebview.test.ts]`; `webview/consolePanelMain.ts` → `[consolePanel.test.ts]`; `extension.ts` → `[extension.test.ts, extensionAutocomplete.test.ts, extensionConfigExport.test.ts, mcpExtensionRegistry.test.ts]`.
 
 ## §1 Intent
 
-**Problem.** SchemaCache invalidation already handles generation and stale in-flight results
-(`src/ui/schemaCache.ts:288-308,356-387`); the AI schema context cache has an explicit `invalidate()`
-(`src/ai/schemaContextCache.ts:217-219`). Both are wired on connection change (`extension.ts:331-333,718-721`)
-and manual refresh (`extension.ts:521-526`) — but NOT after shared successful DDL. After a user runs
-`CREATE`/`ALTER`/`DROP`/`RENAME` from the console, editor, or CodeLens, schema completion, the schema
-tree, and AI autocomplete context keep serving the pre-DDL metadata until the next TTL expiry or manual
-refresh. Additionally, grounding uncovered a REAL gap in the AI cache: `hydrate()` commits its entry
-unconditionally (`schemaContextCache.ts:175-180`), so an `invalidate()` that lands while a hydration is
-in-flight does NOT stop the stale entry from committing — the exact failure the roadmap's wave-1
-regression is meant to close.
+**Problem.** Console history is Memento-backed and capped (200), but a NEW panel intentionally starts empty (`consolePanel.ts:143-144`) and singleton close creates fresh state — the extension drops its `consolePanel` reference on user close (`extension.ts:1627-1629`) and `deactivate` (`1067-1068`), so the next `vsdb.openConsole` constructs a brand-new panel with a single empty `Query 1` tab. Any multi-tab scratch drafts the user had open are lost. Separately, the webview never pushes buffer edits to the host (`consolePanelMain.ts:157-160`), so host buffers are stale the moment a tab is switched or the panel closes — nothing durable to restore even if we tried.
 
-**Success.** (1) A pure, dialect-aware classifier in `src/core/schemaImpact.ts` (new) that decides
-whether a statement, if it actually completed, changes the schema surface (depth-0 CREATE/ALTER/DROP/
-RENAME; DML and literal/comment text are false). (2) After a successful shared run, if any *completed*
-statement has schema impact, a host seam invalidates SchemaCache + AI schema cache and refreshes the
-tree in one place. Failed/cancelled/rejected-confirmation DDL never invalidates. (3) The AI cache
-hydration race is closed so a post-success lookup cannot serve a pre-DDL context. (4) The classifier
-reconciles with the existing `dangerousStatement`/`readOnlyIntent` semantics (documented in-code +
-reviewer criterion), reusing `maskLiteralsAndComments` rather than a new parser.
+**Success.** (1) A versioned, bounded, workspace-scoped snapshot of `{tabs:[{id,name,buffer}], activeTabId}` persists via a debounced flush + exactly-once flush-on-dispose. (2) Closing/reopening the panel or reloading VS Code restores the bounded drafts into the SAME tab ids and buffers, with the same active tab, and NEVER runs SQL. (3) Corrupt or over-cap persisted state fails closed into one fresh empty tab. (4) Clear is explicit and durable — after `Clear drafts`, reopening shows empty and the old draft cannot be resurrected. (5) The webview now flushes edits to the host, which fixes the existing divergence where a tab switch clobbered unsent edits (regression-pinned). (6) Privacy: the persisted payload is exactly tab id/name/buffer — never results, passwords, transaction state, connection data, or history.
 
 ## §2 Scope
 
 **In**
-- ARP-07.1 (wave 1) — pure classifier: `src/core/schemaImpact.ts` (new) + `src/core/__tests__/schemaImpact.test.ts` (new). Depth-0 CREATE/ALTER/DROP/RENAME → true; SELECT / DML (INSERT/UPDATE/DELETE/MERGE/TRUNCATE) → false; keywords inside literals/comments/quoted identifiers → false (reuses `maskLiteralsAndComments`); `with` prelude handling; batch semantics (`completedSchemaImpact` = true iff ANY completed statement has impact).
-- ARP-07.2 (wave 1) — schema cache race: VERIFY-FIRST. The generation guard (`schemaCache.ts:74,356-387`) already defeats invalidate-during-fetch stale commits (existing test `#3 invalidate defeats a refresh that started before it`, `schemaCache.test.ts:194-227`). Add a feature-named regression test scoped to the DDL-invalidation use case. **Modify `schemaCache.ts` only if the new test exposes a gap — expected: no source change.**
-- ARP-07.3 (wave 1) — AI cache regression: `schemaContextCache.ts` — close the real hydration-commit gap. `invalidate()` must (a) prevent a pre-invalidate hydration from committing its entry (generation guard, mirroring SchemaCache) and (b) drop the in-flight hydration so a post-invalidate `resolve()` starts a fresh hydration (with an ownership check so the old hydration's `finally` does not null the new promise). Interface unchanged. Preserves the resolver's identity/race guard (unchanged) and the return-by-reference cache-hit contract.
-- ARP-07.4 (wave 2) — execution wiring: `extension.ts` + `extension.test.ts`. Module-level host seam assigned in `activate` (closing over `schemaCache`, `acSchemaCache`, `state?.tree`); `runStatements` success path feeds only `status === "done"` statements to `completedSchemaImpact` and calls the seam, gated on `!deactivating` (ARP-02 composition). Failed/cancelled/rejected-confirmation runs never call the seam.
+- ARP-08.1 (wave 1) — pure persisted model in `src/ui/consolePanelMessages.ts` (+ `consolePanelMessages.test.ts`): `ConsoleDraftSnapshot` codec (encode/parse, versioned, fail-closed), draft constants, new `clearDrafts` webview→host message + guard case. No other task can land before this one — 08.2/08.3/08.4 import its codec and message type.
+- ARP-08.2 (wave 2) — host restore in `src/ui/consolePanel.ts` (+ `consolePanel.test.ts`): `ConsolePanelOptions.draftMemento`; `hydrateDrafts()` in the constructor (mirror `hydrateHistory`); debounced persist on `updateBuffer`; `flushDrafts()` exactly once in the dispose path; `clearDrafts` handler; deterministic cap enforcement at persist; corrupt→empty-tab fallback; restore never invokes `onRun`. Preserves ARP-02 deactivation sentinel and AIC-004 ghost-text seams byte-untouched.
+- ARP-08.3 (wave 2) — webview UX in `webview/consolePanelMain.ts` (+ `consolePanelBundle.test.ts` + `consoleTabs.test.ts` neighbor pin): debounced `updateBuffer` post on editor input; flush pending on `visibilitychange→hidden` and `beforeunload`; flush-before-`switchTab`/`closeTab` (the divergence fix); "Clear drafts" toolbar button; restore-pre-input re-render. Bundle compilation verified (`consolePanelBundle.test.ts` stays green).
+- ARP-08.4 (wave 3) — extension wiring in `src/extension.ts` (+ `extension.test.ts`): `commandOpenConsole` passes a new `draftMemento` = `context.workspaceState`; verify-only pins that singleton behavior and `globalState` history guarantees are retained. Roadmap sanctions `extension.ts` "only if scope/options change" — workspace-scoping IS the sanctioned change.
 
-**Out** (explicit, from roadmap)
-- Universal SQL semantics; server event subscriptions; DML invalidation absent evidence; automatic tree expansion.
-- Changing `dangerousStatement.ts` / `readOnlyIntent.ts` — the classifier imports their exported `maskLiteralsAndComments` only.
-- Wiring the two direct-`adapter.runQuery` DDL surfaces — form-view DDL (`src/ui/tableCommands.ts:117-123` `runDdl`) and AI plan-apply (`src/ui/aiChatPanel.ts:3619-3743` `handlePlanApprove`). These files are NOT in the roadmap's candidate set; the seam is designed so a follow-up can consume it. **Known gap — see Self-Audit.**
-- Any ARP-02 ownsRun/deactivate behavior change; ARP-03 retained-row cap; ARP-04 tunnel identity; ARP-06 AI policy.
+**Out**
+- Results / result grids, passwords/secrets, transaction state, connection metadata, and query history in the draft payload (history stays in `globalState` under `CONSOLE_HISTORY_KEY` — unchanged).
+- Cross-machine sync, unlimited persistence, file writes, automatic replay of restored drafts.
+- Changes to `src/ui/schemaCache.ts`, `src/ui/resultsPanel.ts`, `src/ui/aiChatPanel.ts`, adapter/driver files, `package.json`.
 
-**Same-wave file disjointness (absolute)**
-- Wave 1: ARP-07.1 owns `schemaImpact.ts` + `schemaImpact.test.ts` (both new); ARP-07.2 owns `schemaCache.ts` (expected no change) + `schemaCache.test.ts`; ARP-07.3 owns `schemaContextCache.ts` + `schemaContextResolver.test.ts`. Disjoint.
-- Wave 2: ARP-07.4 owns `extension.ts` + `extension.test.ts` only. No `src/` file is shared within a wave.
+**File disjointness.** Wave 2 runs TASK-ARP08-002 (owns `consolePanel.ts` + `consolePanel.test.ts`) and TASK-ARP08-003 (owns `webview/consolePanelMain.ts` + `consolePanelBundle.test.ts` + `consoleTabs.test.ts`) in parallel with NO shared file. TASK-ARP08-003 reads the `clearDrafts` message type from `consolePanelMessages.ts` but must NOT modify it (001 owns it).
 
 ## §3 Approach
 
-**Seam design (why a module-level callback, not a `runStatements` parameter).** `runStatements` and its
-three callers (`extension.ts:1597,1656,1670`) are module-scope functions that receive `mgr/runner/panel`
-as params and do NOT close over `schemaCache`/`acSchemaCache` (both are `activate`-local, `extension.ts:317,696`).
-The schema tree IS reachable module-wide via `state?.tree` (`ExtensionState.tree`, `extension.ts:109`). A
-module-level `let invalidateAfterSchemaDdl: ((completed: readonly string[], dialect?: SqlDialect) => void) | null = null;`
-assigned once in `activate` keeps all three callers untouched, is trivially testable by mocking
-`./ui/schemaCache` + `./ai/schemaContextCache`, and is the single "explicit host seam" the roadmap names.
-`runStatements` success path (inside the existing `if (!deactivating)` block, after `panel.render`):
-
+**Snapshot shape (pure, in `consolePanelMessages.ts` — no vscode import, so the webview bundle shares it).**
 ```ts
-const completed = results.filter((r) => r.status === "done").map((r) => r.sql);
-invalidateAfterSchemaDdl?.(completed, active?.driver);
+export interface ConsoleDraftSnapshot {
+  version: 1;
+  tabs: Array<{ id: string; name: string; buffer: string }>;
+  activeTabId: string;
+}
+export function encodeConsoleDraftSnapshot(s: ConsoleDraftSnapshot): string; // JSON.stringify
+export function parseConsoleDraftSnapshot(raw: string): ConsoleDraftSnapshot | null; // fail-closed
+export const CONSOLE_DRAFTS_KEY = "vsdb.consoleDrafts";
+export const CONSOLE_DRAFT_SNAPSHOT_VERSION = 1;
+export const CONSOLE_DRAFTS_MAX_TABS = 20;
+export const CONSOLE_DRAFTS_MAX_BUFFER_CHARS = 64_000;
 ```
+`parseConsoleDraftSnapshot` returns `null` (fail-closed) when: the carrier is not a string, JSON parse throws, the parsed value is not an object, `version !== 1`, `tabs` is not an array, any tab has a non-string `id`/`name`/`buffer`, `activeTabId` is not a string or does not equal some tab id, `tabs.length > CONSOLE_DRAFTS_MAX_TABS`, or any `buffer.length > CONSOLE_DRAFTS_MAX_BUFFER_CHARS`. Unknown extra fields are **tolerated-and-stripped**: `parse` returns a NEW object containing only the known fields and `encode` emits only known fields — a future-added field never nukes an old snapshot and never leaks through the codec. Over-cap snapshots are REJECTED at parse (treated as corrupt → one empty tab at the host); the host clamps at persist (below) so our own writer can never emit an over-cap snapshot.
 
-**Seam payload (pinned).** `runner.run()` resolves to `StatementResult[]`; the record shape is the
-exported `StatementResult` interface (`queryRunner.ts:49-52`): `status: StatementStatus` (line 52) and
-the original statement text on `sql: string` (line 51). So `r.status`/`r.sql` are the actual field names
-and the seam receives the real statement SQL text — never undefined. Executor: pin these two field names
-in 004's mocked result records and assert the seam receives the exact text (004 test row below).
+**New wire message.** Webview→host `{ type: "clearDrafts" }` (guard: `case "clearDrafts": return true;`). No new host→webview message — clear reuses the existing `state` push (the host resets to one empty tab and calls `postState()`; the webview `state` handler already re-renders the textarea from the restored buffer). Explicit `draftsCleared` was considered and rejected as redundant: the state round-trip already gives the webview everything it needs, and one fewer message means one fewer surface to guard.
 
-**Failure semantics (why "completed" is the right filter).** `QueryRunner.run()` never throws per-statement
-— `executeAll` marks a statement `error` and cancels the remainder (`queryRunner.ts:331-352`). A batch can
-therefore resolve with a mix of `done`/`error`/`cancelled`. Only `done` statements genuinely completed, so
-only those are fed to the classifier; a `CREATE` that itself errored, a cancelled batch, and a
-`confirmDangerousStatements` rejection (early return `extension.ts:1719-1721`, before `runner.run`) all
-leave the caches untouched. A `done` `CREATE` earlier in a batch that later fails still invalidates — the
-schema DID change.
+**Host (`consolePanel.ts`).** New option `draftMemento?: vscode.Memento`. Constructor: after the current seed, call `hydrateDrafts()` (mirror `hydrateHistory` at `310-318`): read `CONSOLE_DRAFTS_KEY`, `parse`; on `null`/undefined → KEEP the freshly-seeded empty tab; on valid → replace `this.tabs` with the snapshot tabs (ids preserved) and set `activeTabId` (fall back to `tabs[0].id` if absent). Never throws; never calls `onRun`. `updateBuffer` now: `setBuffer` (unchanged, silent) + arm a single per-panel debounce timer (~500ms, trailing-edge, latest-wins — every `updateBuffer` resets it). On expiry → `persistDrafts()`: clamp (slice each buffer to 64k; keep first 20 tabs in creation order; remap `activeTabId` to `tabs[0].id` if the active tab was truncated), `encode`, `draftMemento.update(CONSOLE_DRAFTS_KEY, encoded)` (no-op when `draftMemento` omitted — in-memory-only fallback mirroring history). `flushDrafts()` in the dispose path exactly once: both `dispose()` (`190-204`) and the `onDidDispose` handler (`177-187`) call it; a `draftDirty` flag makes it idempotent — it clears the timer and persists only when dirty. `deactivate` → `consolePanel.dispose()` (`extension.ts:1067`) therefore covers VS Code reload/window close; the user closing the tab covers `onDidDispose`. `clearDrafts` handler: `draftMemento.update(CONSOLE_DRAFTS_KEY, undefined)` (removes the key — the durable-empty representation), cancel any pending timer, reset tabs to one fresh empty `Query 1` tab + set `activeTabId`, mark not-dirty, `postState()`. A later dispose writes nothing (nothing dirty) unless the user typed after clear — and after clear the old text is gone from host state, so it cannot be resurrected.
 
-**Classifier semantics (reconciliation with existing guards).** Import source: the classifier imports
-`maskLiteralsAndComments` from `./dangerousStatement` (`src/core/dangerousStatement.ts:90` — where the
-symbol actually lives; `readOnlyIntent` re-imports the same symbol at `readOnlyIntent.ts:9`), never from
-`readOnlyIntent`. It mirrors the depth-0 token-scan STRUCTURE of `readOnlyIntent.statementIsMutation`
-(`readOnlyIntent.ts:60-95`) as a reference pattern, not its import graph:
-`maskLiteralsAndComments(sql, dialect)` → depth-0 token scan, `with` prelude skipped. Schema-impact keyword set = `{create, alter, drop, rename}`. Relationship to
-`readOnlyIntent` (mutation set `{insert,update,delete,merge,truncate,drop,alter,create,grant,revoke,comment,lock}`):
-schema-impact is a STRICT SUBSET of mutation on the DDL keywords, PLUS `rename`; DML words (insert/update/
-delete/merge/truncate) mutate data but NOT schema → false. `drop` overlaps `dangerousStatement`'s red tier
-(so it is confirmed before running, and only a confirmed+successful DROP invalidates). `rename` is a
-standalone depth-0 keyword only in MySQL (`RENAME TABLE`); Postgres/MSSQL rename routes through
-`ALTER TABLE … RENAME TO` which already matches `alter`. `readOnlyIntent` does NOT list `rename` as a
-mutation — a pre-existing, separate gap, out of scope, documented for the reviewer. `TRUNCATE`/`VACUUM`/
-`ANALYZE`/`COMMENT ON` are deliberately false (data/maintenance/metadata-only, absent roadmap evidence).
+**The latent divergence bug this cycle fixes (regression-pinned).** Today the webview never posts `updateBuffer`, so after typing in tab A the host's A-buffer is stale; switching to B makes the host push `state` and the webview `tabs = msg.tabs` clobbers A's edits. Fix: (a) the webview flushes a debounced `updateBuffer` on input, (b) the webview flushes its pending buffer BEFORE posting `switchTab`/`closeTab`, and (c) the host keeps `updateBuffer` handling silent (`setBuffer`, NO `postState`) — so the flush can never render-loop. Regression pin: type in A → switch to B → back to A → edits preserved on both host and webview.
 
-**ARP-02 composition.** The seam call sits inside the existing `if (!deactivating)` success block
-(`extension.ts:1754-1756`) — no invalidation or tree write after teardown started, mirroring the ARP-02
-sentinel. The `ownsRun` snapshot and `finally` busy gate are untouched.
+**Webview (`consolePanelMain.ts`).** Per-tab trailing-edge debounced `updateBuffer` post (~500ms, latest-wins, one timer). `flushPending()` posts the current tab's buffer if dirty, and is called on: debounce expiry, `visibilitychange`→hidden (via `document.visibilityState`), `beforeunload`, and before `switchTab`/`closeTab`. New toolbar button `Clear drafts` (no confirm dialog — the explicit click IS the confirmation): clears the local active tab buffer + textarea, cancels any pending debounce, resets the dirty flag, posts `{ type: "clearDrafts" }`. `render()` already sets `e.value = a?.buffer ?? ""` (`87`) — restore-pre-input therefore falls out of the existing render path once the host hydrates; the bundle test pins it by pushing a `state` message with a non-empty buffer.
 
-**Rejected alternatives.** (a) Invalidating on ANY completed run — over-invalidates on SELECT/INSERT,
-cheap but defeats the roadmap's success-only contract. (b) Server event subscriptions / trigger-based
-invalidation — explicitly out of scope. (c) New parser for the classifier — rejected; `maskLiteralsAndComments`
-is already dialect-correct (MySQL backslash/backtick) and shared. (d) A `runStatements` signature change
-threading the seam through three callers — rejected; module-level seam keeps the shared path's signature
-stable and centralizes the refresh.
+**Extension (`extension.ts`, wave 3).** `commandOpenConsole` gains a `draftMemento: vscode.Memento` parameter; registration passes `context.workspaceState` (workspace-scoped per roadmap). `context.globalState` stays the history memento — history unchanged. Singleton `if (!consolePanel)` guard and `onDispose → consolePanel = null` untouched. If the executor finds the wiring already correct (it is not — `commandOpenConsole` currently passes only `globalState`), it may close as not-needed after recording evidence, per the ARP-04-004/ARP-05-004 precedent.
 
-**ADR decision: NO ADR.** ARP-07 introduces no new policy, security-posture, or cross-cutting contract —
-it wires the existing `invalidate()` seams behind a classifier. ADRs 0001-0003 were gating decisions
-(identity policy, resilience contract, fail-closed AI policy); this is additive cache hygiene with a
-code-comment + reviewer reconciliation, not an architecture decision. Next free number `0004` stays unused.
+**Rejected alternatives.** (1) Persisting full console state including results — rejected: results are out of scope and a privacy/byte risk. (2) Webview `localStorage` — rejected: webview storage is not durable across a VS Code reload and is not workspace-scoped. (3) `postState()` on every `updateBuffer` — rejected: render loop; the existing silent `setBuffer` is exactly the seam we keep. (4) `globalState` for drafts — rejected: roadmap says workspace-scoped; `globalState` would leak drafts across unrelated projects. (5) Auto-replay of restored drafts — rejected: roadmap "Out". (6) A dedicated `draftsCleared` host→webview message — rejected as redundant (reuse `state`, see above).
 
 ## §4 Test Plan
 
-Happy-path shape for every task plus ≥2 edge cases of DIFFERENT kinds. All `Expected` values are concrete.
+Every row below lands in exactly one task's `§Test Cases`. Edge cases are of genuinely different kinds (malformed / boundary / concurrent / privacy / durability), not near-duplicates.
 
-| Task | Type | Test name | Expected |
-|---|---|---|---|
-| 001 | happy | `hasSchemaImpact("CREATE TABLE users (id int)", "postgres")` | `true` |
-| 001 | happy | DROP / ALTER / RENAME depth-0 | `true` each (e.g. `"DROP TABLE users"`, `"ALTER TABLE users ADD COLUMN email text"`, `"RENAME TABLE a TO b"` mysql) |
-| 001 | happy | SELECT and DML (INSERT/UPDATE/DELETE/MERGE/TRUNCATE) | `false` each |
-| 001 | edge (literal masking) | `"INSERT INTO t VALUES ('DROP TABLE users')"` | `false` — keyword inside string literal |
-| 001 | edge (comment masking) | `"/* DROP TABLE users */ SELECT 1"` and `"SELECT 'CREATE' FROM t"` | `false` — comment and quoted literal masked |
-| 001 | edge (boundary — CTE/parens) | `"WITH x AS (SELECT 1) SELECT * FROM x"` and `"SELECT count(*) FROM users"` | `false` — WITH prelude skipped; parens not depth-0 |
-| 001 | edge (dialect) | MySQL backtick identifier `` "SELECT `create` FROM t" `` and backslash-escaped literal body, `dialect="mysql"` | `false` — masking honors MySQL escaping/backticks |
-| 001 | edge (data-only) | `"TRUNCATE TABLE users"`, `"VACUUM ANALYZE users"` | `false` — data/maintenance, not schema |
-| 001 | happy (batch) | `completedSchemaImpact(["SELECT 1", "CREATE TABLE t (id int)"])` | `true` |
-| 001 | edge (batch empty / none) | `completedSchemaImpact([])` and `["SELECT 1", "INSERT INTO t VALUES (1)"]` | `false` both |
-| 002 | regression | `#3` variant renamed for DDL: completion lookup in-flight at the moment a successful DDL invalidates → pre-invalidate response never becomes cache state; next `getTables` refetches fresh | passes against CURRENT code (guard `schemaCache.ts:374`); cache slot empty after invalidate |
-| 002 | edge (order) | invalidate before a fetch starts | normal fresh fetch, no stale window |
-| 002 | edge (boundary) | invalidate during a multi-family fetch (tables + columns in flight) | neither family commits stale data |
-| 003 | regression (RED first) | invalidate() during an in-flight hydration → hydration resolves → entry must NOT be committed; next `resolve` re-hydrates (`listTables` called again) | RED before fix (unconditional commit `schemaContextCache.ts:175-180`), GREEN after |
-| 003 | regression (RED first) | resolve() called AFTER invalidate() while a pre-invalidate hydration is still in flight → starts a FRESH hydration (new adapter call), does not coalesce onto the stale in-flight one | RED before fix, GREEN after |
-| 003 | edge (idempotent) | `invalidate()` twice with no hydration; `invalidate()` with empty cache | no-op; next `resolve` re-hydrates once |
-| 003 | happy (contract kept) | existing "repeated resolve same connection → same reference" and "invalidate() refreshes" (`schemaContextResolver.test.ts:167,187`) | unchanged and passing — identity guard + by-reference cache-hit intact |
-| 004 | happy | successful `CREATE TABLE t (id int)` through the shared run path (mocked caches) | `schemaCache.invalidate`, `acSchemaCache.invalidate`, `tree.refresh` each called once |
-| 004 | happy | batch `SELECT 1; CREATE TABLE t(id int)` (mixed) | seam fires (the completed CREATE changed schema) |
-| 004 | edge (failed DDL) | the CREATE statement itself errors (adapter throws) → runner marks it `error`, rest `cancelled` | seam NOT called |
-| 004 | edge (rejected confirmation) | `confirmDangerousStatements` resolves false (mocked) | early return before `runner.run` — seam NOT called |
-| 004 | edge (cancelled run) | cancelled before any statement completes → no invalidation | seam NOT called |
-| 004 | edge (deactivating) | `deactivating === true` at success time | seam NOT called — no post-teardown write (ARP-02) |
-| 004 | edge (DML-only) | successful `INSERT`/`UPDATE`/`TRUNCATE` | seam NOT called (classifier false) |
-| 004 | happy (non-DDL) | successful `SELECT` run | caches untouched (invalidate NOT called) |
-| 004 | edge (seam payload) | mocked `done` StatementResult carries the original statement text on `StatementResult.sql` (`queryRunner.ts:49-52`) → seam receives that exact text, never undefined | captured `completed[0] === "CREATE TABLE t (id int)"` |
+| # | Task | Type | Test name | Expected |
+|---|------|------|-----------|----------|
+| 1 | 001 | happy | encode→parse round-trip of a valid 2-tab snapshot | parsed object deep-equals the input; `version === 1`; keys are exactly `{version, tabs, activeTabId}` |
+| 2 | 001 | edge (malformed) | `parse("not-json")` / `parse("42")` / `parse(undefined)` / `parse(null)` | `null` |
+| 3 | 001 | edge (version) | `parse(JSON.stringify({version: 2, ...}))` and missing `version` | `null` |
+| 4 | 001 | edge (shape) | tab with non-string `id`/`name`/`buffer`; `tabs` not an array; `activeTabId` not a string | `null` |
+| 5 | 001 | edge (boundary over-cap) | 21 tabs; or one tab with a 64_001-char buffer | `null` (fail-closed, cap constants exported and asserted = 20 / 64_000) |
+| 6 | 001 | edge (active-tab integrity) | valid tabs but `activeTabId` matches no tab id | `null` |
+| 7 | 001 | edge (forward-compat) | valid snapshot with an unknown extra field | parsed to a clean object WITHOUT the extra field (tolerated-and-stripped); re-encode omits it |
+| 8 | 001 | happy (wire) | `isConsoleToHostMessage({ type: "clearDrafts" })` | `true` |
+| 9 | 001 | edge (wire) | `{ type: "clearDrafts", junk: 42 }` still `true` (type-only); unknown `{ type: "clearDraft" }` is `false` | `true` / `false` |
+| 10 | 002 | happy | type in a tab → advance 500ms fake timer | `draftMemento.get(CONSOLE_DRAFTS_KEY)` holds a string that `parse` accepts with the typed buffer |
+| 11 | 002 | happy | new `ConsolePanel` over the same `draftMemento` (reopen) | tabs ids/buffers and `activeTabId` restored identically |
+| 12 | 002 | edge (corrupt) | `draftMemento` holds garbage at `CONSOLE_DRAFTS_KEY` | exactly one fresh empty `Query 1` tab; constructor never throws |
+| 13 | 002 | edge (one/two-tab) | reopen restores a 1-tab and a 2-tab snapshot | correct ids/names/buffers/active in both |
+| 14 | 002 | edge (never-runs) | persist, reopen, drive restore | `onRun` spy called **zero** times (restore never executes SQL) |
+| 15 | 002 | edge (concurrent flush-once) | `dispose()` then re-`dispose()` (or `onDidDispose` after `dispose`) | `draftMemento.update(CONSOLE_DRAFTS_KEY, …)` called exactly once for a single dirty flush |
+| 16 | 002 | edge (privacy) | parse the persisted payload after a realistic multi-tab session | exact key set is `{version, tabs, activeTabId}`; each tab exactly `{id, name, buffer}`; NO results/history/password/connection fields |
+| 17 | 002 | edge (durable clear) | clear → assert key removed → reopen | memento key `undefined`; one empty `Query 1` tab; old draft cannot be resurrected |
+| 18 | 002 | edge (boundary clamp at persist) | 21 tabs and a 70k-char buffer live in host state | persisted snapshot has exactly 20 tabs and buffers sliced to 64k; `activeTabId` remapped into the survivors |
+| 19 | 002 | regression | updateBuffer arrives for a non-existent tabId | silent no-op; no crash; no persist |
+| 20 | 002 | edge (fallback) | `draftMemento` omitted | hydrate no-ops (in-memory-only), persist no-ops, no throw |
+| 21 | 002 | edge (debounce reset) | three rapid `updateBuffer`s then one dispose | exactly ONE persist on dispose carrying the last buffer (latest-wins) |
+| 22 | 003 | happy | dispatch `input` on the editor with `"SELECT 1"` → advance 500ms | `{ type: "updateBuffer", tabId, buffer: "SELECT 1" }` posted (debounced) |
+| 23 | 003 | happy | click the new Clear button | `{ type: "clearDrafts" }` posted; textarea cleared; no confirm dialog surfaced |
+| 24 | 003 | edge (restore pre-input) | push `state` with a non-empty tab buffer | textarea value === restored buffer on render |
+| 25 | 003 | edge (latest-wins) | three rapid `input`s under one debounce window | exactly ONE `updateBuffer` with the FINAL buffer |
+| 26 | 003 | edge (flush-on-unload) | type, then dispatch `beforeunload` | pending `updateBuffer` posted immediately (no 500ms wait) |
+| 27 | 003 | edge (flush-on-hidden) | type, set `document.visibilityState = "hidden"` + dispatch `visibilitychange` | pending `updateBuffer` posted immediately (note jsdom fallback in Discussion) |
+| 28 | 003 | regression (divergence) | type in A, click tab B within the debounce window | `updateBuffer`(A) is posted BEFORE `switchTab`(B) — host buffers never stale |
+| 29 | 003 | edge (clear cannot resurrect) | type, click Clear, advance timers | no `updateBuffer` carries the pre-clear text; `clearDrafts` posted; textarea empty |
+| 30 | 003 | edge (no postState loop) | host receives `updateBuffer` (pinned in `consoleTabs.test.ts`) | host does NOT `postMessage` a `state` in reply (silent `setBuffer`) |
+| 31 | 004 | happy | activate → invoke `vsdb.openConsole` | `ConsolePanel` constructed with `draftMemento === context.workspaceState` (asserted via the spy on the created panel / constructor options) |
+| 32 | 004 | happy | invoke `vsdb.openConsole` twice | exactly ONE `createWebviewPanel` call — singleton retained |
+| 33 | 004 | edge (history scope) | run a statement → history persists via `globalState`, drafts via `workspaceState` | `ctx.globalState.update` receives `CONSOLE_HISTORY_KEY`; `ctx.workspaceState.get` receives `CONSOLE_DRAFTS_KEY`; the two keys never cross |
+| 34 | 004 | edge (teardown) | deactivate after open | `consolePanel` disposed (module singleton nulled) — deactivate still tears down |
 
 ## §5 Verification
 
-Exact commands the executor runs for each task (focused test + static gate; no lint script exists). See
-`package.json` `scripts`: `test` (vitest run), `typecheck` (tsc --noEmit).
+Focused per-task (exact commands are also in each task file):
 
 ```bash
-# TASK-ARP07-001
-npm test src/core/__tests__/schemaImpact.test.ts && npm run typecheck
+# 001 (pure codec + guards)
+npx vitest run src/ui/__tests__/consolePanelMessages.test.ts
+npm run typecheck
 
-# TASK-ARP07-002
-npm test src/ui/__tests__/schemaCache.test.ts && npm run typecheck
+# 002 (host restore; the memento harness is in consolePanel.test.ts)
+npx vitest run src/ui/__tests__/consolePanel.test.ts
+npm run typecheck
 
-# TASK-ARP07-003
-npm test src/ai/__tests__/schemaContextResolver.test.ts && npm run typecheck
+# 003 (webview bundle — REQUIRES dist/consolePanel.js, so compile FIRST)
+npm run compile
+npx vitest run src/ui/__tests__/consolePanelBundle.test.ts src/ui/__tests__/consoleTabs.test.ts
+npm run typecheck
 
-# TASK-ARP07-004
-npm test src/extension.test.ts && npm run typecheck
+# 004 (extension wiring)
+npx vitest run src/extension.test.ts
+npm run typecheck
 ```
 
-Note: the tests-map entry for `src/ai/schemaContextCache.ts` is STALE — it resolves to
-`src/ai/tools/__tests__/schemaContext.test.ts` (which only tests `formatSchemaContext`). The real cache
-tests live in `src/ai/__tests__/schemaContextResolver.test.ts`; pin that file. Do NOT run the full suite by
-default; run it only once at cycle close as a regression net (`npm test`), not per task.
+**Worktree note (fresh `git worktree` executors):** bundle tests read `dist/consolePanel.js`, which does not exist in a fresh worktree — run `npm run compile` BEFORE `npx vitest run src/ui/__tests__/consolePanelBundle.test.ts`, and symlink `node_modules` into the worktree (or `npm ci`) or the vitest run fails on imports. 002's debounce/flush tests use `vi.useFakeTimers()` + `vi.advanceTimersByTime(500)` and must NOT use the file's `until()` helper (which awaits a real `setTimeout`); the existing `afterEach(() => vi.useRealTimers())` already covers teardown.
+
+Wave/cycle regression net (release gate — NOT the per-task default): `npm run verify:release` (`npm test && npm run typecheck && npm run compile`) plus `npx vitest run src/__tests__/releaseHygiene.test.ts src/__tests__/releaseVerify.test.ts`. Baseline: 3120 passed | 2 skipped.
 
 ## §6 Acceptance
 
-- [ ] ARP-07.1: `hasSchemaImpact`/`completedSchemaImpact` pass the §4 corpus; no change to `dangerousStatement.ts`; module header documents the reconciliation with `readOnlyIntent`/`dangerousStatement` (schema-impact ⊂ mutation on DDL keywords + `rename`; DML/data-only false).
-- [ ] ARP-07.2: feature-named regression test passes against current `SchemaCache`; `schemaCache.ts` changed ONLY if a test exposed a gap (expected: no change, record evidence in the Executor Report).
-- [ ] ARP-07.3: the two RED-first regression tests fail on the current commit and pass after the `schemaContextCache.ts` fix; existing cache tests (`167,187,206,316`) pass unchanged; `SchemaContextCache` interface identical.
-- [ ] ARP-07.4: after a successful schema-impacting run through the shared path, the next completion/tree/AI lookup cannot use stale locally changed schema (invalidate + tree.refresh fired exactly once); failed/cancelled/rejected-confirmation/deactivating DDL never invalidates; ARP-02 `ownsRun`/`deactivating` logic byte-identical in behavior.
-- [ ] Reviewer reconciles the classifier semantics with dangerous/read-only classification; focused tests + `npm run typecheck` green; full suite green at cycle close.
-- [ ] Manual: create / rename / drop via console run, editor `vsdb.runQuery`, and CodeLens run → completion list, schema tree, and AI context reflect the fresh names without manual `vsdb.refreshSchema`. (Scope note: form-view DDL and AI plan-apply are NOT covered this cycle — Known gap.)
+- [ ] Close/reopen/reload restores bounded drafts (same tab ids, buffers, active tab) and NEVER runs SQL (§4 #11-#14 → TASK-ARP08-002).
+- [ ] Corrupt/over-cap persisted state fails closed to one empty `Query 1` tab without throwing (§4 #12, #5 → 001/002).
+- [ ] Clear is durable: after `Clear drafts`, the key is removed and reopening shows empty; the old draft cannot be resurrected (§4 #17, #29 → 002/003).
+- [ ] Debounced flush + exactly-once flush-on-dispose persist the latest buffer; host `updateBuffer` handling stays silent (no render loop) and the switch-away/back divergence is fixed and regression-pinned (§4 #10,#15,#21,#28,#30 → 002/003).
+- [ ] Privacy review passes: persisted payload key set is exactly `{version, tabs, activeTabId}` with tabs `{id, name, buffer}` — no results/passwords/secrets/connection data/history (§4 #16 → 002; roadmap acceptance box).
+- [ ] Workspace-scoped wiring: `draftMemento = context.workspaceState`; history remains `globalState`; singleton + deactivate guarantees retained (§4 #31-#34 → 004).
+- [ ] Bundle compilation verified: `consolePanelBundle.test.ts` green after `npm run compile`; focused console tests, typecheck, compile, and full suite all pass (§5).
+- [ ] ARP-02 deactivation sentinel and AIC-004 ghost-text seams preserved byte-untouched in `consolePanel.ts`; no changes to `schemaCache`/`resultsPanel`/`aiChatPanel`/adapters.
+- [ ] Manual (release-time, post-cycle): write multi-tab drafts → close/reload/reopen/clear → verify no execution and capped history.
 
 ## §7 Global Constraints
 
-Every `TASK-ARP07-xxx.md` inherits these by reference — do not repeat them inside tasks.
-
-- Version/stack: Node v22.22.1, npm, vitest. **No lint script** — the static gate is `npm run typecheck`. Run focused tests, never the full suite by default.
-- `src/core/schemaImpact.ts` is a NEW roadmap-sanctioned core file; it imports (never modifies) `maskLiteralsAndComments` from `./dangerousStatement` and `SqlDialect` from `./statementParser`.
-- Same-wave file disjointness is absolute (see §2). A task edits only its own Target Files.
-- ARP-02 (extension.ts): preserve the `ownsRun` snapshot and the `deactivating` sentinel; the invalidation seam fires from the success path only and is gated on `!deactivating` — no post-deactivation writes.
-- ARP-03 retained-row cap, ARP-04 tunnel identity, ARP-06 AI policy: untouched.
-- Do NOT touch `docs/AI_HANDOFF/RUN.md`; do NOT commit.
+- Node v22 / `npm`; VS Code `^1.75.0` and TypeScript 5.4 compatibility; no new dependencies (package.json untouched).
+- No lint script — every task MUST run `npm run typecheck`; bundle-touching tasks MUST also run `npm run compile`.
+- Draft payload NEVER contains results, passwords, transaction state, connection data, or history — pinned by the exact-key-set assertion (§4 #16).
+- Snapshot is versioned (`version: 1`), fail-closed on parse, deterministically capped (20 tabs / 64k buffer per tab — exported constants, asserted in tests).
+- Drafts are workspace-scoped (`context.workspaceState`); history stays `globalState` under `CONSOLE_HISTORY_KEY` (unchanged).
+- Restore NEVER invokes `onRun`; no automatic replay, no file writes, no cross-machine sync.
+- ARP-02 deactivation sentinel and AIC-004 ghost-text seams in `consolePanel.ts` must remain byte-identical in behavior (additive lines only).
+- Wave disjointness is mandatory: no task modifies a file another same-wave task owns (§2).
 
 ## Planner Report
-
-PLANNER_MODEL: claude-opus-5
+PLAN_REVIEW: Approved by unic-smart (round 1, minors applied)
+PLANNER_MODEL: unic-smart
 
 ## Planner Self-Audit
 
 Checklist: 12/12 pass
-Fixed during audit: (1) Corrected all stale roadmap extension.ts citations to real wiring lines (331-333/521-526/718-721/1705-1769); (2) promoted ARP-07.3 from "regression verify" to a real FIX — grounding proved `schemaContextCache.hydrate()` commits its entry unconditionally (175-180), so invalidate-during-hydration lands a stale entry; (3) pinned 07.3's test file to `schemaContextResolver.test.ts` because the tests-map entry for `schemaContextCache.ts` is stale; (4) designed the seam as a module-level callback to avoid touching the 3 `runStatements` call sites and to keep the ARP-02 `ownsRun` path byte-identical.
-Known gaps: (1) Form-view DDL (`src/ui/tableCommands.ts` `runDdl`) and AI plan-apply (`src/ui/aiChatPanel.ts` `handlePlanApprove`) run `adapter.runQuery` directly and are NOT wired this cycle — roadmap candidate set excludes those files; the module-level seam is the designed consumption point for a follow-up, and the manual acceptance box is scoped to the shared runStatements surfaces (console/editor/codelens). (2) Transaction rollback is out of scope per roadmap: a `done` schema statement later rolled back by a `ROLLBACK` in the same batch still invalidates. (3) `readOnlyIntent` does not list `rename` as a mutation — a pre-existing separate gap, documented for the reviewer, not fixed here.
+Fixed during audit: (1) Corrected the roadmap's stale extension.ts citations to the real singleton/wiring (`extension.ts:99,753-754,1584-1633,1067-1068`) and consolePanel constructor/hydrate lines (`143-145,310-318`). (2) Pinned parse rejects over-cap and persist clamps (both deterministic), so the codec never emits a snapshot its own parse would reject. (3) Chose tolerated-and-stripped for unknown extra fields and recorded the reasoning. (4) Chose "reuse `state`" over a new `draftsCleared` message and recorded the rejection. (5) Added the flush-before-`switchTab`/`closeTab` webview behavior + host "updateBuffer silent" pin as the concrete divergence fix, so the §4 regression rows test a real behavior (not an empty implementation). (6) Made 004 a real wiring task (evidence: `commandOpenConsole` currently passes only `globalState`; nothing passes `draftMemento`), with the not-needed escape documented for the executor. (7) Confirmed the debounce test harness constraint (fake timers, never the `until()` helper) so the executor's first test run cannot deadlock.
+Known gaps: (1) The 500ms debounce window means an abrupt webview kill can lose the last ~500ms of keystrokes that never reached the host — inherent to postMessage (the webview cannot post after death); `visibilitychange→hidden`/`beforeunload`/dispose flush narrows it. Acceptable per design. (2) `document.visibilityState` is read-only in jsdom; the §4 #27 visibilitychange test may need `Object.defineProperty` or a jsdom config override — if it cannot be driven, the executor falls back to the beforeunload flush test (#26) and records the limitation in the task Discussion (the flush function is shared, so beforeunload coverage exercises the same code). (3) Manual acceptance (multi-tab close/reload/reopen/clear) is release-time and cannot be automated here.
 
 ## Plan Review Log
+
+### Round 1 — Approved by unic-smart (P2.5 independent review)
+Status: Approved. Two non-blocking citation minors (consolePanelBundle.test.ts loadBundle helper 29-48 → 22-40; consoleTabs.test.ts FakeMemento span) — applied directly to TASK-ARP08-002/-003 without re-review per loop policy.
+
 
 ### Round 1 — 2026-09-02 · unic-smart
 Status: Approved
 
 COMPLETENESS:
-  - none — no TODO/TBD; every §4 test has a concrete Expected value; 002 verify-first properly gated (schemaCache.ts changed only if a test exposes a gap, evidence recorded); 003 has genuine RED-first grounded at schemaContextCache.ts:175-180; per-task focused test + `npm run typecheck` in §5; full suite only once at cycle close.
+  - none — §1-§7 all present; §4 has 34 rows covering every task with happy + ≥2 distinct edge kinds (malformed/version/shape/boundary/active-tab/forward-compat/privacy/durability/concurrent) + regression pins; every task file carries its own Test Cases / Test Files / Verification Commands / Acceptance / Dependencies / Interfaces.
 CONSISTENCY:
-  - §3 Approach vs §2 Out: the classifier "mirrors readOnlyIntent.ts:60-95" but §7 pins the import to `./dangerousStatement`. Both are likely consistent (readOnlyIntent itself imports maskLiteralsAndComments), but §3 should state the import source explicitly to stop an executor wiring the wrong module. Fix: one line in §3 naming `./dangerousStatement` as the import.
-  - §4 row 004 "cancelled run → no done statement" reads like an invariant, but §3 failure semantics explicitly lets done-before-failure statements count. Fix: reword to "cancelled before any statement completes → no done → seam NOT called" so it does not contradict the batch semantics.
+  - none — task Target Files match §2 scope exactly (001 owns `consolePanelMessages.ts`+test, 002 owns `consolePanel.ts`+test, 003 owns webview+bundle+`consoleTabs.test.ts`, 004 owns `extension.ts`+test in wave 3); waves match Dependencies (001→002/003→004); wave 2 files are disjoint; INDEX.md graph/waves/ownership and ACTIVE.md `planning_done` match. The roadmap's wave-1 pairing of 08.1+08.2 is correctly re-sequenced (08.2 imports 08.1's codec — cannot share a wave) and documented.
 CLARITY:
-  - §3 seam snippet `results.filter((r) => r.status === "done").map((r) => r.sql)` assumes the QueryRunner result record carries `.status` and the original statement text. The plan cites queryRunner.ts:331-352 for error/cancelled marking but never confirms the record shape. If the completed record lacks the SQL text, the classifier receives undefined and invalidation silently no-ops — the exact failure ARP-07 closes. Fix: in 004, verify the result record's status + statement-text field (or thread the statement list beside results), and add a 004 assertion that the seam receives the real SQL, not undefined.
+  - TASK-ARP08-003: `loadBundle` helper cited at `consolePanelBundle.test.ts:29-48`, actual definition is lines 22-40 (~7-line drift). Cosmetic — executor will find the helper by name.
+  - TASK-ARP08-002: `FakeMemento` described as "the 8-line class from `consoleTabs.test.ts:21-30`", actual class spans lines 21-29 (9 lines). Cosmetic.
 SCOPE:
-  - none — success-only contract testable (§4 004 rows for failed/rejected/cancelled/deactivating/DML-only all assert seam NOT called); out-of-scope list matches the roadmap; known gaps (form-view DDL runDdl, AI plan-apply handlePlanApprove, transaction rollback, readOnlyIntent rename gap) documented honestly in §2/§6/Self-Audit; seam is the roadmap-named single host seam, not a speculative abstraction.
+  - none — Out set matches roadmap (results/passwords/transaction state/cross-machine sync/unlimited persistence/file writes/automatic replay); rejected alternatives documented; no gold-plating.
 YAGNI:
-  - none — rejected alternatives (no new parser, no runStatements signature threading, no server subscriptions) show restraint; keyword set is a strict subset of mutation + rename; dependency order {001,002,003}→{004} is conservative (004 strictly needs only 001) but harmless.
+  - none — `draftsCleared` message correctly rejected (state round-trip suffices); localStorage/globalState/postState-on-every-updateBuffer correctly rejected.
 
-NOTES: Executor=claude-opus-5 (planner), Reviewer=unic-smart, matches config handoff.reviewer.model. Round-1 approval; findings 1-3 are executor-facing clarifications, none risks a flawed build.
-
-#### Round 1 minors applied (no re-review per Approved verdict)
-PLANNER_REVISION_1: §3 seam payload pinned + §4 004 row added — `runner.run()` resolves to `StatementResult[]` (`queryRunner.ts:49-52`) with field `status` (line 52) and original text on `sql` (line 51); the seam therefore receives the real statement SQL, never undefined. Executor must pin these two field names in 004's mocked result records.
-PLANNER_REVISION_2: §3 classifier import source made explicit — `maskLiteralsAndComments` is imported from `./dangerousStatement` (`dangerousStatement.ts:90`, where it actually lives; `readOnlyIntent` re-imports it at `readOnlyIntent.ts:9`). `readOnlyIntent.ts:60-95` is cited only as the mirrored depth-0 token-scan STRUCTURE, not the import source. Aligns with §7.
-PLANNER_REVISION_3: §4 004 "cancelled" row reworded to "cancelled before any statement completes → no invalidation" so it cannot be read as contradicting the done-before-failure batch semantics (§3).
+NOTES: All load-bearing citations verified against HEAD @ 8dca6d2: `consolePanel.ts:143-145,177-187,190-204,231-234,310-318,401-403`; `extension.ts:99,753-754,1067-1068,1584-1633`; `webview/consolePanelMain.ts:65-95,106-110,157-160,327-341`; harness anchors `consolePanel.test.ts:96-117`, `consoleTabs.test.ts:21-30,110-126`, `extension.test.ts:272-300,2081-2120`, `consolePanelBundle.test.ts:22-40`; bundle tests read `dist/consolePanel.js` (compile-first worktree note is required and present); `isConsoleToHostMessage` has no default case so an early-arriving `clearDrafts` in wave 2 silently no-ops (benign intra-wave ordering). 003's Clear-drafts resets only the active tab's dirty flag, leaving background dirty-set entries inert — harmless because host `setBuffer` no-ops on dropped tab ids and `flushPending` guards tab existence; optionally clear the whole dirty set for hygiene. Verification commands are runnable as written (`npm run compile` precedes the 003 vitest run; fake-timer constraint and jsdom `visibilityState` fallback documented). No plan-blocking issues found.
