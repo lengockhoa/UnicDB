@@ -1,6 +1,6 @@
 Command: handoff-fullstack
 Goal: Ship BQ-00 BigQuery provider feasibility + adapter contract spike (no real ADC).
-Base: main @ 0ab34e2 (post-R4.5)
-Phase: R5
-Cursor: All 4 tasks approved (3 in R2 round 1, 2 re-reviewed approved_minor in R4.5 after critical fixes). 1 critical_block + 1 changes_requested from R2 → R4.5 round 1 fixes applied → re-review approved. Suite 3209|2 (floor 3189|2 preserved). No handoff branches/worktrees; main worktree clean.
-Next: R5 — version bump 1.45.0 → 1.46.0 (CHANGELOG entry + package.json + lockfile dual sync), run npm run verify:release + hygiene, commit, tag v1.46.0, push main+tag, vsce package, gh release create v1.46.0 vsdb-1.46.0.vsix.
+Base: main @ 089f2f0
+Phase: done
+Cursor: BQ-00 complete and shipped. P1 → P2 (planner 4-task plan, 12/12 self-audit) → P2.5 round 1 (2 important + 2 minor) → P2 revise (all 4 applied) → P2.5 round 2 (Approved, 0 findings) → P3 commit (91737ce) → I1 (maxParallelAgents=12) → I2 (wave groups: 1+2+1) → I3 (wave 1 7/7 green, wave 2 7/7+6/6 green parallel, wave 3 docs-only 13 content checks green) → I4 INDEX consolidation (638e9ce) → R2 (4 reviewers opus/unic-smart: 1 approved_minor + 1 changes_requested + 1 critical_block + 1 approved_minor) → R4.5 round 1 (2 parallel fix agents: test #7 re-anchored to job.d.ts; @ts-expect-error now REAL via branded string types) → R4.5 re-review (all 4 approved_minor) → R5 (CHANGELOG + version 1.45.0→1.46.0 + lockfile dual sync + verify:release 3209|2 + hygiene 20/20 + commit 089f2f0 + tag v1.46.0 + push main+tag + vsce package + gh release create v1.46.0). 8 wave/commit messages, 5 new src files, 2 new docs/decisions files, 0 read-only file touched.
+Next: BQ-01 (BigQuery connection foundation, depends on BQ-00 contracts) OR any of the 4 STATUS follow-ups — user picks via /ukit:handoff-fullstack. Recommend /compact before next cycle (this session has carried 9 ARP+BQ cycles of history).

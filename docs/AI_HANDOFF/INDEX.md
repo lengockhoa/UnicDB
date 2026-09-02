@@ -1,13 +1,13 @@
 # INDEX
 
-Cycle BQ-00 — **BigQuery provider feasibility + adapter contract spike** — planning_done 2026-09-02 (per `docs/plans/2026-09-01-bigquery-provider-roadmap.md` §4 BQ-00; 4 tasks; no real ADC; no existing-driver changes). Cycle AIX-07 — **Trust, Privacy & Governance** — complete; shipped in v1.28.0. Cycle DX-01 — Release confidence lane — shipped in v1.36.0. Cycle ARP-02 — shutdown-safe query ownership — shipped in v1.38.0. Cycle ARP-03 — retained-result memory budget — shipped in v1.39.0 (2026-09-02). Cycle ARP-04 — tunnel and endpoint identity hardening — shipped in v1.40.0 (2026-09-02; 5/5 tasks approved round 1, released). Cycle ARP-05 — cross-driver resilience contract — shipped in v1.41.0. Cycle ARP-06 — AI SQL policy unification and usage visibility — shipped in v1.42.0. Cycle ARP-07 — successful-DDL cache/context invalidation — shipped in v1.43.0 (2026-09-02; 4/4 tasks approved round 1, released). Cycle ARP-08 — console draft recovery — shipped in v1.44.0 (2026-09-02; 4/4 tasks approved round 1, released). Cycle ARP-09 — redacted support diagnostics + release-confidence profiles — shipped in v1.45.0 (2026-09-02; 5/5 tasks approved round 1 after R4.5, released).
+Cycle BQ-00 — **BigQuery provider feasibility + adapter contract spike** — shipped in v1.46.0 (2026-09-02; 4/4 tasks approved after R4.5 round 1 fixes, 1 critical_block + 1 changes_requested resolved, released; `089f2f0` pushed; `vsdb-1.46.0.vsix` published; gh release live). Cycle AIX-07 — **Trust, Privacy & Governance** — complete; shipped in v1.28.0. Cycle DX-01 — Release confidence lane — shipped in v1.36.0. Cycle ARP-02 — shutdown-safe query ownership — shipped in v1.38.0. Cycle ARP-03 — retained-result memory budget — shipped in v1.39.0 (2026-09-02). Cycle ARP-04 — tunnel and endpoint identity hardening — shipped in v1.40.0 (2026-09-02; 5/5 tasks approved round 1, released). Cycle ARP-05 — cross-driver resilience contract — shipped in v1.41.0. Cycle ARP-06 — AI SQL policy unification and usage visibility — shipped in v1.42.0. Cycle ARP-07 — successful-DDL cache/context invalidation — shipped in v1.43.0 (2026-09-02; 4/4 tasks approved round 1, released). Cycle ARP-08 — console draft recovery — shipped in v1.44.0 (2026-09-02; 4/4 tasks approved round 1, released). Cycle ARP-09 — redacted support diagnostics + release-confidence profiles — shipped in v1.45.0 (2026-09-02; 5/5 tasks approved round 1 after R4.5, released).
 
 | Task / Portfolio | Title | Status | Dependencies | Reviewer |
 |---|---|---|---|---|
-| TASK-BQ00-001 | BigQuery package + bundle proof (`@google-cloud/bigquery` pin, esbuild-API probe) | pending_review | none | - |
-| TASK-BQ00-002 | Pure BigQuery job/page contract types (`bigqueryTypes.ts`) | pending_review | TASK-BQ00-001 | - |
-| TASK-BQ00-003 | ADC diagnostic classifier + client seam (`bigqueryAdc.ts`) | pending_review | TASK-BQ00-001 | - |
-| TASK-BQ00-004 | ADR 0004 — BQ-00 feasibility + adapter contract decision | pending_review | TASK-BQ00-001, TASK-BQ00-002, TASK-BQ00-003 | - |
+| TASK-BQ00-001 | BigQuery package + bundle proof (`@google-cloud/bigquery` pin, esbuild-API probe) | done (approved_minor R4.5 round 1) | none | - |
+| TASK-BQ00-002 | Pure BigQuery job/page contract types (`bigqueryTypes.ts`) | done (approved_minor R4.5 round 1) | TASK-BQ00-001 | - |
+| TASK-BQ00-003 | ADC diagnostic classifier + client seam (`bigqueryAdc.ts`) | done (approved_minor R2 round 1) | TASK-BQ00-001 | - |
+| TASK-BQ00-004 | ADR 0004 — BQ-00 feasibility + adapter contract decision | done (approved_minor R2 round 1) | TASK-BQ00-001, TASK-BQ00-002, TASK-BQ00-003 | - |
 | TASK-RLX-001 | Cancel active PostgreSQL non-cursor queries | done | none | unic-smart |
 | TASK-RLX-002 | Coalesce SchemaCache stale refreshes | done | none | unic-smart |
 | TASK-RLX-003 | Fail closed on malformed import execution plans | done | none | unic-smart |
@@ -35,6 +35,7 @@ Cycle BQ-00 — **BigQuery provider feasibility + adapter contract spike** — p
 | PORT-ARP-07 | Successful-DDL cache/context invalidation | superseded (shipped in v1.43.0) | ARP-01 | unic-smart |
 | PORT-ARP-08 | Console draft recovery | superseded (shipped in v1.44.0) | ARP-03 | unic-smart |
 | PORT-ARP-09 | Redacted support diagnostics + release-confidence profiles | superseded (shipped in v1.45.0) | ARP-02, ARP-05, ARP-06 | unic-smart |
+| PORT-BQ-00 | BigQuery provider feasibility + adapter contract spike | superseded (shipped in v1.46.0) | DBX-07, AIX-07, ARP-07 | unic-smart |
 
 ## Cycle ARP-05 — Cross-driver timeout, pool, and resilience contract
 
@@ -276,6 +277,7 @@ Source: `docs/plans/2026-09-01-vsdb-additive-roadmap.md` §ARP-09 (lines ~399-43
 | TASK-ARP09-004 | Redaction-reuse gate (verify-first, expected not-needed) | done | TASK-ARP09-001 | unic-smart (approved_minor r1) |
 | TASK-ARP09-005 | Runner gate (conditional, expected not-needed) | done | TASK-ARP09-002 | unic-smart (approved r1) |
 | PORT-ARP-09 | Redacted support diagnostics + release-confidence profiles | superseded (shipped in v1.45.0) | ARP-02, ARP-05, ARP-06 | unic-smart |
+| PORT-BQ-00 | BigQuery provider feasibility + adapter contract spike | superseded (shipped in v1.46.0) | DBX-07, AIX-07, ARP-07 | unic-smart |
 
 Graph: TASK-ARP09-001 independent; TASK-ARP09-002 independent; TASK-ARP09-001 → TASK-ARP09-003; TASK-ARP09-001 → TASK-ARP09-004; TASK-ARP09-002 → TASK-ARP09-005.
 
