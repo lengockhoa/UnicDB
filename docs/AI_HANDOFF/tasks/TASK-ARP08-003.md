@@ -155,3 +155,24 @@ The task file's jsdom fallback was NOT needed: `Object.defineProperty(document, 
 - `webview/consolePanelMain.ts` — debounced flush machinery + flush hooks + Clear drafts button + draftsCleared reset.
 - `src/ui/__tests__/consolePanelBundle.test.ts` — new describe "webview/consolePanelMain.ts bundle — ARP-08 draft recovery" (9 tests #1–#9) + helpers; added `beforeEach`/`afterEach` to the vitest import.
 - `src/ui/__tests__/consoleTabs.test.ts` — ONE neighbor pin: "#30 updateBuffer is applied silently" (PLAN §4 #30).
+
+---
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run src/ui/__tests__/consolePanelBundle.test.ts src/ui/__tests__/consoleTabs.test.ts && npx tsc --noEmit
+  result: compile PASS; 27/27 PASS (bundle 18 + tabs 9); tsc exit 0
+TEST_PLAN_COVERAGE: all-followed — PLAN §4 rows 22-30 covered: bundle tests #1-#9 + consoleTabs.test.ts #30 neighbor pin; 6 distinct edge kinds + 1 regression pin (>= 2 required)
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - none
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Debounce is one module timer + per-tab dirty set; flushPending() is the single flush shared by timer expiry / visibilitychange / beforeunload / switch-close hooks, and it clears the timer + dirty entry on first run, so no double-post (pinned by #5's post-flush advance). Divergence fix correct: tab click flushes the active tab's buffer BEFORE posting switchTab, so the host state echo cannot clobber the pending edit (#7 pins order; host `state` pushes confirmed silent on run — consolePanel.ts run path has no postState). Ghost seams untouched: requestGhost still in the input handler; acceptGhost/history recall only arm the flush. Note: PLAN §3 rejected a dedicated draftsCleared host→webview message, but 001/002 implemented it (consolePanelMessages.ts:150, consolePanel.ts:435); the webview handler and test #9 consume the ACTUAL host message, so #9 is not a tautology. Clear removes only the active tab's dirty flag; the shared timer is already cancelled and the draftsCleared ack clears the rest — inert by design. Bundle tests run against the freshly recompiled dist/consolePanel.js (compile-first re-run green, ruling out the stale-dist false-failure).

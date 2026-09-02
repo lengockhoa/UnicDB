@@ -127,3 +127,24 @@ Note: orchestrator step list said `src/ui/__tests__/extension.test.ts`; that pat
 ISSUES: none.
 
 HANDOFF_TO_REVIEWER: yes — STATUS DONE, handoff.reviewer.enabled=true, reviewer model unic-smart ≠ executor unic-code.
+
+---
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/extension.test.ts && npx tsc --noEmit
+  result: 101/101 PASS; tsc exit 0
+TEST_PLAN_COVERAGE: all-followed — PLAN §4 rows 31-34 (#1-#4 implemented); #5 not-needed N/A with step-1 evidence (grep workspaceState -> 0 hits pre-edit; wave-2 draftMemento option confirmed consumed)
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - none
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: draftMemento = context.workspaceState is threaded at the single call site (extension.ts:756-762) and forwarded into new ConsolePanel({ draftMemento }); history stays globalState under CONSOLE_HISTORY_KEY via the unchanged `memento` option. Singleton guard, onDispose -> consolePanel = null, and deactivate teardown untouched; commandOpenConsoleCreateTab never constructs the panel, so no signature ripple. Test #3 key-separation pin asserts real routing (globalState.update never sees CONSOLE_DRAFTS_KEY; workspaceState.get sees it) — not a tautology. Wave-3 commit 7ce8afd touches only extension.ts + extension.test.ts (file disjointness held). RED evidence real: 2 failed for the missing-wiring reason; #2/#4 passed pre-edit because they pin already-correct guarantees.

@@ -119,4 +119,20 @@ NEXT: ready for review; TASK-ARP08-002/003/004 can consume the exported codec/co
 
 ## Reviewer Verdict
 
-<!-- Phase 4 reviewer appends below the Executor Report. -->
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/consolePanelMessages.test.ts src/ui/__tests__/consolePanel.test.ts && npm run typecheck
+  result: 55 pass / 0 fail; tsc --noEmit exit 0
+TEST_PLAN_COVERAGE: all-followed — §Test Cases rows 1-10 all present (#4b empty-tabs, #5 exact-cap acceptance, #8/#9 wire guard)
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - docs/AI_HANDOFF/PLAN.md §4 "New wire message" — the plan explicitly rejected a dedicated `draftsCleared` host→webview message as redundant ("clear reuses the existing state push"); the implementation adds it (consolePanelMessages.ts:150, sent from consolePanel.ts:435) and TASK-003's webview consumes it (webview/consolePanelMain.ts:142). Additive and harmless, but the plan text is now stale — documented divergence, not a defect.
+    - src/ui/consolePanelMessages.ts:253-255 — `name` is validated as string only; a corrupt memento carrying a multi-MB tab name survives parse and is re-persisted verbatim (probe confirmed). Not blocking (contract caps are 20 tabs / 64k buffer chars), but `name` has no byte bound if hardening is wanted.
+NOTES: Adversarial probes (whitespace-only, version as string "1", `__proto__` root/tab, array-as-tab-element, oversized name, secret-shaped extras) all behave fail-closed or strip-clean; no prototype pollution survives (rebuild uses fresh object literals). RED evidence real (11 failed / 15 passed with assertion excerpt); non-vacuous — codec tests fail without the implementation and #8 narrows the cleared-drafts type.
+NEXT_STATUS_FOR_INDEX: approved_minor
