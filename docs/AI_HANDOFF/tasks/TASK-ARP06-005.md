@@ -103,3 +103,106 @@ is regenerated from the changed webview source.
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT (first RED run, before implementation — `npx vitest run src/ui/__tests__/aiChatPanelPolicy.test.ts src/ui/__tests__/aiChatPanel.test.ts src/ui/__tests__/aiChatPanelSessionStateWebview.test.ts`):
+
+```
+ ❯ src/ui/__tests__/aiChatPanelPolicy.test.ts  (20 tests | 4 failed) 18ms
+   ❯ ... > #A1 builtin turn posts usage + denied-policy notice once, before done
+     → expected [] to have a length of 1 but got +0
+   ❯ ... > #A2 all-unknown usage → unknown:true, zeros echoed, nothing invented
+     → expected [] to have a length of 1 but got +0
+   ❯ ... > #A4 usage frame carries only numeric fields + policyNotice string
+     → expected [] to have a length of 1 but got +0
+   ❯ ... > #A5 denied policy: non-empty notice ... no error bubble
+     → expected [] to have a length of 1 but got +0
+ ❯ src/ui/__tests__/aiChatPanel.test.ts  (35 tests | 1 failed) 26ms
+   ❯ ... > posts exactly one usage frame per turn with exact sums, session totals, and empty notice on the allowed path
+     → expected [] to have a length of 1 but got +0
+ ❯ src/ui/__tests__/aiChatPanelSessionStateWebview.test.ts  (9 tests | 5 failed) 32ms
+   ❯ renders token counts into the usage chip            → expected null not to be null
+   ❯ renders the unknown state instead of invented totals → expected null not to be null
+   ❯ renders a non-empty policyNotice on the chip         → expected null not to be null
+   ❯ accumulates across turns — second usage frame ...    → expected null not to be null
+   ❯ chip is textContent-only — hostile numeric/string    → expected null not to be null
+ Test Files  3 failed (3)
+      Tests  10 failed | 54 passed (64)
+
+Detailed (vitest -t "A1 builtin"):
+AssertionError: expected [] to have a length of 1 but got +0
+ ❯ src/ui/__tests__/aiChatPanelPolicy.test.ts:911
+    911|     expect(usages).toHaveLength(1);
+```
+
+RED rationale: 10 new tests failed because no `{type:"usage"}` frame is posted and no
+`#usageChip` exists on base — the expected reason. The two absence-guard tests
+(#A3 whole-turn byte scan, #A6 abort posts no usage) pass on base as negative
+invariants (there is no usage frame yet to leak or fabricate); they become
+meaningful after GREEN and stay green with the frame live.
+
+GREEN implementation:
+- `src/ui/aiChatPanelMessages.ts` — new `AiChatPanelUsage` host→webview message
+  (type/inputTokens/outputTokens/unknown/sessionTokens/policyNotice) + union membership.
+- `src/ui/aiChatPanel.ts` — `sessionUsage` accumulator field; `postUsage(usage, notice)`
+  helper (consumes `AgentRunResult.usage` verbatim — never re-derives accounting;
+  unknown turns contribute 0 to session totals); posted once per COMPLETED builtin
+  turn inside the `!token?.aborted` done path (aborted turns never post usage);
+  OMP `runOmpEngineTurn` posts `postUsage(undefined, policy.notice)` at its single
+  settle point — notice with NO invented usage.
+- `webview/aiChatPanelMain.ts` — `UsageMsg` shape + `"usage"` case in the same
+  switch as `session_state`; `applyUsage()` renders a `#usageChip`
+  (textContent-only, fixed label templates, `Number.isFinite` guards, unknown
+  renders "tokens unknown" instead of reading the zeros as confirmed cost,
+  non-empty `policyNotice` joined as plain text).
+
+Verification Output (all run inside the worktree, this turn):
+
+```
+$ npx vitest run src/ui/__tests__/aiChatPanelPolicy.test.ts src/ui/__tests__/aiChatPanel.test.ts src/ui/__tests__/aiChatPanelSessionStateWebview.test.ts
+ ✓ src/ui/__tests__/aiChatPanelPolicy.test.ts  (20 tests)
+ ✓ src/ui/__tests__/aiChatPanel.test.ts  (35 tests)
+ ✓ src/ui/__tests__/aiChatPanelSessionStateWebview.test.ts  (9 tests)
+ Test Files  3 passed (3)
+      Tests  64 passed (64)
+
+$ npm run typecheck
+> tsc --noEmit
+typecheck exit: 0
+
+$ npm run compile
+  dist/aiChatPanel.js  ...  dist/extension.js ...
+esbuild: build complete
+compile exit: 0
+# dist/aiChatPanel.js regenerated (fresh mtime) and contains usageChip + "usage" case:
+grep -c "usageChip" dist/aiChatPanel.js → 2 ; grep -c '"usage"' → 1
+```
+
+Extra regression net (beyond the pinned commands): 21 sibling suites re-run green —
+aiChatPanelAcp, aiChatPanelEngine, aiChatPanelDbAware, aiChatPanelSessionState,
+aiChatPanelToolParity, aiChatPanelMessages, aiChatE2e, aiChatPanelThoughtRegen,
+aiChatPanelResume, aiChatGrounding, aiChatPanelAttachments, aiChatPanelPlan(+Webview),
+aiChatPanelWebview(+Task002/Task005), aiChatPanelDbAwareWebview, aiChatPanelPrivacy,
+aiChatPanelBundle — 293 tests, 0 failures. The new OMP-path usage frame breaks no
+existing frame-order/byte-scan assertion.
+
+Status: PASS
+
+Note:
+1. SECRET_RE scan adapter: the mandated wire key names (`inputTokens`/`outputTokens`/
+   `sessionTokens`) contain the benign substring "token", so a raw `JSON.stringify`
+   of the whole frames array would false-positive the existing byte-scan tests. The
+   policy suite now serializes usage frames for the scan via `scanFrames()` — key
+   names excluded, every carried VALUE (numbers, unknown flag, full notice string)
+   included. Frame shape itself is pinned exactly (closed key set) by shape-safety
+   test #A4. No other test's scan strength was reduced.
+2. Test-#7 refinement during RED: the unknown-state test pins the TURN label
+   (`/Turn: 0 in/i` absent) rather than any "0 in" anywhere — session totals may
+   legitimately show 0s when nothing was ever reported.
+3. webview chip placement mirrors the existing `#sessionChip`/`#engineLifecycle`
+   pattern (span appended to `#engineBanner` or root), textContent-only.

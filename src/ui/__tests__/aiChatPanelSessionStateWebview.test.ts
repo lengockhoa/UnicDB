@@ -118,3 +118,93 @@ describe("webview — session_state chip", () => {
     expect(chip.innerHTML).toBe("Running…");
   });
 });
+
+describe("webview — usage chip (TASK-ARP06-005)", () => {
+  const usageMsg = (
+    over: Partial<Record<string, unknown>> = {},
+  ): Record<string, unknown> => ({
+    type: "usage",
+    inputTokens: 12,
+    outputTokens: 34,
+    unknown: false,
+    sessionTokens: { inputTokens: 100, outputTokens: 200 },
+    policyNotice: "",
+    ...over,
+  });
+
+  it("renders token counts into the usage chip", () => {
+    const h = makeHarness();
+    h.dispatch(usageMsg());
+    const chip = h.root.querySelector("#usageChip") as HTMLElement | null;
+    expect(chip).not.toBeNull();
+    expect(chip!.textContent).toContain("12");
+    expect(chip!.textContent).toContain("34");
+    expect(chip!.textContent).toContain("100");
+    expect(chip!.textContent).toContain("200");
+    expect(chip!.className).toContain("vsdb-chat-usage");
+  });
+
+  it("renders the unknown state instead of invented totals", () => {
+    const h = makeHarness();
+    h.dispatch(usageMsg({ unknown: true, inputTokens: 0, outputTokens: 0 }));
+    const chip = h.root.querySelector("#usageChip") as HTMLElement | null;
+    expect(chip).not.toBeNull();
+    expect(chip!.textContent).toMatch(/unknown/i);
+    // The turn's zeros must not read as a confirmed zero-cost turn — the
+    // turn label is "unknown", not "0 in / 0 out". (Session totals may
+    // legitimately show 0s when nothing was ever reported.)
+    expect(chip!.textContent).not.toMatch(/Turn: 0 in/i);
+  });
+
+  it("renders a non-empty policyNotice on the chip", () => {
+    const h = makeHarness();
+    h.dispatch(
+      usageMsg({
+        policyNotice:
+          "VSDB AI policy: sensitive AI capabilities are unavailable — workspace is not trusted.",
+      }),
+    );
+    const chip = h.root.querySelector("#usageChip") as HTMLElement | null;
+    expect(chip).not.toBeNull();
+    expect(chip!.textContent).toContain("VSDB AI policy");
+  });
+
+  it("accumulates across turns — second usage frame shows the running session totals", () => {
+    const h = makeHarness();
+    h.dispatch(
+      usageMsg({
+        inputTokens: 10,
+        outputTokens: 20,
+        sessionTokens: { inputTokens: 10, outputTokens: 20 },
+      }),
+    );
+    h.dispatch(
+      usageMsg({
+        inputTokens: 5,
+        outputTokens: 7,
+        sessionTokens: { inputTokens: 15, outputTokens: 27 },
+      }),
+    );
+    const chip = h.root.querySelector("#usageChip") as HTMLElement | null;
+    expect(chip).not.toBeNull();
+    expect(chip!.textContent).toContain("15");
+    expect(chip!.textContent).toContain("27");
+  });
+
+  it("chip is textContent-only — no child nodes on hostile numeric/string values", () => {
+    const h = makeHarness();
+    // Hostile values: markup-shaped strings must never become live DOM.
+    h.dispatch(
+      usageMsg({
+        policyNotice: "<img src=x onerror=alert(1)>",
+        inputTokens: Number.NaN,
+      }),
+    );
+    const chip = h.root.querySelector("#usageChip") as HTMLElement | null;
+    expect(chip).not.toBeNull();
+    expect(chip!.querySelectorAll("*").length).toBe(0);
+    expect(chip!.innerHTML).not.toContain("<img");
+    // The hostile notice string is never rendered verbatim as markup.
+    expect(chip!.innerHTML).not.toContain("<");
+  });
+});

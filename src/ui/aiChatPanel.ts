@@ -42,6 +42,7 @@
   type AgentTool,
    type AgentCallbacks,
    type ToolRegistry,
+  type TurnUsageSummary,
  } from "../ai/agent";
 import type { ChatMessage, ChatContentPart } from "../ai/provider";
 import type { AdapterFactory } from "../ai/tools/types";
@@ -99,6 +100,7 @@ import { formatAttributionFooter } from "../ai/grounding/attribution";
    type AiChatPanelEngine,
    type AiChatPanelHostMessage,
    type AiChatPanelPermissionRequest,
+   type AiChatPanelUsage,
    type AiChatPanelWebviewMessage,
 } from "./aiChatPanelMessages";
 import type { OmpChatEngine } from "../ai/omp/ompChatEngine";
@@ -1180,6 +1182,16 @@ export class AiChatPanel {
   /** AIX-06: host-internal, redacted, in-memory turn trace. Populated
    *  on both engines; never exported to the webview in this cycle. */
   private readonly trace = new TraceRecorder();
+  /**
+   * TASK-ARP06-005: running panel-session token totals across every
+   * posted `usage` frame. Host-side accumulator only — the webview never
+   * invents totals; unknown turns contribute nothing here (zeros echo
+   * the unknown, they do not fabricate cost).
+   */
+  private sessionUsage: { inputTokens: number; outputTokens: number } = {
+    inputTokens: 0,
+    outputTokens: 0,
+  };
   /** Resolvers for in-flight ACP turns — fired by settle path. */
   private acpTurnResolvers: Array<() => void> = [];
   /** Per-turn AbortController for the built-in engine. Created in
@@ -2064,6 +2076,11 @@ export class AiChatPanel {
           content: result.finalText,
         };
         this.history = [...this.history, userMsg, assistantMsg];
+        // TASK-ARP06-005: one usage frame per COMPLETED builtin turn, on
+        // the done path — exact numbers from AgentRunResult.usage plus
+        // the turn's effective policy notice. Aborted turns never reach
+        // this branch, so no usage is ever fabricated for a stop.
+        this.postUsage(result.usage, policy.notice);
       }
     } catch (err) {
       const aborted =
@@ -2141,6 +2158,9 @@ export class AiChatPanel {
     // it so this turn's OMP events land in dumpTrace too.
     engine.attachTrace(this.trace);
     const token = this.token;
+    // TASK-ARP06-005: the OMP turn surfaces the policy notice on its usage
+    // frame (with no invented usage numbers — see the finally block).
+    const policy = await this.resolveEffectivePolicy();
     let postedError = false;
     // AIX-05: `running` posts exactly once per turn, on the FIRST
     // non-aborted stream event.
@@ -2260,6 +2280,11 @@ export class AiChatPanel {
     } finally {
       // A crashed turn ends on the error state, not a misleading "done".
       if (!postedError) this.postSessionState("done");
+      // TASK-ARP06-005: OMP turns carry the policy notice with NO invented
+      // usage — `undefined` usage resolves to `unknown:true` and contributes
+      // nothing to the session totals. Posted once per turn here (the
+      // single settle point), never from the event callbacks.
+      this.postUsage(undefined, policy.notice);
       this.post({ type: "done" });
       this.token = null;
       this.turnSettled = true;
@@ -3719,6 +3744,46 @@ export class AiChatPanel {
 
   private post(msg: AiChatPanelHostMessage): void {
     void this.panel?.webview.postMessage(msg);
+  }
+
+  /**
+   * TASK-ARP06-005: post ONE `{type:"usage"}` frame for a completed turn.
+   *
+   * PRIVACY INVARIANT (hard): the frame carries ONLY numeric token fields
+   * and the policy notice string — never prompt text, SQL, secrets,
+   * trace content, or tool names/arguments. The consumption is strictly
+   * shape-safe: `usage` arrives as the typed `TurnUsageSummary` produced
+   * by runAgent (TASK-ARP06-004) — the panel NEVER re-derives accounting
+   * from steps/messages — and `notice` is the resolved
+   * `EffectivePolicy.notice` (a fixed governance sentence).
+   *
+   * `unknown: true` (no step reported usage) is echoed verbatim — zeros
+   * are never presented as a measured zero cost. Unknown turns still
+   * contribute 0 to the running session totals (adding nothing is not
+   * inventing anything). Aborted turns never reach this method.
+   */
+  private postUsage(
+    usage: TurnUsageSummary | undefined,
+    policyNotice: string,
+  ): void {
+    const inputTokens = usage?.inputTokens ?? 0;
+    const outputTokens = usage?.outputTokens ?? 0;
+    const unknown = usage?.unknown ?? true;
+    if (!unknown) {
+      this.sessionUsage = {
+        inputTokens: this.sessionUsage.inputTokens + inputTokens,
+        outputTokens: this.sessionUsage.outputTokens + outputTokens,
+      };
+    }
+    const msg: AiChatPanelUsage = {
+      type: "usage",
+      inputTokens,
+      outputTokens,
+      unknown,
+      sessionTokens: { ...this.sessionUsage },
+      policyNotice,
+    };
+    this.post(msg);
   }
 
   /**

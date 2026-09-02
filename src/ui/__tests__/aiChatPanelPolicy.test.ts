@@ -239,6 +239,64 @@ function isTraceRecorderLike(value: unknown): boolean {
   );
 }
 
+// ---- TASK-ARP06-005 helpers -------------------------------------------------
+
+/** Narrow a posted frame to the TASK-ARP06-005 usage message. */
+function isUsage(
+  m: unknown,
+): m is {
+  type: "usage";
+  inputTokens: number;
+  outputTokens: number;
+  unknown: boolean;
+  sessionTokens: { inputTokens: number; outputTokens: number };
+  policyNotice: string;
+} {
+  return (
+    !!m && typeof m === "object" && (m as { type?: string }).type === "usage"
+  );
+}
+
+/** A run result carrying an explicit per-turn usage summary, as the real
+ * runAgent resolves on every completion path (TASK-ARP06-004). */
+function makeUsageRunResult(
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    unknown: boolean;
+    steps: number;
+  },
+  finalText = "builtin-final",
+): AgentRunResult {
+  return { steps: [], history: [], finalText, stoppedOnBudget: false, usage };
+}
+
+/**
+ * TASK-ARP06-005 scan adapter: serialize frames for the SECRET_RE byte
+ * scan. The `usage` frame's MANDATED wire key names ("inputTokens" /
+ * "outputTokens" / "sessionTokens" — pinned by the task §Interfaces and
+ * by the shape-safety test #A4) contain the benign word "Tokens", which
+ * a raw JSON.stringify of the frame would false-positive on. SECRET_RE
+ * targets secret VALUES, so usage frames contribute their carried values
+ * only (numbers, unknown flag, notice text) — no key names, no weakening
+ * of the scan for any other frame or any carried string content.
+ */
+function scanFrames(frames: unknown[]): unknown[] {
+  return frames.map((f) =>
+    isUsage(f)
+      ? [
+          f.type,
+          f.inputTokens,
+          f.outputTokens,
+          f.unknown,
+          f.sessionTokens.inputTokens,
+          f.sessionTokens.outputTokens,
+          f.policyNotice,
+        ]
+      : f,
+  );
+}
+
 // ---- fixture helpers -------------------------------------------------------
 
 /** A spy adapter seeded with sentinel rows + DDL columns; tracks calls. */
@@ -435,7 +493,7 @@ describe("AiChatPanel — central policy admission (TASK-AIX07-003)", () => {
 
     // OMP dispatch took place; deny-notice must surface in at least one
     // webview frame (the panel can post a single error/info on deny).
-    const frames = postedMessages(p);
+    const frames = scanFrames(postedMessages(p));
     const blob = JSON.stringify(frames);
     // Wire privacy (test #3) holds even on the OMP path: no secret-shaped
     // string crosses the wire.
@@ -604,7 +662,7 @@ describe("AiChatPanel — wire privacy", () => {
     await until(() => postedMessages(p).some(isDone));
 
     // Aggregate wire + outbound observability for the builtin path.
-    const frames = postedMessages(p);
+    const frames = scanFrames(postedMessages(p));
     const runAgentCall = agentState.runAgentMock.mock.calls[0]?.[0] as {
       messages: ChatMessage[];
     };
@@ -793,7 +851,7 @@ describe("AiChatPanel — invalid configuration denies admission", () => {
     // notice OR fall through silently; the contract is "no sensitive
     // surfaces reach outbound". The webview frames must contain NO
     // secret-shaped content regardless.
-    const blob = JSON.stringify(postedMessages(p));
+    const blob = JSON.stringify(scanFrames(postedMessages(p)));
     expect(SECRET_RE.test(blob)).toBe(false);
   });
 });
@@ -828,6 +886,324 @@ describe("AiChatPanel — all-turn trace snapshot", () => {
     panel.clearTrace();
     const after = panel.dumpTrace("turn-1") as { events: unknown[] };
     expect(after.events.length).toBe(0);
+  });
+});
+
+// ============================================================================
+// TASK-ARP06-005 — privacy-safe usage + policy display in the chat panel
+// ============================================================================
+describe("AiChatPanel — usage + policy notice frame (TASK-ARP06-005)", () => {
+  // #1 happy — builtin turn posts ONE usage frame with the exact summed
+  // numbers + the policy notice (non-empty when the policy denies).
+  it("#A1 builtin turn posts usage + denied-policy notice once, before done", async () => {
+    const spy = makeAdapterSpy();
+    state.isTrusted = false; // denied policy → non-empty notice
+    agentState.runAgentMock.mockImplementation(
+      async (
+        _input: unknown,
+        _deps: unknown,
+        _callbacks: unknown,
+        _signal: unknown,
+        trace?: { record: (turnId: string, kind: string, payload: unknown) => unknown },
+      ) => {
+        trace?.record(`builtin-${Date.now()}`, "prompt", {
+          text: "mocked builtin user prompt",
+        });
+        return makeUsageRunResult({
+          inputTokens: 3,
+          outputTokens: 4,
+          unknown: false,
+          steps: 2,
+        });
+      },
+    );
+
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: spy.factory,
+      isWorkspaceTrusted: () => false,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "hello there" });
+    await until(() => postedMessages(p).some(isAssistant));
+    await until(() => postedMessages(p).some(isDone));
+
+    const posted = postedMessages(p);
+    const usages = posted.filter(isUsage);
+    expect(usages).toHaveLength(1);
+    const u = usages[0];
+    expect(u.inputTokens).toBe(3);
+    expect(u.outputTokens).toBe(4);
+    expect(u.unknown).toBe(false);
+    expect(u.sessionTokens).toEqual({ inputTokens: 3, outputTokens: 4 });
+    expect(u.policyNotice.length).toBeGreaterThan(0);
+    // The frame lands on the done path: before the turn's terminal done.
+    expect(posted.findIndex(isUsage)).toBeLessThan(posted.findIndex(isDone));
+  });
+
+  // #2 edge — all-unknown usage is echoed as unknown:true, never invented.
+  it("#A2 all-unknown usage → unknown:true, zeros echoed, nothing invented", async () => {
+    const spy = makeAdapterSpy();
+    state.isTrusted = true;
+    agentState.runAgentMock.mockImplementation(
+      async (
+        _input: unknown,
+        _deps: unknown,
+        _callbacks: unknown,
+        _signal: unknown,
+        trace?: { record: (turnId: string, kind: string, payload: unknown) => unknown },
+      ) => {
+        trace?.record(`builtin-${Date.now()}`, "prompt", {
+          text: "mocked builtin user prompt",
+        });
+        return makeUsageRunResult({
+          inputTokens: 0,
+          outputTokens: 0,
+          unknown: true,
+          steps: 2,
+        });
+      },
+    );
+
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: spy.factory,
+      isWorkspaceTrusted: () => true,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "hello there" });
+    await until(() => postedMessages(p).some(isDone));
+
+    const usages = postedMessages(p).filter(isUsage);
+    expect(usages).toHaveLength(1);
+    const u = usages[0];
+    expect(u.inputTokens).toBe(0);
+    expect(u.outputTokens).toBe(0);
+    expect(u.unknown).toBe(true);
+    expect(u.sessionTokens).toEqual({ inputTokens: 0, outputTokens: 0 });
+  });
+
+  // #3 edge — whole-turn byte scan stays secret-free (mirror of existing #3):
+  // plant secret-shaped long runs in the recorded prompt payload, a tool
+  // ARGUMENT, and a tool RESULT; the aggregate of every webview frame + the
+  // runAgent history + the trace dump must contain none of them.
+  it("#A3 whole-turn byte scan (frames + history + trace) stays secret-free with sentinel prompt/tool-arg plants", async () => {
+    const spy = makeAdapterSpy();
+    state.isTrusted = true;
+    const PROMPT_SENTINEL = "SK-PROMPT-SENTINEL-4e8a2c11";
+    const TOOLARG_SENTINEL = "SK-TOOLARG-SENTINEL-9d2f7a1b";
+    const TOOLRES_SENTINEL = "SK-RESULT-SENTINEL-7b3d9e55";
+    const toolCall: ToolCall = {
+      id: "t9",
+      name: "run_sql",
+      argumentsJson: `{"sql":"SELECT 1","note":"${TOOLARG_SENTINEL}"}`,
+    };
+    agentState.runAgentMock.mockImplementation(
+      async (
+        _input: unknown,
+        _deps: unknown,
+        callbacks?: {
+          onToolCall?: (call: ToolCall) => void;
+          onToolResult?: (
+            call: ToolCall,
+            outcome: { status: "ok" | "failed" | "denied"; resultText: string },
+          ) => void;
+        },
+        _signal: unknown,
+        trace?: { record: (turnId: string, kind: string, payload: unknown) => unknown },
+      ) => {
+        // Real runAgent records the (redacted) prompt into the trace; plant
+        // the secret-shaped prompt text there to exercise record-time
+        // redaction as the leak boundary.
+        trace?.record(`builtin-${Date.now()}`, "prompt", {
+          text: `analyze ${PROMPT_SENTINEL} for anomalies`,
+        });
+        trace?.record(`builtin-${Date.now()}`, "tool_start", {
+          tool: toolCall.name,
+          argumentsJson: toolCall.argumentsJson,
+        });
+        callbacks?.onToolCall?.(toolCall);
+        callbacks?.onToolResult?.(toolCall, {
+          status: "ok",
+          resultText: `{"ok":true,"rows":0,"detail":"${TOOLRES_SENTINEL}"}`,
+        });
+        return makeUsageRunResult({
+          inputTokens: 5,
+          outputTokens: 7,
+          unknown: false,
+          steps: 2,
+        });
+      },
+    );
+
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: spy.factory,
+      isWorkspaceTrusted: () => true,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "hello there" });
+    await until(() => postedMessages(p).some(isAssistant));
+    await until(() => postedMessages(p).some(isDone));
+
+    // Aggregate every webview frame (usage frame included) + the turn's
+    // outbound history — the display surface under test.
+    const frames = scanFrames(postedMessages(p));
+    const runAgentCall = agentState.runAgentMock.mock.calls[0]?.[0] as {
+      messages: ChatMessage[];
+    };
+    const blob = JSON.stringify({ frames, history: runAgentCall?.messages });
+    expect(SECRET_RE.test(blob)).toBe(false);
+    expect(blob).not.toContain(TOOLARG_SENTINEL);
+    expect(blob).not.toContain(TOOLRES_SENTINEL);
+    expect(blob).not.toContain(PROMPT_SENTINEL);
+    // Defense in depth: the redacted trace dump is clean too.
+    const dumpBlob = JSON.stringify(panel.dumpAll());
+    expect(SECRET_RE.test(dumpBlob)).toBe(false);
+    expect(dumpBlob).not.toContain(PROMPT_SENTINEL);
+    expect(dumpBlob).not.toContain(TOOLARG_SENTINEL);
+  });
+
+  // #4 edge — the usage frame is SHAPE-SAFE: numeric fields + the notice
+  // string only. No prompt text, no SQL, no tool names/arguments, no trace.
+  it("#A4 usage frame carries only numeric fields + policyNotice string", async () => {
+    const spy = makeAdapterSpy();
+    state.isTrusted = true;
+    agentState.runAgentMock.mockImplementation(async () =>
+      makeUsageRunResult({
+        inputTokens: 5,
+        outputTokens: 9,
+        unknown: false,
+        steps: 1,
+      }),
+    );
+
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: spy.factory,
+      isWorkspaceTrusted: () => true,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "shape-safe probe prompt" });
+    await until(() => postedMessages(p).some(isDone));
+
+    const usages = postedMessages(p).filter(isUsage);
+    expect(usages).toHaveLength(1);
+    const u = usages[0] as unknown as Record<string, unknown>;
+    // Closed key set — nothing else may ride along.
+    expect(Object.keys(u).sort()).toEqual([
+      "inputTokens",
+      "outputTokens",
+      "policyNotice",
+      "sessionTokens",
+      "type",
+      "unknown",
+    ]);
+    expect(typeof u.inputTokens).toBe("number");
+    expect(typeof u.outputTokens).toBe("number");
+    expect(typeof u.unknown).toBe("boolean");
+    expect(typeof u.policyNotice).toBe("string");
+    expect(
+      Object.keys(u.sessionTokens as Record<string, unknown>).sort(),
+    ).toEqual(["inputTokens", "outputTokens"]);
+    // No turn content (prompt text, tool names, args) anywhere in the frame.
+    const frameJson = JSON.stringify(usages[0]);
+    expect(frameJson).not.toContain("shape-safe probe prompt");
+    expect(frameJson).not.toContain("run_sql");
+    expect(frameJson).not.toContain("list_tables");
+  });
+
+  // #5 edge — denied policy: notice shown, generic chat completes, no error.
+  it("#A5 denied policy: non-empty notice on the usage frame, generic turn completes, no error bubble", async () => {
+    const spy = makeAdapterSpy();
+    state.isTrusted = false;
+    agentState.runAgentMock.mockImplementation(async () =>
+      makeUsageRunResult({
+        inputTokens: 1,
+        outputTokens: 1,
+        unknown: false,
+        steps: 1,
+      }),
+    );
+
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: spy.factory,
+      isWorkspaceTrusted: () => false,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "generic question" });
+    await until(() => postedMessages(p).some(isAssistant));
+    await until(() => postedMessages(p).some(isDone));
+
+    const usages = postedMessages(p).filter(isUsage);
+    expect(usages).toHaveLength(1);
+    expect(usages[0].policyNotice).toMatch(/VSDB AI policy/);
+    // Generic prompt: no schema introspection ran (denied policy boundary).
+    expect(spy.factory).not.toHaveBeenCalled();
+    // Chat completed — no error bubble on the deny path.
+    expect(postedMessages(p).filter(isError)).toEqual([]);
+  });
+
+  // #6 edge — aborted turn never posts fabricated usage.
+  it("#A6 stop mid-turn: no usage frame is fabricated on abort", async () => {
+    const spy = makeAdapterSpy();
+    state.isTrusted = true;
+    let resolveRun!: (v: AgentRunResult) => void;
+    agentState.runAgentMock.mockImplementation(
+      () =>
+        new Promise<AgentRunResult>((resolve) => {
+          resolveRun = resolve;
+        }),
+    );
+
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: spy.factory,
+      isWorkspaceTrusted: () => true,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "go" });
+    await until(() => agentState.runAgentMock.mock.calls.length === 1);
+    handler({ type: "stop" });
+    resolveRun(
+      makeUsageRunResult({
+        inputTokens: 2,
+        outputTokens: 3,
+        unknown: false,
+        steps: 1,
+      }),
+    );
+    await until(() => postedMessages(p).some(isDone));
+
+    // Abort: no assistant bubble and NO usage frame with invented numbers.
+    expect(postedMessages(p).filter(isUsage)).toHaveLength(0);
+    expect(postedMessages(p).some(isAssistant)).toBe(false);
+    expect(postedMessages(p).some(isDone)).toBe(true);
   });
 });
 

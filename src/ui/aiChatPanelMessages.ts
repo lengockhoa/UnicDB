@@ -178,6 +178,35 @@ export interface AiChatPanelGroundingState {
   turnId: string;
 }
 
+/** TASK-ARP06-005: per-turn usage + governance notice, posted once per
+ * completed builtin turn on the done path (OMP turns post it with
+ * `unknown: true` — no usage numbers exist there, and none are invented).
+ *
+ * PRIVACY INVARIANT (hard): this frame is SHAPE-SAFE by contract — numeric
+ * fields + the policy notice string ONLY. It NEVER carries prompt text,
+ * SQL, secrets/apiKeys, trace content, or tool names/arguments. The
+ * webview must render it as a textContent-only status chip.
+ *
+ * `unknown: true` mirrors `TurnUsageSummary` (src/ai/agent): no completed
+ * step reported a nonzero token count, so the totals must be treated as
+ * unknown — never as an invented zero-cost turn. */
+export interface AiChatPanelUsage {
+  type: "usage";
+  /** Exact summed input tokens for THIS turn (0 when unknown). */
+  inputTokens: number;
+  /** Exact summed output tokens for THIS turn (0 when unknown). */
+  outputTokens: number;
+  /** True iff the turn's usage is unknown — do not render the zeros as
+   * confirmed cost. */
+  unknown: boolean;
+  /** Running panel-session totals across all posted usage frames
+   * (host-side accumulator). */
+  sessionTokens: { inputTokens: number; outputTokens: number };
+  /** "" when the effective policy allows; otherwise the user-visible
+   * policy denial notice from `EffectivePolicy.notice`. */
+  policyNotice: string;
+}
+
 
 /** AIX-04: a reviewed change plan card (plan_change tool result). The
  * webview renders statements + danger tiers + drift and shows Approve/
@@ -222,7 +251,8 @@ export type AiChatPanelHostMessage =
   | AiChatPanelMentionObjects
   | AiChatPanelMentionMiss
   | AiChatPanelAttachError
-  | AiChatPanelGroundingState;
+  | AiChatPanelGroundingState
+  | AiChatPanelUsage;
 
 /** TASK-005: host answer for `mention_list` (≤30 DB objects + ≤20 files).
  * Each item carries `kind` discriminator (table|view|routine|file), a

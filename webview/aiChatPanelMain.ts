@@ -149,6 +149,7 @@ type HostMsg =
   | MentionMissMsg
   | AttachErrorMsg
   | ChangePlanMsg
+  | UsageMsg
   | { type: "grounding_state"; selectionPath: string | null; fileCount: number; excludedCount: number; turnId: string };
 /** AIX-04: reviewed change plan card with Approve/Reject consent
  * buttons. `drifted` disables Approve — a stale plan must not apply. */
@@ -161,6 +162,18 @@ interface ChangePlanMsg {
     drift: string[];
     drifted: boolean;
   };
+}
+/** TASK-ARP06-005: per-turn usage + governance notice. SHAPE-SAFE by
+ * contract — numeric fields + the notice string only; NEVER carries
+ * prompt/SQL/secret/trace/tool args. Rendered as a textContent-only
+ * status chip. `unknown: true` means the zeros are NOT confirmed cost. */
+interface UsageMsg {
+  type: "usage";
+  inputTokens: number;
+  outputTokens: number;
+  unknown: boolean;
+  sessionTokens: { inputTokens: number; outputTokens: number };
+  policyNotice: string;
 }
 
 // ---- State -----------------------------------------------------------------
@@ -1365,6 +1378,51 @@ function applySessionState(state: "connecting" | "running" | "done" | "error"): 
   chip.textContent = label;
 }
 
+/** TASK-ARP06-005: render the per-turn usage + policy notice chip. The
+ * `usage` frame is SHAPE-SAFE (numeric fields + notice string only — no
+ * prompt/SQL/secret/trace/tool args ever ride on it), but the notice is a
+ * host string, so the chip is textContent-ONLY: no innerHTML, no child
+ * nodes, numbers rendered through fixed label templates — never verbatim
+ * wire text. `unknown: true` renders an "unknown" label instead of the
+ * zeros so unknown usage is never displayed as a confirmed zero cost. */
+function applyUsage(msg: UsageMsg): void {
+  const rootEl = document.getElementById("vsdb-root");
+  if (!rootEl) return;
+  let chip = document.getElementById("usageChip") as HTMLSpanElement | null;
+  if (!chip) {
+    chip = document.createElement("span");
+    chip.id = "usageChip";
+    const banner = document.getElementById("engineBanner");
+    const host = banner ?? rootEl;
+    host.appendChild(chip);
+  }
+  const inTok = Number.isFinite(msg.inputTokens) ? msg.inputTokens : 0;
+  const outTok = Number.isFinite(msg.outputTokens) ? msg.outputTokens : 0;
+  const inSes = Number.isFinite(msg.sessionTokens?.inputTokens)
+    ? msg.sessionTokens.inputTokens
+    : 0;
+  const outSes = Number.isFinite(msg.sessionTokens?.outputTokens)
+    ? msg.sessionTokens.outputTokens
+    : 0;
+  const turnLabel = msg.unknown
+    ? "tokens unknown"
+    : `${inTok} in / ${outTok} out`;
+  const parts: string[] = [
+    `Turn: ${turnLabel}`,
+    `Session: ${inSes} in / ${outSes} out`,
+  ];
+  // The policy notice joins the SAME chip as plain text (textContent only)
+  // so a denied turn surfaces its governance notice without any markup.
+  if (typeof msg.policyNotice === "string" && msg.policyNotice.length > 0) {
+    parts.push(msg.policyNotice);
+  }
+  chip.className = msg.unknown
+    ? "vsdb-chat-usage vsdb-chat-usage-unknown"
+    : "vsdb-chat-usage vsdb-chat-usage-known";
+  chip.textContent = parts.join(" — ");
+  chip.title = "AI token usage for this turn and this panel session";
+}
+
 /** TASK-AIX05-103: render the OMP engine runtime lifecycle inside the
  * existing engine banner (`#engineLifecycle` span, textContent only).
  * The state literal is host-enum; the label map is fixed — never rendered
@@ -1766,6 +1824,9 @@ function renderHistory(msg: HistoryMsg): void {
       return;
     case "grounding_state":
       renderGroundingChips(msg);
+      return;
+    case "usage":
+      applyUsage(msg as UsageMsg);
       return;
   }
 });

@@ -1844,3 +1844,106 @@ describe("AiChatPanel — slash model command", () => {
     expect(JSON.stringify(input.messages)).not.toContain("/model");
   });
 });
+
+// ============================================================================
+// TASK-ARP06-005 — happy-path integration of the usage post
+// ============================================================================
+describe("AiChatPanel — usage frame integration (TASK-ARP06-005)", () => {
+  interface UsageMsg {
+    type: "usage";
+    inputTokens: number;
+    outputTokens: number;
+    unknown: boolean;
+    sessionTokens: { inputTokens: number; outputTokens: number };
+    policyNotice: string;
+  }
+  function isUsage(m: unknown): m is UsageMsg {
+    return (
+      !!m && typeof m === "object" && (m as { type?: string }).type === "usage"
+    );
+  }
+  function makeRunResultWithUsage(
+    usage: { inputTokens: number; outputTokens: number; unknown: boolean; steps: number },
+  ): AgentRunResult {
+    return {
+      steps: [],
+      history: [],
+      finalText: "answer",
+      stoppedOnBudget: false,
+      usage,
+    };
+  }
+
+  it("posts exactly one usage frame per turn with exact sums, session totals, and empty notice on the allowed path", async () => {
+    const toolCall: ToolCall = { id: "t1", name: "list_tables", argumentsJson: "{}" };
+    const toolStep: AgentStep = {
+      messages: [
+        { role: "assistant", content: "", toolCalls: [toolCall] },
+        { role: "tool", toolCallId: "t1", content: "[]" },
+      ],
+      result: {
+        text: "",
+        toolCalls: [],
+        finishReason: "tool_calls",
+        usage: { inputTokens: 1, outputTokens: 1 },
+      },
+    };
+    const finalStep: AgentStep = {
+      messages: [{ role: "assistant", content: "answer" }],
+      result: {
+        text: "answer",
+        toolCalls: [],
+        finishReason: "stop",
+        usage: { inputTokens: 2, outputTokens: 3 },
+      },
+    };
+    // Mirror the real runAgent (TASK-ARP06-004): usage is the EXACT roll-up
+    // over completed steps — 1+2 in, 1+3 out.
+    agentState.runAgentMock.mockImplementation(
+      async (
+        _input: unknown,
+        _deps: unknown,
+        callbacks?: { onToolCall?: (call: ToolCall) => void },
+      ) => {
+        callbacks?.onToolCall?.(toolCall);
+        return makeRunResultWithUsage({
+          inputTokens: 3,
+          outputTokens: 4,
+          unknown: false,
+          steps: 2,
+        });
+      },
+    );
+
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const panel = new AiChatPanel({ extensionUri: extUri, deps: makeDeps(), adapterFactory: factory });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "send", text: "show me users" });
+    await until(() => postedMessages(p).some(isAssistant));
+    await until(() => postedMessages(p).some(isDone));
+
+    const posted = postedMessages(p);
+    const usages = posted.filter(isUsage);
+    expect(usages).toHaveLength(1);
+    const u = usages[0];
+    expect(u.inputTokens).toBe(3);
+    expect(u.outputTokens).toBe(4);
+    expect(u.unknown).toBe(false);
+    expect(u.sessionTokens).toEqual({ inputTokens: 3, outputTokens: 4 });
+    // Bare host → legacy admitted policy → empty notice.
+    expect(u.policyNotice).toBe("");
+    // One frame per turn: a second turn posts a second usage frame with
+    // running session totals.
+    handler({ type: "send", text: "again" });
+    await until(() => postedMessages(p).filter(isUsage).length >= 2);
+    await until(() => postedMessages(p).filter(isDone).length >= 2);
+    const usages2 = postedMessages(p).filter(isUsage);
+    expect(usages2).toHaveLength(2);
+    expect(usages2[1].sessionTokens).toEqual({ inputTokens: 6, outputTokens: 8 });
+    // Assistant text still flows normally on the same wire.
+    expect(postedMessages(p).filter(isAssistant).length).toBeGreaterThanOrEqual(2);
+  });
+});
