@@ -1,6 +1,6 @@
 Command: handoff-fullstack
 Goal: Ship BQ-00 BigQuery provider feasibility + adapter contract spike (no real ADC).
-Base: main @ e79567e (post-wave-2)
-Phase: I3
-Cursor: wave 1 + wave 2 done. TASK-BQ00-001 PASS (7/7, package + bundle + .d.ts evidence), TASK-BQ00-002 PASS (7/7, pure job/page types + toBigQueryPage, suite 3203|2), TASK-BQ00-003 PASS (6/6, ADC classifier + client seam, suite 3202|2). All three touch disjoint files. Suite floor preserved 3189|2 → 3203|2.
-Next: wave 3 — TASK-BQ00-004 (docs-only ADR 0004). Cites docs/decisions/_bq00-evidence.md by path; "Pagination + cancellation method names" section enumerates getQueryResults/query/createQueryJob/job.cancel with return shapes; "Grid continuation mapping" paragraph maps BigQueryPage.pageToken onto read-only grid contract (src/adapters/types.ts:78 RunResult.batched + resultsPanel.ts loadMore); README table row appended. No new tests; command-verified content checks.
+Base: main @ 89d6b56 (post-wave-3)
+Phase: R1
+Cursor: All 3 waves implemented + committed (89d6b56). Suite 3209 passed | 2 skipped (floor 3189|2 preserved). Files: package.json + lockfile + 3 new src/adapters/{bigqueryTypes,bigqueryAdc}.ts + 3 new tests + docs/decisions/{_bq00-evidence.md, 0004-...md, README.md update}. No read-only file touched. 4 of 4 tasks PASS.
+Next: I4 (consolidate INDEX to pending_review) → R1 verify clean → R2-R4 review (4 parallel code-reviewers, opus/unic-smart, MUST differ from executor sonnet/unic-code) → R4.5 auto-fix if needed → R5 (commit + push + version bump + vsce + gh release for v1.46.0).

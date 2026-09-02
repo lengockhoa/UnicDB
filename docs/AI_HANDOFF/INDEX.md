@@ -4,10 +4,10 @@ Cycle BQ-00 — **BigQuery provider feasibility + adapter contract spike** — p
 
 | Task / Portfolio | Title | Status | Dependencies | Reviewer |
 |---|---|---|---|---|
-| TASK-BQ00-001 | BigQuery package + bundle proof (`@google-cloud/bigquery` pin, esbuild-API probe) | ready | none | - |
-| TASK-BQ00-002 | Pure BigQuery job/page contract types (`bigqueryTypes.ts`) | ready | TASK-BQ00-001 | - |
-| TASK-BQ00-003 | ADC diagnostic classifier + client seam (`bigqueryAdc.ts`) | ready | TASK-BQ00-001 | - |
-| TASK-BQ00-004 | ADR 0004 — BQ-00 feasibility + adapter contract decision | ready | TASK-BQ00-001, TASK-BQ00-002, TASK-BQ00-003 | - |
+| TASK-BQ00-001 | BigQuery package + bundle proof (`@google-cloud/bigquery` pin, esbuild-API probe) | pending_review | none | - |
+| TASK-BQ00-002 | Pure BigQuery job/page contract types (`bigqueryTypes.ts`) | pending_review | TASK-BQ00-001 | - |
+| TASK-BQ00-003 | ADC diagnostic classifier + client seam (`bigqueryAdc.ts`) | pending_review | TASK-BQ00-001 | - |
+| TASK-BQ00-004 | ADR 0004 — BQ-00 feasibility + adapter contract decision | pending_review | TASK-BQ00-001, TASK-BQ00-002, TASK-BQ00-003 | - |
 | TASK-RLX-001 | Cancel active PostgreSQL non-cursor queries | done | none | unic-smart |
 | TASK-RLX-002 | Coalesce SchemaCache stale refreshes | done | none | unic-smart |
 | TASK-RLX-003 | Fail closed on malformed import execution plans | done | none | unic-smart |
