@@ -1,6 +1,6 @@
 # TASK-ARP06-003 — Usage transport: missing/malformed safe, final usage once, no body retained (provider)
 
-- Status: `pending_review`
+- Status: `done`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §2/§3/§4 (ARP-06.3)

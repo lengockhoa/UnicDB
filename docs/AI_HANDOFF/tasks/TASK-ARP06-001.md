@@ -1,6 +1,6 @@
 # TASK-ARP06-001 — Fail-closed policy decision API + security parser corpus (readonlySqlParser + ADR 0003)
 
-- Status: `pending_review`
+- Status: `done`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §2/§3/§4 (ARP-06.1)

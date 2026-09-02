@@ -1,6 +1,6 @@
 # TASK-ARP06-002 — run_sql tool adoption: only approved SQL executes (sqlTool)
 
-- Status: `pending_review`
+- Status: `done`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §2/§3/§4 (ARP-06.2)

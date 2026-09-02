@@ -1,6 +1,6 @@
 # TASK-ARP06-005 — Privacy-safe policy + usage display in the chat panel (aiChatPanel)
 
-- Status: `pending_review`
+- Status: `done`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §2/§3/§4 (ARP-06.5)
