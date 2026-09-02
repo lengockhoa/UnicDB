@@ -1,186 +1,274 @@
-# PLAN — Cycle BQ-00: BigQuery provider feasibility + adapter contract spike
+# PLAN — Cycle BQ-01: BigQuery connection foundation
 
-Source spec: `docs/plans/2026-09-01-bigquery-provider-roadmap.md` §4 "BQ-00 — Provider feasibility and contract spike" (P0, mandatory measurement cycle — not a feature release). Commissioned per roadmap §9.2: a NEW handoff cycle, no prior `docs/AI_HANDOFF` artifact overwritten, paths re-validated at current HEAD `main @ 35f7aff` (post-ARP-09, v1.45.0).
+Source: `docs/plans/2026-09-01-bigquery-provider-roadmap.md` §4 "BQ-01 — ADC connection and BigQuery adapter foundation" (lines 143-177). Dep: BQ-00 (shipped v1.46.0, GIVEN — `bigqueryTypes.ts` + `bigqueryAdc.ts` reused, not modified). Base: `main @ 9bfd07d` (v1.46.0). Baseline: BQ-00 close-out suite green at HEAD.
 
 ## §1 Intent
 
-Goal (user, verbatim): "Ship BQ-00: provider feasibility + adapter contract spike for Google BigQuery. No real ADC. Prove `@google-cloud/bigquery` integrates with the existing VSDB adapter boundary without modifying existing drivers."
+Let a user add, select, test and safely remove a BigQuery connection using Application
+Default Credentials (ADC), an explicit billing project and a location preference.
 
-P0 user decision (2026-09-02): **BQ-00 first**; the four STATUS.md follow-ups are deferred to a later cycle.
+Success looks like:
 
-Success = the four roadmap acceptance checks, each verifiable at cycle end (see §6):
-
-1. Package/version/bundle behavior is proved in CI-compatible build conditions.
-2. The adapter contract explicitly says who owns job IDs/page tokens and how nested and precision-sensitive values display.
-3. Missing ADC, bad billing project, denied API, and wrong location are distinguishable without secrets.
-4. No existing driver type or UI is changed unless a test demonstrates the need (BQ-00 changes none — §3 proves it).
-
-DEFERRED (out of scope this cycle): roadmap sub-cycles BQ-01..BQ-07 and the 4 STATUS.md follow-ups: (1) browseCommands unguarded `finally`, (2) MSSQL `[insert]` bracket false positive, (3) ARP-07 form-view/AI plan-apply invalidation gap, (4) ARP-08 snapshot name-field uncapped.
+1. A connection created through the UI uses ADC externally and persists ONLY safe
+   metadata (no credential path, token, or password for BigQuery — ADC is external).
+2. Connection test names the failing class + fixed remediation (including
+   `gcloud auth application-default login` only for the missing-ADC class).
+3. Existing PostgreSQL/MySQL/MSSQL behavior — form, SecretStorage flow, factory — is
+   behavior-unchanged (regression net = full suite at wave/cycle boundaries).
 
 ## §2 Scope
 
-**IN:**
+**In scope (4 tasks):**
+- `src/config/types.ts` — extend `DriverType` + BigQuery-safe connection config shape
+  with a pure validator (see §3).
+- `src/adapters/bigquery.ts` (new) — `BigQueryAdapter implements DbAdapter`, calls into
+  BQ-00's `createBigQueryClient` seam; idempotent close; safe page/scalar normalization.
+- `src/adapters/factory.ts` — new `case "bigquery"` in the exhaustiveness switch,
+  password-invariant for BigQuery.
+- `src/core/connectionManager.ts` — BigQuery admission path: NO SecretStorage
+  fake-password round-trip; dispose guard for the BigQuery path.
+- `src/ui/connectionForm.ts`, `src/ui/connectionFormMessages.ts`,
+  `webview/connectionFormMain.ts` — BigQuery-only fields (billing project, location,
+  maxBytesBilled) render ONLY when `driver === "bigquery"`; copy-safe ADC remediation;
+  submit gating.
 
-| Task | Roadmap | Owns (no other task in its wave touches these) |
-|---|---|---|
-| TASK-BQ00-001 (w1) | BQ-00.1 package + bundle proof | `package.json` (deps only), `package-lock.json`, `src/adapters/__tests__/bigqueryPackage.test.ts` (new), `docs/decisions/_bq00-evidence.md` (new, scratch evidence) |
-| TASK-BQ00-002 (w2) | BQ-00.2 pure job/page contract | `src/adapters/bigqueryTypes.ts` (new), `src/adapters/__tests__/bigqueryTypes.test.ts` (new) |
-| TASK-BQ00-003 (w2) | BQ-00.3 ADC diagnostic seam | `src/adapters/bigqueryAdc.ts` (new), `src/adapters/__tests__/bigqueryAdc.test.ts` (new) |
-| TASK-BQ00-004 (w3) | BQ-00.4 ADR/contract | `docs/decisions/0004-bq-00-feasibility-contract.md` (new), `docs/decisions/README.md` |
+**Out of scope this cycle (queued for later cycles, see roadmap §4):** BQ-02
+explorer/preview and beyond; `package.json` driver settings/commands (none required so
+far); any change to `bigqueryTypes.ts` / `bigqueryAdc.ts` (BQ-00 given surface); new ADR;
+cross-platform manual smoke matrix (documented follow-up for the human).
 
-**OUT:** BQ-01..BQ-07; the 4 deferred follow-ups; any edit to `src/adapters/{factory,mssql,mysql,postgres,types}.ts`, `src/core/queryRunner.ts`, `src/ui/resultsPanel.ts`, `src/extension.ts`, `esbuild.js` (all read-only — the bundle probe calls esbuild's JS API from inside the test, so the bundler config is unchanged); any real-GCP automated test; `vitest.integration.config.ts`; no new commands/settings/UI.
+**CONSTRAINT — same-wave file disjointness + wave plan (1+2+1):**
+- Wave 1 (1 task): BQ01-001 owns `src/config/types.ts`.
+- Wave 2 (2 tasks, parallel — disjoint files): BQ01-002 owns `src/adapters/bigquery.ts`;
+  BQ01-004 owns the three form files. Disjoint ✓ — both consume only 001.
+- Wave 3 (1 task): BQ01-003 owns `src/adapters/factory.ts` +
+  `src/core/connectionManager.ts` together (no sibling shares them). Disjoint ✓.
+- Dep-chain rationale: 002 imports 001's exported symbols (`validateBigQueryConnection`,
+  `BigQueryConnectionFields`); 003 imports 002's `BigQueryAdapter` — same-wave parallel
+  would break compile on not-yet-existing symbols, so 1+2+1 is the smallest correct wave
+  plan (matches INDEX.md and Self-Audit item 7). 003 has no same-wave sibling.
 
 ## §3 Approach
 
-**Grounding corrections to the roadmap** (recorded so executors do not rediscover them):
-
-- `docs/decisions/` already exists (ADR 0001-0003 + README index table; convention: `NNNN-slug.md`, `Status: Accepted (gating ...)` header, README row). The roadmap's "0001 genesis" fallback is stale — the BQ-00 ADR is **`0004-bq-00-feasibility-contract.md`**.
-- Candidate version verified live from npm registry (2026-09-02): **`@google-cloud/bigquery@9.0.3`** (latest stable; `engines.node >= 22`; dev box Node v22.22.1 OK; dep tree includes `big.js` ^7, which supports the precision contract). **Runtime caveat to measure, not assume:** 9.x requires Node >= 22 while the extension host for `engines.vscode ^1.75.0` runs older Node; because esbuild bundles the client into `dist/extension.js` (only `vscode` external), the binding constraint is what the bundle actually needs, which the probe measures. BQ-00.1 pins `^9.0.3`, records the probe result, and if it fails falls back to `^8.3.1` (`engines.node >= 18`, verified live) — recording the choice and reason for the ADR. Never silently ship a broken floor.
-- Bundle reality: BQ-00 wires nothing into `src/extension.ts`, so `npm run compile` never sees the library — a `grep bigquery dist/extension.js` smoke is unfalsifiable. The "load the client from a test seam" requirement is satisfied by a **bundle probe test**: esbuild programmatic API (`build({ stdin, bundle: true, platform: "node", format: "cjs", target: "node18", external: ["vscode"] })`) over a virtual entry importing the client, asserting the build succeeds under the extension's exact build options. CI-compatible, no dead code shipped, `esbuild.js` untouched.
-- **`src/adapters/types.ts` needs no change — proven, not assumed:** `DbAdapter` already carries optional seams (`cancelActiveQuery?`, `beginTransaction?`, `RunResult.batched?`, `capabilities?: AdapterCapabilities` + fail-closed `hasAdapterCapability`). BQ-00's job/page contract is standalone pure types; whether a provider capability must be ADDED is an ADR recommendation for a later cycle (BQ-01), not a code change here. If an executor proves a gap, that is a stop-and-revise event (roadmap §9.6) surfaced via task Discussion for a P0 micro-decision — not a silent edit.
-- **Wave plan vs commissioning brief (deliberate, recorded):** BQ-00.3 consumes no BQ-00.2 symbol — the classifier pattern-matches synthetic error inputs and its client seam is its own structural interface. Its only real dependency is the installed package (001). So 002 ∥ 003 run in parallel in wave 2 on disjoint files; 002 depends on 001 because its executor must validate response field names against the installed client's `.d.ts` (roadmap §2 mandate: method names "validated against the package version selected in BQ-00"). 004 depends on all three (ADR cites their recorded evidence).
-- Rejected alternatives: **Storage Read API** (separate measured decision — roadmap BQ-07e), **browser OAuth flow** (user chose ADC-first; larger secret surface), **service-account JSON import** (explicitly out of scope, phase one), **wiring the client into `dist/extension.js` now** (BQ-01 territory; would ship unused code and force factory/manager questions before the contract is settled).
-
-Per task:
-
-- **BQ-00.1** — `npm install @google-cloud/bigquery@^9.0.3` (lockfile pins exact). New `bigqueryPackage.test.ts`: (a) module loads in Node 22 without credentials (import ≠ client construction — no ADC env required); (b) bundle probe under extension build options (esbuild buildMode; reports output byte size; asserts no `vscode` inlining); (c) credential-safety byte-scan on probe output (`application_default_credentials`, `private_key`, `BEGIN RSA PRIVATE KEY` absent); (d) pin consistency (single lockfile resolution matching `^9.0.3`); (e) **roadmap line-67 evidence**: a test parses `node_modules/@google-cloud/bigquery/build/src/bigquery.d.ts` (+ `build/src/job.d.ts`) and asserts the pagination/cancellation method names exist as declarations — `getQueryResults`, `query`, `createQueryJob` on the client and `cancel` on the Job class — and the executor records each name + signature + return shape (incl. `job.cancel()`'s return) with file+line refs into `docs/decisions/_bq00-evidence.md`, the on-disk evidence file ADR 0004 cites by path (Discussions are not stable citations). Package smoke = `npm run compile` regenerates `dist/extension.js` (byte-unchanged content expectation: nothing imports the client yet).
-- **BQ-00.2** — new pure `bigqueryTypes.ts`, no import from `@google-cloud/bigquery` (boundary stays pure): `BigQueryJobRef {projectId, location, jobId}`, `BigQuerySchemaField` (recursive `fields` for RECORD), `BigQueryPage {jobRef, schema, rows, totalBytesProcessed?, totalBytesBilled?, pageToken: string | null}`, `BigQueryPageRequest`, `BigQueryValue` (INT64/NUMERIC/BIGNUMERIC contractually canonical strings — never JS `number`), `hasNextPage(page): boolean`, **and one named mapper export `toBigQueryPage(raw: BigQueryRawQueryResponse): BigQueryPage`** — a pure function from the client's raw response shape (as validated against the installed `.d.ts`) to the contract type. The §4 happy-path test's subject is `toBigQueryPage`: the fixture goes IN, a `BigQueryPage` with verbatim `jobRef` comes OUT — the test cannot pass with types alone. Executor validates field names against the installed `.d.ts` and records evidence in Discussion for the ADR; the pagination/cancel method names live in `_bq00-evidence.md` (owned by 001).
-- **BQ-00.3** — new `bigqueryAdc.ts`: `AdcDiagnosticCategory = "missing_adc" | "bad_billing_project" | "api_denied" | "location_mismatch" | "unknown"`; `AdcDiagnostic {category, remediation}`; pure `classifyAdcDiagnostic(err: unknown): AdcDiagnostic` — emits only category + fixed copy-safe remediation text (redaction by construction: never echoes `err.message`); `BigQueryClientLike` + `createBigQueryClient(projectId?)` as the test seam (thin wrapper over the real constructor, injectable); `runAdcSmoke(client): Promise<"ok" | AdcDiagnostic>` listing one allowed resource through the injected client. CI uses fake clients + synthetic errors only; the real-ADC manual recipe (disposable project; never record env values/tokens) is an ADR appendix written in 004.
-- **BQ-00.4** — ADR 0004 deciding: client method/version (validated evidence from 001's `docs/decisions/_bq00-evidence.md`, cited by path, incl. the 9.x-vs-8.x engine-floor outcome), continuation ownership (VSDB owns `BigQueryJobRef` + opaque page token; client stateless per page), cancellation mapping (owned active job ID only; cancel-after-terminal harmless; **`job.cancel()` return shape as recorded in `_bq00-evidence.md`** — the roadmap line-67 mandate's cancellation owner), safe scalar conversion table (§5 of roadmap), selected config fields (billing project, location, `maximumBytesBilled`), least-privilege IAM set, Storage Read API deferral, manual ADC smoke recipe appendix — plus two reviewer-mandated sections: **"Pagination + cancellation method names"** (the enumerated signatures from `_bq00-evidence.md`: `getQueryResults`, `query`, `createQueryJob`, `job.cancel` with return shapes) and a **"Grid continuation mapping"** paragraph mapping `BigQueryPage.pageToken` onto the existing read-only grid contract (`RunResult.batched` at `src/adapters/types.ts:78` + `resultsPanel.ts` `loadMore` → `runner.loadMore(index)`) as a paper deliverable only. README table row appended.
+- **Config model (BQ01-001):** `DriverType` gains `"bigquery"`. `ConnectionConfig` keeps
+  `host/port/user/database` REQUIRED at the type level for the three SQL drivers
+  (making them optional would ripple through 3 adapters + their tests for zero BQ-01
+  value — alternative rejected), and gains an optional `bigquery` sub-object:
+  `{ billingProject: string; location?: string; maxBytesBilled?: string; datasetProject?: string }`.
+  A pure exported validator `validateBigQueryConnection(cfg): { ok: true } | { ok: false; reason: string }`
+  (no vscode import, in `config/types.ts`) enforces: non-empty `billingProject`;
+  `location`, when present, a non-empty string; `maxBytesBilled`, when present, a digit
+  string > 0 (fail closed: `0`, negatives, non-numeric all rejected); for bigquery,
+  `host === ""` and `port === 0` (host/port semantics rejected); redaction proven by test
+  — `JSON.stringify(cfg)` of a valid bigquery config contains none of
+  `credentials` / `keyFilename` / `token` / `password`.
+- **Adapter (BQ01-002):** `BigQueryAdapter implements DbAdapter`. The adapter owns a
+  private `BigQueryClientFactory` type whose options include `{projectId, location}` —
+  location is part of the adapter's OWN factory surface, not BQ-00's: BQ-00's
+  `createBigQueryClient(projectId?, impl?)` forwards only `{projectId}` to
+  `new BigQuery(opts)` (bigqueryAdc.ts:172-178, frozen). The default
+  `BigQueryClientFactory` wraps `createBigQueryClient` and forwards both fields to the
+  underlying `new BigQuery(opts)` call. Tests inject a richer fake — BQ-00's
+  `BigQueryClientLike` only has `listDatasets`, too narrow for adapter tests covering
+  connect/close/runQuery normalization. The frozen BQ-00 seam is reused for
+  `runAdcSmoke`; the adapter factory is a separate, broader type.
+  `connect()` = build client with `billingProject` (+ location when configured) +
+  `runAdcSmoke` → on diagnostic throw typed `BigQueryConnectError` carrying the
+  `AdcDiagnostic` (category + fixed remediation, never raw err text). `close()`
+  idempotent (second call resolves, no client rebuild). `runQuery`/pagination normalize
+  through BQ-00's `toBigQueryPage`; INT64/NUMERIC/BIGNUMERIC cells stay branded strings
+  (no numeric coercion). `testConnection()` = connect + smoke, mapping diagnostics to
+  typed failure.
+- **Admission (BQ01-003):** factory gains `case "bigquery": return new
+  BigQueryAdapter(cfg)` inside `createAdapter(cfg, password)` — the incoming `password`
+  argument is passed through by the signature (unchanged `(cfg, password)`) and
+  deliberately ignored for bigquery (no password consumed; `never` exhaustiveness arm
+  preserved). `ConnectionManager`:
+  for `driver === "bigquery"` the password paths are skipped — `addConnection` must not
+  `store`/`get` `vsdb.pass.<id>` (spy-proven), edit/connect never demand a missing
+  password; `dispose()` sets a closed flag so post-dispose adapter construction for a
+  bigquery connection fails fast with an explicit error instead of building a client;
+  double-dispose stays a no-op.
+- **Form (BQ01-004):** `ConnectionFormSubmit`/`ConnectionFormTest` gain
+  `billingProject`, `bqLocation`, `bqMaxBytesBilled` (strings on the wire; "" = unset).
+  Webview: for `driver === "bigquery"` render the BQ field group and hide
+  host/port/user/password/SSL; reverse for the three SQL drivers. ADC remediation from a
+  host `testResult` renders verbatim — never concatenated with user input (copy-safe).
+  Submit gating: empty `billingProject` (or invalid maxBytesBilled) blocks save with an
+  inline status — no `postMessage({type:"submit"})`.
+- **Test seams:** no test performs a real GCP call. The adapter owns a
+  `BigQueryClientFactory` type (broader than BQ-00's `BigQueryClientLike`); tests inject
+  a fake factory that returns a fake client with the full method set the adapter needs
+  (`query`, `getQueryResults`, `createQueryJob`, `cancel`, `listDatasets`, `getDataset`,
+  `getTable`). `runAdcSmoke` is reused verbatim from BQ-00 — its `BigQueryClientLike` is
+  sufficient there because `listDatasets` is the only call inside the smoke harness.
 
 ## §4 Test Plan
 
-**TASK-BQ00-001 — package + bundle proof**
-
-| Type | Test | Expected |
+| Type | Test Name | Expected |
 |---|---|---|
-| happy | `client module loads under Node without credentials` | dynamic `import("@google-cloud/bigquery")` resolves; default export exposes a `BigQuery` constructor; no ADC env needed for module load |
-| happy | `bundle probe succeeds under extension build options` | esbuild-API build (bundle, node/cjs, target node18, external vscode) exits 0; output contains a known client marker; byte size reported in log |
-| edge (credential safety) | `probe output contains no credential artifacts` | output lacks `application_default_credentials`, `private_key`, `BEGIN RSA PRIVATE KEY` |
-| edge (pin boundary) | `lockfile resolves exactly one version in range` | single lockfile entry for `@google-cloud/bigquery`, version satisfying `^9.0.3` (or recorded `^8.3.1` fallback) |
-| edge (bundle boundary) | `vscode stays external in probe` | probe output does not inline a resolved `require("vscode")` — external honored, same as the real build |
+| unit (001) | valid bigquery config with billing project + location | `validateBigQueryConnection` returns `{ok:true}` |
+| edge-empty (001) | empty/whitespace `billingProject` | `{ok:false}`, reason names billing project |
+| edge-type (001) | `maxBytesBilled:"abc"` / `"-5"` / `"0"` | all `{ok:false}` (non-numeric / negative / zero) |
+| edge-security (001) | `JSON.stringify(validBqConfig)` scanned | contains none of `credentials`, `keyFilename`, `token`, `password` |
+| edge-compat (001) | legacy pg fixture (no `driver` extras) | validator `{ok:true}`; existing shape untouched |
+| unit (002) | connect with injected fake client | resolves; impl called once with `{projectId: billingProject}` |
+| edge-diag (002) | fake smoke throws "Could not load the default credentials" | rejects `BigQueryConnectError` with `category:"missing_adc"` + remediation matching `gcloud auth application-default login` |
+| edge-lifecycle (002) | `close(); close()` | both resolve; factory not re-invoked; no throw |
+| edge-propagation (002) | location `"EU"` configured | impl observed opts carry location |
+| edge-normalization (002) | page with `"9007199254740993"` int cell | normalized output keeps string (branded), not number |
+| unit (003) | `createAdapter(bigqueryCfg)` | returns `BigQueryAdapter` with DbAdapter duck-type methods |
+| edge-admission (003) | manager `addConnection(bigqueryCfg, "")` | SecretStorage get/store never called with `vsdb.pass.<id>`; metadata persisted |
+| edge-concurrent (003) | `dispose(); dispose(); getAdapterFor(bigqueryId)` | dispose idempotent; post-dispose use rejects explicit closed-error, no client constructed |
+| regression (003) | existing pg add/connect suite | `connectionManager.test.ts` stays green (SecretStorage flow unchanged) |
+| unit (004) | driver=bigquery form | `billingProject` input present; host/port/password/SSL inputs absent |
+| edge-state (004) | bigquery + empty billingProject + Save | submit blocked; status message set; no `submit` postMessage |
+| edge-copy (004) | `testResult` carries fixed ADC remediation | rendered verbatim; no user-input concatenation into remediation node |
+| regression (004) | driver=postgres form | host/port/password/SSL present; BQ fields absent; existing assertions green |
 
-**TASK-BQ00-002 — pure job/page contract**
-
-| Type | Test | Expected |
-|---|---|---|
-| happy | `toBigQueryPage maps fixture to BigQueryPage preserving jobRef identity` | calling exported `toBigQueryPage(rawFixture)` returns a `BigQueryPage`; `jobRef` `{projectId, location, jobId}` verbatim; deep-equals the expected mapped object |
-| edge (empty) | `empty final page has no next` | `rows: []`, `pageToken: null` → `hasNextPage === false` |
-| edge (empty-vs-token) | `empty page can still continue` | `rows: []` + non-null token → `hasNextPage === true` (token, not row count, owns continuation) |
-| edge (continuation/ownership) | `page token round-trips opaquely` | token passes into `BigQueryPageRequest` unmodified — no parse/trim/truncate |
-| edge (structural) | `nested RECORD + REPEATED preserved` | 2-level nested schema with REPEATED mode; arrays and `fields` recursion intact |
-| edge (precision/boundary) | `NUMERIC/BIGNUMERIC canonical strings` | `"12345678901234567890.123456789"` and `"9007199254740993"` (> MAX_SAFE_INTEGER) stay `typeof "string"` with exact digit equality — fails under any `Number` coercion |
-
-**TASK-BQ00-003 — ADC classifier + client seam**
-
-| Type | Test | Expected |
-|---|---|---|
-| happy | `fake client smoke resolves ok` | injected fake listing one dataset → `runAdcSmoke` resolves `"ok"`; client constructed once — observed via `createBigQueryClient`'s injectable `impl` parameter counted with a Vitest `vi.fn()` (`expect(implSpy).toHaveBeenCalledTimes(1)`); projectId propagated |
-| edge (missing credential) | `missing ADC classified with gcloud remediation` | synthetic `"Could not load the default credentials"` → `missing_adc`; remediation names `gcloud auth application-default login` |
-| edge (two distinct permission classes) | `denied API vs bad billing project distinguishable` | synthetic 403 project access denied → `api_denied`; synthetic 404 project-not-found → `bad_billing_project` (different categories) |
-| edge (semantic) | `wrong location classified; unknown falls back` | location-mismatch text → `location_mismatch`; unrecognized error → `unknown` + generic remediation |
-| edge (security/redaction) | `classifier never echoes raw error text` | synthetic message containing `"Bearer abc123"` yields diagnostic where neither `category` nor `remediation` contains the token or the raw message |
-
-**TASK-BQ00-004 — ADR 0004** (docs-only; command-verified content checks — no source behavior to test, justified per RULES N/A rule)
-
-| Type | Check | Expected |
-|---|---|---|
-| happy | ADR exists with all required decision sections | file contains headings: version/method, continuation ownership, cancellation, scalar conversion, config fields, IAM, Storage Read deferral, ADC recipe |
-| happy (method-name evidence) | "Pagination + cancellation method names" section present and cites the evidence file | ADR names `getQueryResults`, `query`, `createQueryJob`, `job.cancel` and cites `docs/decisions/_bq00-evidence.md` by path |
-| edge (paper mapping) | "Grid continuation mapping" paragraph present | ADR maps `BigQueryPage.pageToken` onto the read-only grid continuation contract (`RunResult.batched` / `resultsPanel.ts` `loadMore`) WITHOUT any edit to those files |
-| edge (consistency) | recorded version matches lockfile pin | ADR states the exact installed version |
-| edge (index completeness) | README table updated | `docs/decisions/README.md` gains a `0004` row |
-
-Regression net: full `npm test` at every wave boundary; suite floor 3189 passed | 2 skipped must not drop; BQ-00 adds tests on top.
+Edge-kind coverage: 001 = empty + wrong-type/negative + security-redaction +
+backward-compat (4 kinds); 002 = diagnostic-mapping + lifecycle-concurrency +
+propagation + normalization (4 kinds); 003 = admission/security + double-dispose
+concurrency + regression (3 kinds); 004 = render-state + submit-gating + copy-safety +
+regression (4 kinds).
 
 ## §5 Verification
 
+Per-task: focused vitest file + `npm run typecheck` (see each TASK file). The repo has
+**no lint script** — `npm run typecheck` is the static gate (BQ-00 precedent). Webview
+bundle tests (004) require `npm run compile` first (dist/connectionForm.js).
+Wave/cycle boundary regression net: full `npm test`; BQ-00 suites
+(`bigqueryTypes.test.ts`, `bigqueryAdc.test.ts`, `bigqueryPackage.test.ts`) must remain
+untouched-green.
+
 ```bash
-# Focused (per task — exact paths)
-npx vitest run src/adapters/__tests__/bigqueryPackage.test.ts
-npx vitest run src/adapters/__tests__/bigqueryTypes.test.ts
-npx vitest run src/adapters/__tests__/bigqueryAdc.test.ts
-
-# Static gate — every task (NO lint script exists in this repo; none invented — roadmap §7 concurs)
 npm run typecheck
-
-# Bundle gate — every task (cheap, catches bundle breakage from the new dep)
 npm run compile
-
-# Package smoke (mandatory in TASK-BQ00-001)
-npm run compile && test -f dist/extension.js
-
-# Wave/cycle boundary regression net
 npm test
 ```
 
-Notes: focused paths are direct file paths — the new test files are not yet in `.cache/index/tests-map.json` (stale, 3 entries; no `src/adapters/types.ts` entry); the roadmap orders an index refresh at next commissioning. RULES' fallback floor names `yarn test:release-core` (a ukit-repo script that does not exist here); this npm repo's non-empty floor is `npm test`. New files are named `*.test.ts` (NOT `*.integration.test.ts`, which `vitest.config.ts` excludes from `npm test`).
-
 ## §6 Acceptance
 
-Roadmap bullets 1:1:
-
-- [ ] Package/version/bundle behavior proved in CI-compatible build conditions → TASK-BQ00-001.
-- [ ] Adapter contract states who owns job IDs/page tokens and how nested/precision-sensitive values display → TASK-BQ00-002 types+tests; decision recorded in TASK-BQ00-004.
-- [ ] Missing ADC / bad billing project / denied API / wrong location distinguishable without secrets → TASK-BQ00-003 classifier + redaction test; recipe in TASK-BQ00-004.
-- [ ] No existing driver type or UI changed unless a test demonstrates the need → all tasks; `git diff --stat` on the §2 read-only list must be empty at cycle end; `src/extension.ts` untouched.
-
-Per-task done criteria in each `tasks/TASK-BQ00-00x.md`; every task additionally requires fresh RED→GREEN evidence in its Executor Report, `npm run typecheck` + `npm run compile` green, reviewer model ≠ executor model, full `npm test` green at wave boundaries (floor 3189|2 preserved).
+- [ ] `driver:"bigquery"` config: billing project required, location/cost optional but
+      validated, serialization redaction proven (TASK-BQ01-001).
+- [ ] `BigQueryAdapter` connects via BQ-00 seam; no-ADC → `missing_adc` + gcloud
+      remediation; close idempotent; branded strings preserved (TASK-BQ01-002).
+- [ ] Factory exhaustive incl. bigquery; active BigQuery connection never asks
+      SecretStorage for a fake password; dispose blocks later adapter use (TASK-BQ01-003).
+- [ ] BQ fields render only for bigquery; invalid state cannot silently submit; ADC copy
+      verbatim; 3-driver form behavior unchanged (TASK-BQ01-004).
+- [ ] Full `npm test` green at cycle end; `npm run typecheck` clean.
+- [ ] Zero credential/token/service-account-JSON imports or stores in the diff
+      (executor runs the grep audit and records output).
+- [ ] No real GCP network call in any test.
 
 ## §7 Global Constraints
 
-- `@google-cloud/bigquery` pinned `^9.0.3` (fallback `^8.3.1` only via the documented engine-floor outcome); lockfile pins one exact version; no other dependency changes; no new devDependencies (esbuild already present).
-- Node >= 22 on the dev/test box (client 9.x floor; repo runs v22.22.1). esbuild target stays `node18` — do not raise or lower it.
-- npm only (no yarn/pnpm). VS Code engine `^1.75.0` and all existing scripts unchanged.
-- No automated test constructs a real GCP client or requires ADC; no test file named `*.integration.test.ts`.
-- No secrets, env values, tokens, credential paths, or raw error text in any test, fixture, log, or ADR. Classifier output is fixed-copy remediation only (redaction by construction).
-- Read-only this cycle: `src/adapters/{factory,mssql,mysql,postgres,types}.ts`, `src/core/queryRunner.ts`, `src/ui/resultsPanel.ts`, `src/extension.ts`, `esbuild.js`, `vitest.config.ts`, `vitest.integration.config.ts`.
-
-## Planner Report
-PLANNER_MODEL: unic-smart
-PLAN_REVIEW: Approved by unic-smart
-
-## Planner Self-Audit
-Checklist: 12/12 pass
-Fixed during audit: (1) corrected the roadmap's stale ADR numbering — `docs/decisions/` exists (0001-0003 + README), so BQ-00's ADR is `0004`, not "0001 genesis"; (2) replaced the naive "grep bigquery markers in dist/extension.js" package smoke with an esbuild-API bundle probe after verifying nothing imports the client yet (dist could never contain it — unfalsifiable test); (3) caught the 9.x `engines.node >= 22` floor vs `engines.vscode ^1.75.0` extension-host question via live npm registry checks (8.3.1 = node>=18 fallback documented, 7.9.4 = node>=14 verified too) and made the engine-floor outcome a measured deliverable of 001/004 instead of an assumption; (4) wave 2 widened to run 002 ∥ 003 after proving 003 consumes no 002 symbol (deviation from the commissioning brief's serial order recorded in §3).
-Known gaps: the real-ADC manual recipe is authored in BQ-00.4 but NOT executed this cycle (no disposable test project provisioned) — first live run belongs to BQ-01's environment; the grid continuation mapping is a paper deliverable only (grid files are read-only this cycle); BQ-00.4 is docs-only with command-verified content checks instead of vitest tests (justified in §4). Round 2 note: `.d.ts` method-name evidence is no longer Discussion-only — it is a vitest-parsed proof test + on-disk `_bq00-evidence.md` owned by 001.
+- Reuse `src/adapters/bigqueryTypes.ts` + `src/adapters/bigqueryAdc.ts` as-is — no
+  duplicate/rename/re-export; BQ-01 code imports their public symbols.
+- ADC stays EXTERNAL: no credential/OAuth/service-account-JSON import, store, or mock
+  fixture anywhere in this cycle.
+- TDD: RED first with pasted failing output, then GREEN; no silent instant-pass.
+- No real GCP call in tests — inject the adapter-owned `BigQueryClientFactory` (whose
+  default impl wraps BQ-00's `createBigQueryClient`); `runAdcSmoke` keeps consuming the
+  BQ-00 `BigQueryClientLike` shape verbatim.
+- Branded `BigQueryInt64String` / `BigQueryNumericString` / `BigQueryBigNumericString`
+  discipline preserved at every new boundary.
+- `factory.ts` switch keeps the `never` exhaustiveness arm; bigquery has no
+  host/port/password path.
+- Tests must not depend on network, ADC environment, or `gcloud` presence.
+- No lint script exists — `npm run typecheck` is the static gate in every task.
 
 ## Plan Review Log
 
-### Round 1 — 2026-09-02 · unic-smart
-REVIEWER_MODEL: unic-smart
-Status: Issues Found
-VERDICT: Issues Found
 
-FINDINGS:
-  - docs/AI_HANDOFF/PLAN.md §3 (BQ-00.2) — no mapper function is named; §4's happy-path test "fixture maps to BigQueryPage preserving jobRef identity" has no defined subject. A literal executor may create types only and test the fixture against itself. Fix: name the export (e.g. `toBigQueryPage(raw: RawQueryResponse): BigQueryPage`) in §3 BQ-00.2 so the test, the ADR grid-mapping claim, and the reviewer's coverage check anchor to one function.
-  - docs/AI_HANDOFF/PLAN.md §3 (BQ-00.2/BQ-00.4) — roadmap line-67 mandate is only partially assigned: the `.d.ts` evidence step covers "response field names" only. Job cancellation return shape (`Job.cancel()` / `jobs.cancel` return) has NO owner in any task, and pagination method names (createQueryJob / getQueryResults / autoPaginate) are not enumerated. BQ-00.4's ADR "cites recorded evidence" but nothing records this evidence. Fix: extend BQ-00.2's Discussion-evidence step to enumerate the pagination/job/cancel method signatures from the installed .d.ts, and add cancellation-return-shape to BQ-00.4's required ADR sections.
-  - docs/AI_HANDOFF/PLAN.md §4 (BQ-00.3 happy test) — "client constructed once; projectId propagated" states no observation mechanism. Minor: one sentence on how the seam exposes constructor calls (injectable constructor spy) removes executor guesswork.
-  - docs/AI_HANDOFF/PLAN.md §3 (BQ-00.4) — continuation ownership is stated, but the roadmap's "exact VSDB grid continuation mapping" deserves one explicit ADR paragraph mapping BigQueryPage/pageToken onto the existing grid continuation contract (RunResult.batched / browse load-more), since the grid code is read-only this cycle and the paper mapping is the deliverable.
+## Planner Self-Audit
 
-COMPLETENESS: none — all sections §1-§7 + Planner Report + Self-Audit present; per-task fields (Target Files §2, Dependencies §3, Test Cases §4, Verification §5, Acceptance §6) present; PLANNER_MODEL footer intact.
-CONSISTENCY: none — wave plan matches the dependency graph (002←001, 003←001, 004←all); wave-2 files disjoint; §7 read-only list matches §2 OUT; the wave-2 parallelism deviation from the roadmap's serial order is recorded with rationale in §3.
-SCOPE: none — BQ-01..07 + the 4 follow-ups deferred; no real ADC in CI (fake clients + synthetic errors only); manual recipe authored-not-executed honestly disclosed in Known gaps; read-only list enforced via `git diff --stat` in §6.
-YAGNI: none — bundle probe is load-bearing (naive dist grep unfalsifiable since nothing imports the client yet); version pin + measured 8.3.1/7.9.4 fallbacks justified; no duplication of existing tests.
+Checklist: 12/12 pass
+1. §6 criteria → tasks: criterion 1→001, 2→002, 3→003, 4→004, 5→all (wave-boundary net),
+   6→all (grep audit in executor reports), 7→002/003/004 (fake-only harnesses). Named.
+2. Every task traces to roadmap §4 BQ-01 row 1-4 respectively; no invented task.
+3. Success definition fully covered: add (004→003→001), select (003 setActive), test
+   (002 diagnostics + 004 gating), remove (003 dispose) — no partial delivery.
+4. Unhappy paths planned: no-ADC (002 #2), bad billing project/API denied classes via
+   BQ-00 classifier reuse (002/004), invalid form state (004 #2), post-dispose use
+   (003 #4), legacy config compat (001 #5).
+5. Target Files verified: `config/types.ts`, `factory.ts`, `connectionManager.ts`,
+   `connectionForm.ts`, `connectionFormMessages.ts`, `webview/connectionFormMain.ts`
+   exist at HEAD (git ls-files); `bigquery.ts` marked (new); test files: 4 new + 2
+   modified, all parent dirs exist.
+6. Verification commands real: `npx vitest run <file>`, `npm run typecheck`,
+   `npm run compile`, `npm test` — all defined in package.json scripts (no lint script;
+   stated explicitly).
+7. Same-wave file sharing: wave 1 = 001 (config/types.ts) ∥ nothing; wave 2 = 002
+   (bigquery.ts) ∥ 004 (form files) — disjoint; 003 alone in wave 3 with both its files.
+8. No dangling dependency: 003 consumes `BigQueryAdapter` (002) + validator (001); 004
+   consumes field names (001). All created by earlier waves.
+9. Edge kinds: ≥2 genuinely different kinds per task (001: empty/type-negative/security/
+   compat; 002: diag-mapping/lifecycle/propagation/normalization; 003: admission/
+   concurrency/regression; 004: render-state/copy/wire/regression).
+10. Every Expected is concrete (`{ok:false}` + reason content, spy count 0, exact copy
+    match, typeof checks) — none are "works correctly".
+11. Not a bugfix cycle — regression rows (003 #6, 004 #4) pin existing suites instead.
+12. Not all tests pass on empty impl: each happy case requires new exported symbols
+    (validator, adapter class, factory case, DOM fields) — an empty implementation fails
+    compile/instanceof/DOM assertions.
 
-NOTES: Verified live before verdict: `npm test` = 3189 passed | 2 skipped (floor claim exact); docs/decisions/ has 0001-0003 + README (ADR 0004 numbering correct); no lint script in package.json (§5's omission is correct); esbuild target node18 at esbuild.js:20; DbAdapter seams exist at src/adapters/types.ts:122-183; vitest.config.ts excludes *.integration.test.ts; Node v22.22.1. Both important findings are one-line plan edits — incorporate and re-review, or proceed with them as executor instructions.
+Fixed during audit: INDEX wave bullets initially wrote a contradictory "wave 1 (2)"
+header while 001→002 is a real dependency — corrected to 1+2+1 waves.
+Known gaps: real-ADC cross-platform manual smoke (roadmap acceptance #4) is a human
+follow-up, not an AI task; introspection SQL surfaces (listColumns etc.) are scoped to
+BQ-02 with NotImplementedError allowed this cycle (recorded in TASK-BQ01-002 Discussion).
+Location propagation mechanism now pinned (round 2): adapter-owned `BigQueryClientFactory`
+opts `{projectId, location}`, default impl wraps BQ-00's `createBigQueryClient` — no
+executor-side seam decision remains open.
 
-### Round 2 — findings applied
-PLANNER_MODEL: unic-smart (re-applied)
-APPLIED:
-  - Important 1: named `toBigQueryPage` export in §3 BQ-00.2 + TASK-BQ00-002.md Target Files + Test Cases.
-  - Important 2: BQ-00.1 now records .d.ts method names into `docs/decisions/_bq00-evidence.md`; BQ-00.4 ADR cites that file and gains a "Pagination + cancellation method names" section.
-  - Minor 1: BQ-00.3 happy test now asserts constructed-once.
-  - Minor 2: BQ-00.4 ADR gains a "Grid continuation mapping" paragraph.
-DETAIL:
-  - Important 1 — `toBigQueryPage(raw: BigQueryRawQueryResponse): BigQueryPage` added as a named pure export in §3 BQ-00.2; §4 row 002's happy test re-titled "toBigQueryPage maps fixture to BigQueryPage preserving jobRef identity" so the subject is the real function (types-only implementation cannot pass); TASK-BQ00-002 Target Files, test #1, Acceptance #1, and the Interfaces type block updated; Round-2 Discussion note records the 001/002 evidence split (field names in 002, method names in 001).
-  - Important 2 — §3 BQ-00.1 gains item (e): vitest test #7 parses `node_modules/@google-cloud/bigquery/build/src/bigquery.d.ts` + `build/src/job.d.ts` asserting `getQueryResults`, `query`, `createQueryJob`, `job.cancel` declarations; executor writes `docs/decisions/_bq00-evidence.md` (NEW Target File of TASK-BQ00-001, signature + return shape + file:line refs, explicitly covering the previously owner-less `job.cancel()` return shape). TASK-BQ00-004 gains Test #4 (ADR cites the file by path + enumerates the four names) and the "Pagination + cancellation method names" ADR section in its required-headings list; §2 ownership table and TASK-BQ00-001 Target/Test Files/Acceptance/Interfaces updated to match.
-  - Minor 1 — §4 row 003's happy test and TASK-BQ00-003 test #1 now name the observation mechanism: the seam's existing injectable `impl` parameter wrapped in `vi.fn()`, asserted `expect(implSpy).toHaveBeenCalledTimes(1)` with `projectId` checked inside the captured options — no new mocking surface.
-  - Minor 2 — §4 row 004 gains a "paper mapping" check row; TASK-BQ00-004 gains Test #5 + an explicit Acceptance bullet: a 3-5 sentence "Grid continuation mapping" ADR paragraph mapping `BigQueryPage.pageToken` onto the read-only grid contract (`RunResult.batched` at src/adapters/types.ts:78; resultsPanel.ts `loadMore` → `runner.loadMore(index)`), verified by grep, with the read-only list untouched. Grounded before writing: both paths confirmed to exist at current HEAD.
-UNCHANGED (per revision constraints): wave structure (1: 001 → 2: 002∥003 → 3: 004), §2 read-only list, §7 Global Constraints, PLANNER_MODEL footer, DEFERRED status of the four STATUS follow-ups, task count (4).
+## Planner Report
+PLANNER_MODEL: unic-smart
 
-### Round 3 — 2026-09-02 · Approved
-REVIEWER_MODEL: unic-smart
-FINDINGS:
-  - none
-VERDICT: Approved
+### Round 1 — 2026-09-02 — Issues Found
+Reviewer model: unic-smart
+
+critical: none
+important: docs/AI_HANDOFF/PLAN.md:40-45 — §2 wave constraint block contradicts the plan's own Planner Self-Audit item 7 and INDEX.md:14-16: it schedules 001+002 in "Wave 1" and 003+004 in "Wave 2", but 002 imports 001's exported symbols (`validateBigQueryConnection`) and 003 imports 002's `BigQueryAdapter` — same-wave parallel execution would fail compile on not-yet-existing symbols. Fix: rewrite the §2 block to the 1+2+1 layout (W1=001; W2=002∥004; W3=003) already used in the self-audit and INDEX.
+important: docs/AI_HANDOFF/PLAN.md:64-65,86 — §3 claims location is "propagated via the factory's opts surface" and that test fakes "implement `BigQueryClientLike`", but the frozen BQ-00 seam (src/adapters/bigqueryAdc.ts:172-178) forwards only `{projectId}` and `BigQueryClientLike` (bigqueryAdc.ts:51-53) has only `listDatasets` — no location channel and no query surface for `runQuery`. TASK-BQ01-002's Discussion already resolves this (adapter-owned wider factory type; never edit bigqueryAdc.ts); §3 must be corrected to match, otherwise an executor following the plan verbatim either edits frozen BQ-00 files (violating §7) or fails typecheck.
+minor: docs/AI_HANDOFF/PLAN.md:88-115 — roadmap BQ-01 edge case "user changes active connection during test" has no pinning test or Discussion note in TASK-BQ01-003/004; existing lifecycle-generation guards likely cover it — record that assumption in a Discussion entry or add one edge test.
+minor: docs/AI_HANDOFF/PLAN.md:71 — factory sketch `return new BigQueryAdapter(cfg)` omits the (deliberately ignored) password parameter of `createAdapter(cfg, password)`; task file is authoritative — align wording.
+
+NOTES: Structure, test plan, scope, and YAGNI discipline are solid: §1-§7 plus Planner Report present, validator rules and every §4 Expected are concrete, edge-kind counts meet minTestsEdgeCase per task, BQ-00 surface is explicitly frozen and reused rather than duplicated, out-of-scope (Storage Read API, write workflows, token storage, package.json) is clean, and the "no lint script / typecheck is the static gate" claim matches package.json. Both important findings are documentation-level but execution-breaking if followed as written, and both already have correct resolutions elsewhere (Self-Audit/INDEX for waves, TASK-BQ01-002 Discussion for the seam) — round 2 should only need §2 and §3 wording fixes. Transparency note: planner self-reports unic-smart and reviewer runs unic-smart; the spec/plan review contract has no executor-isolation gate, so this is recorded, not blocking.
+
+### Round 2 — 2026-09-02 — Resolved
+Reviewer model: unic-smart
+Applied: §2 wave block rewritten to 1+2+1 (001 → {002 ∥ 004} → 003) with dep-chain rationale; §3 BQ01-002 location propagation rewritten to "adapter-owned `BigQueryClientFactory` wraps BQ-00 seam" matching TASK-BQ01-002 Discussion; §3 test-seam paragraph corrected (fakes implement the adapter's own factory type, not BQ-00's `BigQueryClientLike`; `runAdcSmoke` reuses BQ-00's narrower interface as-is).
+NOTES: TASK-BQ01-002 Discussion already documented the correct mechanism; PLAN.md §3 caught up. No new tests, no scope change. Extra touchups in the same round: TASK-BQ01-002 Interfaces block replaced the contradictory `clientFactory?: typeof createBigQueryClient` sketch with the adapter-owned `BigQueryClientFactory` + broader `BigQueryClient` type (sync Discussion entry added); §7 global constraint reworded to the same wrapped-factory injection; §3 admission sketch now notes `createAdapter(cfg, password)` passes and ignores the password arg (Round 1 minor); TASK-BQ01-003 Discussion records the active-connection-during-test lifecycle-guard assumption (Round 1 minor); Self-Audit Known gaps updated — location mechanism is pinned, no longer executor-open.
+
+### Round 2 verification — 2026-09-02 — Approved
+Reviewer model: unic-smart
+Independently verified both Round-1 important findings are resolved (source-checked):
+  - Wave block (PLAN.md §2 CONSTRAINT) now reads 1+2+1 (W1=001; W2=002∥004 disjoint;
+    W3=003) with the dep-chain rationale "002 imports 001's symbols, 003 imports 002's
+    adapter" — consistent with INDEX.md wave bullets and Self-Audit item 7. Resolved.
+  - §3 BQ01-002 now pins the adapter-owned `BigQueryClientFactory` with `{projectId,
+    location}` opts wrapping BQ-00's `createBigQueryClient`; verified in source that
+    bigqueryAdc.ts:172-178 forwards only `{projectId}` — no location-through-BQ-00-seam
+    claim remains anywhere in the plan. Resolved.
+  - §3 test-seam paragraph: fakes implement the adapter's broader factory type;
+    `runAdcSmoke` reuses BQ-00's `BigQueryClientLike` (bigqueryAdc.ts:51-53,
+    listDatasets-only — confirmed) verbatim. Accurate. Resolved.
+  - TASK-BQ01-002 Interfaces block lists the adapter-owned `BigQueryClientFactory` +
+    broader `BigQueryClient`; Discussion entry 2 explicitly retracts the stale
+    `clientFactory?: typeof createBigQueryClient` sketch. In sync.
+COMPLETENESS: none
+CONSISTENCY: none
+CLARITY: none
+SCOPE: none
+YAGNI: none
+NOTES: Approved. One non-blocking nit, recorded not blocking: TASK-BQ01-002 test-row #1
+fixture column still hints "fake BigQueryClientLike (mirror bigqueryAdc.test.ts #1)"
+while the normative Interfaces block (same file) requires the broader `BigQueryClient`;
+typecheck at the injection site forces the correct shape, so no plan change needed.
+Round-1 minors also confirmed fixed: §3 admission sketch notes `createAdapter(cfg,
+password)` ignores password for bigquery; TASK-BQ01-003 Discussion records the
+active-connection-during-test lifecycle-guard assumption.
+
+PLAN_REVIEW: Approved by unic-smart (Round 2)

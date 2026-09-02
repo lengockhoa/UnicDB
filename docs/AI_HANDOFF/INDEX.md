@@ -1,6 +1,23 @@
 # INDEX
 
-Cycle BQ-00 — **BigQuery provider feasibility + adapter contract spike** — shipped in v1.46.0 (2026-09-02; 4/4 tasks approved after R4.5 round 1 fixes, 1 critical_block + 1 changes_requested resolved, released; `089f2f0` pushed; `vsdb-1.46.0.vsix` published; gh release live). Cycle AIX-07 — **Trust, Privacy & Governance** — complete; shipped in v1.28.0. Cycle DX-01 — Release confidence lane — shipped in v1.36.0. Cycle ARP-02 — shutdown-safe query ownership — shipped in v1.38.0. Cycle ARP-03 — retained-result memory budget — shipped in v1.39.0 (2026-09-02). Cycle ARP-04 — tunnel and endpoint identity hardening — shipped in v1.40.0 (2026-09-02; 5/5 tasks approved round 1, released). Cycle ARP-05 — cross-driver resilience contract — shipped in v1.41.0. Cycle ARP-06 — AI SQL policy unification and usage visibility — shipped in v1.42.0. Cycle ARP-07 — successful-DDL cache/context invalidation — shipped in v1.43.0 (2026-09-02; 4/4 tasks approved round 1, released). Cycle ARP-08 — console draft recovery — shipped in v1.44.0 (2026-09-02; 4/4 tasks approved round 1, released). Cycle ARP-09 — redacted support diagnostics + release-confidence profiles — shipped in v1.45.0 (2026-09-02; 5/5 tasks approved round 1 after R4.5, released).
+## Cycle BQ-01 — BigQuery connection foundation (ADC, billing project, location)
+
+| Task / Portfolio | Title | Status | Dependencies | Reviewer |
+|---|---|---|---|---|
+| TASK-BQ01-001 | Safe BigQuery connection config (pure validator + DriverType) | ready | none | - |
+| TASK-BQ01-002 | BigQuery adapter / client lifecycle (`bigquery.ts`, BQ-00 seam) | ready | TASK-BQ01-001 | - |
+| TASK-BQ01-003 | Factory + ConnectionManager admission for bigquery | ready | TASK-BQ01-001, TASK-BQ01-002 | - |
+| TASK-BQ01-004 | Connection form + diagnostics for bigquery | ready | TASK-BQ01-001 | - |
+
+Graph: TASK-BQ01-001 independent; TASK-BQ01-001 → TASK-BQ01-002; TASK-BQ01-001, TASK-BQ01-002 → TASK-BQ01-003; TASK-BQ01-001 → TASK-BQ01-004.
+
+- Wave 1 (1): TASK-BQ01-001 (pure config + validator — 002 imports its symbols, so it gates wave 2)
+- Wave 2 (2): TASK-BQ01-002, TASK-BQ01-004 (parallel — disjoint files; both consume only 001)
+- Wave 3 (1): TASK-BQ01-003 (owns `factory.ts` + `connectionManager.ts` together; consumes 002's adapter)
+
+No same-wave file sharing: 001 owns `src/config/types.ts`; 002 owns `src/adapters/bigquery.ts` (new); 003 owns `src/adapters/factory.ts` + `src/core/connectionManager.ts`; 004 owns `src/ui/connectionForm.ts`, `src/ui/connectionFormMessages.ts`, `webview/connectionFormMain.ts`. BQ-00 surface (`bigqueryTypes.ts`, `bigqueryAdc.ts`) frozen. Plan: `docs/AI_HANDOFF/PLAN.md`.
+
+## Cycle BQ-00 — **BigQuery provider feasibility + adapter contract spike** — shipped in v1.46.0 (2026-09-02; 4/4 tasks approved after R4.5 round 1 fixes, 1 critical_block + 1 changes_requested resolved, released; `089f2f0` pushed; `vsdb-1.46.0.vsix` published; gh release live). Cycle AIX-07 — **Trust, Privacy & Governance** — complete; shipped in v1.28.0. Cycle DX-01 — Release confidence lane — shipped in v1.36.0. Cycle ARP-02 — shutdown-safe query ownership — shipped in v1.38.0. Cycle ARP-03 — retained-result memory budget — shipped in v1.39.0 (2026-09-02). Cycle ARP-04 — tunnel and endpoint identity hardening — shipped in v1.40.0 (2026-09-02; 5/5 tasks approved round 1, released). Cycle ARP-05 — cross-driver resilience contract — shipped in v1.41.0. Cycle ARP-06 — AI SQL policy unification and usage visibility — shipped in v1.42.0. Cycle ARP-07 — successful-DDL cache/context invalidation — shipped in v1.43.0 (2026-09-02; 4/4 tasks approved round 1, released). Cycle ARP-08 — console draft recovery — shipped in v1.44.0 (2026-09-02; 4/4 tasks approved round 1, released). Cycle ARP-09 — redacted support diagnostics + release-confidence profiles — shipped in v1.45.0 (2026-09-02; 5/5 tasks approved round 1 after R4.5, released).
 
 | Task / Portfolio | Title | Status | Dependencies | Reviewer |
 |---|---|---|---|---|

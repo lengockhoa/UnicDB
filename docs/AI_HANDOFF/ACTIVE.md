@@ -1,4 +1,4 @@
-Cycle: BQ-00   Date: 2026-09-02   Base: main @ 35f7aff (v1.45.0)
-Goal: Ship BQ-00 BigQuery provider feasibility + adapter contract spike (no real ADC).
+Cycle: BQ-01   Date: 2026-09-02   Base: main @ 9bfd07d
+Goal: Ship BQ-01 BigQuery connection foundation (ADC, billing project, location, lifecycle, factory admission, form diagnostics)
 Tasks: 4 total
 Status: planning_done — ready for executor
