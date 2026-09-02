@@ -3,4 +3,4 @@ Goal: Ship BQ-02 — BigQuery resource explorer + table preview (wires BigQueryA
 Base: main @ e171d42
 Phase: P3
 Cursor: P0 → P1 (lite) → P2 (planner unic-smart, 4 tasks: 001+002 ∥ wave 1, 003+004 ∥ wave 2; seam-widening on BigQueryClient in bigquery.ts: listDatasets→getDatasets, getDataset→dataset(id), getTable→dataset(id).table(id).getMetadata, no getRows; dropped listRoutineParams real impl; self-audit 12/12) → P2.5 r1 (Issues Found 5+1: listTableDetail test missing, listRoutines test missing, 004 gate missing, 003 ownership phrasing, getRows in seam w/o caller) → planner fix pass (all 6 closed; §4 22 rows; 004 gate added; getRows dropped; REPEATED/RECORD fixture added) → P2.5 r2 (Approved by unic-smart; non-blocking note on listTableDetail count-loss convention noted for executor) → P3 (d3fa05d plan commit, 7 files / 707+).
-Next: I1 — verify clean tree, ACTIVE/INDEX read; then I2 infer waves (maxParallelAgents from .ukit/storage/config.json), I3 wave 1 (001 ∥ 002, code agents in worktrees), I4 consolidate, R1-R5.
+Next: I3 wave 2 — 003 ∥ 004 (code agents in worktrees handoff/task-bq02-003 from b5399c4 and handoff/task-bq02-004 from b5399c4).
