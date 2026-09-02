@@ -123,4 +123,28 @@ Note: Worktree had no prebuilt dist/ on first verify:release run — three bundl
 
 ## Reviewer Verdict
 
-(pending)
+REVIEWER_TOOL: claude-code
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+Verdict: changes_requested
+VERIFICATION_RERUN: `npm run verify:release` — exit 0; Tests 3316 passed | 2 skipped (3318); typecheck + compile exit 0 (fresh, this turn)
+TEST_PLAN_COVERAGE: partial — gates #1 (no version pins), #2, #3, #4, #5 (frozen surface empty at HEAD), #6 (version line only; dependencies byte-identical vs d3fa05d) all pass fresh; the CHANGELOG copy itself fails factual accuracy (findings below)
+Findings:
+- IMPORTANT — CHANGELOG.md:9 — preview bullet cites `src/adapters/bigqueryPreview.ts` (new) + `src/adapters/__tests__/bigqueryPreview.test.ts`; NEITHER file exists. Actual: `src/ui/bigQueryPreview.ts` (new) + `src/ui/__tests__/bigQueryPreview.test.ts` (builder at src/ui/bigQueryPreview.ts:57). Correct both paths — a human following the release record lands on a missing file.
+- IMPORTANT — CHANGELOG.md:11 — click-path bullet cites `src/core/connectionManager.ts` as changed; `git diff --stat d3fa05d..HEAD -- src/core/connectionManager.ts` is EMPTY (untouched the whole cycle). Remove it from the citation.
+- IMPORTANT — CHANGELOG.md:24 — Review bullet asserts "R2 per-task review by unic-smart: 3/3 verdicts returned (BQ02-001/002/003 `approved_minor`)". FALSE at land time: TASK-BQ02-001 and TASK-BQ02-002 are still `pending_review` with `(pending)` verdict sections (only 003 has landed). The release record must not claim review evidence that does not exist — rewrite this bullet after the 001-002 verdicts actually land, or state the true review state.
+- MINOR — CHANGELOG.md:5,26 — test count says 3308 passed | 2 skipped / +25 (wave-1 state); the landed state is 3316 | 2 / +33 (executor's own commit message and this reviewer's fresh run both say 3316). Wave-2's 8 schema-tree tests and behavior (listing-rejection error node, dataset-node expansion, estimateTableRowsBatch row-count guard) are absent from the Added bullets. Update counts and add the wave-2 scope in the same revision.
+- MINOR — Executor Report (this task) — reports 3308|2 while the shared wave-2 commit b97162a landed 3316|2; note the final land-state number in the report.
+Notes: All mechanical gates are clean — package.json exactly 1.49.0 with a version-line-only diff, lockfile both version fields 1.49.0, `dependencies` byte-identical vs base, BQ-00 frozen surface diff empty at HEAD c2d2c56. The only work required is a copy-accuracy revision of the [1.49.0] CHANGELOG entry; no source code is involved, so re-verify with the greps + verify:release after the edit.
+
+## Reviewer Verdict (R4.5 round 1 re-review)
+REVIEWER_TOOL: claude-code
+REVIEWER_MODEL: unic-smart (matches handoff.reviewer.model; differs from executor unic-code — isolation OK)
+Verdict: approved_minor
+VERIFICATION_RERUN: npm run verify:release — exit 0; Tests 3316 passed | 2 skipped (3318); typecheck + compile exit 0 (fresh, this turn). Per-file test deltas 14+7+4+7+1 = 33 reconcile with the +33 headline.
+Findings:
+- FIXED (all 4 prior findings verified): CHANGELOG.md:9 now cites `src/ui/bigQueryPreview.ts` + `src/ui/__tests__/bigQueryPreview.test.ts` (both exist); connectionManager claim removed (diff d3fa05d..HEAD -- src/core/connectionManager.ts empty); line 23 now states 4/4 verdicts incl. BQ-02.004 `changes_requested` (matches disk: 001/002/003 approved_minor); totals corrected to +33 / 3283→3316 / 3316|2 (matches fresh run).
+- MINOR — CHANGELOG.md:8-10 — per-bullet test counts do not reconcile with the verified headline: bullets claim 12+6+8=26, actual per-file deltas are 14 (bigquery.test.ts) + 7 (bigQueryPreview.test.ts) + 4 (browseCommands.test.ts) + 7 (schemaTree.test.ts) + 1 (schemaTreeCatalog.test.ts) = 33. The preview bullet's "6 new tests" undercounts the pure module (7) and its browse-arm/qualify-skip pins actually live in src/ui/__tests__/browseCommands.test.ts, which the bullet's file citation omits. Non-blocking copy accuracy nit: fix counts (or attribute the 4 browse tests) at the next docs touch.
+- VERIFIED-CLEAN: package.json 1.49.0 + both package-lock.json version fields 1.49.0; fix commit 871265f is CHANGELOG.md-only (no source files in R4.5); BQ-00 frozen surface diff empty at worktree and since base d3fa05d; DRIVER_ICONS.bigquery/cloud, estimateTableRowsBatch bigquery guard (schemaTree.ts:622), error-node path, qualifyKeywordTables skip, listRoutineParams deferral guard (postmanPayload fail-closed on tableDdl capability) and P2.5 "5+1 fixes round 2" claim all confirmed against source/PLAN.
+Notes: All previously flagged inaccuracies are fixed and fresh-verified; the only residual is the per-bullet count reconciliation nit. Housekeeping: untracked docs/AI_HANDOFF/PLAN_AIX09.md reappeared after c2d2c56 dropped it — out-of-cycle scratch, consider re-deleting before release packaging.
+NEXT_STATUS_FOR_INDEX: approved_minor

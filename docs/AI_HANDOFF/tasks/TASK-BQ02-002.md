@@ -136,4 +136,20 @@ Note: `buildBrowseSelect`'s bigquery case delegates to `buildBigQueryPreviewSql`
 
 ## Reviewer Verdict
 
-(pending)
+REVIEWER_TOOL: claude-code
+REVIEWER_MODEL: unic-smart (matches handoff.reviewer.model; differs from executor — isolation OK)
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/bigQueryPreview.test.ts src/ui/__tests__/browseCommands.test.ts
+  result: 28 passed / 0 failed (7 pure-module + 21 browse)
+  command: npm run typecheck && npm run compile
+  result: exit 0
+  command: npm test (full suite — shared-path regression net)
+  result: 3316 passed | 2 skipped (baseline 3283|2, additive only)
+TEST_PLAN_COVERAGE: all-followed — task rows 1-9 covered by 7 pure tests + #5/#7/#8/#9 browse pins; RED_OUTPUT is real failing output (module-not-found trace, non-zero exit) at the pre-implementation state
+Verdict: approved_minor
+Findings:
+- minor: docs/AI_HANDOFF/tasks/TASK-BQ02-002.md:33 (Test Cases row 4) — says `limit: 0`/`-5` → `LIMIT 100`, but PLAN §4 row 16, the shipped clamp (src/ui/bigQueryPreview.ts:41: n<=0 → BIGQUERY_PREVIEW_MAX_LIMIT) and the passing tests all pin `LIMIT 1000`. Doc drift in the task file only; behavior is correct. Same drift: line 78 Interfaces says "100 <= n <= 1000" which contradicts the pinned `limit: 25` → `LIMIT 25` (explicit limits emit [1,1000]).
+- minor: src/ui/browseCommands.ts:76 — quoteForDriver's unreachable bigquery throw still reads "Unsupported driver: bigquery (BQ-02 wiring pending)" although the wiring has landed; stale for any future direct caller. Kept deliberately for the never-exhaustiveness check — cosmetic only.
+- minor: src/ui/bigQueryPreview.ts:66 and src/ui/__tests__/bigQueryPreview.test.ts:85 — files lack a trailing newline.
+Notes: Diff is exactly the 4 owned files (arm swap + one-line qualify guard + purely additive tests); pg/mysql/mssql arms byte-identical; pure module has zero imports; frozen surface and package.json untouched.
