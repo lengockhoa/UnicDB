@@ -1,6 +1,6 @@
 # INDEX
 
-Cycle AIX-07 — **Trust, Privacy & Governance** — complete; shipped in v1.28.0. Cycle DX-01 — Release confidence lane — shipped in v1.36.0. Cycle ARP-02 — shutdown-safe query ownership — shipped in v1.38.0. Cycle ARP-03 — retained-result memory budget — shipped in v1.39.0 (2026-09-02). Cycle ARP-04 — tunnel and endpoint identity hardening — shipped in v1.40.0 (2026-09-02; 5/5 tasks approved round 1, released). Cycle ARP-05 — cross-driver resilience contract — shipped in v1.41.0. Cycle ARP-06 — AI SQL policy unification and usage visibility — shipped in v1.42.0. Cycle ARP-07 — successful-DDL cache/context invalidation — shipped in v1.43.0 (2026-09-02; 4/4 tasks approved round 1, released).
+Cycle AIX-07 — **Trust, Privacy & Governance** — complete; shipped in v1.28.0. Cycle DX-01 — Release confidence lane — shipped in v1.36.0. Cycle ARP-02 — shutdown-safe query ownership — shipped in v1.38.0. Cycle ARP-03 — retained-result memory budget — shipped in v1.39.0 (2026-09-02). Cycle ARP-04 — tunnel and endpoint identity hardening — shipped in v1.40.0 (2026-09-02; 5/5 tasks approved round 1, released). Cycle ARP-05 — cross-driver resilience contract — shipped in v1.41.0. Cycle ARP-06 — AI SQL policy unification and usage visibility — shipped in v1.42.0. Cycle ARP-07 — successful-DDL cache/context invalidation — shipped in v1.43.0 (2026-09-02; 4/4 tasks approved round 1, released). Cycle ARP-08 — console draft recovery — shipped in v1.44.0 (2026-09-02; 4/4 tasks approved round 1, released).
 
 | Task / Portfolio | Title | Status | Dependencies | Reviewer |
 |---|---|---|---|---|
@@ -29,7 +29,7 @@ Cycle AIX-07 — **Trust, Privacy & Governance** — complete; shipped in v1.28.
 | PORT-ARP-05 | Cross-driver timeout/pool resilience contract | superseded (shipped in v1.41.0) | - | unic-smart |
 | PORT-ARP-06 | AI SQL policy unification and usage visibility | superseded (shipped in v1.42.0) | - | unic-smart |
 | PORT-ARP-07 | Successful-DDL cache/context invalidation | superseded (shipped in v1.43.0) | ARP-01 | unic-smart |
-| PORT-ARP-08 | Console draft recovery | active — cycle planned (ready for executor) | ARP-03 | unic-smart |
+| PORT-ARP-08 | Console draft recovery | superseded (shipped in v1.44.0) | ARP-03 | unic-smart |
 
 ## Cycle ARP-05 — Cross-driver timeout, pool, and resilience contract
 
@@ -246,10 +246,10 @@ Source: `docs/plans/2026-09-01-vsdb-additive-roadmap.md` §ARP-08 (lines 361-393
 
 | Task / Portfolio | Title | Status | Dependencies | Reviewer |
 |---|---|---|---|---|
-| TASK-ARP08-001 | Persisted draft model: snapshot codec + clearDrafts wire (pure) | ready | none | - |
-| TASK-ARP08-002 | Host draft restore: hydrate, debounced flush, dispose flush, durable clear | ready | TASK-ARP08-001 | - |
-| TASK-ARP08-003 | Webview draft UX: debounced flush, flush-before-switch, Clear drafts, restore pre-input | ready | TASK-ARP08-001 | - |
-| TASK-ARP08-004 | Extension wiring: workspaceState as draftMemento + retained singleton/history guarantees | pending_review | TASK-ARP08-001, TASK-ARP08-002 | - |
+| TASK-ARP08-001 | Persisted draft model: snapshot codec + clearDrafts wire (pure) | done | none | unic-smart (approved_minor r1) |
+| TASK-ARP08-002 | Host draft restore: hydrate, debounced flush, dispose flush, durable clear | done | TASK-ARP08-001 | unic-smart (approved r1) |
+| TASK-ARP08-003 | Webview draft UX: debounced flush, flush-before-switch, Clear drafts, restore pre-input | done | TASK-ARP08-001 | unic-smart (approved r1) |
+| TASK-ARP08-004 | Extension wiring: workspaceState as draftMemento + retained singleton/history guarantees | done | TASK-ARP08-001, TASK-ARP08-002 | unic-smart (approved r1) |
 
 Graph: TASK-ARP08-001 → TASK-ARP08-002; TASK-ARP08-001 → TASK-ARP08-003; TASK-ARP08-001, TASK-ARP08-002 → TASK-ARP08-004.
 
