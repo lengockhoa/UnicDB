@@ -122,7 +122,82 @@ Grounding notes for the executor:
 
 ## Executor Report
 
-(pending)
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT:
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq02-001
+ ✓ src/adapters/__tests__/bigquery.test.ts > TASK-BQ02-001 BigQueryAdapter — listColumns > 5. malformed field falls back to dataType:'' and nullable:true
+NotImplementedError: Driver "bigquery" is not implemented yet (TASK-004 will add it).
+ ❯ BigQueryAdapter.listColumns src/adapters/bigquery.ts:282:11
+ ...
+ ❯ src/adapters/__tests__/bigquery.test.ts > TASK-BQ02-001 BigQueryAdapter — permission edge > 7. getTables rejects 403 -> listTables REJECTS (no swallow)
+AssertionError: expected undefined to be 403 // Object.is equality
+ ...
+ ❯ src/adapters/__tests__/bigquery.test.ts > TASK-BQ02-001 BigQueryAdapter — listColumns > 4. listColumns maps schema fields incl. REPEATED/RECORD
+NotImplementedError: Driver "bigquery" is not implemented yet (TASK-004 will add it).
+ ...
+ ❯ src/adapters/__tests__/bigquery.test.ts > TASK-BQ02-001 BigQueryAdapter — listSchemas > 1. listSchemas maps dataset PagedResponse into SchemaInfo[]
+NotImplementedError: Driver "bigquery" is not implemented yet (TASK-004 will add it).
+ ...
+ ❯ src/adapters/__tests__/bigquery.test.ts > TASK-BQ02-001 BigQueryAdapter — listTables > 2. listTables returns only type === 'TABLE'
+NotImplementedError: Driver "bigquery" is not implemented yet (TASK-004 will add it).
+ ...
+ ❯ src/adapters/__tests__/bigquery.test.ts > TASK-BQ02-001 BigQueryAdapter — listViews > 3. listViews returns VIEW + MATERIALIZED_VIEW, excludes TABLE + EXTERNAL
+NotImplementedError: Driver "bigquery" is not implemented yet (TASK-004 will add it).
+ ...
+ ❯ src/adapters/__tests__/bigquery.test.ts > TASK-BQ02-001 BigQueryAdapter — empty dataset > 6. getTables resolves [[], null, {}] -> listTables = [] AND listViews = []
+NotImplementedError: Driver "bigquery" is not implemented yet (TASK-004 will add it).
+ ...
+ ❯ src/adapters/__tests__/bigquery.test.ts > TASK-BQ02-001 BigQueryAdapter — estimateTableRows > 8. numRows past MAX_SAFE_INTEGER -> null; small numRows -> number
+NotImplementedError: Driver "bigquery" is not implemented yet (TASK-004 will add it).
+ ...
+ ❯ src/adapters/__tests__/bigquery.test.ts > TASK-BQ02-001 BigQueryAdapter — estimateTableRowsBatch > 9. batch: ['a','b'] with a metadata numRows='42', b omitted -> Map {a->42}; empty input -> empty Map, 0 client calls
+NotImplementedError: Driver "bigquery" is not implemented yet (TASK-004 will add it).
+ ...
+ ❯ src/adapters/__tests__/bigquery.test.ts > TASK-BQ02-001 BigQueryAdapter — not-connected / closed guards > 10. listSchemas before connect() -> BigQueryNotConnectedError; after close() -> BigQueryClosedError
+AssertionError: expected NotImplementedError: Driver "bigquery" is… to be an instance of BigQueryNotConnectedError
+ ...
+ ❯ src/adapters/__tests__/bigquery.test.ts > TASK-BQ02-001 BigQueryAdapter — listTableDetail > 12. listTableDetail maps metadata to columns + constraints (partitioning/clustering/row count)
+NotImplementedError: Driver "bigquery" is not implemented yet (TASK-004 will add it).
+ ...
+ ❯ src/adapters/__tests__/bigquery.test.ts > TASK-BQ02-001 BigQueryAdapter — listTableDetail > 13. listTableDetail preserves numRows string verbatim when past MAX_SAFE_INTEGER
+NotImplementedError: Driver "bigquery" is not implemented yet (TASK-004 will add it).
+ ...
+ ❯ src/adapters/__tests__/bigquery.test.ts > TASK-BQ02-001 BigQueryAdapter — listRoutines > 14. listRoutines maps routineReference.routineId with hardcoded kind:'function'
+NotImplementedError: Driver "bigquery" is not implemented yet (TASK-004 will add it).
+ Test Files  1 failed (1)
+      Tests  13 failed | 14 passed (27)
+```
+
+Verification Output:
+```
+$ npx vitest run src/adapters/__tests__/bigquery.test.ts
+ ✓ src/adapters/__tests__/bigquery.test.ts  (27 tests) 31ms
+ Test Files  1 passed (1)
+      Tests  27 passed (27)
+   Duration  246ms
+
+$ npm run typecheck
+> vsdb@1.48.0 typecheck
+> tsc --noEmit
+(exit 0, no output)
+
+$ git diff --stat -- src/adapters/bigqueryTypes.ts src/adapters/bigqueryAdc.ts
+(empty output — frozen surface untouched)
+
+$ npx vitest run src/adapters/__tests__/bigqueryAdc.test.ts src/adapters/__tests__/bigqueryTypes.test.ts src/adapters/__tests__/bigqueryConfig.test.ts src/adapters/__tests__/factory.test.ts
+ ✓ src/adapters/__tests__/bigqueryTypes.test.ts  (7 tests) 3ms
+ ✓ src/adapters/__tests__/bigqueryConfig.test.ts  (13 tests) 3ms
+ ✓ src/adapters/__tests__/bigqueryAdc.test.ts  (6 tests) 4ms
+ ✓ src/adapters/__tests__/factory.test.ts  (6 tests) 1ms
+ Test Files  4 passed (4)
+      Tests  32 passed (32)
+```
+
+Status: PASS
+Note: Convention choice for `listTableDetail` row count: when `numRows` is past `Number.MAX_SAFE_INTEGER`, the constraint surfaces `consrc: "unknown"` (consistent with `estimateTableRows` returning `null` past safe integer). For safe-integer values, the verbatim wire string is preserved. This matches the success-definition-3 constraint "without BigInt precision loss" — `Number()` is NEVER applied to a value beyond safe integer; test #13 pins this. `listRoutines` hardcodes `kind: "function"` per Discussion #5 (roadmap defers routine depth to BQ-07b). `listRoutineParams` keeps its `NotImplementedError` with a one-line comment citing the deferral. Widened seam adds `getDatasets(opts?)` and `dataset(id): { getTables, getRoutines, table }` per Discussion #1 (real `@google-cloud/bigquery@9.0.3` names); legacy seam members (`listDatasets`, `getDataset`, `getTable`) are KEPT for BQ-01 compile compatibility and marked with comments.
 
 ---
 

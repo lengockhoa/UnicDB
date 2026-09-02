@@ -114,3 +114,26 @@ from `.cache/index/tests-map.json`. Non-empty floor satisfied; do NOT default to
 ## Reviewer Verdict
 
 (pending)
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: claude-sonnet-4-5
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT:
+> SchemaTreeProvider — TASK-BQ02-003 bigquery wiring
+> 4 failed | 76 passed (80)
+>  1. bigquery connection expands to dataset nodes with bigquery icon: expected 'database' to be 'cloud'
+>  2. bigquery connection node icon + tooltip: expected 'database' to be 'cloud'
+>  3. bigquery dataset tooltip labels as dataset: expected 'BQ-side / ds1' to be 'BQ-side / dataset ds1'
+>  4. row-count batch NEVER fires for bigquery: spy called 1 time with ("ds1", ["t1","t2"])
+
+Verification Output:
+  npx vitest run src/ui/__tests__/schemaTree.test.ts src/ui/__tests__/schemaTreeCatalog.test.ts
+    → 80 passed (80); 2 files passed in 303ms
+  npm run typecheck
+    → tsc --noEmit; no errors
+  npm run compile
+    → esbuild: build complete; dist/extension.js + dist/webview.js produced
+Status: PASS
+Note: minimal scope — `DRIVER_ICONS.bigquery: "cloud"` + bigquery-branched tooltip in `connectionNode()` + bigquery-branched dataset tooltip in `getSchemaNodesForConnection()` + `conn.driver !== "bigquery"` row-count batch guard in `getCategoryChildren()`. Mirrored the tooltip branch in `getParent()`'s schema→connection branch so reveal targets don't render `bigquery@:0/` artifacts. BQ-00 frozen (bigqueryTypes.ts/bigqueryAdc.ts byte-untouched, verified via `git diff --stat`). browseCommands.ts byte-untouched.
