@@ -63,6 +63,74 @@ node -e 'const p=require("./package.json"); const assert=(c,m)=>{if(!c)throw new
 
 (no comments yet)
 
+- [executor, 2026-09-02] Ambiguity: task file §Target Files names the describe block `release profiles (ARP-09)`; the executor dispatch names it `release confidence profiles (ARP-09)`. Chose the dispatch's string (more specific instruction; task file names the tests, dispatch names the describe). Also included task-file Test Case 15 (`vsdb.diagnostics.verbosity` YAGNI guard), which the dispatch's test list omitted — task file is the contract. Task file Test Case 16 (releaseVerify stays green) satisfied by running the file unchanged (19/19 combined).
+
+---
+
+## Executor Report
+
+- Status: DONE
+- Executor tool: claude-code
+- Executor model: unic-code
+- Executor subagent: -
+
+### RED (step 2)
+
+Command: `npx vitest run src/__tests__/releaseHygiene.test.ts`
+
+```
+ FAIL  src/__tests__/releaseHygiene.test.ts > release confidence profiles (ARP-09) > profile:fast exists and equals the pinned fast-profile string
+AssertionError: expected undefined to be 'npm run typecheck && npm run compile'
+
+ FAIL  src/__tests__/releaseHygiene.test.ts > release confidence profiles (ARP-09) > profile:release exists and delegates to the pinned verify:release
+AssertionError: expected undefined to be 'npm run verify:release'
+
+ FAIL  src/__tests__/releaseHygiene.test.ts > release confidence profiles (ARP-09) > profile:* keys are exactly the two named profiles (no extras)
+AssertionError: expected [ Array(0) ] to deeply equal [ 'profile:fast', 'profile:release' ]
+
+ FAIL  src/__tests__/releaseHygiene.test.ts > release confidence profiles (ARP-09) > profile:* values reference ONLY real existing script keys
+AssertionError: profile:* keys phải tồn tại để pin này có ý nghĩa: expected 0 to be greater than 0
+
+ FAIL  src/__tests__/releaseHygiene.test.ts > release confidence profiles (ARP-09) > profile:* values have no shell-injection surface
+AssertionError: profile:* keys phải tồn tại để pin này có ý nghĩa: expected 0 to be greater than 0
+
+ Test Files  1 failed (1)
+      Tests  5 failed | 5 passed (10)
+```
+
+All 5 failures are the new profile pins failing because `profile:*` keys do not exist (pre-state); the 3 pre-existing hygiene tests + the baseline-pins guard + the YAGNI config guard pass pre-change. RED for the expected reason.
+
+### Implementation (step 3)
+
+- `package.json`: added exactly two script keys after `verify:release` — `"profile:fast": "npm run typecheck && npm run compile"` and `"profile:release": "npm run verify:release"`. No other byte changed (git diff --stat: package.json | 2 +).
+- `src/__tests__/releaseHygiene.test.ts`: appended `describe("release confidence profiles (ARP-09)")` with 7 tests (pins for both keys, exact key-set, reference integrity, shell-injection scan, baseline regression guard, YAGNI config guard). Existing 3 tests untouched.
+
+### GREEN + Verification (step 5, fresh in this turn)
+
+1. `npm run typecheck` → exit 0 (`tsc --noEmit`, no output).
+2. `npx vitest run src/__tests__/releaseHygiene.test.ts src/__tests__/releaseVerify.test.ts`:
+
+```
+ ✓ src/__tests__/releaseHygiene.test.ts  (10 tests) 7ms
+ ✓ src/__tests__/releaseVerify.test.ts  (9 tests) 677ms
+
+ Test Files  2 passed (2)
+      Tests  19 passed (19)
+```
+
+3. Task-file node assertion → `profiles ok`.
+
+`git status --porcelain`: only `M package.json`, `M src/__tests__/releaseHygiene.test.ts` (task file edited after this check, per handoff contract). No git add/commit/push performed.
+
+### Acceptance Criteria
+
+- [x] `package.json` gains exactly the two `profile:*` keys with exact values; every other script byte-identical (pinned by test).
+- [x] New hygiene pins pass; existing 3 hygiene tests pass; `releaseVerify.test.ts` (unchanged) passes.
+- [x] `profile:*` values reference only real keys (`typecheck`, `compile`, `verify:release`) and have no shell-injection surface.
+- [x] No `vsdb.diagnostics.verbosity` configuration key added (guard test pins the rejection).
+- [x] `npm run typecheck` and both focused vitest runs exit 0.
+- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
+
 ---
 
 <!--

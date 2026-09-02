@@ -614,6 +614,8 @@
     "package": "vsce package",
     "verify:fast": "npm run typecheck && npm run compile",
     "verify:release": "npm test && npm run typecheck && npm run compile",
+    "profile:fast": "npm run typecheck && npm run compile",
+    "profile:release": "npm run verify:release",
     "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {
