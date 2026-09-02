@@ -1,0 +1,85 @@
+# TASK-ARP09-001 — Pure redacted diagnostics formatter
+
+- Status: `ready`
+- Owner: `-`
+- Reviewer: `-`
+- Parent plan: `docs/AI_HANDOFF/PLAN.md` §2/§3 (09.1) — wave 1
+
+## Goal
+
+Create the pure, vscode-free diagnostics formatter `src/core/diagnostics.ts` (NEW): `logLine()` turns a category/severity/message (+ optional correlation id + optional timestamp) into ONE redacted, single-line string `[<ISO time>] [<category>] [<severity>] <message>` (+ ` (corr:<id>)`), with the 2000-char bound applied to the ASSEMBLED line as the last step, reusing `redact()` from `src/ai/trace.ts` (imported — never re-implemented) and never throwing on any input. This is the module every other ARP-09 task consumes.
+
+## Target Files
+
+- `src/core/diagnostics.ts` — (NEW) pure formatter module: `DiagCategory`, `DiagSeverity`, `MAX_DIAG_LINE_CHARS`, `logLine()`.
+- `src/core/__tests__/diagnostics.test.ts` — (NEW) RED-first tests below.
+
+## Test Cases (REQUIRED — TDD)
+
+| # | Type | Test name | Expected | Pre-state / Fixture |
+|---|------|----------|----------|---------------------|
+| 1 | happy | `logLine("connection","info","connection opened", undefined, FIXED)` | exactly `[2026-09-02T00:00:00.000Z] [connection] [info] connection opened` | `FIXED = new Date("2026-09-02T00:00:00.000Z")` |
+| 2 | happy | `logLine("ai","warn","retry", "run-42", FIXED)` | prefix `[2026-09-02T00:00:00.000Z] [ai] [warn] retry` and ends ` (corr:run-42)` | correlation id present |
+| 3 | edge (secret) | `logLine("ai","error", 'provider failed: Authorization: Bearer eyJhbGciOiJFUzI1NiIs…', undefined, FIXED)` | output contains `<redacted>`, does NOT contain the bearer token substring | redact() must scrub BEARER_RE |
+| 4 | edge (KV-in-SQL) | `logLine("general","warn","SELECT * FROM users WHERE password = 'hunter2'")` | output does NOT contain `hunter2`; contains `password<redacted>` | redact() KV_RE scrubs `password = '…'` |
+| 5 | edge (multiline) | message = `"line1\nline2\r\nline3"` | output contains zero `\n`/`\r`, is exactly one line, `trim()`-equal to itself | single-line invariant |
+| 6 | edge (length bound) | 5000-char message (`"x".repeat(5000)`) | ASSEMBLED line `length <= 2000` (bound applied AFTER prefix + corr-suffix assembly, as the last step); prefix `[` … `]` intact; the MESSAGE tail is what gets cut | `MAX_DIAG_LINE_CHARS = 2000` asserted in test |
+| 7 | edge (non-string) | `logLine("general","info",{a:1})` / `null` / `undefined` | contains `{"a":1}` / `null` / `undefined`; never throws | JSON.stringify fallback → String() |
+| 8 | edge (degenerate) | `const c:any = {}; c.self = c;` → `logLine("general","info",c)` | returns a string, never throws, contains `"[object Object]"` | circular → JSON.stringify throws → String() fallback |
+| 9 | happy | every category × severity accepted | for all 5 categories × 3 severities, output carries exactly `[<cat>] [<sev>]` | category/severity union contract |
+
+## Test Files
+
+- `src/core/__tests__/diagnostics.test.ts` — contains all 9 cases above (RED before implementation, GREEN after).
+
+## Verification Commands
+
+```bash
+npm run typecheck
+npx vitest run src/core/__tests__/diagnostics.test.ts
+```
+
+## Acceptance Criteria
+
+- [ ] Every test in §Test Cases passes (RED-first: 1-9 fail against an empty module).
+- [ ] `logLine` never throws on any input (string/number/object/null/undefined/circular).
+- [ ] Output is always a single line, `[<ISO>] [<cat>] [<sev>]` prefix, ` (corr:<id>)` suffix when id given, length ≤ `MAX_DIAG_LINE_CHARS`.
+- [ ] `redact` from `src/ai/trace.ts` is IMPORTED and used on every message — no re-implementation, no copied regexes.
+- [ ] No `vscode` import in `src/core/diagnostics.ts` (pure, unit-testable).
+- [ ] `npm run typecheck` and the focused vitest run exit 0.
+- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
+
+## Dependencies
+
+- (none) — first task of the cycle.
+
+## Interfaces
+
+- Consumes: `redact(value: unknown): unknown` from `src/ai/trace.ts` (line 57; pure, recursive, never throws — import, don't copy).
+- Produces:
+  ```ts
+  export type DiagCategory = "lifecycle" | "connection" | "ai" | "schema" | "general";
+  export type DiagSeverity = "info" | "warn" | "error";
+  export const MAX_DIAG_LINE_CHARS = 2000;
+  export function logLine(
+    category: DiagCategory,
+    severity: DiagSeverity,
+    message: unknown,
+    correlationId?: string,
+    now?: Date, // test seam — defaults to new Date()
+  ): string;
+  ```
+  Line shape: `[<ISO 8601 from now|new Date()>] [<category>] [<severity>] <redacted single-line message>` plus ` (corr:<id>)` when `correlationId` is a non-empty string (id single-lined, trimmed, sliced to 64 chars). The `MAX_DIAG_LINE_CHARS` (2000) bound is applied to the FULLY ASSEMBLED line (prefix + message + corr suffix), as the last step — so `line.length <= 2000` always holds; a long message tail is what gets truncated, never the prefix.
+
+---
+
+## Discussion
+
+(no comments yet)
+
+---
+
+<!--
+Phase 3 executor appends `## Executor Report` BELOW this separator.
+Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
+-->

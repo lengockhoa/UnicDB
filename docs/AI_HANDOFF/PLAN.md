@@ -1,185 +1,227 @@
-# PLAN — ARP-08: Console draft recovery
+# PLAN — ARP-09: Redacted support diagnostics and release-confidence profiles
 
-Source: `docs/plans/2026-09-01-vsdb-additive-roadmap.md` §ARP-08 (lines 361-393; P2; dep ARP-03 — shipped v1.39.0; preserve ARP-02 ownsRun/deactivate sentinel, AIC-004 ghost-text seams, ARP-06 AI policy untouched).
-Base: `main @ 8dca6d2` (v1.43.0). Executor: `unic-code`. Reviewer: `unic-smart`. No lint script — static gate is `npm run typecheck`; bundle gate `npm run compile`.
+Source: `docs/plans/2026-09-01-vsdb-additive-roadmap.md` §ARP-09 (lines ~399-431; P2; deps ARP-02, ARP-05, ARP-06 — all shipped; preserve ARP-02 deactivate sentinel, ARP-06 AI policy, ARP-07 DDL-invalidation seam, ARP-08 draft wiring byte-untouched).
+Base: `main @ c2baff7` (v1.44.0, released commit 93efafd). Executor: `unic-code`. Reviewer: `unic-smart`. No lint script — static gate is `npm run typecheck`; bundle gate `npm run compile`. Baseline: 3160 passed | 2 skipped. Release target: **v1.45.0** (minor bump, house-style CHANGELOG entry).
 
-**Citation corrections (roadmap line anchors are stale — verified against HEAD):**
-- Roadmap cites `src/ui/consolePanel.ts:137-145` for "constructor seeds empty Query 1". Actual: constructor seeds the single `Query 1` empty tab at **`consolePanel.ts:143-144`** and calls `hydrateHistory()` at **`145`**; `hydrateHistory()` itself is at **`310-318`**. Roadmap cites `src/extension.ts:1274-1278,1325-1330` for singleton close — those lines are NOT the console wiring. Actual: `consolePanel` module singleton at **`extension.ts:99`**, `commandOpenConsole` at **`1584-1633`** (`new ConsolePanel` at **`1591-1630`**, `onDispose` → `consolePanel = null` at **`1627-1629`**), registration `vsdb.openConsole` → `commandOpenConsole(mgr, runner, panel, context.globalState)` at **`753-754`**, deactivate disposes + nulls at **`1067-1068`**, `deactivating` sentinel at **`94`**.
-- `updateBuffer` wire contract confirmed: `ConsoleToHostMessage` member at **`consolePanelMessages.ts:37`**, guard at **`92-95`**, host handles it via `setBuffer` **silently with NO postState** at **`consolePanel.ts:401-403`** (setBuffer at **`231-234`**). This silence is load-bearing: it is why a webview-side flush can never create a render loop.
-- Webview confirmed to NEVER post `updateBuffer` (zero hits): the `input` handler at **`webview/consolePanelMain.ts:157-160`** only mutates the local `activeTab().buffer`; the `state` handler at **`327-341`** does `tabs = msg.tabs` — so host buffers go stale and a host `state` push (switch/close/create) clobbers local edits made since the last flush. This is the latent divergence bug the flush fixes.
-- Tests-map (`.cache/index/tests-map.json`): `consolePanelMessages.ts` → `[consolePanelMessages.test.ts, consolePanel.test.ts]`; `consolePanel.ts` → `[consolePanel.test.ts, consolePanelBundle.test.ts, consolePanelMessages.test.ts, tests/consolePanelWebview.test.ts]`; `webview/consolePanelMain.ts` → `[consolePanel.test.ts]`; `extension.ts` → `[extension.test.ts, extensionAutocomplete.test.ts, extensionConfigExport.test.ts, mcpExtensionRegistry.test.ts]`.
+**Verified source facts (cited, not re-derived):**
+- Zero `OutputChannel` usage today — `grep -rn "createOutputChannel" src/` returns nothing outside `__tests__`. The only vscode-mock in `src/extension.test.ts` is `vi.mock("vscode", ...)` at line 70 (no `createOutputChannel` member yet — executor must add it).
+- `src/ai/trace.ts` exports pure `redact(value: unknown): unknown` at line 57 (recursive, never throws; `SECRET_KEY_RE`/`HEADER_RE`/`BEARER_RE`/`BASIC_RE`/`KV_RE`/`AUTH_KV_RE`/`LONG_RUN_RE` scrubbing). It is directly importable from `src/core/diagnostics.ts`. **It must be imported, never re-implemented or copied.**
+- `src/ai/auditExport.ts` (`serializeAuditExport`) already ends in `JSON.stringify(redact(...))` as the final pass — 004 must prove it stays byte-intact, not change it.
+- `package.json` scripts: `compile`, `watch`, `test`, `test:integration`, `typecheck`, `package`, `verify:fast`, `verify:release`, `vscode:prepublish`. No lint script.
+- `src/__tests__/releaseVerify.test.ts` pins (MUST NOT be broken): `verify:release === "npm test && npm run typecheck && npm run compile"` (exact); `verify:fast` is exactly one of two allowed strings; `verify:fast`/`verify:release` have no shell-injection surface; `verify:*` values reference only pre-existing script keys; the four baseline scripts (`test`/`typecheck`/`compile`/`test:integration`) are preserved byte-identical; `scripts/verify-release.sh` exists, is executable, has a POSIX shebang, and emits ordered `PASS <stage>` / first-failure `FAIL <stage>` + `FAIL verify:release` with verbatim exit-code propagation. The shell-injection + reference-integrity checks iterate ONLY the two `verify:*` keys — new `profile:*` keys are NOT scanned, so 09.2 adds them freely while adding its own pins in `releaseHygiene.test.ts`.
+- `src/__tests__/releaseHygiene.test.ts` currently has 3 tests (lock root version sync, README `vsdb-<version>.vsix` placeholder, package.json semver) — 09.2 appends the new profile pins to this file (roadmap-sanctioned).
+- `src/core/connectionManager.ts`: `onDidChangeActive: vscode.Event<ConnectionConfig | null>` (line 87) and `onDidChangeRecoveryStatus: vscode.Event<ConnectionRecoveryStatus>` (line 91) are existing events extension.ts already subscribes to (`mgr.onDidChangeActive(...)` at `extension.ts:342,729`). Consuming them for a summary line is NOT new callback plumbing.
+- `extension.ts` anchors: `deactivating` sentinel at line 94 (byte-untouched); `activate()` end ~`1047-1054` (lifecycle line goes into a pending buffer — see §3); `deactivate()` at `1056-1091` (channel dispose appended additively after `consolePanel` dispose ~`1075-1076`, before the function ends); AI command registrations `vsdb.ai.showPolicy`/`vsdb.ai.exportTrace`/`vsdb.ai.clearTrace` at `676-690`; `AiChatPanel` construction at `1228`; existing `mgr.onDidChangeActive` handler at `342`.
+- Tests-map (`.cache/index/tests-map.json`): `src/extension.ts` → `[extension.test.ts, extensionAutocomplete.test.ts, extensionConfigExport.test.ts, mcpExtensionRegistry.test.ts]`; `src/ai/trace.ts` → `[trace.test.ts]`; `src/ai/auditExport.ts` → `[auditExport.test.ts]`. `src/core/diagnostics.ts`, `package.json`, `scripts/verify-release.sh` are unmapped → new-file/script-target convention (releaseHygiene + releaseVerify).
 
 ## §1 Intent
 
-**Problem.** Console history is Memento-backed and capped (200), but a NEW panel intentionally starts empty (`consolePanel.ts:143-144`) and singleton close creates fresh state — the extension drops its `consolePanel` reference on user close (`extension.ts:1627-1629`) and `deactivate` (`1067-1068`), so the next `vsdb.openConsole` constructs a brand-new panel with a single empty `Query 1` tab. Any multi-tab scratch drafts the user had open are lost. Separately, the webview never pushes buffer edits to the host (`consolePanelMain.ts:157-160`), so host buffers are stale the moment a tab is switched or the panel closes — nothing durable to restore even if we tried.
+**Problem.** AI trace/audit redaction already exists (`src/ai/trace.ts` `redact()`; `src/ai/auditExport.ts` final-pass), but VSDB has **no extension-wide Output Channel** (verified: zero `createOutputChannel` in `src/`). When a user hits a support issue there is no local, discoverable, redacted diagnostics surface to share — and `package.json` exposes full/integration suites but no named fast/release confidence profile users or CI can point at by name.
 
-**Success.** (1) A versioned, bounded, workspace-scoped snapshot of `{tabs:[{id,name,buffer}], activeTabId}` persists via a debounced flush + exactly-once flush-on-dispose. (2) Closing/reopening the panel or reloading VS Code restores the bounded drafts into the SAME tab ids and buffers, with the same active tab, and NEVER runs SQL. (3) Corrupt or over-cap persisted state fails closed into one fresh empty tab. (4) Clear is explicit and durable — after `Clear drafts`, reopening shows empty and the old draft cannot be resurrected. (5) The webview now flushes edits to the host, which fixes the existing divergence where a tab switch clobbered unsent edits (regression-pinned). (6) Privacy: the persisted payload is exactly tab id/name/buffer — never results, passwords, transaction state, connection data, or history.
+**Success.** (1) A lazy `vscode.window.createOutputChannel("VSDB")` records redacted, single-line lifecycle/connection/AI summaries; the channel is created exactly once, on the first REAL diagnostic write (create-on-first-real-write) or command invocation — never at plain activation, and never for the buffered activate-end lifecycle line alone. (2) `vsdb.diagnostics.show` reveals it and `vsdb.diagnostics.clear` clears it. (3) Every line goes through `trace.ts` `redact()` — no raw SQL, connection strings, passwords, prompts, or tokens can reach the channel (byte-scan-pinned). (4) New named scripts `profile:fast` and `profile:release` exist, reference ONLY real pre-existing commands, and leave every pinned baseline/verify script byte-identical. (5) No new runner script is needed — `scripts/verify-release.sh` already provides the portable staged runner and is pinned by `releaseVerify.test.ts`; `profile:release` names a portable gate (`npm run verify:release`). (6) Redaction is reused, not re-implemented — evidence-pinned by 004 (expected close NOT-NEEDED).
 
 ## §2 Scope
 
 **In**
-- ARP-08.1 (wave 1) — pure persisted model in `src/ui/consolePanelMessages.ts` (+ `consolePanelMessages.test.ts`): `ConsoleDraftSnapshot` codec (encode/parse, versioned, fail-closed), draft constants, new `clearDrafts` webview→host message + guard case. No other task can land before this one — 08.2/08.3/08.4 import its codec and message type.
-- ARP-08.2 (wave 2) — host restore in `src/ui/consolePanel.ts` (+ `consolePanel.test.ts`): `ConsolePanelOptions.draftMemento`; `hydrateDrafts()` in the constructor (mirror `hydrateHistory`); debounced persist on `updateBuffer`; `flushDrafts()` exactly once in the dispose path; `clearDrafts` handler; deterministic cap enforcement at persist; corrupt→empty-tab fallback; restore never invokes `onRun`. Preserves ARP-02 deactivation sentinel and AIC-004 ghost-text seams byte-untouched.
-- ARP-08.3 (wave 2) — webview UX in `webview/consolePanelMain.ts` (+ `consolePanelBundle.test.ts` + `consoleTabs.test.ts` neighbor pin): debounced `updateBuffer` post on editor input; flush pending on `visibilitychange→hidden` and `beforeunload`; flush-before-`switchTab`/`closeTab` (the divergence fix); "Clear drafts" toolbar button; restore-pre-input re-render. Bundle compilation verified (`consolePanelBundle.test.ts` stays green).
-- ARP-08.4 (wave 3) — extension wiring in `src/extension.ts` (+ `extension.test.ts`): `commandOpenConsole` passes a new `draftMemento` = `context.workspaceState`; verify-only pins that singleton behavior and `globalState` history guarantees are retained. Roadmap sanctions `extension.ts` "only if scope/options change" — workspace-scoping IS the sanctioned change.
+- ARP-09.1 (wave 1) — pure redacted formatter in `src/core/diagnostics.ts` (NEW, no vscode import) + `src/core/__tests__/diagnostics.test.ts` (NEW): `logLine(category, severity, message, correlationId?, now?)` producing `[<ISO time>] [<category>] [<severity>] <redacted single-line message>` (+ ` (corr:<id>)`); reuses `redact()` from `src/ai/trace.ts` (the one sanctioned import); never throws on any input; single-line invariant; 2000-char bound applied to the ASSEMBLED line (after prefix + corr-suffix assembly, as the last step); categories `lifecycle|connection|ai|schema|general`, severities `info|warn|error`.
+- ARP-09.2 (wave 1) — profile design in `package.json` (scripts section ONLY) + `src/__tests__/releaseHygiene.test.ts`: NEW keys `profile:fast = "npm run typecheck && npm run compile"` and `profile:release = "npm run verify:release"`; new pins that these keys reference only real artifacts, have no shell-injection surface, and that all pinned baseline/verify scripts stay byte-identical. Cross-file constraint: `releaseVerify.test.ts` is NOT modified but MUST stay green.
+- ARP-09.3 (wave 2) — channel wiring in `src/extension.ts` + `src/extension.test.ts` + `package.json` (contributes.commands + activationEvents sections ONLY, serialized after 002's wave-1 scripts edit): lazy `createOutputChannel("VSDB")` with a bounded pending-buffer flush; commands `vsdb.diagnostics.show` / `vsdb.diagnostics.clear`; exactly-once dispose in `deactivate()`; lifecycle + connection (`mgr.onDidChangeActive`, optionally `onDidChangeRecoveryStatus`) + AI (existing extension.ts command/panel seams) summary lines; privacy byte-scan pins.
+- ARP-09.4 (wave 2, verify-first) — redaction-reuse gate: prove by source evidence that 001 imports and uses `trace.ts` `redact()` (no copy), that `auditExport.ts` final-pass is byte-intact, and that the channel wiring never emits pre-redaction content. Expected close: NOT-NEEDED (no trace/audit source change). Owns `src/ai/__tests__/trace.test.ts` (read-only evidence append) + a docs note.
+- ARP-09.5 (wave 3, conditional) — runner gate: expected NOT-NEEDED. `scripts/verify-release.sh` already exists (POSIX, staged PASS/FAIL, exit-code propagation, pinned by `releaseVerify.test.ts`), and `profile:release` now names a portable gate. If the executor finds a real gap (e.g. Windows `.cmd` wrapper genuinely required), design it then — conditional only.
 
 **Out**
-- Results / result grids, passwords/secrets, transaction state, connection metadata, and query history in the draft payload (history stays in `globalState` under `CONSOLE_HISTORY_KEY` — unchanged).
-- Cross-machine sync, unlimited persistence, file writes, automatic replay of restored drafts.
-- Changes to `src/ui/schemaCache.ts`, `src/ui/resultsPanel.ts`, `src/ui/aiChatPanel.ts`, adapter/driver files, `package.json`.
+- Telemetry / upload / persistence of diagnostics to disk.
+- Raw SQL, SQL results, prompts, tool args, connection strings, host/user/port, passwords, tokens — in channel lines or captured content.
+- Changing any assertion to make a test pass; mandatory integration (`test:integration`) per edit.
+- New dependencies; changes to `scripts/verify-release.sh`; changes to `verify:*` or the four baseline scripts; a `vsdb.diagnostics.verbosity` configuration setting (rejected — YAGNI, see §3).
+- Any source change to `src/ai/trace.ts` / `src/ai/auditExport.ts` (004) or to `src/ui/aiChatPanel.ts` (per-run AI summary seam — outside 003's roadmap file set, documented as a known gap).
 
-**File disjointness.** Wave 2 runs TASK-ARP08-002 (owns `consolePanel.ts` + `consolePanel.test.ts`) and TASK-ARP08-003 (owns `webview/consolePanelMain.ts` + `consolePanelBundle.test.ts` + `consoleTabs.test.ts`) in parallel with NO shared file. TASK-ARP08-003 reads the `clearDrafts` message type from `consolePanelMessages.ts` but must NOT modify it (001 owns it).
+**File disjointness.** Wave 1: 001 owns `src/core/diagnostics.ts` + `src/core/__tests__/diagnostics.test.ts`; 002 owns `package.json` (scripts only) + `src/__tests__/releaseHygiene.test.ts`. Disjoint. Wave 2: 003 owns `src/extension.ts` + `src/extension.test.ts` + `package.json` (commands + activationEvents); 004 owns `src/ai/__tests__/trace.test.ts` (evidence append) + docs note. Disjoint. `package.json` is edited in BOTH 001's wave-1 sibling 002 (scripts) and wave-2 003 (commands/activationEvents) — this is legal because the edits are serialized across waves (002 lands first, 003 is wave 2) and each task touches a different section. Documented explicitly so reviewers do not flag a false same-file collision.
 
 ## §3 Approach
 
-**Snapshot shape (pure, in `consolePanelMessages.ts` — no vscode import, so the webview bundle shares it).**
+**09.1 — pure formatter (`src/core/diagnostics.ts`, NEW).** No `vscode` import (unit-testable in plain vitest). API (the Interfaces contract later tasks consume):
 ```ts
-export interface ConsoleDraftSnapshot {
-  version: 1;
-  tabs: Array<{ id: string; name: string; buffer: string }>;
-  activeTabId: string;
-}
-export function encodeConsoleDraftSnapshot(s: ConsoleDraftSnapshot): string; // JSON.stringify
-export function parseConsoleDraftSnapshot(raw: string): ConsoleDraftSnapshot | null; // fail-closed
-export const CONSOLE_DRAFTS_KEY = "vsdb.consoleDrafts";
-export const CONSOLE_DRAFT_SNAPSHOT_VERSION = 1;
-export const CONSOLE_DRAFTS_MAX_TABS = 20;
-export const CONSOLE_DRAFTS_MAX_BUFFER_CHARS = 64_000;
+export type DiagCategory = "lifecycle" | "connection" | "ai" | "schema" | "general";
+export type DiagSeverity = "info" | "warn" | "error";
+export const MAX_DIAG_LINE_CHARS = 2000;
+export function logLine(
+  category: DiagCategory,
+  severity: DiagSeverity,
+  message: unknown,
+  correlationId?: string,
+  now?: Date,                       // test seam — defaults to new Date()
+): string;
 ```
-`parseConsoleDraftSnapshot` returns `null` (fail-closed) when: the carrier is not a string, JSON parse throws, the parsed value is not an object, `version !== 1`, `tabs` is not an array, any tab has a non-string `id`/`name`/`buffer`, `activeTabId` is not a string or does not equal some tab id, `tabs.length > CONSOLE_DRAFTS_MAX_TABS`, or any `buffer.length > CONSOLE_DRAFTS_MAX_BUFFER_CHARS`. Unknown extra fields are **tolerated-and-stripped**: `parse` returns a NEW object containing only the known fields and `encode` emits only known fields — a future-added field never nukes an old snapshot and never leaks through the codec. Over-cap snapshots are REJECTED at parse (treated as corrupt → one empty tab at the host); the host clamps at persist (below) so our own writer can never emit an over-cap snapshot.
+Pipeline (never throws): (1) coerce `message` to a string — strings pass through; otherwise `JSON.stringify` in try/catch, falling back to `String(value)`, then to `"[unserializable]"`. (2) run `redact(coerced)` (the sole sanctioned import from `../ai/trace`). (3) enforce the single-line invariant — replace every `\r\n`/`\r`/`\n` run with a single space. (4) `trim()`. (5) assemble `[<ISO from now|new Date()>] [<category>] [<severity>] <message>` and, when `correlationId` is a non-empty string, append ` (corr:<id>)` with the id itself single-lined, trimmed, and sliced to 64 chars. (6) THEN, as the LAST step, bound the **assembled line** to `MAX_DIAG_LINE_CHARS` (2000) — the bound applies to the final line (prefix + message + corr suffix), never to the raw message before assembly, so a long message plus the ~40-char prefix still yields a total `line.length <= 2000` (the message tail is what gets cut, not the prefix). RED-first proof: a message containing `Authorization: Bearer …`, `password = '…'`, `apiKey=…`, or a ≥24-char opaque run is scrubbed by `redact()` before it is formatted; category/severity/correlation remain useful.
 
-**New wire message.** Webview→host `{ type: "clearDrafts" }` (guard: `case "clearDrafts": return true;`). No new host→webview message — clear reuses the existing `state` push (the host resets to one empty tab and calls `postState()`; the webview `state` handler already re-renders the textarea from the restored buffer). Explicit `draftsCleared` was considered and rejected as redundant: the state round-trip already gives the webview everything it needs, and one fewer message means one fewer surface to guard.
+**Opt-in verbosity decision (rejection documented).** A `vsdb.diagnostics.verbosity` configuration setting is REJECTED (YAGNI): roadmap lists "opt-in verbosity", which the reveal/clear commands already satisfy — the user opts in by revealing, and a channel that nothing meaningful ever created is never created at all. Severity set is `info|warn|error`; a `debug` severity is deliberately NOT added (no per-severity threshold exists this cycle). `package.json` configuration contributions therefore remain untouched — this also removes any configuration-section conflict between 002 (scripts) and 003 (commands). A future cycle can add a pure `shouldLog(severity, minSeverity)` predicate and a setting without changing the formatter contract.
 
-**Host (`consolePanel.ts`).** New option `draftMemento?: vscode.Memento`. Constructor: after the current seed, call `hydrateDrafts()` (mirror `hydrateHistory` at `310-318`): read `CONSOLE_DRAFTS_KEY`, `parse`; on `null`/undefined → KEEP the freshly-seeded empty tab; on valid → replace `this.tabs` with the snapshot tabs (ids preserved) and set `activeTabId` (fall back to `tabs[0].id` if absent). Never throws; never calls `onRun`. `updateBuffer` now: `setBuffer` (unchanged, silent) + arm a single per-panel debounce timer (~500ms, trailing-edge, latest-wins — every `updateBuffer` resets it). On expiry → `persistDrafts()`: clamp (slice each buffer to 64k; keep first 20 tabs in creation order; remap `activeTabId` to `tabs[0].id` if the active tab was truncated), `encode`, `draftMemento.update(CONSOLE_DRAFTS_KEY, encoded)` (no-op when `draftMemento` omitted — in-memory-only fallback mirroring history). `flushDrafts()` in the dispose path exactly once: both `dispose()` (`190-204`) and the `onDidDispose` handler (`177-187`) call it; a `draftDirty` flag makes it idempotent — it clears the timer and persists only when dirty. `deactivate` → `consolePanel.dispose()` (`extension.ts:1067`) therefore covers VS Code reload/window close; the user closing the tab covers `onDidDispose`. `clearDrafts` handler: `draftMemento.update(CONSOLE_DRAFTS_KEY, undefined)` (removes the key — the durable-empty representation), cancel any pending timer, reset tabs to one fresh empty `Query 1` tab + set `activeTabId`, mark not-dirty, `postState()`. A later dispose writes nothing (nothing dirty) unless the user typed after clear — and after clear the old text is gone from host state, so it cannot be resurrected.
+**09.2 — profile design (`package.json` + `releaseHygiene.test.ts`).** Add exactly two NEW script keys (the roadmap's real gap is "no named profile keys at all"):
+- `"profile:fast": "npm run typecheck && npm run compile"` — the fast confidence profile (typecheck + bundle, no test loop; satisfies "no mandatory integration per edit").
+- `"profile:release": "npm run verify:release"` — names the existing pinned release gate. Chosen over `bash scripts/verify-release.sh` for portability: npm executes scripts through the platform shell, where `bash` may be absent on Windows non-Git-Bash installs; `npm run verify:release` is a portable, deterministic, ordered (`test → typecheck → compile`) chain whose `&&` propagates the first non-zero exit. The staged PASS/FAIL runner still exists and stays independently pinned by `releaseVerify.test.ts`.
+**`profile:fast` being byte-identical in effect to the existing `verify:fast` (`npm run typecheck && npm run compile`) is INTENDED, not a bug** — the roadmap gap is the absence of NAMED profile keys, and the deliverable is the nameable key itself, not a third implementation. `profile:*` and `verify:*` are two namespaces over the same stage sets (fast, release) and are deliberately kept in lockstep so the named-profile surface never diverges from the pinned verify gate. The `verify:release` string and the four baseline scripts are pinned byte-identical by `releaseVerify.test.ts` — they CANNOT change. The releaseVerify reference-integrity/shell-injection checks scan only `verify:*`, so the new `profile:*` keys are unconstrained there; 09.2 instead appends its own pins to `releaseHygiene.test.ts`: (a) `profile:fast`/`profile:release` exist with the exact values above; (b) every `npm run <key>` fragment of `profile:*` resolves to a real package.json script key; (c) `profile:*` values contain no shell-injection surface (`\``, `$(`, `;`, `|`, `>`, `<`); (d) regression: the four baseline scripts + `verify:fast` + `verify:release` stay byte-identical; (e) `releaseVerify.test.ts` (unchanged) still passes.
 
-**The latent divergence bug this cycle fixes (regression-pinned).** Today the webview never posts `updateBuffer`, so after typing in tab A the host's A-buffer is stale; switching to B makes the host push `state` and the webview `tabs = msg.tabs` clobbers A's edits. Fix: (a) the webview flushes a debounced `updateBuffer` on input, (b) the webview flushes its pending buffer BEFORE posting `switchTab`/`closeTab`, and (c) the host keeps `updateBuffer` handling silent (`setBuffer`, NO `postState`) — so the flush can never render-loop. Regression pin: type in A → switch to B → back to A → edits preserved on both host and webview.
+**09.3 — channel wiring (`extension.ts` + `extension.test.ts` + `package.json`).** Module state near the other singletons (`extension.ts:94-114`): `let diagOutputChannel: vscode.OutputChannel | null = null` and `const diagPendingLines: string[] = []` (bounded, max 100, drop-oldest). Helper `ensureDiagChannel()` creates `vscode.window.createOutputChannel("VSDB")` on first real need and flushes pending lines via `appendLine`. `logDiagnostic(category, severity, message, correlationId?)` formats via 001's `logLine` and routes as follows: if a channel already exists → `appendLine` directly; else if the line is a **REAL diagnostic write** (any non-lifecycle line — connection/AI/general — or a lifecycle `warn`/`error`) → `ensureDiagChannel()` creates the channel **exactly once**, flushes the pending buffer into it via `appendLine`, then appends the current line; else (the activate-end lifecycle `info` line only) → push to the pending buffer, so that line is logged eagerly WITHOUT creating the channel (the strict lazy-create pin: plain activate with zero real diagnostics → zero `createOutputChannel` calls). `getDiagChannel()` (for the reveal command) also flushes pending. After `deactivate()` sets `deactivating = true` and disposes the channel, `logDiagnostic` no-ops (never re-creates). No raw values ever reach `logLine` at the call sites: the connection handler logs a fixed summary string and NEVER passes the `ConnectionConfig`; AI seams log engine/command names only.
+- Lifecycle: at `activate()` end (~`1047-1054`) `logDiagnostic("lifecycle","info","VSDB activated")` — lands in pending, does NOT create the channel; at `deactivate()` start (`1056`) `logDiagnostic("lifecycle","info","deactivating")`.
+- Connection: add one subscription `mgr.onDidChangeActive((cfg) => logDiagnostic("connection","info", cfg ? "connection changed" : "connection closed"))` — never the config itself. Optionally one `onDidChangeRecoveryStatus` line (status text only). These consume EXISTING events (connectionManager.ts:87,91) — not new plumbing.
+- AI: one line at the existing extension.ts seams — `commandOpenAiChat` panel build (`extension.ts:1177-1230`), and the `vsdb.ai.exportTrace`/`vsdb.ai.clearTrace`/`vsdb.ai.showPolicy` handlers (`676-690`, `1468-1576`). **Known gap (documented):** one line *per agent run completion* is NOT wired this cycle — that seam lives inside `aiChatPanel.ts` (where `runAgent` resolves `AgentRunResult`), which is outside 003's roadmap file set and would require new callback plumbing (explicitly out). `logDiagnostic` is exported module-level so a future cycle can hook the panel.
+- Commands: register `vsdb.diagnostics.show` (→ `getDiagChannel().show()` + reveal) and `vsdb.diagnostics.clear` (→ `getDiagChannel().clear()`); add both to `package.json` `contributes.commands` and to `activationEvents` (VS Code also auto-activates contributed commands, but the repo explicitly lists every command — keep convention).
+- Deactivate: after the existing `consolePanel` dispose (~`1075-1076`) and before the function ends (`1091`): `diagOutputChannel?.dispose(); diagOutputChannel = null;` — exactly once, additive, ARP-02 sentinel (`deactivating` line 94) byte-untouched. A subsequent `logDiagnostic` no-ops.
+- Privacy pins (mandatory, byte-scan): with the mocked `OutputChannel` capturing every `appendLine`, the tests assert no captured line contains `s3cr3t-*` fixture passwords, `Bearer `, `Basic `, opaque long runs (from redact fixtures), or raw SQL fragment text; and the connection-handler pin proves the handler never receives the config. `extension.test.ts` `vi.mock("vscode", ...)` (line 70) must gain a `createOutputChannel` + `OutputChannel` (appendLine/reveal/clear/dispose) mock that records calls.
 
-**Webview (`consolePanelMain.ts`).** Per-tab trailing-edge debounced `updateBuffer` post (~500ms, latest-wins, one timer). `flushPending()` posts the current tab's buffer if dirty, and is called on: debounce expiry, `visibilitychange`→hidden (via `document.visibilityState`), `beforeunload`, and before `switchTab`/`closeTab`. New toolbar button `Clear drafts` (no confirm dialog — the explicit click IS the confirmation): clears the local active tab buffer + textarea, cancels any pending debounce, resets the dirty flag, posts `{ type: "clearDrafts" }`. `render()` already sets `e.value = a?.buffer ?? ""` (`87`) — restore-pre-input therefore falls out of the existing render path once the host hydrates; the bundle test pins it by pushing a `state` message with a non-empty buffer.
+**09.4 — redaction-reuse gate (verify-first).** Expected close: NOT-NEEDED (mirrors ARP-04-004 / ARP-05-004 precedent). Evidence checks (appended to `src/ai/__tests__/trace.test.ts` as a new read-only describe, or a docs note if a source assertion is impractical): 001 imports `redact` from `../ai/trace` and calls it; 001 defines no copy of a secret scrubber (source scan: no `Bearer\s+` / no new `RegExp(` secret pattern in `diagnostics.ts`); the audit exporter final-pass is intact (`git diff src/ai/auditExport.ts` empty; `serializeAuditExport` still ends `JSON.stringify(redact(...))`); and 003's channel writes go only through `logDiagnostic` → `logLine` (no direct `appendLine` of unredacted content — cross-check 003's byte-scan pins). If evidence surfaces a real bypass, fix it within the same file set (003's extension.ts or a one-line seam) — do not change `trace.ts`.
 
-**Extension (`extension.ts`, wave 3).** `commandOpenConsole` gains a `draftMemento: vscode.Memento` parameter; registration passes `context.workspaceState` (workspace-scoped per roadmap). `context.globalState` stays the history memento — history unchanged. Singleton `if (!consolePanel)` guard and `onDispose → consolePanel = null` untouched. If the executor finds the wiring already correct (it is not — `commandOpenConsole` currently passes only `globalState`), it may close as not-needed after recording evidence, per the ARP-04-004/ARP-05-004 precedent.
+**09.5 — runner gate (conditional).** Expected close: NOT-NEEDED. Evidence: `scripts/verify-release.sh` exists, is executable, POSIX shebang, and its staged PASS/FAIL + exit-code propagation are pinned by `releaseVerify.test.ts` (no change); `profile:release` names a portable ordered release gate. If a genuine gap appears (the only plausible one is a Windows `.cmd` wrapper, made moot because `profile:release` uses `npm run` with no `bash` dependency), design it as a new file owned by 005.
 
-**Rejected alternatives.** (1) Persisting full console state including results — rejected: results are out of scope and a privacy/byte risk. (2) Webview `localStorage` — rejected: webview storage is not durable across a VS Code reload and is not workspace-scoped. (3) `postState()` on every `updateBuffer` — rejected: render loop; the existing silent `setBuffer` is exactly the seam we keep. (4) `globalState` for drafts — rejected: roadmap says workspace-scoped; `globalState` would leak drafts across unrelated projects. (5) Auto-replay of restored drafts — rejected: roadmap "Out". (6) A dedicated `draftsCleared` host→webview message — rejected as redundant (reuse `state`, see above).
+**Rejected alternatives.** (1) Eager channel at activate — rejected: violates the roadmap's "lazy" and the lazy-create pin. (2) Per-run AI completion via new `onRunComplete` callback on `AgentDeps`/`AcpPanelDeps` — rejected: new callback plumbing is explicitly out and would widen 003's file set into `aiChatPanel.ts`. (3) `vsdb.diagnostics.verbosity` setting + `debug` severity — rejected: YAGNI (see above). (4) `profile:release = "bash scripts/verify-release.sh"` — rejected for Windows portability; `npm run verify:release` is portable, ordered, deterministic, and non-zero-propagating. (5) A new runner script — rejected: `verify-release.sh` already exists and is pinned; 005 closes NOT-NEEDED.
 
 ## §4 Test Plan
 
-Every row below lands in exactly one task's `§Test Cases`. Edge cases are of genuinely different kinds (malformed / boundary / concurrent / privacy / durability), not near-duplicates.
+Every row below lands in exactly one task's `§Test Cases`. Edge cases are of genuinely different kinds (secret/redaction, multiline, length-boundary, non-string coercion, degenerate/circular, reference-integrity, shell-injection, lazy-create, privacy byte-scan, exactly-once dispose, regression, source-shape evidence, portability) — not near-duplicates.
 
 | # | Task | Type | Test name | Expected |
 |---|------|------|-----------|----------|
-| 1 | 001 | happy | encode→parse round-trip of a valid 2-tab snapshot | parsed object deep-equals the input; `version === 1`; keys are exactly `{version, tabs, activeTabId}` |
-| 2 | 001 | edge (malformed) | `parse("not-json")` / `parse("42")` / `parse(undefined)` / `parse(null)` | `null` |
-| 3 | 001 | edge (version) | `parse(JSON.stringify({version: 2, ...}))` and missing `version` | `null` |
-| 4 | 001 | edge (shape) | tab with non-string `id`/`name`/`buffer`; `tabs` not an array; `activeTabId` not a string | `null` |
-| 5 | 001 | edge (boundary over-cap) | 21 tabs; or one tab with a 64_001-char buffer | `null` (fail-closed, cap constants exported and asserted = 20 / 64_000) |
-| 6 | 001 | edge (active-tab integrity) | valid tabs but `activeTabId` matches no tab id | `null` |
-| 7 | 001 | edge (forward-compat) | valid snapshot with an unknown extra field | parsed to a clean object WITHOUT the extra field (tolerated-and-stripped); re-encode omits it |
-| 8 | 001 | happy (wire) | `isConsoleToHostMessage({ type: "clearDrafts" })` | `true` |
-| 9 | 001 | edge (wire) | `{ type: "clearDrafts", junk: 42 }` still `true` (type-only); unknown `{ type: "clearDraft" }` is `false` | `true` / `false` |
-| 10 | 002 | happy | type in a tab → advance 500ms fake timer | `draftMemento.get(CONSOLE_DRAFTS_KEY)` holds a string that `parse` accepts with the typed buffer |
-| 11 | 002 | happy | new `ConsolePanel` over the same `draftMemento` (reopen) | tabs ids/buffers and `activeTabId` restored identically |
-| 12 | 002 | edge (corrupt) | `draftMemento` holds garbage at `CONSOLE_DRAFTS_KEY` | exactly one fresh empty `Query 1` tab; constructor never throws |
-| 13 | 002 | edge (one/two-tab) | reopen restores a 1-tab and a 2-tab snapshot | correct ids/names/buffers/active in both |
-| 14 | 002 | edge (never-runs) | persist, reopen, drive restore | `onRun` spy called **zero** times (restore never executes SQL) |
-| 15 | 002 | edge (concurrent flush-once) | `dispose()` then re-`dispose()` (or `onDidDispose` after `dispose`) | `draftMemento.update(CONSOLE_DRAFTS_KEY, …)` called exactly once for a single dirty flush |
-| 16 | 002 | edge (privacy) | parse the persisted payload after a realistic multi-tab session | exact key set is `{version, tabs, activeTabId}`; each tab exactly `{id, name, buffer}`; NO results/history/password/connection fields |
-| 17 | 002 | edge (durable clear) | clear → assert key removed → reopen | memento key `undefined`; one empty `Query 1` tab; old draft cannot be resurrected |
-| 18 | 002 | edge (boundary clamp at persist) | 21 tabs and a 70k-char buffer live in host state | persisted snapshot has exactly 20 tabs and buffers sliced to 64k; `activeTabId` remapped into the survivors |
-| 19 | 002 | regression | updateBuffer arrives for a non-existent tabId | silent no-op; no crash; no persist |
-| 20 | 002 | edge (fallback) | `draftMemento` omitted | hydrate no-ops (in-memory-only), persist no-ops, no throw |
-| 21 | 002 | edge (debounce reset) | three rapid `updateBuffer`s then one dispose | exactly ONE persist on dispose carrying the last buffer (latest-wins) |
-| 22 | 003 | happy | dispatch `input` on the editor with `"SELECT 1"` → advance 500ms | `{ type: "updateBuffer", tabId, buffer: "SELECT 1" }` posted (debounced) |
-| 23 | 003 | happy | click the new Clear button | `{ type: "clearDrafts" }` posted; textarea cleared; no confirm dialog surfaced |
-| 24 | 003 | edge (restore pre-input) | push `state` with a non-empty tab buffer | textarea value === restored buffer on render |
-| 25 | 003 | edge (latest-wins) | three rapid `input`s under one debounce window | exactly ONE `updateBuffer` with the FINAL buffer |
-| 26 | 003 | edge (flush-on-unload) | type, then dispatch `beforeunload` | pending `updateBuffer` posted immediately (no 500ms wait) |
-| 27 | 003 | edge (flush-on-hidden) | type, set `document.visibilityState = "hidden"` + dispatch `visibilitychange` | pending `updateBuffer` posted immediately (note jsdom fallback in Discussion) |
-| 28 | 003 | regression (divergence) | type in A, click tab B within the debounce window | `updateBuffer`(A) is posted BEFORE `switchTab`(B) — host buffers never stale |
-| 29 | 003 | edge (clear cannot resurrect) | type, click Clear, advance timers | no `updateBuffer` carries the pre-clear text; `clearDrafts` posted; textarea empty |
-| 30 | 003 | edge (no postState loop) | host receives `updateBuffer` (pinned in `consoleTabs.test.ts`) | host does NOT `postMessage` a `state` in reply (silent `setBuffer`) |
-| 31 | 004 | happy | activate → invoke `vsdb.openConsole` | `ConsolePanel` constructed with `draftMemento === context.workspaceState` (asserted via the spy on the created panel / constructor options) |
-| 32 | 004 | happy | invoke `vsdb.openConsole` twice | exactly ONE `createWebviewPanel` call — singleton retained |
-| 33 | 004 | edge (history scope) | run a statement → history persists via `globalState`, drafts via `workspaceState` | `ctx.globalState.update` receives `CONSOLE_HISTORY_KEY`; `ctx.workspaceState.get` receives `CONSOLE_DRAFTS_KEY`; the two keys never cross |
-| 34 | 004 | edge (teardown) | deactivate after open | `consolePanel` disposed (module singleton nulled) — deactivate still tears down |
+| 1 | 001 | happy | `logLine("connection","info","connection opened", undefined, FIXED)` | exact string `[2026-09-02T00:00:00.000Z] [connection] [info] connection opened` |
+| 2 | 001 | happy | `logLine("ai","warn","retry", "run-42", FIXED)` | ends with ` (corr:run-42)`; prefix `[2026-09-02T00:00:00.000Z] [ai] [warn]` |
+| 3 | 001 | edge (secret) | `logLine("ai","error", 'provider failed: Authorization: Bearer eyJhbGciOiJFUzI1NiIs…', undefined, FIXED)` | output contains `<redacted>`, does NOT contain the bearer token substring |
+| 4 | 001 | edge (KV-in-SQL) | `logLine("general","warn","SELECT * FROM users WHERE password = 'hunter2'")` | output does NOT contain `hunter2`; contains `password<redacted>` (KV_RE via redact) |
+| 5 | 001 | edge (multiline) | message with `\n`, `\r\n`, `\r` | output contains zero `\n`/`\r`, is exactly one line, `trim()`-equal to itself |
+| 6 | 001 | edge (length bound) | 5000-char message | assembled line `length <= 2000` (bound applied AFTER prefix + corr-suffix assembly, as the last step); prefix `[` … `]` intact; the MESSAGE tail is what gets cut |
+| 7 | 001 | edge (non-string) | `logLine("general","info",{a:1})` / `null` / `undefined` | contains `{"a":1}` / `null` / `undefined`; never throws |
+| 8 | 001 | edge (degenerate) | circular `const c:any={}; c.self=c` | returns a string, never throws, contains `"[object Object]"` (JSON.stringify falls back) |
+| 9 | 001 | happy | every category × severity accepted | `logLine` accepts all 5 categories × 3 severities and emits the right `[<cat>] [<sev>]` tokens |
+| 10 | 002 | happy | `profile:fast` exists | equals exactly `"npm run typecheck && npm run compile"` |
+| 11 | 002 | happy | `profile:release` exists | equals exactly `"npm run verify:release"` |
+| 12 | 002 | edge (reference integrity) | every `npm run <key>` fragment of `profile:*` | resolves to a real package.json script key |
+| 13 | 002 | edge (shell-injection) | `profile:*` values | contain no `` ` ``, `$(`, `;`, `|`, `>`, `<` |
+| 14 | 002 | regression | baseline + verify pins | four baseline scripts AND `verify:fast`/`verify:release` byte-identical; `releaseVerify.test.ts` (unchanged) still passes |
+| 15 | 002 | edge (config untouched) | package.json `contributes.configuration` | contains NO `vsdb.diagnostics.verbosity` key (documents the YAGNI rejection) |
+| 16 | 002 | regression | `releaseVerify.test.ts` stays green | run it unchanged — its `verify:*` + baseline + runner pins all pass (cross-file constraint; file NOT modified) |
+| 17 | 003 | happy | plain `activate()` (lifecycle line buffered, channel NOT created) then the first REAL diagnostic write — a `mgr.onDidChangeActive` event fires | `createOutputChannel` called exactly once, triggered BY the real write (create-on-first-real-write), not by plain activation; captured lines start with the flushed buffered `[lifecycle] [info] VSDB activated` line then a `[connection]` summary |
+| 18 | 003 | happy | `vsdb.diagnostics.show` command | channel created lazily (if absent) and `show()`/`reveal()` called |
+| 19 | 003 | happy | `vsdb.diagnostics.clear` command | `clear()` called on the channel |
+| 20 | 003 | edge (lazy-create) | `activate()` with NO events/commands | `createOutputChannel` called ZERO times (strict pin) |
+| 21 | 003 | edge (privacy byte-scan) | connection event near a config with `password:"s3cr3t-p4ss"` + SQL fixture + bearer-shaped fixture | every captured channel line lacks `s3cr3t-p4ss`, `Bearer `, `Basic `, opaque long runs, and the SQL fixture text |
+| 22 | 003 | edge (exactly-once dispose) | `deactivate()` then a post-deactivate `logDiagnostic` | channel `dispose()` called exactly once; post-deactivate call → no create, no append |
+| 23 | 003 | regression | ARP-02 sentinel | existing deactivate-sentinel tests (in-flight `runStatements` continuation after deactivate short-circuits panel writes) stay green; deactivate ordering additive only |
+| 24 | 003 | happy | `vsdb.ai.exportTrace` (or `vsdb.ai.clearTrace` / panel open) | a captured `[ai]`-category line appears |
+| 25 | 004 | happy (source evidence) | `src/core/diagnostics.ts` imports `redact` from `../ai/trace` (or `../../ai/trace`) and calls it | import present; ≥1 `redact(` call in `logLine`'s path |
+| 26 | 004 | edge (no re-implementation) | source scan of `diagnostics.ts` | NO new copy of a secret scrubber: no `Bearer\s+` / `Basic\s+` regex literal and no `new RegExp(` secret pattern in the file |
+| 27 | 004 | edge (applied, not imported-only) | run 001's secret test cases (rows 3-4) | scrubbed output — proves the `redact` import is actually used |
+| 28 | 004 | edge (auditExport intact) | `git diff src/ai/auditExport.ts` | empty; `serializeAuditExport` still returns `JSON.stringify(redact(buildAuditEnvelope(...)))` |
+| 29 | 004 | edge (no bypass in wiring) | grep channel-write sites in `src/extension.ts` | every `appendLine` argument is logLine-formatted (REDACTED) — redaction reused, NO raw unformatted writes of user/provider/connection content; an `appendLine(<raw>)` anywhere is a FAIL (direct matches at the flush site are expected by design and must be redacted logLine output) |
+| 30 | 005 | happy | `scripts/verify-release.sh` | exists, executable, POSIX shebang, ordered `PASS` stages (already pinned — re-run `releaseVerify.test.ts`) |
+| 31 | 005 | happy | `profile:release` references a real gate | equals `npm run verify:release` → chain `test → typecheck → compile` ordered, `&&` propagates first non-zero |
+| 32 | 005 | edge (portable) | no `bash` dependency in npm scripts | `profile:*` + `verify:*` contain no `bash`/`sh` invocation; runs on Windows/macOS/Linux npm unchanged |
+| 33 | 005 | edge (non-zero propagation) | `releaseVerify.test.ts` FAIL-stage case | first non-zero stage aborts, later stages do NOT run, exit code propagated verbatim (runner untouched) |
 
 ## §5 Verification
 
-Focused per-task (exact commands are also in each task file):
+Worktree note: fresh worktrees need `npm run compile` before vitest only for bundle tests (dist/ required); this cycle's focused suites are source-level except 003's extension suite, but `npm run compile` is still the mandatory bundle gate for the `extension.ts`/`package.json` changes. Symlink `node_modules` in fresh worktrees.
+
+Per-task exact commands (every task MUST also run the static gate — there is no lint script):
 
 ```bash
-# 001 (pure codec + guards)
-npx vitest run src/ui/__tests__/consolePanelMessages.test.ts
+# Static gate (all tasks)
 npm run typecheck
 
-# 002 (host restore; the memento harness is in consolePanel.test.ts)
-npx vitest run src/ui/__tests__/consolePanel.test.ts
-npm run typecheck
+# TASK-ARP09-001
+npx vitest run src/core/__tests__/diagnostics.test.ts
 
-# 003 (webview bundle — REQUIRES dist/consolePanel.js, so compile FIRST)
+# TASK-ARP09-002  (releaseHygiene gets the new pins; releaseVerify MUST stay green)
+npx vitest run src/__tests__/releaseHygiene.test.ts src/__tests__/releaseVerify.test.ts
+
+# TASK-ARP09-003  (bundle gate first, then focused extension suite)
 npm run compile
-npx vitest run src/ui/__tests__/consolePanelBundle.test.ts src/ui/__tests__/consoleTabs.test.ts
-npm run typecheck
-
-# 004 (extension wiring)
 npx vitest run src/extension.test.ts
-npm run typecheck
+
+# TASK-ARP09-004  (evidence-gate: re-run 001 + trace suites, source greps)
+npx vitest run src/ai/__tests__/trace.test.ts src/core/__tests__/diagnostics.test.ts
+git diff --stat src/ai/auditExport.ts src/ai/trace.ts        # expect: empty (or whitespace-only)
+
+# TASK-ARP09-005  (runner gate)
+npx vitest run src/__tests__/releaseVerify.test.ts
+node -e 'const p=require("./package.json"); if(p.scripts["profile:fast"]!=="npm run typecheck && npm run compile")process.exit(1); if(p.scripts["profile:release"]!=="npm run verify:release")process.exit(1); console.log("profiles ok")'
 ```
 
-**Worktree note (fresh `git worktree` executors):** bundle tests read `dist/consolePanel.js`, which does not exist in a fresh worktree — run `npm run compile` BEFORE `npx vitest run src/ui/__tests__/consolePanelBundle.test.ts`, and symlink `node_modules` into the worktree (or `npm ci`) or the vitest run fails on imports. 002's debounce/flush tests use `vi.useFakeTimers()` + `vi.advanceTimersByTime(500)` and must NOT use the file's `until()` helper (which awaits a real `setTimeout`); the existing `afterEach(() => vi.useRealTimers())` already covers teardown.
-
-Wave/cycle regression net (release gate — NOT the per-task default): `npm run verify:release` (`npm test && npm run typecheck && npm run compile`) plus `npx vitest run src/__tests__/releaseHygiene.test.ts src/__tests__/releaseVerify.test.ts`. Baseline: 3120 passed | 2 skipped.
+Release gate (used at v1.45.0 close, not per-edit): `npm run verify:release` — full `npm test && npm run typecheck && npm run compile` (3160 passed | 2 skipped baseline).
 
 ## §6 Acceptance
 
-- [ ] Close/reopen/reload restores bounded drafts (same tab ids, buffers, active tab) and NEVER runs SQL (§4 #11-#14 → TASK-ARP08-002).
-- [ ] Corrupt/over-cap persisted state fails closed to one empty `Query 1` tab without throwing (§4 #12, #5 → 001/002).
-- [ ] Clear is durable: after `Clear drafts`, the key is removed and reopening shows empty; the old draft cannot be resurrected (§4 #17, #29 → 002/003).
-- [ ] Debounced flush + exactly-once flush-on-dispose persist the latest buffer; host `updateBuffer` handling stays silent (no render loop) and the switch-away/back divergence is fixed and regression-pinned (§4 #10,#15,#21,#28,#30 → 002/003).
-- [ ] Privacy review passes: persisted payload key set is exactly `{version, tabs, activeTabId}` with tabs `{id, name, buffer}` — no results/passwords/secrets/connection data/history (§4 #16 → 002; roadmap acceptance box).
-- [ ] Workspace-scoped wiring: `draftMemento = context.workspaceState`; history remains `globalState`; singleton + deactivate guarantees retained (§4 #31-#34 → 004).
-- [ ] Bundle compilation verified: `consolePanelBundle.test.ts` green after `npm run compile`; focused console tests, typecheck, compile, and full suite all pass (§5).
-- [ ] ARP-02 deactivation sentinel and AIC-004 ghost-text seams preserved byte-untouched in `consolePanel.ts`; no changes to `schemaCache`/`resultsPanel`/`aiChatPanel`/adapters.
-- [ ] Manual (release-time, post-cycle): write multi-tab drafts → close/reload/reopen/clear → verify no execution and capped history.
+- [ ] `src/core/diagnostics.ts` exists (NEW), pure (no vscode import), and every `logLine` output is one redacted single line: `[ISO] [category] [severity] message` (+ ` (corr:id)`), length ≤ 2000, never throws. → TASK-ARP09-001
+- [ ] All 5 categories and 3 severities are emitted correctly; secret/KV/multiline/length/non-string/degenerate inputs are pinned (§4 rows 1-9). → TASK-ARP09-001
+- [ ] `package.json` gains exactly `profile:fast` and `profile:release`; baseline + `verify:*` scripts byte-identical; new releaseHygiene pins pass; releaseVerify pins (unchanged file) pass. → TASK-ARP09-002
+- [ ] Channel is lazy (zero `createOutputChannel` on plain activate), reveals/clears via two commands, disposes exactly once in `deactivate()`, and the ARP-02 sentinel is byte-untouched (deactivate additive only). → TASK-ARP09-003
+- [ ] Lifecycle, connection, and AI summary lines appear at the real seams; per-run AI completion gap documented in PLAN §3/003 Discussion. → TASK-ARP09-003
+- [ ] Byte-scan pins hold: no captured channel line contains a fixture password, `Bearer `/`Basic `, opaque long run, or raw SQL fragment; connection handler never receives the config. → TASK-ARP09-003
+- [ ] 004 closes NOT-NEEDED (or fixes a found bypass within its file set) with source evidence that `redact` is imported-and-used, not copied; `auditExport.ts`/`trace.ts` unchanged (`git diff` empty). → TASK-ARP09-004
+- [ ] 005 closes NOT-NEEDED with evidence that the existing runner + `profile:release` cover the roadmap's runner requirement; no new script. → TASK-ARP09-005
+- [ ] `npm run typecheck` and `npm run compile` exit 0; focused suites green; no unrelated changes; CHANGELOG v1.45.0 entry written; version bumped 1.44.0 → 1.45.0 at release. → whole cycle
 
 ## §7 Global Constraints
 
-- Node v22 / `npm`; VS Code `^1.75.0` and TypeScript 5.4 compatibility; no new dependencies (package.json untouched).
-- No lint script — every task MUST run `npm run typecheck`; bundle-touching tasks MUST also run `npm run compile`.
-- Draft payload NEVER contains results, passwords, transaction state, connection data, or history — pinned by the exact-key-set assertion (§4 #16).
-- Snapshot is versioned (`version: 1`), fail-closed on parse, deterministically capped (20 tabs / 64k buffer per tab — exported constants, asserted in tests).
-- Drafts are workspace-scoped (`context.workspaceState`); history stays `globalState` under `CONSOLE_HISTORY_KEY` (unchanged).
-- Restore NEVER invokes `onRun`; no automatic replay, no file writes, no cross-machine sync.
-- ARP-02 deactivation sentinel and AIC-004 ghost-text seams in `consolePanel.ts` must remain byte-identical in behavior (additive lines only).
-- Wave disjointness is mandatory: no task modifies a file another same-wave task owns (§2).
+- Node v22 / `npm`; VS Code `^1.75.0` + TypeScript 5.4 compat; NO new dependencies (package.json `dependencies`/`devDependencies` untouched).
+- No lint script — every task MUST run `npm run typecheck`; 003 MUST also run `npm run compile` (bundle gate for extension.ts/package.json changes).
+- The channel NEVER records credential/auth/raw SQL/raw prompts/tool args/connection config — mandatory byte-scan pins in 003 (§4 row 21) and 004 (§4 row 29).
+- ARP-02 deactivate sentinel (`deactivating` at `extension.ts:94`) and the existing deactivate disposal ordering remain behavior-identical — 003 is additive only.
+- `verify:release` (exact pinned string) and the four baseline scripts (`test`/`typecheck`/`compile`/`test:integration`) are pinned by `releaseVerify.test.ts` — MUST NOT change. New named profiles are NEW keys only (`profile:*`).
+- `profile:fast` being byte-identical in effect to `verify:fast` is INTENDED — the deliverable is the NAMED profile key itself (roadmap "named profiles"), not a third implementation; `profile:*` is a naming namespace over the same stage sets as `verify:*`, deliberately kept in lockstep so the two never diverge.
+- `trace.ts` `redact()` must be IMPORTED and reused, never re-implemented or copied; `trace.ts`/`auditExport.ts` source must not change this cycle (004 verify-only).
+- Wave disjointness mandatory: no task modifies a file another same-wave task owns; `package.json` is serialized across waves (002 = wave-1 scripts, 003 = wave-2 commands/activationEvents).
 
 ## Planner Report
-PLAN_REVIEW: Approved by unic-smart (round 1, minors applied)
+PLAN_REVIEW: Approved by unic-smart (round 2, after one revision round)
 PLANNER_MODEL: unic-smart
 
 ## Planner Self-Audit
 
 Checklist: 12/12 pass
-Fixed during audit: (1) Corrected the roadmap's stale extension.ts citations to the real singleton/wiring (`extension.ts:99,753-754,1584-1633,1067-1068`) and consolePanel constructor/hydrate lines (`143-145,310-318`). (2) Pinned parse rejects over-cap and persist clamps (both deterministic), so the codec never emits a snapshot its own parse would reject. (3) Chose tolerated-and-stripped for unknown extra fields and recorded the reasoning. (4) Chose "reuse `state`" over a new `draftsCleared` message and recorded the rejection. (5) Added the flush-before-`switchTab`/`closeTab` webview behavior + host "updateBuffer silent" pin as the concrete divergence fix, so the §4 regression rows test a real behavior (not an empty implementation). (6) Made 004 a real wiring task (evidence: `commandOpenConsole` currently passes only `globalState`; nothing passes `draftMemento`), with the not-needed escape documented for the executor. (7) Confirmed the debounce test harness constraint (fake timers, never the `until()` helper) so the executor's first test run cannot deadlock.
-Known gaps: (1) The 500ms debounce window means an abrupt webview kill can lose the last ~500ms of keystrokes that never reached the host — inherent to postMessage (the webview cannot post after death); `visibilitychange→hidden`/`beforeunload`/dispose flush narrows it. Acceptable per design. (2) `document.visibilityState` is read-only in jsdom; the §4 #27 visibilitychange test may need `Object.defineProperty` or a jsdom config override — if it cannot be driven, the executor falls back to the beforeunload flush test (#26) and records the limitation in the task Discussion (the flush function is shared, so beforeunload coverage exercises the same code). (3) Manual acceptance (multi-tab close/reload/reopen/clear) is release-time and cannot be automated here.
+Fixed during audit: (1) Verified zero `createOutputChannel` in `src/` and that `extension.test.ts`'s vscode mock (line 70) needs a `createOutputChannel`/`OutputChannel` member — recorded as an executor step, not assumed. (2) Resolved the lazy-create vs. "lifecycle line at activate end" tension with a bounded pending-buffer design so the activate line is logged eagerly WITHOUT creating the channel — the strict pin holds and the reveal command still shows the buffered history. (3) Read `releaseVerify.test.ts` in full and confirmed its shell-injection/reference-integrity checks iterate ONLY `verify:fast`/`verify:release`, so `profile:*` keys are free to add — and pinned the new keys in `releaseHygiene.test.ts` instead. (4) Chose `profile:release = "npm run verify:release"` over `bash scripts/verify-release.sh` for Windows portability and recorded the rejection. (5) Verified `mgr.onDidChangeActive`/`onDidChangeRecoveryStatus` are real existing events extension.ts already subscribes to (connectionManager.ts:87,91; extension.ts:342,729) — the connection summary consumes existing seams, not new plumbing. (6) Confirmed the per-run AI completion seam lives in `aiChatPanel.ts` (outside 003's roadmap file set) and recorded it as a documented known gap rather than silently widening scope. (7) Added cross-file constraint rows so 002 owns releaseHygiene pins but releaseVerify stays green, and package.json is serialized across waves.
+Known gaps: (1) One line per agent run completion is NOT wired — the seam is in `aiChatPanel.ts`, outside 003's roadmap file set; `logDiagnostic` is exported module-level for a future cycle to hook. 003's AI lines cover panel-open, trace export/clear, and policy show at real extension.ts seams. (2) If nothing meaningful ever happens, no channel is created and pending lines are dropped at deactivate — acceptable: nothing meaningful to show; the reveal command flushes buffered history when the user asks. (3) Manual support-flow acceptance (open channel, reproduce, copy lines) is release-time and cannot be automated here.
 
 ## Plan Review Log
 
-### Round 1 — Approved by unic-smart (P2.5 independent review)
-Status: Approved. Two non-blocking citation minors (consolePanelBundle.test.ts loadBundle helper 29-48 → 22-40; consoleTabs.test.ts FakeMemento span) — applied directly to TASK-ARP08-002/-003 without re-review per loop policy.
-
-
 ### Round 1 — 2026-09-02 · unic-smart
+Status: Issues Found
+
+COMPLETENESS:
+  - none — no TODOs/placeholders; §4 rows 1-32 cover all five tasks with genuinely distinct edge cases; §5 commands runnable (typecheck/vitest/compile all exist); §6 acceptance checkable; privacy byte-scan pins present (task 003 #20).
+CONSISTENCY:
+  - important — PLAN §3 `logDiagnostic` bullet ("if a channel exists → appendLine; else → push to the pending buffer") omits the create-on-first-real-write path, contradicting §1 success (1) ("created only on first real diagnostic write or command invocation") and task 003 test #16 (a `mgr.onDidChangeActive` event must call `createOutputChannel` exactly once). Fix: state that logDiagnostic/ensureDiagChannel creates the channel once on the first non-lifecycle "real" write and flushes pending; only the activate-end lifecycle line is pure-buffer.
+  - minor — test-numbering drift: task 002 ships 7 tests (#10-16) but PLAN §4 lists only rows 10-15 for 002; its extra #16 ("releaseVerify stays green") collides with PLAN row 16, which belongs to 003. Substance is required in §3(09.2e)/§5, so documentation-only. Fix: add the releaseVerify-green row to the §4 table for 002 (or renumber 003-005 rows).
+CLARITY:
+  - important — length-bound semantics contradictory. §3 pipeline step (5) bounds the MESSAGE to MAX_DIAG_LINE_CHARS (2000) BEFORE assembly (step 6), but task 001 test #6 and §6 acceptance require the FINAL line `length <= 2000`. A 2000-char message + ~44-char `[ISO] [cat] [sev] ` prefix exceeds 2000; test #6's own wording ("tail cut at the bound" + `line.length <= 2000`) is internally inconsistent. Fix: pin the bound to the assembled line (truncate total to 2000), or bound the message to 2000 minus prefix length, and align the test wording.
+  - minor — task 004 #28 ("no direct appendLine(<raw>)") can be misread as "no appendLine anywhere", which would contradict 003's ensureDiagChannel flush (it MUST appendLine already-redacted logLine output; task 004's own `grep -n appendLine src/extension.ts` returns matches by design). Fix: reword to "every appendLine argument is a logLine-formatted (redacted) string".
+SCOPE:
+  - none — target files per task match plan scope; waves 1/2/3 disjoint (001/002 parallel; 003/004 parallel; 005); package.json serialized 002 w1 (scripts) → 003 w2 (commands+activationEvents), different sections; 004's soft dependency on 003's wiring for #28 is explicitly gated in its Dependencies. Verified against HEAD @ c2baff7: zero createOutputChannel in src/ outside __tests__; trace.ts:57 redact(); auditExport.ts:101 final-pass; releaseVerify.test.ts scans ONLY verify:* (lines 157/193) so profile:* keys are unconstrained there; releaseHygiene has exactly 3 tests; deactivating sentinel extension.ts:94; connectionManager.ts:87/91 events; verify-release.sh executable POSIX. The plan's key design claim (profile:* not scanned by releaseVerify) HOLDS.
+YAGNI:
+  - minor — `profile:fast` is byte-identical to the existing `verify:fast` ("npm run typecheck && npm run compile"). Defensible as a named profile namespace (roadmap gap is "no named profile keys"), but confirm profiles are not intended to diverge from verify:* semantics.
+  - (checked, no issue) verbosity-setting rejection is documented (§3 opt-in decision), pinned (002 #15), and conditional closes 004/005 carry concrete "if a real gap" conditions; out-set (telemetry/upload, raw SQL/prompts/tokens, assertion-changing, mandatory integration per edit) is explicit.
+
+NOTES: Plan is executable — all cited source facts verified against HEAD @ c2baff7. Two important clarity/consistency defects (logDiagnostic create-path; length-bound semantics) are TDD-recoverable but should be pinned before execution so 003/001 implement the intended behavior on the first pass.
+
+### Round 1 — planner revision
+- 1 (IMPORTANT, logDiagnostic create-path): PLAN §3 09.3 now states **create-on-first-real-write** — if a channel exists → `appendLine`; else if the line is a REAL diagnostic write (any non-lifecycle line, or lifecycle `warn`/`error`) → `ensureDiagChannel()` creates the channel exactly once, flushes the pending buffer, then appends; only the activate-end lifecycle `info` line is pure-buffer. §1 success (1) aligned ("created exactly once, on the first REAL diagnostic write ... or command invocation"); 003 test #16 → #17 reworded to pin "exactly once, triggered BY the real write, not by plain activation"; 003 Target Files `logDiagnostic()` description updated to the same routing.
+- 2 (IMPORTANT, length-bound semantics): bound changed from "message bounded to 2000 before assembly" to "the ASSEMBLED final LINE is bounded to 2000 chars" — §3 pipeline reordered so assembly (prefix + message + corr suffix) precedes the bound, applied as the LAST step; §2 09.1 wording, §4 row 6, and 001 test #6 / Interfaces line-shape updated to "assembled line ≤ 2000; the MESSAGE tail is what gets cut".
+- 3 (MINOR, numbering drift): §4 gained 002's missing `releaseVerify stays green` row as new row 16; 003-005 rows renumbered 17-33 (was 16-32); §7 byte-scan row references updated (rows 20,28 → 21,29); 003/004/005 task test numbers renumbered to match (§4 rows ↔ task numbers now correspond).
+- 4 (MINOR, 004 no-bypass wording): 004 test #28 → #29 (and §4 row 29) reworded to "every `appendLine` argument is logLine-formatted (REDACTED) — redaction reused, no raw unformatted writes; an `appendLine(<raw>)` anywhere is a FAIL; direct matches at the flush site are expected by design"; 004 Goal (d) clarified accordingly.
+- 5 (MINOR, profile:fast = verify:fast): §3 09.2 and §7 now state explicitly that `profile:fast` being byte-identical in effect to `verify:fast` is INTENDED — the deliverable is the named profile key itself (roadmap "named profiles"), a naming namespace over the same stage sets, deliberately kept in lockstep; no third implementation. 002 Goal carries the same one-line note.
+
+### Round 2 — 2026-09-02 · unic-smart
 Status: Approved
 
 COMPLETENESS:
-  - none — §1-§7 all present; §4 has 34 rows covering every task with happy + ≥2 distinct edge kinds (malformed/version/shape/boundary/active-tab/forward-compat/privacy/durability/concurrent) + regression pins; every task file carries its own Test Cases / Test Files / Verification Commands / Acceptance / Dependencies / Interfaces.
+  - none — §4 rows 1-33 map 1:1 to task test numbers #1-33 (001=1-9, 002=10-16, 003=17-24, 004=25-29, 005=30-33); no gaps, orphans, or leftover references to the old 1-32 scheme outside this log.
 CONSISTENCY:
-  - none — task Target Files match §2 scope exactly (001 owns `consolePanelMessages.ts`+test, 002 owns `consolePanel.ts`+test, 003 owns webview+bundle+`consoleTabs.test.ts`, 004 owns `extension.ts`+test in wave 3); waves match Dependencies (001→002/003→004); wave 2 files are disjoint; INDEX.md graph/waves/ownership and ACTIVE.md `planning_done` match. The roadmap's wave-1 pairing of 08.1+08.2 is correctly re-sequenced (08.2 imports 08.1's codec — cannot share a wave) and documented.
+  - none — R1 finding 1 (create-path) resolved consistently: §1 success (1), §2 09.3, §3 09.3 routing, §4 row 17, and 003 Goal/Test #17/Target Files all state create-on-first-real-write, buffered-activate-lifecycle-only, exactly-once dispose; no stale "else → buffer" wording remains.
+  - none — R1 finding 3 (numbering) resolved: 002's releaseVerify-green row is §4 row 16 = task 002 #16; 003-005 rows renumbered 17-33 with matching task numbers; §7 byte-scan refs updated to rows 21/29; 004 #27 still cites rows 3-4 (unchanged).
 CLARITY:
-  - TASK-ARP08-003: `loadBundle` helper cited at `consolePanelBundle.test.ts:29-48`, actual definition is lines 22-40 (~7-line drift). Cosmetic — executor will find the helper by name.
-  - TASK-ARP08-002: `FakeMemento` described as "the 8-line class from `consoleTabs.test.ts:21-30`", actual class spans lines 21-29 (9 lines). Cosmetic.
+  - none — R1 finding 2 (bound semantics) resolved consistently: §2 09.1, §3 pipeline (assembly precedes bound-as-last-step), §4 row 6, and 001 Goal/Test #6/Interfaces all pin "ASSEMBLED line ≤ 2000, message tail cut, prefix intact".
+  - none — R1 finding 4 (no-bypass wording) resolved: 004 #29 + §4 row 29 + 004 Goal (d) all read "every appendLine argument is logLine-formatted (REDACTED); flush-site matches expected by design; appendLine(<raw>) is the FAIL".
 SCOPE:
-  - none — Out set matches roadmap (results/passwords/transaction state/cross-machine sync/unlimited persistence/file writes/automatic replay); rejected alternatives documented; no gold-plating.
+  - none — renumbering introduced no cross-file drift; wave/serialization (002 scripts w1 → 003 commands w2) unchanged; task 002's node -e profile check is a superset of PLAN §5's 002 block, not a conflict.
 YAGNI:
-  - none — `draftsCleared` message correctly rejected (state round-trip suffices); localStorage/globalState/postState-on-every-updateBuffer correctly rejected.
+  - none — R1 finding 5 resolved: §3 09.2, §7, and 002 Goal all state profile:fast ≡ verify:fast is INTENDED (named-profile namespace, kept in lockstep, no third implementation).
 
-NOTES: All load-bearing citations verified against HEAD @ 8dca6d2: `consolePanel.ts:143-145,177-187,190-204,231-234,310-318,401-403`; `extension.ts:99,753-754,1067-1068,1584-1633`; `webview/consolePanelMain.ts:65-95,106-110,157-160,327-341`; harness anchors `consolePanel.test.ts:96-117`, `consoleTabs.test.ts:21-30,110-126`, `extension.test.ts:272-300,2081-2120`, `consolePanelBundle.test.ts:22-40`; bundle tests read `dist/consolePanel.js` (compile-first worktree note is required and present); `isConsoleToHostMessage` has no default case so an early-arriving `clearDrafts` in wave 2 silently no-ops (benign intra-wave ordering). 003's Clear-drafts resets only the active tab's dirty flag, leaving background dirty-set entries inert — harmless because host `setBuffer` no-ops on dropped tab ids and `flushPending` guards tab existence; optionally clear the whole dirty set for hygiene. Verification commands are runnable as written (`npm run compile` precedes the 003 vitest run; fake-timer constraint and jsdom `visibilityState` fallback documented). No plan-blocking issues found.
+NOTES: Non-blocking clarification only — §3 09.1 "the MESSAGE tail is what gets cut" is exact for the no-correlationId case (row 6 / test #6). If a future corr+long-message case is pinned, decide whether the bound may cut the corr suffix (whole-line slice) or must preserve it (message-only truncate); today's tests and acceptance do not exercise it, so no action needed.

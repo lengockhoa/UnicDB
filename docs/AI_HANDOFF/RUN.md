@@ -1,6 +1,6 @@
 Command: handoff-fullstack
-Goal: Ship ARP-08 Console draft recovery — versioned bounded workspace-scoped tab/buffer/active-tab persistence with debounced flush + exactly-once dispose flush, corrupt→empty-tab fallback, durable clear, and a webview updateBuffer flush that fixes the switch-clobber divergence; restore never runs SQL.
-Base: main @ af88e47 (v1.43.0 + plan commit)
-Phase: done
-Cursor: R5 shipped — v1.44.0 released (commit 93efafd, tag v1.44.0, GitHub release + vsdb-1.44.0.vsix). All 4 tasks done, 4/4 approved round 1. Suite 3160 | 2.
-Next: start cycle ARP-09 (Redacted support diagnostics + release-confidence profiles) — fresh planning, source docs/plans/2026-09-01-vsdb-additive-roadmap.md §ARP-09. Documented follow-ups not yet scheduled: browseCommands.ts:169-193 unguarded finally; MSSQL [insert] bracket false positive; ARP-07 known gap (form-view DDL tableCommands.ts runDdl + AI plan-apply aiChatPanel.ts not wired to invalidation seam); ARP-08 minor (snapshot name field uncapped).
+Goal: Ship ARP-09 Redacted support diagnostics + release-confidence profiles — lazy VSDB Output Channel with redacted lifecycle/connection/AI summaries, reveal/clear commands, no raw SQL/secrets; named `profile:fast` / `profile:release` npm profiles over real existing commands; redaction reused from trace.ts (no copy).
+Base: main @ c2baff7 (v1.44.0)
+Phase: P3
+Cursor: PLAN.md written (7 sections + Planner Report), 5 task files created (TASK-ARP09-001..005), ACTIVE.md + INDEX.md cycle section + PORT-ARP-09 row updated. Awaiting commit of the plan/tasks, then executor on wave 1 (001 + 002 parallel).
+Next: commit plan → executor runs waves (1: 001+002, 2: 003+004, 3: 005) → reviewer gates → v1.45.0 release (CHANGELOG entry, minor bump, verify:release 3160|2).

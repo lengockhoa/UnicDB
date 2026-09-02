@@ -30,6 +30,7 @@ Cycle AIX-07 — **Trust, Privacy & Governance** — complete; shipped in v1.28.
 | PORT-ARP-06 | AI SQL policy unification and usage visibility | superseded (shipped in v1.42.0) | - | unic-smart |
 | PORT-ARP-07 | Successful-DDL cache/context invalidation | superseded (shipped in v1.43.0) | ARP-01 | unic-smart |
 | PORT-ARP-08 | Console draft recovery | superseded (shipped in v1.44.0) | ARP-03 | unic-smart |
+| PORT-ARP-09 | Redacted support diagnostics + release-confidence profiles | queued — plan + 5 tasks ready | ARP-02, ARP-05, ARP-06 | unic-smart |
 
 ## Cycle ARP-05 — Cross-driver timeout, pool, and resilience contract
 
@@ -258,3 +259,24 @@ Graph: TASK-ARP08-001 → TASK-ARP08-002; TASK-ARP08-001 → TASK-ARP08-003; TAS
 - Wave 3 (1): TASK-ARP08-004 (consumes 001's constants + 002's `draftMemento` option)
 
 No same-wave file sharing: 001 owns `consolePanelMessages.ts`(+`consolePanelMessages.test.ts`); 002 owns `consolePanel.ts`(+`consolePanel.test.ts`); 003 owns `webview/consolePanelMain.ts` + `consolePanelBundle.test.ts` + `consoleTabs.test.ts` (neighbor pin); 004 owns `extension.ts`(+`extension.test.ts`) in wave 3 only. Citation corrections (roadmap anchors stale): constructor seeds `Query 1` at `consolePanel.ts:143-144`, `hydrateHistory` at `310-318`; singleton `extension.ts:99`, `commandOpenConsole` at `1584-1633`, registration `753-754` passes `context.globalState`, deactivate dispose at `1067-1068`; webview NEVER posts updateBuffer (`consolePanelMain.ts:157-160`) — the debounced flush is both the draft-flush mechanism and the switch-clobber divergence fix. Known gap (PLAN.md Self-Audit): ~500ms debounce can lose the last keystrokes on abrupt webview death (flush-on-hidden/unload/dispose narrows it); jsdom `visibilityState` override may be needed for the hidden-flush pin (beforeunload covers the same flush function). Plan: `docs/AI_HANDOFF/PLAN.md`.
+
+## Cycle ARP-09 — Redacted support diagnostics and release-confidence profiles
+
+Source: `docs/plans/2026-09-01-vsdb-additive-roadmap.md` §ARP-09 (lines ~399-431). Dep: ARP-02, ARP-05, ARP-06 (all shipped); preserve ARP-02 deactivate sentinel, ARP-06 AI policy, ARP-07 DDL-invalidation seam, ARP-08 draft wiring byte-untouched. Base: `main @ c2baff7` (v1.44.0). Baseline: 3160 passed | 2 skipped. No lint script — static gate `npm run typecheck`; bundle gate `npm run compile`. Release: v1.45.0. Verified: zero `createOutputChannel` in `src/`; `trace.ts` `redact()` (line 57) importable from `src/core/diagnostics.ts`; `verify:release`/baseline scripts pinned byte-identical by `releaseVerify.test.ts` (new profiles are NEW `profile:*` keys only). Plan: `docs/AI_HANDOFF/PLAN.md`.
+
+| Task / Portfolio | Title | Status | Dependencies | Reviewer |
+|---|---|---|---|---|
+| TASK-ARP09-001 | Pure redacted diagnostics formatter (new `src/core/diagnostics.ts`) | ready | none | - |
+| TASK-ARP09-002 | Release-confidence profiles: `profile:fast` / `profile:release` + hygiene pins | ready | none | - |
+| TASK-ARP09-003 | Lazy redacted Output Channel wiring + reveal/clear commands | ready | TASK-ARP09-001 | - |
+| TASK-ARP09-004 | Redaction-reuse gate (verify-first, expected not-needed) | ready | TASK-ARP09-001 | - |
+| TASK-ARP09-005 | Runner gate (conditional, expected not-needed) | ready | TASK-ARP09-002 | - |
+| PORT-ARP-09 | Redacted support diagnostics + release-confidence profiles | queued — plan + 5 tasks ready | ARP-02, ARP-05, ARP-06 | unic-smart |
+
+Graph: TASK-ARP09-001 independent; TASK-ARP09-002 independent; TASK-ARP09-001 → TASK-ARP09-003; TASK-ARP09-001 → TASK-ARP09-004; TASK-ARP09-002 → TASK-ARP09-005.
+
+- Wave 1 (2): TASK-ARP09-001, TASK-ARP09-002 (parallel — disjoint files)
+- Wave 2 (2): TASK-ARP09-003, TASK-ARP09-004 (parallel — both consume 001; disjoint files)
+- Wave 3 (1): TASK-ARP09-005 (conditional — expected NOT-NEEDED)
+
+No same-wave file sharing: 001 owns `src/core/diagnostics.ts`(+new `diagnostics.test.ts`); 002 owns `package.json` (scripts section only) + `releaseHygiene.test.ts`; 003 owns `extension.ts` + `extension.test.ts` + `package.json` (commands + activationEvents) in wave 2; 004 owns `src/ai/__tests__/trace.test.ts` (read-only evidence append); 005 owns nothing if closed not-needed. `package.json` is edited in BOTH wave 1 (002 scripts) and wave 2 (003 commands/activationEvents) — serialized across waves, different sections. `releaseVerify.test.ts` and `scripts/verify-release.sh` are NOT modified by any task. Known gaps (PLAN.md Self-Audit): per-run AI completion summary not wired (seam in `aiChatPanel.ts`, outside 003's roadmap file set — `logDiagnostic` exported for a future cycle); if nothing meaningful happens no channel is ever created (pending lines dropped at deactivate — acceptable; reveal flushes buffered history).
