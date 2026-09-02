@@ -179,3 +179,22 @@ export interface TurnUsageSummary {
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/ai/__tests__/agent.test.ts && npm run typecheck && npm run compile
+  result: 33 pass / 0 fail; typecheck exit 0; compile exit 0
+TEST_PLAN_COVERAGE: all-followed - §Test Cases 1-6 all present; #5 is a GREEN-on-base abort pin (documented, permitted)
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - src/ai/__tests__/agent.test.ts (test #4) - plan's literal "budget-capped zero completed steps -> steps:0" is unreachable (the step loop always pushes >=1 completed step before the budget return). Executor pins the pure empty case (summarizeTurnUsage([]) -> {0,0,unknown:true,steps:0}) AND the budget-capped 1-tool-step case (steps:1); more accurate than the plan literal, intent fully preserved (unknown:true, no invented usage, budget path reports usage).
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Accounting correct: exact sum over completed steps on BOTH resolution paths; unknown iff no step reported a nonzero count (never fabricated); abort rethrows (no AgentRunResult); maxSteps stays the only hard stop. TurnUsageSummary {inputTokens,outputTokens,unknown,steps} matches what TASK-ARP06-005 consumes verbatim; provider.ts usage shape unchanged. Missing usage on a step (untyped mocks) is treated as not-reported, consistent with the reported-or-unknown policy.

@@ -206,3 +206,23 @@ Note:
    legitimately show 0s when nothing was ever reported.
 3. webview chip placement mirrors the existing `#sessionChip`/`#engineLifecycle`
    pattern (span appended to `#engineBanner` or root), textContent-only.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/aiChatPanelPolicy.test.ts src/ui/__tests__/aiChatPanel.test.ts src/ui/__tests__/aiChatPanelSessionStateWebview.test.ts && npm run typecheck && npm run compile
+  result: 64 pass / 0 fail; typecheck exit 0; compile exit 0; dist/aiChatPanel.js regenerated (usageChip x2, "usage" x1)
+TEST_PLAN_COVERAGE: all-followed - §Test Cases 1-6 in aiChatPanelPolicy.test.ts; #7 (render) split into 5 webview cases; integration in aiChatPanel.test.ts; OMP notice path exercised by existing #1b wire scan
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - src/ui/__tests__/aiChatPanelPolicy.test.ts - no dedicated assertion pins the OMP usage frame's content (unknown:true, zeros, no invented numbers). The shared postUsage(undefined, notice) logic is correct and the builtin unknown/abort tests cover it; an explicit OMP-frame assertion would strengthen the pin.
+    - src/ui/__tests__/aiChatPanelPolicy.test.ts (scanFrames) - the adapter drops any unknown extra field of a usage frame from the SECRET_RE scan; safe ONLY because #A4 pins the exact closed key set. Keep the two tests paired; worth a comment.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Privacy invariant holds: the usage frame carries only numeric fields + the closed-set policy notice (resolvePolicy reasons); no prompt/SQL/tool args/trace on the wire. Values-only scanFrames correctly neutralizes the benign "token" key substring while still scanning every carried value including the full notice string. Builtin posts usage only inside the !aborted done branch (abort never fabricates); OMP posts unknown:true notice-only at its single settle point. Webview chip is textContent-only with Number.isFinite guards (hostile input test confirms no live DOM).

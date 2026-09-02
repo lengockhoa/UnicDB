@@ -159,3 +159,24 @@ Note: |
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+---
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/ai/__tests__/provider.test.ts && npm run typecheck && npm run compile
+  result: 34 pass / 0 fail; typecheck exit 0; compile exit 0
+TEST_PLAN_COVERAGE: all-followed (tests 1-6 present; malformed cases cover string/null/negative/NaN/Infinity/non-object; retention asserts exact key sets)
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - src/ai/provider.ts:628,670 — streaming `tokenCount(...) || inputTokens` makes "last valid NON-ZERO chunk wins", not strict "last chunk wins": a genuine final usage chunk of 0/0 keeps the earlier value. Deviates only when a provider emits a real final 0 after a positive mid-stream value; never invents (both values were provider-reported). Acceptable; a one-line comment would remove the surprise.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: tokenCount guard confirmed at all 4 usage read sites (2 parsers + SSE main loop + trailing-buffer flush). RED evidence real (negative/NaN/Infinity passed through pre-fix). Retention verified: ProviderResult exposes only text/toolCalls/finishReason/usage; ProviderError `name` is the constructor-set Error label, not a body-retention gap (matches the corrected test expectation). scrubApiKey untouched; no new body retention.

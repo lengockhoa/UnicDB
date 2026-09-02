@@ -198,3 +198,24 @@ Status: PASS
 Note: none. ADR drift findings for TASK-ARP06-001 recorded in `## Discussion` (SHOW is admitted by
 run_sql profile; EXPLAIN-wrapped writes deny with the generic allowed-set literal, not a distinct
 reason; INTO inside string literals is over-rejected — deliberate fail-closed).
+
+---
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/ai/tools/__tests__/sqlTool.test.ts && npm run typecheck && npm run compile
+  result: 50 pass / 0 fail; typecheck exit 0; compile exit 0
+TEST_PLAN_COVERAGE: all-followed (tests 1-6 present; side-effect runQuery-never-called + non-secret-denial pins added; cursor close success+error, 50-row cap, null-factory pins retained)
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - src/ai/tools/__tests__/sqlTool.test.ts:518 — file ends without a trailing newline (cosmetic).
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Pin-only task done correctly: guard-mutation RED (36 failed / 14 passed) proves the new side-effect pins are non-vacuous, and the production file was restored byte-exact (diff shows only the module-header rename — denial literals verified at sqlTool.ts:18-27). Drift notes are legitimate and match code (SHOW admitted via ALLOWED_FIRST; EXPLAIN-wrapped writes deny with the generic allowed-set literal; INTO inside literals over-rejected). Gap noted for 001: the drift notes did not flag that run_sql ADMITS non-INTO DML keywords in literals/comments/identifiers — raised on TASK-ARP06-001.

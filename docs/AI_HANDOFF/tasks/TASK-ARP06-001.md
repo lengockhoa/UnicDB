@@ -229,3 +229,25 @@ Files changed: `docs/decisions/0003-ai-sql-policy.md` (new),
 (corpus extended, 20 → 60 tests). EXPLAIN reduction (`stripExplainPrefix`) is cited in
 ADR §6 as already-implemented run_sql behavior — pinned, NOT reimplemented; per the
 plan's ownership rule, ADR corrections for any drift ARP-06.2 finds are wave 2.
+
+---
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/ai/tools/__tests__/readonlySqlParser.test.ts && npm run typecheck && npm run compile
+  result: 60 pass / 0 fail; typecheck exit 0; compile exit 0
+TEST_PLAN_COVERAGE: all-followed (tests 1-8 present; corpus sweep = 64 denied cases; reviewer adversarial probes 22/22)
+FINDINGS:
+  critical:
+    - none
+  important:
+    - docs/decisions/0003-ai-sql-policy.md:107 — ADR §4 matrix row "Forbidden keyword inside string literal / dollar-quote / comment body / identifier substring" run_sql column claims "deny via its keyword scans". Verified FALSE: isReadOnlySql ADMITS `SELECT 'insert' FROM t`, `SELECT 'drop table x' AS s`, `SELECT created_at FROM t`, `SELECT 1 -- drop table t`. The run_sql guard scans only the first-keyword allow-set, `\binto\b`, ROW_LOCK_RE, and writable-CTE `insert|update|delete|merge` (under WITH/EXPLAIN). Safe direction (these are non-mutation reads; fail-closed invariant holds), but the ADR records a false claim the §8 ownership rule says must be reconciled. Fix: narrow the run_sql cell to "deny only where its scans fire (INTO / row-lock / writable-CTE under WITH/EXPLAIN); DML keywords in literals/comments/identifiers are admitted as read-only data". 002's drift note 4 already flags the INTO-in-literal leg; the general leg was missed.
+  minor:
+    - docs/decisions/0003-ai-sql-policy.md:108 — "Multi-statement … statement counting, literal-aware" is inaccurate for the core profile: parseReadonly uses plain `body.indexOf(";")`, so `SELECT ';'` is over-rejected as multi_statement (safe direction). "literal-aware" holds only for run_sql's countStatements.
+    - executor RED note claims "63-case sweep"; committed corpus has 64 entries (cosmetic count only).
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Comment-body fix verified sound: raw-text scans strictly strengthen (raw ⊇ stripped ⇒ deny set only grows), 22 adversarial bypass probes all denied (nested/unterminated/CRLF comments, string-embedded keywords, comment-split keyword fusion, FOR SHARE/INTO hidden in comments, leading-comment smuggling), happy paths + consumer suites green. One ADR matrix cell must be corrected before merge.
