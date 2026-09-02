@@ -1,227 +1,186 @@
-# PLAN — ARP-09: Redacted support diagnostics and release-confidence profiles
+# PLAN — Cycle BQ-00: BigQuery provider feasibility + adapter contract spike
 
-Source: `docs/plans/2026-09-01-vsdb-additive-roadmap.md` §ARP-09 (lines ~399-431; P2; deps ARP-02, ARP-05, ARP-06 — all shipped; preserve ARP-02 deactivate sentinel, ARP-06 AI policy, ARP-07 DDL-invalidation seam, ARP-08 draft wiring byte-untouched).
-Base: `main @ c2baff7` (v1.44.0, released commit 93efafd). Executor: `unic-code`. Reviewer: `unic-smart`. No lint script — static gate is `npm run typecheck`; bundle gate `npm run compile`. Baseline: 3160 passed | 2 skipped. Release target: **v1.45.0** (minor bump, house-style CHANGELOG entry).
-
-**Verified source facts (cited, not re-derived):**
-- Zero `OutputChannel` usage today — `grep -rn "createOutputChannel" src/` returns nothing outside `__tests__`. The only vscode-mock in `src/extension.test.ts` is `vi.mock("vscode", ...)` at line 70 (no `createOutputChannel` member yet — executor must add it).
-- `src/ai/trace.ts` exports pure `redact(value: unknown): unknown` at line 57 (recursive, never throws; `SECRET_KEY_RE`/`HEADER_RE`/`BEARER_RE`/`BASIC_RE`/`KV_RE`/`AUTH_KV_RE`/`LONG_RUN_RE` scrubbing). It is directly importable from `src/core/diagnostics.ts`. **It must be imported, never re-implemented or copied.**
-- `src/ai/auditExport.ts` (`serializeAuditExport`) already ends in `JSON.stringify(redact(...))` as the final pass — 004 must prove it stays byte-intact, not change it.
-- `package.json` scripts: `compile`, `watch`, `test`, `test:integration`, `typecheck`, `package`, `verify:fast`, `verify:release`, `vscode:prepublish`. No lint script.
-- `src/__tests__/releaseVerify.test.ts` pins (MUST NOT be broken): `verify:release === "npm test && npm run typecheck && npm run compile"` (exact); `verify:fast` is exactly one of two allowed strings; `verify:fast`/`verify:release` have no shell-injection surface; `verify:*` values reference only pre-existing script keys; the four baseline scripts (`test`/`typecheck`/`compile`/`test:integration`) are preserved byte-identical; `scripts/verify-release.sh` exists, is executable, has a POSIX shebang, and emits ordered `PASS <stage>` / first-failure `FAIL <stage>` + `FAIL verify:release` with verbatim exit-code propagation. The shell-injection + reference-integrity checks iterate ONLY the two `verify:*` keys — new `profile:*` keys are NOT scanned, so 09.2 adds them freely while adding its own pins in `releaseHygiene.test.ts`.
-- `src/__tests__/releaseHygiene.test.ts` currently has 3 tests (lock root version sync, README `vsdb-<version>.vsix` placeholder, package.json semver) — 09.2 appends the new profile pins to this file (roadmap-sanctioned).
-- `src/core/connectionManager.ts`: `onDidChangeActive: vscode.Event<ConnectionConfig | null>` (line 87) and `onDidChangeRecoveryStatus: vscode.Event<ConnectionRecoveryStatus>` (line 91) are existing events extension.ts already subscribes to (`mgr.onDidChangeActive(...)` at `extension.ts:342,729`). Consuming them for a summary line is NOT new callback plumbing.
-- `extension.ts` anchors: `deactivating` sentinel at line 94 (byte-untouched); `activate()` end ~`1047-1054` (lifecycle line goes into a pending buffer — see §3); `deactivate()` at `1056-1091` (channel dispose appended additively after `consolePanel` dispose ~`1075-1076`, before the function ends); AI command registrations `vsdb.ai.showPolicy`/`vsdb.ai.exportTrace`/`vsdb.ai.clearTrace` at `676-690`; `AiChatPanel` construction at `1228`; existing `mgr.onDidChangeActive` handler at `342`.
-- Tests-map (`.cache/index/tests-map.json`): `src/extension.ts` → `[extension.test.ts, extensionAutocomplete.test.ts, extensionConfigExport.test.ts, mcpExtensionRegistry.test.ts]`; `src/ai/trace.ts` → `[trace.test.ts]`; `src/ai/auditExport.ts` → `[auditExport.test.ts]`. `src/core/diagnostics.ts`, `package.json`, `scripts/verify-release.sh` are unmapped → new-file/script-target convention (releaseHygiene + releaseVerify).
+Source spec: `docs/plans/2026-09-01-bigquery-provider-roadmap.md` §4 "BQ-00 — Provider feasibility and contract spike" (P0, mandatory measurement cycle — not a feature release). Commissioned per roadmap §9.2: a NEW handoff cycle, no prior `docs/AI_HANDOFF` artifact overwritten, paths re-validated at current HEAD `main @ 35f7aff` (post-ARP-09, v1.45.0).
 
 ## §1 Intent
 
-**Problem.** AI trace/audit redaction already exists (`src/ai/trace.ts` `redact()`; `src/ai/auditExport.ts` final-pass), but VSDB has **no extension-wide Output Channel** (verified: zero `createOutputChannel` in `src/`). When a user hits a support issue there is no local, discoverable, redacted diagnostics surface to share — and `package.json` exposes full/integration suites but no named fast/release confidence profile users or CI can point at by name.
+Goal (user, verbatim): "Ship BQ-00: provider feasibility + adapter contract spike for Google BigQuery. No real ADC. Prove `@google-cloud/bigquery` integrates with the existing VSDB adapter boundary without modifying existing drivers."
 
-**Success.** (1) A lazy `vscode.window.createOutputChannel("VSDB")` records redacted, single-line lifecycle/connection/AI summaries; the channel is created exactly once, on the first REAL diagnostic write (create-on-first-real-write) or command invocation — never at plain activation, and never for the buffered activate-end lifecycle line alone. (2) `vsdb.diagnostics.show` reveals it and `vsdb.diagnostics.clear` clears it. (3) Every line goes through `trace.ts` `redact()` — no raw SQL, connection strings, passwords, prompts, or tokens can reach the channel (byte-scan-pinned). (4) New named scripts `profile:fast` and `profile:release` exist, reference ONLY real pre-existing commands, and leave every pinned baseline/verify script byte-identical. (5) No new runner script is needed — `scripts/verify-release.sh` already provides the portable staged runner and is pinned by `releaseVerify.test.ts`; `profile:release` names a portable gate (`npm run verify:release`). (6) Redaction is reused, not re-implemented — evidence-pinned by 004 (expected close NOT-NEEDED).
+P0 user decision (2026-09-02): **BQ-00 first**; the four STATUS.md follow-ups are deferred to a later cycle.
+
+Success = the four roadmap acceptance checks, each verifiable at cycle end (see §6):
+
+1. Package/version/bundle behavior is proved in CI-compatible build conditions.
+2. The adapter contract explicitly says who owns job IDs/page tokens and how nested and precision-sensitive values display.
+3. Missing ADC, bad billing project, denied API, and wrong location are distinguishable without secrets.
+4. No existing driver type or UI is changed unless a test demonstrates the need (BQ-00 changes none — §3 proves it).
+
+DEFERRED (out of scope this cycle): roadmap sub-cycles BQ-01..BQ-07 and the 4 STATUS.md follow-ups: (1) browseCommands unguarded `finally`, (2) MSSQL `[insert]` bracket false positive, (3) ARP-07 form-view/AI plan-apply invalidation gap, (4) ARP-08 snapshot name-field uncapped.
 
 ## §2 Scope
 
-**In**
-- ARP-09.1 (wave 1) — pure redacted formatter in `src/core/diagnostics.ts` (NEW, no vscode import) + `src/core/__tests__/diagnostics.test.ts` (NEW): `logLine(category, severity, message, correlationId?, now?)` producing `[<ISO time>] [<category>] [<severity>] <redacted single-line message>` (+ ` (corr:<id>)`); reuses `redact()` from `src/ai/trace.ts` (the one sanctioned import); never throws on any input; single-line invariant; 2000-char bound applied to the ASSEMBLED line (after prefix + corr-suffix assembly, as the last step); categories `lifecycle|connection|ai|schema|general`, severities `info|warn|error`.
-- ARP-09.2 (wave 1) — profile design in `package.json` (scripts section ONLY) + `src/__tests__/releaseHygiene.test.ts`: NEW keys `profile:fast = "npm run typecheck && npm run compile"` and `profile:release = "npm run verify:release"`; new pins that these keys reference only real artifacts, have no shell-injection surface, and that all pinned baseline/verify scripts stay byte-identical. Cross-file constraint: `releaseVerify.test.ts` is NOT modified but MUST stay green.
-- ARP-09.3 (wave 2) — channel wiring in `src/extension.ts` + `src/extension.test.ts` + `package.json` (contributes.commands + activationEvents sections ONLY, serialized after 002's wave-1 scripts edit): lazy `createOutputChannel("VSDB")` with a bounded pending-buffer flush; commands `vsdb.diagnostics.show` / `vsdb.diagnostics.clear`; exactly-once dispose in `deactivate()`; lifecycle + connection (`mgr.onDidChangeActive`, optionally `onDidChangeRecoveryStatus`) + AI (existing extension.ts command/panel seams) summary lines; privacy byte-scan pins.
-- ARP-09.4 (wave 2, verify-first) — redaction-reuse gate: prove by source evidence that 001 imports and uses `trace.ts` `redact()` (no copy), that `auditExport.ts` final-pass is byte-intact, and that the channel wiring never emits pre-redaction content. Expected close: NOT-NEEDED (no trace/audit source change). Owns `src/ai/__tests__/trace.test.ts` (read-only evidence append) + a docs note.
-- ARP-09.5 (wave 3, conditional) — runner gate: expected NOT-NEEDED. `scripts/verify-release.sh` already exists (POSIX, staged PASS/FAIL, exit-code propagation, pinned by `releaseVerify.test.ts`), and `profile:release` now names a portable gate. If the executor finds a real gap (e.g. Windows `.cmd` wrapper genuinely required), design it then — conditional only.
+**IN:**
 
-**Out**
-- Telemetry / upload / persistence of diagnostics to disk.
-- Raw SQL, SQL results, prompts, tool args, connection strings, host/user/port, passwords, tokens — in channel lines or captured content.
-- Changing any assertion to make a test pass; mandatory integration (`test:integration`) per edit.
-- New dependencies; changes to `scripts/verify-release.sh`; changes to `verify:*` or the four baseline scripts; a `vsdb.diagnostics.verbosity` configuration setting (rejected — YAGNI, see §3).
-- Any source change to `src/ai/trace.ts` / `src/ai/auditExport.ts` (004) or to `src/ui/aiChatPanel.ts` (per-run AI summary seam — outside 003's roadmap file set, documented as a known gap).
+| Task | Roadmap | Owns (no other task in its wave touches these) |
+|---|---|---|
+| TASK-BQ00-001 (w1) | BQ-00.1 package + bundle proof | `package.json` (deps only), `package-lock.json`, `src/adapters/__tests__/bigqueryPackage.test.ts` (new), `docs/decisions/_bq00-evidence.md` (new, scratch evidence) |
+| TASK-BQ00-002 (w2) | BQ-00.2 pure job/page contract | `src/adapters/bigqueryTypes.ts` (new), `src/adapters/__tests__/bigqueryTypes.test.ts` (new) |
+| TASK-BQ00-003 (w2) | BQ-00.3 ADC diagnostic seam | `src/adapters/bigqueryAdc.ts` (new), `src/adapters/__tests__/bigqueryAdc.test.ts` (new) |
+| TASK-BQ00-004 (w3) | BQ-00.4 ADR/contract | `docs/decisions/0004-bq-00-feasibility-contract.md` (new), `docs/decisions/README.md` |
 
-**File disjointness.** Wave 1: 001 owns `src/core/diagnostics.ts` + `src/core/__tests__/diagnostics.test.ts`; 002 owns `package.json` (scripts only) + `src/__tests__/releaseHygiene.test.ts`. Disjoint. Wave 2: 003 owns `src/extension.ts` + `src/extension.test.ts` + `package.json` (commands + activationEvents); 004 owns `src/ai/__tests__/trace.test.ts` (evidence append) + docs note. Disjoint. `package.json` is edited in BOTH 001's wave-1 sibling 002 (scripts) and wave-2 003 (commands/activationEvents) — this is legal because the edits are serialized across waves (002 lands first, 003 is wave 2) and each task touches a different section. Documented explicitly so reviewers do not flag a false same-file collision.
+**OUT:** BQ-01..BQ-07; the 4 deferred follow-ups; any edit to `src/adapters/{factory,mssql,mysql,postgres,types}.ts`, `src/core/queryRunner.ts`, `src/ui/resultsPanel.ts`, `src/extension.ts`, `esbuild.js` (all read-only — the bundle probe calls esbuild's JS API from inside the test, so the bundler config is unchanged); any real-GCP automated test; `vitest.integration.config.ts`; no new commands/settings/UI.
 
 ## §3 Approach
 
-**09.1 — pure formatter (`src/core/diagnostics.ts`, NEW).** No `vscode` import (unit-testable in plain vitest). API (the Interfaces contract later tasks consume):
-```ts
-export type DiagCategory = "lifecycle" | "connection" | "ai" | "schema" | "general";
-export type DiagSeverity = "info" | "warn" | "error";
-export const MAX_DIAG_LINE_CHARS = 2000;
-export function logLine(
-  category: DiagCategory,
-  severity: DiagSeverity,
-  message: unknown,
-  correlationId?: string,
-  now?: Date,                       // test seam — defaults to new Date()
-): string;
-```
-Pipeline (never throws): (1) coerce `message` to a string — strings pass through; otherwise `JSON.stringify` in try/catch, falling back to `String(value)`, then to `"[unserializable]"`. (2) run `redact(coerced)` (the sole sanctioned import from `../ai/trace`). (3) enforce the single-line invariant — replace every `\r\n`/`\r`/`\n` run with a single space. (4) `trim()`. (5) assemble `[<ISO from now|new Date()>] [<category>] [<severity>] <message>` and, when `correlationId` is a non-empty string, append ` (corr:<id>)` with the id itself single-lined, trimmed, and sliced to 64 chars. (6) THEN, as the LAST step, bound the **assembled line** to `MAX_DIAG_LINE_CHARS` (2000) — the bound applies to the final line (prefix + message + corr suffix), never to the raw message before assembly, so a long message plus the ~40-char prefix still yields a total `line.length <= 2000` (the message tail is what gets cut, not the prefix). RED-first proof: a message containing `Authorization: Bearer …`, `password = '…'`, `apiKey=…`, or a ≥24-char opaque run is scrubbed by `redact()` before it is formatted; category/severity/correlation remain useful.
+**Grounding corrections to the roadmap** (recorded so executors do not rediscover them):
 
-**Opt-in verbosity decision (rejection documented).** A `vsdb.diagnostics.verbosity` configuration setting is REJECTED (YAGNI): roadmap lists "opt-in verbosity", which the reveal/clear commands already satisfy — the user opts in by revealing, and a channel that nothing meaningful ever created is never created at all. Severity set is `info|warn|error`; a `debug` severity is deliberately NOT added (no per-severity threshold exists this cycle). `package.json` configuration contributions therefore remain untouched — this also removes any configuration-section conflict between 002 (scripts) and 003 (commands). A future cycle can add a pure `shouldLog(severity, minSeverity)` predicate and a setting without changing the formatter contract.
+- `docs/decisions/` already exists (ADR 0001-0003 + README index table; convention: `NNNN-slug.md`, `Status: Accepted (gating ...)` header, README row). The roadmap's "0001 genesis" fallback is stale — the BQ-00 ADR is **`0004-bq-00-feasibility-contract.md`**.
+- Candidate version verified live from npm registry (2026-09-02): **`@google-cloud/bigquery@9.0.3`** (latest stable; `engines.node >= 22`; dev box Node v22.22.1 OK; dep tree includes `big.js` ^7, which supports the precision contract). **Runtime caveat to measure, not assume:** 9.x requires Node >= 22 while the extension host for `engines.vscode ^1.75.0` runs older Node; because esbuild bundles the client into `dist/extension.js` (only `vscode` external), the binding constraint is what the bundle actually needs, which the probe measures. BQ-00.1 pins `^9.0.3`, records the probe result, and if it fails falls back to `^8.3.1` (`engines.node >= 18`, verified live) — recording the choice and reason for the ADR. Never silently ship a broken floor.
+- Bundle reality: BQ-00 wires nothing into `src/extension.ts`, so `npm run compile` never sees the library — a `grep bigquery dist/extension.js` smoke is unfalsifiable. The "load the client from a test seam" requirement is satisfied by a **bundle probe test**: esbuild programmatic API (`build({ stdin, bundle: true, platform: "node", format: "cjs", target: "node18", external: ["vscode"] })`) over a virtual entry importing the client, asserting the build succeeds under the extension's exact build options. CI-compatible, no dead code shipped, `esbuild.js` untouched.
+- **`src/adapters/types.ts` needs no change — proven, not assumed:** `DbAdapter` already carries optional seams (`cancelActiveQuery?`, `beginTransaction?`, `RunResult.batched?`, `capabilities?: AdapterCapabilities` + fail-closed `hasAdapterCapability`). BQ-00's job/page contract is standalone pure types; whether a provider capability must be ADDED is an ADR recommendation for a later cycle (BQ-01), not a code change here. If an executor proves a gap, that is a stop-and-revise event (roadmap §9.6) surfaced via task Discussion for a P0 micro-decision — not a silent edit.
+- **Wave plan vs commissioning brief (deliberate, recorded):** BQ-00.3 consumes no BQ-00.2 symbol — the classifier pattern-matches synthetic error inputs and its client seam is its own structural interface. Its only real dependency is the installed package (001). So 002 ∥ 003 run in parallel in wave 2 on disjoint files; 002 depends on 001 because its executor must validate response field names against the installed client's `.d.ts` (roadmap §2 mandate: method names "validated against the package version selected in BQ-00"). 004 depends on all three (ADR cites their recorded evidence).
+- Rejected alternatives: **Storage Read API** (separate measured decision — roadmap BQ-07e), **browser OAuth flow** (user chose ADC-first; larger secret surface), **service-account JSON import** (explicitly out of scope, phase one), **wiring the client into `dist/extension.js` now** (BQ-01 territory; would ship unused code and force factory/manager questions before the contract is settled).
 
-**09.2 — profile design (`package.json` + `releaseHygiene.test.ts`).** Add exactly two NEW script keys (the roadmap's real gap is "no named profile keys at all"):
-- `"profile:fast": "npm run typecheck && npm run compile"` — the fast confidence profile (typecheck + bundle, no test loop; satisfies "no mandatory integration per edit").
-- `"profile:release": "npm run verify:release"` — names the existing pinned release gate. Chosen over `bash scripts/verify-release.sh` for portability: npm executes scripts through the platform shell, where `bash` may be absent on Windows non-Git-Bash installs; `npm run verify:release` is a portable, deterministic, ordered (`test → typecheck → compile`) chain whose `&&` propagates the first non-zero exit. The staged PASS/FAIL runner still exists and stays independently pinned by `releaseVerify.test.ts`.
-**`profile:fast` being byte-identical in effect to the existing `verify:fast` (`npm run typecheck && npm run compile`) is INTENDED, not a bug** — the roadmap gap is the absence of NAMED profile keys, and the deliverable is the nameable key itself, not a third implementation. `profile:*` and `verify:*` are two namespaces over the same stage sets (fast, release) and are deliberately kept in lockstep so the named-profile surface never diverges from the pinned verify gate. The `verify:release` string and the four baseline scripts are pinned byte-identical by `releaseVerify.test.ts` — they CANNOT change. The releaseVerify reference-integrity/shell-injection checks scan only `verify:*`, so the new `profile:*` keys are unconstrained there; 09.2 instead appends its own pins to `releaseHygiene.test.ts`: (a) `profile:fast`/`profile:release` exist with the exact values above; (b) every `npm run <key>` fragment of `profile:*` resolves to a real package.json script key; (c) `profile:*` values contain no shell-injection surface (`\``, `$(`, `;`, `|`, `>`, `<`); (d) regression: the four baseline scripts + `verify:fast` + `verify:release` stay byte-identical; (e) `releaseVerify.test.ts` (unchanged) still passes.
+Per task:
 
-**09.3 — channel wiring (`extension.ts` + `extension.test.ts` + `package.json`).** Module state near the other singletons (`extension.ts:94-114`): `let diagOutputChannel: vscode.OutputChannel | null = null` and `const diagPendingLines: string[] = []` (bounded, max 100, drop-oldest). Helper `ensureDiagChannel()` creates `vscode.window.createOutputChannel("VSDB")` on first real need and flushes pending lines via `appendLine`. `logDiagnostic(category, severity, message, correlationId?)` formats via 001's `logLine` and routes as follows: if a channel already exists → `appendLine` directly; else if the line is a **REAL diagnostic write** (any non-lifecycle line — connection/AI/general — or a lifecycle `warn`/`error`) → `ensureDiagChannel()` creates the channel **exactly once**, flushes the pending buffer into it via `appendLine`, then appends the current line; else (the activate-end lifecycle `info` line only) → push to the pending buffer, so that line is logged eagerly WITHOUT creating the channel (the strict lazy-create pin: plain activate with zero real diagnostics → zero `createOutputChannel` calls). `getDiagChannel()` (for the reveal command) also flushes pending. After `deactivate()` sets `deactivating = true` and disposes the channel, `logDiagnostic` no-ops (never re-creates). No raw values ever reach `logLine` at the call sites: the connection handler logs a fixed summary string and NEVER passes the `ConnectionConfig`; AI seams log engine/command names only.
-- Lifecycle: at `activate()` end (~`1047-1054`) `logDiagnostic("lifecycle","info","VSDB activated")` — lands in pending, does NOT create the channel; at `deactivate()` start (`1056`) `logDiagnostic("lifecycle","info","deactivating")`.
-- Connection: add one subscription `mgr.onDidChangeActive((cfg) => logDiagnostic("connection","info", cfg ? "connection changed" : "connection closed"))` — never the config itself. Optionally one `onDidChangeRecoveryStatus` line (status text only). These consume EXISTING events (connectionManager.ts:87,91) — not new plumbing.
-- AI: one line at the existing extension.ts seams — `commandOpenAiChat` panel build (`extension.ts:1177-1230`), and the `vsdb.ai.exportTrace`/`vsdb.ai.clearTrace`/`vsdb.ai.showPolicy` handlers (`676-690`, `1468-1576`). **Known gap (documented):** one line *per agent run completion* is NOT wired this cycle — that seam lives inside `aiChatPanel.ts` (where `runAgent` resolves `AgentRunResult`), which is outside 003's roadmap file set and would require new callback plumbing (explicitly out). `logDiagnostic` is exported module-level so a future cycle can hook the panel.
-- Commands: register `vsdb.diagnostics.show` (→ `getDiagChannel().show()` + reveal) and `vsdb.diagnostics.clear` (→ `getDiagChannel().clear()`); add both to `package.json` `contributes.commands` and to `activationEvents` (VS Code also auto-activates contributed commands, but the repo explicitly lists every command — keep convention).
-- Deactivate: after the existing `consolePanel` dispose (~`1075-1076`) and before the function ends (`1091`): `diagOutputChannel?.dispose(); diagOutputChannel = null;` — exactly once, additive, ARP-02 sentinel (`deactivating` line 94) byte-untouched. A subsequent `logDiagnostic` no-ops.
-- Privacy pins (mandatory, byte-scan): with the mocked `OutputChannel` capturing every `appendLine`, the tests assert no captured line contains `s3cr3t-*` fixture passwords, `Bearer `, `Basic `, opaque long runs (from redact fixtures), or raw SQL fragment text; and the connection-handler pin proves the handler never receives the config. `extension.test.ts` `vi.mock("vscode", ...)` (line 70) must gain a `createOutputChannel` + `OutputChannel` (appendLine/reveal/clear/dispose) mock that records calls.
-
-**09.4 — redaction-reuse gate (verify-first).** Expected close: NOT-NEEDED (mirrors ARP-04-004 / ARP-05-004 precedent). Evidence checks (appended to `src/ai/__tests__/trace.test.ts` as a new read-only describe, or a docs note if a source assertion is impractical): 001 imports `redact` from `../ai/trace` and calls it; 001 defines no copy of a secret scrubber (source scan: no `Bearer\s+` / no new `RegExp(` secret pattern in `diagnostics.ts`); the audit exporter final-pass is intact (`git diff src/ai/auditExport.ts` empty; `serializeAuditExport` still ends `JSON.stringify(redact(...))`); and 003's channel writes go only through `logDiagnostic` → `logLine` (no direct `appendLine` of unredacted content — cross-check 003's byte-scan pins). If evidence surfaces a real bypass, fix it within the same file set (003's extension.ts or a one-line seam) — do not change `trace.ts`.
-
-**09.5 — runner gate (conditional).** Expected close: NOT-NEEDED. Evidence: `scripts/verify-release.sh` exists, is executable, POSIX shebang, and its staged PASS/FAIL + exit-code propagation are pinned by `releaseVerify.test.ts` (no change); `profile:release` names a portable ordered release gate. If a genuine gap appears (the only plausible one is a Windows `.cmd` wrapper, made moot because `profile:release` uses `npm run` with no `bash` dependency), design it as a new file owned by 005.
-
-**Rejected alternatives.** (1) Eager channel at activate — rejected: violates the roadmap's "lazy" and the lazy-create pin. (2) Per-run AI completion via new `onRunComplete` callback on `AgentDeps`/`AcpPanelDeps` — rejected: new callback plumbing is explicitly out and would widen 003's file set into `aiChatPanel.ts`. (3) `vsdb.diagnostics.verbosity` setting + `debug` severity — rejected: YAGNI (see above). (4) `profile:release = "bash scripts/verify-release.sh"` — rejected for Windows portability; `npm run verify:release` is portable, ordered, deterministic, and non-zero-propagating. (5) A new runner script — rejected: `verify-release.sh` already exists and is pinned; 005 closes NOT-NEEDED.
+- **BQ-00.1** — `npm install @google-cloud/bigquery@^9.0.3` (lockfile pins exact). New `bigqueryPackage.test.ts`: (a) module loads in Node 22 without credentials (import ≠ client construction — no ADC env required); (b) bundle probe under extension build options (esbuild buildMode; reports output byte size; asserts no `vscode` inlining); (c) credential-safety byte-scan on probe output (`application_default_credentials`, `private_key`, `BEGIN RSA PRIVATE KEY` absent); (d) pin consistency (single lockfile resolution matching `^9.0.3`); (e) **roadmap line-67 evidence**: a test parses `node_modules/@google-cloud/bigquery/build/src/bigquery.d.ts` (+ `build/src/job.d.ts`) and asserts the pagination/cancellation method names exist as declarations — `getQueryResults`, `query`, `createQueryJob` on the client and `cancel` on the Job class — and the executor records each name + signature + return shape (incl. `job.cancel()`'s return) with file+line refs into `docs/decisions/_bq00-evidence.md`, the on-disk evidence file ADR 0004 cites by path (Discussions are not stable citations). Package smoke = `npm run compile` regenerates `dist/extension.js` (byte-unchanged content expectation: nothing imports the client yet).
+- **BQ-00.2** — new pure `bigqueryTypes.ts`, no import from `@google-cloud/bigquery` (boundary stays pure): `BigQueryJobRef {projectId, location, jobId}`, `BigQuerySchemaField` (recursive `fields` for RECORD), `BigQueryPage {jobRef, schema, rows, totalBytesProcessed?, totalBytesBilled?, pageToken: string | null}`, `BigQueryPageRequest`, `BigQueryValue` (INT64/NUMERIC/BIGNUMERIC contractually canonical strings — never JS `number`), `hasNextPage(page): boolean`, **and one named mapper export `toBigQueryPage(raw: BigQueryRawQueryResponse): BigQueryPage`** — a pure function from the client's raw response shape (as validated against the installed `.d.ts`) to the contract type. The §4 happy-path test's subject is `toBigQueryPage`: the fixture goes IN, a `BigQueryPage` with verbatim `jobRef` comes OUT — the test cannot pass with types alone. Executor validates field names against the installed `.d.ts` and records evidence in Discussion for the ADR; the pagination/cancel method names live in `_bq00-evidence.md` (owned by 001).
+- **BQ-00.3** — new `bigqueryAdc.ts`: `AdcDiagnosticCategory = "missing_adc" | "bad_billing_project" | "api_denied" | "location_mismatch" | "unknown"`; `AdcDiagnostic {category, remediation}`; pure `classifyAdcDiagnostic(err: unknown): AdcDiagnostic` — emits only category + fixed copy-safe remediation text (redaction by construction: never echoes `err.message`); `BigQueryClientLike` + `createBigQueryClient(projectId?)` as the test seam (thin wrapper over the real constructor, injectable); `runAdcSmoke(client): Promise<"ok" | AdcDiagnostic>` listing one allowed resource through the injected client. CI uses fake clients + synthetic errors only; the real-ADC manual recipe (disposable project; never record env values/tokens) is an ADR appendix written in 004.
+- **BQ-00.4** — ADR 0004 deciding: client method/version (validated evidence from 001's `docs/decisions/_bq00-evidence.md`, cited by path, incl. the 9.x-vs-8.x engine-floor outcome), continuation ownership (VSDB owns `BigQueryJobRef` + opaque page token; client stateless per page), cancellation mapping (owned active job ID only; cancel-after-terminal harmless; **`job.cancel()` return shape as recorded in `_bq00-evidence.md`** — the roadmap line-67 mandate's cancellation owner), safe scalar conversion table (§5 of roadmap), selected config fields (billing project, location, `maximumBytesBilled`), least-privilege IAM set, Storage Read API deferral, manual ADC smoke recipe appendix — plus two reviewer-mandated sections: **"Pagination + cancellation method names"** (the enumerated signatures from `_bq00-evidence.md`: `getQueryResults`, `query`, `createQueryJob`, `job.cancel` with return shapes) and a **"Grid continuation mapping"** paragraph mapping `BigQueryPage.pageToken` onto the existing read-only grid contract (`RunResult.batched` at `src/adapters/types.ts:78` + `resultsPanel.ts` `loadMore` → `runner.loadMore(index)`) as a paper deliverable only. README table row appended.
 
 ## §4 Test Plan
 
-Every row below lands in exactly one task's `§Test Cases`. Edge cases are of genuinely different kinds (secret/redaction, multiline, length-boundary, non-string coercion, degenerate/circular, reference-integrity, shell-injection, lazy-create, privacy byte-scan, exactly-once dispose, regression, source-shape evidence, portability) — not near-duplicates.
+**TASK-BQ00-001 — package + bundle proof**
 
-| # | Task | Type | Test name | Expected |
-|---|------|------|-----------|----------|
-| 1 | 001 | happy | `logLine("connection","info","connection opened", undefined, FIXED)` | exact string `[2026-09-02T00:00:00.000Z] [connection] [info] connection opened` |
-| 2 | 001 | happy | `logLine("ai","warn","retry", "run-42", FIXED)` | ends with ` (corr:run-42)`; prefix `[2026-09-02T00:00:00.000Z] [ai] [warn]` |
-| 3 | 001 | edge (secret) | `logLine("ai","error", 'provider failed: Authorization: Bearer eyJhbGciOiJFUzI1NiIs…', undefined, FIXED)` | output contains `<redacted>`, does NOT contain the bearer token substring |
-| 4 | 001 | edge (KV-in-SQL) | `logLine("general","warn","SELECT * FROM users WHERE password = 'hunter2'")` | output does NOT contain `hunter2`; contains `password<redacted>` (KV_RE via redact) |
-| 5 | 001 | edge (multiline) | message with `\n`, `\r\n`, `\r` | output contains zero `\n`/`\r`, is exactly one line, `trim()`-equal to itself |
-| 6 | 001 | edge (length bound) | 5000-char message | assembled line `length <= 2000` (bound applied AFTER prefix + corr-suffix assembly, as the last step); prefix `[` … `]` intact; the MESSAGE tail is what gets cut |
-| 7 | 001 | edge (non-string) | `logLine("general","info",{a:1})` / `null` / `undefined` | contains `{"a":1}` / `null` / `undefined`; never throws |
-| 8 | 001 | edge (degenerate) | circular `const c:any={}; c.self=c` | returns a string, never throws, contains `"[object Object]"` (JSON.stringify falls back) |
-| 9 | 001 | happy | every category × severity accepted | `logLine` accepts all 5 categories × 3 severities and emits the right `[<cat>] [<sev>]` tokens |
-| 10 | 002 | happy | `profile:fast` exists | equals exactly `"npm run typecheck && npm run compile"` |
-| 11 | 002 | happy | `profile:release` exists | equals exactly `"npm run verify:release"` |
-| 12 | 002 | edge (reference integrity) | every `npm run <key>` fragment of `profile:*` | resolves to a real package.json script key |
-| 13 | 002 | edge (shell-injection) | `profile:*` values | contain no `` ` ``, `$(`, `;`, `|`, `>`, `<` |
-| 14 | 002 | regression | baseline + verify pins | four baseline scripts AND `verify:fast`/`verify:release` byte-identical; `releaseVerify.test.ts` (unchanged) still passes |
-| 15 | 002 | edge (config untouched) | package.json `contributes.configuration` | contains NO `vsdb.diagnostics.verbosity` key (documents the YAGNI rejection) |
-| 16 | 002 | regression | `releaseVerify.test.ts` stays green | run it unchanged — its `verify:*` + baseline + runner pins all pass (cross-file constraint; file NOT modified) |
-| 17 | 003 | happy | plain `activate()` (lifecycle line buffered, channel NOT created) then the first REAL diagnostic write — a `mgr.onDidChangeActive` event fires | `createOutputChannel` called exactly once, triggered BY the real write (create-on-first-real-write), not by plain activation; captured lines start with the flushed buffered `[lifecycle] [info] VSDB activated` line then a `[connection]` summary |
-| 18 | 003 | happy | `vsdb.diagnostics.show` command | channel created lazily (if absent) and `show()`/`reveal()` called |
-| 19 | 003 | happy | `vsdb.diagnostics.clear` command | `clear()` called on the channel |
-| 20 | 003 | edge (lazy-create) | `activate()` with NO events/commands | `createOutputChannel` called ZERO times (strict pin) |
-| 21 | 003 | edge (privacy byte-scan) | connection event near a config with `password:"s3cr3t-p4ss"` + SQL fixture + bearer-shaped fixture | every captured channel line lacks `s3cr3t-p4ss`, `Bearer `, `Basic `, opaque long runs, and the SQL fixture text |
-| 22 | 003 | edge (exactly-once dispose) | `deactivate()` then a post-deactivate `logDiagnostic` | channel `dispose()` called exactly once; post-deactivate call → no create, no append |
-| 23 | 003 | regression | ARP-02 sentinel | existing deactivate-sentinel tests (in-flight `runStatements` continuation after deactivate short-circuits panel writes) stay green; deactivate ordering additive only |
-| 24 | 003 | happy | `vsdb.ai.exportTrace` (or `vsdb.ai.clearTrace` / panel open) | a captured `[ai]`-category line appears |
-| 25 | 004 | happy (source evidence) | `src/core/diagnostics.ts` imports `redact` from `../ai/trace` (or `../../ai/trace`) and calls it | import present; ≥1 `redact(` call in `logLine`'s path |
-| 26 | 004 | edge (no re-implementation) | source scan of `diagnostics.ts` | NO new copy of a secret scrubber: no `Bearer\s+` / `Basic\s+` regex literal and no `new RegExp(` secret pattern in the file |
-| 27 | 004 | edge (applied, not imported-only) | run 001's secret test cases (rows 3-4) | scrubbed output — proves the `redact` import is actually used |
-| 28 | 004 | edge (auditExport intact) | `git diff src/ai/auditExport.ts` | empty; `serializeAuditExport` still returns `JSON.stringify(redact(buildAuditEnvelope(...)))` |
-| 29 | 004 | edge (no bypass in wiring) | grep channel-write sites in `src/extension.ts` | every `appendLine` argument is logLine-formatted (REDACTED) — redaction reused, NO raw unformatted writes of user/provider/connection content; an `appendLine(<raw>)` anywhere is a FAIL (direct matches at the flush site are expected by design and must be redacted logLine output) |
-| 30 | 005 | happy | `scripts/verify-release.sh` | exists, executable, POSIX shebang, ordered `PASS` stages (already pinned — re-run `releaseVerify.test.ts`) |
-| 31 | 005 | happy | `profile:release` references a real gate | equals `npm run verify:release` → chain `test → typecheck → compile` ordered, `&&` propagates first non-zero |
-| 32 | 005 | edge (portable) | no `bash` dependency in npm scripts | `profile:*` + `verify:*` contain no `bash`/`sh` invocation; runs on Windows/macOS/Linux npm unchanged |
-| 33 | 005 | edge (non-zero propagation) | `releaseVerify.test.ts` FAIL-stage case | first non-zero stage aborts, later stages do NOT run, exit code propagated verbatim (runner untouched) |
+| Type | Test | Expected |
+|---|---|---|
+| happy | `client module loads under Node without credentials` | dynamic `import("@google-cloud/bigquery")` resolves; default export exposes a `BigQuery` constructor; no ADC env needed for module load |
+| happy | `bundle probe succeeds under extension build options` | esbuild-API build (bundle, node/cjs, target node18, external vscode) exits 0; output contains a known client marker; byte size reported in log |
+| edge (credential safety) | `probe output contains no credential artifacts` | output lacks `application_default_credentials`, `private_key`, `BEGIN RSA PRIVATE KEY` |
+| edge (pin boundary) | `lockfile resolves exactly one version in range` | single lockfile entry for `@google-cloud/bigquery`, version satisfying `^9.0.3` (or recorded `^8.3.1` fallback) |
+| edge (bundle boundary) | `vscode stays external in probe` | probe output does not inline a resolved `require("vscode")` — external honored, same as the real build |
+
+**TASK-BQ00-002 — pure job/page contract**
+
+| Type | Test | Expected |
+|---|---|---|
+| happy | `toBigQueryPage maps fixture to BigQueryPage preserving jobRef identity` | calling exported `toBigQueryPage(rawFixture)` returns a `BigQueryPage`; `jobRef` `{projectId, location, jobId}` verbatim; deep-equals the expected mapped object |
+| edge (empty) | `empty final page has no next` | `rows: []`, `pageToken: null` → `hasNextPage === false` |
+| edge (empty-vs-token) | `empty page can still continue` | `rows: []` + non-null token → `hasNextPage === true` (token, not row count, owns continuation) |
+| edge (continuation/ownership) | `page token round-trips opaquely` | token passes into `BigQueryPageRequest` unmodified — no parse/trim/truncate |
+| edge (structural) | `nested RECORD + REPEATED preserved` | 2-level nested schema with REPEATED mode; arrays and `fields` recursion intact |
+| edge (precision/boundary) | `NUMERIC/BIGNUMERIC canonical strings` | `"12345678901234567890.123456789"` and `"9007199254740993"` (> MAX_SAFE_INTEGER) stay `typeof "string"` with exact digit equality — fails under any `Number` coercion |
+
+**TASK-BQ00-003 — ADC classifier + client seam**
+
+| Type | Test | Expected |
+|---|---|---|
+| happy | `fake client smoke resolves ok` | injected fake listing one dataset → `runAdcSmoke` resolves `"ok"`; client constructed once — observed via `createBigQueryClient`'s injectable `impl` parameter counted with a Vitest `vi.fn()` (`expect(implSpy).toHaveBeenCalledTimes(1)`); projectId propagated |
+| edge (missing credential) | `missing ADC classified with gcloud remediation` | synthetic `"Could not load the default credentials"` → `missing_adc`; remediation names `gcloud auth application-default login` |
+| edge (two distinct permission classes) | `denied API vs bad billing project distinguishable` | synthetic 403 project access denied → `api_denied`; synthetic 404 project-not-found → `bad_billing_project` (different categories) |
+| edge (semantic) | `wrong location classified; unknown falls back` | location-mismatch text → `location_mismatch`; unrecognized error → `unknown` + generic remediation |
+| edge (security/redaction) | `classifier never echoes raw error text` | synthetic message containing `"Bearer abc123"` yields diagnostic where neither `category` nor `remediation` contains the token or the raw message |
+
+**TASK-BQ00-004 — ADR 0004** (docs-only; command-verified content checks — no source behavior to test, justified per RULES N/A rule)
+
+| Type | Check | Expected |
+|---|---|---|
+| happy | ADR exists with all required decision sections | file contains headings: version/method, continuation ownership, cancellation, scalar conversion, config fields, IAM, Storage Read deferral, ADC recipe |
+| happy (method-name evidence) | "Pagination + cancellation method names" section present and cites the evidence file | ADR names `getQueryResults`, `query`, `createQueryJob`, `job.cancel` and cites `docs/decisions/_bq00-evidence.md` by path |
+| edge (paper mapping) | "Grid continuation mapping" paragraph present | ADR maps `BigQueryPage.pageToken` onto the read-only grid continuation contract (`RunResult.batched` / `resultsPanel.ts` `loadMore`) WITHOUT any edit to those files |
+| edge (consistency) | recorded version matches lockfile pin | ADR states the exact installed version |
+| edge (index completeness) | README table updated | `docs/decisions/README.md` gains a `0004` row |
+
+Regression net: full `npm test` at every wave boundary; suite floor 3189 passed | 2 skipped must not drop; BQ-00 adds tests on top.
 
 ## §5 Verification
 
-Worktree note: fresh worktrees need `npm run compile` before vitest only for bundle tests (dist/ required); this cycle's focused suites are source-level except 003's extension suite, but `npm run compile` is still the mandatory bundle gate for the `extension.ts`/`package.json` changes. Symlink `node_modules` in fresh worktrees.
-
-Per-task exact commands (every task MUST also run the static gate — there is no lint script):
-
 ```bash
-# Static gate (all tasks)
+# Focused (per task — exact paths)
+npx vitest run src/adapters/__tests__/bigqueryPackage.test.ts
+npx vitest run src/adapters/__tests__/bigqueryTypes.test.ts
+npx vitest run src/adapters/__tests__/bigqueryAdc.test.ts
+
+# Static gate — every task (NO lint script exists in this repo; none invented — roadmap §7 concurs)
 npm run typecheck
 
-# TASK-ARP09-001
-npx vitest run src/core/__tests__/diagnostics.test.ts
-
-# TASK-ARP09-002  (releaseHygiene gets the new pins; releaseVerify MUST stay green)
-npx vitest run src/__tests__/releaseHygiene.test.ts src/__tests__/releaseVerify.test.ts
-
-# TASK-ARP09-003  (bundle gate first, then focused extension suite)
+# Bundle gate — every task (cheap, catches bundle breakage from the new dep)
 npm run compile
-npx vitest run src/extension.test.ts
 
-# TASK-ARP09-004  (evidence-gate: re-run 001 + trace suites, source greps)
-npx vitest run src/ai/__tests__/trace.test.ts src/core/__tests__/diagnostics.test.ts
-git diff --stat src/ai/auditExport.ts src/ai/trace.ts        # expect: empty (or whitespace-only)
+# Package smoke (mandatory in TASK-BQ00-001)
+npm run compile && test -f dist/extension.js
 
-# TASK-ARP09-005  (runner gate)
-npx vitest run src/__tests__/releaseVerify.test.ts
-node -e 'const p=require("./package.json"); if(p.scripts["profile:fast"]!=="npm run typecheck && npm run compile")process.exit(1); if(p.scripts["profile:release"]!=="npm run verify:release")process.exit(1); console.log("profiles ok")'
+# Wave/cycle boundary regression net
+npm test
 ```
 
-Release gate (used at v1.45.0 close, not per-edit): `npm run verify:release` — full `npm test && npm run typecheck && npm run compile` (3160 passed | 2 skipped baseline).
+Notes: focused paths are direct file paths — the new test files are not yet in `.cache/index/tests-map.json` (stale, 3 entries; no `src/adapters/types.ts` entry); the roadmap orders an index refresh at next commissioning. RULES' fallback floor names `yarn test:release-core` (a ukit-repo script that does not exist here); this npm repo's non-empty floor is `npm test`. New files are named `*.test.ts` (NOT `*.integration.test.ts`, which `vitest.config.ts` excludes from `npm test`).
 
 ## §6 Acceptance
 
-- [ ] `src/core/diagnostics.ts` exists (NEW), pure (no vscode import), and every `logLine` output is one redacted single line: `[ISO] [category] [severity] message` (+ ` (corr:id)`), length ≤ 2000, never throws. → TASK-ARP09-001
-- [ ] All 5 categories and 3 severities are emitted correctly; secret/KV/multiline/length/non-string/degenerate inputs are pinned (§4 rows 1-9). → TASK-ARP09-001
-- [ ] `package.json` gains exactly `profile:fast` and `profile:release`; baseline + `verify:*` scripts byte-identical; new releaseHygiene pins pass; releaseVerify pins (unchanged file) pass. → TASK-ARP09-002
-- [ ] Channel is lazy (zero `createOutputChannel` on plain activate), reveals/clears via two commands, disposes exactly once in `deactivate()`, and the ARP-02 sentinel is byte-untouched (deactivate additive only). → TASK-ARP09-003
-- [ ] Lifecycle, connection, and AI summary lines appear at the real seams; per-run AI completion gap documented in PLAN §3/003 Discussion. → TASK-ARP09-003
-- [ ] Byte-scan pins hold: no captured channel line contains a fixture password, `Bearer `/`Basic `, opaque long run, or raw SQL fragment; connection handler never receives the config. → TASK-ARP09-003
-- [ ] 004 closes NOT-NEEDED (or fixes a found bypass within its file set) with source evidence that `redact` is imported-and-used, not copied; `auditExport.ts`/`trace.ts` unchanged (`git diff` empty). → TASK-ARP09-004
-- [ ] 005 closes NOT-NEEDED with evidence that the existing runner + `profile:release` cover the roadmap's runner requirement; no new script. → TASK-ARP09-005
-- [ ] `npm run typecheck` and `npm run compile` exit 0; focused suites green; no unrelated changes; CHANGELOG v1.45.0 entry written; version bumped 1.44.0 → 1.45.0 at release. → whole cycle
+Roadmap bullets 1:1:
+
+- [ ] Package/version/bundle behavior proved in CI-compatible build conditions → TASK-BQ00-001.
+- [ ] Adapter contract states who owns job IDs/page tokens and how nested/precision-sensitive values display → TASK-BQ00-002 types+tests; decision recorded in TASK-BQ00-004.
+- [ ] Missing ADC / bad billing project / denied API / wrong location distinguishable without secrets → TASK-BQ00-003 classifier + redaction test; recipe in TASK-BQ00-004.
+- [ ] No existing driver type or UI changed unless a test demonstrates the need → all tasks; `git diff --stat` on the §2 read-only list must be empty at cycle end; `src/extension.ts` untouched.
+
+Per-task done criteria in each `tasks/TASK-BQ00-00x.md`; every task additionally requires fresh RED→GREEN evidence in its Executor Report, `npm run typecheck` + `npm run compile` green, reviewer model ≠ executor model, full `npm test` green at wave boundaries (floor 3189|2 preserved).
 
 ## §7 Global Constraints
 
-- Node v22 / `npm`; VS Code `^1.75.0` + TypeScript 5.4 compat; NO new dependencies (package.json `dependencies`/`devDependencies` untouched).
-- No lint script — every task MUST run `npm run typecheck`; 003 MUST also run `npm run compile` (bundle gate for extension.ts/package.json changes).
-- The channel NEVER records credential/auth/raw SQL/raw prompts/tool args/connection config — mandatory byte-scan pins in 003 (§4 row 21) and 004 (§4 row 29).
-- ARP-02 deactivate sentinel (`deactivating` at `extension.ts:94`) and the existing deactivate disposal ordering remain behavior-identical — 003 is additive only.
-- `verify:release` (exact pinned string) and the four baseline scripts (`test`/`typecheck`/`compile`/`test:integration`) are pinned by `releaseVerify.test.ts` — MUST NOT change. New named profiles are NEW keys only (`profile:*`).
-- `profile:fast` being byte-identical in effect to `verify:fast` is INTENDED — the deliverable is the NAMED profile key itself (roadmap "named profiles"), not a third implementation; `profile:*` is a naming namespace over the same stage sets as `verify:*`, deliberately kept in lockstep so the two never diverge.
-- `trace.ts` `redact()` must be IMPORTED and reused, never re-implemented or copied; `trace.ts`/`auditExport.ts` source must not change this cycle (004 verify-only).
-- Wave disjointness mandatory: no task modifies a file another same-wave task owns; `package.json` is serialized across waves (002 = wave-1 scripts, 003 = wave-2 commands/activationEvents).
+- `@google-cloud/bigquery` pinned `^9.0.3` (fallback `^8.3.1` only via the documented engine-floor outcome); lockfile pins one exact version; no other dependency changes; no new devDependencies (esbuild already present).
+- Node >= 22 on the dev/test box (client 9.x floor; repo runs v22.22.1). esbuild target stays `node18` — do not raise or lower it.
+- npm only (no yarn/pnpm). VS Code engine `^1.75.0` and all existing scripts unchanged.
+- No automated test constructs a real GCP client or requires ADC; no test file named `*.integration.test.ts`.
+- No secrets, env values, tokens, credential paths, or raw error text in any test, fixture, log, or ADR. Classifier output is fixed-copy remediation only (redaction by construction).
+- Read-only this cycle: `src/adapters/{factory,mssql,mysql,postgres,types}.ts`, `src/core/queryRunner.ts`, `src/ui/resultsPanel.ts`, `src/extension.ts`, `esbuild.js`, `vitest.config.ts`, `vitest.integration.config.ts`.
 
 ## Planner Report
-PLAN_REVIEW: Approved by unic-smart (round 2, after one revision round)
 PLANNER_MODEL: unic-smart
+PLAN_REVIEW: Approved by unic-smart
 
 ## Planner Self-Audit
-
 Checklist: 12/12 pass
-Fixed during audit: (1) Verified zero `createOutputChannel` in `src/` and that `extension.test.ts`'s vscode mock (line 70) needs a `createOutputChannel`/`OutputChannel` member — recorded as an executor step, not assumed. (2) Resolved the lazy-create vs. "lifecycle line at activate end" tension with a bounded pending-buffer design so the activate line is logged eagerly WITHOUT creating the channel — the strict pin holds and the reveal command still shows the buffered history. (3) Read `releaseVerify.test.ts` in full and confirmed its shell-injection/reference-integrity checks iterate ONLY `verify:fast`/`verify:release`, so `profile:*` keys are free to add — and pinned the new keys in `releaseHygiene.test.ts` instead. (4) Chose `profile:release = "npm run verify:release"` over `bash scripts/verify-release.sh` for Windows portability and recorded the rejection. (5) Verified `mgr.onDidChangeActive`/`onDidChangeRecoveryStatus` are real existing events extension.ts already subscribes to (connectionManager.ts:87,91; extension.ts:342,729) — the connection summary consumes existing seams, not new plumbing. (6) Confirmed the per-run AI completion seam lives in `aiChatPanel.ts` (outside 003's roadmap file set) and recorded it as a documented known gap rather than silently widening scope. (7) Added cross-file constraint rows so 002 owns releaseHygiene pins but releaseVerify stays green, and package.json is serialized across waves.
-Known gaps: (1) One line per agent run completion is NOT wired — the seam is in `aiChatPanel.ts`, outside 003's roadmap file set; `logDiagnostic` is exported module-level for a future cycle to hook. 003's AI lines cover panel-open, trace export/clear, and policy show at real extension.ts seams. (2) If nothing meaningful ever happens, no channel is created and pending lines are dropped at deactivate — acceptable: nothing meaningful to show; the reveal command flushes buffered history when the user asks. (3) Manual support-flow acceptance (open channel, reproduce, copy lines) is release-time and cannot be automated here.
+Fixed during audit: (1) corrected the roadmap's stale ADR numbering — `docs/decisions/` exists (0001-0003 + README), so BQ-00's ADR is `0004`, not "0001 genesis"; (2) replaced the naive "grep bigquery markers in dist/extension.js" package smoke with an esbuild-API bundle probe after verifying nothing imports the client yet (dist could never contain it — unfalsifiable test); (3) caught the 9.x `engines.node >= 22` floor vs `engines.vscode ^1.75.0` extension-host question via live npm registry checks (8.3.1 = node>=18 fallback documented, 7.9.4 = node>=14 verified too) and made the engine-floor outcome a measured deliverable of 001/004 instead of an assumption; (4) wave 2 widened to run 002 ∥ 003 after proving 003 consumes no 002 symbol (deviation from the commissioning brief's serial order recorded in §3).
+Known gaps: the real-ADC manual recipe is authored in BQ-00.4 but NOT executed this cycle (no disposable test project provisioned) — first live run belongs to BQ-01's environment; the grid continuation mapping is a paper deliverable only (grid files are read-only this cycle); BQ-00.4 is docs-only with command-verified content checks instead of vitest tests (justified in §4). Round 2 note: `.d.ts` method-name evidence is no longer Discussion-only — it is a vitest-parsed proof test + on-disk `_bq00-evidence.md` owned by 001.
 
 ## Plan Review Log
 
 ### Round 1 — 2026-09-02 · unic-smart
+REVIEWER_MODEL: unic-smart
 Status: Issues Found
+VERDICT: Issues Found
 
-COMPLETENESS:
-  - none — no TODOs/placeholders; §4 rows 1-32 cover all five tasks with genuinely distinct edge cases; §5 commands runnable (typecheck/vitest/compile all exist); §6 acceptance checkable; privacy byte-scan pins present (task 003 #20).
-CONSISTENCY:
-  - important — PLAN §3 `logDiagnostic` bullet ("if a channel exists → appendLine; else → push to the pending buffer") omits the create-on-first-real-write path, contradicting §1 success (1) ("created only on first real diagnostic write or command invocation") and task 003 test #16 (a `mgr.onDidChangeActive` event must call `createOutputChannel` exactly once). Fix: state that logDiagnostic/ensureDiagChannel creates the channel once on the first non-lifecycle "real" write and flushes pending; only the activate-end lifecycle line is pure-buffer.
-  - minor — test-numbering drift: task 002 ships 7 tests (#10-16) but PLAN §4 lists only rows 10-15 for 002; its extra #16 ("releaseVerify stays green") collides with PLAN row 16, which belongs to 003. Substance is required in §3(09.2e)/§5, so documentation-only. Fix: add the releaseVerify-green row to the §4 table for 002 (or renumber 003-005 rows).
-CLARITY:
-  - important — length-bound semantics contradictory. §3 pipeline step (5) bounds the MESSAGE to MAX_DIAG_LINE_CHARS (2000) BEFORE assembly (step 6), but task 001 test #6 and §6 acceptance require the FINAL line `length <= 2000`. A 2000-char message + ~44-char `[ISO] [cat] [sev] ` prefix exceeds 2000; test #6's own wording ("tail cut at the bound" + `line.length <= 2000`) is internally inconsistent. Fix: pin the bound to the assembled line (truncate total to 2000), or bound the message to 2000 minus prefix length, and align the test wording.
-  - minor — task 004 #28 ("no direct appendLine(<raw>)") can be misread as "no appendLine anywhere", which would contradict 003's ensureDiagChannel flush (it MUST appendLine already-redacted logLine output; task 004's own `grep -n appendLine src/extension.ts` returns matches by design). Fix: reword to "every appendLine argument is a logLine-formatted (redacted) string".
-SCOPE:
-  - none — target files per task match plan scope; waves 1/2/3 disjoint (001/002 parallel; 003/004 parallel; 005); package.json serialized 002 w1 (scripts) → 003 w2 (commands+activationEvents), different sections; 004's soft dependency on 003's wiring for #28 is explicitly gated in its Dependencies. Verified against HEAD @ c2baff7: zero createOutputChannel in src/ outside __tests__; trace.ts:57 redact(); auditExport.ts:101 final-pass; releaseVerify.test.ts scans ONLY verify:* (lines 157/193) so profile:* keys are unconstrained there; releaseHygiene has exactly 3 tests; deactivating sentinel extension.ts:94; connectionManager.ts:87/91 events; verify-release.sh executable POSIX. The plan's key design claim (profile:* not scanned by releaseVerify) HOLDS.
-YAGNI:
-  - minor — `profile:fast` is byte-identical to the existing `verify:fast` ("npm run typecheck && npm run compile"). Defensible as a named profile namespace (roadmap gap is "no named profile keys"), but confirm profiles are not intended to diverge from verify:* semantics.
-  - (checked, no issue) verbosity-setting rejection is documented (§3 opt-in decision), pinned (002 #15), and conditional closes 004/005 carry concrete "if a real gap" conditions; out-set (telemetry/upload, raw SQL/prompts/tokens, assertion-changing, mandatory integration per edit) is explicit.
+FINDINGS:
+  - docs/AI_HANDOFF/PLAN.md §3 (BQ-00.2) — no mapper function is named; §4's happy-path test "fixture maps to BigQueryPage preserving jobRef identity" has no defined subject. A literal executor may create types only and test the fixture against itself. Fix: name the export (e.g. `toBigQueryPage(raw: RawQueryResponse): BigQueryPage`) in §3 BQ-00.2 so the test, the ADR grid-mapping claim, and the reviewer's coverage check anchor to one function.
+  - docs/AI_HANDOFF/PLAN.md §3 (BQ-00.2/BQ-00.4) — roadmap line-67 mandate is only partially assigned: the `.d.ts` evidence step covers "response field names" only. Job cancellation return shape (`Job.cancel()` / `jobs.cancel` return) has NO owner in any task, and pagination method names (createQueryJob / getQueryResults / autoPaginate) are not enumerated. BQ-00.4's ADR "cites recorded evidence" but nothing records this evidence. Fix: extend BQ-00.2's Discussion-evidence step to enumerate the pagination/job/cancel method signatures from the installed .d.ts, and add cancellation-return-shape to BQ-00.4's required ADR sections.
+  - docs/AI_HANDOFF/PLAN.md §4 (BQ-00.3 happy test) — "client constructed once; projectId propagated" states no observation mechanism. Minor: one sentence on how the seam exposes constructor calls (injectable constructor spy) removes executor guesswork.
+  - docs/AI_HANDOFF/PLAN.md §3 (BQ-00.4) — continuation ownership is stated, but the roadmap's "exact VSDB grid continuation mapping" deserves one explicit ADR paragraph mapping BigQueryPage/pageToken onto the existing grid continuation contract (RunResult.batched / browse load-more), since the grid code is read-only this cycle and the paper mapping is the deliverable.
 
-NOTES: Plan is executable — all cited source facts verified against HEAD @ c2baff7. Two important clarity/consistency defects (logDiagnostic create-path; length-bound semantics) are TDD-recoverable but should be pinned before execution so 003/001 implement the intended behavior on the first pass.
+COMPLETENESS: none — all sections §1-§7 + Planner Report + Self-Audit present; per-task fields (Target Files §2, Dependencies §3, Test Cases §4, Verification §5, Acceptance §6) present; PLANNER_MODEL footer intact.
+CONSISTENCY: none — wave plan matches the dependency graph (002←001, 003←001, 004←all); wave-2 files disjoint; §7 read-only list matches §2 OUT; the wave-2 parallelism deviation from the roadmap's serial order is recorded with rationale in §3.
+SCOPE: none — BQ-01..07 + the 4 follow-ups deferred; no real ADC in CI (fake clients + synthetic errors only); manual recipe authored-not-executed honestly disclosed in Known gaps; read-only list enforced via `git diff --stat` in §6.
+YAGNI: none — bundle probe is load-bearing (naive dist grep unfalsifiable since nothing imports the client yet); version pin + measured 8.3.1/7.9.4 fallbacks justified; no duplication of existing tests.
 
-### Round 1 — planner revision
-- 1 (IMPORTANT, logDiagnostic create-path): PLAN §3 09.3 now states **create-on-first-real-write** — if a channel exists → `appendLine`; else if the line is a REAL diagnostic write (any non-lifecycle line, or lifecycle `warn`/`error`) → `ensureDiagChannel()` creates the channel exactly once, flushes the pending buffer, then appends; only the activate-end lifecycle `info` line is pure-buffer. §1 success (1) aligned ("created exactly once, on the first REAL diagnostic write ... or command invocation"); 003 test #16 → #17 reworded to pin "exactly once, triggered BY the real write, not by plain activation"; 003 Target Files `logDiagnostic()` description updated to the same routing.
-- 2 (IMPORTANT, length-bound semantics): bound changed from "message bounded to 2000 before assembly" to "the ASSEMBLED final LINE is bounded to 2000 chars" — §3 pipeline reordered so assembly (prefix + message + corr suffix) precedes the bound, applied as the LAST step; §2 09.1 wording, §4 row 6, and 001 test #6 / Interfaces line-shape updated to "assembled line ≤ 2000; the MESSAGE tail is what gets cut".
-- 3 (MINOR, numbering drift): §4 gained 002's missing `releaseVerify stays green` row as new row 16; 003-005 rows renumbered 17-33 (was 16-32); §7 byte-scan row references updated (rows 20,28 → 21,29); 003/004/005 task test numbers renumbered to match (§4 rows ↔ task numbers now correspond).
-- 4 (MINOR, 004 no-bypass wording): 004 test #28 → #29 (and §4 row 29) reworded to "every `appendLine` argument is logLine-formatted (REDACTED) — redaction reused, no raw unformatted writes; an `appendLine(<raw>)` anywhere is a FAIL; direct matches at the flush site are expected by design"; 004 Goal (d) clarified accordingly.
-- 5 (MINOR, profile:fast = verify:fast): §3 09.2 and §7 now state explicitly that `profile:fast` being byte-identical in effect to `verify:fast` is INTENDED — the deliverable is the named profile key itself (roadmap "named profiles"), a naming namespace over the same stage sets, deliberately kept in lockstep; no third implementation. 002 Goal carries the same one-line note.
+NOTES: Verified live before verdict: `npm test` = 3189 passed | 2 skipped (floor claim exact); docs/decisions/ has 0001-0003 + README (ADR 0004 numbering correct); no lint script in package.json (§5's omission is correct); esbuild target node18 at esbuild.js:20; DbAdapter seams exist at src/adapters/types.ts:122-183; vitest.config.ts excludes *.integration.test.ts; Node v22.22.1. Both important findings are one-line plan edits — incorporate and re-review, or proceed with them as executor instructions.
 
-### Round 2 — 2026-09-02 · unic-smart
-Status: Approved
+### Round 2 — findings applied
+PLANNER_MODEL: unic-smart (re-applied)
+APPLIED:
+  - Important 1: named `toBigQueryPage` export in §3 BQ-00.2 + TASK-BQ00-002.md Target Files + Test Cases.
+  - Important 2: BQ-00.1 now records .d.ts method names into `docs/decisions/_bq00-evidence.md`; BQ-00.4 ADR cites that file and gains a "Pagination + cancellation method names" section.
+  - Minor 1: BQ-00.3 happy test now asserts constructed-once.
+  - Minor 2: BQ-00.4 ADR gains a "Grid continuation mapping" paragraph.
+DETAIL:
+  - Important 1 — `toBigQueryPage(raw: BigQueryRawQueryResponse): BigQueryPage` added as a named pure export in §3 BQ-00.2; §4 row 002's happy test re-titled "toBigQueryPage maps fixture to BigQueryPage preserving jobRef identity" so the subject is the real function (types-only implementation cannot pass); TASK-BQ00-002 Target Files, test #1, Acceptance #1, and the Interfaces type block updated; Round-2 Discussion note records the 001/002 evidence split (field names in 002, method names in 001).
+  - Important 2 — §3 BQ-00.1 gains item (e): vitest test #7 parses `node_modules/@google-cloud/bigquery/build/src/bigquery.d.ts` + `build/src/job.d.ts` asserting `getQueryResults`, `query`, `createQueryJob`, `job.cancel` declarations; executor writes `docs/decisions/_bq00-evidence.md` (NEW Target File of TASK-BQ00-001, signature + return shape + file:line refs, explicitly covering the previously owner-less `job.cancel()` return shape). TASK-BQ00-004 gains Test #4 (ADR cites the file by path + enumerates the four names) and the "Pagination + cancellation method names" ADR section in its required-headings list; §2 ownership table and TASK-BQ00-001 Target/Test Files/Acceptance/Interfaces updated to match.
+  - Minor 1 — §4 row 003's happy test and TASK-BQ00-003 test #1 now name the observation mechanism: the seam's existing injectable `impl` parameter wrapped in `vi.fn()`, asserted `expect(implSpy).toHaveBeenCalledTimes(1)` with `projectId` checked inside the captured options — no new mocking surface.
+  - Minor 2 — §4 row 004 gains a "paper mapping" check row; TASK-BQ00-004 gains Test #5 + an explicit Acceptance bullet: a 3-5 sentence "Grid continuation mapping" ADR paragraph mapping `BigQueryPage.pageToken` onto the read-only grid contract (`RunResult.batched` at src/adapters/types.ts:78; resultsPanel.ts `loadMore` → `runner.loadMore(index)`), verified by grep, with the read-only list untouched. Grounded before writing: both paths confirmed to exist at current HEAD.
+UNCHANGED (per revision constraints): wave structure (1: 001 → 2: 002∥003 → 3: 004), §2 read-only list, §7 Global Constraints, PLANNER_MODEL footer, DEFERRED status of the four STATUS follow-ups, task count (4).
 
-COMPLETENESS:
-  - none — §4 rows 1-33 map 1:1 to task test numbers #1-33 (001=1-9, 002=10-16, 003=17-24, 004=25-29, 005=30-33); no gaps, orphans, or leftover references to the old 1-32 scheme outside this log.
-CONSISTENCY:
-  - none — R1 finding 1 (create-path) resolved consistently: §1 success (1), §2 09.3, §3 09.3 routing, §4 row 17, and 003 Goal/Test #17/Target Files all state create-on-first-real-write, buffered-activate-lifecycle-only, exactly-once dispose; no stale "else → buffer" wording remains.
-  - none — R1 finding 3 (numbering) resolved: 002's releaseVerify-green row is §4 row 16 = task 002 #16; 003-005 rows renumbered 17-33 with matching task numbers; §7 byte-scan refs updated to rows 21/29; 004 #27 still cites rows 3-4 (unchanged).
-CLARITY:
-  - none — R1 finding 2 (bound semantics) resolved consistently: §2 09.1, §3 pipeline (assembly precedes bound-as-last-step), §4 row 6, and 001 Goal/Test #6/Interfaces all pin "ASSEMBLED line ≤ 2000, message tail cut, prefix intact".
-  - none — R1 finding 4 (no-bypass wording) resolved: 004 #29 + §4 row 29 + 004 Goal (d) all read "every appendLine argument is logLine-formatted (REDACTED); flush-site matches expected by design; appendLine(<raw>) is the FAIL".
-SCOPE:
-  - none — renumbering introduced no cross-file drift; wave/serialization (002 scripts w1 → 003 commands w2) unchanged; task 002's node -e profile check is a superset of PLAN §5's 002 block, not a conflict.
-YAGNI:
-  - none — R1 finding 5 resolved: §3 09.2, §7, and 002 Goal all state profile:fast ≡ verify:fast is INTENDED (named-profile namespace, kept in lockstep, no third implementation).
-
-NOTES: Non-blocking clarification only — §3 09.1 "the MESSAGE tail is what gets cut" is exact for the no-correlationId case (row 6 / test #6). If a future corr+long-message case is pinned, decide whether the bound may cut the corr suffix (whole-line slice) or must preserve it (message-only truncate); today's tests and acceptance do not exercise it, so no action needed.
+### Round 3 — 2026-09-02 · Approved
+REVIEWER_MODEL: unic-smart
+FINDINGS:
+  - none
+VERDICT: Approved

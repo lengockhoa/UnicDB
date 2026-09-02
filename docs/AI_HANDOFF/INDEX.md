@@ -1,9 +1,13 @@
 # INDEX
 
-Cycle AIX-07 — **Trust, Privacy & Governance** — complete; shipped in v1.28.0. Cycle DX-01 — Release confidence lane — shipped in v1.36.0. Cycle ARP-02 — shutdown-safe query ownership — shipped in v1.38.0. Cycle ARP-03 — retained-result memory budget — shipped in v1.39.0 (2026-09-02). Cycle ARP-04 — tunnel and endpoint identity hardening — shipped in v1.40.0 (2026-09-02; 5/5 tasks approved round 1, released). Cycle ARP-05 — cross-driver resilience contract — shipped in v1.41.0. Cycle ARP-06 — AI SQL policy unification and usage visibility — shipped in v1.42.0. Cycle ARP-07 — successful-DDL cache/context invalidation — shipped in v1.43.0 (2026-09-02; 4/4 tasks approved round 1, released). Cycle ARP-08 — console draft recovery — shipped in v1.44.0 (2026-09-02; 4/4 tasks approved round 1, released). Cycle ARP-09 — redacted support diagnostics + release-confidence profiles — shipped in v1.45.0 (2026-09-02; 5/5 tasks approved round 1 after R4.5, released).
+Cycle BQ-00 — **BigQuery provider feasibility + adapter contract spike** — planning_done 2026-09-02 (per `docs/plans/2026-09-01-bigquery-provider-roadmap.md` §4 BQ-00; 4 tasks; no real ADC; no existing-driver changes). Cycle AIX-07 — **Trust, Privacy & Governance** — complete; shipped in v1.28.0. Cycle DX-01 — Release confidence lane — shipped in v1.36.0. Cycle ARP-02 — shutdown-safe query ownership — shipped in v1.38.0. Cycle ARP-03 — retained-result memory budget — shipped in v1.39.0 (2026-09-02). Cycle ARP-04 — tunnel and endpoint identity hardening — shipped in v1.40.0 (2026-09-02; 5/5 tasks approved round 1, released). Cycle ARP-05 — cross-driver resilience contract — shipped in v1.41.0. Cycle ARP-06 — AI SQL policy unification and usage visibility — shipped in v1.42.0. Cycle ARP-07 — successful-DDL cache/context invalidation — shipped in v1.43.0 (2026-09-02; 4/4 tasks approved round 1, released). Cycle ARP-08 — console draft recovery — shipped in v1.44.0 (2026-09-02; 4/4 tasks approved round 1, released). Cycle ARP-09 — redacted support diagnostics + release-confidence profiles — shipped in v1.45.0 (2026-09-02; 5/5 tasks approved round 1 after R4.5, released).
 
 | Task / Portfolio | Title | Status | Dependencies | Reviewer |
 |---|---|---|---|---|
+| TASK-BQ00-001 | BigQuery package + bundle proof (`@google-cloud/bigquery` pin, esbuild-API probe) | ready | none | - |
+| TASK-BQ00-002 | Pure BigQuery job/page contract types (`bigqueryTypes.ts`) | ready | TASK-BQ00-001 | - |
+| TASK-BQ00-003 | ADC diagnostic classifier + client seam (`bigqueryAdc.ts`) | ready | TASK-BQ00-001 | - |
+| TASK-BQ00-004 | ADR 0004 — BQ-00 feasibility + adapter contract decision | ready | TASK-BQ00-001, TASK-BQ00-002, TASK-BQ00-003 | - |
 | TASK-RLX-001 | Cancel active PostgreSQL non-cursor queries | done | none | unic-smart |
 | TASK-RLX-002 | Coalesce SchemaCache stale refreshes | done | none | unic-smart |
 | TASK-RLX-003 | Fail closed on malformed import execution plans | done | none | unic-smart |
@@ -280,3 +284,13 @@ Graph: TASK-ARP09-001 independent; TASK-ARP09-002 independent; TASK-ARP09-001 �
 - Wave 3 (1): TASK-ARP09-005 (conditional — expected NOT-NEEDED)
 
 No same-wave file sharing: 001 owns `src/core/diagnostics.ts`(+new `diagnostics.test.ts`); 002 owns `package.json` (scripts section only) + `releaseHygiene.test.ts`; 003 owns `extension.ts` + `extension.test.ts` + `package.json` (commands + activationEvents) in wave 2; 004 owns `src/ai/__tests__/trace.test.ts` (read-only evidence append); 005 owns nothing if closed not-needed. `package.json` is edited in BOTH wave 1 (002 scripts) and wave 2 (003 commands/activationEvents) — serialized across waves, different sections. `releaseVerify.test.ts` and `scripts/verify-release.sh` are NOT modified by any task. Known gaps (PLAN.md Self-Audit): per-run AI completion summary not wired (seam in `aiChatPanel.ts`, outside 003's roadmap file set — `logDiagnostic` exported for a future cycle); if nothing meaningful happens no channel is ever created (pending lines dropped at deactivate — acceptable; reveal flushes buffered history).
+
+## BQ-00 wave structure (inferred from Dependencies)
+
+Graph: TASK-BQ00-001 independent; TASK-BQ00-001 → TASK-BQ00-002; TASK-BQ00-001 → TASK-BQ00-003; all three → TASK-BQ00-004.
+
+- Wave 1 (1): TASK-BQ00-001 (package.json/lockfile owner — serialized alone)
+- Wave 2 (2): TASK-BQ00-002, TASK-BQ00-003 (parallel — disjoint files; 003 consumes no 002 symbol)
+- Wave 3 (1): TASK-BQ00-004 (ADR cites all three tasks' evidence)
+
+No same-wave file sharing. Read-only this cycle: `src/adapters/{factory,mssql,mysql,postgres,types}.ts`, `src/core/queryRunner.ts`, `src/ui/resultsPanel.ts`, `src/extension.ts`, `esbuild.js`, `vitest*.config.ts`. Deferred: BQ-01..BQ-07, the 4 STATUS.md follow-ups. Known gaps: real-ADC recipe authored but not executed (no test project); ADR method-name claims rest on executor-recorded `.d.ts` evidence.

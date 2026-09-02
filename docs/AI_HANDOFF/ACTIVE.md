@@ -1,4 +1,4 @@
-Cycle: ARP-09   Date: 2026-09-02   Base: main @ c2baff7 (v1.44.0)
-Goal: Redacted support diagnostics (lazy VSDB Output Channel with redacted lifecycle/connection/AI summaries + reveal/clear) and named release-confidence profiles (profile:fast / profile:release) — redaction reused from trace.ts, no telemetry, no raw SQL/secrets.
-Tasks: 5 total
+Cycle: BQ-00   Date: 2026-09-02   Base: main @ 35f7aff (v1.45.0)
+Goal: Ship BQ-00 BigQuery provider feasibility + adapter contract spike (no real ADC).
+Tasks: 4 total
 Status: planning_done — ready for executor
