@@ -748,3 +748,60 @@ describe("SchemaTreeProvider — TASK-DBX08-002 declared catalog capability", ()
     expect(tables[0].description).toBe(formatRows(250));
   });
 });
+
+// =============================================================================
+// TASK-BQ02-003 — catalog categories (Indexes/Constraints/Triggers/Sequences)
+// must NEVER render for bigquery. The BigQueryAdapter from TASK-BQ02-001 has
+// no `capabilities` declaration — hasAdapterCapability fail-closed already
+// covers admission. This test pins that future declarations must be paired
+// with a real catalog implementation before the categories can reappear.
+// =============================================================================
+describe("SchemaTreeProvider — TASK-BQ02-003 bigquery catalog categories absent", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.emitters = [];
+    state.treeItemCalls = [];
+    state.errorMessages = [];
+  });
+
+  it("bigquery table node has no Indexes/Constraints/Triggers children (adapter without capabilities)", async () => {
+    // Deliberately do NOT pass `capabilities` — mirrors the BQ-02-001 surface.
+    const { mgr } = setupTree({
+      schemas: [{ name: "ds1" }],
+      tables: [{ name: "tbl", schema: "ds1" }],
+      columns: [
+        { name: "id", dataType: "INT64", nullable: false, isPrimaryKey: false },
+        { name: "name", dataType: "STRING", nullable: true, isPrimaryKey: false },
+      ],
+    });
+    const cfg: ConnectionConfig = {
+      id: "bq-cat",
+      name: "BQ-cat",
+      driver: "bigquery",
+      host: "",
+      port: 0,
+      user: "",
+      database: "",
+      bigquery: { billingProject: "proj-billing" },
+    };
+    await mgr.addConnection(cfg, "");
+    await mgr.setActive("bq-cat");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    const cats = await provider.getChildren(schemas[0]);
+    // Schema-level: only Tables/Views/Routines. Sequences absent (no catalog).
+    expect(cats.map((c) => c.label)).toEqual(["Tables", "Views", "Routines"]);
+
+    const tables = await provider.getChildren(cats[0]);
+    expect(tables).toHaveLength(1);
+    const tableChildren = await provider.getChildren(tables[0]);
+    const labels = tableChildren.map((c) => c.label);
+    // Only column children present. No Indexes/Constraints/Triggers categories.
+    expect(labels).toEqual(["id", "name"]);
+    expect(labels).not.toContain("Indexes");
+    expect(labels).not.toContain("Constraints");
+    expect(labels).not.toContain("Triggers");
+  });
+});

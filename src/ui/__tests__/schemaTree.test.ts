@@ -1759,3 +1759,308 @@ describe("SchemaTreeProvider — TASK-010 D2 batch row-count + D3 collapsed conn
     }
   });
 });
+
+// =============================================================================
+// TASK-BQ02-003 — BigQuery schema explorer wiring.
+//   - DRIVER_ICONS.bigquery entry pins "cloud" (vscode codicon).
+//   - Connection tooltip for bigquery omits host/port/database artifacts.
+//   - Schema (dataset) tooltip uses "dataset" copy, not pg "schema" implication.
+//   - Row-count batch is SUPPRESSED for bigquery (cost-safety posture).
+//   - BigQuery table/view nodes still wire `vsdb.browseTableData`.
+// Regression row (existing pg/mysql/mssql behavior) is implicitly pinned by
+// every other describe block remaining green verbatim.
+// =============================================================================
+describe("SchemaTreeProvider — TASK-BQ02-003 bigquery wiring", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.emitters = [];
+    state.treeItemCalls = [];
+    state.workspaceFolders = undefined;
+  });
+
+  it("bigquery connection expands to dataset nodes with bigquery icon (NOT pg 'schemas' label)", async () => {
+    const { mgr } = setupTree({
+      schemas: [{ name: "ds1" }, { name: "ds2" }],
+    });
+    const cfg: ConnectionConfig = {
+      id: "bq1",
+      name: "BQ-side",
+      driver: "bigquery",
+      host: "",
+      port: 0,
+      user: "",
+      database: "",
+      bigquery: { billingProject: "proj-billing" },
+    };
+    await mgr.addConnection(cfg, "");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    expect(root).toHaveLength(1);
+    expect(root[0].contextValue).toBe("connection");
+    expect(root[0].icon).toBe("cloud");
+
+    const schemas = await provider.getChildren(root[0]);
+    expect(schemas).toHaveLength(2);
+    expect(schemas.map((s) => s.label)).toEqual(["ds1", "ds2"]);
+    expect(schemas.map((s) => s.contextValue)).toEqual(["schema", "schema"]);
+  });
+
+  it("bigquery connection node icon + tooltip (host/port/database absent)", async () => {
+    const stubMgr = {
+      listConnections: () => [{
+        id: "bq1",
+        name: "BQ-side",
+        driver: "bigquery",
+        host: "",
+        port: 0,
+        user: "",
+        database: "",
+        bigquery: { billingProject: "proj-billing", location: "US" },
+      } as ConnectionConfig],
+      getActive: () => null,
+      onDidChangeActive: () => ({ dispose: () => {} }),
+    };
+    const provider = new SchemaTreeProvider(stubMgr as never);
+    const root = await provider.getChildren(undefined);
+    const conn = root[0];
+    // Icon resolved from DRIVER_ICONS.bigquery.
+    expect(conn.icon).toBe("cloud");
+    // Tooltip: "<name>\nbigquery@<billingProject>/<location>\nClick…"
+    // No ":0/" artifacts from empty host/port/database.
+    expect(conn.tooltip).not.toMatch(/:0\//);
+    expect(conn.tooltip).toMatch(/bigquery@proj-billing\/US/);
+    expect(conn.tooltip).toMatch(/Click/);
+  });
+
+  it("bigquery dataset tooltip labels as dataset (NOT pg schema implication)", async () => {
+    // Build a real bigquery connection so the provider's getSchemaNodesForConnection
+    // path runs and we read the schema (dataset) tooltip from the returned nodes.
+    const { mgr } = setupTree({
+      schemas: [{ name: "ds1" }],
+    });
+    const cfg: ConnectionConfig = {
+      id: "bq1",
+      name: "BQ-side",
+      driver: "bigquery",
+      host: "",
+      port: 0,
+      user: "",
+      database: "",
+      bigquery: { billingProject: "proj-billing" },
+    };
+    await mgr.addConnection(cfg, "");
+    const provider = new SchemaTreeProvider(mgr);
+    const root = await provider.getChildren(undefined);
+    const datasets = await provider.getChildren(root[0]);
+    expect(datasets).toHaveLength(1);
+    // Tooltip copy: "<conn.name> / dataset <ds>" — explicitly NOT "schema ds1".
+    expect(datasets[0].tooltip).toBe("BQ-side / dataset ds1");
+    expect(datasets[0].tooltip).not.toMatch(/\bschema\b/);
+
+    // Differential pin: postgres keeps the legacy "<conn> / <schema>" form.
+    const { mgr: mgr2 } = setupTree({
+      schemas: [{ name: "public" }],
+    });
+    await mgr2.addConnection(makeCfg({ id: "pg-tooltip", name: "Local" }), "p");
+    const provider2 = new SchemaTreeProvider(mgr2);
+    const root2 = await provider2.getChildren(undefined);
+    const schemas2 = await provider2.getChildren(root2[0]);
+    expect(schemas2[0].tooltip).toBe("Local / public");
+  });
+
+  it("dataset listing rejection renders error node (Tables category → Failed to load / Connect failed)", async () => {
+    // Build a throwing-on-listTables adapter inline so listTables rejects but
+    // listSchemas resolves normally (mirrors a transient BigQuery API error
+    // on dataset.getTables). The tree must still return an error node — no
+    // throw, no crash.
+    const throwingAdapter: DbAdapter = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+      runQuery: vi.fn(),
+      listSchemas: vi.fn().mockResolvedValue([{ name: "ds1" }]),
+      listTables: vi.fn(() => Promise.reject(new Error("getTables failed"))),
+      listViews: vi.fn(() => Promise.reject(new Error("getTables failed"))),
+      listRoutines: vi.fn(() => Promise.reject(new Error("getTables failed"))),
+      listColumns: vi.fn(() => Promise.reject(new Error("getColumns failed"))),
+      listRoutineParams: vi.fn(() => Promise.reject(new Error("Not implemented"))),
+      estimateTableRows: vi.fn().mockResolvedValue(null),
+      estimateTableRowsBatch: vi.fn().mockResolvedValue(new Map()),
+      listTableDetail: vi.fn(() => Promise.reject(new Error("Not implemented"))),
+      testConnection: vi.fn().mockResolvedValue(undefined),
+    };
+    const factory = vi.fn(() => throwingAdapter);
+    const secret = new (class {
+      store = vi.fn(async (_k: string, _v: string) => {});
+      get = vi.fn(async (_k: string) => "");
+      delete = vi.fn(async (_k: string) => {});
+    })();
+    const ws = { get: vi.fn(), update: vi.fn().mockResolvedValue(undefined) };
+    const gs = { get: vi.fn(), update: vi.fn().mockResolvedValue(undefined) };
+    const mgr = new ConnectionManager(
+      {
+        secrets: secret as never,
+        workspaceState: ws as never,
+        globalState: gs as never,
+      } as never,
+      factory as never,
+    );
+    const cfg: ConnectionConfig = {
+      id: "bq-throw",
+      name: "BQ-throw",
+      driver: "bigquery",
+      host: "",
+      port: 0,
+      user: "",
+      database: "",
+      bigquery: { billingProject: "proj-billing" },
+    };
+    await mgr.addConnection(cfg, "");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    expect(schemas.map((s) => s.label)).toEqual(["ds1"]);
+    expect(schemas[0].contextValue).toBe("schema");
+
+    // Expanding the schema → 3 categories. Tables category's children must
+    // resolve to a single error node without throwing.
+    const cats = await provider.getChildren(schemas[0]);
+    expect(cats.map((c) => c.label)).toEqual(["Tables", "Views", "Routines"]);
+    const tablesNode = cats[0];
+    const tables = await provider.getChildren(tablesNode);
+    expect(tables).toHaveLength(1);
+    expect(tables[0].contextValue).toBe("error");
+    expect(tables[0].label.toLowerCase()).toMatch(/connect failed|error|failed to load/);
+  });
+
+  it("row-count batch NEVER fires for bigquery (differential vs postgres)", async () => {
+    const { mgr, adapter } = setupTree({
+      schemas: [{ name: "ds1" }],
+      tables: [
+        { name: "t1", schema: "ds1" },
+        { name: "t2", schema: "ds1" },
+      ],
+      estimateTableRowsBatchImpl: async (_schema, tables) => {
+        const m = new Map<string, number | null>();
+        for (const t of tables) m.set(t, 100);
+        return m;
+      },
+    });
+    const cfg: ConnectionConfig = {
+      id: "bq-rowcount",
+      name: "BQ-rowcount",
+      driver: "bigquery",
+      host: "",
+      port: 0,
+      user: "",
+      database: "",
+      bigquery: { billingProject: "proj-billing" },
+    };
+    await mgr.addConnection(cfg, "");
+    await mgr.setActive("bq-rowcount");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    const cats = await provider.getChildren(schemas[0]);
+    await provider.getChildren(cats[0]);
+
+    // BigQuery: estimateTableRowsBatch must NEVER fire.
+    expect(adapter.estimateTableRowsBatch).not.toHaveBeenCalled();
+    // Per-table API is not used by the tree either; confirm the same.
+    expect(adapter.estimateTableRows).not.toHaveBeenCalled();
+
+    // Differential pin: same fixture with postgres driver → batch fires.
+    const { mgr: mgr2, adapter: adapter2 } = setupTree({
+      schemas: [{ name: "public" }],
+      tables: [
+        { name: "t1", schema: "public" },
+        { name: "t2", schema: "public" },
+      ],
+      estimateTableRowsBatchImpl: async (_schema, tables) => {
+        const m = new Map<string, number | null>();
+        for (const t of tables) m.set(t, 100);
+        return m;
+      },
+    });
+    await mgr2.addConnection(makeCfg({ id: "pg-rowcount" }), "p");
+    await mgr2.setActive("pg-rowcount");
+    const provider2 = new SchemaTreeProvider(mgr2);
+    const root2 = await provider2.getChildren(undefined);
+    const schemas2 = await provider2.getChildren(root2[0]);
+    const cats2 = await provider2.getChildren(schemas2[0]);
+    await provider2.getChildren(cats2[0]);
+    expect(adapter2.estimateTableRowsBatch).toHaveBeenCalled();
+  });
+
+  it("bigquery table node stays wired to vsdb.browseTableData (preview path)", async () => {
+    const { mgr } = setupTree({
+      schemas: [{ name: "ds1" }],
+      tables: [{ name: "tbl", schema: "ds1" }],
+    });
+    const cfg: ConnectionConfig = {
+      id: "bq-preview",
+      name: "BQ-preview",
+      driver: "bigquery",
+      host: "",
+      port: 0,
+      user: "",
+      database: "",
+      bigquery: { billingProject: "proj-billing" },
+    };
+    await mgr.addConnection(cfg, "");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    const cats = await provider.getChildren(schemas[0]);
+    const tables = await provider.getChildren(cats[0]);
+
+    expect(tables).toHaveLength(1);
+    const t = tables[0];
+    expect(t.contextValue).toBe("table");
+    expect(t.command?.command).toBe("vsdb.browseTableData");
+    expect(t.command?.title).toBe("Browse Data");
+    const arg = t.command?.arguments?.[0] as { meta?: { connection?: { id?: string }; schema?: string; objectName?: string } };
+    expect(arg).toBe(t);
+    expect(arg?.meta?.connection?.id).toBe("bq-preview");
+    expect(arg?.meta?.schema).toBe("ds1");
+    expect(arg?.meta?.objectName).toBe("tbl");
+  });
+
+  it("bigquery view node stays wired to vsdb.browseTableData (preview path)", async () => {
+    const { mgr } = setupTree({
+      schemas: [{ name: "ds1" }],
+      views: [{ name: "v_active", schema: "ds1" }],
+    });
+    const cfg: ConnectionConfig = {
+      id: "bq-view",
+      name: "BQ-view",
+      driver: "bigquery",
+      host: "",
+      port: 0,
+      user: "",
+      database: "",
+      bigquery: { billingProject: "proj-billing" },
+    };
+    await mgr.addConnection(cfg, "");
+    const provider = new SchemaTreeProvider(mgr);
+
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    const cats = await provider.getChildren(schemas[0]);
+    const views = await provider.getChildren(cats[1]); // Views category at index 1
+
+    expect(views).toHaveLength(1);
+    const v = views[0];
+    expect(v.contextValue).toBe("view");
+    expect(v.command?.command).toBe("vsdb.browseTableData");
+    expect(v.command?.title).toBe("Browse Data");
+    const arg = v.command?.arguments?.[0] as { meta?: { connection?: { id?: string }; schema?: string; objectName?: string } };
+    expect(arg).toBe(v);
+    expect(arg?.meta?.connection?.id).toBe("bq-view");
+    expect(arg?.meta?.schema).toBe("ds1");
+    expect(arg?.meta?.objectName).toBe("v_active");
+  });
+});

@@ -27,6 +27,10 @@ const DRIVER_ICONS: Record<string, string> = {
   postgres: "database",
   mysql: "server",
   mssql: "azure",
+  // TASK-BQ02-003 — BigQuery uses the vscode `cloud` codicon (existing theme
+  // icon id). Pinned in test #2; any future rename must update this map AND
+  // the pin together so the cost-safety posture cannot silently drift.
+  bigquery: "cloud",
 };
 
 export type CategoryKind =
@@ -282,10 +286,24 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
   // ---- DBX-05 connection node factory --------------------------------------
 
   private connectionNode(c: ConnectionConfig): VsdbNode {
+    // TASK-BQ02-003 — BigQuery's host/port/database are empty strings (no
+    // socket connection), so the pg-style `driver@host:port/database`
+    // tooltip would render `bigquery@:0/` (visual artifact). Use the
+    // billingProject (+ optional location) instead — the only meaningful
+    // identifier for a BigQuery connection.
+    const isBigQuery = c.driver === "bigquery";
+    const tooltip = isBigQuery
+      ? (() => {
+          const billingProject = c.bigquery?.billingProject ?? "";
+          const location = c.bigquery?.location;
+          const locSuffix = location ? `/${location}` : "";
+          return `${c.name}\nbigquery@${billingProject}${locSuffix}\nClick để đổi active connection`;
+        })()
+      : `${c.name}\n${c.driver}@${c.host}:${c.port}/${c.database}\nClick để đổi active connection`;
     return {
       label: c.name,
       icon: DRIVER_ICONS[c.driver] ?? "database",
-      tooltip: `${c.name}\n${c.driver}@${c.host}:${c.port}/${c.database}\nClick để đổi active connection`,
+      tooltip,
       contextValue: "connection",
       collapsible: vscode.TreeItemCollapsibleState.Collapsed,
       command: {
@@ -356,10 +374,18 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
         ];
       } else {
         const filterActive = this.filterText !== "";
+        // TASK-BQ02-003 — BigQuery datasets are NOT PostgreSQL schemas (no
+        // namespace / grant story at this level). Tooltip copy uses
+        // "dataset <name>" so users do not infer pg-style semantics that
+        // BigQuery doesn't support (no `SET search_path`, no per-schema
+        // ownership). Other drivers keep the legacy "<conn> / <schema>".
+        const isBigQuery = conn.driver === "bigquery";
         children = schemas.map((s) => ({
           label: s.name,
           icon: "symbol-namespace",
-          tooltip: `${conn.name} / ${s.name}`,
+          tooltip: isBigQuery
+            ? `${conn.name} / dataset ${s.name}`
+            : `${conn.name} / ${s.name}`,
           contextValue: "schema",
           // Filter active: expand schema để user thấy được match sâu bên trong.
           collapsible: filterActive
@@ -582,7 +608,18 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
       // TASK-010/D2 — batch: 1 estimateTableRowsBatch cho CẢ schema thay vì
       // N estimateTableRows (1 mỗi table). Guard rỗng TRƯỚC khi gọi — 0 table
       // node → không issue query nào.
-      if (category === "tables" && !isError) {
+      // TASK-BQ02-003 — BigQuery: row-count batch SUPPRESSED. BigQuery's
+      // `numRows` is available free-of-charge via `table.getMetadata()`
+      // (already invoked by `listTableDetail` from TASK-BQ02-001), so the
+      // adapter exposes `estimateTableRowsBatch` but the tree never calls
+      // it — a per-table batch query would mean an extra metadata round
+      // trip per table on every dataset expand. Cost-safety posture:
+      // skip the batch here. If BQ-05+ adds free-count metadata to the
+      // table listing, revisit with a capability declaration.
+      // The suppression is a DRIVER check, not a capability check — the
+      // intent is explicit and testable even when the adapter declares no
+      // capabilities at all.
+      if (category === "tables" && !isError && conn.driver !== "bigquery") {
         const tableNodes = children.filter((c) => c.contextValue === "table");
         if (tableNodes.length > 0) {
           this.fetchRowCountsBatch(tableNodes, conn, schema);
@@ -1211,10 +1248,22 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
     if (node.contextValue === "schema") {
       const conn = meta.connection;
       if (!conn) return null;
+      // TASK-BQ02-003 — mirror connectionNode() tooltip branching so a
+      // bigquery reveal-target's parent node never renders the `bigquery@:0/`
+      // artifact. Other drivers keep the legacy `driver@host:port/database`.
+      const isBigQuery = conn.driver === "bigquery";
+      const tooltip = isBigQuery
+        ? (() => {
+            const billingProject = conn.bigquery?.billingProject ?? "";
+            const location = conn.bigquery?.location;
+            const locSuffix = location ? `/${location}` : "";
+            return `${conn.name}\nbigquery@${billingProject}${locSuffix}\nClick để đổi active connection`;
+          })()
+        : `${conn.name}\n${conn.driver}@${conn.host}:${conn.port}/${conn.database}\nClick để đổi active connection`;
       return {
         label: conn.name,
         icon: DRIVER_ICONS[conn.driver] ?? "database",
-        tooltip: `${conn.name}\n${conn.driver}@${conn.host}:${conn.port}/${conn.database}\nClick để đổi active connection`,
+        tooltip,
         contextValue: "connection",
         // TASK-010/D3 — giữ nhất quán với getRoot(): connection nodes Collapsed.
         collapsible: vscode.TreeItemCollapsibleState.Collapsed,
