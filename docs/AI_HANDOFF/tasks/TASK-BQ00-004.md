@@ -93,3 +93,44 @@ To 004's executor: the ADR's job is to CLOSE the roadmap's open questions, not r
 
 ### 2026-09-02 · planner · unic-smart (Round 2)
 Two plan-review mandates land in this task. (Minor 2 / Important 2) The roadmap's line-67 evidence now has a concrete citation target: TASK-BQ00-001 writes `docs/decisions/_bq00-evidence.md`; your ADR cites it by path and duplicates the enumerated names into a "Pagination + cancellation method names" section — including the previously owner-less **cancellation return shape** (what `job.cancel()` actually returns; object vs void matters for BQ-01's cancel wiring). (Minor 1 partial) Add a "Grid continuation mapping" paragraph (3-5 sentences): `BigQueryPage.pageToken` maps onto the grid's existing continuation contract — `RunResult.batched` (src/adapters/types.ts:78) plus the panel's `loadMore` → `runner.loadMore(index)` path — VSDB owning jobRef + opaque token, client stateless per page. This is a PAPER deliverable: `resultBatcher.ts` and `resultsPanel.ts` are read-only this cycle, so the mapping must live entirely in the ADR prose. Verification commands above now grep for both.
+
+## Executor Report
+EXECUTOR_TOOL: Claude Code
+EXECUTOR_MODEL: unic-code (claude-sonnet-4-5)
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: N/A — docs-only; first-pass content checks are below
+Verification Output:
+```
+=== Section 1 ===
+ADR exists
+version recorded
+continuation ownership
+cancellation mapping
+scalar conversion
+cost policy field
+IAM section
+deferral recorded
+ADC recipe
+evidence file cited
+method names enumerated
+grid mapping present
+evidence file exists (written by TASK-BQ00-001)
+README row
+=== Section 2: typecheck + compile ===
+> vsdb@1.45.0 typecheck
+> tsc --noEmit
+  dist/webview.js.map    4.0mb
+  dist/webview.css.map  65.2kb
+⚡ Done in 148ms
+  dist/extension.js      5.3mb ⚠️
+  dist/extension.js.map  9.3mb
+⚡ Done in 154ms
+esbuild: build complete
+=== Section 3: full test suite ===
+Test Files  222 passed | 1 skipped (223)
+     Tests  3209 passed | 2 skipped (3211)
+   Duration  17.62s
+```
+git diff --stat: docs/decisions/README.md | 1 +/1 insertion (and untracked new ADR); src/ untouched.
+Status: PASS
+Note: All ten required ADR sections (§1 client method/version, §3 continuation ownership, §4 cancellation mapping, §5 safe scalar conversion, §6 selected config fields, §7 required IAM, §8 Storage Read API deferral, §9 manual ADC smoke recipe, §10 pagination+cancellation method names, §11 grid continuation mapping) are present; ADR cites `_bq00-evidence.md` and the four enumerated names; test floor 3189|2 preserved (3209 passed).
