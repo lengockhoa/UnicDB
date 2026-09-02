@@ -1,33 +1,41 @@
 # VSDB Status
 
-- Last meaningful update: 2026-09-01
-- Updated by: Claude
+- Last meaningful update: 2026-09-02
+- Updated by: Claude (session continuation)
 - Status confidence: high
 
-## Snapshot
+## Current state
 
-- Branch/state: `main` — **HEAD @ afcd1df**, v1.34.0 released (tag + vsdb-1.34.0.vsix). Wave 10 shipped: **AIX-03 Read-Only Copilot Hardening** — row-lock clause closure incl. EXPLAIN inner-statement guard; row-cap + sentinel pins with `DEFAULT_BATCH_SIZE=500` fixture; panel recovery-status subscription with recovered=no-op + listener containment + real-teardown regression; toolCallId `tcid:` attribution with narrow redaction allowlist. 3/3 tasks approved (101+102 after 1 fix round), unic-smart.
-- Full suite: **2914 passed | 2 skipped**, typecheck + compile clean.
+- HEAD: `d4eb18a` (main, synced with origin)
+- Latest release: **v1.45.0** (ARP-09 redacted support diagnostics + release-confidence profiles; GitHub release live, vsix `vsdb-1.45.0.vsix` published)
+- Suite baseline: **3189 passed | 2 skipped** (typecheck + compile exit 0; release hygiene 20/20)
+- No pending tasks; no handoff worktrees/branches lingering in the cycle flow
 
-## Active Work
+## Recently shipped (this session's cycles)
 
-- None.
+| Cycle | Release | Tasks | Approval | Notes |
+|---|---|---|---|---|
+| ARP-07 | v1.43.0 | 4/4 | round 1 | Successful-DDL cache/context invalidation |
+| ARP-08 | v1.44.0 | 4/4 | round 1 | Console draft recovery (workspaceState, debounced, exactly-once flush) |
+| ARP-09 | v1.45.0 | 5/5 | round 1 after R4.5 | Redacted diagnostics + `profile:fast`/`profile:release` |
 
-## Decisions Pending
+## Documented follow-ups not yet scheduled (the "làm sạch sẽ" backlog)
 
-- None.
+These were captured across the three cycles as advisory/known-gap items but never planned.
+They are the natural input for the next `ukit:handoff-fullstack` cycle.
 
-## Next Candidates
+1. **`browseCommands.ts:169-193` unguarded finally** — known from the original advisory; missing try/finally can leave partial table-load state on error paths. Read first to confirm scope (file may have moved).
+2. **MSSQL `[insert]` bracket false positive** — the schema-impact classifier / dangerousStatement scanner trips on MSSQL bracket-quoted identifiers like `[insert]`. The class is known; fix belongs in `src/core/dangerousStatement.ts` (and the new `src/core/schemaImpact.ts` if it has the same gap), with a regression pin. Likely a small, verify-first cycle.
+3. **ARP-07 form-view/AI plan-apply invalidation gap** — the `extension.ts` host seam at `runStatements` invalidates schema caches on successful DDL, but `tableCommands.ts:runDdl` and `aiChatPanel.ts:plan-apply` run `adapter.runQuery` directly and are NOT wired. Either route them through the seam (a real cycle) or close the gap explicitly.
+4. **ARP-08 minor — snapshot `name` field uncapped** — R2 noted that the draft snapshot codec caps tabs (20) and buffer (64 000) but the `name` field is uncapped. Tiny cycle; add a cap and pin.
+5. **Cleanup verification cosmetic** — `git worktree list` shows several `.claude/worktrees/agent-*` detached entries owned by the harness; these are NOT part of the handoff cycle flow and will be reclaimed when the harness ages them out. No action required from the orchestrator.
 
-1. **PORT-AIX-05** — Optional OMP engine resilience.
-2. PORT-AIX-06/07 portfolio row is superseded (shipped v1.26/v1.28).
-3. **PORT-DX-01** — last.
+## Next-cycle guidance
 
-## Recently Completed
+- A new `ukit:handoff-fullstack` invocation will start with `Phase: P1` and the orchestrator should batch items 1–4 above into a single **Cleanup Cycle** (e.g. `CYC-CLEANUP-1`) or split into sequential cycles ordered by scope (start with item 2 — smallest, verify-first, ships a clean cap on a known false positive — then item 4, then item 3, then item 1).
+- All three follow-ups live in `src/` and are compatible with the same TDD worktree discipline used in ARP-07..09.
+- Item 5 is a non-issue; the `.claude/worktrees/agent-*` lines are out of cycle scope.
 
-- **v1.34.0 — Cycle AIX-03 Read-Only Copilot Hardening** (2026-09-01): row-lock clause closure incl. EXPLAIN inner-statement guard; row-cap + sentinel pins with `DEFAULT_BATCH_SIZE=500` fixture; panel recovery-status subscription with recovered=no-op + listener containment + real-teardown regression; toolCallId `tcid:` attribution with narrow redaction allowlist (key AND value-prefix). 3/3 approved (101+102 after 1 fix round), unic-smart. Full suite **2914|2** at release. Plan: PLAN_AIX03.md, Tasks: TASK-AIX03-101/102/103.
-- v1.33.0 — Cycle DBX-06 Reviewed PostgreSQL Rename Workflow (2026-09-01): catalog usage analysis with always-three-value binding + inclusion rules; pure multi-step rename-plan builder with named applied/failed reporting; host preview/confirmation integrated with DBX-08 `tableDdl` capability gating and pinned denial literal. 2/2 approved round 1, unic-smart. Full suite **2878|2** at release. Plan: PLAN_DBX06.md, Tasks: TASK-DBX06-001/002.
-- v1.32.0 — Cycle RLX-03 Connection/Tunnel/Schema-refresh Recovery (2026-09-01): typed post-ready SSH tunnel exit + promise-identity coalescing + fresh-spawn-after-rejection; ConnectionManager recovery states `recovering`/`recovered`/`failed`; `SchemaCache.invalidate()` clears inflight WITH the generation bump. 3/3 approved after 1 fix round each, unic-smart. Full suite **2858|2** at release. Plan: PLAN_RLX03.md, Tasks: TASK-RLX03-001/002/003.
-- v1.31.0 — Cycle RLX-02 Cross-dialect Query Lifecycle (2026-09-01): MySQL `PoolConnection.destroy` + pre-handoff stream cancel; MSSQL `activeRequests` snapshot + `request.cancel`; `vsdb.cancelQuery` awaits `runner.cancel()` before busy-clear; `mockMysqlTxConnection` `queryImpl` parameter drives natural rejection. unic-smart: TASK-001 fixed round 1, 002/003 APPROVED round 1. Full suite **2838|2 + 1 pre-existing perf flake** at release. Plan: PLAN_RLX02.md, Tasks: TASK-RLX02-001/002/003.
-- v1.30.0 — Cycle AIX-08 Extensible MCP Tool Contracts (2026-09-01): curated MCP extension registry, fail-closed v1 declaration grammar, AIX-07/DBX-08 admission, least-privilege context, host-MCP curated call lane. unic-smart 2 reviewers CHANGES-REQUESTED round 1 → 4 fixed.
-- v1.29.0 — Cycle DBX-08 Dialect Parity Contract (2026-09-01): `AdapterCapability`/`hasAdapterCapability`, frozen capability matrices, catalog/object-DDL + table-DDL/admin gating. unic-smart 001/003 APPROVED, 002 fixed round 1.
+## Open question (not blocking)
+
+The user has not yet chosen which item to plan next. The orchestrator will await `/ukit:handoff-fullstack` with an explicit Problem/feature — the four follow-ups above are listed in priority order if a single-sentence problem is supplied.
