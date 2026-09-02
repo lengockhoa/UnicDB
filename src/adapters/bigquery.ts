@@ -50,13 +50,29 @@ import { validateBigQueryConnection } from "../config/types";
 // ===========================================================================
 
 /**
+ * Options accepted by the adapter's `BigQueryClient.query` seam. Mirrors
+ * the `skipParsing` flag on the real `@google-cloud/bigquery`
+ * `Query`/`QueryOptions` shape (bigquery.d.ts:71). The adapter ALWAYS
+ * forwards `{ skipParsing: true }` on the production path so that:
+ *   - `mergeSchemaWithRows_` is NOT invoked (bigquery.js:1334-1336), so
+ *     INT64 cells are NOT coerced to JS Number (precision preserved past
+ *     `Number.MAX_SAFE_INTEGER`).
+ *   - `delete res.rows` (bigquery.js:1343, job.js:406) is NOT run, so
+ *     element 2 of the returned TUPLE retains the wire-format `f[].v`
+ *     cells that `toBigQueryPage` consumes.
+ */
+export interface BigQueryQueryOptions {
+  skipParsing?: boolean;
+}
+
+/**
  * One row of query results in the broad wire shape used by the adapter.
  * Kept loose (`unknown`) — the mapper un-nests `f[].v` into a flat tuple via
  * `toBigQueryPage`. BQ-00's `BigQueryValue` is the contract, but the seam
  * stays `unknown` so test fakes don't have to brand every cell.
  */
 export interface BigQueryClient {
-  query(sql: string): Promise<unknown>;
+  query(sql: string, opts?: BigQueryQueryOptions): Promise<unknown>;
   getQueryResults(jobId: string, opts?: unknown): Promise<unknown>;
   createQueryJob(sql: string): Promise<unknown>;
   cancel(jobId: string): Promise<unknown>;
@@ -182,19 +198,36 @@ export class BigQueryAdapter implements DbAdapter {
     //     format `f[].v` cells with branded strings preserved verbatim.
     //     This is what `toBigQueryPage` expects.
     //
-    // We therefore unwrap the tuple: prefer element 2 (raw apiResponse)
-    // when present; fall back to element 0 only as a defensive shim for
-    // 1-element tuples (no pagination, no apiResponse). Note that the
-    // 1-element fallback is intentionally not the production path — tests
-    // (#7 / #7b) pin the real shape.
-    const resolved = (await client.query(sql)) as unknown;
+    // **CRITICAL (R4.5 round-2 fix):** the adapter ALWAYS forwards
+    // `{ skipParsing: true }` to the underlying client. Without this:
+    //   (a) `bigquery.js:1338` runs `mergeSchemaWithRows_` which
+    //       Number-coerces INT64 cells (precision lost past
+    //       MAX_SAFE_INTEGER), and
+    //   (b) `bigquery.js:1343` then `delete res.rows`, stripping the raw
+    //       wire-format cells from element 2 of the TUPLE — so
+    //       `toBigQueryPage` yields an empty `rows` array and the
+    //       production path silently produces `{columns:[], rows:[],
+    //       rowCount:0}`. (See `node_modules/@google-cloud/bigquery/build/
+    //       src/job.js:388, 398-407` for the same delete in the polling
+    //       path.)
+    // With `skipParsing: true`:
+    //   - `bigquery.js:1334-1335` short-circuits: `rows = res.rows` (raw,
+    //     no merge, no Number coercion). `delete res.rows` is NOT run.
+    //   - Element 2 of the TUPLE keeps `rows: [{f: [{v: "..."}]}]`
+    //     verbatim, and `toBigQueryPage` consumes the wire-format `f[].v`
+    //     strings unchanged.
+    //
+    // The tuple unwrap is: prefer element 2 (raw apiResponse) when
+    // present. There is NO 1-element fallback — under `skipParsing: true`
+    // element 0 is `RawTableRow[]` (an array, not a response object), and
+    // feeding it into `toBigQueryPage` would silently produce an empty
+    // page (R4.5 round-1 minor finding).
+    const resolved = (await client.query(sql, { skipParsing: true })) as unknown;
     const tuple = Array.isArray(resolved) ? (resolved as unknown[]) : null;
     const raw: BigQueryRawQueryResponse =
       tuple !== null && tuple.length >= 3 && tuple[2] !== undefined && tuple[2] !== null
         ? (tuple[2] as BigQueryRawQueryResponse)
-        : tuple !== null && tuple.length >= 1
-          ? (tuple[0] as unknown as BigQueryRawQueryResponse)
-          : (resolved as BigQueryRawQueryResponse);
+        : (resolved as BigQueryRawQueryResponse);
     const page: BigQueryPage = toBigQueryPage(raw);
     const result: QueryResult = {
       columns: page.schema.map((f) => f.name),

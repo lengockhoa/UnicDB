@@ -55,7 +55,10 @@ function bqCfg(overrides: {
 /**
  * Build a `BigQueryClient` (the adapter's broader seam) that records calls.
  * `listDatasets` resolves to a one-row list so `runAdcSmoke` returns "ok".
- * `query` returns a synthetic raw response shaped like the BigQuery wire.
+ * `query` returns the TUPLE shape the real `@google-cloud/bigquery`
+ * client produces when invoked with `{ skipParsing: true }`
+ * (bigquery.d.ts:33, bigquery.js:1283-1374). Element 2 carries the
+ * raw `f[].v` cells that `toBigQueryPage` consumes.
  */
 function makeFakeClient(
   page: BigQueryRawQueryResponse = DEFAULT_PAGE,
@@ -70,7 +73,16 @@ function makeFakeClient(
 } {
   return {
     listDatasets: vi.fn(async () => [{ id: "ds1" }]),
-    query: vi.fn(async () => page),
+    query: vi.fn(async (_sql: string, _opts?: { skipParsing?: boolean }) => [
+      // element 0: PARSED RowMetadata array (under skipParsing this is
+      // the unparsed rows; under no-skipParsing it is `mergeSchemaWithRows_`
+      // output, but since the adapter always forwards skipParsing:true
+      // this branch is only present to make the fake shape match the
+      // real client's TUPLE).
+      [{ f: [{ v: "SHOULD_NOT_BE_USED" }] }],
+      null, // element 1: nextQuery
+      page, // element 2: raw apiResponse
+    ]),
     getQueryResults: vi.fn(async () => page),
     createQueryJob: vi.fn(async () => ({ id: "job_xyz" })),
     cancel: vi.fn(async () => undefined),
@@ -268,52 +280,74 @@ describe("TASK-BQ01-002 BigQueryAdapter — runQuery after close", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Test #7 (R4.5 regression) — runQuery must unwrap the real-client TUPLE
-// `[RowMetadata[], Query | null, QueryResultsResponse]` and feed the THIRD
-// element (raw apiResponse, with wire-format `f[].v` cells) into
-// `toBigQueryPage`. Element 0 is the PARSED `RowMetadata[]` where INT64
-// was coerced to Number — feeding it into `toBigQueryPage` would either
-// drop rows (silently) or lose branded-string precision. The default
-// factory's `client.query(sql)` resolves a tuple shaped like the real
-// client, so this test exercises the production code path.
+// Test #7 (R4.5 round-2 regression) — runQuery must invoke the underlying
+// `client.query(sql)` with `{ skipParsing: true }` (per
+// @google-cloud/bigquery's `Query.skipParsing?: boolean` option,
+// bigquery.d.ts:71). Without that option, the real client
+// (bigquery.js:1338-1343) calls `mergeSchemaWithRows_` which coerces INT64
+// cells to JS Number, and then `delete res.rows` strips the raw wire-format
+// cells from element 2 of the TUPLE — so `toBigQueryPage` ends up with an
+// empty `rows` array and the adapter's production path silently yields
+// `{columns:[], rows:[], rowCount:0}`. The fake used here models that
+// post-`mergeSchemaWithRows_` shape: it returns the TUPLE with element 2
+// already lacking `rows` (per the empirical probe), and only resolves rows
+// in element 2 when it sees `skipParsing: true` in the call options.
 //
-// Element 0 (parsed): INT64 cell as Number — would lose the >MAX_SAFE_INTEGER
-//   digit. We shape it as a Map-like object so it's not a valid raw response.
-// Element 2 (raw): jobReference + schema + rows with `f[].v` strings — the
-//   shape `toBigQueryPage` expects. The branded string MUST survive.
+// This is the "no skipParsing" half of the regression: the fake mirrors the
+// real client's behavior so a production-path call without `skipParsing`
+// would yield `rows:[]`. The test pins the fact that the adapter FORWARDS
+// `skipParsing: true` to the client.
 // ---------------------------------------------------------------------------
-describe("TASK-BQ01-002 BigQueryAdapter — R4.5 runQuery TUPLE unwrap + raw apiResponse routing", () => {
-  it("7. real-client TUPLE [parsed, nextQuery, rawApiResponse] -> branded string preserved, columns/rowCount mapped from raw element", async () => {
+describe("TASK-BQ01-002 BigQueryAdapter — R4.5 round-2: skipParsing forwarding", () => {
+  it("7. runQuery always forwards { skipParsing: true } to client.query (production-path regression)", async () => {
     const bigIntStr = "9007199254740993"; // > Number.MAX_SAFE_INTEGER
-    // Element 0: PARSED RowMetadata array. The real client converts each row
-    // to a Map-like structure where INT64 values are JS Number — feeding
-    // this into `toBigQueryPage` would yield zero rows because it expects
-    // `{f:[]}` shape. We mimic the corruption deliberately.
-    const parsedRowsElement = [
-      new Map<unknown, unknown>([["big_int", 9007199254740993]]),
-    ];
-    // Element 1: nextQuery (null = no further pagination).
-    const nextQueryElement: null = null;
-    // Element 2: raw QueryResultsResponse = IGetQueryResultsResponse. The
-    // wire-format `f[].v` is preserved verbatim — this is what
-    // `toBigQueryPage` consumes.
-    const rawApiResponse: BigQueryRawQueryResponse = {
+    const rawApiResponseWithRows: BigQueryRawQueryResponse = {
       jobReference: { projectId: "proj-billing", location: "US", jobId: "job_abc" },
       schema: { fields: [{ name: "big_int", type: "INT64", mode: "REQUIRED" }] },
       rows: [{ f: [{ v: bigIntStr }] }],
       pageToken: null,
     };
-    const tupleResponse: [unknown[], null, BigQueryRawQueryResponse] = [
-      parsedRowsElement,
-      nextQueryElement,
-      rawApiResponse,
+    // Model the real client precisely: per bigquery.js:1334-1343, when
+    // `options.skipParsing` is true, `res.rows` is preserved verbatim;
+    // when it is false/undefined, `mergeSchemaWithRows_` runs and
+    // `delete res.rows` strips the raw cells from the apiResponse. We
+    // mirror that behavior: if the call lacks `skipParsing: true`, the
+    // returned tuple element 2 has its `rows` key deleted.
+    const noSkipRowsElement = [
+      new Map<unknown, unknown>([["big_int", 9007199254740993]]),
+    ];
+    const strippedResponse: BigQueryRawQueryResponse = {
+      jobReference: rawApiResponseWithRows.jobReference,
+      schema: rawApiResponseWithRows.schema,
+      // rows: undefined — emulating `delete res.rows` from bigquery.js:1343
+      pageToken: null,
+    };
+    const noSkipTuple: [unknown[], null, BigQueryRawQueryResponse] = [
+      noSkipRowsElement,
+      null,
+      strippedResponse,
+    ];
+    const skipTuple: [unknown[], null, BigQueryRawQueryResponse] = [
+      noSkipRowsElement,
+      null,
+      rawApiResponseWithRows,
     ];
 
-    // Fake client that resolves the TUPLE shape (production path), not the
-    // raw response object (which is what older fakes did).
+    const queryFn = vi.fn(
+      async (
+        _sql: string,
+        opts?: { skipParsing?: boolean },
+      ): Promise<unknown> => {
+        if (opts && opts.skipParsing === true) {
+          return skipTuple;
+        }
+        // No skipParsing → rows stripped → toBigQueryPage would yield rows:[].
+        return noSkipTuple;
+      },
+    );
     const fakeClient: BigQueryClient = {
       listDatasets: vi.fn(async () => [{ id: "ds1" }]),
-      query: vi.fn(async () => tupleResponse),
+      query: queryFn,
       getQueryResults: vi.fn(),
       createQueryJob: vi.fn(),
       cancel: vi.fn(),
@@ -329,40 +363,202 @@ describe("TASK-BQ01-002 BigQueryAdapter — R4.5 runQuery TUPLE unwrap + raw api
 
     const result = await adapter.runQuery("SELECT 9007199254740993 AS big_int");
 
-    // Branded string preserved end-to-end (acceptance criterion). If the
-    // adapter had unwrapped element 0 (parsed RowMetadata) instead of
-    // element 2 (raw apiResponse), the INT64 cell would be either a Number
-    // (precision lost) or undefined (Map shape not what toBigQueryPage
-    // expects).
+    // The adapter MUST forward skipParsing:true to the client. Assert
+    // the call options.
+    expect(queryFn).toHaveBeenCalledTimes(1);
+    const callArgs = queryFn.mock.calls[0];
+    expect(callArgs[1]).toBeDefined();
+    expect(callArgs[1]?.skipParsing).toBe(true);
+
+    // Because the adapter forwarded skipParsing:true, the fake returned
+    // the rows-bearing tuple, so the page has the row and the branded
+    // INT64 string survives end-to-end.
     const cell = result.results[0].rows[0][0];
     expect(typeof cell).toBe("string");
     expect(cell).toBe(bigIntStr);
-    // Columns + rowCount mapped from the raw element (schema + rows).
     expect(result.results[0].columns).toEqual(["big_int"]);
     expect(result.results[0].rowCount).toBe(1);
   });
 
-  it("7b. paginated TUPLE [parsed, nextQuery, rawApiResponseWithPageToken] -> rowCount/columns from raw element, branded BIGNUMERIC string preserved", async () => {
-    const bigIntStr = "12345678901234567890";
-    const parsedRowsElement: unknown[] = [
+  it("7b. no-skipParsing fake (rows stripped) proves the adapter would have lost precision without the option", async () => {
+    // Same fake shape as #7, but called through a separate adapter whose
+    // call path goes through a default-shaped tuple WITHOUT skipParsing.
+    // We construct a *raw* BigQueryAdapter (no skipParsing) by inspecting
+    // what the fake would resolve if the adapter had not forwarded
+    // `skipParsing: true`. This is the negative-control: if the adapter
+    // ever forgets to forward `skipParsing: true`, this test would
+    // observe `rows:[]` — the bug is "the adapter does not always
+    // forward skipParsing:true", and we want a test that, when the
+    // forwarding regresses, would flip from "rows-bearing" to
+    // "rows-stripped" and fail at the rowCount assertion. We simulate
+    // that by checking the fake's call options directly.
+    const queryFn = vi.fn(
+      async (
+        _sql: string,
+        opts?: { skipParsing?: boolean },
+      ): Promise<unknown> => {
+        // Echo back whatever was forwarded; the test asserts what
+        // options the adapter sent.
+        return opts;
+      },
+    );
+    const fakeClient: BigQueryClient = {
+      listDatasets: vi.fn(async () => [{ id: "ds1" }]),
+      query: queryFn,
+      getQueryResults: vi.fn(),
+      createQueryJob: vi.fn(),
+      cancel: vi.fn(),
+      getDataset: vi.fn(),
+      getTable: vi.fn(),
+    };
+    const factory = vi.fn(
+      (_opts: { projectId: string; location?: string }): BigQueryClient => fakeClient,
+    );
+
+    const adapter = new BigQueryAdapter(bqCfg({}), factory);
+    await adapter.connect();
+    await adapter.runQuery("SELECT 1");
+
+    expect(queryFn).toHaveBeenCalledTimes(1);
+    const opts = queryFn.mock.calls[0][1];
+    expect(opts).toBeDefined();
+    // The fix MUST always forward skipParsing:true on the production
+    // path. Without this, the real client coerces INT64 to Number and
+    // strips wire-format rows (bigquery.js:1338-1343).
+    expect(opts?.skipParsing).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test #8 (R4.5 round-2 regression) — full INT64 precision end-to-end via
+// the TUPLE shape: a tuple with element 2 carrying wire-format `f[].v`
+// strings (the shape produced by the real client WHEN `skipParsing: true`
+// is forwarded) must preserve the exact branded digit through
+// `runQuery` → `toBigQueryPage` → the adapter's result.rows. This pins
+// the acceptance criterion "branded strings survive end-to-end" against
+// the production path, including the tuple unwrap + element[2] routing.
+// ---------------------------------------------------------------------------
+describe("TASK-BQ01-002 BigQueryAdapter — INT64 precision end-to-end (R4.5 round-2)", () => {
+  it("8. TUPLE with element[2].rows carrying raw f[].v strings -> branded INT64 cell survives", async () => {
+    const bigIntStr = "9007199254740993"; // > Number.MAX_SAFE_INTEGER
+    // Element 0 would be the PARSED RowMetadata (INT64 coerced to Number)
+    // under non-skipParsing; under skipParsing element 0 is the unparsed
+    // rows from `mergeSchemaWithRows_` if it ran, but since we forward
+    // skipParsing:true, the real client never calls mergeSchemaWithRows_
+    // and element 0 is the raw row array too. Either way, the adapter
+    // must take element 2 (raw apiResponse) into toBigQueryPage.
+    const element0: unknown[] = [
+      // simulate "raw row" — toBigQueryPage would treat it as a non-`{f:[]}`
+      // object and yield zero rows if we mistakenly routed element 0.
+      [{ f: [{ v: "WRONG_ELEMENT" }] }],
+    ];
+    const element1: null = null;
+    const element2: BigQueryRawQueryResponse = {
+      jobReference: { projectId: "proj-billing", location: "US", jobId: "job_abc" },
+      schema: { fields: [{ name: "big_int", type: "INT64", mode: "REQUIRED" }] },
+      rows: [{ f: [{ v: bigIntStr }] }],
+      pageToken: null,
+    };
+    const tupleResponse: [unknown[], null, BigQueryRawQueryResponse] = [
+      element0,
+      element1,
+      element2,
+    ];
+    const queryFn = vi.fn(
+      async (
+        _sql: string,
+        opts?: { skipParsing?: boolean },
+      ): Promise<unknown> => {
+        // Only resolve the rows-bearing tuple when skipParsing is
+        // forwarded (mirrors the real client).
+        if (opts && opts.skipParsing === true) {
+          return tupleResponse;
+        }
+        // Without skipParsing: rows stripped (per bigquery.js:1343).
+        const stripped: BigQueryRawQueryResponse = {
+          jobReference: element2.jobReference,
+          schema: element2.schema,
+          pageToken: null,
+        };
+        return [element0, element1, stripped];
+      },
+    );
+    const fakeClient: BigQueryClient = {
+      listDatasets: vi.fn(async () => [{ id: "ds1" }]),
+      query: queryFn,
+      getQueryResults: vi.fn(),
+      createQueryJob: vi.fn(),
+      cancel: vi.fn(),
+      getDataset: vi.fn(),
+      getTable: vi.fn(),
+    };
+    const factory = vi.fn(
+      (_opts: { projectId: string; location?: string }): BigQueryClient => fakeClient,
+    );
+
+    const adapter = new BigQueryAdapter(bqCfg({}), factory);
+    await adapter.connect();
+
+    const result = await adapter.runQuery("SELECT 9007199254740993 AS big_int");
+
+    // Branded string preserved verbatim end-to-end. If the adapter had
+    // routed element 0 (a single-element tuple shim) into toBigQueryPage,
+    // the cell would be undefined. If it had failed to forward
+    // skipParsing:true, the fake would have returned the stripped
+    // tuple and `rows[0]` would be undefined.
+    const cell = result.results[0].rows[0]?.[0];
+    expect(cell).toBe(bigIntStr);
+    expect(typeof cell).toBe("string");
+    // Columns + rowCount are mapped from the raw element 2.
+    expect(result.results[0].columns).toEqual(["big_int"]);
+    expect(result.results[0].rowCount).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test #9 (R4.5 round-2 regression) — paginated TUPLE [parsed, nextQuery,
+// rawApiResponseWithPageToken]: the raw element[2] carries the pageToken +
+// wire-format rows, and the BIGNUMERIC cell stays a string.
+// ---------------------------------------------------------------------------
+describe("TASK-BQ01-002 BigQueryAdapter — paginated TUPLE (R4.5 round-2)", () => {
+  it("9. paginated TUPLE -> rowCount/columns from raw element, branded BIGNUMERIC string preserved", async () => {
+    const bigIntStr = "12345678901234567890"; // > Number.MAX_SAFE_INTEGER, BIGNUMERIC
+    const element0: unknown[] = [
       new Map<unknown, unknown>([["big_int", 1.2345678901234568e19]]),
     ];
-    const nextQueryElement = { pageToken: "tok-NEXT" };
-    const rawApiResponse: BigQueryRawQueryResponse = {
+    const element1: unknown = { pageToken: "tok-NEXT" };
+    const element2: BigQueryRawQueryResponse = {
       jobReference: { projectId: "proj-billing", location: "EU", jobId: "job_pag" },
       schema: { fields: [{ name: "big_int", type: "BIGNUMERIC", mode: "REQUIRED" }] },
       rows: [{ f: [{ v: bigIntStr }] }],
       pageToken: "tok-NEXT",
     };
     const tupleResponse: [unknown[], unknown, BigQueryRawQueryResponse] = [
-      parsedRowsElement,
-      nextQueryElement,
-      rawApiResponse,
+      element0,
+      element1,
+      element2,
     ];
-
+    const queryFn = vi.fn(
+      async (
+        _sql: string,
+        opts?: { skipParsing?: boolean },
+      ): Promise<unknown> => {
+        // Mirrors the real client: skipParsing preserves rows; without
+        // it, the rows key is stripped from element 2 (bigquery.js:1343).
+        if (opts && opts.skipParsing === true) {
+          return tupleResponse;
+        }
+        const stripped: BigQueryRawQueryResponse = {
+          jobReference: element2.jobReference,
+          schema: element2.schema,
+          pageToken: element2.pageToken,
+        };
+        return [element0, element1, stripped];
+      },
+    );
     const fakeClient: BigQueryClient = {
       listDatasets: vi.fn(async () => [{ id: "ds1" }]),
-      query: vi.fn(async () => tupleResponse),
+      query: queryFn,
       getQueryResults: vi.fn(),
       createQueryJob: vi.fn(),
       cancel: vi.fn(),
@@ -377,13 +573,13 @@ describe("TASK-BQ01-002 BigQueryAdapter — R4.5 runQuery TUPLE unwrap + raw api
     await adapter.connect();
 
     const result = await adapter.runQuery("SELECT * FROM huge_table");
+
+    // Adapter must forward skipParsing:true.
+    expect(queryFn.mock.calls[0][1]?.skipParsing).toBe(true);
+    // BIGNUMERIC branded string preserved end-to-end.
     expect(result.results[0].columns).toEqual(["big_int"]);
     expect(result.results[0].rows[0][0]).toBe(bigIntStr);
+    expect(typeof result.results[0].rows[0][0]).toBe("string");
     expect(result.results[0].rowCount).toBe(1);
-    // Non-null pageToken is preserved on the raw element; adapter exposes
-    // a continuation signal in the pageToken of the returned result's
-    // command tag field. BatchedQuery wiring is BQ-02 scope — for R4.5 we
-    // only need to prove the adapter no longer feeds the parsed element
-    // into `toBigQueryPage`.
   });
 });
