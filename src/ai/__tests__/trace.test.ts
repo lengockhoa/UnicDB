@@ -382,10 +382,16 @@ describe("ARP-09 diagnostics reuse — TASK-ARP09-004", () => {
   // Dependencies note); when 003 lands, its flush site must keep the
   // `appendLine(logLine(...))` shape — `appendLine(<raw>)` fails this pin.
   it("every appendLine argument in extension.ts is logLine-formatted", () => {
-    const extSrc = readFileSync(
+    const rawSrc = readFileSync(
       fileURLToPath(new URL("../../extension.ts", import.meta.url)),
       "utf8",
     );
+    // Strip /* block */ and // line comments so a comment that just
+    // documents the pattern cannot satisfy the pin. Strings are left
+    // intact; legitimate `appendLine(logLine(...))` calls survive.
+    const extSrc = rawSrc
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^|\s\/\/[^\n]*/g, (m) => (m.startsWith("/") ? "" : m));
     // Accept either pattern:
     //   - inline:       appendLine(logLine(...))
     //   - named-local:  const line = logLine(...); ... appendLine(line)

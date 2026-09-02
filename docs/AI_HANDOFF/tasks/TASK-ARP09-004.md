@@ -136,3 +136,23 @@ Task §Test Cases 25-29 as evidence matrix; §Dependencies gate applied for #29 
 ### Handoff to reviewer
 
 Yes — task closed NOT-NEEDED with recorded evidence; review verdict requested per acceptance criteria.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/extension.test.ts src/ai/__tests__/trace.test.ts src/__tests__/releaseVerify.test.ts src/__tests__/releaseHygiene.test.ts && npx tsc --noEmit; plus git diff --stat src/ai/auditExport.ts src/ai/trace.ts (empty, exit 0)
+  result: 170 pass / 0 fail (trace.test.ts 41 = 37 original + 4 evidence pins); tsc exit 0; trace.ts/auditExport.ts byte-untouched across the full cycle range 1c07da6..HEAD; auditExport.ts:101 final-pass `JSON.stringify(redact(buildAuditEnvelope(...)))` intact
+TEST_PLAN_COVERAGE: all-followed — #25-#29 pinned. #29 rewrite verified beyond face value: (a) confirmed all 3 real appendLine sites in extension.ts pass the pin via the named-local window; (b) adversarially injected a raw `appendLine("raw user SQL: ...")` regression into a copy of the source — the pin FAILS it, so the regression net is real, not vacuous. Dual inline/named-local accept (R4.5) is sound. RED phase N/A is legitimate for a verify-first evidence gate (documented per protocol).
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - src/ai/__tests__/trace.test.ts:398 — the pin uses `extSrc.indexOf(call)` to locate each match's window, so when two appendLine sites produce IDENTICAL call text (e.g. both `.appendLine(line)`), every duplicate resolves to the FIRST occurrence's window. Adversarial probe: a second site `const line = "RAW: " + userSql; appendLine(line)` would reuse site 1's valid window and PASS despite being raw. Latent-only today (all 3 current sites share one legitimate binding in logDiagnostic's path), but worth hardening in a future pass (matchAll with per-match lastIndex, or a per-site anchor). Not blocking: the shape is currently honest and the extension.test.ts byte-scan (#21) independently catches raw content at runtime.
+    - src/ai/__tests__/trace.test.ts:379-383 — stale comment "Today 003 has not landed ... passes vacuously" predates 003's landing; the pin now actively matches 3 sites. Comment-only drift.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Stale R4.5-era comment updated nowhere needed for correctness; the gate does its job. Evidence #25-#28 independently re-verified (import at diagnostics.ts:11, redact call at :45, no local scrubber — the only .replace() calls strip \r\n).

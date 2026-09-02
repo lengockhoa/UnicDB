@@ -114,3 +114,22 @@ NEXT: ready for review
 ### Verdict
 
 NOT-NEEDED. No new runner script (Windows `.cmd` wrapper made moot by `profile:release = npm run verify:release` — npm on Windows does not require bash). No `scripts/*` change. No package.json script change beyond wave-1 lands.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/__tests__/releaseVerify.test.ts src/__tests__/releaseHygiene.test.ts && npx tsc --noEmit; plus node -e profile pins check and test -x scripts/verify-release.sh
+  result: 20 pass / 0 fail (releaseVerify 10 incl. the new pin, releaseHygiene 10); tsc exit 0; "profiles ok" (profile:fast AND profile:release exact); "runner executable" with #!/bin/sh shebang
+TEST_PLAN_COVERAGE: all-followed — #30-#33 pass. #31/#32 closed with the single new evidence pin ("profile:release is the npm-routed string (not a raw bash invocation)"), which asserts BOTH profile:release === "npm run verify:release" AND re-pins verify:release === "npm test && npm run typecheck && npm run compile" — any future drift in either key fails the same test. Verified directly from package.json: profile:release value matches, verify:release string byte-identical to the releaseVerify pin, no bash/sh/.sh token in any profile:*/verify:* value. Full-range diff confirms zero scripts/* changes and zero package.json scripts changes beyond the wave-1 profile keys. Runner script untouched (staged PASS/FAIL + verbatim exit propagation remain pinned by the pre-existing releaseVerify cases, which I re-ran green).
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - none
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Clean conditional NOT-NEEDED close per the plan's expected verdict; evidence pin is minimal, correct, and future-proof.

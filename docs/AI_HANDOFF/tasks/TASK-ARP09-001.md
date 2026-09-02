@@ -88,6 +88,9 @@ Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 
 - Status: `ready` → implemented, pending review
 - Round: 1
+- EXECUTOR_TOOL: Claude Code (Agent tool)
+- EXECUTOR_MODEL: claude-sonnet-4-5 (unic-code per harness tier resolution; differs from reviewer unic-smart)
+- EXECUTOR_SUBAGENT: feature-implementer
 
 ### RED (before implementation)
 
@@ -138,3 +141,21 @@ TYPECHECK_EXIT=0
 
 ---
 
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: (not self-reported — EXECUTOR_TOOL/EXECUTOR_MODEL/EXECUTOR_SUBAGENT all missing from the Executor Report)
+VERIFICATION_RERUN:
+  command: npx vitest run src/core/__tests__/diagnostics.test.ts && npm run typecheck
+  result: 9 pass / 0 fail; tsc --noEmit exit 0 (fresh re-run at HEAD, clean tree)
+TEST_PLAN_COVERAGE: all-followed — 9/9 cases implemented with real assertions; RED evidence is a genuine module-load failure ("Failed to load url ../diagnostics"), not a bare claim
+FINDINGS:
+  critical:
+    - (none)
+  important:
+    - docs/AI_HANDOFF/tasks/TASK-ARP09-001.md:87 — Executor Report is missing the mandatory EXECUTOR_TOOL/EXECUTOR_MODEL/EXECUTOR_SUBAGENT self-report (RULES.md executor-report contract; model-isolation table: missing field → refuse). Fix: append the three fields with the real executor model (must differ from unic-smart) and re-submit. No code change required: reviewer re-verified all 9 tests green, typecheck exit 0, plus adversarial probes (lone CR, exact-2000 vs 2001 bound, corr-id newline/64-char cut, invalid-Date fallback, throwing toString/getter, circular+throwing → <diagnostics failure> fallback) all pass.
+  minor:
+    - (none) — the case-6 fixture deviation (5000-char x-run is LONG_RUN_RE-secret-shaped) is legitimate and documented; the added redact-surviving 6000-char probe plus the corr+overlong bound case is stronger than the contract.
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Implementation is technically clean — redact imported from ../ai/trace (no local secret regexes; the only regex is the sanctioned newline stripper), redact runs before newline-stripping, and the bound slices the ASSEMBLED line as the last step (prefix never cut). The gate fails solely on the missing model self-report; a report amendment clears it.
