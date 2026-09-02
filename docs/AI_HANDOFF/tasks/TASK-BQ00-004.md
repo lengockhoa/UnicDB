@@ -134,3 +134,21 @@ Test Files  222 passed | 1 skipped (223)
 git diff --stat: docs/decisions/README.md | 1 +/1 insertion (and untracked new ADR); src/ untouched.
 Status: PASS
 Note: All ten required ADR sections (§1 client method/version, §3 continuation ownership, §4 cancellation mapping, §5 safe scalar conversion, §6 selected config fields, §7 required IAM, §8 Storage Read API deferral, §9 manual ADC smoke recipe, §10 pagination+cancellation method names, §11 grid continuation mapping) are present; ADR cites `_bq00-evidence.md` and the four enumerated names; test floor 3189|2 preserved (3209 passed).
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart (claude-opus)
+EXECUTOR_MODEL: sonnet/unic-code (from Executor Report)
+VERIFICATION_RERUN:
+  command: all 14 content checks + npm run typecheck + npm run compile + npm test
+  result: 14/14 checks PASS; typecheck PASS; compile PASS; 3209 passed | 2 skipped (floor 3189|2 preserved)
+TEST_PLAN_COVERAGE: all-followed — Tests 1-4 reproduced via command checks; Test 5 verified via `git diff --name-only 91737ce..HEAD` on the §2 read-only list = EMPTY (working tree clean; only docs/decisions/ touched). All 10 mandated sections present; §10 enumerates all 4 methods with return shapes and cites `_bq00-evidence.md` by path; §11 is prose-only and cites types.ts:76/:78, resultsPanel.ts:748→:766 — all verified against source. `.d.ts` citations verbatim-accurate against installed 9.0.3 (matches package-lock.json).
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - docs/decisions/0004-bq-00-feasibility-contract.md:110-112 — §5 evidence sentence claims `BigQueryValue` union lives "at the bottom of" `src/adapters/types.ts`; that symbol does not exist in that file (grep = 0 hits). Correct location: `src/adapters/bigqueryTypes.ts:63`. Fix: re-point the citation (decision content itself is accurate — the table matches the actual union).
+    - docs/decisions/0004-bq-00-feasibility-contract.md:348-349 — §11 cites "the §\"Hard constraints\" read-only list"; no such section exists in this ADR (the read-only list lives in the task file §Target Files / PLAN §2). Fix: drop or re-point the cross-reference.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Citation-error-free traceability is this ADR's core value (§12 "any reviewer challenge must trace back"); both nits are one-line doc fixes the auto-fix round can apply without re-running the cycle. Index row left for orchestrator per instruction (INDEX.md not touched by reviewer).

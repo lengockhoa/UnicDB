@@ -47,26 +47,56 @@ export interface BigQuerySchemaField {
 }
 
 /**
+ * Branded string types for BigQuery's decimal / integer classes. The brand
+ * exists so a bare numeric literal (`123.45`, `9007199254740993`) is NOT
+ * assignable to `BigQueryValue` — only string literals / `string` values
+ * carrying the brand are. A bare `Number(x)` coercion loses precision past
+ * `Number.MAX_SAFE_INTEGER`; the brand makes that mistake a type error.
+ */
+export type BigQueryInt64String = string & { readonly __bqBrand: "INT64" };
+export type BigQueryNumericString = string & { readonly __bqBrand: "NUMERIC" };
+export type BigQueryBigNumericString = string & {
+  readonly __bqBrand: "BIGNUMERIC";
+};
+
+/**
+ * Branded `number` for FLOAT64. Kept branded so a bare numeric literal
+ * (e.g. `3.14`) is NOT assignable to `BigQueryValue` directly — callers must
+ * narrow / cast through this brand, mirroring the discipline required for
+ * the string-typed decimal/int classes.
+ */
+export type BigQueryFloat64 = number & { readonly __bqBrand: "FLOAT64" };
+
+/**
  * One BigQuery value. Decimal / int classes are contractually canonical
  * STRINGS — never JS `number`. The client's wire-format already returns them
  * as strings, and any `Number` coercion would silently lose precision past
  * `Number.MAX_SAFE_INTEGER`. FLOAT64 alone is `number`.
  *
- *   - string      → STRING, INT64, NUMERIC, BIGNUMERIC, DATE/TIME family,
- *                   BYTES (b64), JSON
+ * The mapper un-nests exactly ONE level (`row.f[].v`); the rest of the wire
+ * tree is passed through:
+ *
+ *   - string                            → STRING, DATE/TIME family,
+ *                                         BYTES (b64), JSON
+ *   - BigQueryInt64String               → INT64 (canonical, > MAX_SAFE_INTEGER safe)
+ *   - BigQueryNumericString             → NUMERIC
+ *   - BigQueryBigNumericString          → BIGNUMERIC
  *   - boolean
- *   - number      → FLOAT64 only
+ *   - BigQueryFloat64 (branded `number`) → FLOAT64
  *   - null
- *   - BigQueryValue[]  → REPEATED
- *   - { [field: string]: BigQueryValue }  → RECORD
+ *   - Array<{ v: BigQueryValue }>      → REPEATED (wire-format, elements still wrapped)
+ *   - { f: BigQueryValue[] }            → RECORD (canonical wire shape, positional cells)
  */
 export type BigQueryValue =
   | string
+  | BigQueryInt64String
+  | BigQueryNumericString
+  | BigQueryBigNumericString
   | boolean
-  | number
+  | BigQueryFloat64
   | null
-  | BigQueryValue[]
-  | { [field: string]: BigQueryValue };
+  | Array<{ v: BigQueryValue }>
+  | { f: BigQueryValue[] };
 
 /**
  * One page of a BigQuery query result.
@@ -150,7 +180,15 @@ export interface BigQueryRawQueryResponse {
   jobReference?: RawJobReference;
   schema?: RawTableSchema;
   rows?: RawTableRow[];
-  pageToken?: string;
+  /**
+   * Opaque continuation token. `null` means final page (no further pages).
+   * Per the installed client's wire contract (`IGetQueryResultsResponse`,
+   * types.d.ts:2107), the field is present on every paginated response —
+   * either as a non-empty string when more results remain, or as `null`
+   * when the page is terminal. Absent on the wire is treated as `null`
+   * for forward compatibility with older or synthetic fixtures.
+   */
+  pageToken: string | null;
   totalBytesProcessed?: string;
   totalBytesBilled?: string;
 }
@@ -198,7 +236,12 @@ function mapSchemaField(raw: RawTableFieldSchema): BigQuerySchemaField {
 /** Un-nest one raw row (`{ f: [{ v: any }, ...] }`) into a flat value tuple. */
 function mapRow(raw: RawTableRow): BigQueryValue[] {
   const cells = raw.f ?? [];
-  return cells.map((cell) => cell.v as BigQueryValue);
+  // Wire → contract boundary. The cast is explicit: the mapper TRUSTS the
+  // wire shape (`BigQueryRawQueryResponse`) which is documented to carry
+  // string-typed decimal/int cells and number-typed FLOAT64 cells. The
+  // brand discipline is enforced for downstream consumers — a bare numeric
+  // literal cannot be assigned to a `BigQueryValue`-typed variable.
+  return cells.map((cell) => cell.v as unknown as BigQueryValue);
 }
 
 /**
@@ -228,12 +271,12 @@ export function toBigQueryPage(
     mapSchemaField,
   );
   const rows: BigQueryValue[][] = (raw.rows ?? []).map(mapRow);
-  // The wire contract: pageToken is either present (string) or absent. We map
-  // absence to `null` to make the "no further pages" case explicit at the type
-  // level. A present-but-empty string still means "more pages" — the
-  // client's `IGetQueryResultsResponse` documents non-empty tokens (and any
-  // token the client hands us, including the empty string, is opaque).
-  const pageToken: string | null = raw.pageToken === undefined ? null : raw.pageToken;
+  // The wire contract: pageToken is `string | null` (`null` = final page).
+  // The BigQuery client emits the field on every paginated response — either
+  // a non-empty string (more pages) or `null` (terminal). A present-but-empty
+  // string is still opaque and means "more pages". The mapper preserves the
+  // token verbatim — never trim, decode, or normalize.
+  const pageToken: string | null = raw.pageToken;
   return {
     jobRef,
     schema,

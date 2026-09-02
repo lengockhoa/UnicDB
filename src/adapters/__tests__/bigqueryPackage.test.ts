@@ -216,12 +216,34 @@ describe(`TASK-BQ00-001 ${BQ_PKG} proof`, () => {
     // installed .d.ts. We assert each method appears as a declaration, and
     // extract the line number so the executor can write the evidence file
     // with file:line refs (test #7 is the source of truth — never assume).
-    const requiredOnBigQuery = ["getQueryResults", "query", "createQueryJob"];
+    //
+    // Method/host map (verified against the installed 9.0.3 declarations):
+    //   getQueryResults  -> Job.prototype     (job.d.ts, ~line 234)
+    //   cancel           -> Job.prototype     (job.d.ts, ~line 158)
+    //   query            -> BigQuery.prototype (bigquery.d.ts, ~line 1119)
+    //   createQueryJob   -> BigQuery.prototype (bigquery.d.ts, ~line 782)
+    //
+    // Regex tightening (R4.5 fix): a bare `\bname\s*\(` matches JSDoc example
+    // text like `job.getQueryResults(...)` inside doc comments — that's how
+    // the previous version false-positively asserted getQueryResults lives on
+    // BigQuery. We require a declaration-shaped line: leading class-body
+    // indentation (3+ spaces, since methods in these .d.ts sit one indent
+    // inside the class body which itself is top-level), then the identifier
+    // (with optional `public` / `private` / `protected` modifier), then an
+    // opening paren. This anchors to the start of a method signature while
+    // still tolerating TS overload lines and modifier keywords, and it
+    // ignores `*`-prefixed JSDoc comment lines (which start with `   * `).
+    const DECL_RE = /^[ ]{3,}(?:public\s+|private\s+|protected\s+)?[A-Za-z_$][\w$]*\s*\(/m;
+
+    const requiredOnBigQuery = ["query", "createQueryJob"];
     for (const name of requiredOnBigQuery) {
-      const re = new RegExp(`\\b${name}\\s*\\(`, "m");
+      const re = new RegExp(`^[ ]{3,}(?:public\\s+|private\\s+|protected\\s+)?${name}\\s*\\(`, "m");
       expect(bqText, `${name} must be declared in bigquery.d.ts`).toMatch(re);
     }
-    const cancelRe = new RegExp(`\\bcancel\\s*\\(`, "m");
-    expect(jobText, `cancel must be declared in job.d.ts`).toMatch(cancelRe);
+    const requiredOnJob = ["getQueryResults", "cancel"];
+    for (const name of requiredOnJob) {
+      const re = new RegExp(`^[ ]{3,}(?:public\\s+|private\\s+|protected\\s+)?${name}\\s*\\(`, "m");
+      expect(jobText, `${name} must be declared in job.d.ts`).toMatch(re);
+    }
   });
 });

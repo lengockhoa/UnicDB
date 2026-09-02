@@ -221,28 +221,36 @@ describe("TASK-BQ00-002 BigQuery boundary types", () => {
     expect((tags as Array<{ v: unknown }>)[0].v).toBe("admin");
     expect((tags as Array<{ v: unknown }>)[1].v).toBe("ops");
 
-    // RECORD cell preserves its `{f:[..]}` positional cell-array shape.
-    // (The contract says RECORD is `{ [field: string]: BigQueryValue }` —
-    // the mapper does NOT promote positional cells to named keys; the
-    // RECORD value carries its wire-format `{f:[..]}` payload so callers
-    // can re-bind against `schema`.)
-    const owner = page.rows[0][2] as { f: BigQueryValue[] };
+    // RECORD cell preserves its `{ f: BigQueryValue[] }` positional
+    // cell-array shape (canonical wire-format). The mapper does NOT promote
+    // positional cells to named keys; the RECORD value carries its
+    // wire-format `{ f: [...] }` payload so callers can re-bind against
+    // `schema`.
+    const owner = page.rows[0][2] as unknown;
     expect(typeof owner).toBe("object");
-    expect(Array.isArray(owner.f)).toBe(true);
-    expect(owner.f.length).toBe(2);
-    // owner.f[0] = name (scalar, still in wire `{v}` wrap)
-    expect((owner.f[0] as { v: unknown }).v).toBe("alice");
+    expect(owner !== null && !Array.isArray(owner)).toBe(true);
+    const ownerF = (owner as { f: BigQueryValue[] }).f;
+    expect(Array.isArray(ownerF)).toBe(true);
+    expect(ownerF.length).toBe(2);
+    // owner.f[0] = name (still in wire `{v}` wrap; mapper un-nests only the
+    // outer row level, not RECORD's inner cells)
+    expect((ownerF[0] as unknown as { v: unknown }).v).toBe("alice");
 
     // owner.f[1] = REPEATED RECORD column — its cell payload is the array
-    // of contact cells. Each contact cell is `{v: {f:[..]}}` (wire-format
-    // RECORD-inside-REPEATED), and the inner `f` array is positional.
-    const contacts = (owner.f[1] as { v: Array<{ v: { f: BigQueryValue[] } }> }).v;
-    expect(Array.isArray(contacts)).toBe(true);
-    expect(contacts.length).toBe(2);
-    const firstRecord = contacts[0].v;
+    // of contact cells. Each contact cell is `{ v: { f: [...] } }`
+    // (wire-format RECORD-inside-REPEATED), and the inner `f` array is
+    // positional.
+    const contactsCell = ownerF[1] as unknown;
+    expect(contactsCell).not.toBeNull();
+    const contactsArr = (contactsCell as { v: Array<{ v: BigQueryValue }> }).v;
+    expect(Array.isArray(contactsArr)).toBe(true);
+    expect(contactsArr.length).toBe(2);
+    const firstRecord = contactsArr[0].v as { f: BigQueryValue[] };
+    expect(typeof firstRecord).toBe("object");
+    expect(firstRecord !== null && !Array.isArray(firstRecord)).toBe(true);
     expect(Array.isArray(firstRecord.f)).toBe(true);
-    expect((firstRecord.f[0] as { v: unknown }).v).toBe("email");
-    expect((firstRecord.f[1] as { v: unknown }).v).toBe("a@x");
+    expect(firstRecord.f[0]).toEqual({ v: "email" });
+    expect(firstRecord.f[1]).toEqual({ v: "a@x" });
   });
 
   // =====================================================================
@@ -309,16 +317,20 @@ describe("TASK-BQ00-002 BigQuery boundary types", () => {
     // is consumed by exactly one line below it — if either line compiles
     // successfully, TypeScript reports an "unused @ts-expect-error" error
     // and the test will fail in `npm run typecheck`.
+    // @ts-expect-error — bare numeric literal must NOT assign to BigQueryValue
     const badDecimal: BigQueryValue = 123.45;
     void badDecimal;
+    // @ts-expect-error — bare int literal > MAX_SAFE_INTEGER must NOT assign to BigQueryValue
     const badInt: BigQueryValue = 9007199254740993;
     void badInt;
 
-    // `Bad` below is the union of valid branches — assigning a bare object
-    // that isn't a RECORD (e.g. lacking a known string key) is fine because
-    // BigQueryValue's RECORD branch is `{ [field: string]: BigQueryValue }`.
-    // We use the contract to pin the union.
-    const recordVal: BigQueryValue = { nested: "v" };
+    // The record shape is now `{ f: BigQueryValue[] }` (canonical wire-format
+    // RECORD), not the old `{ [field: string]: BigQueryValue }`. The wire
+    // payload carries positional cells; named-key promotion is the caller's
+    // job (they have `page.schema`). The contract pins the RECORD branch
+    // shape so callers know what to expect.
+    const recordVal: BigQueryValue = { f: ["alice"] };
     expect(typeof recordVal).toBe("object");
+    expect(Array.isArray((recordVal as { f: BigQueryValue[] }).f)).toBe(true);
   });
 });

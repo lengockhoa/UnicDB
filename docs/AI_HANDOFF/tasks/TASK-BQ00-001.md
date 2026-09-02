@@ -152,3 +152,39 @@ grep -l "google-cloud" dist/extension.js → 0 matches (no google-cloud markers)
 
 Status: PASS
 Note: Pinned `@google-cloud/bigquery@^9.0.3` exactly as default — no engine-floor fallback needed (`engines.node >= 22` satisfied by `v22.22.1`). One test (#3) was refined from a naive "no bare `private_key`/`application_default_credentials` substring" check to a structural "no `-----BEGIN ... PRIVATE KEY-----` block" check, because those bare strings appear in legitimate code paths (`google-auth-library` JSON config filename + JSDoc field name) that esbuild must preserve. The refined check still catches real secret leaks while not false-positiving on the existing code surface. Evidence file `docs/decisions/_bq00-evidence.md` written from test #7's actual findings (file + line refs into the installed `.d.ts`); it records the `job.cancel() → Promise<CancelResponse>` return shape as `[IJobCancelResponse]` tuple (roadmap line-67 mandate).
+
+## Executor Report (fix round 1)
+EXECUTOR_TOOL: Claude Code
+EXECUTOR_MODEL: claude-sonnet-4-5
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: N/A — fix only; the new test #7 is the verification surface
+
+Verification Output:
+
+```
+# focused test (7/7 GREEN)
+RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq00-001-fix
+[bq00] probe bundle: 1194990 bytes, errors=0
+[bq00] installed @google-cloud/bigquery@9.0.3 engines.node=">=22" major=9 runtime=v22.22.1
+ ✓ src/adapters/__tests__/bigqueryPackage.test.ts  (7 tests) 180ms
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+
+# typecheck
+> vsdb@1.45.0 typecheck
+> tsc --noEmit  (exit 0, no errors)
+
+# compile
+> vsdb@1.45.0 compile
+> node esbuild.js
+esbuild: build complete
+(dist/comparePanel.js, schemaForm.js, connectionForm.js, aiSettingsForm.js, renameForm.js, newTableForm.js, erPanel.js, consolePanel.js, aiChatPanel.js, webview.js, extension.js all regenerated)
+
+# full suite
+ Test Files  222 passed | 1 skipped (223)
+      Tests  3209 passed | 2 skipped (3211)
+   Duration  18.10s
+```
+
+Status: PASS
+Note: Re-anchored test #7 in `src/adapters/__tests__/bigqueryPackage.test.ts` per R2 reviewer finding. Method/host map corrected: `getQueryResults` and `cancel` now anchor to `job.d.ts` (they live on `Job.prototype`, not `BigQuery.prototype`); `query` and `createQueryJob` remain on `bigquery.d.ts` (`BigQuery.prototype`). Regex tightened from loose `\bNAME\s*\(` to declaration-shaped `^[ ]{3,}(?:public\s+|private\s+|protected\s+)?NAME\s*\(` (line starts with class-body indent + optional TS modifier + identifier + open paren) — this anchors to method signatures and ignores `*`-prefixed JSDoc example text (which is how the previous version false-positively asserted `getQueryResults` lived on `BigQuery`). Choice justified in a code comment above the assertion loop. `docs/decisions/_bq00-evidence.md` updated with an R4.5 fix note documenting the regex tightening; the existing per-method `file:line` refs were already correct (`getQueryResults` at `job.d.ts:234`, `cancel` at `job.d.ts:158`, `query` at `bigquery.d.ts:1119`, `createQueryJob` at `bigquery.d.ts:782`).

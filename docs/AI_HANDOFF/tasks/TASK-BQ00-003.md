@@ -128,3 +128,23 @@ Design note for the executor: classification must be **redaction by construction
 
 ### 2026-09-02 · planner · unic-smart (Round 2)
 Test #1's "constructed once" now has an explicit observation mechanism (plan-review Minor 1): the seam's existing injectable `impl` parameter IS the spy — wrap it in `vi.fn((opts) => fakeClient)` and assert `toHaveBeenCalledTimes(1)` plus `projectId` inside the captured options. No new mocking surface; the assertion must be in the test, not prose.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart (claude-opus-5 tier, per .ukit/storage/config.json handoff.reviewer.model)
+EXECUTOR_MODEL: sonnet/unic-code (from Executor Report: EXECUTOR_MODEL: unic-code) — differs from reviewer, isolation gate PASS
+VERIFICATION_RERUN: PASS
+  - npx vitest run src/adapters/__tests__/bigqueryAdc.test.ts → 6 passed (6)
+  - npm run typecheck → clean
+  - npm run compile → clean
+  - npm test → 3209 passed | 2 skipped (floor 3189|2 preserved)
+TEST_PLAN_COVERAGE: all-followed — tests #1-#6 present and matching the §Test Cases matrix; RED_OUTPUT is a genuine module-load failure (file absent pre-implementation); 4 edge tests exceed minTestsEdgeCase=2.
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/adapters/bigqueryAdc.ts:127-129 — status channel takes precedence over message channel, so a REAL 404 whose message contains "not found in region/location" (the typical BigQuery dataset/location-mismatch shape) classifies as bad_billing_project, not location_mismatch. Synthetic test #4 pins the keyword branch only because its Error carries no .code/.status. Planner-endorsed design (status-channel-first), so non-blocking — but surface this collision in the TASK-BQ00-004 ADR and consider a location-cue recheck inside the 404 branch before BQ-01 consumes the classifier.
+    - src/adapters/bigqueryAdc.ts:176 — `new BigQuery(opts) as unknown as BigQueryClientLike` double-cast bypasses structural checking of the real client against the seam interface; acceptable for this spike, note in the ADR that real-signature compatibility rests on wave-1 runtime evidence, not the type system.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Redaction verified by code trace, not just test: every return path of classifyAdcDiagnostic emits REMEDIATION[category] from the frozen fixed-copy table (lines 56-69); err.message is only ever used as a boolean .test() operand and can never reach the output. Scope discipline confirmed via commit e79567e — only bigqueryAdc.ts + its test touched for this task; no §2-read-only file edited.

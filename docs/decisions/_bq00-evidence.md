@@ -28,7 +28,18 @@ options. Probe bundle size: **1,193,010 bytes** (with the probe entry
 
 All four roadmap line-67 names were located as declarations in the installed
 `.d.ts`. File paths are repo-relative from the worktree root; line numbers
-were captured by test #7 (regex `\bNAME\s*\(` over the raw text).
+were captured by test #7.
+
+> **R4.5 fix note:** the first version of test #7 used a loose regex
+> (`\bNAME\s*\(`) which false-positively matched JSDoc example text like
+> `job.getQueryResults(...)` inside doc comments — that made the test assert
+> `getQueryResults` lived on `BigQuery`, when in fact it lives only on
+> `Job.prototype`. The regex was tightened to
+> `^[ ]{3,}(?:public\s+|private\s+|protected\s+)?NAME\s*\(` so it only matches
+> declaration-shaped lines (leading class-body indent, optional TS modifier,
+> identifier, open paren), ignoring `*`-prefixed JSDoc lines. With the
+> tightened regex, `getQueryResults` and `cancel` anchor to `job.d.ts` while
+> `query` and `createQueryJob` anchor to `bigquery.d.ts`.
 
 ### `BigQuery.getQueryResults` — on `Job`
 
