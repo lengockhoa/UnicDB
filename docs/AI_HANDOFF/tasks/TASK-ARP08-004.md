@@ -1,6 +1,6 @@
 # TASK-ARP08-004 — Extension wiring: workspaceState as draftMemento + retained singleton/history guarantees
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §1, §2, §3, §4, §5, §7
@@ -65,3 +65,65 @@ npm run typecheck
 - The existing `TASK-003 — vsdb.openConsole wiring` describe (lines 2055-2230) must stay green: it asserts one panel, `consolePanel.js`/`webview.css` HTML, full-buffer run routing, and save-cancellation. Do not weaken those pins; the ARP-08 wiring must compose with them.
 - Test #3 key-separation pin is the privacy-scope guard on the extension side: `globalState` gets `CONSOLE_HISTORY_KEY`, `workspaceState` gets `CONSOLE_DRAFTS_KEY`, and neither appears in the other's call log.
 - If the executor closes as not-needed, record in the Executor Report: the `git diff --stat` for `src/extension.ts`/`src/extension.test.ts` (expected empty-ish), the §Test Cases results, and a one-line rationale. Do NOT close without that evidence — a bare "verify only" with no pins is not a close.
+
+---
+
+## Executor Report
+
+- Executor tool/model: claude-code / unic-code
+- Date: 2026-09-02
+- Mode: Handoff (verify-first → wiring landed, real edit per §Acceptance prediction)
+- Step-1 verification (before any edit): `commandOpenConsole` (`src/extension.ts:1584-1589`) constructed ConsolePanel with only `{ extensionUri, memento, onAutocomplete, onRun, onDispose }` — no `draftMemento`. `grep -n workspaceState src/extension.ts` → 0 hits pre-edit. Wave-2 option exists (`src/ui/consolePanel.ts:90,143,162`) and is consumed by `hydrateDrafts`/`persistDrafts`/`handleClearDrafts`. ⇒ NOT-NEEDED close does NOT apply; real wiring required.
+
+### RED (actual output, pre-implementation)
+
+```
+ FAIL  src/extension.test.ts > ARP-08 — console draft memento wiring > #1 happy: seeded workspaceState draft hydrates the Console — draftMemento is wired to workspaceState, not globalState
+     → expected [ { id: 'tab-mtjiv9je-sodemp', …(3) } ] to deeply equal [ { id: 't1', name: 'Saved', …(2) } ]
+ FAIL  src/extension.test.ts > ARP-08 — console draft memento wiring > #3 edge/history-vs-draft scope: run → globalState.update(CONSOLE_HISTORY_KEY); edit+dispose → workspaceState.update(CONSOLE_DRAFTS_KEY); keys never cross
+     → expected false to be true // Object.is equality  (at: expect(ctx.workspaceState.get.mock.calls.some(([k]) => k === CONSOLE_DRAFTS_KEY)).toBe(true))
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 2 passed | 97 skipped (101)
+```
+
+RED for the expected reason: without `draftMemento` the seeded workspaceState snapshot is never read (#1 got the default empty "Query 1" tab) and `workspaceState.get(CONSOLE_DRAFTS_KEY)` is never called (#3). #2/#4 passed pre-edit because singleton/deactivate guarantees were already correct — they now pin those guarantees against regression, per §Goal.
+
+### Implementation
+
+- `src/extension.ts` — `commandOpenConsole` gains fifth parameter `draftMemento: vscode.Memento` and forwards it into `new ConsolePanel({...})`; the single registration site (`vsdb.openConsole`, formerly `753-754`) now passes `context.workspaceState`. NOTHING else changed: `context.globalState` remains the history `memento`; singleton `if (!consolePanel)` guard, `onDispose → consolePanel = null`, `onRun`/`runStatements`, `deactivate()` teardown untouched; `commandOpenConsoleCreateTab` untouched (never constructs the panel).
+- `src/extension.test.ts` — new describe `ARP-08 — console draft memento wiring` (4 tests) reusing `makeCtx()` (workspaceState/globalState get+update spies), the `activateWithConsole` pattern, and the `findConsolePanelCall`-style panel harness; `deactivate()` driven in `afterEach` like the TASK-003 block. Existing TASK-003 pins NOT weakened.
+
+### GREEN + Verification (fresh, this turn)
+
+| # | §Test Cases | Result |
+|---|---|---|
+| 1 | happy: seeded workspaceState draft hydrates; `workspaceState.get(CONSOLE_DRAFTS_KEY)` called | PASS |
+| 2 | happy: double `vsdb.openConsole` → exactly one `createWebviewPanel("vsdb.console")` | PASS |
+| 3 | edge key separation: `globalState.update(CONSOLE_HISTORY_KEY)` on run; `workspaceState.update(CONSOLE_DRAFTS_KEY)` on edit+dispose flush; no key ever appears in the other memento's call log | PASS |
+| 4 | edge teardown: `deactivate()` disposes the panel and nulls the singleton; reopen creates a fresh (second) panel | PASS |
+| 5 | not-expected-close | N/A — wiring was absent (see step-1 evidence); real edit performed |
+
+```
+$ npx vitest run src/extension.test.ts
+ ✓ src/extension.test.ts  (101 tests) 809ms
+ Test Files  1 passed (1)
+      Tests  101 passed (101)
+
+$ npx vitest run src/ui/__tests__/consolePanel.test.ts
+ ✓ src/ui/__tests__/consolePanel.test.ts  (29 tests) 19ms
+ Test Files  1 passed (1)
+      Tests  29 passed (29)
+
+$ npx tsc --noEmit            → exit 0
+$ npm run typecheck           → exit 0
+$ npm run compile             → esbuild: build complete, exit 0
+```
+
+git status --porcelain (worktree): only `M src/extension.test.ts`, `M src/extension.ts`. No git add/commit/push performed. No changes to `consolePanel.ts` / `consolePanelMessages.ts` / webview files / `package.json`.
+
+Note: orchestrator step list said `src/ui/__tests__/extension.test.ts`; that path does not exist in this repo — the task file's contract (`src/extension.test.ts`, lines 14-15, 27-29) governs and was followed. Verification used the task file's §Verification Commands (vitest run src/extension.test.ts + npm run typecheck) plus the orchestrator's extra asks (consolePanel.test.ts, tsc --noEmit, npm run compile) — all pass.
+
+ISSUES: none.
+
+HANDOFF_TO_REVIEWER: yes — STATUS DONE, handoff.reviewer.enabled=true, reviewer model unic-smart ≠ executor unic-code.

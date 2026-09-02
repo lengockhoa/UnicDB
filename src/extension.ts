@@ -749,9 +749,17 @@ export async function activate(
   // 17. vsdb.openConsole — TASK-003 cycle Z: DataGrip-style SQL Console.
   // TASK-AF-004 cycle AF: passes `globalState` Memento so query history
   // (capped at 200 entries) persists across panel reloads.
+  // ARP-08 TASK-ARP08-004: also passes `workspaceState` as the draft
+  // memento so Console drafts stay workspace-scoped (history stays global).
   disposables.push(
     vscode.commands.registerCommand("vsdb.openConsole", () =>
-      commandOpenConsole(mgr, runner, panel, context.globalState),
+      commandOpenConsole(
+        mgr,
+        runner,
+        panel,
+        context.globalState,
+        context.workspaceState,
+      ),
     ),
   );
   // 17b. vsdb.consoleNewTab — TASK-AF-004: add a new tab to the existing
@@ -1586,11 +1594,16 @@ function commandOpenConsole(
   runner: QueryRunner,
   panel: ResultsPanel,
   memento: vscode.Memento,
+  draftMemento: vscode.Memento,
 ): void {
   if (!consolePanel) {
     consolePanel = new ConsolePanel({
       extensionUri: extensionUriForForm,
       memento,
+      // ARP-08 TASK-ARP08-004 — workspace-scoped draft persistence. Drafts
+      // ride `workspaceState` under CONSOLE_DRAFTS_KEY while query history
+      // stays global under CONSOLE_HISTORY_KEY (the `memento` option above).
+      draftMemento,
       // Cycle AIC TASK-AIC-005 — Console ghost-text autocomplete. Routes
       // through the AIC-002 service via the AIC-005 registration; per-tab
       // sequence and cancellation stay on the host.

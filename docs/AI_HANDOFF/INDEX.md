@@ -249,7 +249,7 @@ Source: `docs/plans/2026-09-01-vsdb-additive-roadmap.md` §ARP-08 (lines 361-393
 | TASK-ARP08-001 | Persisted draft model: snapshot codec + clearDrafts wire (pure) | ready | none | - |
 | TASK-ARP08-002 | Host draft restore: hydrate, debounced flush, dispose flush, durable clear | ready | TASK-ARP08-001 | - |
 | TASK-ARP08-003 | Webview draft UX: debounced flush, flush-before-switch, Clear drafts, restore pre-input | ready | TASK-ARP08-001 | - |
-| TASK-ARP08-004 | Extension wiring: workspaceState as draftMemento + retained singleton/history guarantees | ready | TASK-ARP08-001, TASK-ARP08-002 | - |
+| TASK-ARP08-004 | Extension wiring: workspaceState as draftMemento + retained singleton/history guarantees | pending_review | TASK-ARP08-001, TASK-ARP08-002 | - |
 
 Graph: TASK-ARP08-001 → TASK-ARP08-002; TASK-ARP08-001 → TASK-ARP08-003; TASK-ARP08-001, TASK-ARP08-002 → TASK-ARP08-004.
 

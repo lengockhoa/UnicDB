@@ -3530,3 +3530,238 @@ describe("TASK-ARP07-004 — successful-DDL cache invalidation seam", () => {
     expect(passedToRunner[0]?.text).toBe(originalSql);
   });
 });
+
+// =============================================================================
+// ARP-08 TASK-ARP08-004 — extension wiring: `context.workspaceState` as the
+// Console draft memento. `commandOpenConsole` must pass `draftMemento`
+// (workspaceState) IN ADDITION to the `globalState`-backed history memento,
+// so drafts are workspace-scoped while history keeps its global scope.
+// The pins below hold BOTH guarantees:
+//   #1 drafts hydrate from the workspaceState-seeded snapshot (get routing),
+//   #2 singleton retained (exactly one vsdb.console panel per open),
+//   #3 key separation: history → globalState.update(CONSOLE_HISTORY_KEY),
+//      drafts → workspaceState.get/update(CONSOLE_DRAFTS_KEY), never crossed,
+//   #4 deactivate still disposes + nulls the singleton; reopen is fresh.
+// =============================================================================
+
+import {
+  CONSOLE_DRAFTS_KEY,
+  CONSOLE_HISTORY_KEY,
+  encodeConsoleDraftSnapshot,
+  parseConsoleDraftSnapshot,
+} from "./ui/consolePanelMessages";
+
+describe("ARP-08 — console draft memento wiring", () => {
+  let runSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+    state.registeredTreeDataProviders.clear();
+    state.createdStatusBarItems.length = 0;
+    state.createdWebviewPanels.length = 0;
+    state.createdTreeViews.length = 0;
+    state.registeredCodeLensProviders.length = 0;
+    state.onDidChangeConfigSubscribers.length = 0;
+    state.workspaceFolders = undefined;
+    state.activeEditor = undefined;
+    state.createdTerminals.length = 0;
+    state.confirmDestructive = undefined;
+    vi.resetModules();
+  });
+
+  afterEach(async () => {
+    // extension.ts keeps module-level singletons (incl. the console panel);
+    // deactivate drops them so later describes start clean.
+    await deactivate();
+  });
+
+  /** TASK-003's activateWithConsole shape, extended to return the freshly
+   *  imported extension module (deactivate on the FRESH instance is what
+   *  tears down the fresh singleton) and to allow seeding either memento. */
+  async function activateWithConsole(opts?: {
+    draftSnapshot?: string;
+    runResults?: unknown[];
+  }) {
+    const ctx = makeCtx();
+    ctx.globalState.get = vi.fn((key: string) => {
+      if (key === "vsdb.connections") {
+        return [
+          {
+            id: "c1",
+            name: "c",
+            driver: "postgres",
+            host: "h",
+            port: 5432,
+            user: "u",
+            database: "d",
+          },
+        ];
+      }
+      if (key === "vsdb.activeConnection") return "c1";
+      return undefined;
+    }) as never;
+    if (opts?.draftSnapshot !== undefined) {
+      ctx.workspaceState.get = vi.fn((key: string) =>
+        key === CONSOLE_DRAFTS_KEY ? opts.draftSnapshot : undefined,
+      ) as never;
+    }
+
+    const connectionMgrMod = await import("./core/connectionManager");
+    const adapter: Partial<DbAdapter> = {
+      listTables: vi.fn().mockResolvedValue([]),
+      testConnection: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    vi.spyOn(
+      connectionMgrMod.ConnectionManager.prototype,
+      "getAdapter",
+    ).mockResolvedValue(adapter as DbAdapter);
+
+    const runnerMod = await import("./core/queryRunner");
+    runSpy = vi
+      .spyOn(runnerMod.QueryRunner.prototype, "run")
+      .mockResolvedValue((opts?.runResults ?? []) as never);
+
+    const ext = await import("./extension");
+    await ext.activate(ctx as never);
+    return { ctx, ext };
+  }
+
+  /** Latest vsdb.console panel mock + its registered message handler. */
+  function consolePanelHarness(): {
+    panel: Record<string, unknown>;
+    handler: (msg: unknown) => void;
+  } {
+    const calls = (vscodeMock.window.createWebviewPanel as Mock)
+      .mock.calls as unknown as Array<[string, string, unknown, unknown]>;
+    const callIndex = calls.findIndex(([viewType]) => viewType === "vsdb.console");
+    expect(callIndex).toBeGreaterThanOrEqual(0);
+    const panel = state.createdWebviewPanels[callIndex] as Record<string, unknown>;
+    const handler = (
+      panel as unknown as { webview: { onDidReceiveMessage: Mock } }
+    ).webview.onDidReceiveMessage.mock.calls[0][0] as (msg: unknown) => void;
+    return { panel, handler };
+  }
+
+  interface PostedState {
+    type: string;
+    tabs: Array<{ id: string; name: string; buffer: string; active: boolean }>;
+    activeTabId: string;
+    history: string[];
+  }
+  function postedStates(panel: Record<string, unknown>): PostedState[] {
+    return (
+      (panel as unknown as { webview: { postMessage: Mock } }).webview.postMessage
+        .mock.calls as unknown as Array<[PostedState]>
+    ).map(([m]) => m).filter((m) => m.type === "state");
+  }
+
+  it("#1 happy: seeded workspaceState draft hydrates the Console — draftMemento is wired to workspaceState, not globalState", async () => {
+    const seeded = encodeConsoleDraftSnapshot({
+      version: 1,
+      tabs: [{ id: "t1", name: "Saved", buffer: "SELECT 42" }],
+      activeTabId: "t1",
+    });
+    const { ctx } = await activateWithConsole({ draftSnapshot: seeded });
+    const fn = state.registeredCommands.get("vsdb.openConsole");
+    expect(fn).toBeDefined();
+    await fn!();
+
+    const { panel } = consolePanelHarness();
+    const states = postedStates(panel);
+    // The seeded draft REPLACED the default "Query 1" tab — proof the panel's
+    // draftMemento served CONSOLE_DRAFTS_KEY from workspaceState.
+    expect(states.length).toBeGreaterThanOrEqual(1);
+    expect(states[0].tabs).toEqual([
+      { id: "t1", name: "Saved", buffer: "SELECT 42", active: true },
+    ]);
+    expect(states[0].activeTabId).toBe("t1");
+    expect(ctx.workspaceState.get).toHaveBeenCalledWith(CONSOLE_DRAFTS_KEY);
+  });
+
+  it("#2 happy: invoking vsdb.openConsole twice still opens exactly ONE vsdb.console panel (singleton retained)", async () => {
+    await activateWithConsole();
+    const fn = state.registeredCommands.get("vsdb.openConsole");
+    await fn!();
+    await fn!();
+
+    const calls = (vscodeMock.window.createWebviewPanel as Mock)
+      .mock.calls as unknown as Array<[string]>;
+    const consoleCalls = calls.filter(([viewType]) => viewType === "vsdb.console");
+    expect(consoleCalls.length).toBe(1);
+  });
+
+  it("#3 edge/history-vs-draft scope: run → globalState.update(CONSOLE_HISTORY_KEY); edit+dispose → workspaceState.update(CONSOLE_DRAFTS_KEY); keys never cross", async () => {
+    const { ctx, ext } = await activateWithConsole();
+    const fn = state.registeredCommands.get("vsdb.openConsole");
+    await fn!();
+    const { panel, handler } = consolePanelHarness();
+
+    // Run SELECT 1 through the shared flow → successful run appends history.
+    handler({ type: "runConsole", sql: "SELECT 1" });
+    for (
+      let i = 0;
+      i < 500 &&
+      !ctx.globalState.update.mock.calls.some(
+        ([k]) => k === CONSOLE_HISTORY_KEY,
+      );
+      i++
+    ) {
+      await Promise.resolve();
+    }
+    expect(ctx.globalState.update).toHaveBeenCalledWith(
+      CONSOLE_HISTORY_KEY,
+      expect.arrayContaining(["SELECT 1"]),
+    );
+    // History scope untouched by drafts keys, drafts scope untouched by
+    // history keys — the two mementos never receive the other's key.
+    expect(
+      ctx.globalState.update.mock.calls.some(
+        ([k]) => k === CONSOLE_DRAFTS_KEY,
+      ),
+    ).toBe(false);
+    expect(
+      ctx.globalState.get.mock.calls.some(([k]) => k === CONSOLE_DRAFTS_KEY),
+    ).toBe(false);
+    expect(
+      ctx.workspaceState.get.mock.calls.some(([k]) => k === CONSOLE_DRAFTS_KEY),
+    ).toBe(true);
+
+    // Buffer edit then teardown: dispose() flushes the dirty draft snapshot
+    // to the DRAFT memento (workspaceState), not the history memento.
+    const state0 = postedStates(panel)[0];
+    handler({ type: "updateBuffer", tabId: state0.activeTabId, buffer: "SELECT 1" });
+    await ext.deactivate();
+    const draftUpdate = ctx.workspaceState.update.mock.calls.find(
+      ([k]) => k === CONSOLE_DRAFTS_KEY,
+    );
+    expect(draftUpdate).toBeDefined();
+    const snap = parseConsoleDraftSnapshot(draftUpdate![1] as string);
+    expect(snap).not.toBeNull();
+    expect(snap!.tabs.map((t) => t.buffer)).toContain("SELECT 1");
+    expect(
+      ctx.workspaceState.update.mock.calls.some(
+        ([k]) => k === CONSOLE_HISTORY_KEY,
+      ),
+    ).toBe(false);
+  });
+
+  it("#4 edge/teardown: deactivate disposes the console panel and nulls the singleton — reopen builds a fresh panel", async () => {
+    const { ext } = await activateWithConsole();
+    const fn = state.registeredCommands.get("vsdb.openConsole");
+    await fn!();
+    const { panel } = consolePanelHarness();
+
+    await ext.deactivate();
+    expect(panel.dispose).toHaveBeenCalled();
+
+    // Reopen after deactivate: singleton was nulled → a SECOND vsdb.console
+    // createWebviewPanel call (not a reveal of the disposed panel).
+    await fn!();
+    const calls = (vscodeMock.window.createWebviewPanel as Mock)
+      .mock.calls as unknown as Array<[string]>;
+    const consoleCalls = calls.filter(([viewType]) => viewType === "vsdb.console");
+    expect(consoleCalls.length).toBe(2);
+  });
+});
