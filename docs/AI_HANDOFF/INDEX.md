@@ -54,11 +54,11 @@ Source: `docs/plans/2026-09-01-vsdb-additive-roadmap.md` §ARP-06 (lines 277-320
 
 | Task / Portfolio | Title | Status | Dependencies | Reviewer |
 |---|---|---|---|---|
-| TASK-ARP06-001 | Fail-closed policy decision API + security parser corpus (readonlySqlParser + ADR 0003) | ready | none | - |
-| TASK-ARP06-002 | run_sql tool adoption: only approved SQL executes | ready | none | - |
-| TASK-ARP06-003 | Usage transport: missing/malformed safe, final usage once, no body retained | ready | none | - |
-| TASK-ARP06-004 | Per-turn usage accounting + bounded-session budget (agent) | ready | none | - |
-| TASK-ARP06-005 | Privacy-safe policy + usage display in the chat panel | ready | TASK-ARP06-004 | - |
+| TASK-ARP06-001 | Fail-closed policy decision API + security parser corpus (readonlySqlParser + ADR 0003) | pending_review | none | - |
+| TASK-ARP06-002 | run_sql tool adoption: only approved SQL executes | pending_review | none | - |
+| TASK-ARP06-003 | Usage transport: missing/malformed safe, final usage once, no body retained | pending_review | none | - |
+| TASK-ARP06-004 | Per-turn usage accounting + bounded-session budget (agent) | pending_review | none | - |
+| TASK-ARP06-005 | Privacy-safe policy + usage display in the chat panel | pending_review | TASK-ARP06-004 | - |
 
 Graph: TASK-ARP06-001 independent; TASK-ARP06-002 independent; TASK-ARP06-003 independent;
 TASK-ARP06-004 independent; TASK-ARP06-004 → TASK-ARP06-005.
