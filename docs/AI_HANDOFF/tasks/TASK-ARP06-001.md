@@ -270,3 +270,23 @@ strengthening).
   `SELECT 'insert'` / `SELECT 'drop table x'` / `SELECT created_at FROM t` (reviewer
   probe-verified; consistent with TASK-ARP06-002's Discussion drift notes).
 - No source file, no test file touched. Focused suites unaffected (docs-only diff).
+
+
+## Reviewer Verdict (fix round 1 re-review)
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/ai/tools/__tests__/readonlySqlParser.test.ts src/ai/tools/__tests__/sqlTool.test.ts && npm run typecheck && npm run compile
+  result: 110 pass / 0 fail (60 + 50); typecheck exit 0; compile exit 0
+TEST_PLAN_COVERAGE: all-followed (unchanged from R2; this round is docs-only)
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none — blocking finding RESOLVED: ADR 0003 §4 matrix cell (docs/decisions/0003-ai-sql-policy.md:107) no longer claims run_sql "deny via its keyword scans"; it now states run_sql admits read-only statements mentioning forbidden words and defers to new §6.1. Re-probed against HEAD: isReadOnlySql admits all three original shapes (SELECT 'insert', SELECT 'drop table x', SELECT created_at FROM t → ok:true each). §4 core column still denies (over-rejection policy §5), §5 unchanged, no other matrix row contradicts §6.1.
+  minor:
+    - docs/decisions/0003-ai-sql-policy.md:156-158 (and the Fix Round 1 note in this task file) — §6.1's claim that the residual scans (writable-CTE DML, row locks, INTO) are "false-positive-free on literal/comment/identifier shapes" is overstated. Probes against HEAD show each residual scan CAN fire on a literal/body shape containing its keyword: `SELECT 'into'` → denied (INTO_REASON), `SELECT 'for update'` → denied (ROW_LOCK_REASON), `WITH t AS (SELECT 'insert') SELECT * FROM t` → denied (WCTE_REASON). The three cited examples are admitted only because they contain none of those residual patterns. Suggested tightening: "run_sql over-rejects only shapes containing `into`, a row-lock phrase (`for update/share/…`), or a WITH/EXPLAIN body carrying a DML keyword — even inside literals — which is narrower-than-core over-rejection, not literal transparency."
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Blocking finding resolved and probe-verified against HEAD; focused suites + typecheck + compile all green. Fix commit bbf68c2 is docs-only (task file + ADR; no source/test file touched). One minor doc overstatement remains, in the safe (fail-closed) direction — guard is stricter than documented, so no security impact; worth tightening §6.1 so ARP-06.2 pin authors do not expect `SELECT 'into'` to be admitted.
