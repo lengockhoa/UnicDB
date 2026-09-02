@@ -9,9 +9,10 @@ declare const acquireVsCodeApi: undefined | (() => {
 const vscodeApi =
   typeof acquireVsCodeApi === "function" ? acquireVsCodeApi() : null;
 
-type Driver = "postgres" | "mysql" | "mssql";
+type Driver = "postgres" | "mysql" | "mssql" | "bigquery";
 type SslMode = "disable" | "require" | "verify-ca" | "verify-full";
 type SslField = "sslCaPath" | "sslCertPath" | "sslKeyPath";
+type SqlDriver = Exclude<Driver, "bigquery">;
 
 interface FormConfig {
   id: string;
@@ -32,6 +33,13 @@ interface FormConfig {
   color?: string;
   readOnly?: boolean;
   tunnel?: { host: string; port?: number; user?: string; identityFile?: string };
+  /** TASK-BQ01-004 — BigQuery safe metadata (optional; only meaningful when driver === "bigquery"). */
+  bigquery?: {
+    billingProject?: string;
+    location?: string;
+    maxBytesBilled?: string;
+    datasetProject?: string;
+  };
 }
 
 const root = document.getElementById("vsdb-root") as HTMLDivElement;
@@ -45,6 +53,7 @@ const DRIVER_PORTS: Record<Driver, number> = {
   postgres: 5432,
   mysql: 3306,
   mssql: 1433,
+  bigquery: 0,
 };
 
 function input(id: string): HTMLInputElement {
@@ -54,19 +63,30 @@ function select(id: string): HTMLSelectElement {
   return document.getElementById(id) as HTMLSelectElement;
 }
 
+/** Optional accessor — null-safe wrapper for fields that may be absent
+ *  from the DOM (e.g. SQL fields when driver === "bigquery", or BQ fields
+ *  when driver is a SQL driver). Returns "" when the input isn't present. */
+function optionalInput(id: string): string {
+  const el = document.getElementById(id) as HTMLInputElement | HTMLSelectElement | null;
+  return el ? String(el.value ?? "").trim() : "";
+}
+
 function readForm() {
   return {
     name: input("name").value.trim(),
     driver: select("driver").value as Driver,
-    host: input("host").value.trim(),
-    port: parseInt(input("port").value, 10) || 0,
-    user: input("user").value.trim(),
-    database: input("database").value.trim(),
-    password: input("password").value,
+    // SQL-only fields. When the BQ driver is selected the SQL group is
+    // removed from DOM; optionalInput returns "" so the wire payload stays
+    // symmetric (never undefined).
+    host: optionalInput("host"),
+    port: parseInt(optionalInput("port"), 10) || 0,
+    user: optionalInput("user"),
+    database: optionalInput("database"),
+    password: optionalInput("password"),
     sslMode: (useSsl() ? select("sslMode").value : "disable") as SslMode,
-    sslCaPath: input("sslCaPath").value.trim(),
-    sslCertPath: input("sslCertPath").value.trim(),
-    sslKeyPath: input("sslKeyPath").value.trim(),
+    sslCaPath: optionalInput("sslCaPath"),
+    sslCertPath: optionalInput("sslCertPath"),
+    sslKeyPath: optionalInput("sslKeyPath"),
     manualCommit: manualCommit(),
     folder: input("folder").value.trim(),
     color: input("color").value.trim(),
@@ -75,6 +95,10 @@ function readForm() {
     tunnelPort: parseInt(input("tunnelPort").value, 10) || 0,
     tunnelUser: input("tunnelUser").value.trim(),
     tunnelIdentityFile: input("tunnelIdentityFile").value.trim(),
+    /** TASK-BQ01-004 — BigQuery-only safe metadata; empty string when absent. */
+    billingProject: optionalInput("billingProject"),
+    bqLocation: optionalInput("bqLocation"),
+    bqMaxBytesBilled: optionalInput("bqMaxBytesBilled"),
    };
 }
 
@@ -84,7 +108,9 @@ function manualCommit(): boolean {
 }
 
 function useSsl(): boolean {
-  return (document.getElementById("useSsl") as HTMLInputElement).checked;
+  const el = document.getElementById("useSsl") as HTMLInputElement | null;
+  // SQL-only checkbox — absent for bigquery (group removed from DOM).
+  return el ? el.checked : false;
 }
 
 function setBusy(busy: boolean): void {
@@ -114,6 +140,89 @@ function updateSslVisibility(): void {
   const mode = select("sslMode").value;
   const caRow = document.getElementById("row-sslCaPath");
   if (caRow) caRow.style.display = mode === "verify-ca" || mode === "verify-full" ? "" : "none";
+}
+
+/**
+ * TASK-BQ01-004 — pure validation gate before submit. Returns null on
+ * success or an inline-status error string describing the first failure.
+ * No mutation of form state; the caller is responsible for posting the
+ * submit message after a null return. Copy-safe by construction — no user
+ * input is concatenated into the returned strings.
+ */
+function validateBeforeSubmit(f: ReturnType<typeof readForm>): string | null {
+  if (!f.name) {
+    return "Điền đủ các ô có *.";
+  }
+  if (f.driver === "bigquery") {
+    if (!f.billingProject) {
+      return "BigQuery cần billing project — điền GCP project ID chịu charge cho queries.";
+    }
+    if (f.bqMaxBytesBilled !== "" && !/^[1-9][0-9]*$/.test(f.bqMaxBytesBilled)) {
+      return "Max bytes billed phải là số nguyên dương (vd 1000000) hoặc để trống.";
+    }
+    return null;
+  }
+  // SQL drivers: existing required-field gate (mirrors prior behavior).
+  if (!f.host || !f.user || !f.database || !f.port) {
+    return "Điền đủ các ô có *.";
+  }
+  return null;
+}
+
+/**
+ * TASK-BQ01-004 — caches for the two driver-specific field groups. The
+ * render() function builds BOTH nodes, then immediately removes the one
+ * that doesn't match the initial driver (so the DOM starts with exactly
+ * one). On driver change, `updateDriverVisibility` swaps which group is
+ * attached. This is the structural "render ONLY" guarantee the bundle
+ * tests assert via `document.getElementById` returning null for the
+ * inactive group's inputs.
+ */
+let _sqlGroupCache: HTMLElement | null = null;
+let _bqGroupCache: HTMLElement | null = null;
+
+function rememberGroupCaches(): void {
+  // Called once at the end of render() to snapshot the freshly built groups
+  // so the swap function can re-attach them across driver changes.
+  _sqlGroupCache = document.getElementById("sqlFields");
+  _bqGroupCache = document.getElementById("bqFields");
+}
+
+function updateDriverVisibility(): void {
+  const driverEl = document.getElementById("driver") as HTMLSelectElement | null;
+  const driver = (driverEl?.value ?? "postgres") as Driver;
+  const isBq = driver === "bigquery";
+  // Determine which group should currently be visible.
+  const liveSql = document.getElementById("sqlFields");
+  const liveBq = document.getElementById("bqFields");
+  if (isBq) {
+    // Detach SQL, attach BQ.
+    liveSql?.remove();
+    if (!liveBq && _bqGroupCache) {
+      // Clear the initial display:none inline style so the re-attached
+      // group is actually visible.
+      _bqGroupCache.style.display = "";
+      const manualCommit = document.getElementById("manualCommit");
+      const parent = manualCommit?.parentElement ?? root;
+      const beforeNode = manualCommit ?? null;
+      parent.insertBefore(_bqGroupCache, beforeNode);
+    }
+  } else {
+    // Detach BQ, attach SQL.
+    liveBq?.remove();
+    if (!liveSql && _sqlGroupCache) {
+      _sqlGroupCache.style.display = "";
+      const manualCommit = document.getElementById("manualCommit");
+      const parent = manualCommit?.parentElement ?? root;
+      const beforeNode = manualCommit ?? null;
+      parent.insertBefore(_sqlGroupCache, beforeNode);
+    }
+    // Reset port default when switching back to a SQL driver so the value
+    // reflects the new driver (the bigquery:0 sentinel shouldn't leak into
+    // a postgres connection form).
+    const portEl = document.getElementById("port") as HTMLInputElement | null;
+    if (portEl) portEl.value = String(DRIVER_PORTS[driver]);
+  }
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -167,6 +276,7 @@ function render(): void {
     el("option", { value: "postgres" }, "PostgreSQL"),
     el("option", { value: "mysql" }, "MySQL / MariaDB"),
     el("option", { value: "mssql" }, "SQL Server"),
+    el("option", { value: "bigquery" }, "Google BigQuery"),
   );
 
   const sslMode = el(
@@ -241,55 +351,110 @@ function render(): void {
       ),
       el("div", { class: "vsdb-field" }, fieldLabel("Driver", "driver"), driver),
     ),
+    // TASK-BQ01-004 — SQL-only field group. Hidden entirely for bigquery.
     el(
       "div",
-      { class: "vsdb-row" },
+      { id: "sqlFields" },
       el(
         "div",
-        { class: "vsdb-field grow" },
-        fieldLabel("Host", "host", true),
-        el("input", { id: "host", type: "text", value: "localhost" }),
+        { class: "vsdb-row" },
+        el(
+          "div",
+          { class: "vsdb-field grow" },
+          fieldLabel("Host", "host", true),
+          el("input", { id: "host", type: "text", value: "localhost" }),
+        ),
+        el(
+          "div",
+          { class: "vsdb-field" },
+          fieldLabel("Port", "port", true),
+          el("input", { id: "port", type: "text", value: "5432" }),
+        ),
       ),
       el(
         "div",
-        { class: "vsdb-field" },
-        fieldLabel("Port", "port", true),
-        el("input", { id: "port", type: "text", value: "5432" }),
+        { class: "vsdb-row" },
+        el(
+          "div",
+          { class: "vsdb-field grow" },
+          fieldLabel("Username", "user", true),
+          el("input", { id: "user", type: "text" }),
+        ),
+        el(
+          "div",
+          { class: "vsdb-field grow" },
+          fieldLabel("Password", "password"),
+          el("input", { id: "password", type: "password", autocomplete: "off" }),
+        ),
       ),
+      el(
+        "div",
+        { class: "vsdb-row" },
+        el(
+          "div",
+          { class: "vsdb-field grow" },
+          fieldLabel("Database", "database", true),
+          el("input", { id: "database", type: "text" }),
+        ),
+      ),
+      el(
+        "label",
+        { class: "vsdb-form-check" },
+        el("input", { id: "useSsl", type: "checkbox" }),
+        " Use SSL",
+      ),
+      sslPanel,
     ),
+    // TASK-BQ01-004 — BigQuery field group. Hidden for SQL drivers.
     el(
       "div",
-      { class: "vsdb-row" },
+      { id: "bqFields", style: "display:none" },
       el(
         "div",
-        { class: "vsdb-field grow" },
-        fieldLabel("Username", "user", true),
-        el("input", { id: "user", type: "text" }),
+        { class: "vsdb-row" },
+        el(
+          "div",
+          { class: "vsdb-field grow" },
+          fieldLabel("Billing project", "billingProject", true),
+          el("input", {
+            id: "billingProject",
+            type: "text",
+            placeholder: "my-gcp-billing-project",
+          }),
+        ),
       ),
       el(
         "div",
-        { class: "vsdb-field grow" },
-        fieldLabel("Password", "password"),
-        el("input", { id: "password", type: "password", autocomplete: "off" }),
+        { class: "vsdb-row" },
+        el(
+          "div",
+          { class: "vsdb-field grow" },
+          fieldLabel("Location", "bqLocation"),
+          el("input", {
+            id: "bqLocation",
+            type: "text",
+            placeholder: "US / EU / us-central1",
+          }),
+        ),
+        el(
+          "div",
+          { class: "vsdb-field grow" },
+          fieldLabel("Max bytes billed", "bqMaxBytesBilled"),
+          el("input", {
+            id: "bqMaxBytesBilled",
+            type: "text",
+            placeholder: "1000000",
+          }),
+        ),
       ),
-    ),
-    el(
-      "div",
-      { class: "vsdb-row" },
       el(
-        "div",
-        { class: "vsdb-field grow" },
-        fieldLabel("Database", "database", true),
-        el("input", { id: "database", type: "text" }),
+        "p",
+        { class: "vsdb-form-hint" },
+        "BigQuery dùng Application Default Credentials (ADC) từ máy local. Chạy ",
+        el("code", {}, "gcloud auth application-default login"),
+        " nếu chưa có.",
       ),
     ),
-    el(
-      "label",
-      { class: "vsdb-form-check" },
-      el("input", { id: "useSsl", type: "checkbox" }),
-      " Use SSL",
-    ),
-    sslPanel,
     el(
       "label",
       { class: "vsdb-form-check" },
@@ -330,9 +495,14 @@ function render(): void {
     ),
   );
 
-  driver.addEventListener("change", () => {
-    input("port").value = String(DRIVER_PORTS[driver.value as Driver]);
-  });
+  // TASK-BQ01-004 — driver change toggles SQL vs BigQuery field groups.
+  driver.addEventListener("change", updateDriverVisibility);
+  // Snapshot the freshly built groups BEFORE the initial visibility swap
+  // detaches the inactive one — needed so subsequent driver changes can
+  // re-attach the right group.
+  rememberGroupCaches();
+  // Initial state — SQL by default (postgres selected on first render).
+  updateDriverVisibility();
   (document.getElementById("useSsl") as HTMLInputElement).addEventListener(
     "change",
     updateSslVisibility,
@@ -347,8 +517,13 @@ function render(): void {
   });
   document.getElementById("saveBtn")?.addEventListener("click", () => {
     const f = readForm();
-    if (!f.name || !f.host || !f.user || !f.database || !f.port) {
-      setStatus(false, "\u0110i\u1ec1n \u0111\u1ee7 c\u00e1c \u00f4 c\u00f3 *.");
+    // TASK-BQ01-004 \u2014 driver-specific submit gate. SQL drivers need
+    // host/port/user/database; bigquery needs billingProject (+ valid
+    // optional maxBytesBilled). Returns inline-status string on failure;
+    // NO submit posted, NO host round-trip on failure.
+    const err = validateBeforeSubmit(f);
+    if (err !== null) {
+      setStatus(false, err);
       return;
     }
     post({ type: "submit", ...f });
@@ -389,6 +564,15 @@ function applyInit(existing: FormConfig | null): void {
   input("tunnelPort").value = existing.tunnel?.port ? String(existing.tunnel.port) : "";
   input("tunnelUser").value = existing.tunnel?.user ?? "";
   input("tunnelIdentityFile").value = existing.tunnel?.identityFile ?? "";
+  // TASK-BQ01-004 — toggle field group for the prefilled driver, then
+  // prefill BQ inputs when editing a bigquery connection.
+  updateDriverVisibility();
+  const bp = (document.getElementById("billingProject") as HTMLInputElement | null);
+  const bl = (document.getElementById("bqLocation") as HTMLInputElement | null);
+  const bm = (document.getElementById("bqMaxBytesBilled") as HTMLInputElement | null);
+  if (bp) bp.value = existing.bigquery?.billingProject ?? "";
+  if (bl) bl.value = existing.bigquery?.location ?? "";
+  if (bm) bm.value = existing.bigquery?.maxBytesBilled ?? "";
 }
 
 window.addEventListener("message", (ev: MessageEvent) => {

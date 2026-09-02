@@ -135,3 +135,97 @@ honest scope, not a stub claim.
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator. -->
 <!-- Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: claude-sonnet-4-5
+EXECUTOR_SUBAGENT: -
+SUMMARY: BigQueryAdapter implemented in `src/adapters/bigquery.ts` — owns `BigQueryClientFactory` (`{projectId, location}`) wrapping BQ-00's `createBigQueryClient`, validates config via `validateBigQueryConnection`, maps ADC failures to `BigQueryConnectError(diagnostic)`, idempotent close, and routes query results through `toBigQueryPage` so branded strings survive end-to-end. Unimplemented introspection throws `NotImplementedError` (BQ-02 scope). 6/6 tests pass.
+TEST_PLAN_FOLLOWED: task §4 (Test Cases #1-#6)
+FILES_CHANGED:
+  - src/adapters/bigquery.ts: NEW — BigQueryAdapter, BigQueryConnectError, BigQueryClosedError, BigQueryClient, BigQueryClientFactory, default factory wrapping BQ-00.
+  - src/adapters/__tests__/bigquery.test.ts: NEW — 6 tests (happy connect, typed diagnostic, idempotent close, location propagation, branded-string normalization, runQuery after close).
+TESTS_ADDED:
+  - src/adapters/__tests__/bigquery.test.ts: 6 tests, all green
+VERIFICATION:
+  command: npx vitest run src/adapters/__tests__/bigquery.test.ts
+  result: 6 pass / 0 fail / exit 0
+  output_excerpt: |
+    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq01-002
+     ✓ src/adapters/__tests__/bigquery.test.ts  (6 tests) 6ms
+     Test Files  1 passed (1)
+          Tests  6 passed (6)
+  command: npm run typecheck
+  result: exit 0 (no errors)
+  output_excerpt: |
+    > vsdb@1.46.0 typecheck
+    > tsc --noEmit
+  command (sanity): npx vitest run src/adapters/__tests__/bigqueryAdc.test.ts src/adapters/__tests__/bigqueryTypes.test.ts src/adapters/__tests__/bigqueryConfig.test.ts src/adapters/__tests__/bigqueryPackage.test.ts
+  result: 33 pass / 0 fail / exit 0 (BQ-00 and BQ-01-001 surfaces still green)
+ISSUES: none
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for review
+
+### Executor Decision Log
+
+- **RED first confirmed.** Initial run failed with `Error: Failed to load url ../bigquery` (source file absent) — exactly the expected RED shape. After implementation, 5/6 passed; test #1 was red because the helper used a plain `async () => [...]` for `listDatasets` instead of `vi.fn(...)`. Switched the test fixture to `vi.fn(async () => [{id:"ds1"}])` so `toHaveBeenCalledTimes(1)` works. No production-code change was needed for this.
+- **Location-propagation mechanism (per Discussion 2026-09-02):** the adapter owns `BigQueryClientFactory = (opts: {projectId, location?}) => BigQueryClient`. The default implementation wraps BQ-00's `createBigQueryClient(projectId, impl)` where `impl` is a forwarder that constructs `new BigQuery({projectId, location})` (lazy-`require`d, so the GCP client only materializes at factory-call time, not at module import). The real `new BigQuery(...)` call is isolated in a private `buildRealClient` helper behind that lazy require — there is no `new BigQuery(` outside the default factory parameter (acceptance criterion).
+- **Redaction discipline:** `BigQueryConnectError` only carries the typed `AdcDiagnostic` (category + fixed remediation). The leak marker `ZZZ-LEAK-9981` is asserted absent from both `error.message` and `error.diagnostic.remediation` (test #2).
+- **Closed-error shape:** introduced a separate `BigQueryClosedError` for post-`close()` operation requests (lifecycle violation, not connection failure — does not carry a diagnostic). Test #3 and #6 both assert `/closed/i` on the rejection.
+- **Idempotent close:** first `close()` flips `this.closed = true` and drops the client reference; second `close()` is a no-op. `connect()` after close throws `BigQueryClosedError` without re-entering the factory (asserted by `factory` call-count).
+- **Branded-string survival:** `runQuery` routes the client's response through `toBigQueryPage` from BQ-00 and maps `page.schema[].name` → `columns` and `page.rows` → `rows` with `rowCount: page.rows.length`. INT64/NUMERIC/BIGNUMERIC cells are never coerced (test #5 uses `bigIntStr = "9007199254740993"` and asserts `typeof === "string"` and exact digit equality).
+- **Unimplemented surfaces:** `listSchemas`, `listTables`, `listViews`, `listRoutines`, `listColumns`, `listRoutineParams`, `estimateTableRows`, `estimateTableRowsBatch`, `listTableDetail` each throw `NotImplementedError("bigquery")` per task Discussion (BQ-02 wires real introspection).
+- **No `BigQuery`-imports leak into the test seam:** tests inject a `BigQueryClientFactory`; the real `BigQuery` class is only constructed inside the default factory's lazy `require`. Tests never touch `@google-cloud/bigquery`.
+- **BQ-00 frozen surface:** `bigqueryAdc.ts` and `bigqueryTypes.ts` byte-untouched (`git status` shows only the two new untracked files).
+
+## Executor Report (fix round 2 — 2026-09-02)
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+SUMMARY: Retry build after the round-1 worktree was wiped. Re-implemented `BigQueryAdapter implements DbAdapter` in `src/adapters/bigquery.ts` from scratch and added the 6-test contract suite in `src/adapters/__tests__/bigquery.test.ts`. RED confirmed (load failure on missing source); GREEN achieved on first run after implementation (no test-quirk fixes needed this round). BQ-00 surface (`bigqueryAdc.ts`, `bigqueryTypes.ts`) byte-untouched. Work committed inside the worktree.
+TEST_PLAN_FOLLOWED: task §4 (Test Cases #1-#6)
+FILES_CHANGED:
+  - src/adapters/bigquery.ts: NEW — BigQueryAdapter, BigQueryConnectError, BigQueryClosedError, BigQueryClient, BigQueryClientFactory, default factory wrapping BQ-00.
+  - src/adapters/__tests__/bigquery.test.ts: NEW — 6 tests (happy connect, typed diagnostic, idempotent close, location propagation, branded-string normalization, runQuery after close).
+TESTS_ADDED:
+  - src/adapters/__tests__/bigquery.test.ts: 6 tests, all green on first run after implementation
+VERIFICATION:
+  command: npx vitest run src/adapters/__tests__/bigquery.test.ts
+  result: 6 pass / 0 fail / exit 0
+  output_excerpt: |
+    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq01-002
+     ✓ src/adapters/__tests__/bigquery.test.ts  (6 tests) 3ms
+     Test Files  1 passed (1)
+          Tests  6 passed (6)
+  command: npm run typecheck
+  result: exit 0 (no errors)
+  output_excerpt: |
+    > vsdb@1.46.0 typecheck
+    > tsc --noEmit
+  command (sanity): npx vitest run src/adapters/__tests__/bigqueryAdc.test.ts src/adapters/__tests__/bigqueryTypes.test.ts src/adapters/__tests__/bigqueryConfig.test.ts src/adapters/__tests__/bigqueryPackage.test.ts src/adapters/__tests__/factory.test.ts
+  result: 37 pass / 0 fail / exit 0 (5 files, BQ-00 + BQ-01-001 + factory surfaces all green)
+  command: git diff --stat src/adapters/bigqueryAdc.ts src/adapters/bigqueryTypes.ts
+  result: empty (BQ-00 frozen surface confirmed byte-untouched)
+  git status: only 2 new untracked files: src/adapters/bigquery.ts, src/adapters/__tests__/bigquery.test.ts
+ISSUES: none
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for review
+
+### Fix-Round-2 Decision Log
+
+- **RED confirmed:** initial `npx vitest run src/adapters/__tests__/bigquery.test.ts` failed with `Error: Failed to load url ../bigquery (resolved id: ../bigquery) ... Does the file exist?` — exactly the expected RED shape (source absent).
+- **GREEN on first run:** all 6 tests passed immediately after the implementation landed. This round avoided the round-1 quirk (test #1 fixture needed `vi.fn(async () => [...])` for `listDatasets`, not a plain `async () => [...]`) by using `vi.fn` from the start on every fake-client method. No test-quirk fixes needed.
+- **Location-propagation mechanism (per Discussion 2026-09-02):** the adapter owns `BigQueryClientFactory = (opts: {projectId, location?}) => BigQueryClient`. The default implementation wraps BQ-00's `createBigQueryClient(projectId)` (the narrow listDatasets seam) AND constructs the real client via `new BigQuery({projectId, location})` through a lazy `require("@google-cloud/bigquery")` so the GCP client only materializes at factory-call time, not at module import. There is no `new BigQuery(` outside the default factory body (acceptance criterion).
+- **Redaction discipline:** `BigQueryConnectError` only carries the typed `AdcDiagnostic` (category + fixed remediation); the `error.message` is the safe category string and the raw err message is never echoed. The leak marker `ZZZ-LEAK-9981` is asserted absent from both `error.message` and `error.diagnostic.remediation` (test #2).
+- **Closed-error shape:** separate `BigQueryClosedError` for post-`close()` operations (lifecycle violation, no diagnostic). Test #3 and #6 both assert `instanceof BigQueryClosedError`.
+- **Idempotent close:** first `close()` flips `this.closed = true` and drops `this.client`; second `close()` is a no-op. `connect()` after close throws `BigQueryClosedError` without re-entering the factory (asserted via `factory` call-count, test #3).
+- **Branded-string survival:** `runQuery` routes the client's response through `toBigQueryPage` from BQ-00 and maps `page.schema[].name` → `columns`, `page.rows` → `rows`, `rowCount: page.rows.length`. INT64/NUMERIC/BIGNUMERIC cells are never coerced (test #5 uses `bigIntStr = "9007199254740993"` and asserts `typeof === "string"` plus exact digit equality).
+- **Unimplemented surfaces:** `listSchemas`, `listTables`, `listViews`, `listRoutines`, `listColumns`, `listRoutineParams`, `estimateTableRows`, `estimateTableRowsBatch`, `listTableDetail` each throw `NotImplementedError("bigquery")` per task Discussion (BQ-02 wires real introspection).
+- **No `BigQuery`-imports leak into the test seam:** tests inject a `BigQueryClientFactory`; the real `BigQuery` class is only constructed inside the default factory's lazy `require`. Tests never touch `@google-cloud/bigquery`.
+- **BQ-00 frozen surface:** `bigqueryAdc.ts` and `bigqueryTypes.ts` byte-untouched (`git diff --stat` on both is empty; `git status` shows only the two new untracked files).
+- **Persistence:** committed inside the worktree on branch `handoff/task-bq01-002` so the work survives any external teardown.
+

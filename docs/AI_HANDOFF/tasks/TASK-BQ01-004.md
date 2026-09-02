@@ -105,3 +105,35 @@ port field with the SQL drivers only; bigquery disables/clears port (validator p
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator. -->
 <!-- Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+SUMMARY: Added BigQuery field group (billingProject/bqLocation/bqMaxBytesBilled) to the connection form webview, with structural DOM swap (SQL group removed for BQ, BQ group removed for SQL drivers). Submit gating enforces empty-billingProject and invalid-maxBytesBilled inline status. Three new wire fields added to ConnectionFormSubmit/Test messages (symmetric, "" when absent). ADC remediation renders verbatim into status — never concatenated with user input. Host side forwards testResult.message untouched. Existing PostgreSQL/MySQL/MSSQL form behaviour + manualCommit bundle regression stays green.
+TEST_PLAN_FOLLOWED: task §Test Cases (5 tests mapped to 8 bundle + 4 host-side assertions)
+FILES_CHANGED:
+  - src/ui/connectionFormMessages.ts: added `billingProject`/`bqLocation`/`bqMaxBytesBilled` (string) to ConnectionFormSubmit + ConnectionFormTest interfaces (symmetric protocol — never omitted, "" when absent).
+  - webview/connectionFormMain.ts: added "bigquery" option to driver select; structurally swapped SQL/BQ field groups via DOM remove/insert (so host/port/user/password/SSL are absent in DOM for bigquery, vice versa); added validateBeforeSubmit() driver-specific gate returning inline-status string on failure; clear-form helper for null-safe reads of removed-group inputs; applyInit prefills BQ fields when editing a bigquery connection.
+  - src/ui/__tests__/connectionForm.test.ts: added "BigQuery wire fields (TASK-BQ01-004)" describe block (4 tests: submit carries fields, empty fields are "" not undefined, test forwards verbatim, testResult.message is copy-safe).
+  - src/ui/__tests__/connectionFormBigqueryBundle.test.ts: new bundle test mirroring connectionFormManualCommitBundle.test.ts — 8 tests covering Test Cases #1/#2a/#2b/#3/#4/#5a/#5b/#5c.
+TESTS_ADDED:
+  - src/ui/__tests__/connectionFormBigqueryBundle.test.ts: 8 tests (one per Test Case row + extra wire symmetry).
+  - src/ui/__tests__/connectionForm.test.ts: 4 tests appended to existing describe.
+VERIFICATION:
+  command: npm run compile && npx vitest run src/ui/__tests__/connectionForm.test.ts src/ui/__tests__/connectionFormBigqueryBundle.test.ts src/ui/__tests__/connectionFormManualCommitBundle.test.ts && npm run typecheck && npx vitest run
+  result: 3234 pass / 0 fail (full suite) — connectionForm + manualCommit regression + BigQuery bundle all green; tsc --noEmit clean.
+  output_excerpt: |
+    ✓ src/ui/__tests__/connectionForm.test.ts              (15 tests)
+    ✓ src/ui/__tests__/connectionFormBigqueryBundle.test.ts (8 tests)
+    ✓ src/ui/__tests__/connectionFormManualCommitBundle.test.ts (5 tests)
+    Test Files  3 passed (3)
+    Tests  28 passed (28)
+    --- full suite ---
+    Test Files  224 passed | 1 skipped (225)
+    Tests  3234 passed | 2 skipped (3236)
+ISSUES: none
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for review

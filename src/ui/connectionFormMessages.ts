@@ -35,6 +35,15 @@ export interface ConnectionFormSubmit {
   tunnelPort: number | null;
   tunnelUser: string;
   tunnelIdentityFile: string;
+  /**
+   * TASK-BQ01-004 — BigQuery-only safe metadata fields (string, "" = unset).
+   * For non-bigquery drivers these are sent as "" by the form (symmetric
+   * protocol — never omitted). The host maps them into `cfg.bigquery` (see
+   * TASK-BQ01-003).
+   */
+  billingProject: string;
+  bqLocation: string;
+  bqMaxBytesBilled: string;
 }
 
 export interface ConnectionFormCancel {
@@ -72,6 +81,13 @@ export interface ConnectionFormTest {
   sslKeyPath: string;
   /** TASK-001 — giữ trường qua protocol cho symmetric với submit. */
   manualCommit: boolean;
+  /**
+   * TASK-BQ01-004 — BigQuery-only safe metadata fields (string, "" = unset).
+   * Symmetric with submit payload.
+   */
+  billingProject: string;
+  bqLocation: string;
+  bqMaxBytesBilled: string;
 }
 
 // ---- Host → Webview --------------------------------------------------------

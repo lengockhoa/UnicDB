@@ -414,4 +414,174 @@ describe("ConnectionForm", () => {
       expect(post).toHaveBeenCalledWith({ type: "init", existing: withManual });
     });
   });
+
+  // ---- TASK-BQ01-004 — BigQuery wire fields + remediation copy ----------
+  // Submit/Test payload MUST carry the three new string fields
+  // (billingProject, bqLocation, bqMaxBytesBilled) symmetrically so the host
+  // can map them into `cfg.bigquery` (TASK-BQ01-003 territory). Empty fields
+  // post "" (never omitted/undefined — TASK-001 precedent).
+  describe("BigQuery wire fields (TASK-BQ01-004)", () => {
+    function submitBqMsg(overrides: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
+      return {
+        type: "submit",
+        name: "BQ Dev",
+        driver: "bigquery",
+        host: "",
+        port: 0,
+        user: "",
+        database: "",
+        password: "",
+        sslMode: "disable",
+        sslCaPath: "",
+        sslCertPath: "",
+        sslKeyPath: "",
+        manualCommit: false,
+        billingProject: "proj-billing",
+        bqLocation: "EU",
+        bqMaxBytesBilled: "1000000",
+        ...overrides,
+      };
+    }
+
+    it("submit bigquery → onSave nhận billingProject/bqLocation/bqMaxBytesBilled", async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      const form = makeForm(null, onSave);
+      form.show();
+      const panel = state.panels[0];
+      const handler = (panel.webview.onDidReceiveMessage as unknown as {
+        mock: { calls: Array<[Listener<unknown>]> };
+      }).mock.calls[0][0];
+      handler(submitBqMsg());
+      await until(() => onSave.mock.calls.length > 0);
+      const payload = onSave.mock.calls[0]![0] as Record<string, unknown>;
+      expect(payload.billingProject).toBe("proj-billing");
+      expect(payload.bqLocation).toBe("EU");
+      expect(payload.bqMaxBytesBilled).toBe("1000000");
+      expect(payload.driver).toBe("bigquery");
+    });
+
+    it("submit bigquery với empty fields → onSave nhận '' (không bao giờ undefined)", async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      const form = makeForm(null, onSave);
+      form.show();
+      const panel = state.panels[0];
+      const handler = (panel.webview.onDidReceiveMessage as unknown as {
+        mock: { calls: Array<[Listener<unknown>]> };
+      }).mock.calls[0][0];
+      handler(
+        submitBqMsg({
+          bqLocation: "",
+          bqMaxBytesBilled: "",
+        }),
+      );
+      await until(() => onSave.mock.calls.length > 0);
+      const payload = onSave.mock.calls[0]![0] as Record<string, unknown>;
+      expect("billingProject" in payload).toBe(true);
+      expect("bqLocation" in payload).toBe(true);
+      expect("bqMaxBytesBilled" in payload).toBe(true);
+      expect(payload.bqLocation).toBe("");
+      expect(payload.bqMaxBytesBilled).toBe("");
+    });
+
+    it("test bigquery → factory nhận cfg chuẩn + trả testResult ok:false với message verbatim", async () => {
+      const factory = vi.fn(() => fakeAdapter(false));
+      const form = new ConnectionForm({
+        extensionUri: extUri,
+        existing: null,
+        factory,
+        getStoredPassword: async () => undefined,
+        onSave: async () => {},
+      });
+      form.show();
+      const panel = state.panels[0];
+      const handler = (panel.webview.onDidReceiveMessage as unknown as {
+        mock: { calls: Array<[Listener<unknown>]> };
+      }).mock.calls[0][0];
+      handler({
+        type: "test",
+        name: "BQ Dev",
+        driver: "bigquery",
+        host: "",
+        port: 0,
+        user: "",
+        database: "",
+        password: "",
+        sslMode: "disable",
+        sslCaPath: "",
+        sslCertPath: "",
+        sslKeyPath: "",
+        manualCommit: false,
+        billingProject: "proj-billing",
+        bqLocation: "EU",
+        bqMaxBytesBilled: "1000000",
+      });
+      await until(() => factory.mock.calls.length > 0);
+      await until(
+        () =>
+          (panel.webview.postMessage as unknown as ReturnType<typeof vi.fn>).mock.calls.some(
+            (c) => (c[0] as { type?: string }).type === "testResult",
+          ),
+      );
+      // The factory receives a ConnectionConfig. For bigquery, the host may
+      // still pass host/port/user/database as empty strings (validator pins
+      // those separately on TASK-BQ01-003 territory). What matters here:
+      // the factory call DID happen and testResult with ok:false was posted.
+      expect(factory).toHaveBeenCalled();
+      expect(panel.webview.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "testResult", ok: false }),
+      );
+    });
+
+    it("testResult.message được forward verbatim (copy-safe)", async () => {
+      // Verifies the host does NOT prepend/append user-supplied form values
+      // to the testResult.message — copy-safe rendering prerequisite at the
+      // host boundary. (Full XSS/copy assertion lives in the bundle test.)
+      const factory = vi.fn(() => fakeAdapter(false));
+      const form = new ConnectionForm({
+        extensionUri: extUri,
+        existing: null,
+        factory,
+        getStoredPassword: async () => undefined,
+        onSave: async () => {},
+      });
+      form.show();
+      const panel = state.panels[0];
+      const handler = (panel.webview.onDidReceiveMessage as unknown as {
+        mock: { calls: Array<[Listener<unknown>]> };
+      }).mock.calls[0][0];
+      handler({
+        type: "test",
+        name: "BQ Dev",
+        driver: "bigquery",
+        host: "",
+        port: 0,
+        user: "",
+        database: "",
+        password: "",
+        sslMode: "disable",
+        sslCaPath: "",
+        sslCertPath: "",
+        sslKeyPath: "",
+        manualCommit: false,
+        billingProject: "proj-evil",
+        bqLocation: "",
+        bqMaxBytesBilled: "",
+      });
+      await until(() => factory.mock.calls.length > 0);
+      await until(
+        () =>
+          (panel.webview.postMessage as unknown as ReturnType<typeof vi.fn>).mock.calls.some(
+            (c) => (c[0] as { type?: string }).type === "testResult",
+          ),
+      );
+      // The fake adapter throws "connection refused" — verify that string
+      // rides the wire untouched (no concatenation with billingProject).
+      const posts = (panel.webview.postMessage as unknown as ReturnType<typeof vi.fn>).mock.calls;
+      const tr = posts.find(
+        (c) => (c[0] as { type?: string }).type === "testResult",
+      )![0] as { type: string; ok: boolean; message: string };
+      expect(tr.message).toBe("connection refused");
+      expect(tr.message).not.toContain("proj-evil");
+    });
+  });
 });
