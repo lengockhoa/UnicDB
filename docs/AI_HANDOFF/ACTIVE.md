@@ -1,8 +1,8 @@
 # Active Cycle
 
-- Cycle: CL-01
-- Date: 2026-09-02
-- Base: main @ 611df12
-- Goal: Ship CL-01 cleanup cycle — close 6 documented follow-ups from STATUS.md backlog (MSSQL bracket, ARP-07 invalidation wiring, snapshot name cap, BQ R4.5 minors).
+- Cycle: BQ-02
+- Date: 2026-09-03
+- Base: main @ e171d42
+- Goal: Ship BQ-02 — wire the deferred BigQuery resource enumeration (real listSchemas/listTables/listViews/listColumns from client metadata), add the bounded preview SQL builder + bigquery browse arm, and wire the Schema Explorer for BigQuery (datasets, icon, cost-safe tooltips, zero row-count queries).
 - Tasks: 4 total
-- Status: executor_done — ready for review (suite 3283|2 GREEN, +32 new tests over v1.47.0)
+- Status: planning_done — ready for executor

@@ -2,10 +2,10 @@
 
 | Task | Title | Status | Owner | Files |
 |------|-------|--------|-------|-------|
-| TASK-CL-001 | MSSQL bracket masking + read-only guard dialect threading | approved | executor=claude-sonnet-4-6; reviewer=unic-smart | src/core/dangerousStatement.ts, src/core/connectionManager.ts + 4 core test files |
-| TASK-CL-002 | ARP-07 invalidation wiring (form DDL + AI plan-apply) | approved | reviewer=unic-smart, executor=claude-sonnet-4-6 | src/extension.ts, src/ui/tableCommands.ts, src/ui/aiChatPanel.ts + 2 ui test files |
-| TASK-CL-003 | Console draft snapshot name cap (ARP-08 minor) | approved | executor=claude-sonnet-4-6; reviewer=unic-smart | src/ui/consolePanelMessages.ts, src/ui/consolePanel.ts + 2 console test files |
-| TASK-CL-004 | BQ-00 + BQ-01 R4.5 carried minors (folded) | approved_minor | executor=claude-sonnet-4-6; reviewer=unic-smart | src/adapters/bigquery.ts, 2 bigquery test files, ADR 0004 doc |
+| TASK-BQ02-001 | BigQuery resource metadata adapter (real enumeration) | ready | - | src/adapters/bigquery.ts, src/adapters/__tests__/bigquery.test.ts |
+| TASK-BQ02-002 | BigQuery preview SQL builder + browse command arm | ready | - | src/ui/bigQueryPreview.ts (new), src/ui/browseCommands.ts + 2 test files |
+| TASK-BQ02-003 | Schema Explorer bigquery wiring (datasets, icons, row-count suppression) | ready | - | src/ui/schemaTree.ts + 2 tree test files |
+| TASK-BQ02-004 | Release copy + version gate (CHANGELOG, 1.49.0, boundary suite) | ready | - | CHANGELOG.md, package.json |
 
 ## Shipped prior cycles (v1.48.0 and earlier)
 
