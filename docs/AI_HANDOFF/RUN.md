@@ -1,6 +1,6 @@
 Command: handoff-fullstack
-Goal: Ship BQ-01 BigQuery connection foundation (ADC, billing project, location, lifecycle, factory admission, form diagnostics).
-Base: main @ 9bfd07d
-Phase: done
-Cursor: BQ-01 complete and shipped. P1 (lite) → P2 (planner 4-task plan, 12/12 self-audit) → P2.5 round 1 (2 important: wave-block vs self-audit + factory-seam misread) → P2 revise → P2.5 round 2 (Approved) → P3 (0d172b3) → I1 (maxParallelAgents=12) → I2 (1+2+1: 001 → {002∥004} → 003) → I3 (wave 1: 27fb551, wave 2: 49fd7af, wave 3: fe8a913; wave-2 retry required because worktree-side files were lost before commit-inside-worktree discipline was enforced) → I4 (8a5ac37) → R2 (4 reviewers opus/unic-smart: 1 approved_minor + 1 critical_block + 1 changes_requested + 1 changes_requested) → R4.5 round 1 (0d4ee67: 3 parallel fix agents — 002 TUPLE unwrap, 003 post-dispose test + docstring, 004 port-preservation; re-review 3 approved_minor + 002 critical_block again — deeper finding) → R4.5 round 2 (a348848: 002 single fix — forward {skipParsing:true} to client.query so wire element[2] keeps raw f[].v; re-review approved_minor) → R5 (CHANGELOG 1.47.0 + version bump 1.46.0→1.47.0 + lockfile dual sync + verify:release 3251|2 + commit fc81131 + tag v1.47.0 + push main+tag + vsce package + gh release create v1.47.0). 9 wave/commit messages, 5 new src files (bigquery.ts, bigquery.test.ts, bigqueryConfig.test.ts, factory.test.ts, connectionManager.test.ts), 4 new docs/tasks, ripple narrowed in factory/extension/browseCommands/resultsPanel for DriverType+="bigquery", BQ-00 surface byte-untouched.
-Next: BQ-02 (BigQuery resource explorer + table preview, depends on BQ-01 contracts) OR any of the 7 STATUS follow-ups — user picks via /ukit:handoff-fullstack. Recommend /compact before next cycle (this session has carried 10 ARP+BQ cycles of history).
+Goal: Ship CL-01 cleanup cycle — close 6 documented follow-ups from STATUS.md backlog (MSSQL bracket, ARP-07 invalidation wiring, snapshot name cap, BQ R4.5 minors).
+Base: main @ 611df12
+Phase: P2.5
+Cursor: P0 (CL-01 user pick) → P1 (lite INDEX/ACTIVE/RULES/TEMPLATE summary) → P2 (planner 4-task plan, 12/12 self-audit; dropped item 1 verified-fixed + item 7 non-issue) → P2.5 (independent opus review)
+Next: Spawn code-reviewer agent on PLAN.md (round count=0, first review)

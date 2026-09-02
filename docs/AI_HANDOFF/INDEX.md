@@ -1,14 +1,34 @@
 # INDEX
 
-## Cycle BQ-01 — BigQuery connection foundation (ADC, billing project, location)
+## Cycle CL-01 — Cleanup: close documented follow-ups from STATUS.md backlog
+
+Base: `main @ 611df12` (v1.47.0). Plan: `docs/AI_HANDOFF/PLAN.md`. All 4 tasks own
+disjoint file sets → single wave, fully parallel.
 
 | Task / Portfolio | Title | Status | Dependencies | Reviewer |
 |---|---|---|---|---|
-| TASK-BQ01-001 | Safe BigQuery connection config (pure validator + DriverType) | approved_minor | none | unic-smart |
-| TASK-BQ01-002 | BigQuery adapter / client lifecycle (`bigquery.ts`, BQ-00 seam) | approved_minor | TASK-BQ01-001 | unic-smart |
-| TASK-BQ01-003 | Factory + ConnectionManager admission for bigquery | approved_minor | TASK-BQ01-001, TASK-BQ01-002 | unic-smart |
-| TASK-BQ01-004 | Connection form + diagnostics for bigquery | approved_minor | TASK-BQ01-001 | unic-smart |
-| PORT-BQ-01 | BigQuery connection foundation (active — 4/4 tasks committed, pending_review) | active | PORT-BQ-00 | - |
+| TASK-CL-001 | MSSQL bracket-identifier masking + read-only guard dialect threading | ready | none | - |
+| TASK-CL-002 | ARP-07 invalidation wiring: form-view DDL + AI plan-apply fire the seam | ready | none | - |
+| TASK-CL-003 | Console draft snapshot: cap the `name` field (ARP-08 minor) | ready | none | - |
+| TASK-CL-004 | BQ-00 + BQ-01 R4.5 carried minors (folded) | ready | none | - |
+
+Graph: all four independent (wave 1, 4-wide — no same-wave file sharing: 001 owns
+`src/core/{dangerousStatement,connectionManager}.ts` + core tests; 002 owns
+`src/extension.ts` + `src/ui/{tableCommands,aiChatPanel}.ts` + their plan/table tests;
+003 owns `src/ui/{consolePanelMessages,consolePanel}.ts` + their tests; 004 owns
+`src/adapters/bigquery.ts` + bigquery tests + ADR 0004). Dropped as verified non-issues:
+STATUS.md item 1 (`browseCommands.ts` finally is already guarded at :148-183) and item 7
+(harness worktrees).
+
+## Cycle BQ-01 — BigQuery connection foundation (ADC, billing project, location) — shipped in v1.47.0
+
+| Task / Portfolio | Title | Status | Dependencies | Reviewer |
+|---|---|---|---|---|
+| TASK-BQ01-001 | Safe BigQuery connection config (pure validator + DriverType) | done (approved_minor R4.5 round 2) | none | unic-smart |
+| TASK-BQ01-002 | BigQuery adapter / client lifecycle (`bigquery.ts`, BQ-00 seam) | done (approved_minor R4.5 round 2; carried minors → TASK-CL-004) | TASK-BQ01-001 | unic-smart |
+| TASK-BQ01-003 | Factory + ConnectionManager admission for bigquery | done (approved_minor round 1) | TASK-BQ01-001, TASK-BQ01-002 | unic-smart |
+| TASK-BQ01-004 | Connection form + diagnostics for bigquery | done (approved_minor round 1) | TASK-BQ01-001 | unic-smart |
+| PORT-BQ-01 | BigQuery connection foundation | superseded (shipped in v1.47.0) | PORT-BQ-00 | unic-smart |
 
 Graph: TASK-BQ01-001 independent; TASK-BQ01-001 → TASK-BQ01-002; TASK-BQ01-001, TASK-BQ01-002 → TASK-BQ01-003; TASK-BQ01-001 → TASK-BQ01-004.
 
