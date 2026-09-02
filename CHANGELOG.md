@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.42.0] — 2026-09-02
+
+Cycle ARP-06: AI SQL Policy Unification and Usage Visibility — the two parallel AI read-only guards are now documented profiles of one fail-closed policy (ADR 0003), a security corpus pins the parser against adversarial bypasses (and closed one real hole), and AI Chat shows per-turn token usage that can never leak a prompt, SQL text, or secret.
+
+### Added
+- **AI SQL policy ADR** (`docs/decisions/0003-ai-sql-policy.md`): `parseReadonly` (core profile — deliberately over-rejecting) and `isReadOnlySql` (`run_sql` profile — first-keyword allow-list + residual scans) are documented as profiles of one policy, with a per-row matrix (DML/DDL/grants/server-side write/writable CTE/row locks/session-utility/literal-comment/multi-statement/parens/empty), the over-rejection policy rationale, the EXPLAIN-reduction rule, and §6.1's narrower run_sql guarantee: allow-listed first keyword + single statement + no residual mutation surface — mutation capability is inexpressible in BOTH profiles; only the core profile additionally denies benign reads that merely mention forbidden words.
+- **Security parser corpus** (`src/ai/tools/__tests__/readonlySqlParser.test.ts`): 60 corpus cases covering SELECT happy, writable CTE, EXPLAIN ANALYZE mutation, SELECT INTO, multi-statement, malformed parens, and the comment/literal policy (22 adversarial bypass probes). The corpus exposed a real hole — comment-hidden keywords (`SELECT 1 -- insert`) were admitted because token scans ran on a stripped copy; token scans now run on raw text, signatures unchanged.
+- **run_sql guard pins** (`src/ai/tools/__tests__/sqlTool.test.ts`): only approved SQL executes; the cursor closes on success AND error; denials are stable, machine-readable, and non-secret; the row cap is retained; EXPLAIN→inner-statement reduction pinned (pin-only — already correct). Vacuity excluded by a temporary guard mutation (36 failed / 14 passed before restore).
+- **Usage transport hardening** (`src/ai/provider.ts`): a `tokenCount()` guard (finite, non-negative, else 0) at all four usage read sites — malformed provider replies (negative/NaN/Infinity) can no longer poison accounting; streaming final-usage last-chunk-wins and no response-body retention were already safe and are pinned.
+- **Per-turn accounting** (`src/ai/agent.ts`): `TurnUsageSummary { inputTokens, outputTokens, unknown, steps }` on `AgentRunResult.usage` on both resolution paths (budget-capped included); a missing per-step usage counts as not-reported — never invented; an aborted turn rethrows with no result.
+- **Privacy-safe usage display** (`src/ui/aiChatPanel.ts`, `webview/aiChatPanelMain.ts`): the AI Chat panel shows a per-turn usage chip (tokens or "unknown") plus the policy notice. Hard invariant, pinned by tests: the frame carries numbers and closed-set notice text only — no raw prompt, no SQL text, no secrets, no trace content, no tool arguments (a SECRET_RE byte-scan over frame values guards regressions). The OMP path posts the notice with `unknown: true` at its single settle point; the builtin path posts only inside the non-aborted completion branch — abort never fabricates usage.
+
+### Review
+- P2.5 plan review: Round 1 Issues Found (ADR-vs-pins same-wave ownership rule, EXPLAIN-reduction already-implemented clarification, panel bundle-freshness check) — all applied; Round 2 Approved by unic-smart.
+- R2 per-task review by unic-smart: 002/003/004 approved, 005 approved_minor (OMP usage-frame content assertion noted), 001 changes_requested — the ADR matrix overstated run_sql's literal/comment handling (guard admits `SELECT 'insert'` etc.); fixed in R4.5 round 1 by correcting the matrix cell and adding §6.1 (docs-only; reviewer re-probed and confirmed), re-review approved_minor. Reviewers re-ran probes, focused suites (110+50+34+33+64 tests), typecheck, compile, and the full `npm test` (3094 passed).
+- Verification: full suite 3094 passed | 2 skipped (was 3043 | 2 at v1.41.0); `npm run typecheck` and `npm run compile` exit 0; `package-lock.json` both version fields synced to 1.42.0.
+
 ## [1.41.0] — 2026-09-02
 
 Cycle ARP-05: Cross-driver Timeout, Pool, and Resilience Contract — the three drivers' divergent pool/timeout policies are now a measured support contract (ADR 0002), with the one real gap (MySQL's unbounded queue wait) closed and everything already correct pinned by proof.
