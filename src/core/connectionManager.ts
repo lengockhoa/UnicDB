@@ -60,6 +60,21 @@ export interface ConnectionRecoveryStatus {
   readonly maxAttempts: number;
 }
 
+/**
+ * TASK-BQ01-003 — explicit post-dispose error. Any code path that would
+ * build a fresh adapter after `dispose()` (active lazy-connect, passive
+ * `getAdapterFor`, edit-probe, add-probe) throws this so callers — and the
+ * BigQueryAdapter factory — never see a silent post-dispose client
+ * rebuild. The message is explicit ("ConnectionManager is disposed") so
+ * the test assertion can target a stable contract.
+ */
+export class ConnectionManagerDisposedError extends Error {
+  constructor() {
+    super("ConnectionManager is disposed");
+    this.name = "ConnectionManagerDisposedError";
+  }
+}
+
 interface InternalState {
   connections: ConnectionConfig[];
   activeId: string | null;
@@ -161,8 +176,16 @@ export class ConnectionManager {
   /**
    * Thêm connection mới. Test-connect trước; fail → throw, không lưu gì.
    * Lưu metadata + password; KHÔNG active ngay (user phải gọi setActive riêng).
+   *
+   * TASK-BQ01-003 — BigQuery is password-less. `tryStorePassword` /
+   * `tryGetPassword` / `tryDeletePassword` are SKIPPED entirely for
+   * `driver === "bigquery"`: no `vsdb.pass.<id>` SecretStorage key is ever
+   * created, queried, or deleted on the bigquery path. ADC is fetched
+   * externally by the BigQuery adapter (BQ-00 boundary).
    */
   async addConnection(cfg: ConnectionConfig, password: string): Promise<void> {
+    // TASK-BQ01-003 — fail fast if disposed.
+    this.requireNotDisposed();
     // Test-connect qua resolver (DBX-05: tunnel-aware — probe đi qua
     // 127.0.0.1:<localPort> như adapter thật). Nếu fail → không lưu.
     const probe = await this.resolveAdapter(cfg, password);
@@ -187,7 +210,10 @@ export class ConnectionManager {
     await this.persistConnections();
 
     // Lưu password vào SecretStorage (try — nếu lỗi vẫn giữ metadata, để caller xử lý).
-    await this.tryStorePassword(cfg.id, password);
+    // TASK-BQ01-003 — skip for bigquery: password-less driver.
+    if (cfg.driver !== "bigquery") {
+      await this.tryStorePassword(cfg.id, password);
+    }
 
     this.fireConnectionsChanged();
   }
@@ -201,6 +227,8 @@ export class ConnectionManager {
     patch: Partial<ConnectionConfig>,
     password?: string,
   ): Promise<void> {
+    // TASK-BQ01-003 — fail fast if disposed.
+    this.requireNotDisposed();
     const idx = this.state.connections.findIndex((c) => c.id === id);
     if (idx < 0) {
       throw new Error(`Connection "${id}" không tồn tại`);
@@ -224,7 +252,11 @@ export class ConnectionManager {
     // An toàn nhất: luôn test-connect. DBX-05: probe dùng tunnel TEMP KEY —
     // start() idempotent per key, nên nếu probe dùng `id` nó sẽ trả về
     // tunnel CŨ (config bastion cũ) và một config mới sai vẫn pass save.
-    const testPassword = password ?? (await this.tryGetPassword(id)) ?? "";
+    // TASK-BQ01-003 — bigquery never queries SecretStorage for a password;
+    // use the empty fallback directly.
+    const testPassword = next.driver === "bigquery"
+      ? ""
+      : password ?? (await this.tryGetPassword(id)) ?? "";
     const probe = await this.resolveAdapter(
       next,
       testPassword,
@@ -249,7 +281,8 @@ export class ConnectionManager {
     this.state.connections[idx] = next;
     await this.persistConnections();
 
-    if (password !== undefined) {
+    // TASK-BQ01-003 — skip password store for bigquery.
+    if (password !== undefined && next.driver !== "bigquery") {
       await this.tryStorePassword(id, password);
     }
 
@@ -285,9 +318,13 @@ export class ConnectionManager {
     if (wasActive) {
       this.activeGeneration++;
     }
+    const old = this.state.connections[idx];
     this.state.connections.splice(idx, 1);
     await this.persistConnections();
-    await this.tryDeletePassword(id);
+    // TASK-BQ01-003 — skip SecretStorage delete for bigquery (no key exists).
+    if (old.driver !== "bigquery") {
+      await this.tryDeletePassword(id);
+    }
 
     if (wasActive) {
       await this.closeCurrentAdapter();
@@ -359,6 +396,8 @@ export class ConnectionManager {
    * Throw nếu không lấy được password từ SecretStorage hoặc testConnection fail.
    */
   async getAdapterFor(cfg: ConnectionConfig): Promise<DbAdapter> {
+    // TASK-BQ01-003 — fail fast if disposed.
+    this.requireNotDisposed();
     // Reuse cached passive adapter if present (avoid socket leak on every expansion).
     const cached = this.passiveAdapters.get(cfg.id);
     if (cached) {
@@ -374,16 +413,22 @@ export class ConnectionManager {
     // a MID-FLIGHT deletion is caught by the provenance re-check below.
     const current = this.currentConfigFor(cfg.id) ?? cfg;
 
+    // TASK-BQ01-003 — bigquery is password-less: no SecretStorage lookup,
+    // no "password not found" error. Pass "" through to the factory.
     let password: string | undefined;
-    try {
-      password = await this.tryGetPassword(cfg.id);
-    } catch {
-      password = undefined;
-    }
-    if (password === undefined || password === null) {
-      throw new Error(
-        `Không tìm được password cho connection "${cfg.name}". Vui lòng nhập lại password (edit connection).`,
-      );
+    if (current.driver === "bigquery") {
+      password = "";
+    } else {
+      try {
+        password = await this.tryGetPassword(cfg.id);
+      } catch {
+        password = undefined;
+      }
+      if (password === undefined || password === null) {
+        throw new Error(
+          `Không tìm được password cho connection "${cfg.name}". Vui lòng nhập lại password (edit connection).`,
+        );
+      }
     }
     // ARP-02.3: build from the CURRENT config so a reconnect after an edit
     // targets the new host/port, never the stale caller snapshot.
@@ -601,6 +646,8 @@ export class ConnectionManager {
    * Throw nếu không có active hoặc password không lấy được từ SecretStorage.
    */
   async getAdapter(): Promise<DbAdapter> {
+    // TASK-BQ01-003 — fail fast if disposed.
+    this.requireNotDisposed();
     const active = this.getActive();
     if (!active) {
       throw new Error("Chưa chọn connection active");
@@ -611,16 +658,23 @@ export class ConnectionManager {
       const activeGen = this.activeGeneration;
       const lifecycleGen = this.lifecycleGeneration;
       // Lazy connect: tạo adapter mới.
+      // TASK-BQ01-003 — bigquery is password-less: skip the SecretStorage
+      // lookup and the "password not found" guard entirely. ADC is fetched
+      // by the BigQuery adapter itself (BQ-00 boundary).
       let password: string | undefined;
-      try {
-        password = await this.ctx.secrets.get(KEY_PASS_PREFIX + active.id);
-      } catch {
-        password = undefined;
-      }
-      if (password === undefined || password === null) {
-        throw new Error(
-          `Không tìm được password cho connection "${active.name}". Vui lòng nhập lại password (edit connection).`,
-        );
+      if (active.driver === "bigquery") {
+        password = "";
+      } else {
+        try {
+          password = await this.ctx.secrets.get(KEY_PASS_PREFIX + active.id);
+        } catch {
+          password = undefined;
+        }
+        if (password === undefined || password === null) {
+          throw new Error(
+            `Không tìm được password cho connection "${active.name}". Vui lòng nhập lại password (edit connection).`,
+          );
+        }
       }
       const adapter = await this.buildAdapter(active, password);
       // Ownership re-check AFTER every await — never assign a stale candidate.
@@ -645,8 +699,22 @@ export class ConnectionManager {
     return this.currentAdapter;
   }
 
-  /** Dispose: đóng tất cả adapters (active + passive), clear timer. */
+  /**
+   * Dispose: đóng tất cả adapters (active + passive), clear timer.
+   *
+   * TASK-BQ01-003 — idempotent: double-dispose is a no-op (the second call
+   * short-circuits on the `disposed` flag). Post-dispose, the manager
+   * refuses to construct any further adapter (active or passive) for any
+   * connection — including bigquery — by throwing an explicit
+   * ConnectionManagerDisposedError. The bigquery case is wired through the
+   * factory's own closed-error surface (BigQueryAdapter throws on
+   * construction post-dispose when it sees the disposed flag injected by
+   * the test harness), but the manager-level guard also blocks any
+   * `factory()` call from running again.
+   */
   async dispose(): Promise<void> {
+    // Idempotency guard — second dispose is a no-op.
+    if (this.disposed) return;
     // RLX-03 fix round 1: set the disposed flag synchronously BEFORE any
     // disposal await, THEN bump the lifecycle generation — both before any
     // in-flight recovery can observe anything. A tunnel exit delivered after
@@ -658,6 +726,11 @@ export class ConnectionManager {
     this.tunnelExitSub?.dispose();
     this.tunnelExitSub = null;
     await this.closeCurrentAdapter();
+    // TASK-BQ01-003 — drop active bookkeeping so `getActive()` reflects
+    // post-dispose state. Pre-dispose the state is reset; subsequent
+    // `getAdapter()` calls fail fast in `requireNotDisposed()`.
+    this.currentActiveId = null;
+    this.state.activeId = null;
     // Close every cached passive adapter to avoid socket leaks across reloads.
     const ids = Array.from(this.passiveAdapters.keys());
     for (const id of ids) {
@@ -672,6 +745,19 @@ export class ConnectionManager {
     // _onDidChangeActiveEmitter is owned by the extension context (subscribed
     // to context.subscriptions); do NOT dispose it here — doing so would
     // also drop listeners that are still active on a reloaded window.
+  }
+
+  /**
+   * TASK-BQ01-003 — guard for any code path that would build a fresh
+   * adapter post-dispose (active lazy-connect, passive getAdapterFor,
+   * edit-probe, add-probe). Throws an explicit disposed error so callers
+   * (and the BigQueryAdapter factory) never see a silent post-dispose
+   * client rebuild.
+   */
+  private requireNotDisposed(): void {
+    if (this.disposed) {
+      throw new ConnectionManagerDisposedError();
+    }
   }
 
   /**
