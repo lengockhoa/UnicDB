@@ -226,10 +226,10 @@ Source: `docs/plans/2026-09-01-vsdb-additive-roadmap.md` §ARP-07 (lines 320-358
 
 | Task / Portfolio | Title | Status | Dependencies | Reviewer |
 |---|---|---|---|---|
-| TASK-ARP07-001 | Schema-impact classifier (pure core, dialect-aware) | ready | none | unic-smart |
-| TASK-ARP07-002 | Schema cache race: invalidate-during-fetch (verify-first) | ready | none | unic-smart |
-| TASK-ARP07-003 | AI schema cache: invalidate-during-hydration stale-commit fix | ready | none | unic-smart |
-| TASK-ARP07-004 | Execution wiring: successful-DDL invalidation via host seam | ready | TASK-ARP07-001, TASK-ARP07-002, TASK-ARP07-003 | unic-smart |
+| TASK-ARP07-001 | Schema-impact classifier (pure core, dialect-aware) | pending_review | none | unic-smart |
+| TASK-ARP07-002 | Schema cache race: invalidate-during-fetch (verify-first) | pending_review | none | unic-smart |
+| TASK-ARP07-003 | AI schema cache: invalidate-during-hydration stale-commit fix | pending_review | none | unic-smart |
+| TASK-ARP07-004 | Execution wiring: successful-DDL invalidation via host seam | pending_review | TASK-ARP07-001, TASK-ARP07-002, TASK-ARP07-003 | unic-smart |
 
 Graph: TASK-ARP07-001 independent; TASK-ARP07-002 independent; TASK-ARP07-003 independent;
 TASK-ARP07-001, 002, 003 → TASK-ARP07-004.

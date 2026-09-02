@@ -1,6 +1,6 @@
 # TASK-ARP07-003 — AI schema cache: invalidate-during-hydration stale-commit fix
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §1, §2, §4, §5, §6

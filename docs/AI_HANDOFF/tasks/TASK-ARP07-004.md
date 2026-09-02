@@ -1,6 +1,6 @@
 # TASK-ARP07-004 — Execution wiring: successful-DDL invalidation via host seam
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §1, §2, §4, §5, §6
