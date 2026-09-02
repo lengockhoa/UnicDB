@@ -93,3 +93,85 @@ discipline (`totalBytesBilled: string` in `bigqueryTypes.ts`).
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator. -->
 <!-- Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
+
+## Executor Report
+
+**STATUS: DONE**
+**EXECUTOR_TOOL:** claude-code
+**EXECUTOR_MODEL:** claude-sonnet-4-5
+**EXECUTOR_SUBAGENT:** Claude:feature-implementer
+**SUMMARY:** Extended `src/config/types.ts` with `"bigquery"` member on `DriverType`, optional `bigquery` sub-object on `ConnectionConfig`, exported `BigQueryConnectionFields` + `BigQueryValidation` types, and pure `validateBigQueryConnection(cfg)` enforcing R1-R4. Added new `src/adapters/__tests__/bigqueryConfig.test.ts` covering all 6 test cases (13 sub-tests total). Validator is pure (no vscode / @google-cloud/bigquery import).
+**TEST_PLAN_FOLLOWED:** task §Test Cases (inlined as the 6 numbered cases; happy / edge-empty / edge-type / edge-security / edge-compat / edge-rule)
+**FILES_CHANGED:**
+  - src/config/types.ts: added 'bigquery' to DriverType; added optional bigquery?:BigQueryConnectionFields to ConnectionConfig; added BigQueryConnectionFields + BigQueryValidation types; added validateBigQueryConnection() enforcing R1 (sub-object present), R2 (billingProject non-empty/non-whitespace), R3 (maxBytesBilled is canonical digit-string > 0), R4 (host/port/user/database empty for BQ), C0 (non-BQ drivers pass through {ok:true}).
+  - src/adapters/__tests__/bigqueryConfig.test.ts: NEW — 13 unit tests covering all 6 task §Test Cases. Fixture `bqCfg()` mirrors factory.test.ts pattern with minimum required fields.
+  - src/adapters/factory.ts: added `case "bigquery": throw new NotImplementedError("bigquery")` to keep the `never` exhaustiveness arm valid (BQ01-003 will replace with real adapter case).
+  - src/ui/browseCommands.ts: added `case "bigquery": throw new Error(...)` to `quoteForDriver()` switch — same exhaustiveness reason.
+  - src/extension.ts: added private `toSqlDialect()` helper (DriverType | undefined → SqlDialect | undefined; returns undefined for bigquery) and wrapped 5 call sites (VsdbCodeLensProvider, sqlToRun x2, confirmDangerousStatements, invalidateAfterSchemaDdl). SqlDialect type stays narrow.
+  - src/ui/resultsPanel.ts: added private `toDialect()` helper (DriverType | null → Dialect | null; returns null for bigquery) and wrapped 4 call sites (decorateStateMessage, distinct values, requery parsing, requery compose). Dialect type stays narrow.
+
+**TESTS_ADDED:**
+  - src/adapters/__tests__/bigqueryConfig.test.ts:
+    - validateBigQueryConnection — happy path > valid bigquery config with billingProject + location validates (#1)
+    - validateBigQueryConnection — empty/whitespace billingProject > rejects empty billingProject (#2a)
+    - validateBigQueryConnection — empty/whitespace billingProject > rejects whitespace-only billingProject (#2b)
+    - validateBigQueryConnection — maxBytesBilled shape > rejects non-digit maxBytesBilled 'abc' (#3a)
+    - validateBigQueryConnection — maxBytesBilled shape > rejects negative maxBytesBilled '-5' (#3b)
+    - validateBigQueryConnection — maxBytesBilled shape > rejects zero maxBytesBilled '0' (#3c)
+    - validateBigQueryConnection — maxBytesBilled shape > accepts canonical positive maxBytesBilled '1000000' (#3d)
+    - validateBigQueryConnection — serialization redaction > JSON.stringify output never contains credentials-shaped fields (#4a)
+    - validateBigQueryConnection — serialization redaction > BigQueryConnectionFields type does not admit credential-shaped keys (#4b)
+    - validateBigQueryConnection — legacy 3-driver configs untouched > postgres config passes validateBigQueryConnection (#5a)
+    - validateBigQueryConnection — legacy 3-driver configs untouched > postgres config typechecks unchanged (#5b)
+    - validateBigQueryConnection — empty host/port/user/database for bigquery > rejects non-empty host (#6a)
+    - validateBigQueryConnection — empty host/port/user/database for bigquery > rejects non-zero port (#6b)
+
+**VERIFICATION:**
+  command: npx vitest run src/adapters/__tests__/bigqueryConfig.test.ts
+  result: 13 pass / 0 fail / exit 0
+  output_excerpt: |
+    ✓ src/adapters/__tests__/bigqueryConfig.test.ts  (13 tests) 2ms
+    Test Files  1 passed (1)
+         Tests  13 passed (13)
+  command: npm run typecheck
+  result: clean / exit 0 (no errors)
+  output_excerpt: |
+    > vsdb@1.46.0 typecheck
+    > tsc --noEmit
+  command: npx vitest run src/adapters/__tests__/bigqueryConfig.test.ts src/adapters/__tests__/bigqueryTypes.test.ts src/adapters/__tests__/bigqueryAdc.test.ts src/adapters/__tests__/factory.test.ts
+  result: 30 pass / 0 fail / exit 0 (BQ-00 surfaces + factory stay green)
+  output_excerpt: |
+    ✓ src/adapters/__tests__/bigqueryTypes.test.ts  (7 tests) 2ms
+    ✓ src/adapters/__tests__/bigqueryConfig.test.ts  (13 tests) 2ms
+    ✓ src/adapters/__tests__/bigqueryAdc.test.ts  (6 tests) 7ms
+    ✓ src/adapters/__tests__/factory.test.ts  (4 tests) 2ms
+    Test Files  4 passed (4)
+         Tests  30 passed (30)
+
+**RED output (pre-GREEN, captured before types.ts was extended):**
+  command: npx vitest run src/adapters/__tests__/bigqueryConfig.test.ts
+  result: 11 failed | 2 passed (13) — TypeError: validateBigQueryConnection is not a function
+  output_excerpt: |
+    ✗ validateBigQueryConnection — happy path > valid bigquery config with billingProject + location validates
+      → validateBigQueryConnection is not a function
+    ✗ validateBigQueryConnection — empty/whitespace billingProject > rejects empty billingProject
+      → validateBigQueryConnection is not a function
+    ✗ validateBigQueryConnection — maxBytesBilled shape > rejects non-digit maxBytesBilled ('abc')
+      → validateBigQueryConnection is not a function
+    ... [11 total failures, all TypeError: validateBigQueryConnection is not a function]
+    Test Files  1 failed (1)
+         Tests  11 failed | 2 passed (13)
+
+**Note on the 2 tests that passed during RED:** `JSON.stringify output never contains credentials-shaped fields` (#4a) and `BigQueryConnectionFields type does not admit credential-shaped keys` (#4b) are pure shape/serialization invariants — they do not depend on the validator. They passed because they exercise a literal `{ billingProject, location, maxBytesBilled, datasetProject }` object whose JSON serialization contains none of the banned substrings. This is the correct test behavior: the invariant is structural (the type admits no credential-shaped keys), not behavioral (a function under test). These will continue to pass after GREEN and pin the redaction contract independently of the validator's runtime behavior. Not flagged as 'wrong tests' — they are intentional type-level redaction proofs.
+
+**ISSUES:**
+1. **Scope ripple beyond src/config/types.ts.** Adding `"bigquery"` to `DriverType` broke typecheck in 4 consumer files (factory.ts exhaustive `never`, browseCommands.ts exhaustive `never`, extension.ts 5 call sites passing DriverType where SqlDialect expected, resultsPanel.ts 4 call sites passing DriverType where Dialect expected). The task Target Files section says "No other change" but lists `npm run typecheck` as the static gate. I resolved this in the executor's favor (added the minimum-touch updates) for the following principled reasons:
+   - factory.ts exhaustive case is allocated to BQ01-003 in PLAN.md §2 (will be replaced with the real adapter). Adding the case now as a throw keeps the `never` arm valid without stealing BQ01-003's work.
+   - browseCommands.ts / extension.ts / resultsPanel.ts call-site ripples were NOT allocated to any BQ01 task in PLAN.md. They represent a planner oversight (no future wave was assigned). Narrowing at the call site via private `toSqlDialect` / `toDialect` helpers keeps the existing `SqlDialect` and `Dialect` types narrow (so statementParser / saveStatements don't gain unknown branches) and degrades gracefully (BQ connections without an adapter yet get `undefined` / `null` and fall through to the existing no-dialect rendering branch).
+   - postgres.ts / mysql.ts / mssql.ts + their tests are NOT touched — the acceptance-criterion signature guarantee is preserved.
+2. **Bundle test failures pre-existing.** `src/ui/__tests__/consolePanelBundle.test.ts` (18 failures) and `src/ui/__tests__/agGridSmoke.test.ts` (1) and `src/extension.test.ts` (1) fail with "dist/... missing — run npm run compile first". Confirmed pre-existing on clean main via `git stash` + re-run. Not caused by this task. Not in Verification Commands.
+3. **validator.reason for empty billingProject was tightened** during GREEN iteration: original draft said `BigQuery `billingProject` is required and must be non-empty.` (failing the case-insensitive `billing project` substring check). Changed to `BigQuery billing project is required and must be non-empty.` to satisfy test #2.
+
+**HANDOFF_TO_REVIEWER:** yes — task implementation complete; all 6 test cases pass; typecheck clean; BQ-00 surfaces + factory unchanged.
+
+**NEXT:** Ready for review. BQ01-003 (factory + connectionManager) will replace factory.ts `case "bigquery"` with the real adapter case, and may want to revisit extension.ts / resultsPanel.ts narrowing helpers if BQ connections are expected to be active before BQ01-002 lands.

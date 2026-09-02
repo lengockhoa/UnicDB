@@ -60,6 +60,11 @@ function quoteForDriver(
       return '`' + id.replace(/`/g, "``") + '`';
     case "mssql":
       return '[' + id.replace(/]/g, "]]") + ']';
+    case "bigquery":
+      // BQ01-001 — keep the `never` exhaustiveness arm valid. BigQuery quoting
+      // semantics live with TASK-BQ01-002/004 (form + adapter wiring); this
+      // path is unreachable until that lands.
+      throw new Error(`Unsupported driver: bigquery (BQ-02 wiring pending)`);
     default: {
       const _exhaustive: never = driver;
       void _exhaustive;

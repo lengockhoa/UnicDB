@@ -66,6 +66,21 @@ import {
 const DEFAULT_PAGE_SIZE = 500;
 
 /**
+ * BQ01-001 — narrow `DriverType` → `Dialect`. BigQuery's requery / save /
+ * distinct / ORDER-BY path is owned by BQ01-002 (adapter) + future cycles;
+ * until then a bigquery driver is treated as "no save-statement dialect",
+ * so the panel falls through to the no-dialect rendering branch that
+ * already existed for connections without an active driver. The Dialect
+ * type itself stays narrow (statementParser / saveStatements don't gain
+ * unknown branches).
+ */
+function toDialect(
+  driver: ConnectionConfig["driver"] | null,
+): Dialect | null {
+  return driver === "bigquery" ? null : driver;
+}
+
+/**
  * Host-side save flow hook. The extension wires this so the panel knows:
  *  - what dialect the active connection uses,
  *  - how to read PK column metadata for a (schema, table) pair (or skip
@@ -517,7 +532,7 @@ export class ResultsPanel {
    * projection exactly — otherwise the key is omitted entirely.
    */
   private decorateStateMessage(msg: StateMessage): void {
-    const dialect = this.saveContext?.getDriver() ?? undefined;
+    const dialect = toDialect(this.saveContext?.getDriver() ?? null);
     if (dialect) {
       msg.dialect = dialect;
     }
@@ -1472,7 +1487,7 @@ export class ResultsPanel {
       reply(cached.values, cached.truncated);
       return;
     }
-    const dialect = this.saveContext?.getDriver() ?? null;
+    const dialect = toDialect(this.saveContext?.getDriver() ?? null);
     if (!dialect) {
       reply(
         [],
@@ -1691,7 +1706,7 @@ export class ResultsPanel {
     // Concurrency guard: a stale (slower) in-flight requery must never
     // overwrite a newer one that already started.
     const seq = ++this.requerySeq;
-    const dialect = this.saveContext?.getDriver() ?? null;
+    const dialect = toDialect(this.saveContext?.getDriver() ?? null);
 
     // TASK-004 — parse ORDER BY with the LIVE dialect (that is what rejects
     // NULLS on mysql/mssql). A parse failure is surfaced to the user AND as

@@ -6,8 +6,9 @@
  * - postgres: PostgreSQL (pg)
  * - mysql: MySQL / MariaDB (mysql2)
  * - mssql: SQL Server (tedious)
+ * - bigquery: Google BigQuery (BQ-00 boundary; config-only — NO credentials).
  */
-export type DriverType = "postgres" | "mysql" | "mssql";
+export type DriverType = "postgres" | "mysql" | "mssql" | "bigquery";
 
 /**
  * Cấu hình kết nối DB do user tạo qua SecretStorage / WorkspaceState.
@@ -55,9 +56,122 @@ export interface ConnectionConfig {
     user?: string;
     identityFile?: string;
   };
+  /**
+   * BQ-01 — BigQuery-only safe metadata. ONLY present when `driver === "bigquery"`.
+   * Carries NO credential-shaped field by construction (no `credentials`, no
+   * `keyFilename`, no `token`, no `password`) — ADC is external to this module
+   * (BQ-00 boundary in `src/adapters/bigqueryAdc.ts`).
+   */
+  bigquery?: BigQueryConnectionFields;
+}
+
+/**
+ * BQ-01 — safe metadata sub-object for a BigQuery connection. By design,
+ * every field here is either a project identifier or a cost control —
+ * NEVER a credential. ADC is fetched externally (`createBigQueryClient` in
+ * BQ-00) and never enters this config layer.
+ */
+export interface BigQueryConnectionFields {
+  /** GCP project ID that owns the billing for query jobs. REQUIRED. */
+  billingProject: string;
+  /** BigQuery location / region (e.g. "US", "EU", "us-central1"). */
+  location?: string;
+  /**
+   * Cost control — maximum bytes billed per query. Canonical digit-string
+   * (NOT a JS `number`) because byte counts can exceed
+   * `Number.MAX_SAFE_INTEGER` and this matches BQ-00's string-bytes
+   * discipline (`totalBytesBilled: string` in `bigqueryTypes.ts`).
+   */
+  maxBytesBilled?: string;
+  /** Dataset-project override when it differs from `billingProject`. */
+  datasetProject?: string;
 }
 
 export type SslMode = "disable" | "require" | "verify-ca" | "verify-full";
+
+/**
+ * BQ-01 — pure validation result envelope.
+ * Discriminated by `ok`; `reason` is only meaningful when `ok === false`.
+ */
+export type BigQueryValidation = { ok: true } | { ok: false; reason: string };
+
+/**
+ * BQ-01 — pure validator for `driver === "bigquery"` connections.
+ *
+ * Rules enforced (per task §Test Cases):
+ *  - R1  `driver === "bigquery"` requires `bigquery` sub-object.
+ *  - R2  `bigquery.billingProject` MUST be a non-empty, non-whitespace string.
+ *  - R3  `bigquery.maxBytesBilled` (when present) MUST be a canonical
+ *       digit-string of a positive integer (rejects "", "abc", "-5", "0",
+ *       "1.5", "1e9", etc.).
+ *  - R4  For BQ connections, `host`, `port`, `user`, `database` MUST be empty
+ *       / zero — BQ has no notion of these and a non-empty value indicates
+ *       a mis-pasted legacy config.
+ *  - C0  Non-bigquery drivers pass through `{ok:true}` untouched.
+ *
+ * The function is PURE: no imports from `vscode` or `@google-cloud/bigquery`,
+ * no I/O, no exceptions thrown. ADC remains external (BQ-00 seam).
+ */
+export function validateBigQueryConnection(
+  cfg: ConnectionConfig,
+): BigQueryValidation {
+  // C0 — legacy 3-driver configs: the BQ validator is OPT-IN; non-bq drivers
+  //      are not the validator's concern and pass through.
+  if (cfg.driver !== "bigquery") {
+    return { ok: true };
+  }
+
+  // R1 — must carry the sub-object.
+  const bq = cfg.bigquery;
+  if (!bq) {
+    return { ok: false, reason: "BigQuery connection must carry a `bigquery` sub-object with `billingProject`." };
+  }
+
+  // R2 — billingProject non-empty / non-whitespace.
+  if (typeof bq.billingProject !== "string" || bq.billingProject.trim().length === 0) {
+    return { ok: false, reason: "BigQuery billing project is required and must be non-empty." };
+  }
+
+  // R3 — maxBytesBilled, when present, is a canonical digit-string > 0.
+  if (bq.maxBytesBilled !== undefined) {
+    const s = bq.maxBytesBilled;
+    if (typeof s !== "string" || !/^[1-9]\d*$/.test(s)) {
+      return {
+        ok: false,
+        reason:
+          "BigQuery `maxBytesBilled` must be a canonical positive digit-string (no sign, no decimals, no exponent, not zero).",
+      };
+    }
+  }
+
+  // R4 — host/port/user/database MUST be empty for BQ.
+  if (cfg.host !== "") {
+    return {
+      ok: false,
+      reason: "BigQuery connections must leave `host` empty; set `bigquery.location` instead.",
+    };
+  }
+  if (cfg.port !== 0) {
+    return {
+      ok: false,
+      reason: "BigQuery connections must leave `port` at 0; BigQuery has no port.",
+    };
+  }
+  if (cfg.user !== "") {
+    return {
+      ok: false,
+      reason: "BigQuery connections must leave `user` empty; authentication is via Application Default Credentials.",
+    };
+  }
+  if (cfg.database !== "") {
+    return {
+      ok: false,
+      reason: "BigQuery connections must leave `database` empty; set `bigquery.datasetProject` if it differs from `billingProject`.",
+    };
+  }
+
+  return { ok: true };
+}
 
 /**
  * Một statement SQL đã được parser tách ra.

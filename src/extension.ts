@@ -119,6 +119,22 @@ let invalidateAfterSchemaDdl:
   | null = null;
 
 // =====================================================================
+// BQ01-001 — narrow DriverType → SqlDialect. BigQuery's path is wired by
+// BQ01-002/003 (adapter + factory admission); until then, this layer
+// treats a bigquery driver as "no SQL splitter dialect" and the BQ
+// runQuery path (when added) will own its own SQL handling. The narrowing
+// is local to extension.ts because that's where `mgr.getActive()?.driver`
+// crosses into the SqlDialect-typed boundary; the SqlDialect type itself
+// stays narrow so statementParser / confirmDangerous don't gain unknown
+// branches.
+// =====================================================================
+function toSqlDialect(
+  driver: ConnectionConfig["driver"] | undefined,
+): SqlDialect | undefined {
+  return driver === "bigquery" ? undefined : driver;
+}
+
+// =====================================================================
 // TASK-ARP09-003 — Lazy redacted Output Channel wiring.
 // The diagnostic channel is module-level, LAZY (no createOutputChannel at
 // activate), and the activate-end lifecycle `info` line is BUFFERED so a
@@ -415,7 +431,7 @@ export async function activate(
   // (review fix round C, Finding #3) — resolver reads the LIVE active
   // connection at lens-render time (not captured once at construction), so
   // switching connections re-dialects the next `provideCodeLenses` call.
-  const codeLens = new VsdbCodeLensProvider(() => mgr.getActive()?.driver);
+  const codeLens = new VsdbCodeLensProvider(() => toSqlDialect(mgr.getActive()?.driver));
   context.subscriptions.push(
     vscode.languages.registerCodeLensProvider(
       { scheme: "file", language: "sql" },
@@ -1788,7 +1804,7 @@ function commandOpenConsole(
           sql,
           { start: 0, end: sql.length },
           0,
-          mgr.getActive()?.driver,
+          toSqlDialect(mgr.getActive()?.driver),
         );
         if (statements.length === 0) {
           void vscode.window.showInformationMessage(
@@ -1850,7 +1866,7 @@ async function runQueryFromEditor(
   // (review fix round C, Finding #3) — pass the active connection's real
   // dialect through so MSSQL `GO` batch separators / MySQL backslash string
   // escaping actually apply instead of always splitting as if Postgres.
-  const { statements } = sqlToRun(sql, sel, cursorOffset, mgr.getActive()?.driver);
+  const { statements } = sqlToRun(sql, sel, cursorOffset, toSqlDialect(mgr.getActive()?.driver));
   if (statements.length === 0) {
     void vscode.window.showInformationMessage("VSDB: không có statement để chạy.");
     return;
@@ -1918,7 +1934,7 @@ async function applyKeywordQualify(
   // `splitStatements` used to produce `statements` in the first place; else
   // the guard can misclassify a MySQL backslash-escaped string body (see
   // `dangerousStatement.ts` Finding #5) and silently skip a confirm dialog.
-  if (!(await confirmDangerousStatements(statements, active?.driver))) {
+  if (!(await confirmDangerousStatements(statements, toSqlDialect(active?.driver)))) {
     return;
   }
   // TASK-007 — Rewrite reserved-keyword table names after FROM/INTO/UPDATE/JOIN
@@ -1963,7 +1979,7 @@ async function applyKeywordQualify(
       const completed = results
         .filter((r) => r.status === "done")
         .map((r) => r.sql);
-      invalidateAfterSchemaDdl?.(completed, active?.driver);
+      invalidateAfterSchemaDdl?.(completed, toSqlDialect(active?.driver));
     }
   } catch (err) {
     void vscode.window.showErrorMessage(

@@ -19,6 +19,11 @@ export function createAdapter(cfg: ConnectionConfig, password: string): DbAdapte
       return new MySqlAdapter(cfg, password);
     case "mssql":
       return new MsSqlAdapter(cfg, password);
+    case "bigquery":
+      // BQ01-001 keeps the `never` exhaustiveness arm valid by acknowledging
+      // the new variant. The real adapter case (`return new BigQueryAdapter(cfg)`)
+      // is owned by TASK-BQ01-003, which builds on TASK-BQ01-002's adapter.
+      throw new NotImplementedError("bigquery");
     default: {
       const _exhaustive: never = cfg.driver;
       throw new NotImplementedError(String(_exhaustive));
