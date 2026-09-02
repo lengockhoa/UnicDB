@@ -1,6 +1,6 @@
 # TASK-ARP08-002 — Host draft restore: hydrate, debounced flush, dispose flush, durable clear
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §1, §2, §3, §4, §5, §7
@@ -79,3 +79,83 @@ npm run typecheck
 - Hydration order: constructor seeds the empty tab FIRST (`consolePanel.ts:143-144`), then `hydrateDrafts()` REPLACES the seed when a valid snapshot exists. On corrupt/missing, keep the seed. Mirror `hydrateHistory`'s defensive style (`310-318`).
 - `draftMemento.update(key, undefined)` removes the key in real VS Code and in `FakeMemento` (`data.set(key, undefined)` → `get` returns `undefined`). Pin that exact observable in test #8.
 - Timer type: `ReturnType<typeof setTimeout>` keeps Node+DOM timer types compatible — do not use `number`.
+
+---
+
+## Executor Report
+
+- Status executed: `ready` → `pending_review`
+- Executor: Claude Code feature-implementer subagent
+
+### RED (before implementation)
+
+`npx vitest run src/ui/__tests__/consolePanel.test.ts` → **10 failed | 19 passed (29)**. Every ARP-08 draft test failed for the expected reason (no `draftMemento` handling existed — no hydrate, no persist, no clear):
+
+```
+FAIL ... > #1 happy: updateBuffer persists a debounced draft snapshot to the memento after 500ms
+FAIL ... > #2 happy: a second panel over the SAME memento (reopen) restores tabs + active id
+FAIL ... > #4 edge: 1-tab and 2-tab (active=tab2) snapshots both restore verbatim on reopen
+FAIL ... > #6 edge/flush-once: dirty panel → dispose() → dispose() again writes the draft exactly once
+FAIL ... > #6b edge/flush-once: panel-close path (onDidDispose) also flushes exactly once
+FAIL ... > #7 edge/privacy: persisted payload carries exactly {version,tabs,activeTabId} and tabs {id,name,buffer}
+FAIL ... > #8 edge/durable clear: clearDrafts removes the memento key; reopen shows one empty 'Query 1'
+FAIL ... > #9 edge/clamp: 21 tabs + oversized buffer persist as 20 tabs with the buffer sliced
+FAIL ... > #12 edge/latest-wins: three rapid updateBuffers then dispose WITHOUT advancing → one persist carrying C
+FAIL ... > #13 edge/order: out-of-creation-order snapshot tabs restore verbatim in snapshot order
+Test Files  1 failed (1)   Tests  10 failed | 19 passed (29)
+```
+
+(Excerpt of #13 failure — restore absent, seed tab returned instead:)
+
+```
+AssertionError: expected [ 'tab-mtji45hh-xmuof0' ] to deeply equal [ 'zzz', 'aaa' ]
+```
+
+### Implementation notes
+
+- `ConsolePanelOptions.draftMemento?: vscode.Memento` added; when omitted, hydrate/persist no-op (in-memory fallback, test #11).
+- `hydrateDrafts()` runs after the seed tab + `hydrateHistory()`; replaces state only when `parseConsoleDraftSnapshot` returns a valid snapshot; never throws (tests #3/#4/#13).
+- `updateBuffer` routes through `tabById` guard → `setBuffer` + `scheduleDraftPersist()` (500ms trailing-edge, latest-wins, reset per update); stays SILENT (no `postState`) — render-loop seam preserved (PLAN §3). Unknown tabId arms nothing (test #10, regression per task table).
+- `persistDrafts()` clears the timer, writes only when `draftDirty` (idempotent); `buildDraftSnapshot()` clamps to `CONSOLE_DRAFTS_MAX_TABS` / `CONSOLE_DRAFTS_MAX_BUFFER_CHARS` and remaps `activeTabId` into survivors (tests #9, #12).
+- `flushDrafts()` (idempotent, delegates to `persistDrafts()`) called FIRST in both `dispose()` and the `onDidDispose` handler — exactly-once semantics pinned in tests #6/#6b; `draftTimer` is `ReturnType<typeof setTimeout>`.
+- `handleClearDrafts()`: cancels timer, `draftMemento.update(CONSOLE_DRAFTS_KEY, undefined)` (durable-empty — later dispose cannot resurrect), resets to one fresh empty `Query 1`, posts `state` + `draftsCleared` ack (test #8).
+- `hydrateHistory` / `pushHistory`, AIC-004 ghost-text seams, ARP-02 surfaces, and the public accessor signatures are untouched (additive lines only).
+- Fix rounds during GREEN: test-side `m`→`memento` typo in #9; implementation-side added the `tabById` guard on `updateBuffer` after test #10 exposed that arming the timer on an unknown tabId would persist a stale snapshot.
+
+### Verification (fresh, this turn)
+
+`npx vitest run src/ui/__tests__/consolePanel.test.ts src/ui/__tests__/consolePanelMessages.test.ts src/ui/__tests__/consoleTabs.test.ts`:
+
+```
+ ✓ src/ui/__tests__/consoleTabs.test.ts  (8 tests) 19ms
+ ✓ src/ui/__tests__/consolePanel.test.ts  (29 tests) 19ms
+
+ Test Files  3 passed (3)
+      Tests  63 passed (63)
+```
+
+`npm run typecheck` (tsc --noEmit): clean, no output.
+
+Test-plan coverage vs §Test Cases: #1 ✓, #2 ✓, #3 ✓, #4 ✓ (1-tab + 2-tab), #5 ✓ (onRun spy zero calls), #6 ✓ (+#6b onDidDispose path), #7 ✓ (exact key sets, no results/history/connection keys), #8 ✓ (key removed → `undefined`, reopen empty, no resurrection after later dispose), #9 ✓ (20 tabs + 64k slice + active remap), #10 ✓ (silent no-op, no memento write), #11 ✓ (no-memento fallback), #12 ✓ (one persist carrying C), #13 ✓ (verbatim snapshot order). Debounce tests use `vi.useFakeTimers()` + `vi.advanceTimersByTime(500)` and never `until()`.
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: Claude:feature-implementer
+SUMMARY: ConsolePanel now persists/restores workspace-scoped drafts: constructor hydration (fail-closed), debounced updateBuffer persist (silent, 500ms trailing), idempotent flush on both dispose paths, durable clearDrafts — all without ever invoking onRun.
+TEST_PLAN_FOLLOWED: task §Test Cases (all 13 cases; #6b added to pin the onDidDispose flush path separately)
+FILES_CHANGED:
+  - src/ui/consolePanel.ts: draftMemento option, hydrateDrafts, scheduleDraftPersist/persistDrafts/flushDrafts, updateBuffer tabId guard + debounce, clearDrafts case
+  - src/ui/__tests__/consolePanel.test.ts: local FakeMemento + describe "ConsolePanel — draft recovery (ARP-08)" (14 tests)
+TESTS_ADDED:
+  - src/ui/__tests__/consolePanel.test.ts: #1 debounced persist, #2 reopen restore, #3 corrupt fallback, #4 1/2-tab restore, #5 never-runs, #6/#6b flush-once both paths, #7 privacy pin, #8 durable clear, #9 clamp, #10 unknown-tabId no-op, #11 no-memento fallback, #12 latest-wins, #13 snapshot order
+VERIFICATION:
+  command: npx vitest run src/ui/__tests__/consolePanel.test.ts src/ui/__tests__/consolePanelMessages.test.ts src/ui/__tests__/consoleTabs.test.ts && npm run typecheck
+  result: 63 pass / 0 fail; typecheck clean
+  output_excerpt: |
+    Test Files  3 passed (3)
+         Tests  63 passed (63)
+    > tsc --noEmit   (no errors)
+ISSUES: none
+HANDOFF_TO_REVIEWER: yes — DONE with fresh PASS output; reviewer model must differ from unic-code
+NEXT: ready for review; then TASK-ARP08-004 wires extension.ts draftMemento

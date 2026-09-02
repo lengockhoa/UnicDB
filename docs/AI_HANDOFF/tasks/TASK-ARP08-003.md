@@ -77,3 +77,81 @@ npm run typecheck
 - jsdom `visibilityState` is read-only; if `Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true })` does not stick, drop test #6 to a comment + the Discussion note and rely on #5 (beforeunload) + #4 (debounce) — the flush function is identical. Record what you tried.
 - Clear button placement: the existing toolbar (`consolePanelMain.ts:69-78`) — add `<button id="consoleClearDraftsBtn" class="vsdb-console-secondary">Clear drafts</button>` next to History. Click handler: cancel the pending timer, clear `dirtyByTab` for the active tab, set local buffer `""` + `e.value = ""`, then `post({ type: "clearDrafts" })`. No confirm dialog (PLAN §3).
 - The `state` handler already clobbers `tabs` (`327-341`) — that is fine AFTER the flush-before-switch fix because the host now has the latest buffer before it pushes state. Do not weaken the `state` handler.
+
+---
+
+## Executor Report
+
+- Date: 2026-09-02
+- Status: DONE
+- Executor model: unic-code (Claude Code feature-implementer subagent)
+- TDD: RED confirmed (8 new bundle tests failed for the expected reasons before implementation), then GREEN.
+
+### RED (pre-implementation, dist bundle already compiled off wave-1)
+
+Command: `npx vitest run src/ui/__tests__/consolePanelBundle.test.ts src/ui/__tests__/consoleTabs.test.ts`
+
+```
+RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-arp08-003
+
+ ✓ src/ui/__tests__/consoleTabs.test.ts  (9 tests) 20ms
+ ❯ src/ui/__tests__/consolePanelBundle.test.ts  (18 tests | 8 failed) 72ms
+   ❯ …ARP-08 draft recovery > #1 happy: editor input posts a debounced { updateBuffer, tabId, buffer } on the trailing edge
+     → expected [] to deeply equal [ { type: 'updateBuffer', …(2) } ]
+   ❯ …> #2 happy: Clear drafts posts { clearDrafts }, empties the editor, and never calls confirm()
+     → expected null to be truthy   (consoleClearDraftsBtn missing)
+   ❯ …> #4 edge latest-wins: three rapid inputs under one window post exactly ONE updateBuffer carrying the final text
+     → expected [] to deeply equal [ { type: 'updateBuffer', …(2) } ]
+   ❯ …> #5 edge flush-on-unload: beforeunload flushes the pending buffer immediately, without waiting 500ms
+     → expected [] to deeply equal [ { type: 'updateBuffer', …(2) } ]
+   ❯ …> #6 edge flush-on-hidden: visibilitychange→hidden flushes the pending buffer immediately
+     → expected [] to deeply equal [ { type: 'updateBuffer', …(2) } ]
+   ❯ …> #7 regression divergence: updateBuffer(A) is posted BEFORE switchTab(B) when switching within the debounce window
+     → expected -1 to be greater than or equal to 0
+   ❯ …> #8 edge clear-cannot-resurrect: pending debounce is cancelled by Clear; the pre-clear text is never posted
+     → Cannot read properties of null (reading 'click')
+   ❯ …> #9 edge draftsCleared ack: resets to one fresh empty tab and renders pre-input state
+     → expected 'SELECT drafts' to be ''
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  8 failed | 10 passed (18)
+```
+
+Note: consoleTabs.test.ts #30 (host pin) passed pre-implementation — correct: it PINS the already-existing silent `updateBuffer` handling at `consolePanel.ts:401-403` (owned by TASK-ARP08-002's file; not modified here). A first RED run failed with `ReferenceError: beforeEach is not defined` due to a missing vitest import in the new describe block; fixed the test import before re-running RED (the RED run above is the corrected-harness, pre-implementation run — all 8 failures are behavioral).
+
+### GREEN + Verification Commands
+
+1. `npm run compile` → `esbuild: build complete` (exit 0)
+2. `npx vitest run src/ui/__tests__/consolePanelBundle.test.ts src/ui/__tests__/consoleTabs.test.ts`:
+
+```
+ ✓ src/ui/__tests__/consoleTabs.test.ts  (9 tests) 18ms
+ ✓ src/ui/__tests__/consolePanelBundle.test.ts  (18 tests) 77ms
+
+ Test Files  2 passed (2)
+      Tests  27 passed (27)
+```
+
+3. `npm run typecheck` → `tsc --noEmit`, exit 0, no output.
+
+### Implementation notes (webview/consolePanelMain.ts)
+
+- `FLUSH_DEBOUNCE_MS=500`, single module-level `flushTimer`, `dirtyByTab: Set<string>` — exactly the Discussion §1 shape.
+- `flushPending()`: clears the timer, pops the active tab from the dirty set, posts `{ type: "updateBuffer", tabId, buffer }` only if the tab still exists. Single shared flush for debounce expiry, `visibilitychange`→hidden, `beforeunload`, and pre-`switchTab`/`closeTab` hooks (tests #5/#6/#7 all exercise it).
+- `cancelPendingFlush()`: timer-only cancel used by Clear drafts and the `draftsCleared` reset.
+- `input` handler: existing local-buffer mutation + `requestGhost()` preserved byte-for-byte; added dirty-add + cancel/re-arm of the 500ms timer (latest-wins: each keystroke resets, only the final value posts).
+- History recall (ArrowUp/Down + history-pane click) and `acceptGhost()` buffer mutations arm the same debounce (task-file requirement).
+- Clear drafts button: `consoleClearDraftsBtn` / `vsdb-console-secondary` next to History, matching house style. Handler empties textarea + local buffer, removes dirty, cancels the timer, posts `{ type: "clearDrafts" }`. No `confirm()` — the click IS the confirmation.
+- `draftsCleared` handler: cancels pending flush, clears dirty set, resets `tabs` to one fresh `tab-1 / Query 1 / ""`, resets `historyIndex`, renders through the existing `render()` path (restore pre-input).
+- No host→webview message added; `state` handler untouched; `consolePanelMessages.ts` / `consolePanel.ts` NOT modified (001/002 own them). No `vscode` import in the webview bundle; `updateBuffer` frames carry only `tabId`+`buffer`, `clearDrafts` is type-only — no secret/result data.
+- AIC-004 ghost text, TASK-002 context menu, and history recall behavior unchanged (all pre-existing bundle tests still green: 10 TASK-002 + 9 host tabs tests).
+
+### Test #6 jsdom note
+
+The task file's jsdom fallback was NOT needed: `Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true })` sticks (shadowed on the instance; restored via `delete` in `finally`), so test #6 exercises the real visibilitychange path.
+
+### FILES_CHANGED
+
+- `webview/consolePanelMain.ts` — debounced flush machinery + flush hooks + Clear drafts button + draftsCleared reset.
+- `src/ui/__tests__/consolePanelBundle.test.ts` — new describe "webview/consolePanelMain.ts bundle — ARP-08 draft recovery" (9 tests #1–#9) + helpers; added `beforeEach`/`afterEach` to the vitest import.
+- `src/ui/__tests__/consoleTabs.test.ts` — ONE neighbor pin: "#30 updateBuffer is applied silently" (PLAN §4 #30).

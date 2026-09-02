@@ -174,6 +174,35 @@ describe("ConsolePanel — tab registry (case 1)", () => {
     expect(panel.getActiveBuffer()).toBe("SELECT 1;");
     expect(panel.getBuffer(tabC.id)).toBe("SELECT 3;");
   });
+
+  // ARP-08 TASK-ARP08-003 — PLAN §4 #30 neighbor pin. The webview now posts a
+  // debounced `updateBuffer` (arp08-003); the host must keep handling it via a
+  // SILENT `setBuffer` — no `state` postMessage in reply, or the flush would
+  // render-loop the webview and clobber in-flight edits.
+  it("#30 updateBuffer is applied silently: buffer updated, NO state message posted in reply", () => {
+    const panel = new ConsolePanel({ extensionUri: extUri, onRun: vi.fn() });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+
+    // `show()` posts exactly one initial `state` — that baseline is allowed.
+    const post = p.webview.postMessage as unknown as Mock;
+    const initialStates = post.mock.calls.filter(
+      ([m]) => (m as { type?: string }).type === "state",
+    );
+    expect(initialStates).toHaveLength(1);
+
+    const tabId = panel.listTabs()[0].id;
+    handler({ type: "updateBuffer", tabId, buffer: "SELECT typed;" });
+
+    // The tab buffer IS updated…
+    expect(panel.getBuffer(tabId)).toBe("SELECT typed;");
+    expect(panel.getActiveBuffer()).toBe("SELECT typed;");
+    // …but silently: no additional state push, no render loop.
+    const statesAfter = post.mock.calls.filter(
+      ([m]) => (m as { type?: string }).type === "state",
+    );
+    expect(statesAfter).toEqual(initialStates);
+  });
 });
 
 // ============================================================================

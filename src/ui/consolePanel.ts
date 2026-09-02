@@ -16,11 +16,18 @@
 import * as vscode from "vscode";
 import type { ConsoleToHostMessage } from "./consolePanelMessages";
 import {
+  CONSOLE_DRAFTS_KEY,
+  CONSOLE_DRAFTS_MAX_BUFFER_CHARS,
+  CONSOLE_DRAFTS_MAX_TABS,
+  CONSOLE_DRAFT_SNAPSHOT_VERSION,
   CONSOLE_HISTORY_CAP,
   CONSOLE_HISTORY_KEY,
+  encodeConsoleDraftSnapshot,
   isConsoleToHostMessage,
   newTabId,
+  parseConsoleDraftSnapshot,
   suggestSaveFileName,
+  type ConsoleDraftSnapshot,
   type ConsoleHostToWebviewMessage,
   type ConsoleTabState,
 } from "./consolePanelMessages";
@@ -73,6 +80,14 @@ export interface ConsolePanelOptions {
     schemaFingerprint: string;
     signal: AbortSignal;
   }) => Promise<string | null>;
+  /**
+   * ARP-08 TASK-ARP08-002 — Optional Memento for draft persistence. When
+   * present, tab buffers are debounced-persisted on `updateBuffer`, flushed
+   * exactly once on dispose, restored (fail-closed) in the constructor, and
+   * wiped durably by `clearDrafts`. When omitted, drafts live in memory
+   * only (hydrate/persist no-op).
+   */
+  draftMemento?: vscode.Memento;
 }
 
 /** Detect `EXPLAIN ANALYZE` (or ANALYSE) at depth 0 — the only EXPLAIN form
@@ -124,6 +139,8 @@ export class ConsolePanel {
   private readonly onRun: (sql: string) => void | Promise<void>;
   private readonly options: ConsolePanelOptions;
   private readonly memento: vscode.Memento | undefined;
+  /** ARP-08 — draft persistence Memento; in-memory-only drafts when absent. */
+  private readonly draftMemento: vscode.Memento | undefined;
   private readonly onAutocomplete: ConsolePanelOptions["onAutocomplete"];
   /** Per-tab AbortController for the in-flight autocomplete request. */
   private readonly acControllers = new Map<string, AbortController>();
@@ -133,16 +150,22 @@ export class ConsolePanel {
   private activeTabId = "";
   private panel: vscode.WebviewPanel | null = null;
   private disposables: vscode.Disposable[] = [];
+  /** ARP-08 — pending debounced draft-persist timer (never `number`). */
+  private draftTimer: ReturnType<typeof setTimeout> | null = null;
+  /** ARP-08 — true when the in-memory draft state is newer than the memento. */
+  private draftDirty = false;
 
   constructor(options: ConsolePanelOptions) {
     this.extensionUri = options.extensionUri;
     this.onRun = options.onRun;
     this.memento = options.memento;
+    this.draftMemento = options.draftMemento;
     this.onAutocomplete = options.onAutocomplete;
     this.options = options;
     this.tabs.push({ id: newTabId(), name: "Query 1", buffer: "" });
     this.activeTabId = this.tabs[0].id;
     this.hydrateHistory();
+    this.hydrateDrafts();
   }
 
   /** Idempotent open/reveal — one live webview per ConsolePanel. */
@@ -176,6 +199,9 @@ export class ConsolePanel {
     );
     this.disposables.push(
       this.panel.onDidDispose(() => {
+        // ARP-08: persist drafts on the user-closed-tab path too. Idempotent,
+        // so a later explicit dispose() cannot double-write.
+        this.flushDrafts();
         for (const ctrl of this.acControllers.values()) ctrl.abort();
         this.acControllers.clear();
         this.acRequestId.clear();
@@ -188,6 +214,10 @@ export class ConsolePanel {
   }
 
   dispose(): void {
+    // ARP-08: flush pending drafts before anything else so both teardown
+    // paths (explicit dispose() and the onDidDispose handler below) persist
+    // exactly once — flushDrafts() is idempotent.
+    this.flushDrafts();
     // AIC-004: cancel every in-flight autocomplete before tearing down so
     // the underlying service / abort signal path settles cleanly.
     for (const ctrl of this.acControllers.values()) ctrl.abort();
@@ -317,6 +347,94 @@ export class ConsolePanel {
     }
   }
 
+  // ---- ARP-08 — draft persistence (TASK-ARP08-002) ---------------------------
+
+  /** Replace the seeded empty tab with the persisted snapshot when valid.
+   *  Fail-closed: on corrupt/missing data the constructor's fresh
+   *  "Query 1" tab stays — this never throws and NEVER runs SQL. */
+  private hydrateDrafts(): void {
+    if (!this.draftMemento) return;
+    const raw = this.draftMemento.get<unknown>(CONSOLE_DRAFTS_KEY);
+    if (typeof raw !== "string") return;
+    const snapshot = parseConsoleDraftSnapshot(raw);
+    if (!snapshot) return;
+    this.tabs.length = 0;
+    for (const t of snapshot.tabs) {
+      this.tabs.push({ id: t.id, name: t.name, buffer: t.buffer });
+    }
+    this.activeTabId = snapshot.activeTabId;
+  }
+
+  /** Arm (or re-arm) the trailing-edge 500ms persist timer. Latest-wins:
+   *  every updateBuffer resets the timer so bursts write once. */
+  private scheduleDraftPersist(): void {
+    this.draftDirty = true;
+    if (this.draftTimer !== null) clearTimeout(this.draftTimer);
+    this.draftTimer = setTimeout(() => {
+      this.draftTimer = null;
+      this.persistDrafts();
+    }, 500);
+  }
+
+  /** Clamp host state to the codec caps and encode. Keeping the first
+   *  CONSOLE_DRAFTS_MAX_TABS tabs and slicing every buffer guarantees our
+   *  own writer never emits a snapshot parse would reject. */
+  private buildDraftSnapshot(): ConsoleDraftSnapshot {
+    const tabs = this.tabs
+      .slice(0, CONSOLE_DRAFTS_MAX_TABS)
+      .map((t) => ({
+        id: t.id,
+        name: t.name,
+        buffer: t.buffer.slice(0, CONSOLE_DRAFTS_MAX_BUFFER_CHARS),
+      }));
+    const activeTabId = tabs.some((t) => t.id === this.activeTabId)
+      ? this.activeTabId
+      : tabs[0].id;
+    return {
+      version: CONSOLE_DRAFT_SNAPSHOT_VERSION,
+      tabs,
+      activeTabId,
+    };
+  }
+
+  /** Persist the draft snapshot when dirty. Clears the pending timer; the
+   *  dirty flag makes repeated calls write nothing (idempotent). */
+  private persistDrafts(): void {
+    if (this.draftTimer !== null) {
+      clearTimeout(this.draftTimer);
+      this.draftTimer = null;
+    }
+    if (!this.draftDirty) return;
+    this.draftDirty = false;
+    if (!this.draftMemento) return;
+    const encoded = encodeConsoleDraftSnapshot(this.buildDraftSnapshot());
+    void this.draftMemento.update(CONSOLE_DRAFTS_KEY, encoded);
+  }
+
+  /** Idempotent flush used by BOTH teardown paths (dispose() and
+   *  onDidDispose) — delegates to persistDrafts(), which no-ops when the
+   *  state is clean. */
+  private flushDrafts(): void {
+    this.persistDrafts();
+  }
+
+  /** Durable clear: cancel the pending timer, remove the memento key (so a
+   *  later dispose cannot resurrect the old draft), reset to one fresh
+   *  empty tab, and ack the webview. */
+  private handleClearDrafts(): void {
+    if (this.draftTimer !== null) {
+      clearTimeout(this.draftTimer);
+      this.draftTimer = null;
+    }
+    this.draftDirty = false;
+    void this.draftMemento?.update(CONSOLE_DRAFTS_KEY, undefined);
+    this.tabs.length = 0;
+    this.tabs.push({ id: newTabId(), name: "Query 1", buffer: "" });
+    this.activeTabId = this.tabs[0].id;
+    this.postState();
+    void this.panel?.webview.postMessage({ type: "draftsCleared" } as ConsoleHostToWebviewMessage);
+  }
+
   private tabById(tabId: string): ConsoleTabSpec | undefined {
     return this.tabs.find((t) => t.id === tabId);
   }
@@ -399,7 +517,17 @@ export class ConsolePanel {
         this.postState();
         return;
       case "updateBuffer":
-        this.setBuffer(msg.tabId, msg.buffer);
+        // ARP-08: buffer updates stay SILENT (no postState reply) so the
+        // draft flush can never trigger a webview render loop (PLAN §3).
+        // Unknown tabId → setBuffer no-ops, so nothing is dirty and no
+        // persist is scheduled.
+        if (this.tabById(msg.tabId)) {
+          this.setBuffer(msg.tabId, msg.buffer);
+          this.scheduleDraftPersist();
+        }
+        return;
+      case "clearDrafts":
+        this.handleClearDrafts();
         return;
       case "requestAutocomplete":
         void this.handleAutocompleteRequest(

@@ -10,7 +10,7 @@
 // @vitest-environment jsdom
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const distPath = resolve(process.cwd(), "dist", "consolePanel.js");
 const bundleSrc = existsSync(distPath) ? readFileSync(distPath, "utf8") : null;
@@ -244,6 +244,183 @@ describe("webview/consolePanelMain.ts bundle (TASK-002)", () => {
     expect(document.querySelectorAll(".vsdb-console-contextmenu")).toHaveLength(
       1,
     );
+  });
+});
+
+// ---- ARP-08 TASK-ARP08-003 — webview draft recovery -------------------------
+
+function clearDraftsBtn(): HTMLButtonElement {
+  return document.getElementById("consoleClearDraftsBtn") as HTMLButtonElement;
+}
+/** Pushes a host→webview `state` MessageEvent on window (the render path). */
+function postWindowState(msg: Record<string, unknown>): void {
+  window.dispatchEvent(new MessageEvent("message", { data: msg }));
+}
+function inputOn(editor: HTMLTextAreaElement): void {
+  editor.dispatchEvent(new Event("input", { bubbles: true }));
+}
+function updateBuffersOf(
+  received: Array<Record<string, unknown>>,
+): Array<Record<string, unknown>> {
+  return received.filter((m) => m.type === "updateBuffer");
+}
+
+describe("webview/consolePanelMain.ts bundle — ARP-08 draft recovery", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("#1 happy: editor input posts a debounced { updateBuffer, tabId, buffer } on the trailing edge", () => {
+    const received = loadBundle();
+    editorEl().value = "SELECT 1";
+    inputOn(editorEl());
+    // Trailing edge: nothing posted before the ~500ms window elapses.
+    expect(updateBuffersOf(received)).toHaveLength(0);
+    vi.advanceTimersByTime(500);
+    expect(updateBuffersOf(received)).toEqual([
+      { type: "updateBuffer", tabId: "tab-1", buffer: "SELECT 1" },
+    ]);
+  });
+
+  it("#2 happy: Clear drafts posts { clearDrafts }, empties the editor, and never calls confirm()", () => {
+    const received = loadBundle();
+    const confirmSpy = vi.spyOn(window, "confirm");
+    expect(clearDraftsBtn()).toBeTruthy();
+    // The explicit click IS the confirmation — no dialog allowed.
+    clearDraftsBtn().click();
+    expect(received).toContainEqual({ type: "clearDrafts" });
+    expect(editorEl().value).toBe("");
+    expect(confirmSpy).not.toHaveBeenCalled();
+  });
+
+  it("#3 edge restore-pre-input: a host state message with a non-empty buffer renders into the textarea", () => {
+    loadBundle();
+    postWindowState({
+      type: "state",
+      tabs: [
+        { id: "tab-1", name: "Query 1", buffer: "SELECT * FROM t", active: true },
+      ],
+      activeTabId: "tab-1",
+      history: [],
+    });
+    expect(editorEl().value).toBe("SELECT * FROM t");
+  });
+
+  it("#4 edge latest-wins: three rapid inputs under one window post exactly ONE updateBuffer carrying the final text", () => {
+    const received = loadBundle();
+    const editor = editorEl();
+    editor.value = "A";
+    inputOn(editor);
+    editor.value = "B";
+    inputOn(editor);
+    editor.value = "C";
+    inputOn(editor);
+    vi.advanceTimersByTime(500);
+    expect(updateBuffersOf(received)).toEqual([
+      { type: "updateBuffer", tabId: "tab-1", buffer: "C" },
+    ]);
+  });
+
+  it("#5 edge flush-on-unload: beforeunload flushes the pending buffer immediately, without waiting 500ms", () => {
+    const received = loadBundle();
+    editorEl().value = "SELECT unload";
+    inputOn(editorEl());
+    expect(updateBuffersOf(received)).toHaveLength(0);
+    window.dispatchEvent(new Event("beforeunload"));
+    expect(updateBuffersOf(received)).toEqual([
+      { type: "updateBuffer", tabId: "tab-1", buffer: "SELECT unload" },
+    ]);
+    // The debounce stays cancelled after the flush — no double post.
+    vi.advanceTimersByTime(500);
+    expect(updateBuffersOf(received)).toHaveLength(1);
+  });
+
+  it("#6 edge flush-on-hidden: visibilitychange→hidden flushes the pending buffer immediately", () => {
+    const received = loadBundle();
+    // jsdom's visibilityState is a prototype getter — shadow it on the
+    // instance, then drop the own property in `finally` to restore it.
+    Object.defineProperty(document, "visibilityState", {
+      value: "hidden",
+      configurable: true,
+    });
+    try {
+      editorEl().value = "SELECT hidden";
+      inputOn(editorEl());
+      expect(updateBuffersOf(received)).toHaveLength(0);
+      document.dispatchEvent(new Event("visibilitychange"));
+      expect(updateBuffersOf(received)).toEqual([
+        { type: "updateBuffer", tabId: "tab-1", buffer: "SELECT hidden" },
+      ]);
+    } finally {
+      delete (document as unknown as { visibilityState?: string })
+        .visibilityState;
+    }
+  });
+
+  it("#7 regression divergence: updateBuffer(A) is posted BEFORE switchTab(B) when switching within the debounce window", () => {
+    const received = loadBundle();
+    postWindowState({
+      type: "state",
+      tabs: [
+        { id: "tab-1", name: "Query 1", buffer: "", active: true },
+        { id: "tab-2", name: "Query 2", buffer: "", active: false },
+      ],
+      activeTabId: "tab-1",
+      history: [],
+    });
+    editorEl().value = "SELECT A";
+    inputOn(editorEl());
+    // Click tab B within the debounce window — the pending A buffer must
+    // reach the host BEFORE the switch, or the host's next `state` push
+    // clobbers A's edits (the latent divergence bug this task fixes).
+    const tabButtons = document.querySelectorAll<HTMLButtonElement>(
+      ".vsdb-console-tab",
+    );
+    tabButtons[1].click();
+    const bufIdx = received.findIndex((m) => m.type === "updateBuffer");
+    const switchIdx = received.findIndex((m) => m.type === "switchTab");
+    expect(bufIdx).toBeGreaterThanOrEqual(0);
+    expect(received[bufIdx]).toEqual({
+      type: "updateBuffer",
+      tabId: "tab-1",
+      buffer: "SELECT A",
+    });
+    expect(received[switchIdx]).toEqual({ type: "switchTab", tabId: "tab-2" });
+    expect(bufIdx).toBeLessThan(switchIdx);
+  });
+
+  it("#8 edge clear-cannot-resurrect: pending debounce is cancelled by Clear; the pre-clear text is never posted", () => {
+    const received = loadBundle();
+    editorEl().value = "SELECT 8";
+    inputOn(editorEl());
+    clearDraftsBtn().click();
+    vi.advanceTimersByTime(500);
+    expect(updateBuffersOf(received)).toHaveLength(0);
+    expect(received).toContainEqual({ type: "clearDrafts" });
+    expect(editorEl().value).toBe("");
+  });
+
+  it("#9 edge draftsCleared ack: resets to one fresh empty tab and renders pre-input state", () => {
+    loadBundle();
+    postWindowState({
+      type: "state",
+      tabs: [
+        { id: "tab-1", name: "Query 1", buffer: "SELECT drafts", active: true },
+        { id: "tab-2", name: "Query 2", buffer: "SELECT other", active: false },
+      ],
+      activeTabId: "tab-1",
+      history: ["SELECT drafts"],
+    });
+    expect(editorEl().value).toBe("SELECT drafts");
+    postWindowState({ type: "draftsCleared" });
+    expect(editorEl().value).toBe("");
+    const tabNodes = document.querySelectorAll<HTMLElement>(".vsdb-console-tab");
+    expect(tabNodes).toHaveLength(1);
+    // The label text node excludes the "×" close span appended after it.
+    expect(tabNodes[0].firstChild?.textContent).toBe("Query 1");
   });
 });
 // End of bundle tests — AIC-004 ghost-text visual verification is done

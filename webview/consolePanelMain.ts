@@ -17,6 +17,40 @@ let history: string[] = [];
 let historyIndex = -1;
 let plan = "";
 
+// ---- ARP-08 TASK-ARP08-003 draft-recovery state -----------------------------
+// Single trailing-edge debounce timer (~500ms, latest-wins) plus a per-tab
+// dirty set. `flushPending()` is the ONE flush function — shared by the
+// debounce expiry, visibilitychange→hidden, beforeunload, and the
+// switchTab/closeTab pre-post hooks — so a pending edit reaches the host
+// before any host `state` push can clobber it (the divergence fix).
+const FLUSH_DEBOUNCE_MS = 500;
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+const dirtyByTab = new Set<string>();
+
+/** Post the active tab's buffer if dirty. Idempotent and cheap: clears the
+ *  debounce timer, removes the tab from the dirty set, posts only when the
+ *  tab still exists. No secret/result data ever rides on this frame. */
+function flushPending(): void {
+  if (flushTimer !== null) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  const tabId = activeTabId;
+  if (!dirtyByTab.has(tabId)) return;
+  dirtyByTab.delete(tabId);
+  const tab = tabs.find((t) => t.id === tabId);
+  if (!tab) return;
+  post({ type: "updateBuffer", tabId, buffer: tab.buffer });
+}
+
+/** Cancel any pending debounce WITHOUT posting (clear/reset paths). */
+function cancelPendingFlush(): void {
+  if (flushTimer !== null) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+}
+
 // ---- AIC-004 ghost-text state ---------------------------------------------
 let ghostRequestSeq = 0;
 let ghostRequestIdByTab = new Map<string, string>();
@@ -75,6 +109,7 @@ function render(): void {
       <button id="consoleSaveBtn" class="vsdb-console-secondary">Save</button>
       <button id="consoleNewTabBtn" class="vsdb-console-secondary">+ Tab</button>
       <button id="consoleHistoryBtn" class="vsdb-console-secondary">History</button>
+      <button id="consoleClearDraftsBtn" class="vsdb-console-secondary" title="Clear all saved console drafts">Clear drafts</button>
     </div>
     <div class="vsdb-console-editor-wrap">
       <textarea id="consoleSqlEditor" class="vsdb-console-editor" rows="12" placeholder="Type SQL here…" spellcheck="false"></textarea>
@@ -103,11 +138,22 @@ function renderTabs(): void {
     node.className = `vsdb-console-tab${tab.id === activeTabId ? " vsdb-console-tab-active" : ""}`;
     node.setAttribute("role", "tab");
     node.textContent = tab.name;
-    node.addEventListener("click", () => { syncBuffer(); post({ type: "switchTab", tabId: tab.id }); });
+    node.addEventListener("click", () => {
+      // ARP-08 divergence fix: flush the pending buffer BEFORE the switch so
+      // the host has the latest text before it pushes `state` back.
+      syncBuffer();
+      flushPending();
+      post({ type: "switchTab", tabId: tab.id });
+    });
     const close = document.createElement("span");
     close.className = "vsdb-console-tab-close";
     close.textContent = "×";
-    close.addEventListener("click", (ev) => { ev.stopPropagation(); post({ type: "closeTab", tabId: tab.id }); });
+    close.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      syncBuffer();
+      flushPending();
+      post({ type: "closeTab", tabId: tab.id });
+    });
     node.appendChild(close);
     bar.appendChild(node);
   }
@@ -154,8 +200,22 @@ function wireControls(): void {
     h.hidden = !h.hidden;
     renderHistory();
   });
+  document.getElementById("consoleClearDraftsBtn")?.addEventListener("click", () => {
+    // The explicit click IS the confirmation (PLAN §3) — no dialog.
+    const ed = editor();
+    if (ed) ed.value = "";
+    activeTab().buffer = "";
+    dirtyByTab.delete(activeTabId);
+    cancelPendingFlush();
+    post({ type: "clearDrafts" });
+  });
   e?.addEventListener("input", () => {
     activeTab().buffer = e.value;
+    // ARP-08: arm/re-arm the trailing-edge debounce (latest-wins) so the
+    // host learns of the edit even if this webview dies before switching.
+    dirtyByTab.add(activeTabId);
+    if (flushTimer !== null) clearTimeout(flushTimer);
+    flushTimer = setTimeout(flushPending, FLUSH_DEBOUNCE_MS);
     requestGhost();
   });
   e?.addEventListener("keydown", (ev: KeyboardEvent) => {
@@ -184,6 +244,10 @@ function wireControls(): void {
         : (historyIndex - 1 + history.length) % history.length;
       e.value = history[historyIndex];
       activeTab().buffer = e.value;
+      // ARP-08: keyboard history recall mutates the buffer — arm the flush.
+      dirtyByTab.add(activeTabId);
+      if (flushTimer !== null) clearTimeout(flushTimer);
+      flushTimer = setTimeout(flushPending, FLUSH_DEBOUNCE_MS);
     }
   });
   // In-webview right-click menu on the editor.
@@ -208,6 +272,10 @@ function renderHistory(): void {
       const ed = editor();
       if (ed) { ed.value = sql; activeTab().buffer = sql; }
       historyIndex = i;
+      // ARP-08: a recall mutates the buffer — arm the flush for it too.
+      dirtyByTab.add(activeTabId);
+      if (flushTimer !== null) clearTimeout(flushTimer);
+      flushTimer = setTimeout(flushPending, FLUSH_DEBOUNCE_MS);
     });
     h.appendChild(b);
   });
@@ -252,6 +320,11 @@ function acceptGhost(): void {
   e.selectionStart = e.value.length;
   e.selectionEnd = e.value.length;
   post({ type: "acceptAutocomplete", tabId: activeTabId, requestId, suffix });
+  // ARP-08: the accepted suffix mutates the buffer — arm the flush so the
+  // host persists the completed statement even if the webview dies first.
+  dirtyByTab.add(activeTabId);
+  if (flushTimer !== null) clearTimeout(flushTimer);
+  flushTimer = setTimeout(flushPending, FLUSH_DEBOUNCE_MS);
   clearGhostForTab(activeTabId);
 }
 
@@ -372,6 +445,27 @@ window.addEventListener("message", (ev: MessageEvent<Msg>) => {
     clearGhostForTab(msg.tabId as string);
     return;
   }
+  // ARP-08 TASK-ARP08-001/003 — the host wiped persisted drafts; restore
+  // pre-input: one fresh empty tab, rendered through the existing path.
+  if (msg.type === "draftsCleared") {
+    cancelPendingFlush();
+    dirtyByTab.clear();
+    tabs = [{ id: "tab-1", name: "Query 1", buffer: "", active: true }];
+    activeTabId = "tab-1";
+    historyIndex = -1;
+    render();
+    return;
+  }
+});
+
+// ARP-08 — belt for abrupt webview death: flush the pending buffer when the
+// page hides (user switched away / closed the editor) or unloads. Both share
+// `flushPending()`, which clears the debounce timer after posting.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") flushPending();
+});
+window.addEventListener("beforeunload", () => {
+  flushPending();
 });
 render();
 export {};

@@ -88,8 +88,32 @@ vi.mock("vscode", () => ({
 
 // Import AFTER mocks are registered.
 import { ConsolePanel } from "../consolePanel";
+// ARP-08 TASK-ARP08-002 — draft codec + constants (pure module, no vscode).
+import {
+  CONSOLE_DRAFTS_KEY,
+  CONSOLE_DRAFTS_MAX_BUFFER_CHARS,
+  CONSOLE_DRAFTS_MAX_TABS,
+  CONSOLE_DRAFT_SNAPSHOT_VERSION,
+  encodeConsoleDraftSnapshot,
+  parseConsoleDraftSnapshot,
+} from "../consolePanelMessages";
 
 const extUri = { toString: () => "/ext", fsPath: "/ext", scheme: "file" } as never;
+
+// ARP-08 TASK-ARP08-002 — local Memento double for draft persistence tests.
+// Copied verbatim from src/ui/__tests__/consoleTabs.test.ts:21-29 (test files
+// must not import across each other). `update(key, undefined)` drops the key
+// so `get` returns undefined — mirrors real vscode.Memento semantics.
+class FakeMemento {
+  private data = new Map<string, unknown>();
+  get<T>(key: string): T | undefined {
+    return this.data.get(key) as T | undefined;
+  }
+  update(key: string, value: unknown): Promise<void> {
+    this.data.set(key, value);
+    return Promise.resolve();
+  }
+}
 
 // ---- helpers ---------------------------------------------------------------
 
@@ -535,5 +559,290 @@ describe("ConsolePanel — AIC-004 ghost-text host seam", () => {
     p.dispose();
     await until(() => aborted);
     expect(aborted).toBe(true);
+  });
+});
+
+// ============================================================================
+// ARP-08 TASK-ARP08-002 — host draft restore: hydrate, debounced persist,
+// dispose flush, durable clear. Debounce/flush tests use fake timers; the
+// `until()` helper is NEVER used under vi.useFakeTimers (real setTimeout
+// would deadlock).
+// ============================================================================
+describe("ConsolePanel — draft recovery (ARP-08)", () => {
+  /** Seed a memento directly with an encoded snapshot (reopen scenarios). */
+  function seedDrafts(memento: FakeMemento, snapshot: {
+    version: number;
+    tabs: Array<{ id: string; name: string; buffer: string }>;
+    activeTabId: string;
+  }): void {
+    memento.update(
+      CONSOLE_DRAFTS_KEY,
+      encodeConsoleDraftSnapshot(snapshot as never),
+    );
+  }
+
+  /** Construct + show a panel over the given memento. */
+  function openPanel(memento?: FakeMemento, extra?: { onRun?: ReturnType<typeof vi.fn> }) {
+    const onRun = extra?.onRun ?? vi.fn();
+    const panel = new ConsolePanel({
+      extensionUri: extUri,
+      onRun: onRun as never,
+      ...(memento ? { draftMemento: memento as never } : {}),
+    });
+    panel.show();
+    return { panel, onRun, handler: panelHarness().handler };
+  }
+
+  it("#1 happy: updateBuffer persists a debounced draft snapshot to the memento after 500ms", async () => {
+    vi.useFakeTimers();
+    const memento = new FakeMemento();
+    const { panel, handler } = openPanel(memento);
+    const tabId = panel.getActiveTabId();
+
+    handler({ type: "updateBuffer", tabId, buffer: "SELECT 1" });
+    expect(memento.get<string>(CONSOLE_DRAFTS_KEY)).toBeUndefined();
+    vi.advanceTimersByTime(500);
+
+    const raw = memento.get<string>(CONSOLE_DRAFTS_KEY);
+    expect(typeof raw).toBe("string");
+    const snap = parseConsoleDraftSnapshot(raw!);
+    expect(snap).not.toBeNull();
+    expect(snap!.tabs).toHaveLength(1);
+    expect(snap!.tabs[0].buffer).toBe("SELECT 1");
+  });
+
+  it("#2 happy: a second panel over the SAME memento (reopen) restores tabs + active id", async () => {
+    vi.useFakeTimers();
+    const memento = new FakeMemento();
+    const first = openPanel(memento);
+    first.handler({ type: "updateBuffer", tabId: first.panel.getActiveTabId(), buffer: "SELECT a FROM t" });
+    first.handler({ type: "createTab", name: "Migration" });
+    const tab2Id = first.panel.getActiveTabId();
+    first.handler({ type: "updateBuffer", tabId: tab2Id, buffer: "SELECT b FROM u" });
+    first.handler({ type: "switchTab", tabId: first.panel.listTabs()[0].id });
+    vi.advanceTimersByTime(500);
+
+    // Reopen: SECOND panel over the SAME memento restores identically.
+    const second = openPanel(memento);
+    const firstTabs = first.panel.listTabs();
+    const restored = second.panel.listTabs();
+    expect(restored).toEqual(firstTabs);
+    expect(second.panel.getActiveTabId()).toBe(first.panel.getActiveTabId());
+  });
+
+  it("#3 edge/corrupt: garbage memento → constructor does not throw, falls back to one empty 'Query 1'", () => {
+    const memento = new FakeMemento();
+    memento.update(CONSOLE_DRAFTS_KEY, "###not-json###");
+    expect(() => openPanel(memento)).not.toThrow();
+    const { panel } = openPanel(memento);
+    const tabs = panel.listTabs();
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0].name).toBe("Query 1");
+    expect(tabs[0].buffer).toBe("");
+  });
+
+  it("#4 edge: 1-tab and 2-tab (active=tab2) snapshots both restore verbatim on reopen", () => {
+    const memento1 = new FakeMemento();
+    seedDrafts(memento1, {
+      version: CONSOLE_DRAFT_SNAPSHOT_VERSION,
+      tabs: [{ id: "solo", name: "Solo", buffer: "SELECT 42" }],
+      activeTabId: "solo",
+    });
+    const solo = openPanel(memento1).panel;
+    expect(solo.listTabs()).toEqual([{ id: "solo", name: "Solo", buffer: "SELECT 42" }]);
+    expect(solo.getActiveTabId()).toBe("solo");
+
+    const memento2 = new FakeMemento();
+    seedDrafts(memento2, {
+      version: CONSOLE_DRAFT_SNAPSHOT_VERSION,
+      tabs: [
+        { id: "t1", name: "Query 1", buffer: "SELECT 1" },
+        { id: "t2", name: "Query 2", buffer: "SELECT 2" },
+      ],
+      activeTabId: "t2",
+    });
+    const duo = openPanel(memento2).panel;
+    expect(duo.listTabs().map((t) => t.id)).toEqual(["t1", "t2"]);
+    expect(duo.listTabs().map((t) => t.buffer)).toEqual(["SELECT 1", "SELECT 2"]);
+    expect(duo.getActiveTabId()).toBe("t2");
+  });
+
+  it("#5 edge/never-runs: restore path invokes the onRun spy ZERO times", () => {
+    const onRun = vi.fn();
+    const memento = new FakeMemento();
+    seedDrafts(memento, {
+      version: CONSOLE_DRAFT_SNAPSHOT_VERSION,
+      tabs: [
+        { id: "t1", name: "Query 1", buffer: "DELETE FROM users" },
+        { id: "t2", name: "Query 2", buffer: "DROP TABLE secrets" },
+      ],
+      activeTabId: "t1",
+    });
+    openPanel(memento, { onRun });
+    expect(onRun).not.toHaveBeenCalled();
+  });
+
+  it("#6 edge/flush-once: dirty panel → dispose() → dispose() again writes the draft exactly once", async () => {
+    vi.useFakeTimers();
+    const memento = new FakeMemento();
+    const updateSpy = vi.spyOn(memento, "update");
+    const first = openPanel(memento);
+    // Dirty WITHOUT advancing: only the dispose flush may persist.
+    first.handler({ type: "updateBuffer", tabId: first.panel.getActiveTabId(), buffer: "SELECT flush" });
+
+    first.panel.dispose();
+    first.panel.dispose();
+    vi.advanceTimersByTime(1000);
+    const writes = updateSpy.mock.calls.filter(([key]) => key === CONSOLE_DRAFTS_KEY);
+    expect(writes).toHaveLength(1);
+    const snap = parseConsoleDraftSnapshot(writes[0][1] as string)!;
+    expect(snap.tabs[0].buffer).toBe("SELECT flush");
+    await Promise.resolve();
+  });
+
+  it("#6b edge/flush-once: panel-close path (onDidDispose) also flushes exactly once", async () => {
+    vi.useFakeTimers();
+    const memento = new FakeMemento();
+    const updateSpy = vi.spyOn(memento, "update");
+    const { panel } = openPanel(memento);
+    const { handler } = panelHarness();
+    handler({ type: "updateBuffer", tabId: panel.getActiveTabId(), buffer: "SELECT close" });
+    vi.advanceTimersByTime(500);
+
+    // Simulate the user closing the tab: the mock panel's dispose() fires the
+    // registered onDidDispose listener (harness behaviour), no explicit
+    // ConsolePanel.dispose() call.
+    consolePanels()[consolePanels().length - 1].dispose();
+    vi.advanceTimersByTime(1000);
+    const writes = updateSpy.mock.calls.filter(([key]) => key === CONSOLE_DRAFTS_KEY);
+    expect(writes).toHaveLength(1);
+    await Promise.resolve();
+  });
+
+  it("#7 edge/privacy: persisted payload carries exactly {version,tabs,activeTabId} and tabs {id,name,buffer}", () => {
+    vi.useFakeTimers();
+    const m = new FakeMemento();
+    const session = openPanel(m);
+    const t1 = session.panel.getActiveTabId();
+    session.handler({ type: "updateBuffer", tabId: t1, buffer: "SELECT one" });
+    session.handler({ type: "createTab", name: "Two" });
+    const t2 = session.panel.getActiveTabId();
+    session.handler({ type: "updateBuffer", tabId: t2, buffer: "SELECT two" });
+    session.handler({ type: "switchTab", tabId: t1 });
+    vi.advanceTimersByTime(500);
+
+    const raw = m.get<string>(CONSOLE_DRAFTS_KEY)!;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    expect(Object.keys(parsed).sort()).toEqual(["activeTabId", "tabs", "version"]);
+    const tabs = parsed.tabs as Array<Record<string, unknown>>;
+    for (const tab of tabs) {
+      expect(Object.keys(tab).sort()).toEqual(["buffer", "id", "name"]);
+    }
+    const rawLower = raw.toLowerCase();
+    expect(rawLower).not.toContain("password");
+    expect(rawLower).not.toContain("connection");
+    expect(rawLower).not.toContain("result");
+    expect(rawLower).not.toContain("history");
+  });
+
+  it("#8 edge/durable clear: clearDrafts removes the memento key; reopen shows one empty 'Query 1'", async () => {
+    vi.useFakeTimers();
+    const memento = new FakeMemento();
+    const session = openPanel(memento);
+    session.handler({ type: "updateBuffer", tabId: session.panel.getActiveTabId(), buffer: "SELECT doomed" });
+    vi.advanceTimersByTime(500);
+    expect(memento.get<string>(CONSOLE_DRAFTS_KEY)).toBeDefined();
+
+    session.handler({ type: "clearDrafts" });
+    vi.advanceTimersByTime(500);
+    expect(memento.get<string>(CONSOLE_DRAFTS_KEY)).toBeUndefined();
+
+    // Later dispose must NOT resurrect the cleared draft.
+    session.panel.dispose();
+    vi.advanceTimersByTime(1000);
+    expect(memento.get<string>(CONSOLE_DRAFTS_KEY)).toBeUndefined();
+
+    // Reopen: fresh single empty tab, pre-clear buffer gone.
+    const reopened = openPanel(memento).panel;
+    const tabs = reopened.listTabs();
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0].name).toBe("Query 1");
+    expect(tabs[0].buffer).toBe("");
+  });
+
+  it("#9 edge/clamp: 21 tabs + oversized buffer persist as 20 tabs with the buffer sliced", () => {
+    vi.useFakeTimers();
+    const memento = new FakeMemento();
+    const session = openPanel(memento);
+    const big = "X".repeat(CONSOLE_DRAFTS_MAX_BUFFER_CHARS + 6_000);
+    const t1 = session.panel.getActiveTabId();
+    session.handler({ type: "updateBuffer", tabId: t1, buffer: big });
+    for (let i = 0; i < CONSOLE_DRAFTS_MAX_TABS; i++) {
+      session.handler({ type: "createTab" });
+      session.handler({ type: "updateBuffer", tabId: session.panel.getActiveTabId(), buffer: `SELECT ${i}` });
+    }
+    // Active is now the LAST (21st) tab → clamp must remap to a survivor.
+    vi.advanceTimersByTime(500);
+
+    const raw = memento.get<string>(CONSOLE_DRAFTS_KEY)!;
+    const snap = parseConsoleDraftSnapshot(raw)!;
+    expect(snap).not.toBeNull();
+    expect(snap.tabs).toHaveLength(CONSOLE_DRAFTS_MAX_TABS);
+    expect(snap.tabs[0].buffer).toBe(big.slice(0, CONSOLE_DRAFTS_MAX_BUFFER_CHARS));
+    expect(snap.tabs.some((t) => t.id === snap.activeTabId)).toBe(true);
+    expect(snap.tabs.some((t) => t.buffer.length > CONSOLE_DRAFTS_MAX_BUFFER_CHARS)).toBe(false);
+  });
+
+  it("#10 regression: updateBuffer with an unknown tabId is a silent no-op (no write)", () => {
+    vi.useFakeTimers();
+    const memento = new FakeMemento();
+    const updateSpy = vi.spyOn(memento, "update");
+    const { handler } = openPanel(memento);
+    expect(() => handler({ type: "updateBuffer", tabId: "tab-ghost", buffer: "SELECT x" })).not.toThrow();
+    vi.advanceTimersByTime(1000);
+    expect(updateSpy.mock.calls.filter(([key]) => key === CONSOLE_DRAFTS_KEY)).toHaveLength(0);
+  });
+
+  it("#11 edge/fallback: NO draftMemento → hydrate + persist no-op, no throw", () => {
+    vi.useFakeTimers();
+    const { panel, handler } = openPanel();
+    expect(() => panel.listTabs()).not.toThrow();
+    handler({ type: "updateBuffer", tabId: panel.getActiveTabId(), buffer: "SELECT memory" });
+    expect(() => vi.advanceTimersByTime(500)).not.toThrow();
+    expect(() => panel.dispose()).not.toThrow();
+  });
+
+  it("#12 edge/latest-wins: three rapid updateBuffers then dispose WITHOUT advancing → one persist carrying C", async () => {
+    vi.useFakeTimers();
+    const memento = new FakeMemento();
+    const updateSpy = vi.spyOn(memento, "update");
+    const session = openPanel(memento);
+    const tabId = session.panel.getActiveTabId();
+    session.handler({ type: "updateBuffer", tabId, buffer: "SELECT A" });
+    session.handler({ type: "updateBuffer", tabId, buffer: "SELECT B" });
+    session.handler({ type: "updateBuffer", tabId, buffer: "SELECT C" });
+    // dispose() flushes the pending (reset) timer exactly once — latest wins.
+    session.panel.dispose();
+    vi.advanceTimersByTime(1000);
+    const writes = updateSpy.mock.calls.filter(([key]) => key === CONSOLE_DRAFTS_KEY);
+    expect(writes).toHaveLength(1);
+    const snap = parseConsoleDraftSnapshot(writes[0][1] as string)!;
+    expect(snap.tabs[0].buffer).toBe("SELECT C");
+    await Promise.resolve();
+  });
+
+  it("#13 edge/order: out-of-creation-order snapshot tabs restore verbatim in snapshot order", () => {
+    const memento = new FakeMemento();
+    seedDrafts(memento, {
+      version: CONSOLE_DRAFT_SNAPSHOT_VERSION,
+      tabs: [
+        { id: "zzz", name: "Zed", buffer: "SELECT z" },
+        { id: "aaa", name: "Ay", buffer: "SELECT a" },
+      ],
+      activeTabId: "zzz",
+    });
+    const panel = openPanel(memento).panel;
+    expect(panel.listTabs().map((t) => t.id)).toEqual(["zzz", "aaa"]);
+    expect(panel.listTabs().map((t) => t.name)).toEqual(["Zed", "Ay"]);
   });
 });
