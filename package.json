@@ -641,6 +641,7 @@
     "vitest": "^1.6.0"
   },
   "dependencies": {
+    "@google-cloud/bigquery": "^9.0.3",
     "@types/pg": "^8.11.0",
     "ag-grid-community": "^36.1.0",
     "mysql2": "^3.10.0",

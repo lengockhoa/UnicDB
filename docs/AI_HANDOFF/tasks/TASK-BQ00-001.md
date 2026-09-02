@@ -86,3 +86,69 @@ Engine-floor context for the executor: 9.0.3 declares `engines.node >= 22` (veri
 
 ### 2026-09-02 · planner · unic-smart (Round 2)
 New in this task per plan review (roadmap line-67 mandate): test #7 + `docs/decisions/_bq00-evidence.md`. The review found that "response field names" was owned by 002, but pagination method names (`getQueryResults`, `query`, `createQueryJob`) and the **job cancellation return shape** (`job.cancel()` / `jobs.cancel`) had no owner in any task. You now own that evidence: make it a real test (so it cannot silently rot) and write the scratch file from what the test actually found — file+line refs from `node_modules/@google-cloud/bigquery/build/src/bigquery.d.ts` and `build/src/job.d.ts`. Note for 004's executor downstream: Discussions are prose, not stable citations; the on-disk evidence file is what the ADR cites.
+
+### 2026-09-02 · executor · unic-code
+Executed per spec. Pinned `^9.0.3` (no fallback needed — `engines.node >= 22` satisfied by dev runtime `v22.22.1`). Probe bundle: **1,193,010 bytes** under the extension's exact esbuild options (`bundle, node, cjs, node18, external:[vscode]`), 0 errors. All 7 tests GREEN; `npm run typecheck` clean; `npm run compile` clean; `dist/extension.js` regenerated and free of `google-cloud` markers; full vitest **3196 passed | 2 skipped** (above the 3189|2 floor). Wrote `docs/decisions/_bq00-evidence.md` from what test #7 actually found in the installed `.d.ts`. One execution note: test #3 originally tried to assert bare `application_default_credentials` / `private_key` strings were absent — those are legitimate code (file path in `google-auth-library`, JSON field name in `bigquery.d.ts`) and esbuild preserves comment text, so the assertion false-positived. Refined to scan only for STRUCTURED PEM private-key blocks (with `-----BEGIN ... PRIVATE KEY-----` headers AND body), and strip JS regex literals first so that the cert-chain parsing regex in `google-auth-library` does not trip the check. Spirit of the safety gate preserved (no real key material in the bundle); the literal strings remain in the code where they belong.
+
+## Executor Report
+EXECUTOR_TOOL: Claude Code
+EXECUTOR_MODEL: claude-sonnet-4-5
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT (tests written before package install, run produced):
+
+```
+FAIL  src/adapters/__tests__/bigqueryPackage.test.ts > TASK-BQ00-001 @google-cloud/bigquery proof > 1. client module loads under Node without credentials
+Error: Cannot find module '@google-cloud/bigquery'
+ (7/7 tests failed at the same import-level reason — package not installed)
+
+FAIL  src/adapters/__tests__/bigqueryPackage.test.ts > 2. bundle probe succeeds under extension build options
+Error: Build failed with 1 error: <stdin>:1:25: ERROR: Could not resolve "@google-cloud/bigquery"
+
+FAIL  src/adapters/__tests__/bigqueryPackage.test.ts > 3. probe output contains no credential artifacts
+Error: Could not resolve "@google-cloud/bigquery" (esbuild failed before probe output existed)
+
+FAIL  src/adapters/__tests__/bigqueryPackage.test.ts > 4. client engine floor is compatible with the dev runtime
+Error: Cannot find module '@google-cloud/bigquery/package.json'
+
+FAIL  src/adapters/__tests__/bigqueryPackage.test.ts > 5. vscode stays external in probe
+Error: Build failed with 1 error: <stdin>:1:25: ERROR: Could not resolve "@google-cloud/bigquery"
+
+FAIL  src/adapters/__tests__/bigqueryPackage.test.ts > 6. lockfile resolves exactly one version in range
+AssertionError: expected +0 to be 1 — no `node_modules/@google-cloud/bigquery` entry in lockfile yet
+
+FAIL  src/adapters/__tests__/bigqueryPackage.test.ts > 7. client .d.ts declares the pagination and cancellation methods
+Error: Cannot find module '@google-cloud/bigquery/package.json'
+
+Test Files  1 failed (1)
+Tests  7 failed (7)
+```
+
+Verification Output (after install + GREEN):
+
+```
+# focused test
+ ✓ src/adapters/__tests__/bigqueryPackage.test.ts  (7 tests) 98ms
+[bq00] probe bundle: 1193010 bytes, errors=0
+[bq00] installed @google-cloud/bigquery@9.0.3 engines.node=">=22" major=9 runtime=v22.22.1
+ Test Files  1 passed (1)
+ Tests  7 passed (7)
+
+# typecheck
+> vsdb@1.45.0 typecheck
+> tsc --noEmit  (exit 0, no errors)
+
+# compile + dist check
+esbuild: build complete
+dist/extension.js regenerated (5.3mb)
+grep -l "google-cloud" dist/extension.js → 0 matches (no google-cloud markers)
+
+# full suite
+ Test Files  220 passed | 1 skipped (221)
+ Tests  3196 passed | 2 skipped (3198)
+ Start at  13:06:39
+ Duration  17.94s
+```
+
+Status: PASS
+Note: Pinned `@google-cloud/bigquery@^9.0.3` exactly as default — no engine-floor fallback needed (`engines.node >= 22` satisfied by `v22.22.1`). One test (#3) was refined from a naive "no bare `private_key`/`application_default_credentials` substring" check to a structural "no `-----BEGIN ... PRIVATE KEY-----` block" check, because those bare strings appear in legitimate code paths (`google-auth-library` JSON config filename + JSDoc field name) that esbuild must preserve. The refined check still catches real secret leaks while not false-positiving on the existing code surface. Evidence file `docs/decisions/_bq00-evidence.md` written from test #7's actual findings (file + line refs into the installed `.d.ts`); it records the `job.cancel() → Promise<CancelResponse>` return shape as `[IJobCancelResponse]` tuple (roadmap line-67 mandate).
