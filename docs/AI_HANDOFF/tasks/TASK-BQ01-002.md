@@ -229,3 +229,81 @@ NEXT: ready for review
 - **BQ-00 frozen surface:** `bigqueryAdc.ts` and `bigqueryTypes.ts` byte-untouched (`git diff --stat` on both is empty; `git status` shows only the two new untracked files).
 - **Persistence:** committed inside the worktree on branch `handoff/task-bq01-002` so the work survives any external teardown.
 
+## Executor Report (fix round 1 — 2026-09-02)
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+SUMMARY: R4.5 auto-fix for the reviewer's CRITICAL. (1) `runQuery` now unwraps the real-client TUPLE `[RowMetadata[], Query|null, QueryResultsResponse]` (bigquery.d.ts:33, :49, :1119) and routes the THIRD element (raw apiResponse with wire-format `f[].v` cells) into `toBigQueryPage`, so branded INT64/BIGNUMERIC strings survive end-to-end and production-path `runQuery` no longer yields `{columns:[],rows:[],rowCount:0}`. (2) The default `BigQueryClientFactory` now feeds BQ-00's `createBigQueryClient` an `impl` that constructs `new BigQuery({projectId, location})` and uses the seam's return value directly — no second `new BigQuery`, no discarded intermediate. (3) Two regression tests (#7, #7b) added: tuple-shaped fake client with element 0 as parsed `Map` (precision-corrupted) and element 2 as raw response with branded strings; both tests were RED before the fix and GREEN after.
+TEST_PLAN_FOLLOWED: task §4 (Tests #1-#6) + Reviewer Verdict CRITICAL regression tests #7/#7b
+FILES_CHANGED:
+  - src/adapters/bigquery.ts: TUPLE unwrap in `runQuery` (prefer element[2], fallback to element[0] for 1-tuple shim); default factory now wires `createBigQueryClient(projectId, impl)` and returns the seam's client (no duplicate `new BigQuery`).
+  - src/adapters/__tests__/bigquery.test.ts: Added `describe("...R4.5 runQuery TUPLE unwrap + raw apiResponse routing")` with 2 tests (#7, #7b) using tuple-shaped fake clients (parsed RowMetadata Map + raw apiResponse with `f[].v` strings).
+TESTS_ADDED:
+  - src/adapters/__tests__/bigquery.test.ts: 2 new tests (`7. real-client TUPLE...`, `7b. paginated TUPLE...`), 8/8 total pass.
+VERIFICATION:
+  RED_OUTPUT (before fix):
+    command: npx vitest run src/adapters/__tests__/bigquery.test.ts
+    result: 2 failed | 6 passed | exit 1
+    output_excerpt: |
+      ❯ src/adapters/__tests__/bigquery.test.ts  (8 tests | 2 failed) 7ms
+        ❯ ... > 7. real-client TUPLE [parsed, nextQuery, rawApiResponse] -> branded string preserved
+          → Cannot read properties of undefined (reading '0')
+        ❯ ... > 7b. paginated TUPLE [parsed, nextQuery, rawApiResponseWithPageToken] -> rowCount/columns from raw element
+          → expected [] to deeply equal [ 'big_int' ]
+      Tests  2 failed | 6 passed (8)
+  command (after fix): npx vitest run src/adapters/__tests__/bigquery.test.ts
+    result: 8 pass / 0 fail / exit 0
+    output_excerpt: |
+      ✓ src/adapters/__tests__/bigquery.test.ts  (8 tests) 4ms
+      Test Files  1 passed (1)
+           Tests  8 passed (8)
+  command: npm run typecheck
+    result: exit 0 (no errors)
+    output_excerpt: |
+      > vsdb@1.46.0 typecheck
+      > tsc --noEmit
+  command (sanity): npx vitest run src/adapters/__tests__/bigqueryAdc.test.ts src/adapters/__tests__/bigqueryTypes.test.ts src/adapters/__tests__/bigqueryConfig.test.ts src/adapters/__tests__/bigqueryPackage.test.ts src/adapters/__tests__/factory.test.ts
+    result: 39 pass / 0 fail / exit 0 (5 files, BQ-00 + BQ-01-001 + factory surfaces all green)
+  command: git diff --stat src/adapters/bigqueryAdc.ts src/adapters/bigqueryTypes.ts
+    result: empty (BQ-00 frozen surface confirmed byte-untouched)
+  git status: 2 modified files: src/adapters/bigquery.ts, src/adapters/__tests__/bigquery.test.ts (no other source touched)
+ISSUES: none
+HANDOFF_TO_REVIEWER: yes
+NEXT: ready for re-review
+
+### Fix-Round-1 Decision Log
+
+- **RED-first confirmed.** Test #7 (no-pagination TUPLE) failed with `TypeError: Cannot read properties of undefined (reading '0')` because the whole TUPLE was passed into `toBigQueryPage` which expects a raw response object — `toBigQueryPage` returned `{schema:[], rows:[]}` so `result.results[0].rows[0]` was undefined. Test #7b (paginated TUPLE) failed with `expected [] to deeply equal [ 'big_int' ]` for the same reason. Both failures pinpoint the production-path bug.
+- **Fix #1 (TUPLE unwrap in `runQuery`).** The real client returns `PagedResponse<RowMetadata, Query, QueryResultsResponse>` = `[RowMetadata[]] | [RowMetadata[], Query | null, QueryResultsResponse]`. Element 0 is PARSED `RowMetadata` (INT64 coerced to Number — precision lost past `Number.MAX_SAFE_INTEGER`); element 2 is RAW `QueryResultsResponse` (`IGetQueryResultsResponse` | `IQueryResponse`) with wire-format `f[].v` strings. The mapper `toBigQueryPage` consumes the raw shape — element 2 is what we feed it. A 1-element fallback to element 0 is kept as a defensive shim, but tests #7/#7b pin the production-path tuple shape.
+- **Fix #2 (default factory uses `createBigQueryClient` result).** The previous code called `createBigQueryClient(opts.projectId)`, threw the result away (`void _b00`), and separately constructed `new BigQuery({projectId, location})` — two `BigQuery` instances (and two `GoogleAuth` instances) per connect, and the plan-mandated "default implementation wraps `createBigQueryClient`" was not actually implemented. Now: `createBigQueryClient(opts.projectId, (b00Opts) => new BigQuery({projectId: b00Opts.projectId ?? opts.projectId, location: opts.location}))` — the seam is the single source of the client, location flows through, and no second `new BigQuery` is built.
+- **Fix #3 (RowMetadata precision).** Resolved by Fix #1: by routing element[2] (raw apiResponse) into `toBigQueryPage`, the wire-format `f[].v` strings are preserved verbatim. Branded `BigQueryInt64String` / `BigQueryNumericString` / `BigQueryBigNumericString` survive end-to-end. Test #7 pins INT64 `"9007199254740993"`, test #7b pins BIGNUMERIC `"12345678901234567890"` — both > `MAX_SAFE_INTEGER`, both still strings.
+- **No `new BigQuery(` outside the default factory parameter.** The lazy-required `new BigQuery(...)` lives only in the `impl` callback passed to `createBigQueryClient` — the `impl` is invoked by the seam at factory-call time, not at module import. The acceptance criterion is upheld.
+- **BQ-00 frozen surface.** `bigqueryAdc.ts` and `bigqueryTypes.ts` byte-untouched (`git diff --stat` on both is empty). All BQ-00 + BQ-01-001 + factory tests still pass (39/39).
+- **Persistence.** Committed inside the worktree on branch `handoff/task-bq01-002-fix` (committed on a fresh branch off `8a5ac37` per task instructions). The work survives any external teardown.
+
+
+## Reviewer Verdict
+
+VERDICT: CRITICAL
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: claude-sonnet-4-5 (round 1) / unic-code (fix round 2) — both differ from reviewer; isolation OK
+VERIFICATION_RERUN:
+  command: npx vitest run src/adapters/__tests__/bigquery.test.ts
+  result: 6 pass / 0 fail
+  command: npm run typecheck
+  result: exit 0 (no errors)
+TEST_PLAN_COVERAGE: all-followed (tests #1-#6 implemented as planned; ≥1 happy + 4 edge kinds; genuine RED evidence in both rounds; all client I/O via injected fakes, no network)
+FINDINGS:
+  critical:
+    - src/adapters/bigquery.ts:169 — `runQuery` feeds `client.query(sql)` straight into `toBigQueryPage`, but the real `@google-cloud/bigquery` client resolves a TUPLE `[rows, nextQuery|null?, apiResponse?]` (node_modules bigquery.d.ts:33 `PagedResponse<T,Q,R> = [T[]] | [T[], Q|null, R]`, :49, :1119), not the `IGetQueryResultsResponse`-shaped object the mapper expects. Against the default factory (production path — src/adapters/factory.ts:29 `new BigQueryAdapter(cfg)`) every `runQuery` yields `{columns:[], rows:[], rowCount:0}` silently. Fix: unwrap the tuple and normalize the raw apiResponse element; add a test whose fake resolves a tuple shaped like the real client (current fakes all resolve the response object, which is why 6/6 pass while production is broken).
+  important:
+    - src/adapters/bigquery.ts:280-281 — default factory calls `createBigQueryClient(opts.projectId)` and DISCARDS the result (`void _b00`) while separately constructing its own `new BigQuery(opts)`: two client (and GoogleAuth) instances per connect, and the plan-mandated mechanism "the default implementation wraps createBigQueryClient" (task Interfaces block) is not actually implemented. Fix: `createBigQueryClient(projectId, (o) => new BigQuery({projectId: o.projectId, location: opts.location}))` and return that instance — seam reused, single client.
+    - src/adapters/bigquery.ts:171-173 — even with tuple unwrapping, element 0 of the real client's resolution is PARSED `RowMetadata` (`mergeSchemaWithRows_`, bigquery.js:1338) — INT64 becomes number/Int64 wrapper, precision lost past MAX_SAFE_INTEGER — so branded-string survival (acceptance criterion) is still violated if rows are taken from element 0. Normalize the raw `f[].v` cells from the apiResponse element; note bigquery.js:1343 deletes `res.rows` in the jobComplete path, so verify which element carries raw cells and pin it with a regression test.
+  minor:
+    - src/adapters/bigquery.ts:241-247 — `requireClient()` throws `BigQueryClosedError` ("is closed") for the never-connected state; misleading for an adapter that was never open. Use a distinct not-connected error or lazy-connect.
+    - src/adapters/bigquery.ts:176 — `durationMs` hardcoded 0 (other adapters measure); `commandTag` undefined.
+    - src/adapters/bigquery.ts:183-218 — inline `import("./types").X` return annotations instead of top-level type imports (inconsistent with lines 39-44).
+NEXT_STATUS_FOR_INDEX: critical_block
+NOTES: Seam-level work is honest and tests are real (RED evidence, leak-marker assertions, call-count pins), but no test exercises the default-factory client shape — exactly where the empty-result bug and the precision violation live. Re-run TDD with a tuple-shaped fake, then resubmit.

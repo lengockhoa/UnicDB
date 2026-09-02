@@ -706,11 +706,16 @@ export class ConnectionManager {
    * short-circuits on the `disposed` flag). Post-dispose, the manager
    * refuses to construct any further adapter (active or passive) for any
    * connection — including bigquery — by throwing an explicit
-   * ConnectionManagerDisposedError. The bigquery case is wired through the
-   * factory's own closed-error surface (BigQueryAdapter throws on
-   * construction post-dispose when it sees the disposed flag injected by
-   * the test harness), but the manager-level guard also blocks any
-   * `factory()` call from running again.
+   * `ConnectionManagerDisposedError`. The guard is the private
+   * `requireNotDisposed()` method, wired into the admission paths
+   * (`addConnection`, `editConnection`, `getAdapter`, `getAdapterFor`); it
+   * fires synchronously as the FIRST statement in each path so the factory
+   * is never invoked after dispose. There is NO injected "disposed" flag on
+   * `BigQueryAdapter` — its constructor takes only `(cfg, clientFactory?)`
+   * and does not know about manager lifecycle. The adapter-level
+   * `BigQueryClosedError` (TASK-BQ01-002) is a separate, lower-level guard
+   * that fires on connect/close for an adapter that was successfully
+   * constructed BEFORE dispose.
    */
   async dispose(): Promise<void> {
     // Idempotency guard — second dispose is a no-op.

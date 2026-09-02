@@ -228,3 +228,142 @@ $ npx vitest run src/adapters/__tests__/factory.test.ts --reporter verbose
 ### Next
 
 Ready for review.
+
+## Executor Report (fix round 1)
+
+**STATUS:** DONE
+**EXECUTOR_TOOL:** claude-code
+**EXECUTOR_MODEL:** unic-code
+**EXECUTOR_SUBAGENT:** -
+
+### Summary
+
+Applied reviewer R4.5 changes_requested for TASK-BQ01-003:
+(1) rewrote Test #4 to actually exercise `requireNotDisposed()` against all
+four admission paths (passive `getAdapterFor`, active `getAdapter`,
+`editConnection`, `addConnection`) with explicit
+`ConnectionManagerDisposedError` rejection assertions and a factory-call
+snapshot proving no client rebuild;
+(2) corrected the `dispose()` docstring (connectionManager.ts:702-714) to
+describe the actual mechanism — the manager-level `requireNotDisposed()`
+guard — and removed the false claim that `BigQueryAdapter`'s constructor
+takes a disposed flag.
+
+### Test Plan Followed
+
+Inline (round 1 fix) — the reviewer's two important findings + the
+recommended test strengthening.
+
+### Files Changed
+
+- `src/core/__tests__/connectionManager.test.ts`: Test #4 strengthened to
+  assert `ConnectionManagerDisposedError` is thrown by all four admission
+  paths post-dispose; factory call count asserted stable across all
+  rejection attempts. Added `ConnectionManagerDisposedError` to the
+  top-of-file import block.
+- `src/core/connectionManager.ts`: `dispose()` docstring rewritten to
+  describe `requireNotDisposed()` as the actual mechanism; removed false
+  claim about a disposed flag on the `BigQueryAdapter` constructor.
+
+### Tests Added
+
+- `src/core/__tests__/connectionManager.test.ts > ConnectionManager — TASK-BQ01-003 bigquery admission > TASK-BQ01-003 #4 — dispose idempotent + post-dispose adapter use fails fast`
+  - Existing double-dispose idempotency assertion preserved.
+  - NEW: `getAdapterFor(cfg)` rejects with `ConnectionManagerDisposedError`
+    and matches `/disposed/i`.
+  - NEW: `getAdapter()` rejects with `ConnectionManagerDisposedError`.
+  - NEW: `editConnection("bq1", …)` rejects with `ConnectionManagerDisposedError`.
+  - NEW: `addConnection(cfg, "")` rejects with `ConnectionManagerDisposedError`.
+  - NEW: factory call count unchanged after all four rejection attempts
+    (proves no client rebuild — the gate fires BEFORE the factory).
+
+### Verification
+
+#### RED output (guard temporarily disabled — captured, then restored)
+
+```text
+$ npx vitest run src/core/__tests__/connectionManager.test.ts -t "TASK-BQ01-003 #4"
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq01-003-fix
+
+ ❯ src/core/__tests__/connectionManager.test.ts > ConnectionManager — TASK-BQ01-003 bigquery admission > TASK-BQ01-003 #4 — dispose idempotent + post-dispose adapter use fails fast
+   × TASK-BQ01-003 #4 — dispose idempotent + post-dispose adapter use fails fast
+     → promise resolved "{ connect: [Function spy], …(8) }" instead of rejecting
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/core/__tests__/connectionManager.test.ts > ConnectionManager — TASK-BQ01-003 bigquery admission > TASK-BQ01-003 #4 — dispose idempotent + post-dispose adapter use fails fast
+AssertionError: promise resolved "{ connect: [Function spy], …(8) }" instead of rejecting
+
+- Expected
++ Received
+
+- [Error: rejected promise]
++ Object {
++   "close": [Function spy],
++   "connect": [Function spy],
++   "listColumns": [Function spy],
++   "listRoutines": [Function spy],
++   "listSchemas": [Function spy],
++   "listTables": [Function spy],
++   "listViews": [Function spy],
++   "runQuery": [Function spy],
++   "testConnection": [Function spy],
++ }
+
+ ❯ src/core/__tests__/connectionManager.test.ts:1675:25
+    1673|     // Passive path: getAdapterFor(cfg) rejects explicitly.
+    1674|     const passive = mgr.getAdapterFor(cfg);
+    1675|     await expect(passive).rejects.toBeInstanceOf(ConnectionManagerDisp…
+       |                         ^
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 42 skipped (43)
+```
+
+The failure is exactly what was supposed to happen: with
+`requireNotDisposed()` neutered, `getAdapterFor(cfg)` fell through to the
+factory and produced a fake adapter instead of rejecting. RED confirmed.
+
+#### GREEN output (guard restored)
+
+```text
+$ npx vitest run src/adapters/__tests__/factory.test.ts src/core/__tests__/connectionManager.test.ts
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq01-003-fix
+
+ ✓ src/core/__tests__/connectionManager.test.ts  (43 tests) 72ms
+ ✓ src/adapters/__tests__/factory.test.ts  (6 tests) 2ms
+
+ Test Files  2 passed (2)
+      Tests  49 passed (49)
+   Start at  18:41:45
+   Duration  487ms
+```
+
+```text
+$ npm run typecheck
+> vsdb@1.46.0 typecheck
+> tsc --noEmit
+(exit 0, no output)
+```
+
+### Issues / Notes
+
+- RED was produced by temporarily neutering `requireNotDisposed()` (early
+  return instead of throwing on `this.disposed`). The test was reverted to
+  its real implementation immediately after capturing the failure. The
+  failing assertion is `await expect(passive).rejects.toBeInstanceOf(
+  ConnectionManagerDisposedError)` — the FIRST post-dispose assertion,
+  proving the new test fails for the expected reason (the guard is bypassed
+  and the factory fires) rather than a tangentially-related issue.
+- The minor finding (the long inline comment justifying the weakened
+  assertion in the old Test #4) is removed: with the strengthened
+  assertions in place, the comment block is no longer needed.
+- `BigQueryAdapter` (src/adapters/bigquery.ts) was NOT modified — per the
+  hard constraint.
+- 49 tests pass; existing 40 in `connectionManager.test.ts` + 6 in
+  `factory.test.ts` (per the round-0 baseline) all stay green.
+- No `INDEX.md` touched per the task instructions.
+
+### Next
+
+Ready for re-review.

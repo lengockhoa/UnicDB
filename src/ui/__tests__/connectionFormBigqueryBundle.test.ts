@@ -293,4 +293,65 @@ describeIfBundle("webview/connectionFormMain.ts bundle — BigQuery field group 
     // For bigquery the inputs are absent → empty string values.
     expect(submit!.driver).toBe("bigquery");
   });
+
+  // -----------------------------------------------------------------------
+  // #6 — Edit-open regression: opening an existing SQL connection with a
+  //      custom port must NOT clobber the stored port with the driver
+  //      default. Previously updateDriverVisibility() unconditionally set
+  //      port = DRIVER_PORTS[driver] on every call (including the one
+  //      triggered by applyInit), which silently overwrote mysql:6544 etc.
+  // -----------------------------------------------------------------------
+  it("#6 edit-open with custom SQL port preserves the stored port (no clobber)", () => {
+    const { received } = loadBundle();
+    dispatch({
+      type: "init",
+      existing: {
+        id: "mysql-1",
+        name: "Prod MySQL",
+        driver: "mysql",
+        host: "db.example.com",
+        port: 6544,
+        user: "app",
+        database: "appdb",
+        sslMode: "disable",
+      },
+    });
+    // Port input must still carry the stored custom value, not the mysql
+    // driver default (3306) that updateDriverVisibility() would clobber.
+    expect(inputEl("port").value).toBe("6544");
+    // Submit posts the preserved port.
+    btn("saveBtn").click();
+    const submit = lastOf(received, "submit");
+    expect(submit).toBeDefined();
+    expect(submit!.port).toBe(6544);
+    expect(submit!.driver).toBe("mysql");
+    expect(submit!.host).toBe("db.example.com");
+  });
+
+  // -----------------------------------------------------------------------
+  // #6b — Edit-open regression for mssql custom port (1434, instance
+  //      endpoint — also commonly customized). Same gate must hold.
+  // -----------------------------------------------------------------------
+  it("#6b edit-open with custom mssql port preserves the stored port", () => {
+    const { received } = loadBundle();
+    dispatch({
+      type: "init",
+      existing: {
+        id: "mssql-1",
+        name: "Prod MSSQL",
+        driver: "mssql",
+        host: "sql.example.com",
+        port: 1434,
+        user: "sa",
+        database: "master",
+        sslMode: "disable",
+      },
+    });
+    expect(inputEl("port").value).toBe("1434");
+    btn("saveBtn").click();
+    const submit = lastOf(received, "submit");
+    expect(submit).toBeDefined();
+    expect(submit!.port).toBe(1434);
+    expect(submit!.driver).toBe("mssql");
+  });
 });

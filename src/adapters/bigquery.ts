@@ -166,7 +166,35 @@ export class BigQueryAdapter implements DbAdapter {
 
   async runQuery(sql: string): Promise<RunResult> {
     const client = this.requireClient();
-    const raw = (await client.query(sql)) as BigQueryRawQueryResponse;
+    // The real `@google-cloud/bigquery` `client.query(sql)` resolves a
+    // TUPLE — `PagedResponse<RowMetadata, Query, QueryResultsResponse>`
+    // (node_modules/@google-cloud/bigquery/build/src/bigquery.d.ts:33, :49,
+    // :1119). Concretely: `[RowMetadata[]]` when no further pages, or
+    // `[RowMetadata[], Query | null, QueryResultsResponse]` when paginated.
+    //
+    //   - Element 0 (`RowMetadata[]`) is the PARSED form. INT64 cells are
+    //     coerced to JS Number — branded-string precision is LOST past
+    //     `Number.MAX_SAFE_INTEGER` (see `mergeSchemaWithRows_`,
+    //     bigquery.js:1338). Feeding element 0 into `toBigQueryPage` would
+    //     either yield zero rows (Map shape vs `{f:[]}`) or lose precision.
+    //   - Element 2 (`QueryResultsResponse` = `IGetQueryResultsResponse |
+    //     `IQueryResponse`) is the RAW apiResponse. It carries the wire-
+    //     format `f[].v` cells with branded strings preserved verbatim.
+    //     This is what `toBigQueryPage` expects.
+    //
+    // We therefore unwrap the tuple: prefer element 2 (raw apiResponse)
+    // when present; fall back to element 0 only as a defensive shim for
+    // 1-element tuples (no pagination, no apiResponse). Note that the
+    // 1-element fallback is intentionally not the production path — tests
+    // (#7 / #7b) pin the real shape.
+    const resolved = (await client.query(sql)) as unknown;
+    const tuple = Array.isArray(resolved) ? (resolved as unknown[]) : null;
+    const raw: BigQueryRawQueryResponse =
+      tuple !== null && tuple.length >= 3 && tuple[2] !== undefined && tuple[2] !== null
+        ? (tuple[2] as BigQueryRawQueryResponse)
+        : tuple !== null && tuple.length >= 1
+          ? (tuple[0] as unknown as BigQueryRawQueryResponse)
+          : (resolved as BigQueryRawQueryResponse);
     const page: BigQueryPage = toBigQueryPage(raw);
     const result: QueryResult = {
       columns: page.schema.map((f) => f.name),
@@ -263,21 +291,24 @@ function defaultBigQueryClientFactory(opts: {
   projectId: string;
   location?: string;
 }): BigQueryClient {
-  // Build a BigQueryClient via BQ-00's seam (returns the narrow
-  // BigQueryClientLike — only listDatasets) and forward opts to the real
-  // `new BigQuery(opts)` call so `location` reaches the underlying client.
-  // We construct the BigQuery instance via a lazy require so this module
-  // is free of `@google-cloud/bigquery` import side effects.
+  // Per task Interfaces block + Discussion 2026-09-02: the default
+  // implementation wraps BQ-00's `createBigQueryClient` and forwards
+  // `{projectId, location}` to the underlying `new BigQuery(opts)` call.
+  //
+  // The seam is the SINGLE source of the client — we feed BQ-00's
+  // `createBigQueryClient` an `impl` that constructs `new BigQuery`
+  // with the merged options, and the seam's return value is what the
+  // adapter keeps. No second `new BigQuery` is built, no discarded
+  // intermediate. The lazy `require` keeps module import-time free of
+  // `@google-cloud/bigquery` side effects; the real `new BigQuery(...)`
+  // happens ONLY when the default factory is called (production usage).
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { BigQuery } = require("@google-cloud/bigquery") as typeof import("@google-cloud/bigquery");
-  const real = new BigQuery({
-    projectId: opts.projectId,
-    ...(opts.location !== undefined ? { location: opts.location } : {}),
+  const real = createBigQueryClient(opts.projectId, (b00Opts) => {
+    return new BigQuery({
+      projectId: b00Opts.projectId ?? opts.projectId,
+      ...(opts.location !== undefined ? { location: opts.location } : {}),
+    }) as unknown as BigQueryClientLike;
   });
-  // BQ-00's seam is exercised for symmetry with the other tests; it returns
-  // a no-op-listDatasets stub (we don't use it — `real` carries the real
-  // listDatasets and is what callers actually see).
-  const _b00 = createBigQueryClient(opts.projectId);
-  void _b00;
   return real as unknown as BigQueryClient;
 }

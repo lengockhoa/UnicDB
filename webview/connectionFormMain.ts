@@ -188,7 +188,7 @@ function rememberGroupCaches(): void {
   _bqGroupCache = document.getElementById("bqFields");
 }
 
-function updateDriverVisibility(): void {
+function updateDriverVisibility(opts: { resetPort?: boolean } = {}): void {
   const driverEl = document.getElementById("driver") as HTMLSelectElement | null;
   const driver = (driverEl?.value ?? "postgres") as Driver;
   const isBq = driver === "bigquery";
@@ -217,11 +217,15 @@ function updateDriverVisibility(): void {
       const beforeNode = manualCommit ?? null;
       parent.insertBefore(_sqlGroupCache, beforeNode);
     }
-    // Reset port default when switching back to a SQL driver so the value
-    // reflects the new driver (the bigquery:0 sentinel shouldn't leak into
-    // a postgres connection form).
-    const portEl = document.getElementById("port") as HTMLInputElement | null;
-    if (portEl) portEl.value = String(DRIVER_PORTS[driver]);
+    // Reset port default ONLY when the user actively switched drivers (or on
+    // first render with no prefill). Skip when applyInit() called us AFTER
+    // pre-filling the stored port — otherwise editing a connection with a
+    // custom port (e.g. mysql:6544) would clobber it back to the driver
+    // default (3306) and silently corrupt the persisted value.
+    if (opts.resetPort) {
+      const portEl = document.getElementById("port") as HTMLInputElement | null;
+      if (portEl) portEl.value = String(DRIVER_PORTS[driver]);
+    }
   }
 }
 
@@ -496,13 +500,18 @@ function render(): void {
   );
 
   // TASK-BQ01-004 — driver change toggles SQL vs BigQuery field groups.
-  driver.addEventListener("change", updateDriverVisibility);
+  // resetPort:true on USER-driven change so swapping to a new SQL driver
+  // shows the matching default port (mysql→3306, mssql→1433, …).
+  driver.addEventListener("change", () => updateDriverVisibility({ resetPort: true }));
   // Snapshot the freshly built groups BEFORE the initial visibility swap
   // detaches the inactive one — needed so subsequent driver changes can
   // re-attach the right group.
   rememberGroupCaches();
   // Initial state — SQL by default (postgres selected on first render).
-  updateDriverVisibility();
+  // resetPort:true so the markup default 5432 is reaffirmed for add-form;
+  // applyInit() will explicitly call WITHOUT resetPort to preserve any
+  // stored custom port from the existing connection record.
+  updateDriverVisibility({ resetPort: true });
   (document.getElementById("useSsl") as HTMLInputElement).addEventListener(
     "change",
     updateSslVisibility,
@@ -565,8 +574,10 @@ function applyInit(existing: FormConfig | null): void {
   input("tunnelUser").value = existing.tunnel?.user ?? "";
   input("tunnelIdentityFile").value = existing.tunnel?.identityFile ?? "";
   // TASK-BQ01-004 — toggle field group for the prefilled driver, then
-  // prefill BQ inputs when editing a bigquery connection.
-  updateDriverVisibility();
+  // prefill BQ inputs when editing a bigquery connection. Explicitly
+  // OMIT resetPort so the stored port (e.g. mysql:6544) survives the
+  // group swap instead of being clobbered by the driver default.
+  updateDriverVisibility({ resetPort: false });
   const bp = (document.getElementById("billingProject") as HTMLInputElement | null);
   const bl = (document.getElementById("bqLocation") as HTMLInputElement | null);
   const bm = (document.getElementById("bqMaxBytesBilled") as HTMLInputElement | null);

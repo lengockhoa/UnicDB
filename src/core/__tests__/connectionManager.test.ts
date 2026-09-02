@@ -138,7 +138,10 @@ vi.mock("vscode", () => {
   };
 });
 
-import { ConnectionManager } from "../connectionManager";
+import {
+  ConnectionManager,
+  ConnectionManagerDisposedError,
+} from "../connectionManager";
 import type { ConnectionConfig } from "../../config/types";
 import type { DbAdapter } from "../../adapters/types";
 
@@ -1658,17 +1661,36 @@ describe("ConnectionManager — TASK-BQ01-003 bigquery admission", () => {
     // Double-dispose: idempotent no-op (does not throw).
     await expect(mgr.dispose()).resolves.toBeUndefined();
 
-    // Post-dispose factory call for bigquery is not made via the public
-    // admission path. The manager's lazy connect path (getAdapter) requires
-    // an active connection; after dispose, there is none. Setting active
-    // post-dispose and lazy-connecting is a separate concern — the
-    // HARD CONSTRAINT is that the BQ adapter's PUBLIC constructor (called by
-    // the factory) must NOT be invoked again after dispose. We assert the
-    // factory call count is stable across dispose calls (no zombie re-fires).
+    // Post-dispose every adapter-admission path must reject with the
+    // explicit disposed error AND must NOT have invoked the factory. We
+    // exercise ALL three admission paths so the requireNotDisposed() guard
+    // is wired into each (passive getAdapterFor, active getAdapter, edit,
+    // and add) — without these assertions the guard could be silently
+    // deleted and this suite would stay green.
     const factoryAfterDispose = factoryCalls;
-    // Drain pending microtasks.
-    await new Promise((r) => setTimeout(r, 0));
-    await new Promise((r) => setTimeout(r, 0));
+    const cfg = bqCfg({});
+
+    // Passive path: getAdapterFor(cfg) rejects explicitly.
+    const passive = mgr.getAdapterFor(cfg);
+    await expect(passive).rejects.toBeInstanceOf(ConnectionManagerDisposedError);
+    await expect(passive).rejects.toThrow(/disposed/i);
+
+    // Active path: getAdapter() rejects explicitly (no active after dispose).
+    await expect(mgr.getAdapter()).rejects.toBeInstanceOf(
+      ConnectionManagerDisposedError,
+    );
+
+    // Edit probe: editConnection rejects explicitly.
+    await expect(
+      mgr.editConnection("bq1", { bigquery: { billingProject: "p2" } }),
+    ).rejects.toBeInstanceOf(ConnectionManagerDisposedError);
+
+    // Add probe: addConnection rejects explicitly.
+    await expect(mgr.addConnection(cfg, "")).rejects.toBeInstanceOf(
+      ConnectionManagerDisposedError,
+    );
+
+    // None of the rejected calls reached the factory — no client rebuild.
     expect(factoryCalls).toBe(factoryAfterDispose);
   });
 

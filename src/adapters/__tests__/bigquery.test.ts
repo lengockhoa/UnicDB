@@ -266,3 +266,124 @@ describe("TASK-BQ01-002 BigQueryAdapter — runQuery after close", () => {
     expect(factory).toHaveBeenCalledTimes(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Test #7 (R4.5 regression) — runQuery must unwrap the real-client TUPLE
+// `[RowMetadata[], Query | null, QueryResultsResponse]` and feed the THIRD
+// element (raw apiResponse, with wire-format `f[].v` cells) into
+// `toBigQueryPage`. Element 0 is the PARSED `RowMetadata[]` where INT64
+// was coerced to Number — feeding it into `toBigQueryPage` would either
+// drop rows (silently) or lose branded-string precision. The default
+// factory's `client.query(sql)` resolves a tuple shaped like the real
+// client, so this test exercises the production code path.
+//
+// Element 0 (parsed): INT64 cell as Number — would lose the >MAX_SAFE_INTEGER
+//   digit. We shape it as a Map-like object so it's not a valid raw response.
+// Element 2 (raw): jobReference + schema + rows with `f[].v` strings — the
+//   shape `toBigQueryPage` expects. The branded string MUST survive.
+// ---------------------------------------------------------------------------
+describe("TASK-BQ01-002 BigQueryAdapter — R4.5 runQuery TUPLE unwrap + raw apiResponse routing", () => {
+  it("7. real-client TUPLE [parsed, nextQuery, rawApiResponse] -> branded string preserved, columns/rowCount mapped from raw element", async () => {
+    const bigIntStr = "9007199254740993"; // > Number.MAX_SAFE_INTEGER
+    // Element 0: PARSED RowMetadata array. The real client converts each row
+    // to a Map-like structure where INT64 values are JS Number — feeding
+    // this into `toBigQueryPage` would yield zero rows because it expects
+    // `{f:[]}` shape. We mimic the corruption deliberately.
+    const parsedRowsElement = [
+      new Map<unknown, unknown>([["big_int", 9007199254740993]]),
+    ];
+    // Element 1: nextQuery (null = no further pagination).
+    const nextQueryElement: null = null;
+    // Element 2: raw QueryResultsResponse = IGetQueryResultsResponse. The
+    // wire-format `f[].v` is preserved verbatim — this is what
+    // `toBigQueryPage` consumes.
+    const rawApiResponse: BigQueryRawQueryResponse = {
+      jobReference: { projectId: "proj-billing", location: "US", jobId: "job_abc" },
+      schema: { fields: [{ name: "big_int", type: "INT64", mode: "REQUIRED" }] },
+      rows: [{ f: [{ v: bigIntStr }] }],
+      pageToken: null,
+    };
+    const tupleResponse: [unknown[], null, BigQueryRawQueryResponse] = [
+      parsedRowsElement,
+      nextQueryElement,
+      rawApiResponse,
+    ];
+
+    // Fake client that resolves the TUPLE shape (production path), not the
+    // raw response object (which is what older fakes did).
+    const fakeClient: BigQueryClient = {
+      listDatasets: vi.fn(async () => [{ id: "ds1" }]),
+      query: vi.fn(async () => tupleResponse),
+      getQueryResults: vi.fn(),
+      createQueryJob: vi.fn(),
+      cancel: vi.fn(),
+      getDataset: vi.fn(),
+      getTable: vi.fn(),
+    };
+    const factory = vi.fn(
+      (_opts: { projectId: string; location?: string }): BigQueryClient => fakeClient,
+    );
+
+    const adapter = new BigQueryAdapter(bqCfg({}), factory);
+    await adapter.connect();
+
+    const result = await adapter.runQuery("SELECT 9007199254740993 AS big_int");
+
+    // Branded string preserved end-to-end (acceptance criterion). If the
+    // adapter had unwrapped element 0 (parsed RowMetadata) instead of
+    // element 2 (raw apiResponse), the INT64 cell would be either a Number
+    // (precision lost) or undefined (Map shape not what toBigQueryPage
+    // expects).
+    const cell = result.results[0].rows[0][0];
+    expect(typeof cell).toBe("string");
+    expect(cell).toBe(bigIntStr);
+    // Columns + rowCount mapped from the raw element (schema + rows).
+    expect(result.results[0].columns).toEqual(["big_int"]);
+    expect(result.results[0].rowCount).toBe(1);
+  });
+
+  it("7b. paginated TUPLE [parsed, nextQuery, rawApiResponseWithPageToken] -> rowCount/columns from raw element, branded BIGNUMERIC string preserved", async () => {
+    const bigIntStr = "12345678901234567890";
+    const parsedRowsElement: unknown[] = [
+      new Map<unknown, unknown>([["big_int", 1.2345678901234568e19]]),
+    ];
+    const nextQueryElement = { pageToken: "tok-NEXT" };
+    const rawApiResponse: BigQueryRawQueryResponse = {
+      jobReference: { projectId: "proj-billing", location: "EU", jobId: "job_pag" },
+      schema: { fields: [{ name: "big_int", type: "BIGNUMERIC", mode: "REQUIRED" }] },
+      rows: [{ f: [{ v: bigIntStr }] }],
+      pageToken: "tok-NEXT",
+    };
+    const tupleResponse: [unknown[], unknown, BigQueryRawQueryResponse] = [
+      parsedRowsElement,
+      nextQueryElement,
+      rawApiResponse,
+    ];
+
+    const fakeClient: BigQueryClient = {
+      listDatasets: vi.fn(async () => [{ id: "ds1" }]),
+      query: vi.fn(async () => tupleResponse),
+      getQueryResults: vi.fn(),
+      createQueryJob: vi.fn(),
+      cancel: vi.fn(),
+      getDataset: vi.fn(),
+      getTable: vi.fn(),
+    };
+    const factory = vi.fn(
+      (_opts: { projectId: string; location?: string }): BigQueryClient => fakeClient,
+    );
+
+    const adapter = new BigQueryAdapter(bqCfg({}), factory);
+    await adapter.connect();
+
+    const result = await adapter.runQuery("SELECT * FROM huge_table");
+    expect(result.results[0].columns).toEqual(["big_int"]);
+    expect(result.results[0].rows[0][0]).toBe(bigIntStr);
+    expect(result.results[0].rowCount).toBe(1);
+    // Non-null pageToken is preserved on the raw element; adapter exposes
+    // a continuation signal in the pageToken of the returned result's
+    // command tag field. BatchedQuery wiring is BQ-02 scope — for R4.5 we
+    // only need to prove the adapter no longer feeds the parsed element
+    // into `toBigQueryPage`.
+  });
+});
