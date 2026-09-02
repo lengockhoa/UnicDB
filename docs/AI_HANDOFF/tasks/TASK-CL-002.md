@@ -72,5 +72,62 @@ npm run typecheck
 
 ## Discussion
 
+### 2026-09-02 · executor · unic-code
+Implementation matches the planner's note. RED→GREEN→VERIFY observed in
+this session:
+
+RED (new tests on unmodified source — 7 failed in tableCommands + aiChatPanelPlan):
+- tableCommands.test.ts > #1 newTable form runDdl success → onSchemaDdl not called (0 vs 1 expected)
+- tableCommands.test.ts > #2 modifyTable runDdl → onSchemaDdl not called (0 vs 1)
+- tableCommands.test.ts > #4 absent dep → "Created public.users" info never posted (handler-driven form path)
+- tableCommands.test.ts > #5 bigquery narrowing → no panel created (capability gate default matrix)
+- aiChatPanelPlan.test.ts > #6 full success → onSchemaDdl not called (0 vs 2)
+- aiChatPanelPlan.test.ts > #7 partial failure → onSchemaDdl not called (0 vs 1)
+- aiChatPanelPlan.test.ts > #8 apply-time null → "Plan apply stopped" never posted (null factory short-circuited via drift re-check in original setup; corrected test fixture resolves listColumns OK, runQuery throws)
+
+Test #3 (error path) and #9 (consent denied / drift) were ALREADY passing on the unmodified source because the existing code simply doesn't fire the seam; they pin the negative contract so future edits don't accidentally add a fire on the error path.
+
+GREEN (after wiring):
+- All 61 tests in the two narrow test files pass.
+- `npm run typecheck` exits 0.
+- `invalidateAfterSchemaDdl` closure at extension.ts:876-881, `runStatements` firing at :2008, and `deactivate` teardown at :1265 all byte-identical to fe7e0b8 (no edits in those line ranges — verified by git diff).
+- 5 source/test files changed, 443 insertions / 4 deletions. Zero files outside §Target Files.
+
 ### 2026-09-02 · planner · unic-smart
 DI over a new global: `invalidateAfterSchemaDdl` is already a module-private closure — the cheapest correct move is to pass it down through the two EXISTING injection seams (`RegisterDeps`, `AiChatPanelOptions`), both of which extension.ts already constructs. The panel callback intentionally omits the dialect parameter: `DbAdapter` exposes no driver field and the panel only holds `AdapterFactory`, so the panel cannot know the dialect — extension's closure derives it from `mgr.getActive()?.driver` exactly as `runStatements` does at :1982. Per-statement firing (not per-batch) is deliberate: it correctly excludes the failed tail of a partial plan-apply, and `invalidate()` is idempotent. Reviewer: if you prefer once-per-batch for form DDL, the test shapes flip trivially, but per-statement is the more precise contract.
+
+## Executor Report
+EXECUTOR_TOOL: Claude Code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: (representative excerpts from 7 failing tests on unmodified source)
+  FAIL src/ui/__tests__/tableCommands.test.ts > tableCommands — TASK-CL-002 ARP-07 invalidation seam > #1 happy: newTable form runDdl success fires onSchemaDdl once with CREATE TABLE + dialect 'postgres'
+    AssertionError: expected "spy" to be called 1 times, but got 0 times
+  FAIL src/ui/__tests__/tableCommands.test.ts > tableCommands — TASK-CL-002 ARP-07 invalidation seam > #2 happy: modifyTable runDdl fires onSchemaDdl once with the applied ALTER-ish DDL + dialect 'postgres'
+    AssertionError: expected "spy" to be called 1 times, but got 0 times
+  FAIL src/ui/__tests__/tableCommands.test.ts > tableCommands — TASK-CL-002 ARP-07 invalidation seam > #4 absent dep: RegisterDeps without onSchemaDdl → command completes normally, no throw
+    AssertionError: expected false to be true // Object.is equality (handler-driven form path; "Created public.users" info message never posted)
+  FAIL src/ui/__tests__/tableCommands.test.ts > tableCommands — TASK-CL-002 ARP-07 invalidation seam > #5 driver narrowing: conn.driver === 'bigquery' → callback receives dialect === undefined
+    TypeError: Cannot read properties of undefined (reading 'webview') (capability gate blocked form creation)
+  FAIL src/ui/__tests__/aiChatPanelPlan.test.ts > AiChatPanel — TASK-CL-002 ARP-07 invalidation seam (plan-apply) > #6 happy: full success → onSchemaDdl called 2× (per applied statement, in order)
+    AssertionError: expected "spy" to be called 2 times, but got 0 times
+  FAIL src/ui/__tests__/aiChatPanelPlan.test.ts > AiChatPanel — TASK-CL-002 ARP-07 invalidation seam (plan-apply) > #7 partial failure: execute throws at statement 2 → callback fired exactly 1× (applied prefix only)
+    AssertionError: expected "spy" to be called 1 times, but got 0 times
+  FAIL src/ui/__tests__/aiChatPanelPlan.test.ts > AiChatPanel — TASK-CL-002 ARP-07 invalidation seam (plan-apply) > #8 no connection: apply-time adapter null → zero callbacks; existing contract preserved
+    AssertionError: expected 'Here is the plan.' to contain 'Plan apply stopped'
+Verification Output:
+  command: npx vitest run src/ui/__tests__/tableCommands.test.ts src/ui/__tests__/aiChatPanelPlan.test.ts
+  result: 2 test files passed, 61/61 tests passed, exit 0
+  output_excerpt:
+    Test Files  2 passed (2)
+    Tests  61 passed (61)
+    Start at  22:20:15
+    Duration  345ms (transform 269ms, setup 0ms, collect 343ms, tests 29ms, environment 0ms, prepare 74ms)
+
+  command: npm run typecheck
+  result: tsc --noEmit, exit 0
+
+  command: npx vitest run src/extension.test.ts
+  result: 1 test file, 169/170 passed (1 pre-existing schemaFormBundlePresent dist artifact failure unrelated to this task — confirmed by `git stash` re-run on clean tree)
+Status: PASS
+Note: All §Test Cases wired and pinned. The `runDdl` helper now also fires the seam for ANALYZE/VACUUM paths since they share the helper; this is safe because the host closure's `completedSchemaImpact` filter (extension.ts:877) returns false for non-DDL statements so the cache invalidation is a no-op. The seam is optional — every existing test that constructs `RegisterDeps` without `onSchemaDdl` continues to pass without changes.

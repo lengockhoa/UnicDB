@@ -206,6 +206,7 @@ import {
   CONSOLE_DRAFTS_KEY,
   CONSOLE_DRAFT_SNAPSHOT_VERSION,
   CONSOLE_DRAFTS_MAX_BUFFER_CHARS,
+  CONSOLE_DRAFTS_MAX_NAME_CHARS,
   CONSOLE_DRAFTS_MAX_TABS,
   encodeConsoleDraftSnapshot,
   parseConsoleDraftSnapshot,
@@ -229,6 +230,7 @@ describe("CONSOLE_DRAFTS_* constants (ARP-08)", () => {
     expect(CONSOLE_DRAFT_SNAPSHOT_VERSION).toBe(1);
     expect(CONSOLE_DRAFTS_MAX_TABS).toBe(20);
     expect(CONSOLE_DRAFTS_MAX_BUFFER_CHARS).toBe(64_000);
+    expect(CONSOLE_DRAFTS_MAX_NAME_CHARS).toBe(200);
   });
 });
 
@@ -414,7 +416,84 @@ describe("parseConsoleDraftSnapshot — forward compat", () => {
   });
 });
 
-// ---- #8/#9/#10 — clearDrafts wire member --------------------------------------
+// ---- TASK-CL-003 — tab name cap (ARP-08 minor) -------------------------------
+//
+// Pure-unit coverage for CONSOLE_DRAFTS_MAX_NAME_CHARS:
+//   - parse REJECTS over-cap names (fail-closed) but accepts the exact cap
+//     and the empty name (cap is an upper bound).
+//   - The existing non-string-name reject path is preserved (composes after,
+//     not instead of).
+//   - A short ("Query 1") name round-trips losslessly through the codec.
+
+describe("parseConsoleDraftSnapshot — tab name cap (TASK-CL-003)", () => {
+  it("#1 name exactly at cap round-trips through encode→parse losslessly", () => {
+    const exactName = "n".repeat(CONSOLE_DRAFTS_MAX_NAME_CHARS);
+    const snapshot: ConsoleDraftSnapshot = {
+      version: 1,
+      tabs: [{ id: "tab-1", name: exactName, buffer: "SELECT 1;" }],
+      activeTabId: "tab-1",
+    };
+    const encoded = encodeConsoleDraftSnapshot(snapshot);
+    const parsed = parseConsoleDraftSnapshot(encoded);
+    expect(parsed).toEqual(snapshot);
+    expect(parsed?.tabs[0]?.name).toHaveLength(CONSOLE_DRAFTS_MAX_NAME_CHARS);
+  });
+
+  it("#1b short name unaffected: 'Query 1' round-trips verbatim", () => {
+    const snapshot: ConsoleDraftSnapshot = {
+      version: 1,
+      tabs: [
+        { id: "tab-1", name: "Query 1", buffer: "SELECT 1;" },
+        { id: "tab-2", name: "Query 2", buffer: "SELECT 2;" },
+      ],
+      activeTabId: "tab-1",
+    };
+    const encoded = encodeConsoleDraftSnapshot(snapshot);
+    const parsed = parseConsoleDraftSnapshot(encoded);
+    expect(parsed).toEqual(snapshot);
+    expect(parsed?.tabs.map((t) => t.name)).toEqual(["Query 1", "Query 2"]);
+  });
+
+  it("#3 name 201 chars (cap + 1) → parse rejects (fail-closed)", () => {
+    const overName = "n".repeat(CONSOLE_DRAFTS_MAX_NAME_CHARS + 1);
+    const raw = JSON.stringify({
+      version: 1,
+      tabs: [{ id: "tab-1", name: overName, buffer: "SELECT 1;" }],
+      activeTabId: "tab-1",
+    });
+    expect(parseConsoleDraftSnapshot(raw)).toBeNull();
+  });
+
+  it("#5 empty name '' is still valid (cap is an upper bound only)", () => {
+    const snapshot: ConsoleDraftSnapshot = {
+      version: 1,
+      tabs: [{ id: "tab-1", name: "", buffer: "SELECT 1;" }],
+      activeTabId: "tab-1",
+    };
+    const parsed = parseConsoleDraftSnapshot(encodeConsoleDraftSnapshot(snapshot));
+    expect(parsed).toEqual(snapshot);
+    expect(parsed?.tabs[0]?.name).toBe("");
+  });
+
+  it("#6 non-string name still rejected: new cap check composes after typeof check", () => {
+    // The pre-existing typeof guard still rejects non-strings (numeric `name`
+    // would fail BEFORE the length check runs — both checks are independent
+    // and both must hold).
+    const raw = JSON.stringify({
+      version: 1,
+      tabs: [{ id: "tab-1", name: 42, buffer: "SELECT 1;" }],
+      activeTabId: "tab-1",
+    });
+    expect(parseConsoleDraftSnapshot(raw)).toBeNull();
+    // null name is also rejected by the existing typeof path.
+    const rawNull = JSON.stringify({
+      version: 1,
+      tabs: [{ id: "tab-1", name: null, buffer: "SELECT 1;" }],
+      activeTabId: "tab-1",
+    });
+    expect(parseConsoleDraftSnapshot(rawNull)).toBeNull();
+  });
+});
 
 describe("clearDrafts wire (ARP-08)", () => {
   it("#8 accepts the type-only clearDrafts message and narrows it", () => {

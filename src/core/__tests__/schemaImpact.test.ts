@@ -98,3 +98,18 @@ describe("TASK-ARP07-001 — completedSchemaImpact (batch, any-completed)", () =
     ).toBe(true);
   });
 });
+
+// TASK-CL-001 — schemaImpact classifier inherits the new mssql bracket
+// masking. Direction 1: real DDL with bracket-quoted table name still
+// triggers (CREATE TABLE [foo] …). Direction 2: a SELECT with a
+// bracket-quoted identifier that merely SPELLS `create` does NOT trigger,
+// because the masker blanks the bracket region before the depth-scan.
+describe("TASK-CL-001 — schemaImpact inherits mssql bracket masking", () => {
+  it("#8a — real DDL with bracket-quoted name is still schema-impact", () => {
+    expect(hasSchemaImpact("CREATE TABLE [foo] (x int)", "mssql")).toBe(true);
+  });
+
+  it("#8b — SELECT * FROM [create] (mssql) is NOT schema-impact", () => {
+    expect(hasSchemaImpact("SELECT * FROM [create]", "mssql")).toBe(false);
+  });
+});

@@ -447,3 +447,184 @@ describe("AiChatPanel — plan_change consent flow", () => {
     expect(runCalls.current).toBe(0);
   });
 });
+
+// =============================================================================
+// TASK-CL-002 — ARP-07 invalidation wiring: plan-apply execute fires the seam
+// PER successful statement (not per batch). Partial failure / denied / drift
+// / null adapter → callback NEVER fires for failed/never-run statements.
+// =============================================================================
+describe("AiChatPanel — TASK-CL-002 ARP-07 invalidation seam (plan-apply)", () => {
+  it("#6 happy: full success → onSchemaDdl called 2× (per applied statement, in order)", async () => {
+    const runCalls = { current: 0 };
+    const factory: AdapterFactory = vi.fn(async () => makeAdapter({ runCalls }));
+    const onSchemaDdl = vi.fn();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+      onSchemaDdl,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some((m) => (m as { type?: string }).type === "init"));
+    runTurnWithPlan(p, planEnvelope());
+    handler({ type: "send", text: "plan the migration" });
+    await until(() => postedMessages(p).some(isPlan));
+
+    consentState.confirmMock.mockResolvedValue(true);
+    handler({ type: "plan_approve" });
+    await until(() =>
+      postedMessages(p).some((m) => isAssistant(m) && m.text.includes("Plan applied")),
+    );
+
+    expect(runCalls.current).toBe(2);
+    expect(onSchemaDdl).toHaveBeenCalledTimes(2);
+    // Per-statement firing — each call gets exactly one applied sql.
+    const sql0 = (onSchemaDdl.mock.calls[0]![0] as readonly string[])[0];
+    const sql1 = (onSchemaDdl.mock.calls[1]![0] as readonly string[])[0];
+    expect(sql0).toBe("UPDATE users SET b = 1 WHERE a = 2");
+    expect(sql1).toBe("DELETE FROM users WHERE a = 1");
+  });
+
+  it("#7 partial failure: execute throws at statement 2 → callback fired exactly 1× (applied prefix only)", async () => {
+    const runCalls = { current: 0 };
+    const factory: AdapterFactory = vi.fn(async () => makeAdapter({ runCalls, failAt: 2 }));
+    const onSchemaDdl = vi.fn();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+      onSchemaDdl,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some((m) => (m as { type?: string }).type === "init"));
+    runTurnWithPlan(p, planEnvelope());
+    handler({ type: "send", text: "plan the migration" });
+    await until(() => postedMessages(p).some(isPlan));
+
+    consentState.confirmMock.mockResolvedValue(true);
+    handler({ type: "plan_approve" });
+    await until(() =>
+      postedMessages(p).some((m) => isAssistant(m) && m.text.includes("Plan apply stopped")),
+    );
+
+    expect(runCalls.current).toBe(2); // first ran, second threw
+    // Only the applied statement should fire the seam.
+    expect(onSchemaDdl).toHaveBeenCalledTimes(1);
+    const sql0 = (onSchemaDdl.mock.calls[0]![0] as readonly string[])[0];
+    expect(sql0).toBe("UPDATE users SET b = 1 WHERE a = 2");
+    // Existing contract preserved.
+    const report = postedMessages(p).filter(isAssistant).pop()!;
+    expect(report.text).toContain("Plan apply stopped");
+  });
+
+  it("#8 no connection: apply-time adapter null → zero callbacks; existing contract preserved", async () => {
+    // Drift re-check calls listColumns; we need it to succeed so we get to
+    // the apply step. runQuery then runs against `null` adapter — the
+    // execute wrapper throws "No active database connection." on the first
+    // statement, runRenameStatements returns the error outcome, and the
+    // panel posts "Plan apply stopped: applied 0/2".
+    let listColsCalls = 0;
+    const factory: AdapterFactory = vi.fn(async () => ({
+      listColumns: async () => {
+        listColsCalls += 1;
+        return [
+          { name: "a", dataType: "int", nullable: true },
+          { name: "b", dataType: "int", nullable: true },
+        ];
+      },
+      // Throw from runQuery so the execute wrapper's `await adapter.runQuery`
+      // rejects — exactly like a real "no connection" / dropped-driver failure.
+      runQuery: async () => {
+        throw new Error("No active database connection.");
+      },
+    }));
+    const onSchemaDdl = vi.fn();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+      onSchemaDdl,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some((m) => (m as { type?: string }).type === "init"));
+    runTurnWithPlan(p, planEnvelope());
+    handler({ type: "send", text: "plan the migration" });
+    await until(() => postedMessages(p).some(isPlan));
+
+    consentState.confirmMock.mockResolvedValue(true);
+    handler({ type: "plan_approve" });
+    await until(() =>
+      postedMessages(p).some(
+        (m) => isAssistant(m) && m.text.includes("Plan apply stopped"),
+      ),
+    );
+
+    // Drift re-check used listColumns but runQuery never ran successfully.
+    expect(listColsCalls).toBeGreaterThan(0);
+    expect(onSchemaDdl).toHaveBeenCalledTimes(0);
+    // Existing "Plan apply stopped: applied 0/2" contract preserved.
+    const stops = postedMessages(p).filter(
+      (m) => isAssistant(m) && m.text.includes("Plan apply stopped"),
+    );
+    expect(stops.length).toBeGreaterThan(0);
+    expect(stops[stops.length - 1]!.text).toContain("0/2");
+  });
+
+  it("#9a consent denied → ZERO runQuery AND zero onSchemaDdl calls", async () => {
+    const runCalls = { current: 0 };
+    const factory: AdapterFactory = vi.fn(async () => makeAdapter({ runCalls }));
+    const onSchemaDdl = vi.fn();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+      onSchemaDdl,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some((m) => (m as { type?: string }).type === "init"));
+    runTurnWithPlan(p, planEnvelope());
+    handler({ type: "send", text: "plan the migration" });
+    await until(() => postedMessages(p).some(isPlan));
+
+    consentState.confirmMock.mockResolvedValue(false);
+    handler({ type: "plan_approve" });
+    await until(() => postedMessages(p).some((m) => isToolResult(m) && m.status === "denied"));
+
+    expect(runCalls.current).toBe(0);
+    expect(onSchemaDdl).toHaveBeenCalledTimes(0);
+  });
+
+  it("#9b drift at approve → ZERO runQuery AND zero onSchemaDdl calls", async () => {
+    const runCalls = { current: 0 };
+    const factory: AdapterFactory = vi.fn(async () => makeAdapter({ columns: ["a"], runCalls }));
+    const onSchemaDdl = vi.fn();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+      onSchemaDdl,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some((m) => (m as { type?: string }).type === "init"));
+    runTurnWithPlan(p, planEnvelope());
+    handler({ type: "send", text: "plan the migration" });
+    await until(() => postedMessages(p).some(isPlan));
+
+    consentState.confirmMock.mockResolvedValue(true);
+    handler({ type: "plan_approve" });
+    await until(() => postedMessages(p).some(isError));
+
+    expect(runCalls.current).toBe(0);
+    expect(onSchemaDdl).toHaveBeenCalledTimes(0);
+  });
+});

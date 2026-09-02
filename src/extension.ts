@@ -369,7 +369,20 @@ export async function activate(
   });
   disposables.push(treeView);
   // TASK-005 — 6 table-utility commands (New/Modify/Copy DDL/Sample Data/Analyze/Vacuum).
-  registerTableCommands({ mgr, tree, treeView, context });
+  // TASK-CL-002 — thread the existing `invalidateAfterSchemaDdl` closure into
+  // the form-view DDL seam. The thunk reads the module-private binding at
+  // fire time (not at registration time), so the closure assignment at
+  // :863-867 — which happens AFTER this site — is correctly observed by
+  // the panel/form callbacks. The closure itself stays byte-identical.
+  registerTableCommands({
+    mgr,
+    tree,
+    treeView,
+    context,
+    onSchemaDdl: (statements, dialect) => {
+      invalidateAfterSchemaDdl?.(statements, dialect);
+    },
+  });
 
   // TASK-AF-002 — vsdb-ddl: virtual document provider for "Open DDL" on
   // view/routine/trigger nodes. Registers content provider + vsdb.openDdl +
@@ -1466,6 +1479,19 @@ async function commandOpenAiChat(
     // The panel owns its subscription; we never re-import or re-create a
     // ConnectionManager at this site.
     onDidChangeRecoveryStatus: mgr.onDidChangeRecoveryStatus,
+    // TASK-CL-002 — ARP-07 invalidation wiring for the AI plan-apply seam.
+    // Lazy thunk: reads the module-private closure at fire time so the
+    // :863-867 assignment (which is already in effect by the time the user
+    // approves a plan) is observed. The panel's callback shape intentionally
+    // omits the dialect param because the panel only holds AdapterFactory
+    // (no driver field); the host closure already derives dialect from
+    // `mgr.getActive()?.driver` exactly as `runStatements` does at :1982.
+    onSchemaDdl: (statements) => {
+      invalidateAfterSchemaDdl?.(
+        statements,
+        toSqlDialect(mgr.getActive()?.driver),
+      );
+    },
     onDispose: () => {
       aiChatPanel = null;
     },

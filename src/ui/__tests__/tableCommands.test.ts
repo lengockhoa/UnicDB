@@ -1597,3 +1597,190 @@ describe("tableCommands — DBX-08 tableDdl capability gate", () => {
     expect(mgr.treeView.reveal).not.toHaveBeenCalled();
   });
 });
+
+// =============================================================================
+// TASK-CL-002 — ARP-07 invalidation wiring: form-view DDL fires the seam.
+// Per-statement firing after `await adapter.runQuery(sql)` resolves; never on
+// the error path; optional dep — callers that omit it stay byte-identical.
+// =============================================================================
+describe("tableCommands — TASK-CL-002 ARP-07 invalidation seam", () => {
+  it("#1 happy: newTable form runDdl success fires onSchemaDdl once with CREATE TABLE + dialect 'postgres'", async () => {
+    const mgr = makeFakeMgr();
+    const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
+    registerSchemaTreeProvider(provider);
+    const onSchemaDdl = vi.fn();
+    registerTableCommands({
+      mgr: mgr.stub as unknown as ConnectionManager,
+      tree: provider,
+      treeView: treeView as unknown as TreeView<unknown>,
+      context: { subscriptions: [] } as unknown as ExtensionContext,
+      onSchemaDdl,
+    });
+    const schemaNode: VsdbNode = {
+      label: "public",
+      contextValue: "schema",
+      collapsible: 0,
+      meta: { connection: mgr.cfg, schema: "public" },
+    };
+    await state.registeredCommands.get("vsdb.newTable")!(schemaNode);
+    const panel = state.createdPanels[0];
+    const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0] as (msg: unknown) => Promise<void>;
+    await handler({ type: "ready" });
+    const spec = { name: "users", schema: "public", columns: defaultColumnSpecs("users"), keys: [] } satisfies TableSpec;
+    await handler({ type: "specChanged", spec });
+    await handler({ type: "submit", spec });
+    expect(onSchemaDdl).toHaveBeenCalledTimes(1);
+    const args = onSchemaDdl.mock.calls[0]!;
+    const stmts = args[0] as readonly string[];
+    const dialect = args[1] as unknown;
+    expect(stmts).toHaveLength(1);
+    expect((stmts[0] as string).toUpperCase()).toContain("CREATE TABLE");
+    expect(dialect).toBe("postgres");
+  });
+
+  it("#2 happy: modifyTable runDdl fires onSchemaDdl once with the applied ALTER-ish DDL + dialect 'postgres'", async () => {
+    const cols: PgColumnRow[] = [
+      { column_name: "id", format_type: "bigint", is_nullable: "NO", column_default: null },
+      { column_name: "name", format_type: "character varying", is_nullable: "YES", column_default: null },
+    ];
+    const cons: PgConstraintRow[] = [
+      { conname: "t_pkey", contype: "p", conkey: [1], confrelidname: null, confkeycols: null, consrc: "PRIMARY KEY (id)" },
+    ];
+    const mgr = makeFakeMgr({
+      introspectRows: { columns: cols, constraints: cons },
+      tables: [{ name: "t", schema: "public" }],
+    });
+    const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
+    registerSchemaTreeProvider(provider);
+    const onSchemaDdl = vi.fn();
+    registerTableCommands({
+      mgr: mgr.stub as unknown as ConnectionManager,
+      tree: provider,
+      treeView: treeView as unknown as TreeView<unknown>,
+      context: { subscriptions: [] } as unknown as ExtensionContext,
+      onSchemaDdl,
+    });
+    const tableNode: VsdbNode = {
+      label: "t",
+      contextValue: "table",
+      collapsible: 0,
+      meta: { connection: mgr.cfg, schema: "public", objectName: "t" },
+    };
+    await state.registeredCommands.get("vsdb.modifyTable")!(tableNode);
+    const panel = state.createdPanels[0];
+    const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0] as (msg: unknown) => Promise<void>;
+    await handler({ type: "ready" });
+    const newSpec: TableSpec = {
+      name: "t",
+      schema: "public",
+      columns: [
+        { name: "user_id", type: "bigint", nullable: false, originalName: "id" },
+        { name: "name", type: "character varying", nullable: true, originalName: "name" },
+      ],
+      keys: [{ kind: "primaryKey", columns: ["user_id"], name: "t_pkey" }],
+    };
+    await handler({ type: "specChanged", spec: newSpec });
+    await handler({ type: "submit", spec: newSpec });
+    expect(onSchemaDdl).toHaveBeenCalledTimes(1);
+    const args = onSchemaDdl.mock.calls[0]!;
+    const stmts = args[0] as readonly string[];
+    const dialect = args[1] as unknown;
+    expect(stmts.length).toBeGreaterThan(0);
+    expect(dialect).toBe("postgres");
+  });
+
+  it("#3 error: adapter.runQuery rejects → onSchemaDdl NOT called; error toast unchanged", async () => {
+    const mgr = makeFakeMgr({ rejectRun: true });
+    const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
+    registerSchemaTreeProvider(provider);
+    const onSchemaDdl = vi.fn();
+    registerTableCommands({
+      mgr: mgr.stub as unknown as ConnectionManager,
+      tree: provider,
+      treeView: treeView as unknown as TreeView<unknown>,
+      context: { subscriptions: [] } as unknown as ExtensionContext,
+      onSchemaDdl,
+    });
+    const schemaNode: VsdbNode = {
+      label: "public",
+      contextValue: "schema",
+      collapsible: 0,
+      meta: { connection: mgr.cfg, schema: "public" },
+    };
+    await state.registeredCommands.get("vsdb.newTable")!(schemaNode);
+    const panel = state.createdPanels[0];
+    const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0] as (msg: unknown) => Promise<void>;
+    await handler({ type: "ready" });
+    const spec = { name: "users", schema: "public", columns: defaultColumnSpecs("users"), keys: [] };
+    await handler({ type: "specChanged", spec });
+    await handler({ type: "submit", spec });
+    expect(onSchemaDdl).not.toHaveBeenCalled();
+    expect(state.errorMessages.some((m) => m.startsWith("New Table failed: "))).toBe(true);
+  });
+
+  it("#4 absent dep: RegisterDeps without onSchemaDdl → command completes normally, no throw", async () => {
+    const mgr = makeFakeMgr({ tables: [{ name: "users", schema: "public" }] });
+    const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
+    registerSchemaTreeProvider(provider);
+    // Build deps WITHOUT onSchemaDdl — optional contract.
+    registerTableCommands({
+      mgr: mgr.stub as unknown as ConnectionManager,
+      tree: provider,
+      treeView: treeView as unknown as TreeView<unknown>,
+      context: { subscriptions: [] } as unknown as ExtensionContext,
+    });
+    const schemaNode: VsdbNode = {
+      label: "public",
+      contextValue: "schema",
+      collapsible: 0,
+      meta: { connection: mgr.cfg, schema: "public" },
+    };
+    const fn = state.registeredCommands.get("vsdb.newTable");
+    await fn!(schemaNode);
+    const panel = state.createdPanels[0];
+    const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0] as (msg: unknown) => Promise<void>;
+    await handler({ type: "ready" });
+    const spec = { name: "users", schema: "public", columns: defaultColumnSpecs("users"), keys: [] };
+    await handler({ type: "specChanged", spec });
+    await handler({ type: "submit", spec });
+    expect(state.errorMessages).toHaveLength(0);
+    expect(state.infoMessages.some((m) => /Created\s+public\.users/.test(m))).toBe(true);
+  });
+
+  it("#5 driver narrowing: conn.driver === 'bigquery' → callback receives dialect === undefined", async () => {
+    // BigQuery is BQ-shaping: the production matrix declares tableDdl:false,
+    // so the capability gate would block the form. For this narrowing pin
+    // we override the capability to admit the form so the seam can fire.
+    const mgr = makeFakeMgr({
+      driver: "bigquery",
+      capabilities: { catalog: false, objectDdl: false, tableDdl: true, admin: false },
+    });
+    const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
+    registerSchemaTreeProvider(provider);
+    const onSchemaDdl = vi.fn();
+    registerTableCommands({
+      mgr: mgr.stub as unknown as ConnectionManager,
+      tree: provider,
+      treeView: treeView as unknown as TreeView<unknown>,
+      context: { subscriptions: [] } as unknown as ExtensionContext,
+      onSchemaDdl,
+    });
+    const schemaNode: VsdbNode = {
+      label: "public",
+      contextValue: "schema",
+      collapsible: 0,
+      meta: { connection: mgr.cfg, schema: "public" },
+    };
+    await state.registeredCommands.get("vsdb.newTable")!(schemaNode);
+    const panel = state.createdPanels[0];
+    const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0] as (msg: unknown) => Promise<void>;
+    await handler({ type: "ready" });
+    const spec = { name: "users", schema: "public", columns: defaultColumnSpecs("users"), keys: [] };
+    await handler({ type: "specChanged", spec });
+    await handler({ type: "submit", spec });
+    expect(onSchemaDdl).toHaveBeenCalledTimes(1);
+    const args = onSchemaDdl.mock.calls[0]!;
+    const dialect = args[1] as unknown;
+    expect(dialect).toBeUndefined();
+  });
+});

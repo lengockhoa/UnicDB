@@ -22,6 +22,7 @@ import {
   BigQueryAdapter,
   BigQueryConnectError,
   BigQueryClosedError,
+  BigQueryNotConnectedError,
   type BigQueryClient,
   type BigQueryClientFactory,
 } from "../bigquery";
@@ -581,5 +582,88 @@ describe("TASK-BQ01-002 BigQueryAdapter — paginated TUPLE (R4.5 round-2)", () 
     expect(result.results[0].rows[0][0]).toBe(bigIntStr);
     expect(typeof result.results[0].rows[0][0]).toBe("string");
     expect(result.results[0].rowCount).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TASK-CL-004 — R4.5 carried minors (folded):
+//   - Not-connected error is distinct from closed-error (never-connected vs
+//     post-close; pre-state is `new BigQueryAdapter(cfg, factory)` then
+//     `runQuery` immediately, factory call count 0).
+//   - durationMs is a real measurement via Date.now() delta.
+// ---------------------------------------------------------------------------
+describe("TASK-CL-004 BigQueryAdapter — not-connected vs closed (R4.5)", () => {
+  it("10. runQuery before any connect() rejects with BigQueryNotConnectedError; factory 0 calls", async () => {
+    const fakeClient = makeFakeClient();
+    const factory = vi.fn(
+      (_opts: { projectId: string; location?: string }): BigQueryClient => fakeClient,
+    );
+
+    // Constructor only — no connect(), no close().
+    const adapter = new BigQueryAdapter(bqCfg({}), factory);
+    let captured: unknown;
+    try {
+      await adapter.runQuery("SELECT 1");
+    } catch (e) {
+      captured = e;
+    }
+    expect(captured).toBeInstanceOf(BigQueryNotConnectedError);
+    const err = captured as BigQueryNotConnectedError;
+    expect(err.name).toBe("BigQueryNotConnectedError");
+    // Closed-error must NOT be returned for the never-connected case.
+    expect(captured).not.toBeInstanceOf(BigQueryClosedError);
+    // Factory was never invoked — no client was ever constructed.
+    expect(factory).toHaveBeenCalledTimes(0);
+  });
+});
+
+describe("TASK-CL-004 BigQueryAdapter — durationMs measured (R4.5)", () => {
+  it("11. ~20ms fake query -> result.results[0].durationMs >= 15 and finite", async () => {
+    const timerFakeClient: BigQueryClient = {
+      listDatasets: vi.fn(async () => [{ id: "ds1" }]),
+      query: vi.fn(async (_sql: string, _opts?: { skipParsing?: boolean }) => {
+        await new Promise((r) => setTimeout(r, 20));
+        return [
+          [{ f: [{ v: "ok" }] }],
+          null,
+          DEFAULT_PAGE,
+        ];
+      }),
+      getQueryResults: vi.fn(async () => DEFAULT_PAGE),
+      createQueryJob: vi.fn(async () => ({ id: "job_xyz" })),
+      cancel: vi.fn(async () => undefined),
+      getDataset: vi.fn(async () => ({ id: "ds1" })),
+      getTable: vi.fn(async () => ({ id: "t1" })),
+    };
+    const factory = vi.fn(
+      (_opts: { projectId: string; location?: string }): BigQueryClient => timerFakeClient,
+    );
+
+    const adapter = new BigQueryAdapter(bqCfg({}), factory);
+    await adapter.connect();
+
+    const result = await adapter.runQuery("SELECT 1");
+    const dur = result.results[0].durationMs;
+    expect(typeof dur).toBe("number");
+    expect(Number.isFinite(dur)).toBe(true);
+    expect(dur).toBeGreaterThanOrEqual(15);
+    // commandTag stays undefined (BQ-02 wires the source).
+    expect(result.results[0].commandTag).toBeUndefined();
+  });
+
+  it("12. instant-resolving fake -> durationMs is a finite number >= 0 (not a hardcoded constant)", async () => {
+    const fakeClient = makeFakeClient();
+    const factory = vi.fn(
+      (_opts: { projectId: string; location?: string }): BigQueryClient => fakeClient,
+    );
+
+    const adapter = new BigQueryAdapter(bqCfg({}), factory);
+    await adapter.connect();
+
+    const result = await adapter.runQuery("SELECT 1");
+    const dur = result.results[0].durationMs;
+    expect(typeof dur).toBe("number");
+    expect(Number.isFinite(dur)).toBe(true);
+    expect(dur).toBeGreaterThanOrEqual(0);
   });
 });

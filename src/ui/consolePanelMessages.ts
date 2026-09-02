@@ -194,6 +194,11 @@ export const CONSOLE_DRAFTS_MAX_TABS = 20;
  *  input so a corrupt/giant memento can never bloat the host. */
 export const CONSOLE_DRAFTS_MAX_BUFFER_CHARS = 64_000;
 
+/** Upper bound on a single tab name, in characters — parse REJECTS over-cap
+ *  input so a corrupt/hostile memento can never bloat the host. Cap sits far
+ *  above any real UI-typed name while keeping the codec fail-closed. */
+export const CONSOLE_DRAFTS_MAX_NAME_CHARS = 200;
+
 /** Versioned, bounded snapshot of every console tab's draft buffer.
  *  Serialized to `CONSOLE_DRAFTS_KEY` by the host (TASK-ARP08-002). */
 export interface ConsoleDraftSnapshot {
@@ -215,8 +220,9 @@ export function encodeConsoleDraftSnapshot(snapshot: ConsoleDraftSnapshot): stri
  *   - non-string input / malformed JSON / non-object root;
  *   - missing or non-`1` version;
  *   - `tabs` not an array, EMPTY, over-cap (> CONSOLE_DRAFTS_MAX_TABS), or a
- *     tab with a non-string id/name/buffer or a buffer over
- *     CONSOLE_DRAFTS_MAX_BUFFER_CHARS;
+ *     tab with a non-string id/name/buffer, a buffer over
+ *     CONSOLE_DRAFTS_MAX_BUFFER_CHARS, or a name over
+ *     CONSOLE_DRAFTS_MAX_NAME_CHARS;
  *   - `activeTabId` missing, non-string, or matching no tab.
  *
  *  Forward compatibility is TOLERATED-AND-STRIPPED (deliberate choice, not
@@ -252,6 +258,7 @@ export function parseConsoleDraftSnapshot(raw: string): ConsoleDraftSnapshot | n
     if (typeof tab.id !== "string") return null;
     if (typeof tab.name !== "string") return null;
     if (typeof tab.buffer !== "string") return null;
+    if (tab.name.length > CONSOLE_DRAFTS_MAX_NAME_CHARS) return null;
     if (tab.buffer.length > CONSOLE_DRAFTS_MAX_BUFFER_CHARS) return null;
     tabs.push({ id: tab.id, name: tab.name, buffer: tab.buffer });
   }

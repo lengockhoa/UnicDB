@@ -18,6 +18,7 @@ import type { ConsoleToHostMessage } from "./consolePanelMessages";
 import {
   CONSOLE_DRAFTS_KEY,
   CONSOLE_DRAFTS_MAX_BUFFER_CHARS,
+  CONSOLE_DRAFTS_MAX_NAME_CHARS,
   CONSOLE_DRAFTS_MAX_TABS,
   CONSOLE_DRAFT_SNAPSHOT_VERSION,
   CONSOLE_HISTORY_CAP,
@@ -377,14 +378,14 @@ export class ConsolePanel {
   }
 
   /** Clamp host state to the codec caps and encode. Keeping the first
-   *  CONSOLE_DRAFTS_MAX_TABS tabs and slicing every buffer guarantees our
+   *  CONSOLE_DRAFTS_MAX_TABS tabs, slicing every name/buffer, guarantees our
    *  own writer never emits a snapshot parse would reject. */
   private buildDraftSnapshot(): ConsoleDraftSnapshot {
     const tabs = this.tabs
       .slice(0, CONSOLE_DRAFTS_MAX_TABS)
       .map((t) => ({
         id: t.id,
-        name: t.name,
+        name: t.name.slice(0, CONSOLE_DRAFTS_MAX_NAME_CHARS),
         buffer: t.buffer.slice(0, CONSOLE_DRAFTS_MAX_BUFFER_CHARS),
       }));
     const activeTabId = tabs.some((t) => t.id === this.activeTabId)

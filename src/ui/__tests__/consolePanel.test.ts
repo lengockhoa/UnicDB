@@ -92,6 +92,7 @@ import { ConsolePanel } from "../consolePanel";
 import {
   CONSOLE_DRAFTS_KEY,
   CONSOLE_DRAFTS_MAX_BUFFER_CHARS,
+  CONSOLE_DRAFTS_MAX_NAME_CHARS,
   CONSOLE_DRAFTS_MAX_TABS,
   CONSOLE_DRAFT_SNAPSHOT_VERSION,
   encodeConsoleDraftSnapshot,
@@ -844,5 +845,31 @@ describe("ConsolePanel — draft recovery (ARP-08)", () => {
     const panel = openPanel(memento).panel;
     expect(panel.listTabs().map((t) => t.id)).toEqual(["zzz", "aaa"]);
     expect(panel.listTabs().map((t) => t.name)).toEqual(["Zed", "Ay"]);
+  });
+
+  it("#14 edge/writer-clamp: a 500-char tab name persists sliced to CONSOLE_DRAFTS_MAX_NAME_CHARS", async () => {
+    vi.useFakeTimers();
+    const memento = new FakeMemento();
+    const session = openPanel(memento);
+    const tabId = session.panel.getActiveTabId();
+    const longName = "N".repeat(500);
+    // Mutate host state directly via the public renameTab method so the
+    // writer sees a 500-char name; then trigger a debounced persist through
+    // the message seam.
+    session.panel.renameTab(tabId, longName);
+    session.handler({ type: "updateBuffer", tabId, buffer: "SELECT clamp" });
+    vi.advanceTimersByTime(500);
+
+    const raw = memento.get<string>(CONSOLE_DRAFTS_KEY)!;
+    expect(typeof raw).toBe("string");
+    const snap = parseConsoleDraftSnapshot(raw);
+    expect(snap).not.toBeNull();
+    // Writer clamp: emitted name is exactly CONSOLE_DRAFTS_MAX_NAME_CHARS,
+    // not the original 500.
+    expect(snap!.tabs[0].name).toHaveLength(CONSOLE_DRAFTS_MAX_NAME_CHARS);
+    expect(snap!.tabs[0].name).toBe("N".repeat(CONSOLE_DRAFTS_MAX_NAME_CHARS));
+    // The host's clamp guarantees our own writer never emits a snapshot
+    // our own parser would reject — round-trip is safe.
+    expect(parseConsoleDraftSnapshot(encodeConsoleDraftSnapshot(snap!))).toEqual(snap);
   });
 });

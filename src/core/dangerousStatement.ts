@@ -203,6 +203,36 @@ export function maskLiteralsAndComments(
       continue;
     }
 
+    // TASK-CL-001 — MSSQL bracket-quoted identifier `[...]` with the
+    // standard `]]` doubling escape. Gated on `dialect === "mssql"` because
+    // `[...]` is not SQL syntax in postgres/mysql (postgres uses `"..."`,
+    // mysql uses both). Without this branch, `` SELECT * FROM [insert] ``
+    // on a read-only MSSQL connection is blocked as a mutation because the
+    // identifier body `[insert]` survives into the depth-scan as a fake
+    // `insert` keyword — same false-positive class the mysql backtick branch
+    // fixes for `` `insert` ``. Mirrors the `"`/`` ` `` branches above
+    // (doubling escape only; unterminated `[…` runs to EOF mirroring the
+    // unterminated-`...` behavior). `dialect === "mssql"` is exclusive of
+    // `useBackslashEscape` (`dialect === "mysql"`), so this branch is
+    // never reachable when the mysql backtick branch fires.
+    if (ch === "[" && dialect === "mssql") {
+      let j = i + 1;
+      while (j < sql.length) {
+        if (sql[j] === "]") {
+          if (sql[j + 1] === "]") {
+            j += 2;
+            continue;
+          }
+          j += 1;
+          break;
+        }
+        j += 1;
+      }
+      blank(i, j);
+      i = j;
+      continue;
+    }
+
     // Dollar-quote `$$...$$` hoặc `$tag$...$tag$`.
     if (ch === "$") {
       const tagMatch = /^\$[A-Za-z_][A-Za-z0-9_]*\$|^\$\$/.exec(sql.slice(i));

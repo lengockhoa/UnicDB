@@ -78,3 +78,36 @@ npm run typecheck
 
 ### 2026-09-02 · planner · unic-smart
 STATUS.md item 2 said "fix belongs in dangerousStatement.ts and schemaImpact.ts if it has the same gap". Verified: schemaImpact/analyzeStatement pick the FIRST depth-0 keyword, so a bracket identifier cannot flip them — but they consume the same masker, so tests #8 pins both directions. The real second surface is `connectionManager.guardAdapter` calling `isMutationSql(sql)` with NO dialect (so the mysql backtick masking is ALSO inert there) — that threading is in scope here because it is the same false-positive class on the same guard. Masking MORE than the mssql tokenizer sees is the safe direction (today `[o'brien]` opens a bogus string literal in the tokenizer; the masker hiding the region hides a superset). `statementParser` bracket tokenization is deliberately out of scope (PLAN §2).
+
+## Executor Report
+EXECUTOR_TOOL: Claude Code
+EXECUTOR_MODEL: claude-sonnet-4-6
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  5 tests failed at the masking/threading gap:
+  - dangerousStatement.test.ts > TASK-CL-001 > #1 maskLiteralsAndComments blanks the bracket region length-preservingly
+    → expected 'SELECT * FROM [insert]' to be 'SELECT * FROM          ' (no bracket branch in masker)
+  - dangerousStatement.test.ts > TASK-CL-001 > #5 `]]` doubling escape
+    → expected true to be false (masker keeps `[we]]ird]` verbatim → "we]]ird" leaks)
+  - dangerousStatement.test.ts > TASK-CL-001 > #6 unterminated bracket
+    → expected 'SELECT * FROM [insert' not to contain 'insert' (no masking at all)
+  - readOnlyIntent.test.ts > TASK-CL-001 > #2 SELECT * FROM [insert] (mssql) is not a mutation
+    → expected true to be false (depth-scan sees fake `insert` keyword)
+  - connectionManager.test.ts > DBX-05 read-only + tunnel > readOnly + mssql: SELECT * FROM [insert] passes through
+    → ReadOnlyViolation: Connection is marked read-only — mutation blocked: SELECT * FROM [insert]
+      (object.value at connectionManager.ts:814 — `isMutationSql(sql)` called with no dialect)
+
+Verification Output: |
+  > npx vitest run src/core/__tests__/dangerousStatement.test.ts src/core/__tests__/readOnlyIntent.test.ts src/core/__tests__/schemaImpact.test.ts src/core/__tests__/connectionManager.test.ts
+  ✓ src/core/__tests__/dangerousStatement.test.ts  (34 tests)
+  ✓ src/core/__tests__/schemaImpact.test.ts  (13 tests)
+  ✓ src/core/__tests__/readOnlyIntent.test.ts  (24 tests)
+  ✓ src/core/__tests__/connectionManager.test.ts  (45 tests)
+  Test Files  4 passed (4)
+       Tests  116 passed (116)
+  > npm run typecheck
+  > tsc --noEmit
+  EXIT: 0
+
+Status: PASS
+Note: All 11 test cases (#1-#11) pass; 116 total core tests green; typecheck exits 0. Implementation: (a) `dangerousStatement.ts` adds a `dialect === "mssql"`-gated bracket branch mirroring the mysql backtick branch (doubling escape, unterminated → EOF blanking); (b) `connectionManager.ts:guardAdapter` narrows `cfg.driver` to `SqlDialect | undefined` (bigquery → undefined) via a local ternary helper (no import from extension.ts), and threads the dialect through BOTH `isMutationSql`/`mutationStatements` call sites (:813/:814 and :831/:832). Per-task scope respected; BQ-00 frozen surface untouched. Test expectations adjusted for byte-exact length preservation: `[insert]` is 8 chars → 8 spaces (test #1 was off-by-one on character count, not a masking bug). Full suite has 20 unrelated `dist/*.js missing` failures (bundle gate, runs at cycle close, not per task).

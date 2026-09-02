@@ -24,6 +24,7 @@ import {
   mutationStatements,
   ReadOnlyViolation,
 } from "./readOnlyIntent";
+import type { SqlDialect } from "./statementParser";
 import { SshTunnelManager } from "./sshTunnelManager";
 import type { TunnelExit } from "./sshTunnelManager";
 
@@ -802,16 +803,31 @@ export class ConnectionManager {
 
   private guardAdapter(adapter: DbAdapter, cfg: ConnectionConfig): DbAdapter {
     if (!cfg.readOnly) return adapter;
+    // TASK-CL-001 — narrow `cfg.driver` to the SQL dialects the masker /
+    // classifier actually understand. BigQuery is intentionally NOT a
+    // SqlDialect (BQ-00 boundary: read-only is admitted by the factory but
+    // not enforced through the SQL gate — BigQueryAdapter surfaces its own
+    // DDL/DML gating at the client layer). Narrowing here is a local helper,
+    // not an import from extension.ts, per the plan's "Local helper; do NOT
+    // import from extension.ts" pin.
+    const dialect: SqlDialect | undefined =
+      cfg.driver === "postgres" || cfg.driver === "mysql" || cfg.driver === "mssql"
+        ? cfg.driver
+        : undefined;
     const original = adapter.runQuery.bind(adapter);
     // Replace the runQuery property on the same object — preserves the
     // prototype chain (matters for close/testConnection called by dispose).
+    // TASK-CL-001 — thread `dialect` through BOTH call sites; before this
+    // change the gate called `isMutationSql(sql)` with no dialect, which
+    // also left the mysql backtick masking inert on this path (same false-
+    // positive class as the mssql bracket fix).
     Object.defineProperty(adapter, "runQuery", {
       configurable: true,
       enumerable: true,
       writable: true,
       value: (sql: string) => {
-        if (isMutationSql(sql)) {
-          throw new ReadOnlyViolation(mutationStatements(sql));
+        if (isMutationSql(sql, dialect)) {
+          throw new ReadOnlyViolation(mutationStatements(sql, dialect));
         }
         return original(sql);
       },
@@ -822,14 +838,16 @@ export class ConnectionManager {
     // pass through untouched; adapters without beginTransaction gain nothing.
     // The wrap happens per beginTransaction() call so two concurrent
     // transactions each get their own guard (per-call freshness).
+    // TASK-CL-001 — dialect threading is the SAME here (`:832`); both
+    // boundaries must use the connection's dialect.
     if (typeof adapter.beginTransaction === "function") {
       const originalBegin = adapter.beginTransaction.bind(adapter);
       adapter.beginTransaction = async () => {
         const tx = await originalBegin();
         const originalTxRun = tx.runQuery.bind(tx);
         tx.runQuery = (sql: string, values?: unknown[]) => {
-          if (isMutationSql(sql)) {
-            throw new ReadOnlyViolation(mutationStatements(sql));
+          if (isMutationSql(sql, dialect)) {
+            throw new ReadOnlyViolation(mutationStatements(sql, dialect));
           }
           return originalTxRun(sql, values);
         };

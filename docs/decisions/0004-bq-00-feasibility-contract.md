@@ -107,10 +107,12 @@ precision.
 | `REPEATED` (any) | `BigQueryValue[]` | outer array; element type matches `mode = REPEATED` |
 | `NULL` | `null` | **distinct from empty string** — never collapsed |
 
-`src/adapters/types.ts` `BigQueryValue` (the union type at the bottom of the
-file) implements exactly this set; `src/adapters/bigqueryTypes.ts` comments on
-`BigQueryValue` reproduce the rule. `Number` coercion is **prohibited** for
-`INT64`, `NUMERIC`, `BIGNUMERIC`. `null` is **distinct** from `""`.
+`src/adapters/bigqueryTypes.ts` `BigQueryValue` (the union type defined at
+`bigqueryTypes.ts:90` — TASTE NOTE: the union was at :63 in earlier drafts and
+moved to :90 when the file grew; the cite uses the current line) implements
+exactly this set; the comments on `BigQueryValue` reproduce the rule. `Number`
+coercion is **prohibited** for `INT64`, `NUMERIC`, `BIGNUMERIC`. `null` is
+**distinct** from `""`.
 
 **Evidence:** `src/adapters/bigqueryTypes.ts` lines defining `BigQueryValue`
 (type alias and the docstring above it). Cross-referenced against
@@ -345,8 +347,10 @@ means EOF, regardless of how many rows the last page held. The panel sees an
 ordinary `BatchedQuery` and a final-page `fetchBatch` returning `null`,
 exactly like the Postgres adapter today; `resultBatcher.ts` and
 `resultsPanel.ts` are not touched in BQ-01. This is a paper mapping only —
-no `src/` file is modified in BQ-00, and `git diff --stat` on the §"Hard
-constraints" read-only list stays empty.
+no `src/` file is modified in BQ-00, and `git diff --stat` on the BQ-00
+frozen-surface list (`src/adapters/bigqueryTypes.ts`,
+`src/adapters/bigqueryAdc.ts`; enumerated in TASK-BQ00-004 §Target Files /
+PLAN §2) stays empty.
 
 ## 12. Consequences
 

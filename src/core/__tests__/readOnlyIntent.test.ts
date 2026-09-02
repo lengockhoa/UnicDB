@@ -123,3 +123,41 @@ describe("readOnlyIntent", () => {
     ]);
   });
 });
+
+// TASK-CL-001 — MSSQL bracket-quoted identifier false-positive class.
+// Today `maskLiteralsAndComments` has no `[…]` branch, so a benign SELECT
+// on a read-only MSSQL connection (`SELECT * FROM [insert]`) is blocked
+// as a mutation because the identifier body `[insert]` survives into the
+// depth-scan as a fake `insert` keyword. The fix adds a dialect-gated
+// mssql branch to the masker (mirroring the mysql backtick branch) and
+// threads the connection's dialect through `ConnectionManager.guardAdapter`
+// so the gate actually uses it. These tests pin the classifier surface;
+// the threading half is pinned separately in `connectionManager.test.ts`.
+describe("TASK-CL-001 — MSSQL bracket-quoted identifier false-positive", () => {
+  // Case 2 (RED-first driver, regression): `SELECT * FROM [insert]` on
+  // read-only mssql is benign and must not be flagged. Returns 0 entries.
+  it("#2 — SELECT * FROM [insert] (mssql) is not a mutation", () => {
+    expect(isMutationSql("SELECT * FROM [insert]", "mssql")).toBe(false);
+    expect(mutationStatements("SELECT * FROM [insert]", "mssql")).toEqual([]);
+  });
+
+  // Case 3 (happy): real DDL with bracket-quoted table still caught.
+  it("#3 — DROP TABLE [insert] (mssql) is still a mutation", () => {
+    expect(isMutationSql("DROP TABLE [insert]", "mssql")).toBe(true);
+  });
+
+  // Case 4 (happy): genuine INSERT with bracket-quoted table still flagged.
+  it("#4 — INSERT INTO [order] VALUES (1) (mssql) is still a mutation", () => {
+    const list = mutationStatements("INSERT INTO [order] VALUES (1)", "mssql");
+    expect(list.length).toBe(1);
+    expect(list[0]).toContain("INSERT INTO [order]");
+  });
+
+  // Case 7 (dialect gate guard): omitted/postgres dialect keeps the OLD
+  // behavior — bracket region is NOT masked, so `[insert]` still leaks as
+  // a mutation keyword. Proves the fix is dialect-gated, not unconditional.
+  it("#7 — dialect gate guard: omitted / postgres dialect unchanged", () => {
+    expect(mutationStatements("SELECT * FROM [insert]").length).toBe(1);
+    expect(mutationStatements("SELECT * FROM [insert]", "postgres").length).toBe(1);
+  });
+});

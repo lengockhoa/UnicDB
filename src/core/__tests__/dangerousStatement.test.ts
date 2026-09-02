@@ -1,7 +1,11 @@
 // src/core/__tests__/dangerousStatement.test.ts
 // TASK-606 A1–A8 — detector thuần (không vscode).
 import { describe, it, expect } from "vitest";
-import { analyzeStatement, guardTier } from "../dangerousStatement";
+import {
+  analyzeStatement,
+  guardTier,
+  maskLiteralsAndComments,
+} from "../dangerousStatement";
 
 describe("TASK-606 — analyzeStatement + guardTier", () => {
   it("A1 — DELETE có WHERE → delete/hasWhere + amber", () => {
@@ -223,5 +227,57 @@ describe("TASK-AHL-004b — session-control DCL (KILL/TERMINATE)", () => {
   it("C4 — regression: bare SELECT 1 vẫn other/none", () => {
     expect(analyzeStatement("SELECT 1").kind).toBe("other");
     expect(guardTier(analyzeStatement("SELECT 1"))).toBe("none");
+  });
+});
+
+// TASK-CL-001 — MSSQL bracket-quoted identifier masking.
+// Mirrors the mysql backtick branch (TASK-ARP01-001). The MSSQL `[…]`
+// region must be blanked before the depth-scan so a benign identifier
+// that merely SPELLS a mutation keyword (`[insert]`, `[drop]`, etc.)
+// no longer leaks through. Escape rule: `]]` is the standard doubling
+// escape (real MSSQL semantics). Unterminated brackets blank to EOF.
+describe("TASK-CL-001 — MSSQL bracket identifier masking", () => {
+  it("#1 — maskLiteralsAndComments blanks the bracket region length-preservingly", () => {
+    const sql = "SELECT * FROM [insert]";
+    const masked = maskLiteralsAndComments(sql, "mssql");
+    expect(masked.length).toBe(sql.length);
+    // `[insert]` is 8 chars → 8 spaces; "SELECT * FROM " prefix preserved.
+    expect(masked).toBe("SELECT * FROM " + "        ");
+  });
+
+  it("#5 — `]]` doubling escape: closed at the final `]`", () => {
+    const sql = "SELECT * FROM [we]]ird]";
+    const masked = maskLiteralsAndComments(sql, "mssql");
+    // `[we]]ird]` — the doubled `]]` belongs to the body; identifier closes at final `]`.
+    // Length must match; bracket region blanked; the closing `]` is consumed.
+    expect(masked.length).toBe(sql.length);
+    // No `insert`/`update`/etc keyword text survives the mask.
+    expect(/\[we\]\]ird\]/.test(masked)).toBe(false);
+  });
+
+  it("#6 — unterminated bracket: blanked to EOF, no throw", () => {
+    const sql = "SELECT * FROM [insert";
+    expect(() => maskLiteralsAndComments(sql, "mssql")).not.toThrow();
+    const masked = maskLiteralsAndComments(sql, "mssql");
+    expect(masked.length).toBe(sql.length);
+    // No `insert` body survives the mask.
+    expect(masked).not.toContain("insert");
+  });
+
+  it("#9 — backtick regression intact (mysql masking unchanged)", () => {
+    const sql = "SELECT `insert` FROM t";
+    const masked = maskLiteralsAndComments(sql, "mysql");
+    expect(masked.length).toBe(sql.length);
+    expect(masked).not.toContain("insert");
+    // Confirm via the public classifier surface used in readOnlyIntent.test.ts.
+    expect(analyzeStatement(sql, "mysql").kind).toBe("other");
+  });
+
+  it("regression guard — bracket masking is dialect-gated: omitted dialect keeps `[…]` verbatim", () => {
+    // With no dialect, the existing code path leaves `[insert]` unblanked —
+    // proves the branch is gated on `dialect === "mssql"`, not unconditional.
+    const sql = "SELECT * FROM [insert]";
+    const masked = maskLiteralsAndComments(sql);
+    expect(masked).toBe(sql);
   });
 });

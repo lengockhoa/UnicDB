@@ -38,9 +38,15 @@ import {
 } from "./bigqueryTypes";
 import {
   NotImplementedError,
+  type ColumnInfo,
   type DbAdapter,
   type QueryResult,
+  type RoutineInfo,
   type RunResult,
+  type SchemaInfo,
+  type TableDetail,
+  type TableInfo,
+  type ViewInfo,
 } from "./types";
 import type { ConnectionConfig } from "../config/types";
 import { validateBigQueryConnection } from "../config/types";
@@ -116,6 +122,18 @@ export class BigQueryClosedError extends Error {
   constructor() {
     super("BigQueryAdapter is closed");
     this.name = "BigQueryClosedError";
+  }
+}
+
+/**
+ * Operation request before any `connect()` succeeded — distinct from
+ * `BigQueryClosedError` so callers can disambiguate a never-connected
+ * adapter from a post-close one. Does not carry a diagnostic.
+ */
+export class BigQueryNotConnectedError extends Error {
+  constructor() {
+    super("BigQueryAdapter is not connected");
+    this.name = "BigQueryNotConnectedError";
   }
 }
 
@@ -222,7 +240,14 @@ export class BigQueryAdapter implements DbAdapter {
     // element 0 is `RawTableRow[]` (an array, not a response object), and
     // feeding it into `toBigQueryPage` would silently produce an empty
     // page (R4.5 round-1 minor finding).
+    //
+    // Measure durationMs around `client.query(...)` so the result reflects
+    // the wire round-trip; `commandTag` stays undefined because the wire
+    // response does not carry a statement tag (BQ-02 will wire a real
+    // source when introspection lands).
+    const queryStartedAt = Date.now();
     const resolved = (await client.query(sql, { skipParsing: true })) as unknown;
+    const durationMs = Date.now() - queryStartedAt;
     const tuple = Array.isArray(resolved) ? (resolved as unknown[]) : null;
     const raw: BigQueryRawQueryResponse =
       tuple !== null && tuple.length >= 3 && tuple[2] !== undefined && tuple[2] !== null
@@ -234,26 +259,26 @@ export class BigQueryAdapter implements DbAdapter {
       rows: page.rows as unknown as unknown[][],
       rowCount: page.rows.length,
       commandTag: undefined,
-      durationMs: 0,
+      durationMs,
     };
     return { results: [result] };
   }
 
   // ----- introspection (BQ-02 scope — throw NotImplementedError) ----------
 
-  async listSchemas(_includeSystem: boolean): Promise<import("./types").SchemaInfo[]> {
+  async listSchemas(_includeSystem: boolean): Promise<SchemaInfo[]> {
     throw new NotImplementedError("bigquery");
   }
-  async listTables(_schema?: string): Promise<import("./types").TableInfo[]> {
+  async listTables(_schema?: string): Promise<TableInfo[]> {
     throw new NotImplementedError("bigquery");
   }
-  async listViews(_schema?: string): Promise<import("./types").ViewInfo[]> {
+  async listViews(_schema?: string): Promise<ViewInfo[]> {
     throw new NotImplementedError("bigquery");
   }
-  async listRoutines(_schema?: string): Promise<import("./types").RoutineInfo[]> {
+  async listRoutines(_schema?: string): Promise<RoutineInfo[]> {
     throw new NotImplementedError("bigquery");
   }
-  async listColumns(_table: string, _schema?: string): Promise<import("./types").ColumnInfo[]> {
+  async listColumns(_table: string, _schema?: string): Promise<ColumnInfo[]> {
     throw new NotImplementedError("bigquery");
   }
   async listRoutineParams(
@@ -274,7 +299,7 @@ export class BigQueryAdapter implements DbAdapter {
   async listTableDetail(
     _schema: string,
     _table: string,
-  ): Promise<import("./types").TableDetail> {
+  ): Promise<TableDetail> {
     throw new NotImplementedError("bigquery");
   }
 
@@ -301,10 +326,11 @@ export class BigQueryAdapter implements DbAdapter {
       throw new BigQueryClosedError();
     }
     if (this.client === null) {
-      // Not connected — refuse rather than lazy-build. Callers should
-      // connect() explicitly. (BQ-02 may revisit; tests #6 expects the
-      // closed-error, which the closed branch returns.)
-      throw new BigQueryClosedError();
+      // Not connected (and not closed) — refuse rather than lazy-build.
+      // Callers should connect() explicitly. Distinct from the closed
+      // case so callers can disambiguate a never-connected adapter
+      // from a post-close one. (BQ-02 may revisit.)
+      throw new BigQueryNotConnectedError();
     }
     return this.client;
   }

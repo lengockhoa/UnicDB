@@ -439,6 +439,45 @@ describe("ConnectionManager DBX-05 read-only + tunnel", () => {
     mgr.dispose();
   });
 
+  // TASK-CL-001 — regression: the read-only gate must thread the
+  // connection's dialect through to `isMutationSql(sql, dialect)`. With a
+  // MSSQL connection, a benign SELECT against a bracket-quoted identifier
+  // (`SELECT * FROM [insert]`) reaches `adapter.runQuery` and is NOT
+  // mis-blocked as a mutation. Requires BOTH the new bracket branch in
+  // `maskLiteralsAndComments` AND the `:813`/`:832` dialect threading —
+  // the existing read-only suite cannot pass this on dialect-threading alone.
+  it("readOnly + mssql: SELECT * FROM [insert] passes through to adapter.runQuery", async () => {
+    const runs: string[] = [];
+    const factory = () => ({
+      runQuery: async (sql: string) => { runs.push(sql); return { results: [] }; },
+      testConnection: async () => {},
+      close: async () => {},
+    });
+    const mgr = new (ConnectionManager)(STUB_CTX, factory);
+    const a = await mgr.getAdapterFor({ ...baseCfg, driver: "mssql" } as any);
+    // No throw: gate must NOT classify `[insert]` as a mutation keyword.
+    await expect(a.runQuery("SELECT * FROM [insert]")).resolves.toEqual({ results: [] });
+    expect(runs).toEqual(["SELECT * FROM [insert]"]);
+    mgr.dispose();
+  });
+
+  // TASK-CL-001 inverse — real mutation on mssql is STILL blocked, even
+  // with the bracket region now masked. Sanity check the gate is still
+  // wired (not silently no-op'd) after the dialect-thread change.
+  it("readOnly + mssql: DELETE FROM [t] still throws ReadOnlyViolation", async () => {
+    const runs: string[] = [];
+    const factory = () => ({
+      runQuery: async (sql: string) => { runs.push(sql); return { results: [] }; },
+      testConnection: async () => {},
+      close: async () => {},
+    });
+    const mgr = new (ConnectionManager)(STUB_CTX, factory);
+    const a = await mgr.getAdapterFor({ ...baseCfg, driver: "mssql" } as any);
+    expect(() => a.runQuery("DELETE FROM [t]")).toThrow(ReadOnlyViolation);
+    expect(runs.length).toBe(0);
+    mgr.dispose();
+  });
+
   it("tunnel: adapter is created with rewritten host/port; persisted cfg unchanged", async () => {
     const fakeTunnels = {
       start: async (cfg: any) => ({ key: "cT", localPort: 55432, child: undefined }),

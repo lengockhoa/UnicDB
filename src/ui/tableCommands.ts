@@ -30,6 +30,7 @@ import {
 } from "../core/ddl/createTable";
 import { alwaysQuote } from "../core/ddl/alterTable";
 import { rowsToSpec } from "../core/ddl/pgIntrospect";
+import type { SqlDialect } from "../core/statementParser";
 import { AiConfigStore } from "../ai/config";
 import { createProviderClient } from "../ai/provider";
 import {
@@ -112,15 +113,40 @@ interface RegisterDeps {
   tree: SchemaTreeProvider;
   treeView: vscode.TreeView<unknown>;
   context: vscode.ExtensionContext;
+  /**
+   * TASK-CL-002 — ARP-07 invalidation wiring. Optional injected seam fired
+   * PER successful form-view DDL statement (after `await adapter.runQuery`
+   * resolves). NEVER fires on the error path. The dialect is derived locally
+   * from `conn.driver` exactly the same way extension.ts:131-135 narrows
+   * `DriverType → SqlDialect` (bigquery → `undefined`). Optional: callers
+   * that omit it keep the pre-CL-002 behavior byte-identical.
+   */
+  onSchemaDdl?: (statements: readonly string[], dialect?: SqlDialect) => void;
+}
+
+// TASK-CL-002 — local `DriverType → SqlDialect` narrowing mirroring
+// extension.ts:131-135. BigQuery has no SqlDialect and the BQ runQuery path
+// owns its own SQL handling; locally `undefined` here matches the host's
+// `toSqlDialect` so the closure stays the single source of truth at the
+// module seam, but we mirror the narrowing here to avoid crossing the
+// tableCommands boundary to call into the host on every form DDL.
+function toLocalSqlDialect(
+  driver: ConnectionConfig["driver"] | undefined,
+): SqlDialect | undefined {
+  return driver === "bigquery" ? undefined : driver;
 }
 
 async function runDdl(
   mgr: ConnectionManager,
   conn: ConnectionConfig,
   sql: string,
+  onSchemaDdl?: (statements: readonly string[], dialect?: SqlDialect) => void,
 ): Promise<void> {
   const adapter = await mgr.getAdapterFor(conn);
   await adapter.runQuery(sql);
+  // TASK-CL-002 — fire the seam PER successful statement, NEVER on the
+  // error path (the await above would have thrown and skipped this line).
+  onSchemaDdl?.([sql], toLocalSqlDialect(conn.driver));
 }
 
 /** Guard: meta + driver. Trả null nếu pass hoặc đã hiển thị message. */
@@ -200,7 +226,7 @@ async function introspectTable(
 }
 
 export function registerTableCommands(deps: RegisterDeps): void {
-  const { mgr, tree, treeView, context } = deps;
+  const { mgr, tree, treeView, context, onSchemaDdl } = deps;
   registerSchemaTreeProvider(tree);
 
   // vsdb.newTable — schema/category (tables only)/table node.
@@ -238,7 +264,7 @@ export function registerTableCommands(deps: RegisterDeps): void {
         }),
         runDdl: async (sql: string, spec) => {
           try {
-            await runDdl(mgr, conn, sql);
+            await runDdl(mgr, conn, sql, onSchemaDdl);
             tree.refresh();
             // spec.name từ form (KHÔNG regex SQL string — fix round 1 minor).
             const createdName = spec.name;
@@ -282,7 +308,7 @@ export function registerTableCommands(deps: RegisterDeps): void {
         },
         runDdl: async (sql: string, _spec) => {
           try {
-            await runDdl(mgr, conn, sql);
+            await runDdl(mgr, conn, sql, onSchemaDdl);
             tree.refresh();
             await revealTableNode(treeView, conn, schema, table);
             void vscode.window.showInformationMessage(
@@ -578,6 +604,9 @@ export function registerTableCommands(deps: RegisterDeps): void {
         runDdl: async (sql, _name) => {
           const adapter = await mgr.getAdapterFor(conn);
           await adapter.runQuery(sql);
+          // TASK-CL-002 — fire the seam PER successful CREATE SCHEMA, NEVER
+          // on the error path. Mirrors the local narrowing above.
+          onSchemaDdl?.([sql], toLocalSqlDialect(conn.driver));
         },
         onOk: async (sql, name) => {
           tree.refresh();

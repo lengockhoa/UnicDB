@@ -233,17 +233,21 @@ describe(`TASK-BQ00-001 ${BQ_PKG} proof`, () => {
     // opening paren. This anchors to the start of a method signature while
     // still tolerating TS overload lines and modifier keywords, and it
     // ignores `*`-prefixed JSDoc comment lines (which start with `   * `).
-    const DECL_RE = /^[ ]{3,}(?:public\s+|private\s+|protected\s+)?[A-Za-z_$][\w$]*\s*\(/m;
+    // Single regex source: a method signature anchored to declaration
+    // indent (3+ spaces) with optional access modifier. The per-name
+    // patterns below are derived by interpolating the method name into
+    // this prefix (DECL_RE is the source of truth — if the declaration
+    // shape changes, both loops update together).
+    const DECL_RE = /^[ ]{3,}(?:public\s+|private\s+|protected\s+)?/;
+    const declReFor = (name: string): RegExp => new RegExp(`${DECL_RE.source}${name}\\s*\\(`, "m");
 
     const requiredOnBigQuery = ["query", "createQueryJob"];
     for (const name of requiredOnBigQuery) {
-      const re = new RegExp(`^[ ]{3,}(?:public\\s+|private\\s+|protected\\s+)?${name}\\s*\\(`, "m");
-      expect(bqText, `${name} must be declared in bigquery.d.ts`).toMatch(re);
+      expect(bqText, `${name} must be declared in bigquery.d.ts`).toMatch(declReFor(name));
     }
     const requiredOnJob = ["getQueryResults", "cancel"];
     for (const name of requiredOnJob) {
-      const re = new RegExp(`^[ ]{3,}(?:public\\s+|private\\s+|protected\\s+)?${name}\\s*\\(`, "m");
-      expect(jobText, `${name} must be declared in job.d.ts`).toMatch(re);
+      expect(jobText, `${name} must be declared in job.d.ts`).toMatch(declReFor(name));
     }
   });
 });

@@ -637,6 +637,18 @@ export interface AiChatPanelOptions {
    * (no cancellation, no visible-state mutation, no error bubble).
    */
   onDidChangeRecoveryStatus?: vscode.Event<ConnectionRecoveryStatus>;
+  /**
+   * TASK-CL-002 — ARP-07 invalidation wiring. Optional injected seam fired
+   * PER successful plan-apply statement (inside the `execute` wrapper below
+   * after `await adapter.runQuery(sql)` resolves). NEVER fires on the error
+   * path: a partial-failure run only fires for the applied prefix, never
+   * the failed/remaining tail. The dialect is intentionally omitted here
+   * because `DbAdapter` exposes no driver field and the panel only holds
+   * `AdapterFactory` — extension.ts's closure derives the dialect from
+   * `mgr.getActive()?.driver` exactly as `runStatements` does at :1982.
+   * Optional: callers that omit it keep the pre-CL-002 behavior unchanged.
+   */
+  onSchemaDdl?: (statements: readonly string[]) => void;
 }
 
 /**
@@ -3706,6 +3718,10 @@ export class AiChatPanel {
             throw new Error("No active database connection.");
           }
           await adapter.runQuery(sql);
+          // TASK-CL-002 — fire the seam PER successful statement. Partial
+          // failure / null adapter paths throw above and never reach this
+          // line; the applied prefix is the only thing that invalidates.
+          this.options.onSchemaDdl?.([sql]);
         },
         (i, n, sql) => {
           this.post({

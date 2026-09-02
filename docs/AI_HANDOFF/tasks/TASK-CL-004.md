@@ -73,3 +73,24 @@ npm run typecheck
 
 ### 2026-09-02 · planner · unic-smart
 Both STATUS.md items 5 and 6 are one-line-scale fixes sharing one concern family (BQ carried reviewer minors), folded per the cycle instruction. Grounding notes for the executor: (1) reviewer's ADR nit cites `bigqueryTypes.ts:63` for `BigQueryValue`, but current grep puts the union at :90 — re-grep and cite the line you find, do not copy the reviewer's number. (2) `connectionManager.ts:716` mentions `BigQueryClosedError` in a doc comment — leave it alone; it describes the post-close path which is unchanged. (3) The not-connected error is a NEW public export — allowed explicitly by PLAN §6; do not export anything else while in there.
+
+## Executor Report
+
+EXECUTOR_TOOL: Claude Code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT:
+- Test #10: `AssertionError: The instanceof assertion needs a constructor but undefined was given.` (BigQueryNotConnectedError is undefined → confirmed new export missing)
+- Test #11: `AssertionError: expected 0 to be greater than or equal to 15` (durationMs hardcoded to 0 → confirmed no real measurement)
+- Test #12: passed pre-fix (only checked >= 0)
+
+Verification Output:
+- `npx vitest run src/adapters/__tests__/bigquery.test.ts src/adapters/__tests__/bigqueryPackage.test.ts` → 20/20 PASS (13 + 7)
+- `npm run typecheck` → exit 0
+- `git diff --stat -- src/adapters/bigqueryTypes.ts src/adapters/bigqueryAdc.ts` → empty (frozen-surface gate)
+- `npx vitest run src/adapters/__tests__/factory.test.ts src/adapters/__tests__/bigqueryAdc.test.ts src/adapters/__tests__/bigqueryTypes.test.ts src/adapters/__tests__/bigqueryConfig.test.ts` → 32/32 PASS (sanity net)
+- `grep -n "BigQueryValue.*types.ts\|Hard constraints" docs/decisions/0004-bq-00-feasibility-contract.md` → empty (both ADR nits clean)
+- `grep -n 'import("./types")' src/adapters/bigquery.ts` → empty (no inline type imports remain)
+
+Status: PASS
+Note: bigqueryPackage test count is 7, not the 14 mentioned in the task's stale reference — the existing test file has 7 `it(...)` blocks; behavior identical, all 7 green. Re-grep found BigQueryValue union at bigqueryTypes.ts:90 (planner's note confirmed — was :63 in older drafts). No inline `import("./types")` annotations found (the planner estimated 7; actual is 6 in bigquery.ts).

@@ -69,3 +69,51 @@ npm run typecheck
 
 ### 2026-09-02 · planner · unic-smart
 Cap value 200 chosen to sit far above any real tab name (default `"Query 1"`, rename via the tab UI) while making a corrupt multi-MB memento impossible; it mirrors the existing fail-closed style exactly — parse REJECTS (like buffer/tabs), writer CLAMPS (like `buffer.slice`). Version stays 1: older persisted snapshots with names ≤ 200 are unaffected, and a > 200-name snapshot can only come from a corrupt/hostile memento, which the codec's fail-closed contract already treats as reject-not-migrate.
+
+## Executor Report
+
+EXECUTOR_TOOL: Claude Code
+EXECUTOR_MODEL: claude-sonnet-4-6
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT:
+```
+FAIL  src/ui/__tests__/consolePanel.test.ts > ConsolePanel — draft recovery (ARP-08) > #14 edge/writer-clamp: a 500-char tab name persists sliced to CONSOLE_DRAFTS_MAX_NAME_CHARS
+AssertionError: expected 'Query 1' to have a length of undefined but got 7
+ ❯ src/ui/__tests__/consolePanel.test.ts:868:32
+
+FAIL  src/ui/__tests__/consolePanelMessages.test.ts > CONSOLE_DRAFTS_* constants (ARP-08) > exports the persisted-draft storage key, schema version, and caps
+AssertionError: expected undefined to be 200
+ ❯ src/ui/__tests__/consolePanelMessages.test.ts:233:43
+
+FAIL  src/ui/__tests__/consolePanelMessages.test.ts > parseConsoleDraftSnapshot — tab name cap (TASK-CL-003) > #1 name exactly at cap round-trips through encode→parse losslessly
+AssertionError: expected '' to have a length of undefined but got +0
+ ❯ src/ui/__tests__/consolePanelMessages.test.ts:439:35
+
+FAIL  src/ui/__tests__/consolePanelMessages.test.ts > parseConsoleDraftSnapshot — tab name cap (TASK-CL-003) > #3 name 201 chars (cap + 1) → parse rejects (fail-closed)
+AssertionError: expected { Object (version, tabs, ...) } to be null
+ ❯ src/ui/__tests__/consolePanelMessages.test.ts:464:44
+
+Test Files  2 failed (2)
+     Tests  4 failed | 57 passed (61)
+```
+
+Verification Output:
+```
+RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-cl-003
+
+ ✓ src/ui/__tests__/consolePanelMessages.test.ts  (31 tests) 5ms
+ ✓ src/ui/__tests__/consolePanel.test.ts  (30 tests) 19ms
+
+ Test Files  2 passed (2)
+      Tests  61 passed (61)
+   Start at  22:14:03
+   Duration  286ms
+
+> vsdb@1.47.0 typecheck
+> tsc --noEmit
+(exit 0, no output)
+```
+
+Status: PASS
+Note: One small test-design adaptation for test #14 — the writer-clamp test mutates host state via the public `panel.renameTab(tabId, longName)` method instead of going through the message handler, because the existing `isConsoleToHostMessage` guard does not list `renameTab` (pre-existing latent gap, not in the task's scope to fix). The clamp itself is exercised by the same `buildDraftSnapshot` path triggered by an `updateBuffer` write.
