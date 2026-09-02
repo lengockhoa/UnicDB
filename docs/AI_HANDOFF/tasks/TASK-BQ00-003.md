@@ -86,6 +86,41 @@ export function runAdcSmoke(client: BigQueryClientLike): Promise<"ok" | AdcDiagn
 
 ---
 
+## Executor Report
+EXECUTOR_TOOL: Claude Code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq00-003
+
+   FAIL  src/adapters/__tests__/bigqueryAdc.test.ts [ src/adapters/__tests__/bigqueryAdc.test.ts ]
+  Error: Failed to load url ../bigqueryAdc (resolved id: ../bigqueryAdc) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq00-003/src/adapters/__tests__/bigqueryAdc.test.ts. Does the file exist?
+   Test Files  1 failed (1)
+        Tests  no tests
+Verification Output: |
+  # 1. Focused proof (6/6 GREEN)
+  ✓ src/adapters/__tests__/bigqueryAdc.test.ts  (6 tests) 4ms
+  Test Files  1 passed (1)
+       Tests  6 passed (6)
+
+  # 2. typecheck (clean)
+  > vsdb@1.45.0 typecheck
+  > tsc --noEmit
+  (no errors)
+
+  # 3. compile (clean — all bundles emitted including dist/extension.js)
+  esbuild: build complete
+
+  # 4. full test suite (floor 3189|2 preserved; observed 3202|2)
+  Test Files  221 passed | 1 skipped (222)
+       Tests  3202 passed | 2 skipped (3204)
+Status: PASS
+Note: Classifier is redaction-by-construction — AdcDiagnostic has no field
+       that could carry raw error text or tokens. Status-channel first (403 → api_denied,
+       404 → bad_billing_project, 401 → missing_adc), keyword fallback second. The
+       injectable `impl` parameter is the observation point for test #1 (no extra mocking
+       library). No module-load I/O.
+
 ## Discussion
 
 ### 2026-09-02 · planner · unic-smart

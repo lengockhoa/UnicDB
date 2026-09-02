@@ -118,3 +118,50 @@ To 002's executor: the `.d.ts` field-name validation (Acceptance #3) is a hard r
 
 ### 2026-09-02 · planner · unic-smart (Round 2)
 `toBigQueryPage` is now a named deliverable (plan-review Important 1): previously no mapper was named, so a literal executor could ship types only and let the happy test check a fixture against itself — a self-referential test with no subject. Test #1 now calls the real function: fixture IN, `BigQueryPage` OUT, `jobRef` verbatim. Division of labor with 001: response **field names** (pageToken, totalBytesProcessed, schema.fields) stay yours (Acceptance #3); pagination/cancel **method names + return shapes** now live in 001's `docs/decisions/_bq00-evidence.md` — cite it if your validation touches those methods, don't duplicate it.
+
+### 2026-09-02 · executor · unic-code — `.d.ts` field-name validation
+
+Field-name validation against installed `@google-cloud/bigquery@9.0.3` `.d.ts`:
+
+- `BigQueryRawQueryResponse.pageToken?: string` — `node_modules/@google-cloud/bigquery/build/src/types.d.ts:2107` (in `IGetQueryResultsResponse`).
+- `BigQueryRawQueryResponse.totalBytesProcessed?: string` — same file:2119.
+- `BigQueryRawQueryResponse.schema?: { fields?: Array<{ name?, type?, mode?, fields? }> }` — schema:5858 (`ITableFieldSchema`, with recursive `fields`), schema:6142 (`ITableSchema.fields`).
+- `BigQueryRawQueryResponse.rows?: Array<{ f?: Array<{ v?: any }> }>` — schema:6132 (`ITableRow`), schema:5711 (`ITableCell = { v?: any }`).
+- `BigQueryRawQueryResponse.jobReference?: { projectId?, location?, jobId? }` — schema:3149 (`IJobReference`).
+
+The planner's type surface matches reality — no field-name deltas. The declared `BigQueryRawQueryResponse` mirrors `IGetQueryResultsResponse` shape-for-shape, and the mapper un-nests `row.f[].v` into `BigQueryValue[][]`.
+
+**Note on REPEATED/RECORD wire shape.** The wire format wraps every cell value in `{v: ...}` and every RECORD inner payload in `{f: [...]}`; the mapper un-nests exactly ONE level (`row.f[].v`) and passes the rest of the tree through verbatim. Test #5 asserts structural preservation (array for REPEATED, `{f:[..]}` for RECORD, positional cells preserved) without claiming the mapper promotes positional cells to named keys. Schema field-name → record-key binding is the downstream caller's job (they have `page.schema`).
+
+### 2026-09-02 · executor · unic-code — Implementation report
+
+Source file: `src/adapters/bigqueryTypes.ts` — exports `BigQueryJobRef`, `BigQuerySchemaField`, `BigQueryValue`, `BigQueryPage`, `BigQueryPageRequest`, `BigQueryRawQueryResponse`, `hasNextPage`, and the named mapper `toBigQueryPage`. Zero imports from `@google-cloud/bigquery` or `vscode` (only `import { describe, it, expect } from "vitest"` in the test). No edits to any §2-read-only file.
+
+## Executor Report
+EXECUTOR_TOOL: Claude Code
+EXECUTOR_MODEL: claude-sonnet-4-5
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  FAIL  src/adapters/__tests__/bigqueryTypes.test.ts [ src/adapters/__tests__/bigqueryTypes.test.ts ]
+  Error: Failed to load url ../bigqueryTypes (resolved id: ../bigqueryTypes) in
+  /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq00-002/src/adapters/__tests__/bigqueryTypes.test.ts.
+  Does the file exist?
+    Test Files  1 failed (1)
+    Tests  no tests
+Verification Output: |
+  # focused
+    ✓ src/adapters/__tests__/bigqueryTypes.test.ts  (7 tests) 2ms
+  # typecheck
+    > vsdb@1.45.0 typecheck
+    > tsc --noEmit
+    (no output, exit 0)
+  # compile
+    ⚡ Done in 12ms ... esbuild: build complete
+    dist/extension.js      5.3mb
+    dist/extension.js.map  9.3mb
+  # npm test
+    Test Files  221 passed | 1 skipped (222)
+    Tests  3203 passed | 2 skipped (3205)
+    Duration  17.91s
+Status: PASS
+Note: Floor of 3189|2 preserved (3203|2 after this task's 7 tests + BQ-00.1's 7 = 14 added). `toBigQueryPage` is the named subject of test #1 (real function, not types-only). `@ts-expect-error` lines in test #7 are consumed by the numeric-literal assignments below them, confirming `BigQueryValue` decimal/int branches are string-typed at compile time.
