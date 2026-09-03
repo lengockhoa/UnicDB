@@ -85,4 +85,72 @@ Grounding notes for the executor:
 
 ## Executor Report
 
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT:
+```
+$ npx vitest run src/adapters/__tests__/bigqueryJobs.test.ts
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq03-001
+
+ FAIL  src/adapters/__tests__/bigqueryJobs.test.ts > TASK-BQ03-001 assertSingleReadOnlyGoogleSql — pure MVP SQL gate > rejects multi-statement input
+AssertionError: expected true to be false // Object.is equality
+
+ FAIL  src/adapters/__tests__/bigqueryJobs.test.ts > TASK-BQ03-001 runQuery — BatchedQuery page source > 2. runQuery resolves { results: [], batched }; batched.columns maps schema names; fetchBatch returns rows
+TypeError: Cannot read properties of undefined (reading 'jobReference')
+ ❯ Module.toBigQueryPage src/adapters/bigqueryTypes.ts:266:20
+ ❯ BigQueryAdapter.runQuery src/adapters/bigquery.ts:327:32
+
+ FAIL  src/adapters/__tests__/bigqueryJobs.test.ts > TASK-BQ03-001 runQuery — multi-statement rejected > 3. SELECT 1; SELECT 2 rejects with 'not in BigQuery MVP'; createQueryJob NOT called
+AssertionError: expected undefined to be an instance of Error
+    expect(captured).toBeInstanceOf(Error);
+
+ FAIL  src/adapters/__tests__/bigqueryJobs.test.ts > TASK-BQ03-001 BigQueryJobError — error envelope sanitization > 8. createQueryJob rejects with 403-shape error
+ AssertionError: The instanceof assertion needs a constructor but undefined was given.
+ ❯ src/adapters/__tests__/bigqueryJobs.test.ts:501:22
+     |                      ^
+
+ Test Files  1 failed (1)
+      Tests  28 failed | 1 passed (29)
+   Duration  293ms
+```
+
+RED confirmed: 28 of 29 tests failed before implementation. Failures fell into three categories: (a) gate / BigQueryJobError / BigQueryPagedQuery symbols did not exist (1 each, plus ripple effects), (b) the new runQuery path fell through to the OLD tuple unwrap which expected `client.query()` shape (the new makeJobsClient only stubs `createQueryJob`), and (c) the limited-channel hook installer did not exist.
+
+Verification Output:
+```
+$ npx vitest run src/adapters/__tests__/bigqueryJobs.test.ts
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq03-001
+ ✓ src/adapters/__tests__/bigqueryJobs.test.ts  (29 tests) 9ms
+ Test Files  1 passed (1)
+      Tests  29 passed (29)
+
+$ npm run typecheck
+> vsdb@1.49.0 typecheck
+> tsc --noEmit
+(exit 0)
+
+$ git diff --stat -- src/adapters/bigqueryTypes.ts src/adapters/bigqueryAdc.ts
+(no output — frozen surfaces byte-untouched)
+
+$ npx vitest run src/adapters/__tests__/bigquery.test.ts src/adapters/__tests__/bigqueryTypes.test.ts src/adapters/__tests__/bigqueryAdc.test.ts
+ ✓ src/adapters/__tests__/bigqueryTypes.test.ts  (7 tests) 3ms
+ ✓ src/adapters/__tests__/bigqueryAdc.test.ts  (6 tests) 4ms
+ ✓ src/adapters/__tests__/bigquery.test.ts  (27 tests) 31ms
+ Test Files  3 passed (3)
+      Tests  40 passed (40)
+```
+
+Status: PASS
+Note:
+- Wave-1 deliverable scope honored: BigQueryPagedQuery uses a local fetcher double injected via the constructor (the 03.2 swap point is a one-line constructor change). No import of createBigQueryPageFetcher from ./bigqueryPages.
+- Limited-channel pinning: BigQueryPagedQuery records the `limited` flag on the FIRST non-null page that reports it, then invokes `onExhausted?.({ limited: observedLimited })` on the EOF fetchBatch call. Hook installer: `setOnExhausted(cb)`.
+- Seams widened additively: BigQueryClient.createQueryJob now accepts `string | BigQueryCreateQueryJobOptions` (BQ-01 tests that pass `string` keep compiling). bigqueryAdc.ts and bigqueryTypes.ts are byte-untouched.
+- MVP SQL gate is heuristic (per task spec): string-aware semicolon scan + leading-keyword allowlist (SELECT, WITH) + write/DDL blocklist scan across the cleaned text (catches `WITH cte AS (...) DELETE FROM ...`). String literals (`'...'`, `"..."`) and comments (`-- ...`, `/* ... */`) are stripped before the scan; semicolons inside string literals do not split (test #3b).
+- BigQueryJobError sanitization: message uses fixed shape `"BigQuery job failed: <category> (<location>)"` + optional sanitized detail; never embeds raw SQL, raw Google message, or credential-shaped strings (token regex strips `ya29.*`, `service_account`, long base64-looking runs).
+- cancelActiveQuery seam added to the adapter for the runner's pre-batched cancel window (TASK-RLX-001 contract); active job tracked in adapter state and cleared on close().
+- Backwards compatibility: runQuery falls back to the legacy `client.query({ skipParsing: true })` TUPLE path when the createQueryJob result lacks `getQueryResults` (BQ-01/02 fakes that return `{ id }` only). This keeps BQ-02 tests green unmodified.
+- Edge case: when the first page is terminal (pageToken === null), `initialState === "done"` is observable on the handle BEFORE any fetchBatch call; the first fetchBatch still serves the cached first page, then subsequent calls return null and fire `onExhausted` exactly once.
+
 ## Reviewer Verdict
