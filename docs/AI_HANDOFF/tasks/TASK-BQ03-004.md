@@ -76,4 +76,76 @@ Grounding notes for the executor:
 
 ## Executor Report
 
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT:
+```
+ FAIL  src/ui/__tests__/resultsPanel.test.ts > ResultsPanel — BQ-03.4 BigQuery states > #3 — resultLimited + cursorClosed statement: loadMore is a silent panel-level no-op (no runner call, no busy flip, no toast)
+AssertionError: expected "spy" to not be called at all, but actually been called 1 times
+  1st spy call: Array [ 0 ]
+ ❯ src/ui/__tests__/resultsPanel.test.ts:1983:33
+
+ FAIL  src/ui/__tests__/resultsPanel.test.ts > ResultsPanel — BQ-03.4 BigQuery states > #4 — token-less statement (batched: false): loadMore is a silent panel-level no-op; no runner call, no busy state, state re-posted unchanged
+AssertionError: expected "spy" to not to be called at all, but actually been called 1 times
+  1st spy call: Array [ 0 ]
+ ❯ src/ui/__tests__/resultsPanel.test.ts:2025:33
+
+ FAIL  src/ui/__tests__/resultsPanel.test.ts > ResultsPanel — BQ-03.4 BigQuery states > #6 — render() during an in-flight loadMore does not let the stale completion overwrite the newer lastResults
+AssertionError: expected 1 to be 99 // Object.is equality
+ ❯ src/ui/__tests__/resultsPanel.test.ts:2134:56
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 49 passed (52)
+```
+
+Tests #1, #2, #5, #7 already passed against base (they pin wire-shape
+preservation which the `...r` spread in `sanitizeStatementResult` already
+guarantees — the field is additive and flows through). The 3 RED tests
+(targets of the new gate + generation guard) failed as expected: the
+panel was calling `runner.loadMore` unconditionally (#3, #4) and the
+loadMore completion overwrote the newer render's `lastResults` (#6).
+
+Verification Output:
+
+```
+$ npx vitest run src/ui/__tests__/resultsPanel.test.ts
+ ✓ src/ui/__tests__/resultsPanel.test.ts  (52 tests) 435ms
+ Test Files  1 passed (1)
+      Tests  52 passed (52)
+
+$ npm run typecheck
+> vsdb@1.49.0 typecheck
+> tsc --noEmit
+(clean exit, no output)
+
+$ npx vitest run src/ui/__tests__/resultsPanelRequery.test.ts src/ui/__tests__/resultsPanelServerFilter.test.ts
+ ✓ src/ui/__tests__/resultsPanelRequery.test.ts  (15 tests) 10ms
+ ✓ src/ui/__tests__/resultsPanelServerFilter.test.ts  (16 tests) 13ms
+ Test Files  2 passed (2)
+      Tests  31 passed (31)
+```
+
+Status: PASS
+Note:
+- Implementation adds a panel-level gate before `runner.loadMore`:
+  when `stmt.batched === false` (BigQuery token-less) or
+  `stmt.cursorClosed === true` (closed cursor), loadMore is a silent
+  no-op — no runner call, no busy flip, no error toast, state re-posted
+  unchanged. The existing ARP03-003 catch-path suppression is preserved
+  for the synthetic limited-only throw case.
+- Captures `statementGeneration` before the loadMore await and re-checks
+  after every await: a render()/requery() that lands during the in-flight
+  loadMore bumps the generation, and the stale completion is dropped
+  (mirrors the requerySeq guard in handleRequery).
+- `pending?: boolean` is read via the `...r` spread in
+  `sanitizeStatementResult` — no explicit slot needed. Tests use
+  `as unknown as StatementResult` casts since the field will be added to
+  the base type by TASK-BQ03-003 (out of scope for this cycle).
+- Files touched: `src/ui/resultsPanel.ts` (loadMore handler) and
+  `src/ui/__tests__/resultsPanel.test.ts` (appended describe block; all
+  existing describes untouched). `src/core/queryRunner.ts` and
+  `src/extension.ts` not touched.
+
 ## Reviewer Verdict

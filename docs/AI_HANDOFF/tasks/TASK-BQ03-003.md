@@ -80,4 +80,52 @@ Grounding notes for the executor:
 
 ## Executor Report
 
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  ✓ src/core/__tests__/queryRunner.test.ts  (52 tests | 4 failed) — captured after
+  initial implementation run. Failing tests (RED state before GREEN):
+    - Test #2 — EOF releases the retained job context exactly once; further
+      loadMore is a graceful no-op
+      → expected undefined to be true (cursorClosed not set at EOF)
+    - Test #4 — late page after cancel is discarded; close() called on the
+      handle
+      → Test timed out (mockImplementationOnce consumed by initial fetch,
+        not loadMore; fixed in test by reordering the override to AFTER
+        runner.run())
+    - Test #5 — late page after a NEW run is discarded; first fetch's rows
+      never land in new run
+      → Same mock-ordering issue; fixed in test by reordering
+    - Test #9 — BQ onExhausted({ limited: true }) surfaces as resultLimited
+      on the statement
+      → expected undefined to be true (resultLimited not set by onExhausted)
+Verification Output: |
+  ## npx vitest run src/core/__tests__/queryRunner.test.ts
+  RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq03-003
+   ✓ src/core/__tests__/queryRunner.test.ts  (52 tests) 238ms
+   Test Files  1 passed (1)
+        Tests  52 passed (52)
+
+  ## npm run typecheck
+  > vsdb@1.49.0 typecheck
+  > tsc --noEmit
+  (no output, exit 0)
+
+  ## npx vitest run src/core/__tests__/resultBatcher.test.ts
+  RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq03-003
+   ✓ src/core/__tests__/resultBatcher.test.ts  (14 tests) 3ms
+   Test Files  1 passed (1)
+        Tests  14 passed (14)
+Status: PASS
+Note: Implementation matches spec — EOF close + cursorClosed + cursorExhausted
+  for BQ-shaped handles (duck-typed via 'onExhausted' in batched), onExhausted
+  callback wired to set resultLimited, runGeneration counter closes the
+  late-page-after-new-run leak, pending field set/cleared on BQ-shaped
+  runResult. Non-BQ (postgres cursor) paths stay byte-identical — all existing
+  ARP03-002 boundary tests, sweep tests, and the cursorClosed throw tests
+  pass verbatim. The 'cursorExhausted' field is the new minimum to distinguish
+  BQ-EOF close (graceful no-op) from sweep close (existing throw); documented
+  in StatementResult JSDoc.
+
 ## Reviewer Verdict
