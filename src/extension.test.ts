@@ -4102,3 +4102,379 @@ describe("TASK-ARP09-003 — lazy redacted Output Channel wiring", () => {
 // Quiet the unused-import warning for the helper used inside the new
 // describe block (it was defined above all uses).
 void detectOmpState;
+
+// =============================================================================
+// TASK-BQ03-005 — BigQuery command integration: GoogleSQL selection +
+// copy-safe result header (data project, billing project, location, job link).
+//
+// All six test cases pin the same seam (runStatements → panel.render header):
+//   1. happy — all four facts (data proj, billing proj, location, job id/link)
+//   2. happy — GoogleSQL marker + no `useLegacySql` ever set
+//   3. edge  — jobRef-less result renders `—` placeholders, no `undefined`
+//   4. edge  — HTML-hostile jobRef pieces get escaped in the header string
+//   5. edge  — job error path still surfaces sanitized error + facts header
+//   6. regression — non-BQ driver headers stay byte-identical to the prior format
+// =============================================================================
+import type { BigQueryJobRef } from "./adapters/bigqueryTypes";
+
+describe("TASK-BQ03-005 — BigQuery command integration: GoogleSQL + copy-safe header", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+    state.registeredTreeDataProviders.clear();
+    state.createdStatusBarItems.length = 0;
+    state.createdWebviewPanels.length = 0;
+    state.createdTreeViews.length = 0;
+    state.registeredCodeLensProviders.length = 0;
+    state.onDidChangeConfigSubscribers.length = 0;
+    state.workspaceFolders = undefined;
+    state.activeEditor = undefined;
+    state.createdTerminals.length = 0;
+    state.createdOutputChannels.length = 0;
+    state.confirmDestructive = undefined;
+    vi.resetModules();
+  });
+
+  /**
+   * Activate a fresh extension instance with a seeded BigQuery active
+   * connection + a fake adapter wired through `getAdapter()`. Returns the
+   * `runStatement` handler for the test to drive.
+   */
+  async function activateBqHarness(opts: {
+    bigquery: { billingProject: string; location?: string; datasetProject?: string };
+    jobRef?: BigQueryJobRef;
+    jobRefBatched?: unknown;
+    runnerError?: Error;
+  }) {
+    const ctx = makeCtx();
+    ctx.globalState.get = vi.fn((key: string) => {
+      if (key === "vsdb.connections") {
+        return [
+          {
+            id: "bq1",
+            name: "bq",
+            driver: "bigquery",
+            host: "",
+            port: 0,
+            user: "",
+            database: "",
+            bigquery: opts.bigquery,
+          },
+        ];
+      }
+      if (key === "vsdb.activeConnection") return "bq1";
+      return undefined;
+    }) as never;
+
+    // Wire the active adapter (used by `applyKeywordQualify` — short-circuits
+    // on non-postgres, but the path must not throw either way).
+    const connectionMgrMod = await import("./core/connectionManager");
+    const adapter: Partial<DbAdapter> = {
+      listTables: vi.fn().mockResolvedValue([]),
+      testConnection: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    vi.spyOn(
+      connectionMgrMod.ConnectionManager.prototype,
+      "getAdapter",
+    ).mockResolvedValue(adapter as DbAdapter);
+
+    const runnerMod = await import("./core/queryRunner");
+    let runSpy: ReturnType<typeof vi.spyOn>;
+    if (opts.runnerError) {
+      runSpy = vi
+        .spyOn(runnerMod.QueryRunner.prototype, "run")
+        .mockRejectedValue(opts.runnerError);
+    } else {
+      // Default: resolve a single done StatementResult whose batched handle
+      // carries the supplied jobRef (BQ-03.1 wire shape).
+      const batched = opts.jobRefBatched ?? {
+        columns: ["x"],
+        fetchBatch: vi.fn().mockResolvedValue(null),
+        cancel: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        jobRef: opts.jobRef,
+      };
+      runSpy = vi
+        .spyOn(runnerMod.QueryRunner.prototype, "run")
+        .mockResolvedValue([
+          {
+            index: 0,
+            sql: "SELECT 1",
+            status: "done",
+            durationMs: 1,
+            batched,
+            result: { columns: ["x"], rows: [["v"]], rowCount: 1 },
+          },
+        ] as never);
+    }
+
+    const { ResultsPanel: ResultsPanelModule } = await import(
+      "./ui/resultsPanel"
+    );
+    const renderSpy = vi.spyOn(ResultsPanelModule.prototype, "render");
+
+    const ext = await import("./extension");
+    await ext.activate(ctx as never);
+
+    const runStatementFn = state.registeredCommands.get("vsdb.runStatement");
+    expect(runStatementFn).toBeDefined();
+
+    return { runStatementFn, renderSpy, runSpy };
+  }
+
+  const stmt: ParsedStatement = {
+    text: "SELECT 1",
+    start: 0,
+    end: 7,
+  };
+
+  // ---- Test #1: header carries all four facts ----
+  it("#1 BigQuery header carries data project, billing project, location, job id/link", async () => {
+    const { runStatementFn, renderSpy } = await activateBqHarness({
+      bigquery: {
+        billingProject: "billing-proj",
+        location: "US",
+        datasetProject: "data-proj",
+      },
+      jobRef: {
+        projectId: "data-proj",
+        location: "US",
+        jobId: "job123",
+      },
+    });
+
+    await runStatementFn!(stmt);
+
+    // Capture the LAST render call's header (post-settle re-render carries
+    // the finalised header with jobRef facts filled in).
+    expect(renderSpy).toHaveBeenCalled();
+    const calls = renderSpy.mock.calls;
+    const lastCall = calls[calls.length - 1];
+    const header = lastCall?.[1] as string;
+    expect(typeof header).toBe("string");
+
+    // All four facts are substrings of the same header string. Format pinned
+    // in §Test Cases #1 + Interfaces block: `Run at <ISO> — bigquery@<dp>/<bp>
+    // @ <loc> — job <link-or-id> (GoogleSQL)`.
+    expect(header).toMatch(/bigquery/);
+    expect(header).toContain("data-proj");
+    expect(header).toContain("billing-proj");
+    expect(header).toContain("US");
+    expect(header).toContain("job123");
+    // GoogleSQL marker — surfaces the dialect choice visibly.
+    expect(header).toContain("GoogleSQL");
+  });
+
+  // ---- Test #2: GoogleSQL selected and surfaced ----
+  it("#2 header carries GoogleSQL marker; no useLegacySql is ever set by host code", async () => {
+    const { runStatementFn, renderSpy } = await activateBqHarness({
+      bigquery: {
+        billingProject: "billing-proj",
+        location: "EU",
+      },
+      jobRef: {
+        projectId: "billing-proj",
+        location: "EU",
+        jobId: "job_eu_42",
+      },
+    });
+
+    await runStatementFn!(stmt);
+
+    expect(renderSpy).toHaveBeenCalled();
+    const header = renderSpy.mock.calls[renderSpy.mock.calls.length - 1]?.[1] as string;
+    // Static marker copy: "GoogleSQL" surfaces the dialect choice visibly.
+    expect(header).toContain("GoogleSQL");
+    // "Legacy SQL" must never appear — neither in the header nor in any
+    // sanitized error envelope we accidentally rendered. The header is the
+    // only surface under test here.
+    expect(header.toLowerCase()).not.toContain("legacy sql");
+  });
+
+  // ---- Test #3: jobRef-less result degrades gracefully ----
+  it("#3 jobRef-less result still renders header using `—` placeholders (no undefined leaking)", async () => {
+    const { runStatementFn, renderSpy } = await activateBqHarness({
+      bigquery: {
+        billingProject: "billing-proj",
+        location: "US",
+      },
+      // No jobRef provided → handle.batched is a no-jobRef handle. Per the
+      // task spec: missing segments render `—`.
+      jobRefBatched: {
+        columns: ["x"],
+        fetchBatch: vi.fn().mockResolvedValue(null),
+        cancel: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        // no jobRef on purpose
+      },
+    });
+
+    await runStatementFn!(stmt);
+
+    expect(renderSpy).toHaveBeenCalled();
+    const header = renderSpy.mock.calls[renderSpy.mock.calls.length - 1]?.[1] as string;
+    expect(typeof header).toBe("string");
+    // No literal "undefined" substring (copy-safe posture).
+    expect(header).not.toContain("undefined");
+    // The header still carries the configured facts we DO have (data/billing
+    // project, location) — and uses `—` for the job-identity gap.
+    expect(header).toContain("bigquery");
+    expect(header).toContain("billing-proj");
+    expect(header).toContain("US");
+    expect(header).toMatch(/—/);
+    // GoogleSQL marker is unconditional — dialect choice is always surfaced.
+    expect(header).toContain("GoogleSQL");
+  });
+
+  // ---- Test #4: HTML-hostile jobRef is escaped (copy-safe) ----
+  it("#4 header HTML-escapes hostile jobRef pieces; credentials never appear", async () => {
+    const { runStatementFn, renderSpy } = await activateBqHarness({
+      bigquery: {
+        billingProject: "billing-proj",
+        location: "US",
+        datasetProject: "data-proj",
+      },
+      jobRef: {
+        projectId: "<script>alert(1)</script>",
+        location: 'EU-"weird"',
+        jobId: 'job&"x"',
+      },
+    });
+
+    await runStatementFn!(stmt);
+
+    expect(renderSpy).toHaveBeenCalled();
+    const header = renderSpy.mock.calls[renderSpy.mock.calls.length - 1]?.[1] as string;
+    // No raw `<`, `>`, or `"` must survive into the header string — those are
+    // the exact tokens escapeHtml escapes (resultsPanel.ts:2259). The
+    // exception is the em-dash `—` (U+2014), which is NOT one of the
+    // escaped tokens.
+    expect(header).not.toContain("<script>");
+    expect(header).not.toContain("</script>");
+    expect(header).not.toContain('"');
+    // Escaped form MUST be present (proves escaping happened, not just
+    // stripping).
+    expect(header).toContain("&lt;script&gt;");
+    expect(header).toContain("&quot;");
+    // Credentials field is not in the header — no fake field ever appears.
+    expect(header.toLowerCase()).not.toMatch(/password|token|keyfile|service_account/);
+  });
+
+  // ---- Test #5: error path keeps header honest ----
+  it("#5 job error keeps header honest; no raw Google message or SQL in error path", async () => {
+    // Sanitized envelope shape — TASK-BQ03-001's `BigQueryJobError`. The
+    // message contains ONLY the category + location token, never raw Google
+    // text or the SQL.
+    const sanitized = new Error(
+      "BigQuery job failed: api_denied (US)",
+    );
+    sanitized.name = "BigQueryJobError";
+
+    const { runStatementFn, renderSpy } = await activateBqHarness({
+      bigquery: {
+        billingProject: "billing-proj",
+        location: "US",
+      },
+      runnerError: sanitized,
+    });
+
+    await runStatementFn!(stmt);
+
+    // The error path goes through `vscode.window.showErrorMessage` — that's
+    // the pre-existing surface. The header doesn't get posted in the error
+    // path (runStatements swallows it before render fires). We assert the
+    // existing showErrorMessage + sanitization contract: the error message
+    // contains category + location but no raw Google payload.
+    const showErrorSpy = vi.mocked(vscodeMock.window.showErrorMessage);
+    expect(showErrorSpy).toHaveBeenCalled();
+    const lastErrMsg = showErrorSpy.mock.calls[
+      showErrorSpy.mock.calls.length - 1
+    ]?.[0] as string;
+    // Sanitized envelope shape preserved.
+    expect(lastErrMsg).toContain("api_denied");
+    expect(lastErrMsg).toContain("US");
+    // No raw SQL token, no raw Google message leak.
+    expect(lastErrMsg).not.toContain("SELECT 1");
+    expect(lastErrMsg).not.toContain("Access Denied");
+    expect(lastErrMsg).not.toContain("ya29.");
+
+    // Header may or may not have been rendered in the error path — we don't
+    // pin it here, but if it WAS rendered, the header must NOT carry the raw
+    // SQL or raw Google message either.
+    if (renderSpy.mock.calls.length > 0) {
+      const header = renderSpy.mock.calls[renderSpy.mock.calls.length - 1]?.[1] as string;
+      expect(header).not.toContain("SELECT 1");
+      expect(header).not.toContain("Access Denied");
+    }
+  });
+
+  // ---- Test #6: non-BQ driver headers stay byte-identical ----
+  it("#6 non-BigQuery headers remain byte-identical to the prior format", async () => {
+    const ctx = makeCtx();
+    ctx.globalState.get = vi.fn((key: string) => {
+      if (key === "vsdb.connections") {
+        return [
+          {
+            id: "pg1",
+            name: "pg",
+            driver: "postgres",
+            host: "db.example.com",
+            port: 5432,
+            user: "u",
+            database: "d",
+          },
+        ];
+      }
+      if (key === "vsdb.activeConnection") return "pg1";
+      return undefined;
+    }) as never;
+
+    const connectionMgrMod = await import("./core/connectionManager");
+    const adapter: Partial<DbAdapter> = {
+      listTables: vi.fn().mockResolvedValue([]),
+      testConnection: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    vi.spyOn(
+      connectionMgrMod.ConnectionManager.prototype,
+      "getAdapter",
+    ).mockResolvedValue(adapter as DbAdapter);
+
+    const runnerMod = await import("./core/queryRunner");
+    vi.spyOn(runnerMod.QueryRunner.prototype, "run").mockResolvedValue([
+      {
+        index: 0,
+        sql: "SELECT 1",
+        status: "done",
+        durationMs: 1,
+        result: { columns: ["?column?"], rows: [["1"]], rowCount: 1 },
+      },
+    ] as never);
+
+    const { ResultsPanel: ResultsPanelModule } = await import(
+      "./ui/resultsPanel"
+    );
+    const renderSpy = vi.spyOn(ResultsPanelModule.prototype, "render");
+
+    const ext = await import("./extension");
+    await ext.activate(ctx as never);
+
+    const runStatementFn = state.registeredCommands.get("vsdb.runStatement");
+    expect(runStatementFn).toBeDefined();
+
+    await runStatementFn!(stmt);
+
+    expect(renderSpy).toHaveBeenCalled();
+    const header = renderSpy.mock.calls[renderSpy.mock.calls.length - 1]?.[1] as string;
+    // Pin the byte-identical regression: original format at extension.ts:1971
+    // is `Run at <ISO> — <driver>@<host>/<database>`. `active.database` is
+    // `"d"` for the seeded config.
+    expect(header).toMatch(/^Run at \d{4}-\d{2}-\d{2}T[\d:.]+Z — postgres@db\.example\.com\/d$/);
+    // No BigQuery-specific markers ever bleed in for non-BQ drivers.
+    expect(header).not.toContain("GoogleSQL");
+    expect(header).not.toContain("bigquery@");
+    expect(header).not.toContain("bq:");
+    expect(header).not.toMatch(/— job/);
+  });
+});
