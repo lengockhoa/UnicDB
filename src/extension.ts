@@ -50,6 +50,7 @@ import type { AdapterFactory } from "./ai/tools/types";
 import type { AgentDeps } from "./ai/agent";
 import { AiChatPanel, type AcpPanelDeps } from "./ui/aiChatPanel";
 import { ConsolePanel } from "./ui/consolePanel";
+import { HelpGridPanel } from "./ui/helpGridPanel";
 import { AcpProcess, type AcpProcessHandle, type OmpEngineState } from "./ai/omp/acpProcess";
 import { detectOmp, OMP_INSTALL_HINT, OMP_UPDATE_HINT } from "./ai/omp/detect";
 import { resolveEngine } from "./ai/engineChoice";
@@ -103,6 +104,8 @@ let aiSettingsForm: AiSettingsForm | null = null;
 /** Cached single-instance AiChatPanel (TASK-004). Reused across calls. */
 let aiChatPanel: AiChatPanel | null = null;
 let consolePanel: ConsolePanel | null = null;
+/** TASK-OC4O-002 — VSDB Help Grid singleton. Created on first open. */
+let helpGridPanel: HelpGridPanel | null = null;
 /** Cycle AIC TASK-AIC-005 — singletons for the autocomplete wiring. */
 let autocompleteService: SqlAutocompleteService | null = null;
 let autocompleteRegistration: AutocompleteRegistration | null = null;
@@ -905,6 +908,34 @@ export async function activate(
       () => commandOpenConsoleCreateTab(),
     ),
   );
+  // 17c. vsdb.openConsoleForObject — open the SQL Console with a fresh tab
+  // pre-filled with a driver-aware SELECT for the picked table/view.
+  // Wired to the right-click `view/item/context` menu on schema-tree
+  // table/view nodes (see package.json contributes.menus.view/item/context).
+  // The handler reuses commandOpenConsole so the singleton panel and its
+  // existing onRun / draft / autocomplete wiring stay unchanged; if the
+  // active connection has no driver yet (none picked or add-connection
+  // flow not finished), we fall back to a plain postgres-style snippet.
+  disposables.push(
+    vscode.commands.registerCommand(
+      "vsdb.openConsoleForObject",
+      (qualifiedOrNode?: unknown) =>
+        commandOpenConsoleForObject(mgr, runner, panel, qualifiedOrNode, {
+          globalState: context.globalState,
+          workspaceState: context.workspaceState,
+        }),
+    ),
+  );
+  // 17d. vsdb.openHelpGrid — TASK-OC4O-002: open the VSDB Help Grid webview
+  // (a responsive grid of feature cards). Also wired into the webview's
+  // `...` (more actions) menu via package.json contributes.menus. The
+  // singleton uses the live `disposables` registered-commands set so cards
+  // for missing registrations are filtered out before the panel renders.
+  disposables.push(
+    vscode.commands.registerCommand("vsdb.openHelpGrid", () =>
+      commandOpenHelpGrid(disposables),
+    ),
+  );
   // surfaces a copy-pasteable `omp` command line (Copy button puts it on
   // the clipboard). apiKey is NEVER written to disk; the YAML carries an
   // env-var hint so OMP picks it up from the user's `OPENAI_API_KEY`.
@@ -1250,6 +1281,8 @@ export async function deactivate(): Promise<void> {
   aiChatPanel = null;
   consolePanel?.dispose();
   consolePanel = null;
+  helpGridPanel?.dispose();
+  helpGridPanel = null;
   // Cycle AIC TASK-AIC-005 — drop the autocomplete wiring.
   autocompleteRegistration?.dispose();
   autocompleteRegistration = null;
@@ -1858,6 +1891,123 @@ function commandOpenConsole(
 function commandOpenConsoleCreateTab(): void {
   consolePanel?.createTab();
   consolePanel?.show();
+}
+
+/**
+ * Resolve a qualified name out of the argument shape used by view/item
+ * context-menu commands (string when invoked from a programmatic caller,
+ * `{ meta: { schema, objectName } }` when invoked from the schema tree).
+ * Returns undefined when the shape doesn't carry an objectName.
+ */
+function resolveQualifiedFromArg(
+  qualifiedOrNode: unknown,
+): { qualified: string; schema: string; table: string } | undefined {
+  if (typeof qualifiedOrNode === "string" && qualifiedOrNode.length > 0) {
+    const lastDot = qualifiedOrNode.lastIndexOf(".");
+    if (lastDot < 0) {
+      return { qualified: qualifiedOrNode, schema: "", table: qualifiedOrNode };
+    }
+    return {
+      qualified: qualifiedOrNode,
+      schema: qualifiedOrNode.slice(0, lastDot),
+      table: qualifiedOrNode.slice(lastDot + 1),
+    };
+  }
+  if (
+    qualifiedOrNode &&
+    typeof qualifiedOrNode === "object" &&
+    "meta" in qualifiedOrNode
+  ) {
+    const meta = (qualifiedOrNode as {
+      meta?: { schema?: string; objectName?: string };
+    }).meta;
+    if (meta?.objectName) {
+      const schema = meta.schema ?? "";
+      return {
+        qualified: schema ? `${schema}.${meta.objectName}` : meta.objectName,
+        schema,
+        table: meta.objectName,
+      };
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Open the Console (singleton) with a fresh tab pre-filled with a
+ * driver-aware SELECT * ... LIMIT/TOP 100 snippet for the picked table/view.
+ * Falls back to a plain postgres-style snippet if the active connection has
+ * no driver yet — the snippet is editable, never auto-executed.
+ */
+function commandOpenConsoleForObject(
+  mgr: ConnectionManager,
+  runner: QueryRunner,
+  panel: ResultsPanel,
+  qualifiedOrNode: unknown,
+  mem: { globalState: vscode.Memento; workspaceState: vscode.Memento },
+): void {
+  const resolved = resolveQualifiedFromArg(qualifiedOrNode);
+  if (!resolved) {
+    void vscode.window.showInformationMessage(
+      "VSDB: right-click a table or view in the schema tree to open the Console for it.",
+    );
+    return;
+  }
+  // Reuse the singleton seeder so the panel + onRun + draft/autocomplete
+  // wiring stays exactly the same as `vsdb.openConsole`.
+  commandOpenConsole(
+    mgr,
+    runner,
+    panel,
+    mem.globalState,
+    mem.workspaceState,
+  );
+  if (!consolePanel) {
+    // commandOpenConsole is sync and sets the singleton; defensive guard.
+    return;
+  }
+  const driver = mgr.getActive()?.driver ?? "postgres";
+  const snippet = generateSelectForTable({
+    driver,
+    table: resolved.table,
+    schema: resolved.schema,
+  });
+  // seedTab creates a new tab + pre-fills the buffer + pushes one `state`
+  // postMessage so the webview editor shows the snippet. setBuffer would be
+  // the WRONG call here — it is the silent webview→host echo path (ARP-08
+  // #30) and the snippet would never reach the visible webview.
+  consolePanel.seedTab(`Query ${resolved.qualified}`, snippet);
+  consolePanel.show();
+}
+
+/**
+ * TASK-OC4O-002 — open the VSDB Help Grid webview. Singleton lifecycle
+ * (mirrors `commandOpenConsole`): create on first call, reveal on
+ * subsequent calls, drop the singleton when the user closes the panel.
+ * The live `disposables` set is the source of truth for "which command
+ * ids are currently registered" — cards whose command id is not in that
+ * set are filtered out by the registry before the panel renders.
+ */
+function commandOpenHelpGrid(
+  disposables: readonly vscode.Disposable[],
+): void {
+  const registered = new Set<string>();
+  for (const d of disposables) {
+    // `disposables` is typed loosely in this codebase; the registered
+    // entries are vscode.CommandDispose shapes whose `command` field carries
+    // the command id. Anything else is skipped.
+    const cmd = (d as unknown as { command?: unknown }).command;
+    if (typeof cmd === "string" && cmd.startsWith("vsdb.")) {
+      registered.add(cmd);
+    }
+  }
+  if (!helpGridPanel) {
+    helpGridPanel = new HelpGridPanel({
+      extensionUri: extensionUriForForm,
+      registeredCommandIds: registered,
+    });
+  }
+  helpGridPanel.show();
 }
 
 async function runQueryFromEditor(

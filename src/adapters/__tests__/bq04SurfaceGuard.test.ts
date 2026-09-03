@@ -9,9 +9,11 @@
 //  - BQ-01: src/adapters/types.ts (BigQueryClientLike + BatchedQuery)
 //  - deps:  package.json dependency manifest (no new/removed/upgraded
 //           deps, @google-cloud/bigquery stays 9.0.3). The top-level
-//           `version` line is intentionally NOT frozen — every release
-//           cycle bumps it (this guard exists to catch ADAPTER drift,
-//           not version drift).
+//           `version` line, the `commands` array, the `menus` entries,
+//           and any non-dependency contributes are intentionally NOT
+//           frozen — every release cycle can bump `version` and add new
+//           command/menu contributions (this guard exists to catch
+//           ADAPTER drift, not version/contributes drift).
 //
 // Test cases (TDD):
 //  1. BQ-00 surface byte-untouched vs v1.50.0 (primary, regression)
@@ -41,21 +43,63 @@ function gitDiff(ref: string, paths: readonly string[]): string {
 }
 
 /**
- * Strip the `version` line from a `package.json` diff. Every release
- * cycle bumps `version` from one cycle to the next, and that bump is
- * an INTENTIONAL change — the guard is here to catch ADAPTER drift
- * (new / removed / upgraded dependencies, @google-cloud/bigquery
- * version drift), not version drift. Returns the +/- lines that
- * remain after filtering; the test asserts that set is empty.
+ * Strip version bumps and non-dependency contributes from a `package.json`
+ * diff. Every release cycle:
+ *  - bumps `version` from one cycle to the next (intentional);
+ *  - may add new command palette entries / menu bindings for new features
+ *    (intentional, e.g. `vsdb.openConsoleForObject` shipped after BQ-04).
+ * The guard exists to catch ADAPTER drift (new / removed / upgraded
+ * dependencies, @google-cloud/bigquery version drift), not version or
+ * contributes drift. Returns the +/- lines that remain after filtering;
+ * the test asserts that set is empty.
+ *
+ * Implementation: drop any +/- line whose key is one of the contributes
+ * keys (`command`, `title`, `category`, `icon`, `when`, `group`,
+ * `keybinding`, `mac`, `win`, `linux`) when the line is part of a command
+ * block or menu binding. The simpler approach — filter by a single
+ * `+/- "command": "vsdb.X",` anchor — works for the command block but
+ * misses the surrounding `title`/`category`/`icon`/`when`/`group` lines
+ * that live in the same diff hunk. Filtering on a whitelist of safe
+ * contributes keys covers both the command palette block and the menu
+ * binding block in one pass.
  */
 function packageJsonDepsDiff(ref: string): string {
   const raw = gitDiff(ref, ["package.json"]);
+  // Keys that are part of command palette entries or menu bindings. ANY
+  // +/- line with one of these keys is treated as a non-dependency
+  // contributes change and dropped. The dependency manifest (deps,
+  // devDependencies, peerDependencies, engines) uses different keys and
+  // is never matched here.
+  const contributesKeyPattern =
+    /^[+-]\s+"(command|title|category|icon|when|group|keybinding|mac|win|linux)":/;
+  // Menu block headers (`"webview/<id>/context":`, `"view/title":`,
+  // `"editor/title":`, ...) appear on their own lines as the JSON key of
+  // the contributes.menus map. Drop them too — they are part of the
+  // contributes surface, not the dependency manifest. The key is anchored
+  // to a whitelist of known contributes.menus sub-keys (`webview/`,
+  // `view/`, `editor/`, `scm/`, `file/`, `commandPalette`, `menus`) so
+  // this filter can never silently drop a top-level package.json key
+  // like `"dependencies":` or `"devDependencies":` that happens to end
+  // in `": {`. The JSON key is followed by `": [` (or `": {` for nested
+  // menus), which the regex tolerates via `\s*[?[{]?\s*$`.
+  const contributesMenuKeyPattern =
+    /^[+-]\s+"(webview\/[a-zA-Z0-9/._-]+|view\/[a-zA-Z0-9/._-]+|editor\/[a-zA-Z0-9/._-]+|scm\/[a-zA-Z0-9/._-]+|file\/[a-zA-Z0-9/._-]+|commandPalette|menus)":\s*[?[{]?\s*$/;
   return raw
     .split("\n")
     .filter(
       (line) =>
-        /^[+-] [^]/.test(line) && // keep only add/remove content lines (skip `---` / `+++` / `@@`)
-        !/^[+-]\s+"version":\s+"[^"]+",?\s*$/.test(line) // drop the version bump
+        /^[+-] [^]/.test(line) && // keep only add/remove content lines
+        !/^[+-]\s+"version":\s+"[^"]+",?\s*$/.test(line) && // drop version bump
+        !contributesKeyPattern.test(line) && // drop command/menu/keybinding contributes
+        !contributesMenuKeyPattern.test(line) && // drop menu block headers
+        // Drop the block delimiters (`{` / `}`) that wrap a contributes
+        // hunk — they carry no dependency info and only show up because
+        // the command/menu lines they bracket were added.
+        !/^[+-]\s*[{}]\s*,?\s*$/.test(line) &&
+        // Drop standalone opening `[` / closing `]` of a menu entries
+        // block (the key itself is filtered above; the bracket is not).
+        !/^[+-]\s*\[\s*,?\s*$/.test(line) &&
+        !/^[+-]\s*\]\s*,?\s*$/.test(line)
     )
     .join("\n");
 }

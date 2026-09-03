@@ -289,6 +289,18 @@
         "icon": "$(add)"
       },
       {
+        "command": "vsdb.openConsoleForObject",
+        "title": "VSDB: Open Console for Object",
+        "category": "VSDB",
+        "icon": "$(window)"
+      },
+      {
+        "command": "vsdb.openHelpGrid",
+        "title": "VSDB: Open Help Grid",
+        "category": "VSDB",
+        "icon": "$(book)"
+      },
+      {
         "command": "vsdb.refreshAdmin",
         "title": "VSDB: Refresh Admin",
         "category": "VSDB",
@@ -383,6 +395,27 @@
       }
     ],
     "menus": {
+      "webview/vsdb.console/context": [
+        {
+          "command": "vsdb.openHelpGrid",
+          "when": "true",
+          "group": "vsdbHelp"
+        }
+      ],
+      "webview/vsdb.results/context": [
+        {
+          "command": "vsdb.openHelpGrid",
+          "when": "true",
+          "group": "vsdbHelp"
+        }
+      ],
+      "webview/vsdb.aiChatPanel/context": [
+        {
+          "command": "vsdb.openHelpGrid",
+          "when": "true",
+          "group": "vsdbHelp"
+        }
+      ],
       "editor/title": [
         {
           "command": "vsdb.runQuery",
@@ -409,6 +442,11 @@
         {
           "command": "vsdb.copyQualifiedName",
           "when": "view == vsdb.schemaTree && (viewItem == table || viewItem == view || viewItem == column || viewItem == routine)",
+          "group": "inline"
+        },
+        {
+          "command": "vsdb.openConsoleForObject",
+          "when": "view == vsdb.schemaTree && (viewItem == table || viewItem == view)",
           "group": "inline"
         },
         {

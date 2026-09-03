@@ -258,7 +258,12 @@ export class ConsolePanel {
     return this.tabById(tabId)?.buffer ?? "";
   }
 
-  /** Replace a tab's buffer. Silently no-op on unknown id. */
+  /** Replace a tab's buffer. Silently no-op on unknown id.
+   *  IMPORTANT: this is the webview→host echo path for ARP-08 debounced
+   *  `updateBuffer`. It must NOT push a `state` postMessage back to the
+   *  webview (see ARP-08 #30 — that would render-loop and clobber the
+   *  in-flight edit). Host-side seeding that needs to sync down to the
+   *  webview must call `seedTab()` / `createTab()` instead. */
   setBuffer(tabId: string, buffer: string): void {
     const tab = this.tabById(tabId);
     if (tab) tab.buffer = buffer;
@@ -270,7 +275,9 @@ export class ConsolePanel {
   }
 
   /** Create a new tab with an optional display name. Returns the new spec.
-   *  The new tab becomes active immediately. */
+   *  The new tab becomes active immediately and a `state` postMessage is
+   *  pushed so the webview shows it (host-side creation must sync — unlike
+   //  the silent `setBuffer` echo path). */
   createTab(name?: string): ConsoleTabSpec {
     const n = this.tabs.length + 1;
     const spec: ConsoleTabSpec = {
@@ -280,7 +287,21 @@ export class ConsolePanel {
     };
     this.tabs.push(spec);
     this.activeTabId = spec.id;
+    this.postState();
     return { ...spec };
+  }
+
+  /** Host-side tab seed: create a fresh tab pre-filled with `buffer` and
+   *  sync the state down to the webview. Use this when the host wants to
+   *  populate the editor for the user (e.g. right-click "Open Console for
+   *  Object" with a driver-aware SELECT snippet). Distinct from `setBuffer`
+   *  which is the silent webview→host echo path (ARP-08 #30). */
+  seedTab(name: string, buffer: string): ConsoleTabSpec {
+    const spec = this.createTab(name);
+    const tab = this.tabById(spec.id);
+    if (tab) tab.buffer = buffer;
+    this.postState();
+    return spec;
   }
 
   /** Close a tab by id. Closing the last remaining tab creates a fresh

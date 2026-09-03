@@ -2,6 +2,8 @@
 
 | Task | Title | Status | Owner | Files |
 |------|-------|--------|-------|-------|
+| TASK-OC4O-001 | Right-click "Open Console for Object" on schema-tree table/view nodes | pending_review | executor=unic-code; 3417 tests pass, typecheck 0, compile clean | package.json, src/extension.ts, src/ui/consolePanel.ts, src/extension.test.ts, src/adapters/__tests__/bq04SurfaceGuard.test.ts |
+| TASK-OC4O-002 | Help Grid panel opened from the webview `...` (more actions) menu | pending_review | executor=unic-code; 3417 tests pass, typecheck 0, compile clean | package.json, src/ui/helpGrid.ts (new), src/ui/helpGridPanel.ts (new), src/ui/__tests__/helpGrid.test.ts (new), webview/helpGridMain.ts (new), src/extension.ts, src/extension.test.ts |
 | TASK-BQ04-001 | Additive `dialect?` marker on `StatementResult` + BQ setter in `runStatements` | done | executor=claude-sonnet-4-5; reviewer=unic-smart (R2 changes_requested → R4.5 R1 approved) | src/core/queryRunner.ts, src/ui/resultsGridModel.ts, src/extension.ts, src/core/__tests__/queryRunner.test.ts, src/core/bqDialect.ts (new) |
 | TASK-BQ04-002 | Webview cell-renderer switch to `formatBigQueryCell` (`formatDataCellForDialect`) | done | executor=unic-code; reviewer=unic-smart (R2 changes_requested → R4.5 R1 approved_minor) | src/ui/resultsGridModel.ts, webview/main.ts, src/ui/__tests__/resultsGridModel.test.ts |
 | TASK-BQ04-003 | Frozen-surface guard test | done | executor=claude-sonnet-4-5; reviewer=unic-smart (R2 changes_requested → R4.5 R1 approved_minor) | src/adapters/__tests__/bq04SurfaceGuard.test.ts (new) |

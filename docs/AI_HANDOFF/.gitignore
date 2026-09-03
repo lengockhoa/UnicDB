@@ -1,0 +1,8 @@
+# Local-only AI_HANDOFF scratch files (intentionally untracked).
+# These are working copies of prior cycles' PLAN.md that the orchestrator
+# occasionally writes for diff/context reasons; they are not part of the
+# committed cycle record. See docs/STATUS.md §"Documented follow-ups" for
+# the BQ-03/BQ-04 lesson about the broad `git add docs/AI_HANDOFF/`
+# glob picking these up untracked.
+PLAN_AIX09.md
+PLAN_BQ03.md

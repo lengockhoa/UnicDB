@@ -4580,4 +4580,228 @@ describe("TASK-BQ03-005 — BigQuery command integration (header + copy-safety)"
     expect(occurrences).toBeGreaterThanOrEqual(1);
   });
 });
+
+// =============================================================================
+// TASK-CONSOLE-FOR-OBJECT: vsdb.openConsoleForObject — right-click on table/view
+// in the schema tree opens the SQL Console with a fresh tab pre-filled with a
+// driver-aware SELECT * ... LIMIT/TOP 100 snippet.
+describe("vsdb.openConsoleForObject — right-click table/view → Console tab", () => {
+  beforeEach(() => {
+    // consolePanel is a module-level singleton in extension.ts — without
+    // resetting the module cache the second test in this block would skip
+    // ConsolePanel construction (createWebviewPanel not invoked) because the
+    // previous test's instance is still live.
+    vi.resetModules();
+    vi.clearAllMocks();
+    state.createdWebviewPanels.length = 0;
+  });
+
+  // Re-import + activate sau resetModules (mỗi test lấy module-level
+  // consolePanel singleton mới).
+  async function activateFresh(ctx: ReturnType<typeof makeCtx>) {
+    const mod = await import("./extension");
+    await mod.activate(ctx as never);
+  }
+
+  it("package.json contributes khai báo command mới + menu entry đúng when", () => {
+    const commands = pkgJson.contributes.commands as Array<{
+      command: string;
+      title: string;
+      icon: string;
+    }>;
+    const cmd = commands.find((c) => c.command === "vsdb.openConsoleForObject");
+    expect(cmd).toBeDefined();
+    expect(cmd!.title).toBe("VSDB: Open Console for Object");
+    expect(cmd!.icon).toBe("$(window)");
+
+    const viewItemContext = pkgJson.contributes.menus[
+      "view/item/context"
+    ] as Array<{ command: string; when: string; group: string }>;
+    const menu = viewItemContext.find(
+      (m) => m.command === "vsdb.openConsoleForObject",
+    );
+    expect(menu).toBeDefined();
+    expect(menu!.when).toBe(
+      "view == vsdb.schemaTree && (viewItem == table || viewItem == view)",
+    );
+    expect(menu!.group).toBe("inline");
+  });
+
+  it("command vsdb.openConsoleForObject được register khi activate", async () => {
+    const ctx = makeCtx();
+    await activateFresh(ctx);
+    expect(state.registeredCommands.has("vsdb.openConsoleForObject")).toBe(true);
+  });
+
+  it("handler với qualified string → tạo webview panel + pre-fill snippet", async () => {
+    const ctx = makeCtx();
+    await activateFresh(ctx);
+
+    const fn = state.registeredCommands.get("vsdb.openConsoleForObject");
+    expect(fn).toBeDefined();
+    await fn!("public.users");
+
+    // Console panel opens (creates one webview panel via ConsolePanel ctor).
+    expect(state.createdWebviewPanels.length).toBeGreaterThanOrEqual(1);
+    // The last `state` postMessage (ConsolePanel.postState) MUST carry the
+    // snippet for the requested table in the active tab's buffer.
+    const panel = state.createdWebviewPanels[0]!;
+    const webview = panel.webview as unknown as { postMessage: Mock };
+    const stateCalls = webview.postMessage.mock.calls.filter(
+      (c) => (c[0] as { type?: string })?.type === "state",
+    );
+    expect(stateCalls.length).toBeGreaterThan(0);
+    const last = stateCalls[stateCalls.length - 1]![0] as {
+      tabs: Array<{ name: string; buffer: string; active: boolean }>;
+    };
+    const activeTab = last.tabs.find((t) => t.active);
+    expect(activeTab).toBeDefined();
+    expect(activeTab!.name).toBe("Query public.users");
+    expect(activeTab!.buffer).toBe("SELECT * FROM public.users LIMIT 100;");
+  });
+
+  it("argument shape `{ meta: { schema, objectName } }` resolves qualified name", async () => {
+    const ctx = makeCtx();
+    await activateFresh(ctx);
+
+    const fn = state.registeredCommands.get("vsdb.openConsoleForObject");
+    await fn!({ meta: { schema: "sales", objectName: "orders" } });
+
+    expect(state.createdWebviewPanels.length).toBeGreaterThanOrEqual(1);
+    const panel = state.createdWebviewPanels[0]!;
+    const webview = panel.webview as unknown as { postMessage: Mock };
+    const stateCalls = webview.postMessage.mock.calls.filter(
+      (c) => (c[0] as { type?: string })?.type === "state",
+    );
+    const last = stateCalls[stateCalls.length - 1]![0] as {
+      tabs: Array<{ name: string; buffer: string; active: boolean }>;
+    };
+    const activeTab = last.tabs.find((t) => t.active);
+    expect(activeTab).toBeDefined();
+    expect(activeTab!.name).toBe("Query sales.orders");
+    expect(activeTab!.buffer).toBe("SELECT * FROM sales.orders LIMIT 100;");
+  });
+
+  it("argument shape không hợp lệ → showInformationMessage, KHÔNG mở panel mới", async () => {
+    const ctx = makeCtx();
+    await activateFresh(ctx);
+
+    const panelsBefore = state.createdWebviewPanels.length;
+    const fn = state.registeredCommands.get("vsdb.openConsoleForObject");
+    await fn!(undefined);
+    await fn!(42); // not a string, not a node
+    await fn!({ meta: {} }); // meta missing objectName
+
+    expect(state.createdWebviewPanels.length).toBe(panelsBefore);
+    expect(vscodeMock.window.showInformationMessage).toHaveBeenCalled();
+  });
+});
+
+// =============================================================================
+// TASK-OC4O-002: vsdb.openHelpGrid — VSDB Help Grid webview (responsive grid
+// of feature cards with one-click "Try it" actions). Pure registry tests live
+// in src/ui/__tests__/helpGrid.test.ts; this block pins the host wiring.
+describe("vsdb.openHelpGrid — Help Grid webview wiring", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    state.createdWebviewPanels.length = 0;
+  });
+
+  async function activateFresh(ctx: ReturnType<typeof makeCtx>) {
+    const mod = await import("./extension");
+    await mod.activate(ctx as never);
+  }
+
+  it("package.json contributes khai báo command mới + menu entries cho 3 webview viewTypes", () => {
+    const commands = pkgJson.contributes.commands as Array<{
+      command: string;
+      title: string;
+      icon: string;
+    }>;
+    const cmd = commands.find((c) => c.command === "vsdb.openHelpGrid");
+    expect(cmd).toBeDefined();
+    expect(cmd!.title).toBe("VSDB: Open Help Grid");
+    expect(cmd!.icon).toBe("$(book)");
+
+    const menus = pkgJson.contributes.menus as Record<
+      string,
+      Array<{ command: string }>
+    >;
+    for (const key of [
+      "webview/vsdb.console/context",
+      "webview/vsdb.results/context",
+      "webview/vsdb.aiChatPanel/context",
+    ]) {
+      const list = menus[key] ?? [];
+      expect(
+        list.some((m) => m.command === "vsdb.openHelpGrid"),
+        `menu key ${key} must reference vsdb.openHelpGrid`,
+      ).toBe(true);
+    }
+  });
+
+  it("command vsdb.openHelpGrid được register khi activate", async () => {
+    const ctx = makeCtx();
+    await activateFresh(ctx);
+    expect(state.registeredCommands.has("vsdb.openHelpGrid")).toBe(true);
+  });
+
+  it("handler tạo 1 webview panel + HTML chứa script + cards payload", async () => {
+    const ctx = makeCtx();
+    await activateFresh(ctx);
+
+    const fn = state.registeredCommands.get("vsdb.openHelpGrid");
+    expect(fn).toBeDefined();
+    await fn!();
+
+    expect(state.createdWebviewPanels.length).toBe(1);
+    const panel = state.createdWebviewPanels[0]!;
+    expect(panel.webview.html).toContain("vsdb-help-root");
+    expect(panel.webview.html).toContain("helpGrid.js");
+    // HTML carries the JSON-encoded cards payload so the webview can render
+    // without a follow-up postMessage round trip.
+    expect(panel.webview.html).toContain("data-cards=");
+  });
+
+  it("singleton: gọi 2 lần → chỉ 1 webview panel + reveal gọi 1 lần", async () => {
+    const ctx = makeCtx();
+    await activateFresh(ctx);
+
+    const fn = state.registeredCommands.get("vsdb.openHelpGrid");
+    await fn!();
+    const panel = state.createdWebviewPanels[0]!;
+    const revealBefore = (panel.reveal as Mock).mock.calls.length;
+    await fn!();
+    expect(state.createdWebviewPanels.length).toBe(1);
+    expect((panel.reveal as Mock).mock.calls.length).toBe(revealBefore + 1);
+  });
+
+  it("panel nhận message { type: 'runCommand', commandId } → executeCommand được gọi", async () => {
+    const ctx = makeCtx();
+    await activateFresh(ctx);
+
+    const fn = state.registeredCommands.get("vsdb.openHelpGrid");
+    await fn!();
+
+    const panel = state.createdWebviewPanels[0]!;
+    const onMsg = (panel.webview.onDidReceiveMessage as Mock).mock
+      .calls[0]![0] as (msg: unknown) => Promise<void>;
+
+    // vsdb.openConsole is registered by activate — should fire.
+    await onMsg({ type: "runCommand", commandId: "vsdb.openConsole" });
+    expect(vscodeMock.commands.executeCommand).toHaveBeenCalledWith(
+      "vsdb.openConsole",
+    );
+
+    // Unknown prefix must be ignored (defence-in-depth).
+    await onMsg({ type: "runCommand", commandId: "rm -rf /" });
+    // Still only 1 executeCommand call from the legitimate run.
+    expect(
+      (vscodeMock.commands.executeCommand as Mock).mock.calls.filter(
+        (c) => c[0] === "rm -rf /",
+      ).length,
+    ).toBe(0);
+  });
+});
 void detectOmpState;
