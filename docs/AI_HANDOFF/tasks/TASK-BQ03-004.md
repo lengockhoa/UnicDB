@@ -149,3 +149,20 @@ Note:
   `src/extension.ts` not touched.
 
 ## Reviewer Verdict
+
+REVIEWER_MODEL: unic-smart (per .ukit/storage/config.json handoff.reviewer.model)
+EXECUTOR_MODEL: unic-code — differs from reviewer; isolation check OK
+Verdict: Approved-with-minor
+VERIFICATION_RERUN (fresh, reviewer-run):
+  - npx vitest run src/ui/__tests__/resultsPanel.test.ts → 52 passed / 0 failed
+  - npm run typecheck → exit 0
+  - npx vitest run src/ui/__tests__/resultsPanelRequery.test.ts src/ui/__tests__/resultsPanelServerFilter.test.ts → 31 passed / 0 failed
+TEST_PLAN_COVERAGE: all-followed — tests #1-#7 implemented as pinned; RED_OUTPUT is genuine vitest failure output (3 real assertion failures: loadMore-called-once twice, rows-resurrected 1≠99); ≥2 heterogeneous edge cases (#4 token-less, #5 dispose/recreate, #6 mid-flight render).
+FINDINGS:
+  minor:
+    - src/ui/resultsPanel.ts:780-784 — the `batched === false` token-less sentinel is unrepresentable in `StatementResult.batched?: BatchedQuery` (src/core/queryRunner.ts:54); BQ03-003 landed without the promised type widening, so the panel keeps an `as unknown` cast and tests cast literals. Safe today (no host producer emits `false`; the real BQ EOF path surfaces as `cursorClosed: true`, which the gate catches). Follow-up: widen the type so the sentinel is type-safe.
+    - src/ui/resultsPanel.ts:855-864 — the finally's new `generation === this.statementGeneration` condition delegates the busy clear to whoever caused the generation bump. Verified safe today (every render/requery source pairs with an actor that clears busy: extension run lifecycle at src/extension.ts:2113, requery finally at resultsPanel.ts:2046), but a future render source without a busy owner would strand busy=true. Add one sentence to the finally comment naming that contract.
+    - PLAN.md Interfaces says 03.4 "reads result.pending === true" — implemented as wire passthrough only (sanitize `...r` spread, no explicit host read). This matches the task's own Discussion #4 postMessage-boundary scope and tests #1/#2 pin the acceptance criterion; recorded so the follow-up cycle owns the actual webview visual.
+SCOPE: footprint is exactly the loadMore hunk in src/ui/resultsPanel.ts + one appended test describe (existing 45 tests untouched); queryRunner.ts/extension.ts changes in the cycle diff belong to BQ03-003/005; no formatBigQueryCell wiring in the panel; `pending` is optional, sanitized, undefined on every non-BQ path (no wire break).
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Gate, generation guard, and epoch guards are correct and test-pinned; busy-clear delegation in the finally is sound under every current render source. Minors are type/doc hygiene for a follow-up; none blocking.

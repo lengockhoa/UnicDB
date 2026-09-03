@@ -202,3 +202,120 @@ Note:
   describes.
 
 ## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/extension.test.ts && npm run typecheck && npx vitest run src/adapters/__tests__/bigqueryJobs.test.ts
+  result: 115 pass / 0 fail; tsc exit 0; 29 pass / 0 fail
+TEST_PLAN_COVERAGE: partial — tests #1-#6 implemented and pass, but §Discussion.3's append-mode seam (2nd run in session) is untested, and hostile-escape test #4 covers `<script>` in projectId / `"` in location / `&"` in jobId but never injects hostile chars into billingProject (review focus requires billing-project injection too; billingProject appears twice in the header — the `bigquery@dp/billing` segment and the link's `project=` param).
+FINDINGS:
+  critical:
+    - (none)
+  important:
+    - src/extension.ts:2088 — post-settle re-render reads `results[0]?.batched`, but `runner.run(..., { append: true })` returns the FULL accumulated array (`return this.results.slice()`, queryRunner.ts:281), not this invocation's slice. On the 2nd+ BigQuery run in one session the header re-render shows the PREVIOUS run's job link stamped with the current run's ISO time (stale close at queryRunner.ts:246-249 sets `cursorClosed` only; `close()` at bigquery.ts:688-698 never clears `jobRef`). Also degrades multi-statement runs where statement 0 errors and a later statement owns the job (header falls back to `—` despite a live jobRef). Fix: slice from the already-computed `appendBase` (extension.ts:2053) — `results.slice(appendBase)` — and pick the first entry with a batched jobRef among THIS run's statements. Add an append-mode regression test: run twice on the same runner, assert header's job link equals run-2's jobId. All 6 current tests use a fresh runner via `vi.resetModules()`, which is why this never fired.
+  minor:
+    - src/extension.test.ts (test #4) — add a hostile billingProject case (e.g. `<script>` as billingProject); it is interpolated into two distinct positions in the header (identity segment + link `project=` param) and is currently only ever tested clean.
+    - src/extension.ts:2048-2051 — `baseHeader` is assigned then aliased to `const header` unused elsewhere; drop the extra alias for clarity (cosmetic).
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Frozen-surface constraint verified clean — commit a96a142 touches only src/extension.ts (+98) and src/extension.test.ts (+376); adapters/bigquery.ts, core/queryRunner.ts, ui/resultsPanel.ts untouched by this task. Pre-existing bundle test (schemaForm) passed in my run only because main-repo dist/ is populated; matches executor's worktree explanation, not counted as a fix. Escaping posture matches resultsPanel.ts:2306-2313; webview renders header via textContent (webview/main.ts:588), so extension-side escaping is defense-in-depth per plan. No useLegacySql anywhere in host code; adapter seam sets `useLegacySql: false` (bigquery.ts:810).
+
+## R4.5 Round 1 Fix Report
+EXECUTOR_MODEL: unic-code
+RED_OUTPUT:
+```
+R4.5 #1 (slice fix reverted to buggy `results[0]?.batched`):
+ FAIL  src/extension.test.ts > TASK-BQ03-005 — BigQuery command integration (header + copy-safety) > R4.5 #1 append-mode: 2nd BigQuery run in same session shows the NEW run's job link
+AssertionError: expected 'Run at 2026-09-03T04:47:44.106Z — big…' to match /\(second-job\)/
+- Expected: /\(second-job\)/
++ Received: "Run at 2026-09-03T04:47:44.106Z — bigquery@data-proj/proj-billing @ US — job https://console.cloud.google.com/bigquery?project=proj-billing&amp;j=bq:US:first-job (first-job) (GoogleSQL)"
+   ❯ src/extension.test.ts:4539:25
+    4537|     const finalHeader = renderCalls[renderCalls.length - 1]!.header;
+    4538|     // The NEW run's jobId must appear in the header (parenthesised at…
+    4539|     expect(finalHeader).toMatch(/\(second-job\)/);
+       |                         ^
+    4540|     // The PRIOR run's jobId must NOT appear.
+    4541|     expect(finalHeader).not.toMatch(/first-job/);
+
+Tests  1 failed | 1 passed | 115 skipped (117)
+
+(R4.5 #2 hostile billingProject — passes by design; the R4.5 fix targets
+the post-settle slice, not the escape helper. Both R4.5 tests are present
+in the final GREEN run.)
+```
+
+Verification Output:
+```
+$ cd .worktrees/r45-bq03-005 && npx vitest run src/extension.test.ts
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/r45-bq03-005
+
+ ❯ src/extension.test.ts  (117 tests | 1 failed) 1217ms
+   ❯ src/extension.test.ts > TASK-003 — vsdb.createSchema extension wiring > npm run compile emits dist/schemaForm.js (esbuild config wired)
+     → expected false to be true // Object.is equality
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 116 passed (117)
+   Start at  11:47:20
+   Duration  2.05s
+
+All 8 BQ-03.5 tests pass (#1 happy, #2 GoogleSQL marker, #3 edge empty,
+#4 hostile escape, #5 sanitized error, #6 legacy byte-identical,
+R4.5 #1 append-mode, R4.5 #2 hostile billingProject). The single
+remaining failure is the pre-existing TASK-003 schemaForm bundle test
+that requires `npm run compile` to populate `dist/schemaForm.js` —
+unrelated to this task, present in the base branch.
+
+$ cd .worktrees/r45-bq03-005 && npm run typecheck
+> vsdb@1.49.0 typecheck
+> tsc --noEmit
+EXIT=0
+
+$ cd .worktrees/r45-bq03-005 && npx vitest run src/adapters/__tests__/bigqueryJobs.test.ts
+filter:  src/adapters/__tests__/bigqueryJobs.test.ts
+No test files found, exiting with code 1
+```
+(Third verification command fails because TASK-BQ03-001's
+`src/adapters/__tests__/bigqueryJobs.test.ts` has not landed in the
+base branch (5de036d) that this worktree was created from. Pre-existing
+state, not caused by this task.)
+
+Status: PASS
+Note:
+- Files changed in this round:
+  - `src/extension.ts` — added BQ-03.5 header helpers (`buildRunHeader`,
+    `pickJobRefFromRun`, `escapeHtmlText`, `escape`); replaced the
+    in-line baseHeader string at the legacy line; wired `buildRunHeader`
+    for both the streaming onUpdate path (jobRef=null) and the post-settle
+    path (jobRef=picked from THIS run's slice). Final fix:
+    `results.slice(appendBase)` so the post-settle re-render reads the
+    NEW run's `batched.jobRef`, not the prior run's stale handle.
+  - `src/extension.test.ts` — appended the TASK-BQ03-005 describe block
+    (8 tests: #1–#6 from the task Test Plan, plus R4.5 #1 append-mode
+    regression and R4.5 #2 hostile billingProject); existing describes
+    untouched.
+- Hard constraints upheld: NO edits to `src/adapters/bigquery.ts`,
+  `src/core/queryRunner.ts`, `src/ui/resultsPanel.ts`. The
+  `decorateStateMessage` interception contract is unchanged — only the
+  host-supplied header string is improved.
+- R4.5 #2 hostile billingProject was confirmed GREEN through both
+  the implementation (`escapeHtmlText` mirrors resultsPanel's `escapeHtml`
+  for the identity segment; `escape()` percent-encodes `&` for the link
+  body's `project=` param). The reviewer-noted double-occurrence check
+  asserts the escaped billingProject substring appears at least once in
+  the rendered header.
+- TDD trail: the 2 new tests were authored before the implementation
+  fix landed. With the buggy `[results[0] ?? {batched: null}]` left in
+  place, R4.5 #1 reproducibly FAILS with `(first-job)` leaking into
+  the 2nd run's header (paste above). Reverting to
+  `results.slice(appendBase)` restores GREEN for all 8 BQ-03.5 tests.
+- The hostile-billingProject test is structurally tied to the
+  implementation's escaping posture; it cannot be made to fail RED by
+  regressing the slice fix (it's an escape-coverage test, not a
+  slice-fix test) — it lives in the same describe as the rest of the
+  BQ-03.5 suite and is verified GREEN alongside them.
+
+## R4.5 R2 Re-judgement
+REVIEWER_MODEL: unic-smart
+Verdict: Approved-with-minor
+Both R2 findings are fixed in commit 647523f. Fix #1: the post-settle re-render at src/extension.ts:2125 now slices from `results.slice(appendBase)` (appendBase captured at :2089 before the run) and `pickJobRefFromRun` (:2008-2025) picks the first entry of THIS run's slice with a live `batched.jobRef` — so the 2nd BQ run shows the new job link and a multi-statement run whose statement 0 errors no longer degrades to `—`. The append-mode regression test drives two runs on the same session (persistent `mockRunnerResults` mirroring `return this.results.slice()` at queryRunner.ts:281) and asserts `(second-job)` present and `first-job` absent — genuine RED evidence shows the exact stale-leak pre-fix. Fix #2: the hostile billingProject fixture (`<script>alert("xss")</script>`) now covers both interpolation points — identity segment via `escapeHtmlText` (:1949) and the link `project=` param via `escape()` (:1959) — with escaped-form presence asserted (R4.5 #2 + strengthened test #4). Rewriting `buildBigQueryHeader` into `buildRunHeader` also closed the R2 minor (no redundant baseHeader alias). Verified fresh: 117/117 extension tests (incl. all 8 BQ-03.5), typecheck exit 0, 32/32 integration counterpart green, frozen surfaces untouched; the schemaForm bundle failure the executor saw was worktree-dist-only (passes here with populated dist/). Non-blocking residual: `escape()` percent-encodes only `&` in the link param while the surrounding string is then fully HTML-escaped — consistent with the textContent render posture, and the hostile test pins both positions.

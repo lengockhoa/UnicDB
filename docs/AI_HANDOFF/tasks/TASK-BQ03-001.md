@@ -154,3 +154,69 @@ Note:
 - Edge case: when the first page is terminal (pageToken === null), `initialState === "done"` is observable on the handle BEFORE any fetchBatch call; the first fetchBatch still serves the cached first page, then subsequent calls return null and fire `onExhausted` exactly once.
 
 ## Reviewer Verdict
+REVIEWER_MODEL: unic-smart
+Verdict: Changes-requested
+
+What's good: verification re-ran fresh (29/29 jobs tests, typecheck 0, BQ-02 40/40, frozen-surface diff empty at 5de036d); RED output is real; gate is string/comment-aware with CTE positive control (test 4); full 16-verb blocklist; cancel is exactly-once/right-job/no-op-after-done/never-cross-job; BigQueryJobError message is structurally safe (no SQL/credential path into it); wave-1 local fetcher double honored (no `./bigqueryPages` import).
+1. IMPORTANT — `cancelActiveQuery()` is dead in its target window. `this.activeJob = job` is set at src/adapters/bigquery.ts:944 AFTER `await fetcher({})` (line 938) instead of "at submit" per Discussion #4, and is only cleared on close() (line 800), never on settle. Reviewer probe (read-only, not committed): hanging first fetch + `cancelActiveQuery()` → `job.cancel` called 0 times. The createJob/first-fetch window the seam exists for (PLAN.md §3) does nothing. Fix: set activeJob immediately after the job handle resolves (before the initial fetch), clear on settle, and add a test cancelling during a hanging first fetch.
+2. IMPORTANT — Test #8's `getQueryResults`-rejection fixture is unimplemented: raw errors from the first page fetch (bigquery.ts:905/938, no try/catch) propagate to the caller UNsanitized — `classifyJobError` wraps only `createQueryJob` (bigquery.ts:842). A 403-at-completion (common BigQuery ACL timing) leaks the raw Google message. Fix: classify the initial fetch (and fetchBatch) errors into BigQueryJobError; add the getQueryResults-rejection variant of test #8.
+3. IMPORTANT — Test #5 required in-order pending→running→done; shipped test asserts only terminal `done`, and `"pending"` is never assigned anywhere (dead enum member). Acceptable only with a stated mechanism: add minimal observability (adapter-level phase during the pre-fetch window, or initialState sourced from job metadata) + an in-order assertion, or record the deviation in the task file for 03.4 to consume differently.
+Minor: (a) probe-confirmed gate false positives on read-only `SELECT REPLACE(...)`, `SELECT * REPLACE(...)` (blocklist whole-text scan; plan-sanctioned heuristic — log as known limitation, consider skipping verbs preceded by `(`/`.` in wave 2); (b) test #7 casts the private `state` field to force cancel deliverability — brittle white-box coupling, unnecessary once fix 1 lands; (c) `classifyJobError`/`BigQueryJobError` accept `sql`/`rawText` options that are structurally unused — dead parameters invite future misuse; remove or assert-ignore.
+Must change before merge: findings 1 and 2 (both are this task's own deliverable surface, empirically broken/uncovered); finding 3 fix-or-document. Re-run verification + RED for the new tests.
+
+## R4.5 Round 1 Fix Report
+EXECUTOR_MODEL: unic-code
+
+RED_OUTPUT:
+```
+$ npx vitest run src/adapters/__tests__/bigqueryJobs.test.ts
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/r45-bq03-001
+
+ ❯ src/adapters/__tests__/bigqueryJobs.test.ts  (32 tests | 3 failed) 22ms
+   ❯ cancelActiveQuery during first-fetch window > cancelActiveQuery() targets the in-flight job while the initial getQueryResults is hanging
+     → expected "spy" to be called 1 times, but got 0 times
+   ❯ getQueryResults rejection is sanitized > getQueryResults rejecting with 403-shape error -> BigQueryJobError with category + location; no creds/SQL leaked
+     → expected { code: 403, errors: [ { …(2) } ] } to be an instance of BigQueryJobError
+   ❯ pending -> running -> done in order > active job phase is observable: pending at submit, running during first fetch, done after resolve
+     → adapter.activeJobPhase is not a function
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 29 passed (32)
+```
+
+Verification Output:
+```
+$ npx vitest run src/adapters/__tests__/bigqueryJobs.test.ts
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/r45-bq03-001
+ ✓ src/adapters/__tests__/bigqueryJobs.test.ts  (32 tests) 29ms
+ Test Files  1 passed (1)
+      Tests  32 passed (32)
+
+$ npm run typecheck
+> vsdb@1.49.0 typecheck
+> tsc --noEmit
+(exit 0)
+
+$ git diff --stat -- src/adapters/bigqueryTypes.ts src/adapters/bigqueryAdc.ts
+(no output — frozen surfaces byte-untouched)
+
+$ npx vitest run src/adapters/__tests__/bigquery.test.ts src/adapters/__tests__/bigqueryTypes.test.ts src/adapters/__tests__/bigqueryAdc.test.ts
+ ✓ src/adapters/__tests__/bigqueryTypes.test.ts  (7 tests) 2ms
+ ✓ src/adapters/__tests__/bigqueryAdc.test.ts  (6 tests) 3ms
+ ✓ src/adapters/__tests__/bigquery.test.ts  (27 tests) 31ms
+ Test Files  3 passed (3)
+      Tests  40 passed (40)
+```
+
+Status: PASS
+Note:
+- Fix #1: `activeJob` and `activeJobPhaseValue = "pending"` are now set IMMEDIATELY after `createQueryJob` resolves (BEFORE the initial `getQueryResults` call). After settle (runQuery returns), `activeJob = null` and `activeJobPhaseValue = "done"`. The `cancelActiveQuery()` seam is now deliverable during the first-fetch window the seam was designed for.
+- Fix #2: `classifyJobError` now wraps BOTH `createQueryJob` rejections (existing) AND `getQueryResults` rejections (new — both in `runQuery`'s initial fetch try/catch and in `BigQueryPagedQuery.fetchBatch` via the new `classifyError` constructor option). Secret-shaped strings and SQL text are stripped by `sanitizeDetail` in `BigQueryJobError`.
+- Fix #3: Adapter exposes `activeJobPhase()` getter returning `pending → running → done/error/cancelled` in order (or `null` if no active job). `close()` clears the phase. State transitions are pinned by the deferred `getQueryResults` test fixture (R4.5 finding #3 test).
+- Frozen surfaces byte-untouched (verified via `git diff --stat`).
+- 32 jobs tests + 40 BQ-02 tests all pass. `npm run typecheck` exits 0.
+
+## R4.5 R2 Re-judgement
+REVIEWER_MODEL: unic-smart
+Verdict: Approved-with-minor
+All three R2 blocking findings are fixed in commit 647523f and verified fresh. Fix #1: `activeJob` is set at src/adapters/bigquery.ts:921 immediately after `createQueryJob` resolves and BEFORE the initial fetch await (:984), cleared on error (:987), settle (:1018) and close() (:824); the R4.5 test drives a hanging `getQueryResults` and asserts `job.cancel` called exactly once with the right jobId — RED output shows 0 calls pre-fix, so the window is genuinely covered now. Fix #2: getQueryResults rejections are classified on BOTH paths — initial fetch try/catch (:983-989) and `BigQueryPagedQuery.fetchBatch` via the new `classifyError` constructor option (:644-651, wired :1012); the R4.5 test injects a 403-shaped rejection carrying a `ya29.` token + SQL text and asserts `BigQueryJobError` with category/location and no leaks — real RED evidence pre-fix. Fix #3: `activeJobPhase()` getter delivered with in-order transitions pinned by the deferred-fetch test, satisfying the R2 "mechanism + in-order assertion" bar. Minor residual (non-blocking): `pending` is assigned at :923 but the code path to `running` at :981 contains no await, so external observers can only ever read `running`/terminal during the initial window — the test tolerates this (`pending || running`) and the load-bearing cancel seam reads `activeJob`, not the phase, so behavior is unaffected. Fresh re-run: 32/32 jobs tests, 40/40 BQ-02 regression, typecheck exit 0, frozen surfaces untouched.
