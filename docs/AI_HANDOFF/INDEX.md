@@ -2,12 +2,13 @@
 
 | Task | Title | Status | Owner | Files |
 |------|-------|--------|-------|-------|
-| TASK-BQ02-001 | BigQuery resource metadata adapter (real enumeration) | done | reviewer=unic-smart | src/adapters/bigquery.ts, src/adapters/__tests__/bigquery.test.ts |
-| TASK-BQ02-002 | BigQuery preview SQL builder + browse command arm | done | executor=unic-code; reviewer=unic-smart | src/ui/bigQueryPreview.ts (new), src/ui/browseCommands.ts + 2 test files |
-| TASK-BQ02-003 | Schema Explorer bigquery wiring (datasets, icons, row-count suppression) | done | executor=claude-sonnet-4-5; reviewer=unic-smart | src/ui/schemaTree.ts + 2 tree test files |
-| TASK-BQ02-004 | Release copy + version gate (CHANGELOG, 1.49.0, boundary suite) | done | executor=unic-code; reviewer=unic-smart | CHANGELOG.md, package.json |
+| TASK-BQ03-001 | BigQuery job state machine + MVP SQL gate | ready | - | src/adapters/bigquery.ts, src/adapters/__tests__/bigqueryJobs.test.ts (new) |
+| TASK-BQ03-002 | BigQuery result page bridge (pure helpers) | ready | - | src/adapters/bigqueryPages.ts (new), src/adapters/__tests__/bigqueryPages.test.ts (new) |
+| TASK-BQ03-003 | QueryRunner continuation contract for BigQuery pages | ready | TASK-BQ03-001 | src/core/queryRunner.ts, src/core/__tests__/queryRunner.test.ts |
+| TASK-BQ03-004 | ResultsPanel BigQuery job states + token-gated Load More | ready | none | src/ui/resultsPanel.ts, src/ui/__tests__/resultsPanel.test.ts |
+| TASK-BQ03-005 | Command integration: GoogleSQL selection + copy-safe header | ready | TASK-BQ03-001, TASK-BQ03-004 | src/extension.ts, src/extension.test.ts |
 
-## Shipped prior cycles (v1.48.0 and earlier)
+## Shipped prior cycles (v1.49.0 and earlier)
 
 | Task | Title | Status | Release |
 |------|-------|--------|---------|

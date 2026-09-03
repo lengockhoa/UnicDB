@@ -1,8 +1,8 @@
 # Active Cycle
 
-- Cycle: BQ-02
-- Date: 2026-09-03
-- Base: main @ e171d42
-- Goal: Ship BQ-02 — wire the deferred BigQuery resource enumeration (real listSchemas/listTables/listViews/listColumns from client metadata), add the bounded preview SQL builder + bigquery browse arm, and wire the Schema Explorer for BigQuery (datasets, icon, cost-safe tooltips, zero row-count queries).
-- Tasks: 4 total
-- Status: done — v1.49.0 released
+Cycle: BQ-03
+Date: 2026-09-03
+Base: main @ 5de036d
+Goal: Ship BQ-03 — run one GoogleSQL statement as a BigQuery job with MVP read-only gating, job-identity-preserving paged Results (Load More via token-driven BatchedQuery), job-scoped cancellation, sanitized job errors, and a copy-safe result header (data project, billing project, location, job link).
+Tasks: 5 total (3 waves)
+Status: planning_done — ready for executor

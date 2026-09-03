@@ -1,275 +1,175 @@
-# PLAN — Cycle BQ-02: BigQuery resource explorer + table preview
+# PLAN — Cycle BQ-03: GoogleSQL query jobs + paged Results grid
 
-Source spec: `docs/plans/2026-09-01-bigquery-provider-roadmap.md` §4 "BQ-02 — BigQuery explorer and table preview" (P0, depends on BQ-01). Commissioned per roadmap §9: a NEW handoff cycle; no prior `docs/AI_HANDOFF` artifact overwritten (BQ-01 plan already archived with cycle history).
-Base: `main @ e171d42` (post-CL-01, v1.48.0). Suite baseline: **3283 passed | 2 skipped**.
+Source spec: `docs/plans/2026-09-01-bigquery-provider-roadmap.md` §5 "BQ-03 — GoogleSQL jobs, cancellation and paged Results grid" (P0, depends on BQ-01 + BQ-02; coordinated after RLX-02). User P0 answer: **all 5 tasks, ship as v1.50.0** (3 waves).
+Base: `main @ 5de036d` (post v1.49.0).
 
 ## §1 Intent
 
-BQ-01 (v1.47.0) shipped the BigQuery connection foundation but deliberately deferred all resource
-enumeration: every introspection method on `BigQueryAdapter` (`listSchemas`, `listTables`,
-`listViews`, `listRoutines`, `listColumns`, `listRoutineParams`, `estimateTableRows`,
-`estimateTableRowsBatch`, `listTableDetail`) currently throws `NotImplementedError("bigquery")`
-(`src/adapters/bigquery.ts:269-304`). A user can add a BigQuery connection but expanding it in the
-Schema Explorer yields an error node, and `vsdb.browseTableData` throws
-`Unsupported driver: bigquery (BQ-02 wiring pending)` (`src/ui/browseCommands.ts:67`).
+BQ-02 shipped BigQuery resource *enumeration* and a preview SQL builder, but running a query still routes through the legacy `runQuery` tuple-unwrap: `client.query(sql, { skipParsing: true })` (`src/adapters/bigquery.ts:319-320`), which does **not** preserve job identity, cannot cancel the active job, and cannot continue past the first page of results. There is no GoogleSQL/legacy-SQL distinction, no read-only gate, and no paged Load More for BigQuery.
 
-BQ-02 wires real implementations for the enumeration methods, keeps discovery lazy (project →
-dataset → table/view), and makes the existing generic Schema Explorer + Browse Data flow work
-end-to-end for BigQuery — mirroring the canonical `listSchemas/listTables/listColumns` shapes of
-`postgres.ts`/`mysql.ts`/`mssql.ts` so no consumer (`schemaTree.ts`, `browseCommands.ts`,
-`connectionManager.ts`) needs a BigQuery-specific fork.
+**Success definition:** run one GoogleSQL statement as a real BigQuery *job*, render its first page in VSDB Results, and page through the rest via Load More — without losing job identity, query location, cancellation status, or page continuation. Concretely:
 
-**Success definition** (each verifiable in §6):
-1. Expanding a BigQuery connection lists its datasets as schema nodes; expanding a dataset shows
-   Tables/Views/Routines categories fed by the real client seam; expanding a table lists its
-   columns from real table metadata.
-2. Clicking/Enter on a BigQuery table or view node previews it: a bounded `SELECT * FROM ...`
-   GoogleSQL statement runs through the existing `runner.run → panel.render` pipeline.
-3. `BigQueryAdapter.listTableDetail` returns real columns + BigQuery metadata (partitioning,
-   clustering, row/byte counts) without BigInt precision loss.
-4. The BQ-00 frozen surface (`bigqueryTypes.ts`, `bigqueryAdc.ts`) stays byte-untouched.
-5. Full suite ≥ 3283 passed, typecheck + compile exit 0.
-
-**Scope check**: roadmap §4 scopes BQ-02 as ONE subsystem (explorer + preview). GoogleSQL query
-jobs + paged grid (BQ-03) are a separately planned cycle — the preview path reuses the already-
-working `runQuery` TUPLE path from BQ-01, so no shared-file conflict with BQ-03. No decomposition
-needed; 4 tasks in one cycle.
+1. A large result can be loaded page by page with **no all-result accumulation** (token-driven continuation, never row-count-driven).
+2. **Cancellation targets only the active BigQuery job** and cannot cancel a later query.
+3. **Job errors preserve Google `category`/`location` context** while removing raw credentials and the full SQL from logs/UI.
+4. Non-read-only or multi-statement input is rejected with a precise **"not in BigQuery MVP"** message, not a generic parser error.
+5. GoogleSQL is selected (never silently legacy SQL) and surfaced in the result header alongside data project, billing project, location and job link/ID in copy-safe form.
 
 ## §2 Scope
 
-**In-scope:**
+### In scope
+- **BQ-03.1** job state machine + MVP SQL gate: submit a single GoogleSQL statement as a job via a new `createQueryJob` seam member, expose pending→running→done/error/cancelled, cancel via `job.cancel()`, retain `{projectId, location, jobId}`. `runQuery` returns a `BatchedQuery`-conforming page source so the existing runner/`pickResult` machinery composes unchanged. Owns `src/adapters/bigquery.ts` + NEW test file `bigqueryJobs.test.ts`.
+- **BQ-03.2** result page bridge: pure continuation helper (token-verbatim, 20 MB-aware bounded page) + pure cell-display formatter preserving INT64/NUMERIC/BIGNUMERIC/BYTES/JSON/temporal/RECORD/REPEATED display semantics. Owns NEW `src/adapters/bigqueryPages.ts` + NEW `bigqueryPages.test.ts` (no file overlap with 03.1).
+- **BQ-03.3** runner continuation contract: Load More consumes only the current statement's page source; concurrent duplicate fetch prevented; late page after cancel/new run discarded; retained job context released once exhausted. Owns `src/core/queryRunner.ts` + runner tests.
+- **BQ-03.4** panel state: pending/running/cancelled/limited/error distinct; Load More only when a continuation token exists; a new connection/run cannot display a prior BigQuery page. Owns `src/ui/resultsPanel.ts` + panel tests.
+- **BQ-03.5** command integration: GoogleSQL selected for BigQuery (never silent legacy SQL), result header shows data project + billing project + location + job link/ID copy-safe. Owns `src/extension.ts` + extension tests.
 
-| Task | Roadmap slice | Owns (no other task in its wave touches these) |
-|---|---|---|
-| TASK-BQ02-001 (w1) | Resource metadata adapter — real `listSchemas`/`listTables`/`listViews`/`listColumns`/`listRoutines`/`listRoutineParams`/`estimateTableRows(Batch)`/`listTableDetail` on `BigQueryAdapter` | `src/adapters/bigquery.ts`, `src/adapters/__tests__/bigquery.test.ts` |
-| TASK-BQ02-002 (w1) | Pure preview SQL builder — `buildBigQueryPreviewSql` (bounded, backtick-quoted) + `buildBrowseSelect` bigquery arm | `src/ui/bigQueryPreview.ts` (new), `src/ui/__tests__/bigQueryPreview.test.ts` (new), `src/ui/browseCommands.ts` (arm swap only), `src/ui/__tests__/browseCommands.test.ts` (arm pins only) |
-| TASK-BQ02-003 (w2) | Explorer wiring — bigquery metadata node labels/tooltip/icon parity + row-count batch suppression for bigquery + preview wiring check confined to `src/ui/schemaTree.ts` (verify bigquery table+view nodes stay wired to `vsdb.browseTableData`; the SQL itself ships in TASK-BQ02-002 — no `browseCommands.ts` edit in this task) | `src/ui/schemaTree.ts`, `src/ui/__tests__/schemaTree.test.ts`, `src/ui/__tests__/schemaTreeCatalog.test.ts` |
-| TASK-BQ02-004 (w2) | User-facing copy + release gate — CHANGELOG entry, `package.json` version bump, release-hygiene suite green | `CHANGELOG.md`, `package.json` |
+### Out of scope (this cycle)
+- Routine/parameter introspection depth (roadmap BQ-07b).
+- A generic multi-statement SQL parser — rejected via cheap heuristic (§3).
+- Any relational transaction abstraction — cancellation is a job op (`job.cancel()`), not rollback.
+- `table().getRows` row enumeration (Number-coerces INT64; deferred with BQ-02's seam note).
+- Legacy SQL *support* — GoogleSQL is the only submitted dialect; an explicit `useLegacySql: true` hint is honored at the seam but no UI sets it.
+- **`formatBigQueryCell` rendering wiring** — the pure helper from BQ-03.2 ships tested + exported but is **not** wired into the results grid in this cycle. RECORD/REPEATED cells keep the existing `ResultsPanel` rendering. A follow-up cycle (BQ-04 or later) swaps it in without re-deriving the display rules.
 
-**Out-of-scope (deferred, per roadmap §4 + commissioning brief):**
-- GoogleSQL query jobs + paged grid, `BatchedQuery` continuation, Load More (BQ-03).
-- Bounded export (BQ-04), DML/DDL/cell editing (BQ-05+), service-account JSON / OAuth.
-- Organization-wide project discovery; automatic cost calculation; saved/scheduled queries; GCS
-  transfer; Storage Read API.
-- `listRoutineParams` real implementation: BigQuery routines have no parameter-shaped surface in
-  the MVP scope and no consumer path exists for bigquery (the only caller,
-  `tableCommands.ts:652`, is guarded by `contextValue === "routine"` click flows the BQ tree
-  does not enable). BQ-02 keeps the existing `NotImplementedError` throw for this one method,
-  documented in TASK-BQ02-001's Discussion. Routines still list (names only) per roadmap
-  ("routines may be visible as non-actionable metadata nodes").
-- Routines/models as expandable nodes (roadmap: "visible but non-editable or deliberately
-  deferred") — deferred; listed under Routines category only.
-- `commandTag` sourcing for BQ results (carried BQ-01 minor) — needs the job-based path of BQ-03.
+### Wave plan & file ownership (no same-wave collision)
+- **Wave 1** (2 parallel): BQ-03.1 → `src/adapters/bigquery.ts`; BQ-03.2 → `src/adapters/bigqueryPages.ts` (new). Disjoint files, disjoint new test files.
+- **Wave 2** (2 parallel): BQ-03.3 → `src/core/queryRunner.ts` (deps: 03.1 — fakes its `BatchedQuery` shape); BQ-03.4 → `src/ui/resultsPanel.ts` (deps: none — consumes only base-present `StatementResult` fields, fakes the runner). Disjoint files.
+- **Wave 3** (1): BQ-03.5 → `src/extension.ts` (deps: 03.1 + 03.4 — consumes jobRef/header contracts).
+- No demotions: the roadmap's "03.1∥03.2 share bigquery.ts" concern is resolved by moving the page bridge into a NEW pure module `bigqueryPages.ts`; 03.1 owns the adapter file outright and consumes 03.2's helper only from wave 2 onward (03.1's job-state tests inject the page-fetcher dependency directly — see Interfaces).
+
+### Frozen surface (do NOT modify)
+- `src/adapters/bigqueryTypes.ts` and `src/adapters/bigqueryAdc.ts` (BQ-00). Import-only. Every task carries a frozen-surface `git diff --stat` gate.
 
 ## §3 Approach
 
-**Adapter enumeration via the existing client seam, no seam change.** The adapter-owned
-`BigQueryClient` seam (`bigquery.ts:80-88`) already declares `listDatasets`, `getDataset`,
-`getTable`, and `query`. BQ-02 implements the DbAdapter methods over exactly those seams:
+**Core idea — make BigQuery a `BatchedQuery` producer.** The existing `QueryRunner`/`pickResult`/`ResultsPanel` already handle a server-side paged source through the `BatchedQuery` interface (`src/adapters/types.ts:62-67`: `columns`, `fetchBatch()`, `cancel()`, `close()`); Postgres single-SELECT already returns `{ results: [], batched }` and `pickResult` performs the initial fetch (with `rowCount: null` keeping Load More honest). BQ-03.1 makes `BigQueryAdapter.runQuery` return the same shape, so paging, cancel, and `resultLimited` all work through code that is already tested and reviewed — no new generic framework, no forked paging path.
 
-- `listSchemas()` → `client.listDatasets()` (the ADC smoke already uses it; returns dataset ids).
-- `listTables(schema)` / `listViews(schema)` → `client.getTable(datasetId, tableId)` is per-table;
-  listing needs the dataset's `getTables()`. **Verified against the installed client 9.0.3**:
-  the real instance has `getDatasets` (NOT `listDatasets`), `dataset(id)`, and
-  `Dataset.prototype.getTables()` returning `PagedResponse<Table, …, ITableList>` where
-  `ITableList.tables[]` carries `tableReference.tableId`, `type` ("TABLE" | "VIEW" |
-  "MATERIALIZED_VIEW" | "EXTERNAL" | "SNAPSHOT"), `timePartitioning`, `clustering`,
-  `requirePartitionFilter`, `labels`, `creationTime` (types.d.ts:5967-6050).
-  **Critical grounding finding**: the current `BigQueryClient` seam method names
-  (`listDatasets`, `getDataset`, `getTable`) do NOT match the real client instance surface
-  (`getDatasets`, `dataset(id)`, `dataset(id).table(id)`) — the seam works today only because
-  `runAdcSmoke` accepts a `BigQueryClientLike` cast and tests inject fakes. TASK-BQ02-001 must
-  widen the adapter-owned seam (`BigQueryClient` in bigquery.ts — adapter-owned, NOT frozen) to
-  carry the real client shapes (`getDatasets(opts?)`, `dataset(id)` → `{ getTables(opts?)… }`,
-  `table` handle with `getMetadata()`; no `getRows` on the widened seam — no MVP caller, and it
-  Number-coerces INT64 via `mergeSchemaWithRows_` (see rejected alternatives); re-evaluate in
-  BQ-03 when the paged grid lands), keeping the default factory's cast surface truthful. The frozen BQ-00 `BigQueryClientLike` is untouched — `runAdcSmoke`'s structural
-  contract (`listDatasets(projectId?)`) keeps working through the existing one-way cast.
-- `listColumns(table, schema)` → `table.getMetadata()` → `ITable.schema.fields`
-  (nested RECORD recursion already proven by `mapSchemaField` in bigqueryTypes.ts — reused via
-  `BigQuerySchemaField`, import-only from the frozen module). Maps to `ColumnInfo { name,
-  dataType (type + mode suffix for REPEATED/RECORD), nullable (mode !== "REQUIRED"),
-  isPrimaryKey: false }` — BigQuery has no PKs. The fixture must cover REPEATED and RECORD
-  (e.g. `STRING` REPEATED → `dataType: "STRING REPEATED"`, as pinned in §4), not only
-  REQUIRED/NULLABLE.
-- `listTableDetail(schema, table)` → same `getMetadata()` plus partition/clustering/row/byte
-  metadata mapped into the `TableDetail` shape (`columns` half) with BigQuery-specific facts in
-  the `constraints` half repurposed as key/value metadata rows — matching how the pg shape is
-  consumed by `schemaDiff.ts` / `compareService.ts` (stringly-typed by contract).
-- `estimateTableRows` / `estimateTableRowsBatch` → `ITable.numRows` (a string; parsed with a
-  safe `Number()` only when ≤ MAX_SAFE_INTEGER, else `null` — "unknown"), no scan.
-- `listRoutines(schema)` → `Dataset.getRoutines()` (client `getRoutines` exists on the real
-  instance; returns `{ id?, routineReference? }` rows mapped to `RoutineInfo { name, kind:
-  "function", schema }`).
+The continuation token (`pageToken`) lives *inside* the page source; the runner never sees it (it only calls `fetchBatch()`). That encapsulation is exactly what prevents a prior job's token leaking into a new run.
 
-**Preview via the generic browse path.** Rather than a new command surface, `vsdb.browseTableData`
-gains a real bigquery arm: `buildBrowseSelect("bigquery", schema, table)` currently throws
-(`browseCommands.ts:63-67`); TASK-BQ02-002 moves the quoting/bounding logic into a new pure module
-`src/ui/bigQueryPreview.ts` (`buildBigQueryPreviewSql({ dataset, table, project?, limit })`) that
-emits a backtick-quoted, LIMIT-capped (default 100, hard ceiling 1000) GoogleSQL SELECT; the
-bigquery arm of `buildBrowseSelect` delegates to it. Full three-part references
-`` `project`.`dataset`.`table` `` are used when the connection's `datasetProject` differs from
-`billingProject`. `qualifyKeywordTables` is skipped for bigquery (PG keyword rules don't apply;
-the SQL is always fully quoted anyway — same reasoning as the existing lazy no-op pin in
-`browseCommands.test.ts` #11). Preview for views uses the identical SELECT (BigQuery views are
-queryable) — no ctid-style wrapping, matching the TASK-001 PG read-path pin.
+**Job lifecycle (03.1).** `runQuery`:
+1. `requireClient()` (existing not-connected/closed guards).
+2. `assertSingleReadOnlyGoogleSql(sql)` — reject multi-statement (semicolon-count heuristic, string-literal/comment-aware) and write/DDL (leading read-only keyword set + write-token blocklist) with a precise `"not in BigQuery MVP: <reason>"` message. Tested, not aspirational.
+3. `client.createQueryJob({ query, useLegacySql: false, location })` — new seam member mirroring the real client's verified shapes (`createQueryJob(options: Query | string): Promise<JobResponse>` where `JobResponse = [Job, bigquery.IJob]`; `Job.getQueryResults(options?): Promise<QueryRowsResponse>`; `Job.cancel(): Promise<CancelResponse>` — all in `@google-cloud/bigquery@9.0.3` `.d.ts`). `useLegacySql` from an explicit opts override is honored; default is GoogleSQL (`useLegacySql: false`), never silent legacy.
+4. Wrap the returned job handle in a `BigQueryPagedQuery implements BatchedQuery`: `fetchBatch()` calls `getQueryResults({ maxResults, pageToken })`, maps the raw response through frozen `toBigQueryPage`, advances the token, returns `rows` (`null`/empty when the token is exhausted); `cancel()` calls `job.cancel()` exactly once (job op, no rollback); `close()` releases the retained handle.
+5. Return `{ results: [], batched }` so `pickResult` performs the initial fetch.
+
+Job state machine: `pending` (job created, first page not yet fetched) → `running` (fetch in flight) → `done` | `error` | `cancelled`. Cancel after completion is a harmless no-op. Job errors map to a sanitized envelope keeping Google `category` + `location` and dropping raw credentials/SQL text. `cancelActiveQuery()` (existing optional `DbAdapter` seam) gains a BigQuery implementation targeting the currently-tracked active job, covering the createJob/first-fetch window before `currentBatched` is assigned.
+
+**Page bridge (03.2).** New pure module `bigqueryPages.ts` (no `@google-cloud/bigquery`, no `vscode` imports):
+- `createBigQueryPageFetcher(deps)` — consumes the raw `getQueryResults` tuple, maps through frozen `toBigQueryPage`, preserves the token verbatim (null = final page), and applies a 20 MB-aware bound: a `byteBudget` marks the page `limited` when `totalBytesProcessed`/projected page bytes exceed the budget; the budget is advisory at the seam (real GCP byte behavior varies by region — verified via fixture tests, not live GCP).
+- `formatBigQueryCell(value, field?)` — renders a `BigQueryValue` for display without `Number()` coercion: INT64/NUMERIC/BIGNUMERIC stay canonical strings, FLOAT64 stays numeric, BYTES stays base64, JSON/temporal stay strings, RECORD/REPEATED serialize structurally.
+
+**Runner continuation (03.3).** Small, driver-agnostic: when `fetchBatch()` returns `null`/empty (final page), close the handle and mark the statement exhausted (reuse `cursorClosed` semantics) so a later `loadMore` is a graceful no-op and the retained job context is released. Reuse the existing `loadMoreInFlight` serialization and the `cancelSeq` post-await late-page discard; pin both with regression tests plus per-index isolation (loadMore on statement #2 never touches #1's handle/token).
+
+**Panel state (03.4).** `StatementResult.status` already carries `running/done/error/cancelled`; 03.4 distinguishes a BigQuery `pending` (job submitted, first page not yet fetched) from `running`, and gates Load More on the presence of a continuation capability rather than row count. Reuse the existing `sessionEpoch`/`requerySeq` staleness guards so a new connection/run cannot render a prior page.
+
+**Command integration (03.5).** `runStatements` (shared editor/Console path) builds a copy-safe BigQuery result header — data project, billing project, location, job link/ID (`https://console.cloud.google.com/bigquery?project=<billing>&j=bq:<location>:<jobId>` form, HTML-escaped) — and never chooses legacy SQL silently.
 
 **Alternatives rejected:**
-- *New `src/ui/bigQueryTree.ts` provider* (roadmap candidate): rejected — `schemaTree.ts` already
-  parameterizes per-adapter through `DbAdapter`; a parallel tree would duplicate caching,
-  filtering, folder grouping, and reveal plumbing for one driver. Roadmap itself marks this
-  "choose after BQ-00 contract"; the contract proved the generic DbAdapter seam sufficient.
-- *INFORMATION_SCHEMA queries for enumeration* (task brief's "listColumns on INFORMATION_SCHEMA"):
-  rejected — BQ `INFORMATION_SCHEMA` views bill per query and are location-bound; the
-  metadata/list APIs (`getTables`, `table.getMetadata`) are free, typed, and already paged. The
-  brief's phrasing described the BQ-01 deferral, not a binding design choice; the client-metadata
-  route satisfies the same contract with zero query cost.
-- *DTO view of tables via `getRows` for preview*: rejected — `query()` with `skipParsing: true`
-  is the proven precision-preserving path (BQ-01 R4.5); `getRows` runs `mergeSchemaWithRows_`
-  (table.js:1001) which Number-coerces INT64.
-
-**Wave logic**: TASK-001 (adapter) and TASK-002 (preview builder + browse arm) are independent —
-different files, 002 consumes only the existing `runQuery`/`buildBrowseSelect` contracts. Wave 2:
-TASK-003 (tree) consumes 001's real list methods through the `DbAdapter` interface (no symbol
-import — mockable), and TASK-004 (release copy) consumes both. Same-wave file disjointness holds
-(see §7 map).
+- A generic multi-statement SQL parser / transaction abstraction — YAGNI; contradicts the "reject with a precise MVP message" policy.
+- Forking a separate BigQuery paging path in runner/panel — the `BatchedQuery` seam already encodes fetch/cancel/close semantics; a fork would double the cancel-state surface.
+- Exposing the raw page token to runner/panel — the token must stay encapsulated in the page source (leaked tokens are the bug class the roadmap calls out).
 
 ## §4 Test Plan
 
 | Type | Test Name | Expected |
-|---|---|---|
-| happy | adapter `listSchemas` returns dataset ids | fake client `getDatasets` resolving `[{ metadata: { id: "p:ds1" }, id: "ds1" }]` → `[{ name: "ds1" }]` |
-| happy | adapter `listTables("ds")` filters `type === "TABLE"` | fake `getTables` with TABLE + VIEW + MATERIALIZED_VIEW rows → only the TABLE row, as `{ name: tableId, schema: "ds" }` |
-| happy | adapter `listViews("ds")` returns VIEW + MATERIALIZED_VIEW | same fixture → both rows, `schema: "ds"` |
-| happy | adapter `listColumns` maps schema fields incl. REPEATED/RECORD | fixture fields `[{name:"id",type:"INT64",mode:"REQUIRED"},{name:"v",type:"STRING",mode:"NULLABLE"},{name:"tags",type:"STRING",mode:"REPEATED"},{name:"r",type:"RECORD",mode:"NULLABLE",fields:[…]}]` → id/v as pinned, `tags → dataType "STRING REPEATED"` (type + mode suffix per §3), `r → dataType "RECORD"` with nested fields NOT flattened into the column list |
-| edge (malformed input) | schema field missing `type`/`mode` | `{name:"x"}` → `dataType: ""` + `nullable: true` (no throw) — mirrors frozen `mapSchemaField` defaults |
-| edge (empty) | empty dataset | `getTables` resolves `[[], null, {}]` → `listTables` returns `[]`, `listViews` returns `[]` |
-| edge (permission) | dataset list rejects 403 | fake rejects `{ code: 403, errors:[{message:"access denied"}] }` → the adapter method REJECTS (error node path in tree), never returns `[]` |
-| edge (boundary) | `estimateTableRows` with `numRows: "9007199254740993"` | returns `null` (past safe integer — unknown), not a rounded number |
-| edge (boundary) | `estimateTableRowsBatch` with `numRows: "42"` | Map has `42` for that table; omitted row → absent from Map; empty `tables` array → empty Map, zero client calls |
-| regression | not-connected guard composes with new methods | `listSchemas` before `connect()` → `BigQueryNotConnectedError`; after `close()` → `BigQueryClosedError` (pins CL-004 semantics on the new code) |
-| happy | adapter `listTableDetail` carries partitioning/clustering, no count loss | fake `getMetadata` with `numRows: "1234567890123456789"` (beyond `MAX_SAFE_INTEGER`), `timePartitioning: { type: "DAY", field: "ts" }`, `clustering: { fields: ["a"] }` → `TableDetail.constraints` carries the partitioning/clustering facts AND the row count is never coerced/rounded (string kept verbatim or `null` for unknown) |
-| happy | adapter `listRoutines` maps routine references | fake `getRoutines` rows `{ id, metadata: { routineReference: { routineId: "fn1" } } }` → `RoutineInfo { name: "fn1", kind: "function", schema: "ds" }` (name-only, hardcoded kind per §3) |
-| happy | preview builder quoted + bounded | `buildBigQueryPreviewSql({dataset:"my ds", table:"tbl", limit:100})` → ``SELECT * FROM `my ds`.`tbl` LIMIT 100`` |
-| happy | preview builder 3-part with datasetProject | `project:"proj-data"` → ``SELECT * FROM `proj-data`.`ds`.`tbl` LIMIT 100`` |
-| edge (malformed input) | table id containing a backtick | `` `we``ird` `` doubling escape, never raw |
-| edge (boundary) | limit clamped | `limit: 0` / `limit: -5` / `limit: 100000` → all emit `LIMIT 1000` (ceiling); omitted limit → `LIMIT 100` |
-| happy | browse command bigquery arm | `buildBrowseSelect("bigquery","ds","tbl")` returns the same bounded SQL (no throw) |
-| regression | pg/mysql/mssql arms byte-identical | existing `browseCommands.test.ts` #1-#4 pass verbatim |
-| happy (tree) | bigquery connection expands to datasets | mocked adapter `listSchemas` → `[{"ds1"}]` → schema nodes labeled `ds1` with bigquery icon; NOT labeled as pg-style "schemas" tooltip |
-| edge (tree) | listing rejection renders error node | mocked `listTables` rejects → category shows error node `Failed to load …`, tree does not crash |
-| edge (tree) | row-count batch suppressed for bigquery | bigquery adapter WITHOUT `capabilities` declaration → `estimateTableRowsBatch` never called (no spurious count queries), descriptions keep dataset fallback |
-| regression | postgres tree behavior unchanged | existing `schemaTree.test.ts` suites stay green verbatim |
+|------|-----------|----------|
+| happy | `SELECT 1` submits a GoogleSQL job and returns a `BatchedQuery` page source | `{ results: [], batched }`; `batched.columns` from schema; job created with `useLegacySql: false` and location from config |
+| happy | pending→running→done job state | state transitions emitted in order; `done` carries the mapped `QueryResult` with branded-string cells |
+| happy | first page + Load More across 3 pages | pages appended with no all-result accumulation; token advances verbatim; null final token stops continuation and closes the handle |
+| happy | cell display preserves INT64/NUMERIC/BIGNUMERIC/BYTES/JSON/temporal/RECORD/REPEATED | no `Number()` coercion; branded strings, base64, JSON strings, nested structures preserved |
+| happy | result header shows data project, billing project, location, job link/ID | header contains all four facts in copy-safe (escaped) form |
+| edge (malformed) | multi-statement `SELECT 1; SELECT 2` (incl. semicolon inside string literal) | rejected with `"not in BigQuery MVP"`; no job created |
+| edge (permission) | write/DDL `DELETE FROM t` / `CREATE TABLE t (...)` / `INSERT ...` | rejected with `"not in BigQuery MVP"`; no job created |
+| happy | explicit read-only statement passes the gate | `SELECT`-leading statement accepted; positive control for the gate |
+| edge (lifecycle) | cancel after completion | harmless no-op; no state corruption; later query unaffected |
+| edge (concurrency) | two concurrent `loadMore` on the same index | serialized via existing in-flight chain; no lost/duplicated batch |
+| edge (stale) | late page settles after `cancel()` or a new `run()` | discarded; never appended onto cancelled/new state |
+| edge (boundary) | 20 MB-aware bounded page | page over budget marked `limited`; budget enforced in the fetcher |
+| edge (identity) | `loadMore` on statement #2 after #1 completed | consumes only #2's page source/token; #1's handle untouched |
+| edge (error) | job error preserves `category`+`location`, strips credentials + full SQL | sanitized envelope surfaces category/location; no credential/SQL text in message/log |
+| regression | existing postgres/mysql/mssql cursor + runner tests stay green | no behavior change for non-BigQuery batched paths |
 
-Full-suite regression net: `npm test` at wave/cycle boundary (RULES.md policy) — baseline 3283|2
-must hold with only additive growth.
+Each task file expands these into concrete Type/Name/Expected rows with fixtures (≥1 happy + ≥2 edge cases of different kinds; the SQL gate gets positive read-only + multi-statement reject + write/DDL reject).
 
 ## §5 Verification
 
+Run from repo root. **No `lint` script exists** in `package.json` (`scripts`: `compile`, `watch`, `test`, `test:integration`, `typecheck`, `package`, `verify:fast`, `verify:release`, `profile:*`, `vscode:prepublish`). The static gate is `npm run typecheck` (`tsc --noEmit`).
+
 ```bash
-# Per-task (executor, RED → GREEN):
-npx vitest run src/adapters/__tests__/bigquery.test.ts            # TASK-BQ02-001
-npx vitest run src/ui/__tests__/bigQueryPreview.test.ts src/ui/__tests__/browseCommands.test.ts  # TASK-BQ02-002
-npx vitest run src/ui/__tests__/schemaTree.test.ts src/ui/__tests__/schemaTreeCatalog.test.ts   # TASK-BQ02-003
-npm run typecheck                                                  # static gate (no lint script exists)
-npm run compile                                                    # bundle gate
-npm run verify:release && git diff --stat -- src/adapters/bigqueryTypes.ts src/adapters/bigqueryAdc.ts   # TASK-BQ02-004 release gate (full suite + typecheck + compile; frozen-surface diff MUST print nothing)
-
-# Wave/cycle boundary:
-npm test            # full suite — baseline 3283 passed | 2 skipped, only additive growth
-npm run typecheck && npm run compile
-git diff --stat -- src/adapters/bigqueryTypes.ts src/adapters/bigqueryAdc.ts   # MUST print nothing (frozen surface)
+npm run typecheck
+# targeted per task:
+npx vitest run src/adapters/__tests__/bigqueryJobs.test.ts     # BQ-03.1
+npx vitest run src/adapters/__tests__/bigqueryPages.test.ts    # BQ-03.2
+npx vitest run src/core/__tests__/queryRunner.test.ts          # BQ-03.3
+npx vitest run src/ui/__tests__/resultsPanel.test.ts           # BQ-03.4
+npx vitest run src/extension.test.ts                           # BQ-03.5
+# frozen-surface gate (every task):
+git diff --stat -- src/adapters/bigqueryTypes.ts src/adapters/bigqueryAdc.ts   # must print nothing
+# sanity net (adapter tasks):
+npx vitest run src/adapters/__tests__/bigquery.test.ts src/adapters/__tests__/bigqueryTypes.test.ts src/adapters/__tests__/bigqueryAdc.test.ts
 ```
-
-`package.json` scripts verified at HEAD: `test` (vitest run), `typecheck` (tsc --noEmit),
-`compile` (node esbuild.js), `verify:fast`, `verify:release`. **No `lint` script exists** —
-`npm run typecheck` is the static gate; never silently skipped. `test:integration` requires a real
-GCP project — out of scope for CI, unchanged.
 
 ## §6 Acceptance
 
-- [ ] All 4 tasks `approved`/`approved_minor` in INDEX.md. — all tasks
-- [ ] `BigQueryAdapter` enumeration methods no longer throw `NotImplementedError` (except
-      `listRoutineParams`, documented deferral): focused bigquery suite passes with the new
-      enumeration tests. — TASK-BQ02-001
-- [ ] `buildBrowseSelect("bigquery", …)` returns bounded quoted SQL; bigquery table/view node
-      click drives `runner.run` with it; existing dialect arms unchanged. — TASK-BQ02-002
-- [ ] Schema Explorer renders dataset → Tables/Views/Routines for bigquery with no
-      PostgreSQL-schema labeling; listing errors render error nodes. — TASK-BQ02-003
-- [ ] Row-count batching does not fire for bigquery (no `capabilities` declaration). — TASK-BQ02-003
-- [ ] Full suite ≥ 3283 passed | 2 skipped; typecheck + compile exit 0. — cycle gate
-- [ ] BQ-00 frozen surface byte-untouched (`git diff --stat` on the two files is empty). — cycle gate
-- [ ] CHANGELOG entry under a new `[1.49.0]` heading + `package.json` version `1.49.0`. — TASK-BQ02-004
-- [ ] No new external dependency; `@google-cloud/bigquery` stays `^9.0.3`. — all
+- [ ] A large result loads page by page with no all-result accumulation (BQ-03.1, BQ-03.3).
+- [ ] Cancellation targets only the active BigQuery job; a later query is never cancelled (BQ-03.1).
+- [ ] Job errors preserve `category`/`location`, stripping raw credentials + full SQL from logs/UI (BQ-03.1, BQ-03.4).
+- [ ] Multi-statement and write/DDL input rejected with `"not in BigQuery MVP"`; tested positive read-only control (BQ-03.1).
+- [ ] GoogleSQL selected, never silent legacy SQL; header shows data project, billing project, location, job link/ID copy-safe (BQ-03.5).
+- [ ] Panel pending/running/cancelled/limited/error distinct; Load More only when a continuation token exists; new run/connection cannot show a prior page (BQ-03.4).
+- [ ] `npm run typecheck` exits 0; every targeted test file exits 0; frozen-surface `git diff --stat` prints nothing.
+- [ ] Manual (release note, not automated): small query, large paged query, cancelled long query, location mismatch, denied query, non-read-only statement.
 
 ## §7 Global Constraints
 
-- Base `main @ e171d42`; 1 commit per wave; commit inside the executor worktree session before returning.
-- **FROZEN**: `src/adapters/bigqueryTypes.ts`, `src/adapters/bigqueryAdc.ts` — import only, byte-untouched. Every task ends with `git diff --stat -- src/adapters/bigqueryTypes.ts src/adapters/bigqueryAdc.ts` empty.
-- Extend, don't replace: `BigQueryClientFactory` and `BigQueryAdapter` are the only adapter seams; the adapter-owned `BigQueryClient` interface in `bigquery.ts` MAY be widened (it is BQ-01 surface, not frozen), but BQ-00's `BigQueryClientLike` contract must stay structurally satisfied by the default factory.
-- No new external dependency; no `package.json` dependency change (version bump only in TASK-BQ02-004).
-- No new vscode command id; `vsdb.browseTableData` is the only user-facing entry point. No `package.json` `contributes` changes.
-- No lint script exists — `npm run typecheck` is the static gate; never silently skipped.
-- New source modules must stay vitest-testable without the vscode module (pure modules or vscode-mocked tests, per existing `schemaTree.test.ts` / `browseCommands.test.ts` harness patterns).
-- File ownership (same-wave disjointness):
-  - Wave 1 — TASK-BQ02-001: `src/adapters/bigquery.ts`, `src/adapters/__tests__/bigquery.test.ts` ∥ TASK-BQ02-002: `src/ui/bigQueryPreview.ts` (new), `src/ui/__tests__/bigQueryPreview.test.ts` (new), `src/ui/browseCommands.ts`, `src/ui/__tests__/browseCommands.test.ts`
-  - Wave 2 — TASK-BQ02-003: `src/ui/schemaTree.ts`, `src/ui/__tests__/schemaTree.test.ts`, `src/ui/__tests__/schemaTreeCatalog.test.ts` ∥ TASK-BQ02-004: `CHANGELOG.md`, `package.json`
+- Node ≥ 20 (repo runs v22); package manager `npm`; TypeScript strict — `npm run typecheck` must exit 0.
+- No new runtime dependency; no new `@google-cloud/bigquery` import at module top level (lazy `require` in the default factory preserved).
+- Frozen surfaces `src/adapters/bigqueryTypes.ts` and `src/adapters/bigqueryAdc.ts` are import-only.
+- No generic multi-statement parser, no transaction abstraction, no `Number()` coercion of INT64/NUMERIC/BIGNUMERIC/numRows/byte strings past `Number.MAX_SAFE_INTEGER`.
+- Error/log/UI surfaces never carry raw credentials or the full SQL text (category + location + sanitized message only).
+
+---
 
 ## Planner Report
 PLANNER_MODEL: unic-smart
-PLAN_REVIEW: Approved by unic-smart (round 2)
+PLAN_REVIEW: Approved by unic-smart (round 2, 2026-09-03; all 5 round-1 fixes verified landed; 3 non-blocking prose nits recorded for the record)
 
 ## Planner Self-Audit
 Checklist: 12/12 pass
-Re-audit (Round 1 fix pass, 2026-09-03): 12/12 pass. Caught during audit: (a) the listTableDetail/listRoutines insertion had accidentally REPLACED the "preview builder quoted + bounded" §4 row — restored, final table is 22 rows (adapter 1-12, preview 13-18, tree 19-22) and task-header row ranges were corrected to match; (b) §3's REPEATED example (INT64) differed from the pinned fixture (STRING) — aligned to STRING. `verify:release` confirmed real in package.json:630 before writing §5.
-Fixed during audit: (1) Runtime-verified the real client 9.0.3 instance surface (`getDatasets`/`dataset()`/`Dataset.getTables`/`Table.getMetadata`; `listDatasets`/`getDataset`/`getTable` DO NOT exist on the instance) — the plan originally assumed the current seam names were truthful; TASK-BQ02-001 now explicitly widens the adapter-owned `BigQueryClient` seam, and this latent mismatch is recorded instead of silently inherited. (2) Dropped `listRoutines` real implementation from the seam-widening table, then re-added it after confirming `Dataset.getRoutines` exists at runtime and roadmap allows name-only listing. (3) Merged an initially-planned separate tree-icon task into TASK-BQ02-003 (same file). (4) Narrowed TASK-BQ02-002's `browseCommands.ts` edit to the arm swap + qualifier skip only, after confirming `qualifyKeywordTables` is already lazy (test #11 pins zero listTables calls) so the skip is a one-line guard.
-Known gaps: (1) `listRoutineParams` stays `NotImplementedError` — no consumer path for bigquery routines in MVP; recorded in §2. (2) Preview runs through BQ-01 `runQuery`, so a >500-row table preview returns only the first page's rows with no Load More (paged grid is BQ-03); the LIMIT cap (≤1000) plus `batchSize` default 500 keeps this a correct bounded preview, not a truncated surprise. (3) Routines list names only, `kind` hardcoded `"function"` (BigQuery routines carry a `routineType` the MVP does not map — deferred with BQ-07b). (4) Manual smoke against a real GCP project (roadmap §7 "Controlled integration") is out of CI scope and deferred to the maintainer recipe in ADR 0004 §9. (5) `column.description`/`friendlyName`/`labels` are fetched in metadata but not yet surfaced in the tree tooltip beyond existing schema/name fields — UI polish deferred with BQ-06.
+Fixed during audit: Split BQ-03.1/BQ-03.2 across `bigquery.ts` vs NEW `bigqueryPages.ts` (removing the roadmap's same-file collision) so wave 1 is genuinely 2-wide; moved the MVP SQL gate into 03.1 (the submit entry must reject before job creation); made BQ-03.4 dependency-free (it consumes only base-present `StatementResult` fields and fakes the runner) so wave 2 is 2-wide per the directed 3-wave plan; added the positive read-only control test the SQL gate needs; verified real client signatures (`createQueryJob`, `Job.getQueryResults`, `Job.cancel`) against the installed 9.0.3 `.d.ts` before quoting them.
+Known gaps: The 20 MB bound is a budget/marking helper verified via fixtures, not a byte-precise policy against live GCP (real byte behavior varies by region; not reproducible in CI). `useLegacySql: true` is honored at the job-creation seam (tested) but no UI sets it — GoogleSQL is the only submitted dialect per policy. The manual six-query checklist (small/large/cancelled/location-mismatch/denied/non-read-only) cannot be automated without a real GCP project; it is recorded as a manual release note. BQ-03.1's `runQuery` consumes BQ-03.2's page-fetcher helper only via a wave-2 follow-up seam — 03.1's own tests inject a local fetcher double, so wave-1 parallelism never blocks on 03.2; wiring the pure helper into `BigQueryPagedQuery` lands with 03.3's wave (noted in both Interfaces blocks).
 
 ## Plan Review Log
 
 ### Round 1 — 2026-09-03 · unic-smart
 Status: Issues Found
 
-COMPLETENESS:
-  - docs/AI_HANDOFF/PLAN.md §4 — no test row for `listTableDetail`, yet §1 Success definition 3 explicitly promises "real columns + BigQuery metadata (partitioning, clustering, row/byte counts) without BigInt precision loss" and §6 acceptance bullet 2 leans on "the new enumeration tests". As written, TASK-BQ02-001 can ship `listTableDetail` mapping completely untested, and a task-level reviewer checking "all §4 tests implemented" would pass it while success criterion 3 goes unverified. Fix: add a happy test — fake `getMetadata` carrying `timePartitioning`/`clustering`/`numRows: "1234567890123456789"` (string, beyond MAX_SAFE_INTEGER) → TableDetail carries the partition/clustering facts and the count stays non-lossy (string kept or `null`), never a coerced/rounded number.
-  - docs/AI_HANDOFF/PLAN.md §4 — no test row for `listRoutines`, although §2/§3 promise name-only listing (`RoutineInfo { name, kind: "function", schema }` from `Dataset.getRoutines()`). Fix: add one happy test pinning that mapping.
-  - docs/AI_HANDOFF/PLAN.md §5 — the per-task RED→GREEN block names commands for 001/002/003 but none for TASK-BQ02-004, whose only owned files are `CHANGELOG.md`/`package.json`. Fix: add its exact gate (e.g. `npm run verify:release`, or the specific release-hygiene vitest file) so the 004 executor has a runnable verification target like the others.
-CLARITY:
-  - docs/AI_HANDOFF/PLAN.md §2 (TASK-BQ02-003 row) — "preview command dispatch through `buildBigQueryPreviewSql`" reads as if wave-2 task 003 edits `src/ui/browseCommands.ts`, but §2 and §7 assign that file to TASK-BQ02-002 (wave 1) only. As written an executor can legitimately violate the ownership map. Fix: reword so 003's dispatch work is explicitly confined to `src/ui/schemaTree.ts` (tree-item command already targets `vsdb.browseTableData`; 003 only verifies bigquery table+view nodes stay wired), or explicitly add `browseCommands.ts` to 003's ownership if a real edit is needed.
-  - docs/AI_HANDOFF/PLAN.md §4 (listColumns happy row) — fixture covers only REQUIRED/NULLABLE, but §3 promises `dataType` carries a "type + mode suffix for REPEATED/RECORD" and no test pins that new-code behavior. Fix: add a REPEATED and/or RECORD field to the listColumns fixture with the expected suffixed `dataType`.
-CONSISTENCY:
-  - none
-SCOPE:
-  - none
-YAGNI:
-  - docs/AI_HANDOFF/PLAN.md §3 (seam-widening bullet) — it adds `getRows` to the widened `table` handle, but the plan's own rejected-alternatives bullet says `getRows` Number-coerces INT64 via `mergeSchemaWithRows_` and no in-scope path calls it. Fix: drop `getRows` from the widened seam or name its caller; otherwise TASK-BQ02-001 is instructed to add and maintain dead seam surface.
+- Approved: roadmap BQ-03 coverage is complete (every bullet → §4 row or explicit deferral, incl. the manual six-query checklist); all 5 task files carry every Task Gate field (Goal/Targets/Test Cases/Interfaces with real signatures/Verification incl. typecheck/Acceptance); verification commands verified runnable against base (`typecheck` exists, no lint script exists and §5 says so, all referenced test paths exist); scope/YAGNI clean (token encapsulated in the page source, no parser/transaction abstraction, frozen surface gated per task, `types.ts` untouched per roadmap "only if"); PLANNER_MODEL footer present.
+- Consistency (must fix): wave-2 wiring of `createBigQueryPageFetcher` into `BigQueryPagedQuery` requires editing `src/adapters/bigquery.ts`, but no wave-2 task owns that file (03.1 owns it in wave 1 only; the Self-Audit's "noted in both Interfaces blocks" is inaccurate — TASK-BQ03-001's Interfaces block carries no wave-2 note) — as written the swap is either skipped (03.2's fetcher + byteBudget/limited tests become dead code, two page-fetch implementations drift) or done by an executor editing a file they don't own; related: `BatchedQuery.fetchBatch()` (`src/adapters/types.ts:62-67`) has no `limited` channel, so the byte-budget flag's observable behavior after wiring is unspecified.
+- Clarity (must fix): `formatBigQueryCell` has no production call-site in any of the 5 tasks (03.4 owns states only; "any later display wiring" in TASK-BQ03-002 Interfaces is hand-waving) — RECORD/REPEATED cells keep today's rendering while the formatter ships tested-but-unwired.
+- Clarity (should fix): 03.4's pending-vs-running mechanism is unpinned — `StatementResult` lives in `src/core/queryRunner.ts` (03.3's file, same wave) and `sanitizeStatementResult` (resultsPanel.ts:2191) reduces `batched` to boolean, so the panel cannot read the handle's state getter; risk of a mid-task same-wave file collision.
+- Minor: the MVP SQL gate positive-control set lacks `WITH cte AS (SELECT 1) SELECT * FROM cte` — pin it (admit = WITH joins the leading read-only set; or explicitly reject) in TASK-BQ03-001 test #4.
 
-NOTES: Structure is strong — all six mandatory sections are substantive, same-wave file disjointness holds (§7 map), the BQ-00 frozen surface has a runnable guard, edge cases span 4 different kinds (malformed/empty/permission/boundary), regression rows present, typecheck gate named with the no-lint justification. The blocking gap is §4 coverage: two of the nine implemented adapter methods — including the one success criterion with explicit BigInt-loss risk — have no planned tests. Fix §4/§5 and the two wording items; no rewrite of §1-§3 or the wave structure is needed.
+NOTES: Planner (unic-smart) and reviewer (unic-smart) share a model id; per RULES §P2.5 plan-review independence is fresh-context based, and this review ran in a fresh context — flagged here for transparency. Two must-fix ownership/consistency items + two clarity pins before tasks execute.
 
-### Round 1 — 2026-09-03 · unic-smart (Issues Found → fixed in planner pass)
-Fixes applied:
-- §4 + test row 1: listTableDetail happy test added with MAX_SAFE_INTEGER-overflow numRows + partitioning/clustering; row-count must never be coerced/rounded
-- §4 + test row 2: listRoutines happy test asserting {name, kind:"function", schema} mapping
-- §4 extra (review CLARITY #2, beyond the caller's list): listColumns happy row fixture extended with REPEATED (`STRING REPEATED` mode-suffix) + RECORD fields pinning the §3 dataType-suffix promise; §3 listColumns bullet now names the suffix example explicitly
-- §5 + TASK-BQ02-004 gate: `npm run verify:release && git diff --stat -- src/adapters/bigqueryTypes.ts src/adapters/bigqueryAdc.ts` (must be empty)
-- §2 TASK-BQ02-003 phrasing: "preview command dispatch through `buildBigQueryPreviewSql`" → confined to `src/ui/schemaTree.ts` (verify bigquery table+view nodes wire to `vsdb.browseTableData`); file ownership unchanged, browseCommands.ts stays 002-owned
-- §3 seam-widening: dropped `getRows` from the BigQueryClient table handle (no MVP caller; re-evaluate in BQ-03 when paged grid lands)
+### Round 1 — 2026-09-03 · orchestrator · unic-smart (findings applied)
+Applied directly to `PLAN.md` + task files (TASK-BQ03-001, -002, -003, -004) before round 2 re-review:
 
-Ready for re-review.
+1. **Wave-2 ownership gap (was: blocking)** — pinned in TASK-BQ03-001 Interfaces: the wave-1 `BigQueryPagedQuery` uses a local fetcher double; the 03.1 executor (operating on its own `bigquery.ts` file in wave 2) swaps the double for `createBigQueryPageFetcher` from `./bigqueryPages` once 03.2 lands. TASK-BQ03-001 explicitly owns `src/adapters/bigquery.ts` across both waves.
+2. **`limited` channel (was: blocking)** — pinned in both 001 and 002 Interfaces + 003's `onExhausted?.({ limited })` hook: `BatchedQuery` stays frozen; `BigQueryPagedQuery` carries the flag internally and informs the runner via `onExhausted` at EOF; 03.3 calls `appendBatchBounded` (mirroring `src/core/queryRunner.ts:462-489`) so the flag surfaces as `resultLimited`.
+3. **`formatBigQueryCell` no call-site (was: clarity)** — recorded in `PLAN.md` §2 Out of scope + TASK-BQ03-002 Interfaces as **deliverable-but-unwired this cycle**, named as a follow-up (BQ-04 or later), not a hidden TODO.
+4. **03.4 pending-vs-running (was: clarity)** — pinned in TASK-BQ03-003 + 004 Interfaces: 03.3 adds an OPTIONAL `pending?: boolean` field to `StatementResult`; 03.4 reads it directly; field flows through `sanitizeStatementResult` (it spreads `...r`) — backward-compatible additive change; non-BigQuery paths leave it `undefined` and behavior is byte-identical to base.
+5. **Minor (CTE positive control)** — TASK-BQ03-001 test #4 now pins `WITH cte AS (SELECT 1) SELECT * FROM cte` as part of the positive read-only controls (`WITH` joins the leading read-only set per the gate definition in TASK-BQ03-001 Discussion #1).
 
 ### Round 2 — 2026-09-03 · unic-smart
-Verdict: Approved
-Summary: All six Round-1 fixes verified landed; §4 table recounted at 22 rows (adapter 1-12, preview 13-18, tree 19-22) matching the planner self-audit; §5 gate commands spot-checked real in package.json (verify:release exists, no lint script).
+Status: Approved
 
-COMPLETENESS:
-  - none — listTableDetail happy row (§4 line 151) now pins numRows "1234567890123456789" + timePartitioning/clustering with a non-lossy count assertion, closing §1 Success-3; listRoutines happy row (line 152) pins the §3 name-only mapping; TASK-BQ02-004 has its exact gate (§5 line 176: npm run verify:release + frozen-surface diff must print nothing).
-CONSISTENCY:
-  - none — §2 TASK-BQ02-003 wording no longer conflicts with the §7 ownership map (schemaTree.ts only, browseCommands.ts stays 002-owned); §3's REPEATED example (STRING) now matches the §4 listColumns fixture verbatim.
-CLARITY:
-  - none
-SCOPE:
-  - none — BQ-03 paged grid remains cleanly fenced out; wave-1/wave-2 file disjointness intact.
-YAGNI:
-  - none — getRows dropped from the widened seam with rationale (mergeSchemaWithRows_ INT64 coercion, no MVP caller) and an explicit BQ-03 re-evaluation trigger.
+1. Wave-2 ownership — LANDED: TASK-BQ03-001 Interfaces (line 66) explicitly owns `src/adapters/bigquery.ts` across wave 1 + wave 2, pins the wave-1 local fetcher double (constructor-injected) and the post-03.2 swap to `createBigQueryPageFetcher` from `./bigqueryPages` performed by the 03.1 executor in wave 2; PLAN.md line 39 agrees.
+2. `limited` channel — LANDED: 001 (line 67), 002 (line 66), 003 (lines 60/62) pin one identical contract: `BatchedQuery` stays frozen, `BigQueryPagedQuery` keeps an internal `limited` flag, `onExhausted?.({ limited })` fires on next-null-after-limited EOF, 03.3 calls `appendBatchBounded` mirroring `src/core/queryRunner.ts:462-489` so the flag surfaces as `resultLimited`.
+3. `formatBigQueryCell` deliverable-but-unwired — LANDED: PLAN.md §2 Out of scope (line 33) names the follow-up (BQ-04 or later); TASK-BQ03-002 Interfaces (line 67) says ships tested + exported, not wired into the results grid this cycle. Non-blocking nit: 002 claims the record also lives in PLAN.md §6 Acceptance — it does not (§2 only).
+4. `pending` mechanism — LANDED: 003 Interfaces (line 63) + 004 Interfaces (line 60) pin OPTIONAL `pending?: boolean` on `StatementResult`, set on the BigQuery `{ results: [], batched }` return, cleared on first page, read directly by 03.4, flowing through `sanitizeStatementResult` (`...r` spread); `undefined` + byte-identical on all non-BigQuery paths.
+5. CTE positive control — LANDED: TASK-BQ03-001 test #4 (line 24) includes `WITH cte AS (SELECT 1) SELECT * FROM cte` in the positive read-only controls; Discussion #1 (line 76) pins `WITH` in the leading allowlist with the write-verb scan for `WITH ... DELETE/UPDATE/INSERT`.
 
-NOTES: Ready for task creation. Minor non-blocking observation for later: §4 row 11 permits listTableDetail's row count as "string kept verbatim or null" while estimateTableRows mandates null past MAX_SAFE_INTEGER — both non-lossy, but TASK-BQ02-001's executor should pick one convention for consistency.
+NOTES: All 5 round-1 fixes landed where claimed; round 2 closed. Non-blocking prose nits only, none blocks P3: (a) 002's §6 cross-reference is inaccurate (record exists in §2 only); (b) 001 line 66 sketches the swap as `createBigQueryPageFetcher({ client: job, pageSize, byteBudget })` vs 002's authoritative deps `{ fetch, byteBudget? }` — the wave-2 swap compiles against the real module, so drift cannot ship silently, 002's signature governs; (c) 004 Target Files 14(c) retains pre-fix hedging superseded by the pinned Interfaces contract.
