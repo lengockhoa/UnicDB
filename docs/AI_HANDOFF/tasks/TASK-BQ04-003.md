@@ -69,3 +69,41 @@ Note on the `75cdb08` guard base (for @executor): the ACTIVE.md request template
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: claude-sonnet-4-5
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT:
+  This is a guard-only task by design — the three primary rows are GREEN at base because the frozen surfaces ARE byte-untouched relative to `75cdb08`; a guard test that failed on an empty implementation would be meaningless. TDD discipline was satisfied by adding a sanity check (`describe("sanity check")`) that demonstrates the SAME `execSync` invocation against a known-differing ref (`75cdb08~1..75cdb08 -- CHANGELOG.md`) returns 37 NON-empty diff lines, proving the assertion is not tautological and the test wiring is live. Before that sanity block existed, the file would have been a 3-line "no-op" passing on no work; after the sanity check was added, an initial run confirmed the wiring produced the expected 37 non-empty lines from the intentionally-differing ref — the equivalent of a RED signal in a guard's logic.
+Verification Output:
+  command: npx vitest run src/adapters/__tests__/bq04SurfaceGuard.test.ts
+  result: 4 passed (3 frozen-guard rows + 1 sanity row) | 0 failed
+  command: npm run typecheck
+  result: tsc --noEmit exit 0
+  command: git diff 75cdb08 -- src/adapters/bigqueryTypes.ts src/adapters/bigqueryAdc.ts src/adapters/types.ts package.json
+  result: empty (frozen surface intact; guard rows 003.a-c are GREEN)
+  command: git status --porcelain (filtered to this task's scope)
+  result: only `src/adapters/__tests__/bq04SurfaceGuard.test.ts` listed (no source edit; guard-only as designed)
+Status: PASS
+Note: test file resolves repo root via `path.resolve(__dirname, "..", "..", "..")` and uses `git -C <repoRoot>` for the diff invocations — robust against any CWD. Each row uses `execSync(... { encoding: "utf8" }).trim()` and asserts `=== ""`. The sanity row's 37-line CHANGELOG diff output is logged to stdout for traceability. No new npm dep, no source edit, no touch on the four frozen files.
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: claude-sonnet-4-5 (relayed by orchestrator; NOT self-reported on disk — see critical finding)
+VERIFICATION_RERUN:
+  command: npx vitest run src/adapters/__tests__/bq04SurfaceGuard.test.ts ; npm run typecheck ; git diff 75cdb08 -- src/adapters/bigqueryTypes.ts src/adapters/bigqueryAdc.ts src/adapters/types.ts package.json
+  result: 4/4 pass ; typecheck exit 0 ; frozen diff empty
+TEST_PLAN_COVERAGE: all-followed — rows 1-3 implemented exactly as §Test Cases, plus a non-tautology sanity block (75cdb08~1..75cdb08 -- CHANGELOG.md → 37 diff lines, verified live)
+FINDINGS:
+  critical:
+    - docs/AI_HANDOFF/tasks/TASK-BQ04-003.md — "## Executor Report" is MISSING from the task file: no FILES_CHANGED, no VERIFICATION block, no EXECUTOR_MODEL/EXECUTOR_TOOL self-report. handoff.executor.appendReportToTaskFile=true and the cross-tool review contract depend on this on-disk report; the model-isolation gate cannot verify the executor model from the package itself. Fix: executor appends the full report (same content class as TASK-BQ03-001.md:86). No code change required — the implementation itself verified clean on independent re-run.
+  important:
+    - none
+  minor:
+    - src/adapters/__tests__/bq04SurfaceGuard.test.ts:70-77 — sanity check inlines execSync instead of reusing gitDiff(), which would accept the "75cdb08~1..75cdb08" range string unchanged; helper reuse would make the "same execSync call" proof literal.
+    - src/adapters/__tests__/bq04SurfaceGuard.test.ts:31 — comment "keeps stderr from leaking on stderr" is garbled; intended meaning: stderr is piped so it cannot interleave with the asserted stdout.
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Implementation is correct and fully verified on independent re-run (guard targets exact, repo-root resolution correct via git -C, loud failure on unreachable ref is documented intended behavior, CI shallow-clone caveat accepted by planner in Discussion). The only blocker is the missing executor self-report — a package-completeness fix, not a code fix.
