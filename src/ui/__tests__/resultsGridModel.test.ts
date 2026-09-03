@@ -9,6 +9,7 @@ import {
   shouldResetGrid,
   footerText,
   formatCell,
+  formatDataCellForDialect,
   serializeTsv,
   serializeCsv,
   type StatementResult,
@@ -675,5 +676,133 @@ describe("hidden columns excluded from export (TASK-006 #5)", () => {
       hiddenColumns: [],
     });
     expect(out).toBe("name\tctid\nalice\t(0,1)");
+  });
+});
+
+// =============================================================================
+// 12. BQ-04 — formatDataCellForDialect (TASK-BQ04-002)
+// =============================================================================
+// TASK-BQ04-002: pure switch helper that renders BigQuery cells via the
+// frozen `formatBigQueryCell(value, field)` (re-exported from
+// `../adapters/bigqueryPages`) when `dialect === "bigquery"`, otherwise
+// falls through to the verbatim `formatCell(value)`. `formatCell` itself
+// is byte-untouched — this block asserts both the switch dispatch and the
+// fall-through to the existing `formatCell` semantics (one spot-check on
+// `formatCell(new Date(0))` to lock the contract).
+
+describe("BQ-04 formatDataCellForDialect", () => {
+  it("002.a — BQ REPEATED renders compact `[1,2]`, not JSON", () => {
+    const field = { name: "arr", type: "INT64", mode: "REPEATED" };
+    const out = formatDataCellForDialect(
+      [{ v: 1 }, { v: 2 }],
+      field,
+      "bigquery",
+    );
+    expect(out).toBe("[1,2]");
+    expect(out).not.toBe('[{"v":1},{"v":2}]');
+  });
+
+  it("002.a' — BQ RECORD renders compact `{1,a}`, not JSON", () => {
+    const field = { name: "r", type: "RECORD" };
+    const out = formatDataCellForDialect(
+      { f: [1, "a"] },
+      field,
+      "bigquery",
+    );
+    expect(out).toBe("{1,a}");
+  });
+
+  it("002.b — postgres Date(0) → ISO via formatCell; mysql bigint → string; undefined dialect → formatCell", () => {
+    // postgres: Date(0) → ISO
+    expect(formatDataCellForDialect(new Date(0), undefined, "postgres")).toBe(
+      "1970-01-01T00:00:00.000Z",
+    );
+    // mysql: 10n (bigint) → "10" via formatCell's BigInt branch
+    expect(formatDataCellForDialect(BigInt(10), undefined, "mysql")).toBe(
+      "10",
+    );
+    // undefined dialect → fall through to formatCell
+    const v = { a: 1 };
+    expect(formatDataCellForDialect(v, undefined, undefined)).toBe(
+      formatCell(v),
+    );
+  });
+
+  it("002.c — BQ with `field` undefined renders INT64 verbatim string, no Number coercion", () => {
+    // Critical: an INT64 column receives a STRING (BigQuery does not fit
+    // an INT64 in a JS number) — switching to formatBigQueryCell must NOT
+    // coerce it to a Number. formatCell's object branch JSON-stringifies
+    // strings-as-strings (no-op), but formatBigQueryCell has a dedicated
+    // string branch.
+    expect(
+      formatDataCellForDialect("12345", undefined, "bigquery"),
+    ).toBe("12345");
+  });
+
+  it("002.d — null (BQ) and undefined (mssql) both return the empty marker ''", () => {
+    // BQ null → "" via formatBigQueryCell's null branch.
+    expect(
+      formatDataCellForDialect(null, { name: "x", type: "INT64" }, "bigquery"),
+    ).toBe("");
+    // mssql undefined → "" via formatCell's null/undefined branch.
+    expect(
+      formatDataCellForDialect(undefined, undefined, "mssql"),
+    ).toBe("");
+  });
+
+  it("002.e — BQ type variety (table-driven): NUMERIC / BIGNUMERIC / BYTES / JSON / TIMESTAMP pass verbatim", () => {
+    // INT64 string
+    expect(
+      formatDataCellForDialect(
+        "12345",
+        { name: "n", type: "INT64" },
+        "bigquery",
+      ),
+    ).toBe("12345");
+    // NUMERIC string
+    expect(
+      formatDataCellForDialect(
+        "1.5",
+        { name: "x", type: "NUMERIC" },
+        "bigquery",
+      ),
+    ).toBe("1.5");
+    // BIGNUMERIC — full-precision canonical string, must NOT be Number-coerced.
+    expect(
+      formatDataCellForDialect(
+        "1.23456789012345678901234567890123456789",
+        { name: "p", type: "BIGNUMERIC" },
+        "bigquery",
+      ),
+    ).toBe("1.23456789012345678901234567890123456789");
+    // BYTES base64 — verbatim.
+    expect(
+      formatDataCellForDialect(
+        "aGVsbG8=",
+        { name: "b", type: "BYTES" },
+        "bigquery",
+      ),
+    ).toBe("aGVsbG8=");
+    // JSON — verbatim text.
+    expect(
+      formatDataCellForDialect(
+        '{"a":1}',
+        { name: "j", type: "JSON" },
+        "bigquery",
+      ),
+    ).toBe('{"a":1}');
+    // TIMESTAMP — verbatim text.
+    expect(
+      formatDataCellForDialect(
+        "2026-01-01 00:00:00 UTC",
+        { name: "t", type: "TIMESTAMP" },
+        "bigquery",
+      ),
+    ).toBe("2026-01-01 00:00:00 UTC");
+  });
+
+  it("regression — formatCell remains byte-identical: Date → ISO", () => {
+    // Lock the formatCell behavior the switch delegates to.
+    expect(formatCell(new Date(0))).toBe("1970-01-01T00:00:00.000Z");
   });
 });

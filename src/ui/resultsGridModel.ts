@@ -22,6 +22,7 @@
 
 import { stripTrailingSemicolon } from "../core/text";
 import type { SqlDialect } from "../core/statementParser";
+import { formatBigQueryCell } from "../adapters/bigqueryPages";
 
 export type ColumnKind = "number" | "string" | "boolean";
 
@@ -460,6 +461,82 @@ export function formatCell(v: unknown): string {
     }
   }
   return String(v);
+}
+
+// ---- formatDataCellForDialect (TASK-BQ04-002) -----------------------------
+//
+// Pure switch helper: routes BigQuery cells through `formatBigQueryCell`
+// (which preserves INT64/NUMERIC/BIGNUMERIC/BYTES/JSON/temporal/RECORD/
+// REPEATED display semantics WITHOUT `Number()` coercion) when the
+// statement's `dialect === "bigquery"`, otherwise falls through to the
+// verbatim `formatCell` for every other dialect (and for the no-dialect
+// default).
+//
+// Purity contract: no DOM, no vscode, no I/O. `formatBigQueryCell` itself
+// is a pure module (its only import is the type-only `./bigqueryTypes`),
+// so importing it here does not pull any runtime surface.
+//
+// `field` is typed with a LOCAL structural alias that matches the mirror
+// `StatementResult.schemaFields` element shape. We do NOT import the
+// frozen `src/adapters/bigqueryTypes.ts` interface directly — the
+// frozen-surface rule forbids editing that file, but its TYPE re-export
+// (read-only) is allowed by `import type`. We use a local alias here for
+// a tighter decoupling: the helper only reads `name`/`type`/`mode`, and
+// those fields are already optional, so the structural shape is enough.
+//
+// Acceptance:
+//   - BigQuery REPEATED `[1,2]` → `"[1,2]"` (NOT JSON.stringify raw).
+//   - BigQuery RECORD `{f:[1,"a"]}` → `"{1,a}"`.
+//   - BigQuery INT64 string `"12345"` → `"12345"` verbatim (no Number coercion).
+//   - postgres `Date(0)` → ISO via `formatCell`; mysql bigint → string via `formatCell`.
+//   - `dialect !== "bigquery"` (including undefined) → `formatCell(v)`.
+
+/**
+ * TASK-BQ04-002 — local structural alias for a BigQuery schema field. The
+ * shape mirrors `StatementResult.schemaFields` (TASK-BQ04-001) and the
+ * frozen `BigQuerySchemaField` in `src/adapters/bigqueryTypes.ts`; all
+ * members are optional because the live BQ seam does not always surface
+ * `type`/`mode` (TASK-BQ04-001 executor note: `BigQueryPagedQuery.columns`
+ * only gives `name`). The helper reads nothing — it just hands the
+ * object through to `formatBigQueryCell`, which already treats `_field`
+ * as optional and ignores undefined.
+ */
+export interface BigQuerySchemaFieldLike {
+  name?: string;
+  type?: string;
+  mode?: string;
+}
+
+/**
+ * Switch between BigQuery cell rendering and the verbatim `formatCell`.
+ *
+ * @param value  The cell value (any JS value, including BQ's REPEATED
+ *               `Array<{ v }>` and RECORD `{ f }` shapes).
+ * @param field  Optional BigQuery schema-field descriptor. Ignored when
+ *               `dialect !== "bigquery"`; passed verbatim to
+ *               `formatBigQueryCell` otherwise. The frozen
+ *               `formatBigQueryCell` already treats `_field` as optional.
+ * @param dialect The active statement's dialect. `"bigquery"` switches to
+ *                `formatBigQueryCell`; every other value (including
+ *                undefined) falls through to `formatCell`.
+ */
+export function formatDataCellForDialect(
+  value: unknown,
+  field?: BigQuerySchemaFieldLike,
+  dialect?: string,
+): string {
+  if (dialect === "bigquery") {
+    // formatBigQueryCell expects `BigQueryValue | null | undefined` and a
+    // `BigQuerySchemaField`. Our local alias is structurally compatible
+    // (name/type/mode, all optional). Casting at the call site keeps the
+    // helper's contract loose — we don't want to take a hard dependency
+    // on the frozen-types import here.
+    return formatBigQueryCell(
+      value as Parameters<typeof formatBigQueryCell>[0],
+      field as Parameters<typeof formatBigQueryCell>[1],
+    );
+  }
+  return formatCell(value);
 }
 
 // ---- Export serializers (TASK-502) ----------------------------------------

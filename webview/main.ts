@@ -47,6 +47,7 @@ import {
   selectionToText,
   footerText,
   formatCell,
+  formatDataCellForDialect,
   EditState,
   parseTsvPaste,
   applyPasteToDirty,
@@ -387,6 +388,21 @@ const serverIndexByRowId = new Map<number, number>();
  *  handler closure captures this at renderGrid time. */
 let currentSpecs: readonly ColumnSpec[] = [];
 /**
+ * TASK-BQ04-002 — last dialect / schemaFields seen for the active
+ * statement (mirror of `StatementResult.dialect` and
+ * `StatementResult.schemaFields` from TASK-BQ04-001). Held at module
+ * scope so `onCsvToggleClick` (which rebuilds `valueFormatter` callbacks
+ * after the original renderGrid call has returned and the `r` closure is
+ * gone) can still feed the dispatch into `formatDataCellForDialect`.
+ * The `state` postMessage at the host already carries these fields on
+ * every `results[i]`, so no new message type is required — they ride on
+ * the existing `state` payload.
+ */
+let currentDialect: string | undefined = undefined;
+let currentSchemaFields:
+  | ReadonlyArray<{ name?: string; type?: string; mode?: string }>
+  | undefined = undefined;
+/**
  * Type-narrowed accessor for the stable row identity that AG Grid's
  * getRowId/restore-style flows rely on. AG Grid calls our getRowId
  * with `r.data`; we set `__rowId` on every row in rowsToObjects so the
@@ -531,6 +547,13 @@ let firstRender = true;
 // Currently displayed footer/statement (for quick-filter live updates).
 function setCurrentStatement(r: StatementResult | null): void {
   currentStatement = r;
+  // TASK-BQ04-002 — capture the active statement's dialect / schemaFields
+  // so cell renderers (built by renderGrid's specs.map closure) and the
+  // csv-toggle rebuilder can route BigQuery cells through
+  // `formatBigQueryCell`. The two fields ride on the existing `state`
+  // payload's `results[i]` (TASK-BQ04-001 stamp); no new message type.
+  currentDialect = r?.dialect;
+  currentSchemaFields = r?.schemaFields;
   if (dom) currentFooter = dom.gridFooter;
 }
 let currentFooter: HTMLElement | null = null;
@@ -1682,6 +1705,12 @@ function renderGrid(): void {
   // — those were the TASK-402 text/number inputs we replaced). The panel
   // itself lives inside the column-menu popup, so the floating-filter row
   // is no longer needed and stays disabled.
+  // TASK-BQ04-002 — capture the active statement's dialect / schemaFields
+  // for the cell-renderer closures. `r.schemaFields[i]` may be undefined
+  // when the live BQ seam only surfaces `name`; the helper treats that as
+  // "no declared metadata" and falls back to verbatim string handling.
+  const stmtDialect = r.dialect;
+  const stmtSchemaFields = r.schemaFields;
   const baseCols = specs.map((spec) => {
     // colIndex in currentSpecs is the source-array index. We close over
     // it for the cellClassRules predicate so each column knows which
@@ -1703,7 +1732,8 @@ function renderGrid(): void {
       // valueFormatter is rebuilt when csvMode flips (toggleCsv) so the user
       // sees raw vs formatted values.
       editable: true,
-      valueFormatter: (p: { value: unknown }) => formatDataCell(p.value),
+      valueFormatter: (p: { value: unknown }) =>
+        formatDataCell(p.value, stmtSchemaFields?.[colIndex], stmtDialect),
       // TASK-004 — null/undefined cells render an italic muted "(NULL)"
       // placeholder. valueFormatter alone cannot attach a CSS class, so
       // this cellRenderer wraps the formatted display: null/undefined →
@@ -1722,7 +1752,9 @@ function renderGrid(): void {
           el.textContent = "(NULL)";
           return el;
         }
-        el.textContent = p.valueFormatted ?? formatDataCell(p.value);
+        el.textContent =
+          p.valueFormatted ??
+          formatDataCell(p.value, stmtSchemaFields?.[colIndex], stmtDialect);
         return el;
       },
       // TASK-007: cellClassRules paints `vsdb-cell-dirty` on a cell whose
@@ -2511,8 +2543,20 @@ function closeValueViewer(): void {
 /** Open the value viewer overlay showing the FULL raw cell value. The grid
  *  itself ellipsizes long text (cellStyle white-space/overflow), so this is
  *  the "see everything" affordance. Content is set via textContent — never
- *  innerHTML — so cell values cannot inject markup. */
-function openValueViewer(value: unknown, anchor?: HTMLElement | null): void {
+ *  innerHTML — so cell values cannot inject markup.
+ *
+ *  TASK-BQ04-002 — when the active statement is BigQuery, route the
+ *  displayed string through `formatBigQueryCell` (so REPEATED `[1,2]`,
+ *  RECORD `{1,a}`, and INT64 strings stay verbatim — NOT JSON-serialized
+ *  through `formatCell`). `field` and `dialect` are optional; `field`
+ *  defaults to the matching `schemaFields[colIndex]` looked up by the
+ *  caller's `colId`. */
+function openValueViewer(
+  value: unknown,
+  anchor: HTMLElement | null | undefined,
+  field?: { name?: string; type?: string; mode?: string },
+  dialect?: string,
+): void {
   if (!dom) return;
   closeValueViewer();
   const overlay = document.createElement("div");
@@ -2520,7 +2564,9 @@ function openValueViewer(value: unknown, anchor?: HTMLElement | null): void {
   overlay.setAttribute("role", "dialog");
   overlay.setAttribute("aria-label", "Cell value viewer");
   overlay.textContent =
-    value === null || value === undefined ? "(NULL)" : formatCell(value);
+    value === null || value === undefined
+      ? "(NULL)"
+      : formatDataCellForDialect(value, field, dialect);
 
   // Position near the double-clicked cell when a usable rect exists (jsdom
   // rects are all-zero — the CSS fallback anchor applies there instead).
@@ -2575,25 +2621,44 @@ function onCellDoubleClickedHandler(e: CellDoubleClickedEvent): void {
   const raw = e.value;
   const target = (e.event as Event | undefined)?.target;
   const anchor = target instanceof HTMLElement ? target : null;
+  // TASK-BQ04-002 — thread the active statement's dialect / schemaFields
+  // into the value viewer so REPEATED / RECORD cells display via
+  // formatBigQueryCell instead of formatCell's JSON.stringify path.
+  const colIndex = currentSpecs.findIndex((s) => s.field === colId);
+  const field =
+    colIndex >= 0 ? currentSchemaFields?.[colIndex] : undefined;
   setTimeout(() => {
     if (!gridApi) return;
     if (gridApi.getEditingCells().length > 0) return;
-    openValueViewer(raw, anchor);
+    openValueViewer(raw, anchor, field, currentDialect);
   }, 0);
 }
 
-/** Format a data cell value. csvMode off → formatted (formatCell, the
- *  default display); csvMode on → raw (toString, so a Date renders as the
- *  Date object's toString rather than an ISO string). TASK-004: null and
- *  undefined both display as the "(NULL)" placeholder text (the
- *  cellRenderer above wraps it in the styled `.vsdb-null` span) — the
- *  underlying data keeps the real null, this only changes display. */
-function formatDataCell(v: unknown): string {
+/** Format a data cell value. csvMode off → formatted via the BQ-aware
+ *  switch helper `formatDataCellForDialect` (which routes BigQuery cells
+ *  through `formatBigQueryCell` and everything else through `formatCell`);
+ *  csvMode on → raw (toString, so a Date renders as the Date object's
+ *  toString rather than an ISO string). TASK-004: null and undefined
+ *  both display as the "(NULL)" placeholder text (the cellRenderer above
+ *  wraps it in the styled `.vsdb-null` span) — the underlying data keeps
+ *  the real null, this only changes display.
+ *
+ *  TASK-BQ04-002 — `field` is the optional per-column schema descriptor
+ *  (looked up by `colIndex` against the active statement's
+ *  `schemaFields`); `dialect` is the active statement's dialect. The
+ *  helper treats `field` as undefined when `schemaFields` is missing or
+ *  shorter than the column index, which is the documented seam behavior
+ *  (live BQ does not always surface `type`/`mode`). */
+function formatDataCell(
+  v: unknown,
+  field?: { name?: string; type?: string; mode?: string },
+  dialect?: string,
+): string {
   if (v === null || v === undefined) return "(NULL)";
   if (csvMode) {
     return String(v);
   }
-  return formatCell(v);
+  return formatDataCellForDialect(v, field, dialect);
 }
 
 /** Dispatch a paste payload from the OS clipboard. The browser's
@@ -3079,7 +3144,14 @@ function onRetryFailedRowsClick(): void {
 }
 
 /** CSV toggle: flip csvMode and rebuild the valueFormatter on every visible
- *  data column so the user sees raw values vs formatted. */
+ *  data column so the user sees raw values vs formatted.
+ *
+ *  TASK-BQ04-002 — capture the active statement's dialect / schemaFields
+ *  from module scope (set by `setCurrentStatement` at the most recent
+ *  renderGrid call) so the rebuilt valueFormatter still routes BQ cells
+ *  through `formatBigQueryCell`. The column's `field` is resolved to a
+ *  `colIndex` against `currentSpecs` so the schemaFields lookup matches
+ *  the spec-position ordering (same convention as the renderGrid closure). */
 function onCsvToggleClick(): void {
   csvMode = !csvMode;
   if (!gridApi) return;
@@ -3087,9 +3159,18 @@ function onCsvToggleClick(): void {
     | Array<{ field?: string; valueFormatter?: unknown }>
     | undefined;
   if (!cols) return;
+  const stmtDialect = currentDialect;
+  const stmtSchemaFields = currentSchemaFields;
   const next = cols.map((c) => ({
     ...c,
-    valueFormatter: (p: { value: unknown }) => formatDataCell(p.value),
+    valueFormatter: (p: { value: unknown }) => {
+      const colIndex = currentSpecs.findIndex((s) => s.field === c.field);
+      return formatDataCell(
+        p.value,
+        colIndex >= 0 ? stmtSchemaFields?.[colIndex] : undefined,
+        stmtDialect,
+      );
+    },
   }));
   gridApi.setGridOption("columnDefs", next);
 }
