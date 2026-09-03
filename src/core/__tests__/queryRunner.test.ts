@@ -1284,3 +1284,338 @@ describe("QueryRunner — retained-row cap (TASK-ARP03-002)", () => {
     expect(final[1].result?.rows).toEqual([[1], [2], [1]]);
   });
 });
+
+// =============================================================================
+// TASK-BQ03-003 — QueryRunner continuation contract for BigQuery pages.
+//
+// A BigQuery-shaped BatchedQuery carries an `onExhausted?: (info: { limited:
+// boolean }) => void` property (set by 03.1's `BigQueryPagedQuery`). The
+// runner detects BQ-shaped via `'onExhausted' in batched` and:
+//   1) closes the handle + sets `cursorClosed = true` on EOF (the new
+//      EOF → close transition; plain postgres cursors are NOT closed here
+//      because the next-run sweep already handles them and the existing
+//      ARP03-002 boundary tests assert `cursorClosed` stays undefined at
+//      EOF for non-BQ handles),
+//   2) wires `onExhausted` to call `appendBatchBounded` so the BQ handle's
+//      internal `limited` flag surfaces as `resultLimited`,
+//   3) snapshots a `runGeneration` counter before each `fetchBatch` await
+//      and discards the late batch if a new `run()` started while parked,
+//   4) sets `StatementResult.pending = true` immediately when the adapter
+//      returned a BQ-shaped `{ results: [], batched }` and clears it on
+//      the first successful `pickResult` (orthogonal to `status`).
+// =============================================================================
+describe("QueryRunner — BQ-03.3 BigQuery page continuation", () => {
+  /**
+   * BQ-shaped BatchedQuery fake: same surface as makeBatched, plus an
+   * `onExhausted` property the runner can wire to. The fake does NOT
+   * auto-fire onExhausted on EOF — the test that needs it (Test #9) calls
+   * `batched.onExhausted?.({ limited: true })` explicitly, mirroring how
+   * 03.1's `BigQueryPagedQuery` fires it on EOF.
+   */
+  function makeBqBatched(
+    columns: string[],
+    fetchSequence: Array<any[][] | null>,
+  ): BatchedQuery & { onExhausted?: ((info: { limited: boolean }) => void) | null } {
+    const base = makeBatched(columns, fetchSequence);
+    // Pre-declare the property so `'onExhausted' in base` is true.
+    (base as any).onExhausted = null;
+    return base as unknown as BatchedQuery & { onExhausted?: ((info: { limited: boolean }) => void) | null };
+  }
+
+  it("Test #1 — Load More consumes only the current handle's fetchBatch, appends page 2 then page 3", async () => {
+    const batched = makeBqBatched(["n"], [
+      [[1], [2]], // initial fetch (pickResult)
+      [[10], [11], [12]], // loadMore #1 → page 2
+      [[20], [21]], // loadMore #2 → page 3
+      null, // loadMore #3 → EOF
+    ]);
+    const adapter = makeAdapter(async () => ({ results: [], batched }));
+    const runner = new QueryRunner(async () => adapter);
+
+    const result = await runner.run([stmt("SELECT *", 0, 9)], () => {});
+    expect(result[0].result?.rows).toEqual([[1], [2]]);
+    expect(batched.fetchBatch).toHaveBeenCalledTimes(1); // initial only
+
+    const more1 = await runner.loadMore(0);
+    expect(more1[0].result?.rows).toEqual([[1], [2], [10], [11], [12]]);
+    expect(batched.fetchBatch).toHaveBeenCalledTimes(2);
+
+    const more2 = await runner.loadMore(0);
+    expect(more2[0].result?.rows).toEqual([[1], [2], [10], [11], [12], [20], [21]]);
+    expect(batched.fetchBatch).toHaveBeenCalledTimes(3);
+
+    // Same handle throughout — no other fetchBatch entries.
+    const fetchRecords = batched.fetchBatch.mock.results;
+    expect(fetchRecords).toHaveLength(3);
+  });
+
+  it("Test #2 — EOF releases the retained job context exactly once; further loadMore is a graceful no-op", async () => {
+    const batched = makeBqBatched(["n"], [
+      [[1]], // initial
+      [[2]], // loadMore #1
+      null, // loadMore #2 → EOF
+    ]);
+    const adapter = makeAdapter(async () => ({ results: [], batched }));
+    const runner = new QueryRunner(async () => adapter);
+
+    const result = await runner.run([stmt("SELECT *", 0, 9)], () => {});
+    expect(result[0].cursorClosed).toBeUndefined();
+    expect(batched.close).not.toHaveBeenCalled();
+
+    await runner.loadMore(0);
+    expect(batched.close).not.toHaveBeenCalled();
+
+    // The third loadMore hits EOF → close EXACTLY once + cursorClosed = true.
+    const eof = await runner.loadMore(0);
+    expect(eof[0].cursorClosed).toBe(true);
+    expect(batched.close).toHaveBeenCalledTimes(1);
+
+    // A further loadMore is a graceful no-op (no throw, no extra close).
+    const noop = await runner.loadMore(0);
+    expect(noop[0].result?.rows).toEqual([[1], [2]]);
+    expect(noop[0].cursorClosed).toBe(true);
+    expect(batched.close).toHaveBeenCalledTimes(1); // still exactly once
+    expect(noop[0].resultLimited).toBeUndefined();
+  });
+
+  it("Test #3 — concurrent loadMore for the same index is serialized (no lost/duplicate batch)", async () => {
+    // fetchBatch has delay so concurrent calls genuinely race.
+    const fetchBatch = vi
+      .fn<[], Promise<any[][] | null>>()
+      .mockImplementationOnce(async () => {
+        // initial (pickResult)
+        await new Promise((r) => setTimeout(r, 10));
+        return [[1]];
+      })
+      .mockImplementationOnce(async () => {
+        // loadMore #1
+        await new Promise((r) => setTimeout(r, 10));
+        return [[2]];
+      })
+      .mockImplementationOnce(async () => {
+        // loadMore #2
+        await new Promise((r) => setTimeout(r, 10));
+        return [[3]];
+      });
+    const batched: BatchedQuery & { onExhausted?: ((info: { limited: boolean }) => void) | null } = {
+      columns: ["n"],
+      fetchBatch,
+      cancel: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      onExhausted: null,
+    };
+    const adapter = makeAdapter(async () => ({ results: [], batched }));
+    const runner = new QueryRunner(async () => adapter);
+    await runner.run([stmt("SELECT *", 0, 9)], () => {});
+
+    const [a, b] = await Promise.all([
+      runner.loadMore(0),
+      runner.loadMore(0),
+    ]);
+    const rowsA = a[0].result!.rows.length;
+    const rowsB = b[0].result!.rows.length;
+    expect(Math.max(rowsA, rowsB)).toBeGreaterThanOrEqual(2); // both pages landed
+    expect(batched.fetchBatch).toHaveBeenCalledTimes(3); // 1 initial + 2 serialized
+  });
+
+  it("Test #4 — late page after cancel is discarded; close() called on the handle", async () => {
+    const batched = makeBqBatched(["n"], [
+      [[1]], // initial
+    ]);
+    const adapter = makeAdapter(async () => ({ results: [], batched }));
+    const runner = new QueryRunner(async () => adapter);
+
+    await runner.run([stmt("SELECT *", 0, 9)], () => {});
+    expect(batched.fetchBatch).toHaveBeenCalledTimes(1);
+
+    // Override the NEXT fetchBatch to be deferred (after the initial
+    // already consumed the default).
+    let resolveLoadMoreFetch: ((v: any[][] | null) => void) | null = null;
+    batched.fetchBatch.mockImplementationOnce(
+      () => new Promise<any[][] | null>((resolve) => { resolveLoadMoreFetch = resolve; }),
+    );
+
+    const loadMorePromise = runner.loadMore(0).catch((err) => err);
+    await new Promise((r) => setTimeout(r, 5));
+
+    await runner.cancel();
+    if (resolveLoadMoreFetch) resolveLoadMoreFetch([[42]]);
+    const settled = await loadMorePromise;
+
+    const final = runner.getResults();
+    expect(final[0].result?.rows).toEqual([[1]]); // 42 not appended
+    expect(batched.close).toHaveBeenCalled();
+    // Settled is either the (unchanged) results array or a cancel-shaped error.
+    if (settled instanceof Error) {
+      expect(String(settled.message)).toMatch(/cancelled|cancel/i);
+    }
+  });
+
+  it("Test #5 — late page after a NEW run is discarded; first fetch's rows never land in new run", async () => {
+    // One handle serves the first run; we defer the loadMore fetch and start
+    // a new (append) run() while the fetch is in flight. The deferred
+    // fetch's rows must NOT be appended to the OLD statement (which is
+    // preserved across append runs) — the leak is observable as the OLD
+    // statement's row count going from [[1]] to [[1], [42]].
+    const batched = makeBqBatched(["n"], [
+      [[1]], // initial for run #1
+    ]);
+    const adapter = makeAdapter(async (sql) => {
+      // First run's SELECT returns the batched; second run returns a fresh
+      // non-batched result so we can detect "rows from old handle leaked".
+      if (sql === "SELECT old") return { results: [], batched };
+      return okResult(["v"], [[sql]]);
+    });
+    const runner = new QueryRunner(async () => adapter);
+
+    await runner.run([stmt("SELECT old", 0, 11)], () => {});
+    const oldResult = runner.getResults()[0];
+    expect(oldResult.result?.rows).toEqual([[1]]);
+
+    // Override the NEXT fetchBatch AFTER the initial consumed the default.
+    let resolveLoadMoreFetch: ((v: any[][] | null) => void) | null = null;
+    batched.fetchBatch.mockImplementationOnce(
+      () => new Promise<any[][] | null>((resolve) => { resolveLoadMoreFetch = resolve; }),
+    );
+
+    const loadMorePromise = runner.loadMore(0).catch((err) => err);
+    await new Promise((r) => setTimeout(r, 5));
+
+    // Start a new APPEND run while the loadMore fetch is pending — the
+    // OLD statement is preserved in the results array, so any leak is
+    // observable on the same object reference.
+    const newRun = runner.run(
+      [stmt("SELECT new", 0, 11)],
+      () => {},
+      { append: true },
+    );
+
+    // Resolve the deferred fetch — late-settled rows from the OLD handle
+    // must NOT be appended to the OLD statement (which is now the first
+    // entry of the new run's results array).
+    if (resolveLoadMoreFetch) resolveLoadMoreFetch([[42]]);
+    await loadMorePromise;
+    const newResult = await newRun;
+
+    // The OLD statement (preserved in the append run) must still be
+    // [[1]] — NOT [[1], [42]]. The late batch is discarded.
+    const preserved = newResult[0];
+    expect(preserved).toBe(oldResult); // same object preserved
+    expect(preserved.result?.rows).toEqual([[1]]);
+    // The new run's SELECT new result must be a single [SELECT new] row.
+    const newStmt = newResult.find((r) => r.sql === "SELECT new");
+    expect(newStmt?.result?.rows).toEqual([["SELECT new"]]);
+  });
+
+  it("Test #6 — loadMore on statement #2 never touches statement #1's handle", async () => {
+    const b1 = makeBqBatched(["n"], [
+      [[1]], // initial
+      [[2]], // loadMore 1
+    ]);
+    const b2 = makeBqBatched(["n"], [
+      [[10]], // initial
+      [[20]], // loadMore 2
+    ]);
+    const adapter = makeAdapter(async (sql) => {
+      if (sql === "SELECT 1") return { results: [], batched: b1 };
+      return { results: [], batched: b2 };
+    });
+    const runner = new QueryRunner(async () => adapter);
+
+    const result = await runner.run(
+      [stmt("SELECT 1", 0, 8), stmt("SELECT 2", 9, 17)],
+      () => {},
+    );
+    expect(result[0].result?.rows).toEqual([[1]]);
+    expect(result[1].result?.rows).toEqual([[10]]);
+    expect(b1.fetchBatch).toHaveBeenCalledTimes(1);
+    expect(b2.fetchBatch).toHaveBeenCalledTimes(1);
+
+    // Load more on statement #2 only.
+    const updated = await runner.loadMore(1);
+    expect(updated[1].result?.rows).toEqual([[10], [20]]);
+    // b1 is untouched.
+    expect(b1.fetchBatch).toHaveBeenCalledTimes(1);
+    expect(b1.close).not.toHaveBeenCalled();
+    // b2 fetched exactly one extra.
+    expect(b2.fetchBatch).toHaveBeenCalledTimes(2);
+  });
+
+  it("Test #7 — regression: postgres cursor semantics unchanged (existing ARP03-002 boundary)", async () => {
+    // Pin: a non-BQ handle (no `onExhausted` property) at EOF keeps
+    // `cursorClosed` undefined — the next-run sweep handles plain cursor
+    // release. This mirrors the existing ARP03-002 boundary test but
+    // asserted here against the explicit 03.3 EOF close path.
+    const batched = makeBatched(["n"], [
+      [[1]],
+      [[2]],
+      null, // EOF
+    ]);
+    const adapter = makeAdapter(async () => ({ results: [], batched }));
+    const runner = new QueryRunner(async () => adapter);
+
+    await runner.run([stmt("SELECT *", 0, 9)], () => {});
+    const eof = await runner.loadMore(0);
+    expect(eof[0].cursorClosed).toBeUndefined(); // non-BQ handle: not closed on EOF
+    expect(batched.close).not.toHaveBeenCalled();
+  });
+
+  it("Test #8 — regression: BQ-shaped runResult ({ results: [], batched }) goes through pickResult with rowCount=null", async () => {
+    // Minimal fake adapter returning the BQ-shaped RunResult. pickResult
+    // must call fetchBatch() once for the initial page, and the resulting
+    // QueryResult must have rowCount=null (Load More still offered).
+    const batched = makeBqBatched(["id", "name"], [
+      [[1, "a"], [2, "b"]], // initial fetch
+      null, // EOF
+    ]);
+    const adapter = makeAdapter(async () => ({ results: [], batched }));
+    const runner = new QueryRunner(async () => adapter);
+
+    const result = await runner.run([stmt("SELECT *", 0, 9)], () => {});
+    expect(result[0].status).toBe("done");
+    expect(result[0].result?.columns).toEqual(["id", "name"]);
+    expect(result[0].result?.rows).toEqual([[1, "a"], [2, "b"]]);
+    expect(result[0].result?.rowCount).toBeNull();
+    // initial fetchBatch was called once.
+    expect(batched.fetchBatch).toHaveBeenCalledTimes(1);
+    // The BQ-shaped adapter sets `pending = true` while the initial fetch
+    // is in flight, and clears it (to `false`) after the first successful
+    // pickResult. The flag is the explicit "not pending" terminal state;
+    // non-BQ paths leave it `undefined` (never set).
+    expect(result[0].pending).toBe(false);
+  });
+
+  it("Test #9 — BQ onExhausted({ limited: true }) surfaces as resultLimited on the statement", async () => {
+    // The EOF carries limited=true (mirrors 03.1's BigQueryPagedQuery firing
+    // onExhausted at EOF when its internal `limited` flag is set). The
+    // runner's onExhausted wiring (mirrors the loadMoreImpl budget close
+    // path) must set `resultLimited = true` and close the handle.
+    const batched = makeBqBatched(
+      ["n"],
+      [
+        [[1]], // initial
+        [[2]], // loadMore
+        null, // EOF
+      ],
+    );
+    const adapter = makeAdapter(async () => ({ results: [], batched }));
+    const runner = new QueryRunner(async () => adapter);
+
+    await runner.run([stmt("SELECT *", 0, 9)], () => {});
+    await runner.loadMore(0); // returns [[2]]
+    // Override the next fetchBatch to also call onExhausted (mirrors 03.1's
+    // BigQueryPagedQuery firing it at EOF when limited).
+    batched.fetchBatch.mockImplementationOnce(async () => {
+      const cb = batched.onExhausted;
+      // 03.1's design: onExhausted fires INSIDE the fetchBatch call when
+      // the underlying page source reports EOF + limited.
+      if (typeof cb === "function") cb({ limited: true });
+      return null;
+    });
+    const eof = await runner.loadMore(0); // EOF, limited=true
+
+    expect(eof[0].resultLimited).toBe(true);
+    expect(eof[0].cursorClosed).toBe(true);
+    expect(batched.close).toHaveBeenCalledTimes(1);
+  });
+});

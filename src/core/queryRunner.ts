@@ -57,11 +57,33 @@ export interface StatementResult {
   /** True when a batched cursor was released before this run completed. */
   cursorClosed?: boolean;
   /**
+   * TASK-BQ03-003 — true iff the cursor was released because the
+   * BigQuery-shaped page source reported EOF (a fresh handle's natural
+   * exhaustion), NOT because a new run swept it for the pool. This
+   * distinguishes a BQ-EOF close from a sweep close so `loadMore` can
+   * be a graceful no-op for the former and keep the existing
+   * "run this statement alone" throw for the latter. For postgres
+   * cursors, this stays undefined (their EOF still uses the next-run
+   * sweep, and the ARP03-002 boundary tests pin `cursorClosed`
+   * undefined at EOF for non-BQ handles).
+   */
+  cursorExhausted?: boolean;
+  /**
    * TASK-ARP03-002 — true iff the retained-row cap was hit and the cursor
    * was closed for the budget (NOT by a cancel). A later loadMore is a
    * graceful no-op: unchanged rows, no throw, no false EOF.
    */
   resultLimited?: boolean;
+  /**
+   * TASK-BQ03-003 — true iff the adapter returned a BigQuery-shaped
+   * `{ results: [], batched }` (job submitted, first page not yet fetched).
+   * Cleared on the first successful `pickResult`. Orthogonal to `status`:
+   * a pending BigQuery statement is still `status = "running"`, while a
+   * postgres-cursor statement keeps `pending` undefined. TASK-BQ03-004
+   * reads this directly to render the pending state without re-deriving
+   * from a `batched` boolean the panel discards.
+   */
+  pending?: boolean;
   /** 1-based run ordinal, present only for append-mode entries. */
   runNo?: number;
   /** 1-based statement ordinal within an append-mode run. */
@@ -133,6 +155,19 @@ export class QueryRunner {
   /** Per-index in-flight promise — serializes concurrent loadMore cho cùng index. */
   private loadMoreInFlight: Map<number, Promise<StatementResult[]>> = new Map();
   private runCount = 0;
+  /**
+   * TASK-BQ03-003 — monotonically increasing run ordinal. `loadMoreImpl`
+   * snapshots this BEFORE its `fetchBatch` await and re-checks AFTER; a
+   * new `run()` having started while the fetch was parked bumps the
+   * counter and discards the late-settled batch. Closes the "late page
+   * after a NEW run" leak that the existing `cancelSeq` re-check (reset
+   * to 0 on each run) cannot catch — the new run starts with
+   * `cancelSeq = 0` again, so a loadMore's snapshot of 0 matches the
+   * post-await value of 0 and the late batch would otherwise land on the
+   * preserved statement. The counter is the minimal additive guard; the
+   * cancel machinery itself is untouched.
+   */
+  private runGeneration = 0;
 
   constructor(
     adapterProvider: () => Promise<DbAdapter>,
@@ -184,6 +219,13 @@ export class QueryRunner {
     const append = opts.append === true;
     const base = append ? this.results.length : 0;
     const runNo = ++this.runCount;
+    // TASK-BQ03-003 — bump the run generation so any in-flight loadMore
+    // (whose pre-await snapshot still references the previous generation)
+    // is forced to discard its late-settled batch on the post-await
+    // re-check. The previous run's preserved statement is the only place
+    // the late batch could otherwise leak into; this counter is the
+    // minimal additive guard that closes the leak.
+    this.runGeneration++;
     // TASK-ARP02-001 — a new run owns its cancel state: clear the sticky
     // flag (legacy semantics) and open the in-flight cancel window. Any
     // close-origin cancel from before this run is bounded away.
@@ -275,6 +317,15 @@ export class QueryRunner {
           // CRITICAL #1 contract: batched cursor — assign currentBatched NGAY
           // để cancel trong fetchBatch(initial) reaches đúng cursor.
           this.currentBatched = runResult.batched;
+          // TASK-BQ03-003 — mark the statement `pending = true` for a
+          // BigQuery-shaped `{ results: [], batched }` (job submitted,
+          // first page not yet fetched). Postgres cursors (no
+          // `onExhausted` property) leave `pending` undefined so the
+          // existing tests stay byte-identical. Cleared after the first
+          // successful `pickResult` below.
+          if ("onExhausted" in runResult.batched) {
+            this.results[index].pending = true;
+          }
         }
 
         if (this.cancelRequested) {
@@ -293,6 +344,14 @@ export class QueryRunner {
 
         // Pick result với batched-aware contract.
         const result = await pickResult(runResult);
+        // TASK-BQ03-003 — first successful pickResult clears `pending`.
+        // (A failing pickResult — e.g. a rejected initial fetchBatch —
+        // leaves `pending` set so the error path doesn't accidentally
+        // mark a never-fetched statement as not-pending; the catch block
+        // below resets it explicitly.)
+        if (this.results[index].pending) {
+          this.results[index].pending = false;
+        }
 
         // Re-check cancel: cancel có thể đã được gọi trong lúc fetchBatch(initial)
         // đang chờ. Status cuối cùng là 'cancelled', KHÔNG done.
@@ -339,6 +398,13 @@ export class QueryRunner {
           this.results[index].durationMs = Date.now() - start;
         }
         this.currentBatched = null;
+        // TASK-BQ03-003 — `pending` is the pre-running marker. A statement
+        // that errored or was cancelled before its first page resolved
+        // never had its initial fetch completed; clear the flag so
+        // consumers don't see a "pending" entry that's already terminal.
+        if (this.results[index].pending) {
+          this.results[index].pending = false;
+        }
         // Emit state change (error dừng chuỗi).
         onUpdate(this.results.slice());
         // Nếu lỗi logic (không phải cancel) → KHÔNG chạy statements sau.
@@ -397,8 +463,18 @@ export class QueryRunner {
     if (r.resultLimited) {
       return this.results.slice();
     }
-    if (r.cursorClosed) {
+    if (r.cursorClosed && !r.cursorExhausted) {
       throw new Error(`Statement ${index} cursor closed after its run finished — run this statement alone to page more rows`);
+    }
+    // TASK-BQ03-003 — BQ-shaped cursor that hit its natural EOF: a later
+    // loadMore is a graceful no-op (no throw, no extra fetch, unchanged
+    // rows). Mirrors the `resultLimited` no-op above; ordering matches
+    // the existing `cursorClosed` throw because a budget-limited
+    // statement also has `cursorExhausted` unset (budget close ≠ EOF
+    // close on a BQ handle in this design — onExhausted is the limited
+    // signal and the EOF branch is the close path).
+    if (r.cursorExhausted) {
+      return this.results.slice();
     }
     if (!r.batched) {
       throw new Error(`Statement ${index} has no batched cursor`);
@@ -418,12 +494,46 @@ export class QueryRunner {
       throw new Error(`Statement ${index} cancelled`);
     }
     const batched = r.batched;
+    // TASK-BQ03-003 — detect BigQuery-shaped handles (duck-typed via the
+    // optional `onExhausted` property TASK-BQ03-001's BigQueryPagedQuery
+    // exposes). Postgres cursors do NOT have this property; their EOF
+    // behavior is unchanged (the next-run sweep still releases them and
+    // the ARP03-002 boundary tests pin `cursorClosed` undefined at EOF).
+    const isBqShaped = "onExhausted" in batched;
+    if (isBqShaped) {
+      // Wire the onExhausted callback so 03.1's BigQueryPagedQuery can
+      // surface its internal `limited` flag as `resultLimited` on the
+      // statement (mirrors the budget close path below). The callback
+      // must NOT close the handle — that's loadMoreImpl's job at the
+      // EOF transition — so the onExhausted fires BEFORE the EOF check
+      // sees the null and closes; if it already ran, we no-op.
+      const bq = batched as BatchedQuery & {
+        onExhausted?: ((info: { limited: boolean }) => void) | null;
+      };
+      bq.onExhausted = (info: { limited: boolean }) => {
+        if (!info.limited) return;
+        if (r.resultLimited || r.cursorClosed) return;
+        // The BQ handle hit its byte budget at EOF. Re-run the same
+        // budget math the loadMore path uses (appendBatchBounded) so
+        // the rows are bounded and `resultLimited` surfaces. We only
+        // mark the flag here; the actual close is performed by the EOF
+        // branch below (unified path) for both limited and non-limited
+        // BQ handles. This keeps "EOF releases the job context exactly
+        // once" as a single transition.
+        r.resultLimited = true;
+      };
+    }
     // Track currentBatched để cancel mid-fetchBatch reaches đúng cursor.
     this.currentBatched = batched;
     this.currentBatchedCancelDelivered = false;
     // Snapshot the cancel sequence before the await; a cancel landing during
     // the fetch bumps it (see cancel()).
     const cancelSeqBefore = this.cancelSeq;
+    // TASK-BQ03-003 — snapshot the run generation too. A new `run()`
+    // having started while the fetch was parked bumps the counter (and
+    // resets cancelSeq to 0); the cancelSeq re-check alone cannot catch
+    // this because both the snapshot and the post-await value are 0.
+    const runGenBefore = this.runGeneration;
     try {
       const batch = await batched.fetchBatch();
       // TASK-ARP02-001 — post-await re-check (load-bearing): the run()'s
@@ -435,10 +545,35 @@ export class QueryRunner {
       if (this.cancelSeq !== cancelSeqBefore) {
         return this.results.slice();
       }
+      // TASK-BQ03-003 — late page after a NEW run: a run() that started
+      // while we were parked bumps `runGeneration`; the late batch is
+      // discarded so it never lands on the previous run's preserved
+      // statement (append-mode) or a leaked object reference.
+      if (this.runGeneration !== runGenBefore) {
+        return this.results.slice();
+      }
       if (batch === null || batch.length === 0) {
         // EOF — không append gì; rowCount = current rows length.
         if (r.result) {
           r.result = { ...r.result, rowCount: r.result.rows.length };
+        }
+        // TASK-BQ03-003 — BQ-shaped handle on EOF: close the retained
+        // job context exactly once and mark the statement `cursorClosed`.
+        // Plain postgres cursors are NOT closed here (the next-run
+        // sweep releases them and the ARP03-002 boundary tests pin
+        // `cursorClosed` undefined at EOF for non-BQ handles). When
+        // onExhausted already marked `resultLimited`, this same call
+        // closes the handle for the budget — unified EOF transition.
+        if (isBqShaped && !r.cursorClosed) {
+          this.currentBatchedCancelDelivered = true;
+          this.currentBatched = null;
+          try {
+            await batched.close();
+          } catch {
+            // best-effort — handle may already be closed.
+          }
+          r.cursorClosed = true;
+          r.cursorExhausted = true;
         }
         return this.results.slice();
       }

@@ -1782,3 +1782,387 @@ describe("ResultsPanel — TASK-ARP03-003 limited statements (wire + silent load
     expect(runner.loadMore).toHaveBeenCalledWith(0);
   });
 });
+
+
+// =============================================================================
+// TASK-BQ03-004 — BigQuery job states on the wire + token-gated Load More.
+// Constraints (from the task file):
+//  - `StatementResult.pending?: boolean` (added by 03.3) rides the wire via
+//    `sanitizeStatementResult`'s `...r` spread without an explicit slot.
+//  - `result.status` + `result.pending` + `resultLimited` + `cursorClosed` are
+//    orthogonal axes; none of them is collapsed by the host.
+//  - Load More fires only when the statement has a continuation capability
+//    (`batched !== false && !cursorClosed`). Token-less / closed-cursor
+//    statements are silent no-ops at the panel boundary: no runner call,
+//    no busy flip, no error toast — state is re-posted unchanged so the
+//    webview clears any in-flight flag.
+//  - Epoch / generation guards (`sessionEpoch` / `requerySeq` /
+//    `statementGeneration`) hold across BigQuery loadMore paths so a
+//    disposed panel or a newer render/requery never receives or overwrites
+//    state from a stale completion.
+// =============================================================================
+describe("ResultsPanel — BQ-03.4 BigQuery states", () => {
+  /** Bounded wait for any postMessage call whose payload matches `pred`. */
+  async function until(
+    fake: FakeWebview,
+    pred: (msgs: Array<Record<string, unknown>>) => boolean,
+  ): Promise<void> {
+    for (let i = 0; i < 200; i++) {
+      const msgs = fake.webview.postMessage.mock.calls.map(
+        (c) => c[0] as Record<string, unknown>,
+      );
+      if (pred(msgs)) return;
+      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 1));
+    }
+    throw new Error("timeout waiting for postMessage predicate (BQ-03.4)");
+  }
+
+  function stateMsgs(fake: FakeWebview): Array<Record<string, unknown>> {
+    return fake.webview.postMessage.mock.calls
+      .map((c) => c[0] as Record<string, unknown>)
+      .filter((m) => m.type === "state");
+  }
+
+  const showErrMock = () =>
+    vscode.window.showErrorMessage as unknown as {
+      mockClear: () => void;
+      mock: { calls: unknown[][] };
+    };
+
+  // ---- Test #1 — happy: pending/running states are distinct on the wire ----
+  // "a BigQuery statement rendered with status: 'running' while its job is
+  // pending shows the busy/spinner affordance; after settle with rows it
+  // shows done — the two posted state messages differ in the statement's
+  // status and the busy flag."
+  it("#1 — pending(running) and done ride the wire as distinct state posts; the pending field flows through sanitize", async () => {
+    const runner = makeRunnerStub();
+    const panel = new ResultsPanel({ runner });
+    // The runner flow calls setBusy(true) before posting the pending snapshot.
+    panel.setBusy(true);
+    const pendingStmt = {
+      index: 0,
+      sql: "SELECT * FROM bigquery.project.dataset.t",
+      status: "running" as const,
+      result: undefined,
+      pending: true,
+      durationMs: 0,
+    };
+    panel.render([pendingStmt as unknown as StatementResult], "bq-hdr");
+    const fake = lastPanel.current!;
+    fake.webview.postMessage.mockClear();
+
+    // The render post for the pending snapshot: busy:true, status:'running',
+    // pending:true on the result.
+    panel.render([pendingStmt as unknown as StatementResult], "bq-hdr");
+    const pendingPost = stateMsgs(fake).find(
+      (m) =>
+        Array.isArray(m.results) &&
+        ((m.results as Array<Record<string, unknown>>)[0]?.status === "running"),
+    );
+    expect(pendingPost).toBeDefined();
+    expect(pendingPost?.busy).toBe(true);
+    const pendingResult = (pendingPost!.results as Array<Record<string, unknown>>)[0];
+    expect(pendingResult.pending).toBe(true);
+    expect(pendingResult.status).toBe("running");
+
+    // Settle: setBusy(false) + status:'done'. Re-render.
+    panel.setBusy(false);
+    const doneStmt = {
+      index: 0,
+      sql: "SELECT * FROM bigquery.project.dataset.t",
+      status: "done" as const,
+      result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
+      durationMs: 0,
+    };
+    panel.render([doneStmt as unknown as StatementResult], "bq-hdr");
+
+    const allStates = stateMsgs(fake);
+    const donePost = allStates
+      .filter(
+        (m) =>
+          Array.isArray(m.results) &&
+          ((m.results as Array<Record<string, unknown>>)[0]?.status === "done"),
+      )
+      .pop();
+    expect(donePost).toBeDefined();
+    expect(donePost?.busy).toBe(false);
+    const doneResult = (donePost!.results as Array<Record<string, unknown>>)[0];
+    expect(doneResult.status).toBe("done");
+    expect(doneResult.pending).toBeFalsy();
+    // No status collapse: the two snapshots had different statuses, and the
+    // wire preserved each one in its own post.
+    expect(pendingResult.status).not.toBe(doneResult.status);
+    expect(pendingPost?.busy).not.toBe(donePost?.busy);
+  });
+
+  // ---- Test #2 — happy: cancelled / error / done are distinct on the wire ----
+  it("#2 — cancelled, error, and done ride the wire as three distinct statuses with the error text preserved", () => {
+    const runner = makeRunnerStub();
+    const panel = new ResultsPanel({ runner });
+    const results: StatementResult[] = [
+      // cancelled statement: no result, no error, no batched
+      {
+        index: 0,
+        sql: "SELECT 1",
+        status: "cancelled",
+        durationMs: 0,
+      },
+      // error statement: error text set
+      {
+        index: 1,
+        sql: "SELECT bad_col FROM missing",
+        status: "error",
+        error: "column \"bad_col\" does not exist",
+        durationMs: 5,
+      },
+      // done statement
+      {
+        index: 2,
+        sql: "SELECT 3",
+        status: "done",
+        result: { columns: ["x"], rows: [[3]], rowCount: 1, durationMs: 0 },
+        durationMs: 1,
+      },
+    ];
+    panel.render(results, "hdr");
+    const fake = lastPanel.current!;
+    const states = stateMsgs(fake);
+    expect(states.length).toBeGreaterThan(0);
+    const posted = (states[0].results as Array<Record<string, unknown>>);
+    expect(posted[0].status).toBe("cancelled");
+    expect(posted[1].status).toBe("error");
+    expect(posted[1].error).toBe('column "bad_col" does not exist');
+    expect(posted[2].status).toBe("done");
+    // None collapsed into a different status.
+    const statuses = posted.map((r) => r.status);
+    expect(new Set(statuses).size).toBe(3);
+  });
+
+  // ---- Test #3 — limited + closed is distinct; loadMore is a silent no-op ----
+  it("#3 — resultLimited + cursorClosed statement: loadMore is a silent panel-level no-op (no runner call, no busy flip, no toast)", async () => {
+    const runner = makeRunnerStub();
+    const panel = new ResultsPanel({ runner });
+    const limitedStmt: StatementResult = {
+      index: 0,
+      sql: "SELECT * FROM bigquery.public.x",
+      status: "done",
+      result: { columns: ["a"], rows: [[1]], rowCount: 1, durationMs: 0 },
+      resultLimited: true,
+      cursorClosed: true,
+      durationMs: 0,
+    };
+    panel.render([limitedStmt], "bq-hdr");
+    const fake = lastPanel.current!;
+
+    // The render post carries the limited + closed markers (sanitize preserves
+    // them via the `...r` spread).
+    let states = stateMsgs(fake);
+    expect(states.length).toBeGreaterThan(0);
+    for (const m of states) {
+      const r = (m.results as Array<Record<string, unknown>>)[0];
+      expect(r.resultLimited).toBe(true);
+      expect(r.cursorClosed).toBe(true);
+    }
+
+    fake.webview.postMessage.mockClear();
+    showErrMock().mockClear();
+
+    // Spy on loadMore and dispatch the webview message.
+    (runner.loadMore as ReturnType<typeof vi.fn>).mockClear();
+    fake.webview.dispatch({ type: "loadMore", index: 0 });
+    // Flush microtasks: a real runner call + setBusy would be synchronous on
+    // the dispatch path; give the gate a chance to either swallow or
+    // re-post the state.
+    for (let i = 0; i < 30; i++) {
+      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 1));
+    }
+
+    // No runner call.
+    expect(runner.loadMore).not.toHaveBeenCalled();
+    // No busy:true post.
+    const busyTrue = fake.webview.postMessage.mock.calls
+      .map((c) => c[0] as { type?: string; busy?: boolean })
+      .filter((m) => m.type === "busy" && m.busy === true);
+    expect(busyTrue).toHaveLength(0);
+    // No toast.
+    expect(showErrMock().mock.calls).toHaveLength(0);
+    // State re-posted with the same markers preserved.
+    states = stateMsgs(fake);
+    expect(states.length).toBeGreaterThan(0);
+    const last = states[states.length - 1];
+    const posted = (last.results as Array<Record<string, unknown>>)[0];
+    expect(posted.resultLimited).toBe(true);
+    expect(posted.cursorClosed).toBe(true);
+  });
+
+  // ---- Test #4 — edge: token-less (batched: false) loadMore is a silent no-op ----
+  it("#4 — token-less statement (batched: false): loadMore is a silent panel-level no-op; no runner call, no busy state, state re-posted unchanged", async () => {
+    const runner = makeRunnerStub();
+    const panel = new ResultsPanel({ runner });
+    const tokenlessStmt: StatementResult = {
+      index: 0,
+      sql: "SELECT * FROM bigquery.public.x",
+      status: "done",
+      result: { columns: ["a"], rows: [[1]], rowCount: 1, durationMs: 0 },
+      // token-less: handle is falsy (false), no continuation capability.
+      batched: false,
+      durationMs: 0,
+    };
+    panel.render([tokenlessStmt], "bq-hdr");
+    const fake = lastPanel.current!;
+    fake.webview.postMessage.mockClear();
+    showErrMock().mockClear();
+
+    (runner.loadMore as ReturnType<typeof vi.fn>).mockClear();
+    fake.webview.dispatch({ type: "loadMore", index: 0 });
+    for (let i = 0; i < 30; i++) {
+      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 1));
+    }
+
+    expect(runner.loadMore).not.toHaveBeenCalled();
+    const busyTrue = fake.webview.postMessage.mock.calls
+      .map((c) => c[0] as { type?: string; busy?: boolean })
+      .filter((m) => m.type === "busy" && m.busy === true);
+    expect(busyTrue).toHaveLength(0);
+    expect(showErrMock().mock.calls).toHaveLength(0);
+    // State re-posted with the SAME results (no new batch).
+    const states = stateMsgs(fake);
+    expect(states.length).toBeGreaterThan(0);
+    const last = states[states.length - 1];
+    const posted = (last.results as Array<Record<string, unknown>>)[0];
+    expect(posted.batched).toBe(false);
+    expect(posted.result).toEqual({
+      columns: ["a"],
+      rows: [[1]],
+      rowCount: 1,
+      durationMs: 0,
+    });
+  });
+
+  // ---- Test #5 — edge: stale session guard (panel dispose + recreate) ----
+  it("#5 — disposed panel; recreated; stale BigQuery loadMore completion posts NOTHING to the new session (epoch guard)", async () => {
+    const runner = makeRunnerStub();
+    const deferred = Promise.withResolvers<StatementResult[]>();
+    runner.loadMore = vi.fn(() => deferred.promise) as unknown as typeof runner.loadMore;
+    const oldStmt: StatementResult = {
+      index: 0,
+      sql: "SELECT old FROM bigquery.public.x",
+      status: "done",
+      result: { columns: ["a"], rows: [[1]], rowCount: 1, durationMs: 0 },
+      durationMs: 0,
+    };
+    const panel = new ResultsPanel({ runner });
+    panel.render([oldStmt], "bq-hdr");
+    const fake = lastPanel.current!;
+    fake.webview.dispatch({ type: "loadMore", index: 0 });
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+
+    // Dispose then recreate with a NEW statement set.
+    panel.dispose();
+    panel.render([{ ...oldStmt, sql: "SELECT new FROM bigquery.public.x" }], "bq-hdr");
+    const recreated = lastPanel.current!;
+    expect(recreated).not.toBe(fake);
+    recreated.webview.postMessage.mockClear();
+    showErrMock().mockClear();
+
+    // Stale continuation resolves NOW.
+    deferred.resolve([oldStmt]);
+    for (let i = 0; i < 30; i++) {
+      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 1));
+    }
+
+    // The recreated panel must NOT receive the stale old-SQL state post.
+    const staleState = recreated.webview.postMessage.mock.calls
+      .map((c) => c[0] as { type?: string; results?: Array<{ sql?: string }> })
+      .filter((m) => m.type === "state")
+      .filter((m) => (m.results ?? []).some((r) => r.sql === "SELECT old FROM bigquery.public.x"));
+    expect(staleState).toHaveLength(0);
+    expect(showErrMock().mock.calls).toHaveLength(0);
+  });
+
+  // ---- Test #6 — edge: requery/re-render during in-flight loadMore does not
+  // resurrect old rows (generation/seq guard).
+  it("#6 — render() during an in-flight loadMore does not let the stale completion overwrite the newer lastResults", async () => {
+    const runner = makeRunnerStub();
+    const deferred = Promise.withResolvers<StatementResult[]>();
+    runner.loadMore = vi.fn(() => deferred.promise) as unknown as typeof runner.loadMore;
+    const original: StatementResult = {
+      index: 0,
+      sql: "SELECT * FROM bigquery.public.x",
+      status: "done",
+      result: { columns: ["a"], rows: [[1]], rowCount: 1, durationMs: 0 },
+      durationMs: 0,
+    };
+    const refreshed: StatementResult = {
+      index: 0,
+      sql: "SELECT * FROM bigquery.public.x",
+      status: "done",
+      result: { columns: ["a"], rows: [[99]], rowCount: 1, durationMs: 0 },
+      durationMs: 0,
+    };
+    const panel = new ResultsPanel({ runner });
+    panel.render([original], "bq-hdr");
+    const fake = lastPanel.current!;
+    fake.webview.dispatch({ type: "loadMore", index: 0 });
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+
+    // Re-render with NEWER results while the loadMore is still in-flight.
+    panel.render([refreshed], "bq-hdr");
+    const internal = panel as unknown as {
+      lastResults: StatementResult[];
+      requerySeq: number;
+      statementGeneration: number;
+      sessionEpoch: number;
+    };
+    // The newer render must have bumped the generation.
+    expect(internal.statementGeneration).toBeGreaterThanOrEqual(2);
+    expect(internal.lastResults[0].result?.rows[0][0]).toBe(99);
+    fake.webview.postMessage.mockClear();
+
+    // Stale loadMore resolves with the OLD rows. The new generation/seq
+    // (and the panel's loadMore-handler epoch) must drop it.
+    deferred.resolve([original]);
+    for (let i = 0; i < 30; i++) {
+      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 1));
+    }
+
+    expect(internal.lastResults[0].result?.rows[0][0]).toBe(99);
+    // No state post re-asserted the OLD row on the wire.
+    const resurrected = fake.webview.postMessage.mock.calls
+      .map((c) => c[0] as { results?: Array<{ result?: { rows?: unknown[][] } }> })
+      .filter((m) => (m.results ?? []).some(
+        (r) => (r.result?.rows?.[0]?.[0]) === 1,
+      ));
+    expect(resurrected).toHaveLength(0);
+  });
+
+  // ---- Test #7 — regression: header passes through for non-BigQuery drivers ----
+  it("#7 — postgres header string flows through to every state post unchanged (regression pin)", () => {
+    const runner = makeRunnerStub();
+    const panel = new ResultsPanel({ runner });
+    const header = "Run at 2026-09-03T00:00:00.000Z — postgres@localhost/db";
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT 1",
+          status: "done",
+          result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      header,
+    );
+    const fake = lastPanel.current!;
+    const states = stateMsgs(fake);
+    expect(states.length).toBeGreaterThan(0);
+    for (const m of states) {
+      expect(m.header).toBe(header);
+    }
+  });
+});

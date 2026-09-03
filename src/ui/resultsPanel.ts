@@ -760,63 +760,110 @@ export class ResultsPanel {
 
   private async handleMessage(msg: WebviewMessage): Promise<void> {
     switch (msg.type) {
-      case "loadMore":
+      case "loadMore": {
+        // TASK-ARP02-002 — capture the session epoch before the first await;
+        // re-check after EVERY await so a continuation that outlives the
+        // panel (dispose mid-run) never posts into a re-created session.
+        const epoch = this.sessionEpoch;
+        const stmt = this.lastResults[msg.index];
+        // TASK-BQ03-004 — token-less / closed-cursor statements have NO
+        // continuation capability (BigQuery token-less final page: the
+        // handle is `false`; a closed-cursor post-budget/EOF statement:
+        // `cursorClosed: true`). The panel-level gate makes loadMore a
+        // SILENT no-op for these: do not call the runner (it would throw
+        // "no batched cursor" / "cursor closed after its run finished"),
+        // do not flip the busy flag, do not toast — just re-post the
+        // current state so the webview clears any in-flight UI flag it
+        // may have set. Mirrors the cancel-suppression shape; distinct
+        // from the ARP03-003 limited-only catch path (which only fires
+        // when the runner is actually called).
+        // The `batched` field is typed `BatchedQuery | undefined` on the
+        // base StatementResult; BigQuery's token-less sentinel is `false`
+        // (a planned 03.3 widening — the panel reads both shapes without
+        // re-deriving a boolean from the handle's truthiness).
+        const batchedField = stmt?.batched as unknown;
+        const noContinuation =
+          !stmt ||
+          batchedField === false ||
+          stmt.cursorClosed === true;
+        if (noContinuation) {
+          this.postMessage({
+            type: "state",
+            header: this.header,
+            results: this.lastResults,
+            busy: this.busy,
+          });
+          break;
+        }
+        // TASK-BQ03-004 — capture the statement generation BEFORE the
+        // first await. A render()/requery() that lands while the loadMore
+        // is in flight bumps statementGeneration; the stale completion
+        // then must NOT overwrite the newer lastResults (mirrors the
+        // requerySeq guard in handleRequery).
+        const generation = this.statementGeneration;
         // Mark busy TRƯỚC await để webview enable Cancel button ngay khi batch
         // bắt đầu fetch qua mạng. finally đảm bảo busy:false kể cả khi reject,
         // tránh kẹt disable vĩnh viễn.
         this.setBusy(true);
-        {
-          // TASK-ARP02-002 — capture the session epoch before the first await;
-          // re-check after EVERY await so a continuation that outlives the
-          // panel (dispose mid-run) never posts into a re-created session.
-          const epoch = this.sessionEpoch;
-          // TASK-ARP03-003 — capture the limited marker BEFORE the await:
-          // a budget-limited statement is a graceful no-op in the runner
-          // (queryRunner.ts loadMoreImpl), so a rejection here is
-          // stale/defensive and must NOT surface as "Load more failed" —
-          // the limit is neither an error nor a false EOF. Mirrors the
-          // cancel branch below.
-          const limited = this.lastResults[msg.index]?.resultLimited === true;
-          try {
-            const updated = await this.runner.loadMore(msg.index);
-            if (this.isStaleSession(epoch)) break;
-            this.lastResults = updated;
+        // TASK-ARP03-003 — capture the limited marker BEFORE the await:
+        // a budget-limited statement is a graceful no-op in the runner
+        // (queryRunner.ts loadMoreImpl), so a rejection here is
+        // stale/defensive and must NOT surface as "Load more failed" —
+        // the limit is neither an error nor a false EOF. Mirrors the
+        // cancel branch below.
+        const limited = stmt.resultLimited === true;
+        try {
+          const updated = await this.runner.loadMore(msg.index);
+          if (this.isStaleSession(epoch)) break;
+          if (generation !== this.statementGeneration) break;
+          this.lastResults = updated;
+          this.postMessage({
+            type: "state",
+            header: this.header,
+            results: updated,
+            busy: this.busy,
+          });
+        } catch (err) {
+          // Cancel-during-loadMore: runner đã hủy cursor (xem queryRunner.ts
+          // loadMoreImpl — currentBatched set trước fetchBatch). Nuốt error
+          // (không toast) và re-post state để webview clear in-flight flag.
+          // TASK-ARP03-003 — a limited statement suppresses the toast the
+          // same way: no "Load more failed" for a budget close.
+          const cancelled = this.runner.isCancelled?.() === true ||
+            /cancel/i.test(err instanceof Error ? err.message : String(err));
+          if (
+            !cancelled &&
+            !limited &&
+            !this.isStaleSession(epoch) &&
+            generation === this.statementGeneration
+          ) {
+            void vscode.window.showErrorMessage(
+              `Load more failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+          if (
+            !this.isStaleSession(epoch) &&
+            generation === this.statementGeneration
+          ) {
             this.postMessage({
               type: "state",
               header: this.header,
-              results: updated,
+              results: this.lastResults,
               busy: this.busy,
             });
-          } catch (err) {
-            // Cancel-during-loadMore: runner đã hủy cursor (xem queryRunner.ts
-            // loadMoreImpl — currentBatched set trước fetchBatch). Nuốt error
-            // (không toast) và re-post state để webview clear in-flight flag.
-            // TASK-ARP03-003 — a limited statement suppresses the toast the
-            // same way: no "Load more failed" for a budget close.
-            const cancelled = this.runner.isCancelled?.() === true ||
-              /cancel/i.test(err instanceof Error ? err.message : String(err));
-            if (!cancelled && !limited && !this.isStaleSession(epoch)) {
-              void vscode.window.showErrorMessage(
-                `Load more failed: ${err instanceof Error ? err.message : String(err)}`,
-              );
-            }
-            if (!this.isStaleSession(epoch)) {
-              this.postMessage({
-                type: "state",
-                header: this.header,
-                results: this.lastResults,
-                busy: this.busy,
-              });
-            }
-          } finally {
-            // TASK-ARP02-002 — the stale session's finally must not clear a
-            // NEWER session's busy flag (case 5).
-            if (!this.isStaleSession(epoch)) {
-              this.setBusy(false);
-            }
+          }
+        } finally {
+          // TASK-ARP02-002 — the stale session's finally must not clear a
+          // NEWER session's busy flag (case 5).
+          if (
+            !this.isStaleSession(epoch) &&
+            generation === this.statementGeneration
+          ) {
+            this.setBusy(false);
           }
         }
         break;
+      }
       case "cancel":
         await this.runner.cancel();
         this.setBusy(false);
