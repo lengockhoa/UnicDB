@@ -21,6 +21,7 @@
 // KHÔNG sửa behavior formatCell.
 
 import { stripTrailingSemicolon } from "../core/text";
+import type { SqlDialect } from "../core/statementParser";
 
 export type ColumnKind = "number" | "string" | "boolean";
 
@@ -58,6 +59,23 @@ export interface StatementResult {
   result?: QueryResultLike;
   error?: string;
   durationMs: number;
+  /**
+   * TASK-BQ04-001 — additive dialect marker, mirror of the canonical
+   * `src/core/queryRunner.ts:StatementResult.dialect`. The union
+   * re-declared inline (rather than imported from the canonical site)
+   * keeps the mirror's "no webview/ import" invariant intact.
+   * `"bigquery"` iff the statement ran on a BigQuery connection;
+   * `undefined` on every other driver. Survives the requery rest-spread
+   * (resultsPanel.ts:696) so downstream renderers keep the signal.
+   */
+  dialect?: "bigquery" | SqlDialect;
+  /**
+   * TASK-BQ04-001 — per-column BQ schema field, ordered to match
+   * `result.columns`. Mirror of the canonical field; same structural
+   * shape `{name?:, type?:, mode?:}` (type/mode may be undefined when
+   * the live seam does not surface them).
+   */
+  schemaFields?: ReadonlyArray<{ name?: string; type?: string; mode?: string }>;
 }
 
 // ---- inferColumns ----------------------------------------------------------

@@ -34,6 +34,7 @@ import { VsdbCodeLensProvider } from "./ui/codeLensProvider";
 import { registerTableCommands } from "./ui/tableCommands";
 import { ConnectionForm } from "./ui/connectionForm";
 import { sqlToRun, type SqlDialect } from "./core/statementParser";
+import { stampBqDialect } from "./core/bqDialect";
 import {
   createKeywordTableCache,
   qualifyKeywordTables,
@@ -2123,6 +2124,18 @@ async function applyKeywordQualify(
       // pick the first one with a live `batched.jobRef` so a multi-statement
       // run where statement 0 errors doesn't degrade the header to `—`.
       const runSlice = results.slice(appendBase);
+      // TASK-BQ04-001 — stamp `dialect: "bigquery"` (+ structural
+      // `schemaFields`) on every settled statement of THIS run when the
+      // active connection is BigQuery. The helper is pure / dependency-
+      // light (see `src/core/bqDialect.ts`) and a no-op on every non-BQ
+      // driver — `dialect` stays `undefined` so the formatCell path
+      // TASK-BQ04-002 reads stays byte-identical on postgres/mysql/mssql.
+      // Stamping happens AFTER `runner.run()` settles and BEFORE
+      // `panel.render(...)` so the post-settle render carries the marker;
+      // the streaming `onUpdate` path above intentionally does NOT stamp
+      // (running/pending states don't need the marker and the slice at
+      // that point may be partial).
+      stampBqDialect(runSlice, active);
       const liveJobRef = pickJobRefFromRun(runSlice);
       const finalHeader = buildRunHeader(isoTime, active, liveJobRef);
       panel.render(results, finalHeader, { appendBase });

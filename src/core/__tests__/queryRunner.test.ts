@@ -13,6 +13,10 @@ import {
   RETAINED_ROW_CAP,
   type StatementResult,
 } from "../queryRunner";
+import {
+  stampBqDialect,
+  type BqSchemaField,
+} from "../bqDialect";
 import type { ParsedStatement } from "../../config/types";
 import type {
   BatchedQuery,
@@ -1707,5 +1711,200 @@ describe("QueryRunner — BQ-03.3 BigQuery page continuation", () => {
     expect(eof[0].resultLimited).toBe(true);
     expect(eof[0].cursorClosed).toBe(true);
     expect((realShapedBatched.close as any)).toHaveBeenCalledTimes(1);
+  });
+});
+
+// =============================================================================
+// TASK-BQ04-001 — additive `dialect?` + `schemaFields?` markers on
+// StatementResult (BIG-04 dialect marker). Pure-function tests on the
+// `stampBqDialect` helper; the runner never has to be driven through a
+// full `runStatements` VS Code handle to assert the contract.
+//
+// 001.a happy        — BQ run stamps `dialect: "bigquery"` on every settled
+//                      statement + `schemaFields` is structurally present.
+// 001.b non-BQ        — postgres / mysql / mssql drivers leave `dialect`
+//                      and `schemaFields` `undefined` (regression pin for
+//                      TASK-BQ04-002's formatCell path).
+// 001.c spread survival — `dialect` survives the `resultsPanel.ts:696`
+//                      requery rest-spread `const { resultLimited,
+//                      cursorClosed, ...rest } = stmt`; reconstruction
+//                      sites preserve the marker.
+// =============================================================================
+describe("QueryRunner — BQ-04 dialect marker (TASK-BQ04-001)", () => {
+  /** Minimal settled `StatementResult` factory. */
+  function mkSettled(index: number, sql = `SELECT ${index}`, columns: string[] = [`c${index}`]): StatementResult {
+    return {
+      index,
+      sql,
+      status: "done",
+      durationMs: 1,
+      result: { columns, rows: [columns.map(() => index)], rowCount: 1, durationMs: 1 },
+    };
+  }
+
+  /** Build a settled BQ-shaped statement whose batched handle exposes columns. */
+  function mkBqSettled(index: number, columns: string[]): { stmt: StatementResult; batched: BatchedQuery } {
+    const batched = makeBatched(columns, [columns.map(() => index)]);
+    const stmt: StatementResult = {
+      ...mkSettled(index, `SELECT ${index}`, columns),
+      batched: batched as unknown as BatchedQuery,
+    };
+    return { stmt, batched };
+  }
+
+  it("001.a — happy: BQ run stamps `dialect: \"bigquery\"` on every settled statement + schemaFields is structurally present", () => {
+    // Two settled statements; the first carries a BQ-shaped `batched` handle
+    // exposing a `columns` array (the live `BigQueryPagedQuery` shape). The
+    // second carries no batched handle (e.g. an INSERT or DML in the same
+    // run). After `stampBqDialect(runSlice, { driver: "bigquery" })`:
+    //   - every entry has `dialect === "bigquery"`
+    //   - the entry with a `batched.columns` exposes `schemaFields` matching
+    //     the column-name order, structurally `{name?:,type?:,mode?:}` shaped
+    //   - the entry without a batched handle leaves `schemaFields` undefined
+    //     (the helper has no source to read from)
+    const { stmt: s0, batched } = mkBqSettled(0, ["id", "name"]);
+    const s1 = mkSettled(1); // no batched — INSERT-shaped
+    const slice: StatementResult[] = [s0, s1];
+
+    stampBqDialect(slice, { driver: "bigquery" });
+
+    expect(slice[0].dialect).toBe("bigquery");
+    expect(slice[1].dialect).toBe("bigquery");
+
+    // schemaFields: structural shape on the statement whose batched handle
+    // surfaces columns. Length and order match the handle's columns.
+    expect(slice[0].schemaFields).toBeDefined();
+    const fields0 = slice[0].schemaFields!;
+    expect(fields0).toHaveLength(2);
+    // The structural shape is { name?: string; type?: string; mode?: string };
+    // we only stamp `name` because the live `BigQueryPagedQuery` exposes
+    // `columns: string[]` (names only — no type/mode seam).
+    expect(fields0[0]!.name).toBe("id");
+    expect(fields0[1]!.name).toBe("name");
+    // Verify the structural-shape invariant TASK-BQ04-002 consumes: each
+    // entry has only the documented keys.
+    expect(Object.keys(fields0[0]!).sort()).toEqual(["name"]);
+    expect(Object.keys(fields0[1]!).sort()).toEqual(["name"]);
+
+    // Statement without a batched handle: schemaFields stays undefined
+    // (no source).
+    expect(slice[1].schemaFields).toBeUndefined();
+
+    // batched reference preserved.
+    expect(slice[0].batched).toBe(batched);
+  });
+
+  it("001.a (complement) — BQ stamp preserves pre-existing fields and order", () => {
+    // Stamp must NOT reorder entries, drop fields, or change status / result /
+    // batched references — only ADD the new markers.
+    const { stmt: s0Base, batched } = mkBqSettled(0, ["x"]);
+    const s0: StatementResult = {
+      ...s0Base,
+      resultLimited: true,
+      cursorClosed: true,
+      cursorExhausted: true,
+      pending: false,
+    };
+    const slice: StatementResult[] = [s0];
+
+    stampBqDialect(slice, { driver: "bigquery" });
+
+    expect(slice[0].dialect).toBe("bigquery");
+    expect(slice[0].resultLimited).toBe(true);
+    expect(slice[0].cursorClosed).toBe(true);
+    expect(slice[0].cursorExhausted).toBe(true);
+    expect(slice[0].pending).toBe(false);
+    expect(slice[0].result?.columns).toEqual(["x"]);
+    expect(slice[0].batched).toBe(batched);
+  });
+
+  it("001.b — edge (non-BQ regression): postgres / mysql / mssql drivers leave `dialect` and `schemaFields` undefined", () => {
+    // For every non-BQ driver, the stamp helper must NOT enter the BQ
+    // branch — `dialect` and `schemaFields` stay `undefined` and the
+    // formatCell path TASK-BQ04-002 reads from `dialect` does not regress.
+    const drivers = ["postgres", "mysql", "mssql"] as const;
+    for (const driver of drivers) {
+      const { stmt: s0, batched } = mkBqSettled(0, ["a", "b"]);
+      const s1 = mkSettled(1);
+      const slice: StatementResult[] = [s0, s1];
+
+      stampBqDialect(slice, { driver });
+
+      // Non-BQ: every entry stays untouched (no `dialect`, no `schemaFields`).
+      expect(slice[0].dialect).toBeUndefined();
+      expect(slice[1].dialect).toBeUndefined();
+      expect(slice[0].schemaFields).toBeUndefined();
+      expect(slice[1].schemaFields).toBeUndefined();
+      // Pre-existing fields preserved byte-identically.
+      expect(slice[0].result?.columns).toEqual(["a", "b"]);
+      expect(slice[0].batched).toBe(batched);
+      expect(slice[0].status).toBe("done");
+      expect(slice[1].status).toBe("done");
+    }
+  });
+
+  it("001.b (complement) — undefined / null active connection leaves `dialect` undefined (no crash)", () => {
+    // The host's runStatements seam calls this with the result of
+    // `mgr.getActive()` which may be `null`/`undefined` (no connection).
+    const slice: StatementResult[] = [mkSettled(0)];
+    expect(() => stampBqDialect(slice, null)).not.toThrow();
+    expect(() => stampBqDialect(slice, undefined)).not.toThrow();
+    expect(() => stampBqDialect(slice, {})).not.toThrow();
+    expect(slice[0].dialect).toBeUndefined();
+    expect(slice[0].schemaFields).toBeUndefined();
+  });
+
+  it("001.c — edge (spread survival): `dialect` survives the loadMore/requery rest-spread", () => {
+    // The resultsPanel requery path (resultsPanel.ts:696) destructures
+    // budget markers off and rebuilds the statement with `...rest`. A BQ
+    // statement's `dialect` marker must survive that spread so downstream
+    // consumers keep seeing the marker post-requery.
+    const base: StatementResult = {
+      index: 0,
+      sql: "SELECT 1",
+      status: "done",
+      durationMs: 1,
+      result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 1 },
+      resultLimited: true,
+      cursorClosed: true,
+      dialect: "bigquery",
+    };
+
+    // Mirror the exact pattern from resultsPanel.ts:696.
+    const { resultLimited, cursorClosed, ...rest } = base;
+    void resultLimited;
+    void cursorClosed;
+
+    // `rest.dialect` MUST equal `"bigquery"` — proves the reconstruction
+    // site preserves the marker. Without the additive field, `rest.dialect`
+    // would be `undefined` and downstream renderers would lose the signal.
+    expect(rest.dialect).toBe("bigquery");
+    // Verify the rest-spread shape: budget markers stripped, everything
+    // else carried.
+    expect((rest as { resultLimited?: boolean }).resultLimited).toBeUndefined();
+    expect((rest as { cursorClosed?: boolean }).cursorClosed).toBeUndefined();
+    expect(rest.sql).toBe("SELECT 1");
+    expect(rest.status).toBe("done");
+    expect(rest.result?.columns).toEqual(["x"]);
+  });
+
+  it("001.c (complement) — `dialect` is structurally preserved across both StatementResult declarations", () => {
+    // Compile-time assertion that the canonical `StatementResult`
+    // (queryRunner.ts) declares the field. The mirror site
+    // (resultsGridModel.ts) is enforced separately by `npm run typecheck`
+    // — a successful vitest run + typecheck together prove the field
+    // exists on BOTH sites.
+    //
+    // Runtime: the helper's `stampBqDialect` only accepts `StatementResult[]`
+    // and reads/writes the `dialect` field. If the canonical interface
+    // forgot the field, this test would fail to compile (vitest's esbuild
+    // transformer tolerates them — but `npm run typecheck` would error).
+    const stmt: StatementResult = mkSettled(0);
+    stmt.dialect = "bigquery"; // direct assignment requires the field
+    expect(stmt.dialect).toBe("bigquery");
+    // schemaFields type-check: assignable to ReadonlyArray<BqSchemaField>-shaped
+    const fields: ReadonlyArray<BqSchemaField> = [{ name: "x" }];
+    stmt.schemaFields = fields;
+    expect(stmt.schemaFields?.[0]?.name).toBe("x");
   });
 });

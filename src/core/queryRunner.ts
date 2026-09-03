@@ -33,6 +33,7 @@ import type {
   RunResult,
 } from "../adapters/types";
 import { appendBatchBounded } from "./resultBatcher";
+import type { SqlDialect } from "./statementParser";
 
 export type StatementStatus = "running" | "done" | "error" | "cancelled";
 
@@ -90,6 +91,29 @@ export interface StatementResult {
   runStmtNo?: number;
   /** Optional per-statement tab label used by browse flows. */
   label?: string;
+  /**
+   * TASK-BQ04-001 — additive dialect marker. `"bigquery"` iff this
+   * statement ran on a BigQuery connection (stamped by the host's
+   * `runStatements` after `runner.run()` settles). `undefined` on every
+   * non-BQ path so existing postgres/mysql/mssql behavior stays
+   * byte-identical. The marker is the canonical signal TASK-BQ04-002's
+   * `formatCell` switch reads to decide between the dialect-aware and the
+   * legacy rendering. Survives the requery rest-spread (see
+   * `resultsPanel.ts:696`) because the field is added to the interface
+   * AND mirrored in `src/ui/resultsGridModel.ts` — reconstruction sites
+   * carry it through verbatim.
+   */
+  dialect?: "bigquery" | SqlDialect;
+  /**
+   * TASK-BQ04-001 — per-column BQ schema field, ordered to match
+   * `result.columns`. Set ONLY when the live page source exposes a
+   * typed `BigQuerySchemaField[]` (or a structural equivalent); the
+   * `BigQueryPagedQuery` surface currently exposes `columns: string[]`
+   * only, so the helper falls back to a name-only projection (type/mode
+   * `undefined`) — TASK-BQ04-002 consumers must treat absent type/mode
+   * as "no declared metadata". `undefined` on every non-BQ path.
+   */
+  schemaFields?: ReadonlyArray<{ name?: string; type?: string; mode?: string }>;
 }
 
 export interface QueryRunnerOptions {
