@@ -7,12 +7,16 @@
 // Frozen surfaces (NON-NEGOTIABLE):
 //  - BQ-00: src/adapters/bigqueryTypes.ts, src/adapters/bigqueryAdc.ts
 //  - BQ-01: src/adapters/types.ts (BigQueryClientLike + BatchedQuery)
-//  - deps:  package.json (no new deps, @google-cloud/bigquery stays 9.0.3)
+//  - deps:  package.json dependency manifest (no new/removed/upgraded
+//           deps, @google-cloud/bigquery stays 9.0.3). The top-level
+//           `version` line is intentionally NOT frozen — every release
+//           cycle bumps it (this guard exists to catch ADAPTER drift,
+//           not version drift).
 //
 // Test cases (TDD):
 //  1. BQ-00 surface byte-untouched vs v1.50.0 (primary, regression)
 //  2. BigQueryClientLike + BatchedQuery unchanged (regression)
-//  3. package.json deps unchanged (regression)
+//  3. package.json dependency manifest unchanged (regression)
 //
 // A `sanity check` block at the end runs the same execSync call against an
 // obviously-different ref (HEAD) to prove the assertion isn't a tautology:
@@ -36,6 +40,26 @@ function gitDiff(ref: string, paths: readonly string[]): string {
   });
 }
 
+/**
+ * Strip the `version` line from a `package.json` diff. Every release
+ * cycle bumps `version` from one cycle to the next, and that bump is
+ * an INTENTIONAL change — the guard is here to catch ADAPTER drift
+ * (new / removed / upgraded dependencies, @google-cloud/bigquery
+ * version drift), not version drift. Returns the +/- lines that
+ * remain after filtering; the test asserts that set is empty.
+ */
+function packageJsonDepsDiff(ref: string): string {
+  const raw = gitDiff(ref, ["package.json"]);
+  return raw
+    .split("\n")
+    .filter(
+      (line) =>
+        /^[+-] [^]/.test(line) && // keep only add/remove content lines (skip `---` / `+++` / `@@`)
+        !/^[+-]\s+"version":\s+"[^"]+",?\s*$/.test(line) // drop the version bump
+    )
+    .join("\n");
+}
+
 describe(`TASK-BQ04-003 frozen-surface guard (base ${BASE_REF})`, () => {
   it("1. BQ-00 surface byte-untouched vs v1.50.0", () => {
     const out = gitDiff(BASE_REF, [
@@ -50,9 +74,11 @@ describe(`TASK-BQ04-003 frozen-surface guard (base ${BASE_REF})`, () => {
     expect(out.trim()).toBe("");
   });
 
-  it("3. package.json deps unchanged", () => {
-    const out = gitDiff(BASE_REF, ["package.json"]);
-    expect(out.trim()).toBe("");
+  it("3. package.json dependency manifest unchanged (version bumps are allowed)", () => {
+    // Release-time version bump is intentional — see packageJsonDepsDiff.
+    // We assert the +/- set is empty AFTER dropping the version line.
+    const filtered = packageJsonDepsDiff(BASE_REF);
+    expect(filtered).toBe("");
   });
 });
 
