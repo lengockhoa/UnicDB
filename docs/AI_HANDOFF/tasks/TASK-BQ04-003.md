@@ -107,3 +107,25 @@ FINDINGS:
     - src/adapters/__tests__/bq04SurfaceGuard.test.ts:31 — comment "keeps stderr from leaking on stderr" is garbled; intended meaning: stderr is piped so it cannot interleave with the asserted stdout.
 NEXT_STATUS_FOR_INDEX: changes_requested
 NOTES: Implementation is correct and fully verified on independent re-run (guard targets exact, repo-root resolution correct via git -C, loud failure on unreachable ref is documented intended behavior, CI shallow-clone caveat accepted by planner in Discussion). The only blocker is the missing executor self-report — a package-completeness fix, not a code fix.
+
+### R4.5 R1 — 2026-09-03 · unic-smart
+
+R4.5 focused re-review of the package-completeness fix (orchestrator round 1). Code is byte-identical to the R2-reviewed state (verified `git diff HEAD -- src/adapters/__tests__/bq04SurfaceGuard.test.ts` empty); the only delta is the newly-appended `## Executor Report`.
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart (config handoff.reviewer.model; differs from executor — isolation gate satisfied)
+EXECUTOR_MODEL: claude-sonnet-4-5 (now self-reported on disk; consistent with R2's relay)
+VERIFICATION_RERUN:
+  command: npx vitest run src/adapters/__tests__/bq04SurfaceGuard.test.ts ; npm run typecheck ; git diff 75cdb08 -- src/adapters/bigqueryTypes.ts src/adapters/bigqueryAdc.ts src/adapters/types.ts package.json
+  result: 4/4 pass (sanity row logged exactly 37 non-empty CHANGELOG diff lines, matching executor claim) ; typecheck exit 0 ; frozen diff empty
+TEST_PLAN_COVERAGE: all-followed — rows 1-3 pin the four frozen surfaces (BQ-00 two-file / BQ-01 types.ts / package.json); sanity block present and live
+FINDINGS:
+  critical:
+    - none — R2 blocker resolved: report on disk with EXECUTOR_TOOL / EXECUTOR_MODEL / EXECUTOR_SUBAGENT / RED_OUTPUT / Verification Output / Status / Note. RED_OUTPUT substantively explains the GREEN-by-design guard and demonstrates the sanity check yields the expected 37 non-empty diff lines (independently re-confirmed).
+  important:
+    - none
+  minor:
+    - (carried over from R2 — unchanged code, non-blocking) src/adapters/__tests__/bq04SurfaceGuard.test.ts:70-77 — sanity block inlines execSync instead of reusing gitDiff().
+    - (carried over from R2 — unchanged code, non-blocking) src/adapters/__tests__/bq04SurfaceGuard.test.ts:31 — comment "keeps stderr from leaking on stderr" is garbled.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: R2's "no code change required" stands. Report lacks a raw RED console block and an explicit `FILES_CHANGED:` label, but the `git status --porcelain` verification line plus Note substantively convey FILES_CHANGED — acceptable for a GREEN-by-design guard (no RED state exists). Executor model now self-reported, satisfying the model-isolation gate.

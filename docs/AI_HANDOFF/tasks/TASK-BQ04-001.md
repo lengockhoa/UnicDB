@@ -116,3 +116,22 @@ FINDINGS:
     - src/core/bqDialect.ts:87 — the `as unknown as StatementResultWithBatchedColumns` cast reads `batched.columns` structurally; fine because the frozen BatchedQuery contract guarantees `columns: string[]`, but the helper would mis-report `{name: [object Object]}` if a future adapter ever surfaced column objects. A `typeof c === "string" ? c : String((c as {name?:unknown})?.name ?? "")` guard would be more future-proof. Non-blocking.
 NEXT_STATUS_FOR_INDEX: changes_requested
 NOTES: Code and tests are genuinely good — verification re-ran green on all three commands and the frozen-surface guard holds. The only blocker is the missing self-report: the Quality Gate cannot confirm model isolation or TDD RED evidence without the Executor Report appended to this task file. Executor must append it (no code changes needed unless RED output reveals the tests were written after implementation).
+
+### R4.5 R1 — 2026-09-03 (re-reviewer, unic-smart)
+
+(R2 verdict preserved above for audit.)
+
+VERDICT: approved
+REVIEWER_MODEL: unic-smart (claude-opus tier, configured via handoff.reviewer.model)
+EXECUTOR_MODEL: claude-sonnet-4-5 (now self-reported in the ## Executor Report above; consistent with the R2-relayed claim and the INDEX.md row)
+VERIFICATION_RERUN:
+  command: npx vitest run src/core/__tests__/queryRunner.test.ts src/adapters/__tests__/bq04SurfaceGuard.test.ts && npm run typecheck && git diff 75cdb08 -- src/adapters/bigqueryTypes.ts src/adapters/bigqueryAdc.ts src/adapters/types.ts src/adapters/bigqueryPages.ts package.json
+  result: PASS — 63 pass / 0 fail (59 queryRunner + 4 guard); tsc --noEmit exit 0; frozen-surface diff 0 bytes
+TEST_PLAN_COVERAGE: all-followed (4/4 test rows; RED evidence now concrete — see below)
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - carried forward from R2 (non-blocking, no code change in this round): bqDialect.ts:40-46 hardcoded `BqDialectDriver` union; bqDialect.ts:87 structural cast on batched.columns.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: The sole R2 blocker is resolved. The newly-appended Executor Report is substantive: EXECUTOR_TOOL=claude-code, EXECUTOR_MODEL=claude-sonnet-4-5 (matches INDEX.md), EXECUTOR_SUBAGENT=feature-implementer, and RED_OUTPUT carries concrete, row-specific TDD-RED assertion failures (`expected undefined to be 'bigquery'` row 1, `expected 'bigquery' to be undefined` row 2, `TypeError: Cannot destructure property 'dialect' of 'rest'` row 3) — not a generic "tests failed". Code is byte-unchanged from the wave-1 commit R2 verified in detail: commit 8c169c5 (fix round 1) touched only the 3 task .md files, and the sole source drift b2a68c1..HEAD is the wave-2 BQ04-002 helper in resultsGridModel.ts. Model isolation holds (claude-sonnet-4-5 != unic-smart). All verification re-ran green. R2's two minor findings are unchanged and remain non-blocking.

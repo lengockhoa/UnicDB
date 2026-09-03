@@ -116,3 +116,20 @@ FINDINGS:
   minor: none (code review complete: 7 checklist items clear — helper dispatch correct and byte-frozen formatter reuse confirmed via `git diff 75cdb08 -- src/adapters/bigqueryPages.ts` = 0 lines; wiring at webview/main.ts 1736/1757/2543-2567/2633/2652/3168 threads dialect+schemaFields through module-scope currentDialect/currentSchemaFields; no new postMessage type; resultsGridModel.ts vscode-free with only type-only `../core/statementParser` + pure `../adapters/bigqueryPages` imports; frozen surface diff empty; formatCell 433-445 verbatim; test block covers rows 002.a-e + spot-check; acceptance criteria match code)
 NEXT_STATUS_FOR_INDEX: changes_requested
 NOTES: Technical review of the wave-2 diff is fully green (verdict will lift to approved once the Executor Report is appended — no code changes needed). Reviewer model unic-smart differs from executor unic-code per config .ukit/storage/config.json handoff.reviewer.model.
+
+### R4.5 R1 — re-review after fix round 1 (Executor Report appended) · unic-smart
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/resultsGridModel.test.ts src/ui/__tests__/webviewBundle.test.ts && npm run typecheck && npm test
+  result: 61 pass / 0 fail (52 resultsGridModel incl. new BQ-04 block + 9 webviewBundle); tsc --noEmit exit 0; full npm test 3402 pass / 2 skip (229 files pass / 1 skip) — the 1 "error" is the pre-existing webviewResultLimit.test.ts after-teardown timer leak (0 test failures, file untouched by this diff)
+TEST_PLAN_COVERAGE: all-followed — all 7 test rows implemented (002.a REPEATED `[1,2]`, 002.a' RECORD `{1,a}`, 002.b postgres/mysql/undefined fall-through, 002.c BQ field-undefined INT64 no-coercion, 002.d null/undefined empty marker, 002.e BQ type-variety table, regression formatCell spot-check); all with real expect() assertions; ≥2 distinct edge cases satisfied
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - docs/AI_HANDOFF/tasks/TASK-BQ04-002.md:105 (Executor Report Note) — line references are plan-era/base anchors that no longer match the committed file: formatCell is at 452-464 (not 433-445), formatDataCellForDialect at 523-540, openValueViewer textContent at 2566-2569 (not 2523), formatDataCell at 2652-2662 (not 2596). Wiring is confirmed correct at the real sites (1736/1757/2543-2567/2633/3168); this is prose only — recommend citing symbols instead of line numbers in future reports. Non-blocking.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: R2 technical-green confirmed and now unblocked — code is byte-unchanged between R2 and R4.5 R1 (only docs commit 8c169c5 landed; frozen-surface diffs empty; formatCell verbatim). Executor Report is present and substantive: EXECUTOR_TOOL claude-code, EXECUTOR_MODEL unic-code, EXECUTOR_SUBAGENT feature-implementer, RED_OUTPUT is a concrete `TypeError: formatDataCellForDialect is not a function` per-row trace with pre-existing rows green, fresh verification output included. Model isolation satisfied: reviewer unic-smart != executor unic-code per config. No new postMessage type; fields ride existing `state` results[i].
