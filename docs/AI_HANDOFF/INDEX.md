@@ -2,11 +2,11 @@
 
 | Task | Title | Status | Owner | Files |
 |------|-------|--------|-------|-------|
-| TASK-BQ03-001 | BigQuery job state machine + MVP SQL gate | ready | - | src/adapters/bigquery.ts, src/adapters/__tests__/bigqueryJobs.test.ts (new) |
-| TASK-BQ03-002 | BigQuery result page bridge (pure helpers) | ready | - | src/adapters/bigqueryPages.ts (new), src/adapters/__tests__/bigqueryPages.test.ts (new) |
-| TASK-BQ03-003 | QueryRunner continuation contract for BigQuery pages | ready | TASK-BQ03-001 | src/core/queryRunner.ts, src/core/__tests__/queryRunner.test.ts |
-| TASK-BQ03-004 | ResultsPanel BigQuery job states + token-gated Load More | ready | none | src/ui/resultsPanel.ts, src/ui/__tests__/resultsPanel.test.ts |
-| TASK-BQ03-005 | Command integration: GoogleSQL selection + copy-safe header | ready | TASK-BQ03-001, TASK-BQ03-004 | src/extension.ts, src/extension.test.ts |
+| TASK-BQ03-001 | BigQuery job state machine + MVP SQL gate | pending_review | executor=unic-code; reviewer=unic-smart | src/adapters/bigquery.ts, src/adapters/__tests__/bigqueryJobs.test.ts (new) |
+| TASK-BQ03-002 | BigQuery result page bridge (pure helpers) | pending_review | executor=unic-code; reviewer=unic-smart | src/adapters/bigqueryPages.ts (new), src/adapters/__tests__/bigqueryPages.test.ts (new) |
+| TASK-BQ03-003 | QueryRunner continuation contract for BigQuery pages | pending_review | executor=unic-code; reviewer=unic-smart | src/core/queryRunner.ts, src/core/__tests__/queryRunner.test.ts |
+| TASK-BQ03-004 | ResultsPanel BigQuery job states + token-gated Load More | pending_review | executor=unic-code; reviewer=unic-smart | src/ui/resultsPanel.ts, src/ui/__tests__/resultsPanel.test.ts |
+| TASK-BQ03-005 | Command integration: GoogleSQL selection + copy-safe header | pending_review | executor=unic-code; reviewer=unic-smart | src/extension.ts, src/extension.test.ts |
 
 ## Shipped prior cycles (v1.49.0 and earlier)
 
