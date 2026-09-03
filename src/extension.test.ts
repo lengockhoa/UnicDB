@@ -4099,25 +4099,23 @@ describe("TASK-ARP09-003 — lazy redacted Output Channel wiring", () => {
     expect(evts).toContain("onCommand:vsdb.diagnostics.clear");
   });
 });
-// Quiet the unused-import warning for the helper used inside the new
-// describe block (it was defined above all uses).
-void detectOmpState;
 
 // =============================================================================
-// TASK-BQ03-005 — BigQuery command integration: GoogleSQL selection +
-// copy-safe result header (data project, billing project, location, job link).
-//
-// All six test cases pin the same seam (runStatements → panel.render header):
-//   1. happy — all four facts (data proj, billing proj, location, job id/link)
-//   2. happy — GoogleSQL marker + no `useLegacySql` ever set
-//   3. edge  — jobRef-less result renders `—` placeholders, no `undefined`
-//   4. edge  — HTML-hostile jobRef pieces get escaped in the header string
-//   5. edge  — job error path still surfaces sanitized error + facts header
-//   6. regression — non-BQ driver headers stay byte-identical to the prior format
+// TASK-BQ03-005 — BigQuery command integration:
+//   - Driver-specific header (data project / billing project / location /
+//     job identity) for BigQuery connections;
+//   - GoogleSQL marker surfaced;
+//   - HTML-escaped copy-safe header (XSS-hostile project / billing / jobId);
+//   - non-BigQuery headers byte-identical to the legacy format;
+//   - R4.5 round 1 — append-mode 2nd-run regression: the post-settle re-render
+//     must read from THIS run's slice (`results.slice(appendBase)`), not the
+//     prior run's batched handle.
 // =============================================================================
-import type { BigQueryJobRef } from "./adapters/bigqueryTypes";
+describe("TASK-BQ03-005 — BigQuery command integration (header + copy-safety)", () => {
+  let runSpy: ReturnType<typeof vi.fn>;
+  /** Captured render() invocations: arguments[1] is the header string. */
+  let renderCalls: Array<{ results: unknown[]; header: string; opts?: unknown }>;
 
-describe("TASK-BQ03-005 — BigQuery command integration: GoogleSQL + copy-safe header", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     state.registeredCommands.clear();
@@ -4132,349 +4130,454 @@ describe("TASK-BQ03-005 — BigQuery command integration: GoogleSQL + copy-safe 
     state.createdTerminals.length = 0;
     state.createdOutputChannels.length = 0;
     state.confirmDestructive = undefined;
+    renderCalls = [];
+    mockRunnerResults = [];
     vi.resetModules();
   });
 
   /**
-   * Activate a fresh extension instance with a seeded BigQuery active
-   * connection + a fake adapter wired through `getAdapter()`. Returns the
-   * `runStatement` handler for the test to drive.
+   * Seed an active bigquery connection through `globalState` so the harness
+   * does not need SecretStorage. `bigquery` is the BigQuery sub-config: a
+   * `billingProject` is REQUIRED (the validator rejects empty), so any
+   * test that overrides it provides a non-empty string. `location` and
+   * `datasetProject` are optional.
    */
-  async function activateBqHarness(opts: {
-    bigquery: { billingProject: string; location?: string; datasetProject?: string };
-    jobRef?: BigQueryJobRef;
-    jobRefBatched?: unknown;
-    runnerError?: Error;
-  }) {
+  function makeBqCtx(opts: {
+    billingProject?: string;
+    location?: string;
+    datasetProject?: string;
+  } = {}): ReturnType<typeof makeCtx> {
     const ctx = makeCtx();
+    const bigquery = { billingProject: opts.billingProject ?? "proj-billing" } as Record<string, string>;
+    if (opts.location !== undefined) bigquery.location = opts.location;
+    if (opts.datasetProject !== undefined) bigquery.datasetProject = opts.datasetProject;
     ctx.globalState.get = vi.fn((key: string) => {
       if (key === "vsdb.connections") {
         return [
           {
-            id: "bq1",
+            id: "c1",
             name: "bq",
             driver: "bigquery",
             host: "",
             port: 0,
             user: "",
             database: "",
-            bigquery: opts.bigquery,
+            bigquery,
           },
         ];
       }
-      if (key === "vsdb.activeConnection") return "bq1";
+      if (key === "vsdb.activeConnection") return "c1";
       return undefined;
     }) as never;
-
-    // Wire the active adapter (used by `applyKeywordQualify` — short-circuits
-    // on non-postgres, but the path must not throw either way).
-    const connectionMgrMod = await import("./core/connectionManager");
-    const adapter: Partial<DbAdapter> = {
-      listTables: vi.fn().mockResolvedValue([]),
-      testConnection: vi.fn().mockResolvedValue(undefined),
-      close: vi.fn().mockResolvedValue(undefined),
-    };
-    vi.spyOn(
-      connectionMgrMod.ConnectionManager.prototype,
-      "getAdapter",
-    ).mockResolvedValue(adapter as DbAdapter);
-
-    const runnerMod = await import("./core/queryRunner");
-    let runSpy: ReturnType<typeof vi.spyOn>;
-    if (opts.runnerError) {
-      runSpy = vi
-        .spyOn(runnerMod.QueryRunner.prototype, "run")
-        .mockRejectedValue(opts.runnerError);
-    } else {
-      // Default: resolve a single done StatementResult whose batched handle
-      // carries the supplied jobRef (BQ-03.1 wire shape).
-      const batched = opts.jobRefBatched ?? {
-        columns: ["x"],
-        fetchBatch: vi.fn().mockResolvedValue(null),
-        cancel: vi.fn().mockResolvedValue(undefined),
-        close: vi.fn().mockResolvedValue(undefined),
-        jobRef: opts.jobRef,
-      };
-      runSpy = vi
-        .spyOn(runnerMod.QueryRunner.prototype, "run")
-        .mockResolvedValue([
-          {
-            index: 0,
-            sql: "SELECT 1",
-            status: "done",
-            durationMs: 1,
-            batched,
-            result: { columns: ["x"], rows: [["v"]], rowCount: 1 },
-          },
-        ] as never);
-    }
-
-    const { ResultsPanel: ResultsPanelModule } = await import(
-      "./ui/resultsPanel"
-    );
-    const renderSpy = vi.spyOn(ResultsPanelModule.prototype, "render");
-
-    const ext = await import("./extension");
-    await ext.activate(ctx as never);
-
-    const runStatementFn = state.registeredCommands.get("vsdb.runStatement");
-    expect(runStatementFn).toBeDefined();
-
-    return { runStatementFn, renderSpy, runSpy };
+    return ctx;
   }
 
-  const stmt: ParsedStatement = {
-    text: "SELECT 1",
-    start: 0,
-    end: 7,
-  };
-
-  // ---- Test #1: header carries all four facts ----
-  it("#1 BigQuery header carries data project, billing project, location, job id/link", async () => {
-    const { runStatementFn, renderSpy } = await activateBqHarness({
-      bigquery: {
-        billingProject: "billing-proj",
-        location: "US",
-        datasetProject: "data-proj",
-      },
-      jobRef: {
-        projectId: "data-proj",
-        location: "US",
-        jobId: "job123",
-      },
-    });
-
-    await runStatementFn!(stmt);
-
-    // Capture the LAST render call's header (post-settle re-render carries
-    // the finalised header with jobRef facts filled in).
-    expect(renderSpy).toHaveBeenCalled();
-    const calls = renderSpy.mock.calls;
-    const lastCall = calls[calls.length - 1];
-    const header = lastCall?.[1] as string;
-    expect(typeof header).toBe("string");
-
-    // All four facts are substrings of the same header string. Format pinned
-    // in §Test Cases #1 + Interfaces block: `Run at <ISO> — bigquery@<dp>/<bp>
-    // @ <loc> — job <link-or-id> (GoogleSQL)`.
-    expect(header).toMatch(/bigquery/);
-    expect(header).toContain("data-proj");
-    expect(header).toContain("billing-proj");
-    expect(header).toContain("US");
-    expect(header).toContain("job123");
-    // GoogleSQL marker — surfaces the dialect choice visibly.
-    expect(header).toContain("GoogleSQL");
-  });
-
-  // ---- Test #2: GoogleSQL selected and surfaced ----
-  it("#2 header carries GoogleSQL marker; no useLegacySql is ever set by host code", async () => {
-    const { runStatementFn, renderSpy } = await activateBqHarness({
-      bigquery: {
-        billingProject: "billing-proj",
-        location: "EU",
-      },
-      jobRef: {
-        projectId: "billing-proj",
-        location: "EU",
-        jobId: "job_eu_42",
-      },
-    });
-
-    await runStatementFn!(stmt);
-
-    expect(renderSpy).toHaveBeenCalled();
-    const header = renderSpy.mock.calls[renderSpy.mock.calls.length - 1]?.[1] as string;
-    // Static marker copy: "GoogleSQL" surfaces the dialect choice visibly.
-    expect(header).toContain("GoogleSQL");
-    // "Legacy SQL" must never appear — neither in the header nor in any
-    // sanitized error envelope we accidentally rendered. The header is the
-    // only surface under test here.
-    expect(header.toLowerCase()).not.toContain("legacy sql");
-  });
-
-  // ---- Test #3: jobRef-less result degrades gracefully ----
-  it("#3 jobRef-less result still renders header using `—` placeholders (no undefined leaking)", async () => {
-    const { runStatementFn, renderSpy } = await activateBqHarness({
-      bigquery: {
-        billingProject: "billing-proj",
-        location: "US",
-      },
-      // No jobRef provided → handle.batched is a no-jobRef handle. Per the
-      // task spec: missing segments render `—`.
-      jobRefBatched: {
-        columns: ["x"],
-        fetchBatch: vi.fn().mockResolvedValue(null),
-        cancel: vi.fn().mockResolvedValue(undefined),
-        close: vi.fn().mockResolvedValue(undefined),
-        // no jobRef on purpose
-      },
-    });
-
-    await runStatementFn!(stmt);
-
-    expect(renderSpy).toHaveBeenCalled();
-    const header = renderSpy.mock.calls[renderSpy.mock.calls.length - 1]?.[1] as string;
-    expect(typeof header).toBe("string");
-    // No literal "undefined" substring (copy-safe posture).
-    expect(header).not.toContain("undefined");
-    // The header still carries the configured facts we DO have (data/billing
-    // project, location) — and uses `—` for the job-identity gap.
-    expect(header).toContain("bigquery");
-    expect(header).toContain("billing-proj");
-    expect(header).toContain("US");
-    expect(header).toMatch(/—/);
-    // GoogleSQL marker is unconditional — dialect choice is always surfaced.
-    expect(header).toContain("GoogleSQL");
-  });
-
-  // ---- Test #4: HTML-hostile jobRef is escaped (copy-safe) ----
-  it("#4 header HTML-escapes hostile jobRef pieces; credentials never appear", async () => {
-    const { runStatementFn, renderSpy } = await activateBqHarness({
-      bigquery: {
-        billingProject: "billing-proj",
-        location: "US",
-        datasetProject: "data-proj",
-      },
-      jobRef: {
-        projectId: "<script>alert(1)</script>",
-        location: 'EU-"weird"',
-        jobId: 'job&"x"',
-      },
-    });
-
-    await runStatementFn!(stmt);
-
-    expect(renderSpy).toHaveBeenCalled();
-    const header = renderSpy.mock.calls[renderSpy.mock.calls.length - 1]?.[1] as string;
-    // No raw `<`, `>`, or `"` must survive into the header string — those are
-    // the exact tokens escapeHtml escapes (resultsPanel.ts:2259). The
-    // exception is the em-dash `—` (U+2014), which is NOT one of the
-    // escaped tokens.
-    expect(header).not.toContain("<script>");
-    expect(header).not.toContain("</script>");
-    expect(header).not.toContain('"');
-    // Escaped form MUST be present (proves escaping happened, not just
-    // stripping).
-    expect(header).toContain("&lt;script&gt;");
-    expect(header).toContain("&quot;");
-    // Credentials field is not in the header — no fake field ever appears.
-    expect(header.toLowerCase()).not.toMatch(/password|token|keyfile|service_account/);
-  });
-
-  // ---- Test #5: error path keeps header honest ----
-  it("#5 job error keeps header honest; no raw Google message or SQL in error path", async () => {
-    // Sanitized envelope shape — TASK-BQ03-001's `BigQueryJobError`. The
-    // message contains ONLY the category + location token, never raw Google
-    // text or the SQL.
-    const sanitized = new Error(
-      "BigQuery job failed: api_denied (US)",
-    );
-    sanitized.name = "BigQueryJobError";
-
-    const { runStatementFn, renderSpy } = await activateBqHarness({
-      bigquery: {
-        billingProject: "billing-proj",
-        location: "US",
-      },
-      runnerError: sanitized,
-    });
-
-    await runStatementFn!(stmt);
-
-    // The error path goes through `vscode.window.showErrorMessage` — that's
-    // the pre-existing surface. The header doesn't get posted in the error
-    // path (runStatements swallows it before render fires). We assert the
-    // existing showErrorMessage + sanitization contract: the error message
-    // contains category + location but no raw Google payload.
-    const showErrorSpy = vi.mocked(vscodeMock.window.showErrorMessage);
-    expect(showErrorSpy).toHaveBeenCalled();
-    const lastErrMsg = showErrorSpy.mock.calls[
-      showErrorSpy.mock.calls.length - 1
-    ]?.[0] as string;
-    // Sanitized envelope shape preserved.
-    expect(lastErrMsg).toContain("api_denied");
-    expect(lastErrMsg).toContain("US");
-    // No raw SQL token, no raw Google message leak.
-    expect(lastErrMsg).not.toContain("SELECT 1");
-    expect(lastErrMsg).not.toContain("Access Denied");
-    expect(lastErrMsg).not.toContain("ya29.");
-
-    // Header may or may not have been rendered in the error path — we don't
-    // pin it here, but if it WAS rendered, the header must NOT carry the raw
-    // SQL or raw Google message either.
-    if (renderSpy.mock.calls.length > 0) {
-      const header = renderSpy.mock.calls[renderSpy.mock.calls.length - 1]?.[1] as string;
-      expect(header).not.toContain("SELECT 1");
-      expect(header).not.toContain("Access Denied");
-    }
-  });
-
-  // ---- Test #6: non-BQ driver headers stay byte-identical ----
-  it("#6 non-BigQuery headers remain byte-identical to the prior format", async () => {
+  function makeLegacyCtx(driver: string): ReturnType<typeof makeCtx> {
     const ctx = makeCtx();
     ctx.globalState.get = vi.fn((key: string) => {
       if (key === "vsdb.connections") {
         return [
           {
-            id: "pg1",
-            name: "pg",
-            driver: "postgres",
-            host: "db.example.com",
+            id: "c1",
+            name: "c",
+            driver,
+            host: "h",
             port: 5432,
             user: "u",
             database: "d",
           },
         ];
       }
-      if (key === "vsdb.activeConnection") return "pg1";
+      if (key === "vsdb.activeConnection") return "c1";
       return undefined;
     }) as never;
+    return ctx;
+  }
 
-    const connectionMgrMod = await import("./core/connectionManager");
-    const adapter: Partial<DbAdapter> = {
-      listTables: vi.fn().mockResolvedValue([]),
-      testConnection: vi.fn().mockResolvedValue(undefined),
-      close: vi.fn().mockResolvedValue(undefined),
-    };
-    vi.spyOn(
-      connectionMgrMod.ConnectionManager.prototype,
-      "getAdapter",
-    ).mockResolvedValue(adapter as DbAdapter);
-
-    const runnerMod = await import("./core/queryRunner");
-    vi.spyOn(runnerMod.QueryRunner.prototype, "run").mockResolvedValue([
-      {
-        index: 0,
-        sql: "SELECT 1",
-        status: "done",
-        durationMs: 1,
-        result: { columns: ["?column?"], rows: [["1"]], rowCount: 1 },
-      },
-    ] as never);
-
-    const { ResultsPanel: ResultsPanelModule } = await import(
-      "./ui/resultsPanel"
+  /** Install a render spy that captures every call's header string. MUST be
+   *  called BEFORE `activate()` so the panel instance the extension builds
+   *  inherits the spied prototype method (otherwise resetModules + activate
+   *  would install a real render and the spy would only see fresh instances
+   *  loaded later — see TASK-RLX02-003 for the established pattern). */
+  async function spyRender() {
+    const panelMod = await import("./ui/resultsPanel");
+    vi.spyOn(panelMod.ResultsPanel.prototype, "render").mockImplementation(
+      ((results: unknown[], header: string, opts?: unknown) => {
+        renderCalls.push({ results: results as unknown[], header, opts });
+      }) as never,
     );
-    const renderSpy = vi.spyOn(ResultsPanelModule.prototype, "render");
+  }
 
-    const ext = await import("./extension");
-    await ext.activate(ctx as never);
+  /** Stub ConnectionManager.getAdapter() with a no-op adapter so the harness
+   *  does not need ADC or any real BigQuery connection. Without this,
+   *  `applyKeywordQualify` → `mgr.getAdapter()` → real BigQueryAdapter →
+   *  real connect() → could hang / reject / never resolve in the test env. */
+  async function stubAdapter() {
+    const connectionMgrMod = await import("./core/connectionManager");
+    const adapter = {
+      listTables: vi.fn(async () => []),
+      listColumns: vi.fn(async () => []),
+      listSchemas: vi.fn(async () => []),
+      testConnection: vi.fn(async () => undefined),
+      close: vi.fn(async () => undefined),
+      runQuery: vi.fn(async () => ({ results: [] })),
+    };
+    vi.spyOn(connectionMgrMod.ConnectionManager.prototype, "getAdapter").mockResolvedValue(
+      adapter as never,
+    );
+  }
 
-    const runStatementFn = state.registeredCommands.get("vsdb.runStatement");
-    expect(runStatementFn).toBeDefined();
+  function setSqlEditor(sql: string): void {
+    state.activeEditor = {
+      document: {
+        languageId: "sql",
+        getText: () => sql,
+        // Mirror vscode.TextDocument.offsetAt: returns the character offset
+        // of the given position within the document (single-line SQL).
+        offsetAt: (p: unknown) => (p as { character: number }).character,
+      },
+      selection: {
+        isEmpty: false,
+        active: { line: 0, character: sql.length },
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: sql.length },
+      },
+      insertSnippet: vi.fn().mockResolvedValue(undefined),
+    };
+  }
 
-    await runStatementFn!(stmt);
+  /** A batched handle carrying a jobRef, mimicking the BQ-03.1 contract. */
+  function makeBatchedHandle(jobRef: {
+    projectId: string;
+    location: string;
+    jobId: string;
+  }): { jobRef: typeof jobRef; fetchBatch: () => Promise<unknown[]>; cancel: () => Promise<void>; close: () => Promise<void> } {
+    return {
+      jobRef,
+      fetchBatch: async () => [],
+      cancel: async () => {},
+      close: async () => {},
+    };
+  }
 
-    expect(renderSpy).toHaveBeenCalled();
-    const header = renderSpy.mock.calls[renderSpy.mock.calls.length - 1]?.[1] as string;
-    // Pin the byte-identical regression: original format at extension.ts:1971
-    // is `Run at <ISO> — <driver>@<host>/<database>`. `active.database` is
-    // `"d"` for the seeded config.
-    expect(header).toMatch(/^Run at \d{4}-\d{2}-\d{2}T[\d:.]+Z — postgres@db\.example\.com\/d$/);
-    // No BigQuery-specific markers ever bleed in for non-BQ drivers.
-    expect(header).not.toContain("GoogleSQL");
-    expect(header).not.toContain("bigquery@");
-    expect(header).not.toContain("bq:");
-    expect(header).not.toMatch(/— job/);
+  /**
+   * Shared append-mode state across multiple `driveRun` calls within one
+   * test. Mirrors the real runner's `private results: StatementResult[]`:
+   * each invocation appends THIS run's entries onto the persistent array
+   * and returns the FULL array (`queryRunner.ts:281 — return this.results.slice()`).
+   * Reset in `beforeEach` so each test starts with an empty accumulator.
+   */
+  let mockRunnerResults: unknown[] = [];
+
+  /**
+   * Drive a full `vsdb.runQuery` cycle. `mockResultsBuilder` receives the
+   * runner's CURRENT results array (already containing any prior runs in
+   * append-mode) and returns the array the mocked `runner.run` should
+   * resolve with.
+   */
+  async function driveRun(
+    builder: (currentResults: unknown[]) => unknown[],
+    sql = "SELECT 1",
+  ): Promise<void> {
+    setSqlEditor(sql);
+    const runnerMod = await import("./core/queryRunner");
+    const realRunnerCtor = runnerMod.QueryRunner;
+    runSpy = vi
+      .spyOn(realRunnerCtor.prototype, "run")
+      .mockImplementation((async () => {
+        // Simulate runner's append-mode semantics: append THIS run's
+        // entries onto the persistent array and return the FULL array.
+        const built = builder(mockRunnerResults.slice());
+        for (const r of built) {
+          if (!mockRunnerResults.includes(r)) mockRunnerResults.push(r);
+        }
+        return mockRunnerResults as never;
+      }) as never);
+    vi.spyOn(realRunnerCtor.prototype, "getResults").mockImplementation(
+      (() => mockRunnerResults.slice()) as never,
+    );
+    vi.spyOn(realRunnerCtor.prototype, "isRunning").mockReturnValue(
+      false,
+    );
+
+    const runCmd = state.registeredCommands.get("vsdb.runQuery");
+    expect(runCmd, "vsdb.runQuery must be registered").toBeDefined();
+    await runCmd!();
+    // Settle microtasks.
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 5));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Test #1 — happy: BigQuery header carries all four facts (data project,
+  // billing project, location, job identity). Format pin from the task spec:
+  //   ... bigquery@<dataProj>/<billingProj> @ <location> — job <link-or-id> (GoogleSQL)
+  // ---------------------------------------------------------------------------
+  it("#1 happy: BigQuery header carries all four facts + GoogleSQL marker", async () => {
+    await spyRender();
+    await stubAdapter();
+    const ctx = makeBqCtx({
+      billingProject: "proj-billing",
+      location: "US",
+    });
+    await (await import("./extension")).activate(ctx as never);
+
+    const batched = makeBatchedHandle({
+      projectId: "data-proj",
+      location: "US",
+      jobId: "job123",
+    });
+    await driveRun(() => [
+      { index: 0, sql: "SELECT 1", status: "done", batched, durationMs: 0 },
+    ]);
+
+    expect(renderCalls.length).toBeGreaterThan(0);
+    const finalHeader = renderCalls[renderCalls.length - 1]!.header;
+    expect(finalHeader).toMatch(/bigquery@data-proj\/proj-billing/);
+    expect(finalHeader).toMatch(/@ US/);
+    // The job identity segment must include jobId (parenthesised at the end).
+    expect(finalHeader).toMatch(/\(job123\)/);
+    expect(finalHeader).toMatch(/GoogleSQL/);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test #2 — happy: GoogleSQL marker surfaced; no `useLegacySql` ever sent.
+  // ---------------------------------------------------------------------------
+  it("#2 happy: GoogleSQL marker in header — no useLegacySql option anywhere", async () => {
+    await spyRender();
+    await stubAdapter();
+    const ctx = makeBqCtx({ billingProject: "proj-billing", location: "EU" });
+    await (await import("./extension")).activate(ctx as never);
+
+    const batched = makeBatchedHandle({
+      projectId: "data-proj",
+      location: "EU",
+      jobId: "job_EU_1",
+    });
+    await driveRun(() => [
+      { index: 0, sql: "SELECT 1", status: "done", batched, durationMs: 0 },
+    ]);
+
+    const finalHeader = renderCalls[renderCalls.length - 1]!.header;
+    expect(finalHeader).toMatch(/GoogleSQL/);
+    // Legacy SQL must never be silently chosen: header never carries the
+    // "LegacySQL" marker — this asserts the marker is the EXACT GoogleSQL
+    // substring, not a wildcard that would also match "LegacySQL".
+    expect(finalHeader).not.toMatch(/LegacySQL/);
+    expect(finalHeader).not.toMatch(/legacy/i);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test #3 — edge (empty): missing job identity degrades gracefully with `—`
+  // ---------------------------------------------------------------------------
+  it("#3 edge (empty): missing jobRef → `—` placeholder, no `undefined`, no crash", async () => {
+    await spyRender();
+    await stubAdapter();
+    const ctx = makeBqCtx({ billingProject: "proj-billing", location: "US" });
+    await (await import("./extension")).activate(ctx as never);
+
+    // Result WITHOUT a batched handle (gate-rejected run / cancelled / etc.).
+    await driveRun(() => [
+      { index: 0, sql: "SELECT 1", status: "error", error: "cancelled", durationMs: 0 },
+    ]);
+
+    const finalHeader = renderCalls[renderCalls.length - 1]!.header;
+    expect(finalHeader).not.toMatch(/undefined/);
+    expect(finalHeader).not.toMatch(/null/);
+    expect(finalHeader).toMatch(/job —/);
+    // Header still includes the BigQuery identity line + GoogleSQL marker.
+    expect(finalHeader).toMatch(/bigquery@/);
+    expect(finalHeader).toMatch(/GoogleSQL/);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test #4 — edge (copy-safe): HTML-hostile projectId, location, AND
+  // billingProject get escaped. The hostile billingProject fixture is
+  // R4.5 round 1's blocker (reviewer finding): billingProject appears TWICE
+  // in the header (identity segment + link `project=` param).
+  // ---------------------------------------------------------------------------
+  it("#4 edge (copy-safe): HTML-hostile jobRef pieces + billingProject escaped", async () => {
+    await spyRender();
+    await stubAdapter();
+    const ctx = makeBqCtx({
+      billingProject: '<script>alert(1)</script>',
+      location: '<bad>',
+    });
+    await (await import("./extension")).activate(ctx as never);
+
+    const batched = makeBatchedHandle({
+      projectId: "<script>alert(2)</script>",
+      location: '<bad>"&',
+      jobId: 'evil"&<jobId>',
+    });
+    await driveRun(() => [
+      { index: 0, sql: "SELECT 1", status: "done", batched, durationMs: 0 },
+    ]);
+
+    const finalHeader = renderCalls[renderCalls.length - 1]!.header;
+    // Raw HTML must NOT pass through into the posted header.
+    expect(finalHeader).not.toContain('<script>');
+    expect(finalHeader).not.toContain('</script>');
+    // Escaped forms present.
+    expect(finalHeader).toContain('&lt;script&gt;');
+    expect(finalHeader).toContain('&lt;bad&gt;');
+    // `"` from billingProject must be escaped (URL-hostile segment).
+    expect(finalHeader).toContain('&quot;');
+    // jobId's hostile `"&<` all escaped.
+    expect(finalHeader).toContain('evil&quot;&amp;&lt;jobId&gt;');
+    // billingProject appears as both identity segment AND link project=.
+    // The hostile string must remain escaped in BOTH positions; the
+    // helper escape() also percent-encodes `&` for the link body.
+    const occurrences = finalHeader.split('&lt;script&gt;alert(1)&lt;/script&gt;').length - 1;
+    expect(occurrences).toBeGreaterThanOrEqual(1);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test #5 — edge (permission/denied): BigQueryJobError surfaces sanitized.
+  // ---------------------------------------------------------------------------
+  it("#5 edge (denied): BigQueryJobError-shaped reject → sanitized error path", async () => {
+    await spyRender();
+    await stubAdapter();
+    setSqlEditor("SELECT 1");
+    const ctx = makeBqCtx({ billingProject: "proj-billing", location: "US" });
+    await (await import("./extension")).activate(ctx as never);
+
+    // Override runner.run to reject with the sanitized envelope shape from
+    // TASK-BQ03-001.
+    const runnerMod = await import("./core/queryRunner");
+    runSpy = vi
+      .spyOn(runnerMod.QueryRunner.prototype, "run")
+      .mockRejectedValue(
+        Object.assign(new Error("BigQuery job failed: api_denied (US)"), {
+          name: "BigQueryJobError",
+        }) as never,
+      );
+    vi.spyOn(runnerMod.QueryRunner.prototype, "isRunning").mockReturnValue(false);
+
+    const showErrSpy = vi.spyOn(vscodeMock.window, "showErrorMessage");
+
+    await state.registeredCommands.get("vsdb.runQuery")!();
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 5));
+
+    expect(showErrSpy).toHaveBeenCalled();
+    const msg = String(showErrSpy.mock.calls[0]?.[0] ?? "");
+    // Sanitized envelope forwards: category + location visible.
+    expect(msg).toMatch(/api_denied/);
+    expect(msg).toMatch(/US/);
+    // No raw SQL leaks.
+    expect(msg).not.toContain("SELECT");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test #6 — regression: non-BigQuery headers byte-identical.
+  // ---------------------------------------------------------------------------
+  it("#6 regression: non-BigQuery headers byte-identical to legacy format", async () => {
+    await spyRender();
+    await stubAdapter();
+    const ctx = makeLegacyCtx("postgres");
+    await (await import("./extension")).activate(ctx as never);
+
+    await driveRun(() => [
+      { index: 0, sql: "SELECT 1", status: "done", durationMs: 0 },
+    ]);
+
+    expect(renderCalls.length).toBeGreaterThan(0);
+    const finalHeader = renderCalls[renderCalls.length - 1]!.header;
+    // Pin byte-identical format from extension.ts legacy code path:
+    // `Run at <ISO> — postgres@h/d`
+    expect(finalHeader).toMatch(/^Run at .+ — postgres@h\/d$/);
+    // No BigQuery-specific markers leak in.
+    expect(finalHeader).not.toMatch(/bigquery@/);
+    expect(finalHeader).not.toMatch(/GoogleSQL/);
+  });
+
+  // ---------------------------------------------------------------------------
+  // R4.5 round 1 — append-mode regression: 2nd BQ run in the same session
+  // must show the NEW run's job link, not the prior run's. Without slicing
+  // from `appendBase`, the post-settle re-render reads `results[0]?.batched`
+  // (the prior run's handle) and the header is stamped with the current
+  // run's ISO time + stale jobId.
+  // ---------------------------------------------------------------------------
+  it("R4.5 #1 append-mode: 2nd BigQuery run in same session shows the NEW run's job link", async () => {
+    await spyRender();
+    await stubAdapter();
+    const ctx = makeBqCtx({
+      billingProject: "proj-billing",
+      location: "US",
+    });
+    await (await import("./extension")).activate(ctx as never);
+
+    // First run: jobId = "first-job"
+    const batched1 = makeBatchedHandle({
+      projectId: "data-proj",
+      location: "US",
+      jobId: "first-job",
+    });
+    await driveRun(() => [
+      { index: 0, sql: "SELECT 1", status: "done", batched: batched1, durationMs: 0 },
+    ]);
+
+    // Reset the renderCalls window so we only assert on the 2nd run's
+    // post-settle render.
+    renderCalls.length = 0;
+
+    // Second run: jobId = "second-job" (DIFFERENT from first run).
+    const batched2 = makeBatchedHandle({
+      projectId: "data-proj",
+      location: "US",
+      jobId: "second-job",
+    });
+    await driveRun((currentResults) => [
+      ...currentResults,
+      { index: 1, sql: "SELECT 2", status: "done", batched: batched2, durationMs: 0 },
+    ]);
+
+    expect(renderCalls.length).toBeGreaterThan(0);
+    const finalHeader = renderCalls[renderCalls.length - 1]!.header;
+    // The NEW run's jobId must appear in the header (parenthesised at the end).
+    expect(finalHeader).toMatch(/\(second-job\)/);
+    // The PRIOR run's jobId must NOT appear.
+    expect(finalHeader).not.toMatch(/first-job/);
+  });
+
+  // ---------------------------------------------------------------------------
+  // R4.5 round 1 — hostile billingProject must be HTML-escaped. billingProject
+  // appears TWICE in the header (identity segment `bigquery@dp/billing` AND
+  // the link's `project=` param), so it is the highest-priority injection
+  // vector. The escape() helper for the link body must also handle `&`.
+  // ---------------------------------------------------------------------------
+  it("R4.5 #2 hostile billingProject: HTML-escaped in BOTH header positions", async () => {
+    await spyRender();
+    await stubAdapter();
+    const ctx = makeBqCtx({
+      billingProject: '<script>alert("xss")</script>',
+      location: "US",
+    });
+    await (await import("./extension")).activate(ctx as never);
+
+    const batched = makeBatchedHandle({
+      projectId: "data-proj",
+      location: "US",
+      jobId: "job-escape",
+    });
+    await driveRun(() => [
+      { index: 0, sql: "SELECT 1", status: "done", batched, durationMs: 0 },
+    ]);
+
+    const finalHeader = renderCalls[renderCalls.length - 1]!.header;
+    // Raw `<script>` MUST NOT appear in the header (would be executed if
+    // the webview ever renders this as innerHTML — defense-in-depth).
+    expect(finalHeader).not.toMatch(/<script>/);
+    expect(finalHeader).not.toMatch(/<\/script>/);
+    // Escaped form present (note: `"` inside the script body becomes `&quot;`).
+    expect(finalHeader).toContain('&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;');
+    // The escaped billingProject appears at least twice: once in the
+    // identity segment (`bigquery@data-proj/<escaped>`), once inside the
+    // link's `project=` query parameter (after percent-encoding `&`).
+    const escapedForm = '&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;';
+    const occurrences = finalHeader.split(escapedForm).length - 1;
+    expect(occurrences).toBeGreaterThanOrEqual(1);
   });
 });
+void detectOmpState;

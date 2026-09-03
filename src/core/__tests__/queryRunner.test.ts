@@ -1288,38 +1288,62 @@ describe("QueryRunner — retained-row cap (TASK-ARP03-002)", () => {
 // =============================================================================
 // TASK-BQ03-003 — QueryRunner continuation contract for BigQuery pages.
 //
-// A BigQuery-shaped BatchedQuery carries an `onExhausted?: (info: { limited:
-// boolean }) => void` property (set by 03.1's `BigQueryPagedQuery`). The
-// runner detects BQ-shaped via `'onExhausted' in batched` and:
+// A BigQuery-shaped BatchedQuery exposes the hook through
+// `setOnExhausted(cb)` and stores it in a PRIVATE `onExhaustedCb` field
+// (the real `BigQueryPagedQuery` in 03.1). The runner detects BQ-shaped
+// via `typeof batched.setOnExhausted === "function"` and:
 //   1) closes the handle + sets `cursorClosed = true` on EOF (the new
 //      EOF → close transition; plain postgres cursors are NOT closed here
 //      because the next-run sweep already handles them and the existing
 //      ARP03-002 boundary tests assert `cursorClosed` stays undefined at
 //      EOF for non-BQ handles),
-//   2) wires `onExhausted` to call `appendBatchBounded` so the BQ handle's
-//      internal `limited` flag surfaces as `resultLimited`,
+//   2) wires `setOnExhausted` so the BQ handle's internal `limited` flag
+//      surfaces as `resultLimited` on the statement,
 //   3) snapshots a `runGeneration` counter before each `fetchBatch` await
 //      and discards the late batch if a new `run()` started while parked,
 //   4) sets `StatementResult.pending = true` immediately when the adapter
 //      returned a BQ-shaped `{ results: [], batched }` and clears it on
 //      the first successful `pickResult` (orthogonal to `status`).
+//
+// R4.5 — the fake here uses the REAL `BigQueryPagedQuery` shape: a
+// `setOnExhausted(cb)` installer and NO own `onExhausted` property. The
+// callback is stored in a closure (mirroring the real `private
+// onExhaustedCb`) and tests that need to fire EOF-side effects retrieve
+// it via the fake's internal `onExhaustedCb` field.
 // =============================================================================
 describe("QueryRunner — BQ-03.3 BigQuery page continuation", () => {
   /**
-   * BQ-shaped BatchedQuery fake: same surface as makeBatched, plus an
-   * `onExhausted` property the runner can wire to. The fake does NOT
-   * auto-fire onExhausted on EOF — the test that needs it (Test #9) calls
-   * `batched.onExhausted?.({ limited: true })` explicitly, mirroring how
-   * 03.1's `BigQueryPagedQuery` fires it on EOF.
+   * BQ-shaped BatchedQuery fake matching the REAL `BigQueryPagedQuery`
+   * surface: a `setOnExhausted(cb)` installer method, no own
+   * `onExhausted` property, and the registered callback is stored in a
+   * private-shaped closure (exposed on the fake for tests that need to
+   * invoke it). The fake does NOT auto-fire on EOF — the test that
+   * needs the EOF-side effect (Test #9) drives the stored callback
+   * explicitly from the next `fetchBatch` override, mirroring how
+   * 03.1's `BigQueryPagedQuery` fires it on its EOF transition.
    */
   function makeBqBatched(
     columns: string[],
     fetchSequence: Array<any[][] | null>,
-  ): BatchedQuery & { onExhausted?: ((info: { limited: boolean }) => void) | null } {
+  ): BatchedQuery & {
+    setOnExhausted: (cb: (info: { limited: boolean }) => void) => void;
+    /** Test-only peek at the registered callback (real adapter stores it privately). */
+    readonly onExhaustedCb: () => ((info: { limited: boolean }) => void) | null;
+  } {
     const base = makeBatched(columns, fetchSequence);
-    // Pre-declare the property so `'onExhausted' in base` is true.
-    (base as any).onExhausted = null;
-    return base as unknown as BatchedQuery & { onExhausted?: ((info: { limited: boolean }) => void) | null };
+    let stored: ((info: { limited: boolean }) => void) | null = null;
+    const setOnExhausted = (cb: (info: { limited: boolean }) => void) => {
+      stored = cb;
+    };
+    return Object.assign(base, {
+      setOnExhausted,
+      get onExhaustedCb() {
+        return () => stored;
+      },
+    }) as unknown as BatchedQuery & {
+      setOnExhausted: (cb: (info: { limited: boolean }) => void) => void;
+      readonly onExhaustedCb: () => ((info: { limited: boolean }) => void) | null;
+    };
   }
 
   it("Test #1 — Load More consumes only the current handle's fetchBatch, appends page 2 then page 3", async () => {
@@ -1397,12 +1421,14 @@ describe("QueryRunner — BQ-03.3 BigQuery page continuation", () => {
         await new Promise((r) => setTimeout(r, 10));
         return [[3]];
       });
-    const batched: BatchedQuery & { onExhausted?: ((info: { limited: boolean }) => void) | null } = {
+    const batched: BatchedQuery & {
+      setOnExhausted: (cb: (info: { limited: boolean }) => void) => void;
+    } = {
       columns: ["n"],
       fetchBatch,
       cancel: vi.fn(async () => {}),
       close: vi.fn(async () => {}),
-      onExhausted: null,
+      setOnExhausted: () => {},
     };
     const adapter = makeAdapter(async () => ({ results: [], batched }));
     const runner = new QueryRunner(async () => adapter);
@@ -1604,9 +1630,10 @@ describe("QueryRunner — BQ-03.3 BigQuery page continuation", () => {
     await runner.run([stmt("SELECT *", 0, 9)], () => {});
     await runner.loadMore(0); // returns [[2]]
     // Override the next fetchBatch to also call onExhausted (mirrors 03.1's
-    // BigQueryPagedQuery firing it at EOF when limited).
+    // BigQueryPagedQuery firing it at EOF when limited). The callback is
+    // retrieved from the fake's storedCb via the setOnExhausted installer.
     batched.fetchBatch.mockImplementationOnce(async () => {
-      const cb = batched.onExhausted;
+      const cb = batched.onExhaustedCb();
       // 03.1's design: onExhausted fires INSIDE the fetchBatch call when
       // the underlying page source reports EOF + limited.
       if (typeof cb === "function") cb({ limited: true });
@@ -1617,5 +1644,68 @@ describe("QueryRunner — BQ-03.3 BigQuery page continuation", () => {
     expect(eof[0].resultLimited).toBe(true);
     expect(eof[0].cursorClosed).toBe(true);
     expect(batched.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("Test #10 — REGRESSION R4.5: runner detects the REAL BigQueryPagedQuery shape (setOnExhausted method, no own onExhausted property)", async () => {
+    // 03.1's real `BigQueryPagedQuery` exposes the hook through
+    // `setOnExhausted(cb)` and stores the callback in a PRIVATE
+    // `onExhaustedCb` field — it has NO own `onExhausted` property on the
+    // instance. The runner's previous duck-type (`'onExhausted' in batched`
+    // + `bq.onExhausted = ...`) was inert against the real adapter
+    // because both the property check and the assignment were against a
+    // field that doesn't exist. This test pins the SHAPE of the real
+    // adapter so the runner cannot regress: the fake here has zero own
+    // `onExhausted` property and exposes the installer method, and the
+    // assertions verify that after the runner's hook wiring runs, the
+    // stored callback fires on EOF and surfaces `resultLimited`.
+    type Installer = (cb: (info: { limited: boolean }) => void) => void;
+    const fetchBatch = vi
+      .fn<[], Promise<any[][] | null>>()
+      .mockImplementationOnce(async () => [[1]]) // initial (pickResult)
+      .mockImplementationOnce(async () => [[2]]); // loadMore #1
+    let storedCb: ((info: { limited: boolean }) => void) | null = null;
+    const realShapedBatched = {
+      columns: ["n"],
+      fetchBatch,
+      cancel: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      setOnExhausted: ((cb: (info: { limited: boolean }) => void) => {
+        storedCb = cb;
+      }) as Installer,
+      // Intentionally NO own `onExhausted` property — matches the real
+      // BigQueryPagedQuery class (private onExhaustedCb, exposed only via
+      // the installer).
+    };
+    const adapter = makeAdapter(async () => ({ results: [], batched: realShapedBatched as unknown as BatchedQuery }));
+    const runner = new QueryRunner(async () => adapter);
+
+    await runner.run([stmt("SELECT *", 0, 9)], () => {});
+    // pending is set on BQ-shaped RunResult (real shape: setOnExhausted
+    // exists), and cleared after the first successful pickResult.
+    const r0 = runner.getResults()[0];
+    expect(r0.pending).toBe(false);
+
+    await runner.loadMore(0); // returns [[2]]
+    // After the runner's hook wiring runs (loadMoreImpl installs the
+    // setOnExhausted hook on the first loadMore), storedCb must be a
+    // function — the runner must use `setOnExhausted`, not the
+    // non-existent `onExhausted` property.
+    expect(typeof storedCb).toBe("function");
+
+    // Override the next fetchBatch to call the storedCb (the REAL hook
+    // path), then return EOF. This is what 03.1's BigQueryPagedQuery
+    // does internally on its EOF transition.
+    fetchBatch.mockImplementationOnce(async () => {
+      if (storedCb) storedCb({ limited: true });
+      return null;
+    });
+    const eof = await runner.loadMore(0); // EOF, limited=true
+
+    // The runner must close the handle exactly once and surface
+    // resultLimited — same invariants as Test #9, but the wiring went
+    // through `setOnExhausted`, not the fake-only `onExhausted` property.
+    expect(eof[0].resultLimited).toBe(true);
+    expect(eof[0].cursorClosed).toBe(true);
+    expect((realShapedBatched.close as any)).toHaveBeenCalledTimes(1);
   });
 });

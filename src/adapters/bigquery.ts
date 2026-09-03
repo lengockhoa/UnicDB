@@ -558,6 +558,7 @@ export class BigQueryPagedQuery implements BatchedQuery {
   private firstPageCache: unknown[][] | null;
   private firstPageServed = false;
   private exhaustedFired = false;
+  private readonly classifyError?: (err: unknown) => Error;
 
   constructor(opts: {
     columns: string[];
@@ -567,12 +568,15 @@ export class BigQueryPagedQuery implements BatchedQuery {
     initialState?: BigQueryJobState;
     /** Pre-fetched first page (returned by the FIRST `fetchBatch()` call). */
     firstPage?: { rows: unknown[][] | null; limited?: boolean } | null;
+    /** Error classifier — mirrors the adapter-side `classifyJobError`. */
+    classifyError?: (err: unknown) => Error;
   }) {
     this.columns = opts.columns;
     this.job = opts.job;
     this.jobId = opts.jobRef.jobId;
     this.jobRef = opts.jobRef;
     this.fetcher = opts.fetcher;
+    this.classifyError = opts.classifyError;
     if (opts.initialState) this.state = opts.initialState;
     this.firstPageCache = opts.firstPage ? opts.firstPage.rows : null;
     if (opts.firstPage?.limited === true) this.observedLimited = true;
@@ -637,7 +641,16 @@ export class BigQueryPagedQuery implements BatchedQuery {
     if (this.pageToken !== undefined && this.pageToken !== null) {
       opts.pageToken = this.pageToken;
     }
-    const page = await this.fetcher(opts);
+    let page: { rows: unknown[][] | null; limited?: boolean };
+    try {
+      page = await this.fetcher(opts);
+    } catch (e) {
+      this.state = "error";
+      if (this.classifyError) {
+        throw this.classifyError(e);
+      }
+      throw e;
+    }
     if (page === null || page.rows === null) {
       this.state = "done";
       this.pageToken = null;
@@ -746,6 +759,15 @@ export class BigQueryAdapter implements DbAdapter {
   private closed = false;
   private activeJob: BigQueryJobHandle | null = null;
   private activeJobCancelDelivered = false;
+  /**
+   * Lifecycle phase of the active job — observable so the runner's
+   * pre-batched cancel window (and 03.4 panel) can read `pending →
+   * running → done/error/cancelled` IN ORDER. Set to `pending` the moment
+   * `createQueryJob` resolves with a handle, transitions to `running`
+   * when the initial `getQueryResults` is in flight, then `done` (or
+   * `error` / `cancelled`) once the handle settles.
+   */
+  private activeJobPhaseValue: BigQueryJobState | null = null;
 
   constructor(cfg: ConnectionConfig, clientFactory?: BigQueryClientFactory) {
     // Constructor pre-condition: a valid BigQuery config (BQ-01-001 validator).
@@ -799,6 +821,9 @@ export class BigQueryAdapter implements DbAdapter {
     // in-flight job use `cancelActiveQuery()` or the BatchedQuery handle.
     this.activeJob = null;
     this.activeJobCancelDelivered = false;
+    // R4.5: also clear the observable phase (Fix #1/#3 — close must reset
+    // the seam so a subsequent connect+runQuery starts at `pending`).
+    this.activeJobPhaseValue = null;
   }
 
   // ----- runQuery ----------------------------------------------------------
@@ -888,6 +913,15 @@ export class BigQueryAdapter implements DbAdapter {
       jobId: jobMetadata?.jobReference?.jobId ?? job?.id ?? "unknown",
     };
 
+    // R4.5 Fix #1: track the active job on the adapter IMMEDIATELY after
+    // `createQueryJob` resolves — BEFORE any `getQueryResults` call. This
+    // is the seam the runner's pre-`batched` cancel window
+    // (`cancelActiveQuery`) targets; setting it after the first fetch
+    // renders the seam dead in the very window it exists for.
+    this.activeJob = job;
+    this.activeJobCancelDelivered = false;
+    this.activeJobPhaseValue = "pending";
+
     // Local fetcher double (wave-1). The constructor signature pins the
     // ONE-LINE wave-2 swap point: replace this lambda with
     // `createBigQueryPageFetcher({ client: job, pageSize, byteBudget })`
@@ -935,14 +969,27 @@ export class BigQueryAdapter implements DbAdapter {
     // constructor as the pre-fetched first page; the handle serves it on
     // its first `fetchBatch()` call. Subsequent calls drive the
     // (single-page) fetcher and hit EOF.
-    const initialResult = await fetcher({});
+    //
+    // R4.5 Fix #2: wrap the initial fetch in try/catch and route the
+    // rejection through `classifyJobError` so the credential/SQL text
+    // from `getQueryResults` is sanitized (mirror of the createQueryJob
+    // rejection path).
+    //
+    // R4.5 Fix #3: transition the active-job phase `pending → running`
+    // before the fetch and `done` after, so the seam is observable in
+    // order on the adapter.
+    this.activeJobPhaseValue = "running";
+    let initialResult: { rows: unknown[][] | null; limited?: boolean };
+    try {
+      initialResult = await fetcher({});
+    } catch (e) {
+      this.activeJobPhaseValue = "error";
+      this.activeJob = null;
+      throw classifyJobError(e, { location, sql });
+    }
     // Schema from the first raw response (always present after one call).
     const schemaPage = captured.firstRaw ? toBigQueryPage(captured.firstRaw) : null;
     const columns = schemaPage ? schemaPage.schema.map((f) => f.name) : [];
-    // Track the active job on the adapter so `cancelActiveQuery` can
-    // cancel the in-flight job (the runner's non-batched cancel window).
-    this.activeJob = job;
-    this.activeJobCancelDelivered = false;
 
     // Wrap the job in the local-double BatchedQuery. The wave-2 swap
     // replaces `fetcher` with a real fetcher.
@@ -959,9 +1006,31 @@ export class BigQueryAdapter implements DbAdapter {
       fetcher,
       initialState: isSinglePage ? "done" : "running",
       firstPage: initialResult,
+      // R4.5 Fix #2: classify `getQueryResults` rejections from later
+      // fetchBatch() calls too (mirror of the initial-fetch try/catch
+      // above). The wrapper carries `location` and strips creds/SQL.
+      classifyError: (e: unknown) => classifyJobError(e, { location, sql }),
     });
 
+    // R4.5 Fix #1: clear `activeJob` once the BatchedQuery handle owns it
+    // (the handle has its own exactly-once cancel), and transition the
+    // observable phase to `done` for the runner's pre-batched window.
+    this.activeJob = null;
+    this.activeJobPhaseValue = "done";
+
     return { results: [], batched };
+  }
+
+  /**
+   * Read the active job's lifecycle phase. Returns `null` if no job has
+   * been submitted since the last `close()` / settle. The phase advances
+   * `pending` → `running` → `done` (or `error` / `cancelled`) — observable
+   * in order so the runner's pre-batched cancel window and the 03.4 panel
+   * can render the right state without depending on the BatchedQuery
+   * handle (which only exists after `runQuery` resolves).
+   */
+  activeJobPhase(): BigQueryJobState | null {
+    return this.activeJobPhaseValue;
   }
 
   /**
@@ -975,6 +1044,7 @@ export class BigQueryAdapter implements DbAdapter {
     if (!job) return;
     if (this.activeJobCancelDelivered) return;
     this.activeJobCancelDelivered = true;
+    this.activeJobPhaseValue = "cancelled";
     try {
       await job.cancel();
     } catch {

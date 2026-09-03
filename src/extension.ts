@@ -1914,6 +1914,116 @@ async function runStatement(
   await runStatements(mgr, runner, panel, [stmt]);
 }
 
+// =====================================================================
+// TASK-BQ03-005 — BigQuery header composition.
+//
+// For `driver === "bigquery"` the header carries, after the standard
+// "Run at <ISO> — " prefix:
+//   bigquery@<dataProject>/<billingProject> @ <location> — job <link-or-id> (GoogleSQL)
+// Missing segments render as `—` (em-dash) per format pin; the line is
+// always present so users can copy it without ambiguity. Job identity
+// is the canonical console link
+//   https://console.cloud.google.com/bigquery?project=<billing>&j=bq:<location>:<jobId>
+// when jobId is known, falling back to the raw jobId when location is
+// missing, and to `—` when neither is known.
+//
+// The header string is rendered into the webview as textContent
+// (webview/main.ts:588) so escapeHtml at this layer is defense-in-depth,
+// matching the posture of `escapeHtml` in src/ui/resultsPanel.ts:2259
+// (which escapes `& < > " '`). The em-dash placeholder is intentionally
+// NOT escaped — it must render literally so the format-pinned missing
+// marker stays readable.
+//
+// Data project precedence: jobRef.projectId (job-time truth) > cfg.bigquery
+// .datasetProject (override) > cfg.bigquery.billingProject (legacy fallback).
+// =====================================================================
+
+/** Minimal shape we read from `StatementResult.batched.jobRef` (BQ-03.1). */
+interface BigQueryJobRefLite {
+  projectId: string;
+  location: string;
+  jobId: string;
+}
+
+/** HTML-escape the five entities `escapeHtml` covers in resultsPanel.ts:2259. */
+function escapeHtmlText(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/** Minimal escape for the link's `project=` query param — escapes `&` only. */
+function escape(s: string): string {
+  return s.replace(/&/g, "%26");
+}
+
+/**
+ * Build the per-run header. Non-BigQuery drivers keep the byte-identical
+ * `Run at <ISO> — <driver>@<host>/<database>` format (test #6 regression pin).
+ * BigQuery: replace the bare driver@host/database with the BQ identity line —
+ * host/database are empty strings for BQ connections, so the legacy form
+ * would render `bigquery@/` which carries no information. The BQ format
+ * pinned by the task spec:
+ *   Run at <ISO> — bigquery@<dataProj>/<billingProj> @ <location> — job <link-or-id> (GoogleSQL)
+ */
+function buildRunHeader(
+  isoTime: string,
+  active: ConnectionConfig | null | undefined,
+  jobRef: BigQueryJobRefLite | null,
+): string {
+  if (!active || active.driver !== "bigquery") {
+    return `Run at ${isoTime} — ${active ? `${active.driver}@${active.host}/${active.database}` : "no connection"}`;
+  }
+  const billing = active.bigquery?.billingProject ?? "";
+  const configured = active.bigquery?.datasetProject ?? "";
+  const dataProject = jobRef?.projectId || configured || billing;
+  const location =
+    jobRef?.location || active.bigquery?.location || "";
+  const jobId = jobRef?.jobId ?? "";
+  const safeData = escapeHtmlText(dataProject || "—");
+  const safeBilling = escapeHtmlText(billing || "—");
+  const safeLocation = escapeHtmlText(location || "—");
+  const jobSegment = jobId
+    ? `job ${escapeHtmlText(
+        `https://console.cloud.google.com/bigquery?project=${escape(billing || jobRef?.projectId || "")}&j=bq:${location}:${jobId}`,
+      )} (${escapeHtmlText(jobId)})`
+    : `job —`;
+  return `Run at ${isoTime} — bigquery@${safeData}/${safeBilling} @ ${safeLocation} — ${jobSegment} (GoogleSQL)`;
+}
+
+/**
+ * Walk THIS run's statement results (`results.slice(appendBase)`) and pick
+ * the first one whose `batched` handle exposes a usable `jobRef`. Returns
+ * `null` when no statement of this run owns a live jobRef — header then
+ * degrades to `—` for the job segment without crashing.
+ *
+ * BQ-03.1 surfaces the job identity as `batched.jobRef: { projectId, location,
+ * jobId }` on the returned handle. The handle is ALSO a BatchedQuery with
+ * `fetchBatch`/`cancel`/`close` methods — we read only the `jobRef` field
+ * here.
+ */
+function pickJobRefFromRun(
+  runSlice: ReadonlyArray<{ batched?: unknown }>,
+): BigQueryJobRefLite | null {
+  for (const stmt of runSlice) {
+    const batched = stmt.batched as
+      | { jobRef?: BigQueryJobRefLite | null }
+      | undefined;
+    const j = batched?.jobRef;
+    if (j && typeof j.jobId === "string" && j.jobId.length > 0) {
+      return {
+        projectId: j.projectId ?? "",
+        location: j.location ?? "",
+        jobId: j.jobId,
+      };
+    }
+  }
+  return null;
+}
+
 /**
  * TASK-007 — Qualify reserved-keyword table names in `statements` against the
  * active adapter's public schema. Returns the original array reference if no
@@ -1946,75 +2056,6 @@ async function applyKeywordQualify(
   return rewritten;
 }
 
-/**
- * TASK-BQ03-005 — copy-safe header builder for the BigQuery run path.
- *
- * Format pinned by TASK-BQ03-005 §Interfaces:
- *   `Run at <ISO> — bigquery@<dataProject>/<billingProject> @ <location> —
- *    job <link-or-id> (GoogleSQL)`
- *
- * Missing segments render `—` (em-dash) per spec. Pieces are HTML-escaped
- * (matching the panel's own `escapeHtml` posture, resultsPanel.ts:2259)
- * because the header string flows into the webview's `header` field and
- * may be rendered as text. Credential-shaped fields (password/token/etc.)
- * never enter this builder.
- *
- * Precedence for each fact (job-time truth wins, falls back to config,
- * then `—`):
- *   - dataProject : jobRef.projectId > cfg.bigquery.datasetProject >
- *                   cfg.bigquery.billingProject > `—`
- *   - billing     : cfg.bigquery.billingProject > `—`
- *   - location    : jobRef.location > cfg.bigquery.location > `—`
- *   - jobId       : jobRef.jobId > `—`
- */
-function buildBigQueryHeader(
-  iso: string,
-  cfg: { bigquery?: { billingProject?: string; location?: string; datasetProject?: string } } | null | undefined,
-  jobRef: { projectId?: string; location?: string; jobId?: string } | null | undefined,
-): string {
-  const billing = escapeHtmlText(cfg?.bigquery?.billingProject);
-  // Data project precedence: jobRef.projectId (job-time truth) >
-  // cfg.bigquery.datasetProject (configured override) > configured billing
-  // project (legacy fallback when no override exists). This lets test #4
-  // exercise the hostile jobRef.projectId surface.
-  const dataProj = escapeHtmlText(
-    jobRef?.projectId ?? cfg?.bigquery?.datasetProject ?? cfg?.bigquery?.billingProject,
-  );
-  const cfgLoc = escapeHtmlText(cfg?.bigquery?.location);
-  const jobId = escapeHtmlText(jobRef?.jobId);
-  const jobLoc = escapeHtmlText(jobRef?.location);
-  // Location pinned from the run-scope jobRef when present (job-time truth);
-  // fall back to the configured location, then `—`. Both already escaped.
-  const loc = jobRef?.location ? jobLoc : cfgLoc;
-  // Job identity: prefer a console link (canonical), fall back to the
-  // jobId alone. Link form per spec:
-  //   https://console.cloud.google.com/bigquery?project=<billing>&j=bq:<location>:<jobId>
-  const jobIdentity = jobRef?.jobId
-    ? `https://console.cloud.google.com/bigquery?project=${escapeHtmlText(cfg?.bigquery?.billingProject ?? "")}&j=bq:${jobLoc}:${jobId}`
-    : "—";
-  return (
-    `Run at ${iso} — ` +
-    `bigquery@${dataProj}/${billing} @ ${loc} — ` +
-    `job ${jobIdentity} ` +
-    `(GoogleSQL)`
-  );
-}
-
-/**
- * HTML-escape a header segment. Mirrors `escapeHtml` in resultsPanel.ts:2259:
- * `&` `<` `>` `"` `'` get escaped. Em-dash `—` (U+2014) is NOT escaped.
- * Empty / missing segments render `—` so the format is always present.
- */
-function escapeHtmlText(s: string | undefined): string {
-  if (s === undefined || s === null || s === "") return "—";
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
  async function runStatements(
   mgr: ConnectionManager,
   runner: QueryRunner,
@@ -2037,19 +2078,14 @@ function escapeHtmlText(s: string | undefined): string {
   // `syntax error at or near "order"`. Only touches identifiers that resolve to
   // actual tables in `public` (see core/keywordQualify).
   const rewritten = await applyKeywordQualify(mgr, statements);
-  // TASK-BQ03-005 — BigQuery-specific header: surfaces GoogleSQL dialect
-  // choice + data/billing projects + location + job identity (data project
-  // comes from `cfg.bigquery.datasetProject`, billing from `cfg.bigquery.
-  // billingProject`). Non-BQ drivers keep the prior byte-identical format
-  // (regression pin #6). jobRef is filled in AFTER the run settles from
-  // the batched handle the BigQuery adapter exposes — placeholder header
-  // is rebuilt once results are stable.
-  const isoAt = new Date().toISOString();
-  const baseHeader =
-    active && active.driver === "bigquery"
-      ? buildBigQueryHeader(isoAt, active, null)
-      : `Run at ${isoAt} — ${active ? `${active.driver}@${active.host}/${active.database}` : "no connection"}`;
-  const header = baseHeader;
+  const isoTime = new Date().toISOString();
+  // TASK-BQ03-005 — BigQuery runs carry a richer header (data project / billing
+  // project / location / job identity + GoogleSQL marker). Built ONCE here for
+  // the streaming onUpdate path with placeholders for the live jobRef, then
+  // rebuilt once more after `runner.run` settles so the live jobRef (BATCH-3.1's
+  // `BigQueryJobRef` shape on `StatementResult.batched.jobRef`) reaches the
+  // panel. Non-BigQuery header remains byte-identical to the prior format.
+  const header = buildRunHeader(isoTime, active, /* jobRef */ null);
   const appendBase = runner.getResults().length;
   // TASK-ARP02-004 — host-side ownership gates. Two gaps the panel-internal
   // session epoch (TASK-ARP02-002) cannot close, because these calls are
@@ -2077,19 +2113,18 @@ function escapeHtmlText(s: string | undefined): string {
       }
     }, { append: true });
     if (!deactivating) {
-      // TASK-BQ03-005 — for BigQuery runs the job identity surfaces only
-      // AFTER the run settles (the live `batched` handle exposes its
-      // `jobRef` once `StatementResult.batched` is assigned by the runner).
-      // Rebuild the header with the freshly available jobRef and re-render
-      // once more so the panel posts the finalised identity. Non-BQ drivers
-      // get a byte-identical header; this branch is a no-op for them.
-      let finalHeader = header;
-      if (active && active.driver === "bigquery") {
-        const batched = results[0]?.batched as
-          | { jobRef?: { projectId?: string; location?: string; jobId?: string } }
-          | undefined;
-        finalHeader = buildBigQueryHeader(isoAt, active, batched?.jobRef ?? null);
-      }
+      // TASK-BQ03-005 R4.5 — `runner.run(..., { append: true })` returns the
+      // FULL accumulated array (queryRunner.ts:281 — `return this.results.slice()`),
+      // not this invocation's slice. On a 2nd BigQuery run in-session, the
+      // post-settle re-render must read from THIS run's slice only —
+      // `results.slice(appendBase)` — so the new run's jobRef is what reaches
+      // the panel header (the prior run's batched handle is what
+      // `results[0]?.batched` would point at). Among THIS run's statements,
+      // pick the first one with a live `batched.jobRef` so a multi-statement
+      // run where statement 0 errors doesn't degrade the header to `—`.
+      const runSlice = results.slice(appendBase);
+      const liveJobRef = pickJobRefFromRun(runSlice);
+      const finalHeader = buildRunHeader(isoTime, active, liveJobRef);
       panel.render(results, finalHeader, { appendBase });
       // TASK-ARP07-004 — feed ONLY the statements that actually completed
       // (`status === "done"`, original text on `.sql` per queryRunner.ts:49-52)

@@ -317,13 +317,22 @@ export class QueryRunner {
           // CRITICAL #1 contract: batched cursor — assign currentBatched NGAY
           // để cancel trong fetchBatch(initial) reaches đúng cursor.
           this.currentBatched = runResult.batched;
-          // TASK-BQ03-003 — mark the statement `pending = true` for a
-          // BigQuery-shaped `{ results: [], batched }` (job submitted,
-          // first page not yet fetched). Postgres cursors (no
-          // `onExhausted` property) leave `pending` undefined so the
-          // existing tests stay byte-identical. Cleared after the first
-          // successful `pickResult` below.
-          if ("onExhausted" in runResult.batched) {
+          // TASK-BQ03-003 R4.5 — detect BigQuery-shaped handles via the
+          // real `BigQueryPagedQuery.setOnExhausted(cb)` installer method.
+          // 03.1's adapter stores the hook in a PRIVATE `onExhaustedCb`
+          // field — there is NO own `onExhausted` property on the
+          // instance. The previous duck-type (`'onExhausted' in batched`)
+          // was inert against the real adapter, so `pending`, EOF-close,
+          // and `resultLimited` surfacing were all dead. Mark the
+          // statement `pending = true` for a BQ-shaped `{ results: [],
+          // batched }` (job submitted, first page not yet fetched).
+          // Postgres cursors (no `setOnExhausted` method) leave `pending`
+          // undefined so the existing tests stay byte-identical. Cleared
+          // after the first successful `pickResult` below.
+          const bqLike = runResult.batched as BatchedQuery & {
+            setOnExhausted?: (cb: (info: { limited: boolean }) => void) => void;
+          };
+          if (typeof bqLike.setOnExhausted === "function") {
             this.results[index].pending = true;
           }
         }
@@ -494,34 +503,35 @@ export class QueryRunner {
       throw new Error(`Statement ${index} cancelled`);
     }
     const batched = r.batched;
-    // TASK-BQ03-003 — detect BigQuery-shaped handles (duck-typed via the
-    // optional `onExhausted` property TASK-BQ03-001's BigQueryPagedQuery
-    // exposes). Postgres cursors do NOT have this property; their EOF
+    // TASK-BQ03-003 R4.5 — detect BigQuery-shaped handles via the real
+    // `BigQueryPagedQuery.setOnExhausted(cb)` installer method. 03.1's
+    // adapter stores the hook in a PRIVATE `onExhaustedCb` field — there
+    // is NO own `onExhausted` property on the instance. The previous
+    // duck-type (`'onExhausted' in batched`) was inert against the real
+    // adapter. Postgres cursors do NOT have `setOnExhausted`; their EOF
     // behavior is unchanged (the next-run sweep still releases them and
     // the ARP03-002 boundary tests pin `cursorClosed` undefined at EOF).
-    const isBqShaped = "onExhausted" in batched;
-    if (isBqShaped) {
+    const bqLike = batched as BatchedQuery & {
+      setOnExhausted?: (cb: (info: { limited: boolean }) => void) => void;
+    };
+    const isBqShaped = typeof bqLike.setOnExhausted === "function";
+    if (isBqShaped && bqLike.setOnExhausted) {
       // Wire the onExhausted callback so 03.1's BigQueryPagedQuery can
       // surface its internal `limited` flag as `resultLimited` on the
       // statement (mirrors the budget close path below). The callback
       // must NOT close the handle — that's loadMoreImpl's job at the
       // EOF transition — so the onExhausted fires BEFORE the EOF check
       // sees the null and closes; if it already ran, we no-op.
-      const bq = batched as BatchedQuery & {
-        onExhausted?: ((info: { limited: boolean }) => void) | null;
-      };
-      bq.onExhausted = (info: { limited: boolean }) => {
+      bqLike.setOnExhausted((info: { limited: boolean }) => {
         if (!info.limited) return;
         if (r.resultLimited || r.cursorClosed) return;
-        // The BQ handle hit its byte budget at EOF. Re-run the same
-        // budget math the loadMore path uses (appendBatchBounded) so
-        // the rows are bounded and `resultLimited` surfaces. We only
-        // mark the flag here; the actual close is performed by the EOF
-        // branch below (unified path) for both limited and non-limited
-        // BQ handles. This keeps "EOF releases the job context exactly
+        // The BQ handle hit its byte budget at EOF. We only mark the
+        // flag here; the actual close is performed by the EOF branch
+        // below (unified path) for both limited and non-limited BQ
+        // handles. This keeps "EOF releases the job context exactly
         // once" as a single transition.
         r.resultLimited = true;
-      };
+      });
     }
     // Track currentBatched để cancel mid-fetchBatch reaches đúng cursor.
     this.currentBatched = batched;
