@@ -2,7 +2,9 @@
 
 | Task | Title | Status | Owner | Files |
 |------|-------|--------|-------|-------|
-| TASK-BQ03-001..005 | GoogleSQL query jobs + paged Results grid (5 tasks / 3 waves / 1 R4.5 round) | done | executor=unic-code; reviewer=unic-smart | src/adapters/bigquery.ts, src/adapters/bigqueryPages.ts (new), src/core/queryRunner.ts, src/ui/resultsPanel.ts, src/extension.ts + 5 test files |
+| TASK-BQ04-001 | Additive `dialect?` marker on `StatementResult` + BQ setter in `runStatements` | ready | - | src/core/queryRunner.ts, src/ui/resultsGridModel.ts, src/extension.ts, src/core/__tests__/queryRunner.test.ts |
+| TASK-BQ04-002 | Webview cell-renderer switch to `formatBigQueryCell` (`formatDataCellForDialect`) | ready | - | src/ui/resultsGridModel.ts, webview/main.ts, src/ui/__tests__/resultsGridModel.test.ts |
+| TASK-BQ04-003 | Frozen-surface guard test + non-BQ render regression | ready | - | src/adapters/__tests__/bq04SurfaceGuard.test.ts (new) |
 
 ## Shipped prior cycles (v1.49.0 and earlier)
 

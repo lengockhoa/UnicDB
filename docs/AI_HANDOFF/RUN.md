@@ -1,6 +1,6 @@
 Command: handoff-fullstack
-Goal: Ship BQ-03 — GoogleSQL query jobs + paged Results grid (BigQueryAdapter.runQuery → real BigQuery job with pending/running/done/cancelled state, job-scoped cancel, sanitized BigQueryJobError; token-driven paged BatchedQuery producer; runner EOF→close + per-index isolation; panel pending/running/cancelled/limited/error distinct; GoogleSQL surfaced with copy-safe data/billing project + location + job link; release v1.50.0)
-Base: main @ 5de036d
-Phase: done
-Cursor: P0 → P1 (lite) → P2 (planner unic-smart, 5 tasks / 3 waves, self-audit 60/60) → P2.5 r1 (Issues Found: 2 blocking + 2 should-fix + 1 minor) → orchestrator applied all 5 fixes directly → P2.5 r2 (Approved by unic-smart) → P3 (3969c25 plan committed) → I1 (clean tree) → I2 (waves 1+2+1, no same-wave file collision) → I3 wave 1 (60307d5 + 067d085: 001+002 PASS unic-code, 81/81 wave-1 tests) → I3 wave 2 (dafc032 + f069581: 003+004 PASS unic-code, full suite 3373|2 GREEN) → I3 wave 3 (a96a142 + 67be906: 005 PASS unic-code, full suite 3379|2 GREEN +63 over v1.49.0) → I4 (a960fd0 INDEX 5→pending_review) → R1 (OK) → R2 (5 parallel reviewers: 002/004 approved_minor, 001/003/005 changes_requested) → R4.5 R1 (647523f: 001 fix cancelActiveQuery timing + getQueryResults classifyJobError + pending observability; 003 fix setOnExhausted installer duck-type; 005 fix append-mode slice + hostile billingProject escape; 6 additional tests; full suite 3385|2 GREEN +69) → R4.5 R2 re-judgement (all 3 re-judged approved_minor; no R4.5 R3 needed) → R5 (75cdb08 CHANGELOG/package.json/package-lock.json sync; vsdb-1.50.0.vsix 1.99 MB packaged; v1.50.0 tagged + pushed; gh release live at https://github.com/lengockhoa/VSDB/releases/tag/v1.50.0)
-Next: BQ-04 (TBD) — user picks via /ukit:handoff-fullstack. Recommend /compact before next cycle.
+Goal: BQ-04 — wire formatBigQueryCell into the Results grid (cell formatter for BigQuery values: INT64/NUMERIC/BIGNUMERIC/BYTES/JSON/temporal/RECORD/REPEATED display semantics; BQ-00/BQ-01/BatchedQuery surface frozen)
+Base: main @ 75cdb08
+Phase: P3
+Cursor: P2 done (3 tasks / 2 waves) → P2.5 done (Approved by unic-smart, 3 minor applied)
+Next: I1 — verify clean tree + read ACTIVE/INDEX
