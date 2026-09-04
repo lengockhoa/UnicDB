@@ -103,3 +103,12 @@ placeholders so the statement still parses); the user edits values before runnin
 is the requested workflow. If `openConsoleWithTemplate` in extension.ts proves
 unnecessary because tableCommands can reach the panel through an existing export, prefer
 the existing path and note it here.
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: (reported confirmed in worktree — 8 failing tests in tableCommands.test.ts for buildInsertTemplate not exported + openConsoleWithTemplate seam not invoked)
+Verification Output: 199/199 in scope (extension.test.ts 145 + tableCommands.test.ts 54) after rebuild; full suite 3495|2 (baseline 3484|2, +5 net from UX1-003; +6 from UX1-007); typecheck + compile clean
+Status: PASS
+Note: single out-of-Target-File edit on src/extension.test.ts line ~4885 to update the menu-order array assertion for the 'Generate Sample Data…' → 'Insert Sample Data…' retitle (minimal two-line change).

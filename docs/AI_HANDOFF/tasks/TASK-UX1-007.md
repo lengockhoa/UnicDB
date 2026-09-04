@@ -76,3 +76,12 @@ shows exactly the extension's contributed settings, which is the "hub" the user 
 argument) is the supported shape of `workbench.action.openSettings`; if the executor's VS
 Code version ignores the argument, fall back to `"workbench.action.openSettingsApi"`-free
 plain open + info toast — record which shape worked in Discussion.
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: (reported confirmed in worktree — extension.test.ts UX1-007 showed 6 failing tests for the new vsdb.openSettingsHub command + view/title menu entry)
+Verification Output: extension.test.ts 145/145 after merge; +6 net tests vs baseline (3412 vs 3406 — worktree baseline); full suite 3495|2 (baseline 3484|2, +6 net from UX1-007; pre-existing webview file ENOENT failures are baseline, not regressions); typecheck + compile clean
+Status: PASS
+Note: Schema tree is a NATIVE TreeView (no webview bridge), so no webview/main.ts or styles.css edits needed. view/title entry appended at index 6 to preserve scaffold.test.ts positional pins.

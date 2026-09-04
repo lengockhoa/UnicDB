@@ -93,3 +93,12 @@ resolver serves both commands. DDL fetch is read-only (`pg_get_*def`), no destru
 gate needed. Saving as .sql is the console's existing save flow — nothing new. If the
 executor finds `seedTab` requires the panel to exist first, follow the OC4O sequence
 (commandOpenConsole → guard consolePanel non-null → seedTab → show), extension.ts:1955.
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: (reported confirmed in worktree — npx vitest run src/extension.test.ts -t 'UX1-002' showed 7 failing tests for the new command wiring)
+Verification Output: 139/139 in extension.test.ts after rebuild; full suite 3484|2 (baseline 3469|2, +7 net from UX1-002 — agent's spec verification command `src/adapters/__tests__/postgresAdapter.test.ts` doesn't exist; equivalent `src/adapters/__tests__/postgres.test.ts` 24/24 passed; typecheck + compile clean)
+Status: PASS
+Note: spec verification command path `postgresAdapter.test.ts` does not exist in repo; closest equivalent `src/adapters/__tests__/postgres.test.ts` (24 tests) passed clean. No regressions vs baseline.

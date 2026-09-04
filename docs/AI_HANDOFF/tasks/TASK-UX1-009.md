@@ -96,3 +96,12 @@ bypassing `renderMarkdown` until the terminal message. The mid-stream re-render 
 because `renderMarkdown` escapes before injecting and the `data-raw` attribute round-trips
 the raw code for copy; re-render must preserve UX1-008's layout contract (dependencies
 edge is conceptual, but keep both suites green together at P3 merge).
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: (7 of 8 new tests failed before implementation; #7 was a regression guard already green)
+Verification Output: chatLayoutCss.test.ts 31/31 + aiChatPanelBundle.test.ts 28/28 after rebuild; full suite 3484|2 (baseline 3469|2, +8 net from UX1-009); typecheck + compile clean
+Status: PASS
+Note: Test infra fix to loadBundle() (listener teardown) was required to isolate state across sequential tests within the file — no production-bundle changes for that.

@@ -94,3 +94,12 @@ commands block, verified at P2) — pick a distinct book-family icon and pin it;
 decision is the executor's, the test enforces only distinctness. Path resolution MUST use
 `context.extensionUri` so the packaged VSIX resolves the bundled docs file; a `cwd`-based
 path is the classic breakage this test (case 1: "not cwd") guards against.
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: (reported confirmed in worktree — extension.test.ts UX1-004 + userGuideContent.test.ts showed 14 failing tests for the new command + missing guide content)
+Verification Output: extension.test.ts 151/151 + userGuideContent.test.ts 8/8 after rebuild; full suite 3495|2 (baseline 3484|2, +10 net from UX1-004); typecheck + compile clean
+Status: PASS
+Note: Icon $(markdown); vsdb.openHelpGrid keeps $(book). Worktree node_modules symlinked from repo root (gitignored). No frozen files touched.
