@@ -17,6 +17,12 @@
 //     handled by the legacy grid path and never enters `buildDdlCardText`.
 //   - Hint extraction is a regex over the pg error text, NEVER a
 //     re-parse of SQL (per the planner's discussion note).
+//
+// TASK-UX2-001 — failure surface widened:
+//   - SELECT+error rows now route to the error card (was: empty grid).
+//   - No-kind+error rows (synthetic connection-failure rows) also
+//     route to the error card. The legacy BQ-pending "no kind" path
+//     is preserved for non-error statuses (still → "grid").
 
 export type PanelKind = "grid" | "card";
 
@@ -41,17 +47,22 @@ export interface StatementResultLike {
  * Decide whether the panel should render the legacy AG Grid (SELECT)
  * or the new status card (DDL/DML/other).
  *
- * Rules:
- *   - `kind === "select"`                 → "grid" (legacy SELECT flow)
- *   - `kind` undefined (BQ-pending, never-stamped legacy) → "grid"
+ * Rules (TASK-UX2-001):
+ *   - `r.status === "error"`              → "card" (always surface the error
+ *                                            card, including SELECT failures
+ *                                            and synthetic connection-failure
+ *                                            rows that have no `kind`).
+ *   - `kind === "select"` + non-error     → "grid" (legacy SELECT flow)
+ *   - `kind` undefined + non-error        → "grid" (BQ-pending / never-stamped
+ *                                            legacy — TASK-BQ03/04)
  *   - `kind === "ddl" | "dml" | "other"`  → "card"
  *
- * BQ-pending safety: an entry with no `kind` is treated identically
- * to the legacy "no kind field" path — the new status card branch only
- * fires when the host's stamping helper actually classified the SQL.
- * This keeps TASK-BQ03/04 behaviour byte-identical.
+ * BQ-pending safety: a `running`/`done` entry with no `kind` is still
+ * treated as legacy "no kind field" → "grid". Only the error branch
+ * short-circuits to the card.
  */
 export function classifyPanelKind(r: StatementResultLike): PanelKind {
+  if (r.status === "error") return "card";
   if (!r.kind) return "grid";
   if (r.kind === "select") return "grid";
   return "card";
@@ -66,7 +77,7 @@ export interface BuildCardInput {
 }
 
 export interface BuildCardOutput {
-  kind: "ddl" | "dml" | "other" | "select";
+  kind: "ddl" | "dml" | "other" | "select" | "connection-error";
   variant: "success" | "error";
   /** Headline text — typically `<commandTag> (<KindLabel>)` or
    *  `<KindLabel> statement` when no commandTag is available. */
@@ -123,6 +134,25 @@ export function buildDdlCardText(input: BuildCardInput): BuildCardOutput {
   const { r, statementCount, statementIndex } = input;
   const stmtKind = r.kind ?? "other";
   const isError = r.status === "error";
+
+  // TASK-UX2-001 — synthetic connection-failure rows: no `kind` field
+  // AND a sentinel `sql === "(connection)"`. These reach the card via
+  // `classifyPanelKind` and need a dedicated title / kind label so the
+  // user sees "Connection failed" instead of the generic "Other statement".
+  // Happy path (DDL/DML/other with `kind` set) is unchanged.
+  if (isError && r.kind === undefined && r.sql === "(connection)") {
+    const errorText = r.error ?? "";
+    const hint = extractHint(errorText);
+    return {
+      kind: "connection-error",
+      variant: "error",
+      title: "Connection failed",
+      meta: `${r.durationMs}ms`,
+      errorText,
+      hint,
+      hasError: true,
+    };
+  }
 
   const command = r.result?.commandTag;
   const kindLabel =

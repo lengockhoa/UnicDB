@@ -1,6 +1,6 @@
 Command: handoff-fullstack
 Goal: Surface connection + SQL errors in the Results panel + fix broken `Run N · Stmt M` tab labels
 Base: main
-Phase: I1
-Cursor: PLAN committed (3fa3d4a); 4 tasks ready (TASK-UX2-001..004); P3 done
-Next: I1 setup — verify clean working tree, spawn I2 wave inference, then I3 wave 1 (TASK-UX2-001 only — render primitive)
+Phase: I3-wave1
+Cursor: Wave 1 DONE (TASK-UX2-001 — render primitive extended; 17/17 tests green; merged into main working tree)
+Next: Wave 2 — TASK-UX2-002 (webview tab labels) + TASK-UX2-003 (host side: runFailed + statusBar wrapper) in parallel

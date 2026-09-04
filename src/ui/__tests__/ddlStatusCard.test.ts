@@ -232,3 +232,125 @@ describe("buildDdlCardText — success card text", () => {
     expect(card.hasError).toBe(false);
   });
 });
+
+// =============================================================================
+// TASK-UX2-001 — error card surfaces for SELECT-failure and connection-failure
+// =============================================================================
+
+// Case 1 — SELECT + error → "card" (was "grid")
+describe("classifyPanelKind — UX2-001 case 1 (SELECT+error returns 'card')", () => {
+  it("routes a legacy SELECT with status:'error' to the error card", () => {
+    const r: StatementResultLike = {
+      index: 0,
+      sql: "SELECT * FROM nonexistent",
+      status: "error",
+      error: 'relation "nonexistent" does not exist',
+      durationMs: 4,
+      kind: "select",
+    };
+    expect(classifyPanelKind(r)).toBe("card");
+  });
+});
+
+// Case 2 — buildDdlCardText for SELECT+error → variant:"error" + verbatim errorText + hint
+describe("buildDdlCardText — UX2-001 case 2 (SELECT+error card text)", () => {
+  it("preserves error verbatim and extracts LINE N hint", () => {
+    const errorText = 'syntax error at or near "FROM"\nLINE 2: SELECT * FROMS t';
+    const r: StatementResultLike = {
+      index: 0,
+      sql: "/* stmt 1 */\nSELECT * FROMS t",
+      status: "error",
+      error: errorText,
+      durationMs: 7,
+      kind: "select",
+    };
+    const card = buildDdlCardText({ r, statementCount: 1, statementIndex: 0 });
+    expect(card.variant).toBe("error");
+    // errorText must be byte-identical
+    expect(card.errorText).toBe(errorText);
+    // hint from LINE N regex (or undefined if not parseable) — assert structure
+    if (card.hint !== undefined) {
+      expect(card.hint).toContain("LINE 2");
+    }
+    expect(card.hasError).toBe(true);
+  });
+});
+
+// Case 3 — no-kind + error (synthetic connection-error row) → "card"
+describe("classifyPanelKind — UX2-001 case 3 (no-kind+error returns 'card')", () => {
+  it("routes a connection-error row (no kind field) to the card", () => {
+    const r: StatementResultLike = {
+      index: 0,
+      sql: "(connection)",
+      status: "error",
+      error: "ECONNREFUSED 127.0.0.1:5432",
+      durationMs: 5,
+      // kind intentionally undefined
+    };
+    expect(classifyPanelKind(r)).toBe("card");
+  });
+});
+
+// Case 4 — buildDdlCardText with empty error string → variant:"error", errorText:"", no hint
+describe("buildDdlCardText — UX2-001 case 4 (empty error string)", () => {
+  it("renders error variant with empty errorText and no hint", () => {
+    const r: StatementResultLike = {
+      index: 0,
+      sql: "CREATE TABLE a (id int)",
+      status: "error",
+      error: "",
+      durationMs: 2,
+      kind: "ddl",
+    };
+    const card = buildDdlCardText({ r, statementCount: 1, statementIndex: 0 });
+    expect(card.variant).toBe("error");
+    expect(card.errorText).toBe("");
+    expect(card.hint).toBeUndefined();
+    expect(card.hasError).toBe(true);
+  });
+});
+
+// Case 5 — extractHint multi-marker pg error
+describe("extractHint — UX2-001 case 5 (multi-marker pg error)", () => {
+  it("returns 'near LINE 5, position 12' for combined marker text", async () => {
+    const { extractHint } = await import("../ddlStatusCard");
+    const hint = extractHint("syntax error at or near 'x'\nLINE 5: SELECT x at character 12");
+    expect(hint).toBe("near LINE 5, position 12");
+  });
+});
+
+// Case 6 — regression: healthy SELECT (UX1-010 untouched) → "grid"
+describe("classifyPanelKind — UX2-001 case 6 (healthy SELECT still 'grid')", () => {
+  it("healthy SELECT (status:'done') still routes to 'grid'", () => {
+    const r: StatementResultLike = {
+      index: 0,
+      sql: "SELECT 1",
+      status: "done",
+      result: { columns: ["n"], rows: [[1]], rowCount: 1, durationMs: 1 },
+      durationMs: 1,
+      kind: "select",
+    };
+    expect(classifyPanelKind(r)).toBe("grid");
+  });
+});
+
+// Case 7 — connection-error card text
+describe("buildDdlCardText — UX2-001 case 7 (connection-error card)", () => {
+  it("renders kind:'connection-error' with title 'Connection failed' and meta '<durationMs>ms'", () => {
+    const r: StatementResultLike = {
+      index: 0,
+      sql: "(connection)",
+      status: "error",
+      error: "ECONNREFUSED 127.0.0.1:5432",
+      durationMs: 5,
+      // no kind
+    };
+    const card = buildDdlCardText({ r, statementCount: 1, statementIndex: 0 });
+    expect(card.kind).toBe("connection-error");
+    expect(card.variant).toBe("error");
+    expect(card.title).toBe("Connection failed");
+    expect(card.meta).toContain("5ms");
+    expect(card.hasError).toBe(true);
+    expect(card.errorText).toBe("ECONNREFUSED 127.0.0.1:5432");
+  });
+});

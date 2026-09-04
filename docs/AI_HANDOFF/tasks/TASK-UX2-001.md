@@ -79,3 +79,95 @@ project's static gate; `compile` is the build.
 ## Discussion
 
 (no comments yet)
+
+---
+
+## Executor Report
+
+- **EXECUTOR_MODEL**: `unic-code` (claude-sonnet)
+- **Worktree**: `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/UX2-001`
+- **Files changed** (absolute paths):
+  - `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/UX2-001/src/ui/ddlStatusCard.ts`
+  - `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/UX2-001/src/ui/__tests__/ddlStatusCard.test.ts`
+
+### RED phase — 3 of 7 new tests failed as expected
+
+Command: `npm test -- src/ui/__tests__/ddlStatusCard.test.ts`
+
+```
+ ❯ src/ui/__tests__/ddlStatusCard.test.ts  (17 tests | 3 failed) 6ms
+   ❯ classifyPanelKind — UX2-001 case 1 (SELECT+error returns 'card') > routes a legacy SELECT with status:'error' to the error card
+     → expected 'grid' to be 'card' // Object.is equality
+   ❯ classifyPanelKind — UX2-001 case 3 (no-kind+error returns 'card') > routes a connection-error row (no kind field) to the card
+     → expected 'grid' to be 'card' // Object.is equality
+   ❯ buildDdlCardText — UX2-001 case 7 (connection-error card) > renders kind:'connection-error' with title 'Connection failed' and meta '<durationMs>ms'
+     → expected 'other' to be 'connection-error' // Object.is equality
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 14 passed (17)
+```
+
+Cases 2, 4, 5, 6 already passed in the RED phase because the current code
+already handled them (SELECT+error with `variant:"error"`, empty error,
+healthy SELECT, `extractHint` multi-marker).
+
+### GREEN phase — 17/17 pass
+
+Command: `npm test -- src/ui/__tests__/ddlStatusCard.test.ts`
+
+```
+ ✓ src/ui/__tests__/ddlStatusCard.test.ts  (17 tests) 3ms
+
+ Test Files  1 passed (1)
+      Tests  17 passed (17)
+```
+
+(10 pre-existing UX1-010 cases + 7 new UX2-001 cases, all green.)
+
+### typecheck
+
+Command: `npm run typecheck`
+
+Exit code 0, no output. Clean.
+
+### Full suite — baseline check
+
+Command: `npm test` (worktree)
+
+```
+ Test Files  8 failed | 196 passed | 29 skipped (233)
+      Tests  20 failed | 3198 passed | 243 skipped (3461)
+```
+
+The 20 failures are all pre-existing environmental issues in this worktree
+(ENOENT for `node_modules/.bin/esbuild` and `dist/consolePanel.js missing`).
+They are unrelated to TASK-UX2-001 and reproduce on a clean `main` checkout
+in the same worktree (no worktree, no dist). The plan's expected baseline
+`3530|2` matches the main-repo `npm test` run verbatim (3530 passed, 2
+skipped, 0 failed in 233 files).
+
+The worktree's `ddlStatusCard.test.ts` itself passes 17/17 in the full run:
+
+```
+ ✓ src/ui/__tests__/ddlStatusCard.test.ts  (17 tests) 20ms
+```
+
+### Code changes summary
+
+`src/ui/ddlStatusCard.ts`:
+- `classifyPanelKind`: added `if (r.status === "error") return "card";` as
+  the first check so any error — including `select+error` and no-kind
+  connection-failure rows — routes to the error card. The BQ-pending
+  no-kind-running path still returns "grid" because the error check
+  short-circuits before it.
+- `BuildCardOutput["kind"]` extended with `"connection-error"`.
+- `buildDdlCardText`: added an early return for the synthetic
+  `kind === undefined && sql === "(connection)"` connection-failure row,
+  producing `kind: "connection-error"`, `title: "Connection failed"`,
+  `meta: "<durationMs>ms"`, with `extractHint` for the hint. The happy
+  path (DDL/DML/other with `kind` set) is byte-identical to the previous
+  implementation.
+
+### Status
+
+DONE. Ready for review. Worktree left dirty per instructions.
