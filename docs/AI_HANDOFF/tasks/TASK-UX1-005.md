@@ -86,3 +86,85 @@ The pinned contract (cases 1–2) is the observable outcome; if runtime reproduc
 a different mechanism, fix THAT mechanism and adjust the pinned declarations accordingly —
 the test asserts equality of the two rows, not specific pixel values, so it survives a
 cause correction as long as equality holds.
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code (claude-sonnet-4-5)
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT:
+```
+ ❯ src/ui/__tests__/webviewSetFilter.test.ts  (18 tests | 1 failed | 11 skipped) 7ms
+   ❯ src/ui/__tests__/webviewSetFilter.test.ts > TASK-UX1-005 — set-filter popup Select All alignment (R5) > case 1 — .vsdb-setfilter-selectall-row and .vsdb-setfilter-entry share the same padding
+     → .vsdb-setfilter-selectall-row must declare align-items:center: expected false to be true // Object.is equality
+
+ FAIL  src/ui/__tests__/webviewSetFilter.test.ts > TASK-UX1-005 — set-filter popup Select All alignment (R5) > case 1 — .vsdb-setfilter-selectall-row and .vsdb-setfilter-entry share the same padding
+AssertionError: .vsdb-setfilter-selectall-row must declare align-items:center: expected false to be true // Object.is equality
+- Expected
++ Received
+- true
++ false
+
+ ❯ src/ui/__tests__/webviewSetFilter.test.ts:729:7
+```
+
+Verification Output:
+
+1. `npx vitest run src/ui/__tests__/webviewSetFilter.test.ts` (after fix):
+   ```
+   ✓ src/ui/__tests__/webviewSetFilter.test.ts  (18 tests) 1373ms
+   Tests  7 passed | 11 skipped (18)
+   ```
+   (All 7 new TASK-UX1-005 cases pass. 11 skipped = the bundle-dependent cases
+   pre-existing in the file, gated on `bundleSrc !== null`.)
+
+2. `npm run typecheck`:
+   ```
+   > vsdb@1.51.0 typecheck
+   > tsc --noEmit
+   ```
+   (clean exit)
+
+3. `npm run compile`:
+   ```
+   dist/aiChatPanel.js       53.3kb
+   dist/webview.js        2.2mb ⚠️
+   dist/webview.css      34.3kb
+   dist/extension.js       6.4mb ⚠️
+   esbuild: build complete
+   ```
+   (clean)
+
+4. `npm test` (full suite, after `npm install` in the worktree populated
+   `node_modules/.bin/esbuild`):
+   ```
+   Test Files  230 passed | 1 skipped (231)
+   Tests  3427 passed | 2 skipped (3429)
+   ```
+   Baseline before this task: 3420|2. Net delta: +7 tests (all from the new
+   TASK-UX1-005 describe block). All previously-passing tests still pass.
+
+Status: PASS
+Note:
+- CSS-only fix. `.vsdb-setfilter-selectall-row` was a non-flex block with
+  `padding: 4px 8px` while `.vsdb-setfilter-entry` is a flex row with
+  `padding: 2px 8px`. The fix adds `display: flex; align-items: center; gap:
+  6px; cursor: pointer; user-select: none` to the select-all row and pins its
+  padding to `2px 8px` so both rows share an identical flex scaffold + block
+  padding. The inner `.vsdb-setfilter-selectall-label` was extended with
+  `flex: 1 1 auto; min-width: 0` so it fills the row while remaining
+  ellipsizable. The TASK-009 shared `padding-left: 8px` rule (line 1113) is
+  untouched. No `webview/main.ts` change was required.
+- Region contract respected: only `.vsdb-setfilter-*` selectors modified in
+  styles.css. `.vsdb-chat-*` (UX1-008) and `.vsdb-ddl-*` (UX1-010) untouched.
+  No frozen files modified (no bigquery* / package.json / package-lock.json).
+- Initial CSS comment accidentally used the literal selector
+  `.vsdb-setfilter-entry` inside its body. That tripped a sibling
+  TASK-009E test (`tests/webviewRequeryAlignment.test.ts`) that uses naive
+  `src.indexOf(selector)` to find rule bodies. Comment was rewritten without
+  the literal selector; both test suites now pass.
+- Runtime reproduction note (per task spec): vision evidence was unusable,
+  so the code-derived contract is the pin. The fix targets the user-stated
+  outcome ("Select All checkbox aligned with item checkboxes") by equalising
+  the flex scaffold + block padding of both rows. Manual extension-host
+  confirmation deferred to reviewer per task's "manual check after compile"
+  acceptance step (the executor agent has no extension-host runtime).

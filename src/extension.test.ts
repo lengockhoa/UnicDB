@@ -4903,4 +4903,121 @@ describe("MENU — table-node context menu: New Table #1, Modify Table #2", () =
     ]);
   });
 });
+
+// =============================================================================
+// TASK-UX1-001 — `commandGenerateSelect` clipboard fallback (R6+R7, cases 5-6).
+// When `vsdb.generateSelect` fires from the left pane with no active text
+// editor, the host MUST still hand the user a runnable SELECT — write to
+// clipboard + info toast — instead of refusing with "VSDB: no active editor."
+// Editor-present path is unchanged (untouched; not re-tested here).
+// =============================================================================
+describe("TASK-UX1-001 — generateSelect clipboard fallback when no editor is open", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+    state.registeredTreeDataProviders.clear();
+    state.createdStatusBarItems.length = 0;
+    state.createdWebviewPanels.length = 0;
+    state.createdTreeViews.length = 0;
+    state.registeredCodeLensProviders.length = 0;
+    state.registeredContentProviders.length = 0;
+    state.onDidChangeConfigSubscribers.length = 0;
+    state.workspaceFolders = undefined;
+    state.activeEditor = undefined;
+    state.createdTerminals.length = 0;
+    state.createdOutputChannels.length = 0;
+  });
+
+  /**
+   * Helper: activate() with a seeded active postgres connection so
+   * `mgr.getActive()` resolves to a ConnectionConfig and the dialect path
+   * proceeds past the "no active connection" refusal.
+   */
+  function activateWithActivePostgres() {
+    const ctx = makeCtx();
+    ctx.globalState.get = vi.fn((key: string) => {
+      if (key === "vsdb.connections") {
+        return [
+          {
+            id: "c1",
+            name: "local-pg",
+            driver: "postgres",
+            host: "h",
+            port: 5432,
+            user: "u",
+            database: "d",
+          },
+        ];
+      }
+      if (key === "vsdb.activeConnection") return "c1";
+      return undefined;
+    }) as never;
+    activate(ctx as never);
+    return ctx;
+  }
+
+  it("#5 regression: vsdb.generateSelect with no editor and a table-node meta → clipboard gets a runnable SELECT, info toast confirms", async () => {
+    activateWithActivePostgres();
+
+    // No editor open (the bug scenario).
+    state.activeEditor = undefined;
+
+    const writeTextSpy = vi.mocked(vscodeMock.env.clipboard.writeText);
+    const infoSpy = vi.mocked(vscodeMock.window.showInformationMessage);
+
+    const gen = state.registeredCommands.get("vsdb.generateSelect");
+    expect(gen).toBeDefined();
+    // View/item/context menu passes the SchemaTree node argument with `meta`.
+    await gen!({
+      meta: {
+        schema: "public",
+        objectName: "users",
+        connection: {
+          id: "c1",
+          name: "local-pg",
+          driver: "postgres",
+          host: "h",
+          port: 5432,
+          user: "u",
+          database: "d",
+        },
+      },
+    } as never);
+
+    // RED today: early return at !editor → clipboard untouched. After fix: SELECT written.
+    expect(writeTextSpy).toHaveBeenCalledTimes(1);
+    const sql = String(writeTextSpy.mock.calls[0][0]);
+    // Per generateSelectForTable(public, users, postgres) — the function
+    // returns `SELECT * FROM ${qualifiedName({schema:'public',table:'users'})} LIMIT 100;`
+    // = `SELECT * FROM public.users LIMIT 100;` (postgres unquoted, qualified
+    // by a dot, matching the established `generateSelectForTable` template).
+    expect(sql).toBe("SELECT * FROM public.users LIMIT 100;");
+
+    // Info toast: matches the Vietnamese copy in the task spec.
+    expect(infoSpy).toHaveBeenCalledTimes(1);
+    const message = String((infoSpy.mock.calls[0] as unknown[])[0]);
+    expect(message).toMatch(/SELECT/i);
+    expect(message).toMatch(/clipboard/i);
+    expect(message).toMatch(/không có editor/i);
+  });
+
+  it("#6 boundary: vsdb.generateSelect with NO arg and NO editor → info toast guides the user, clipboard untouched", async () => {
+    activateWithActivePostgres();
+    state.activeEditor = undefined;
+
+    const writeTextSpy = vi.mocked(vscodeMock.env.clipboard.writeText);
+    const infoSpy = vi.mocked(vscodeMock.window.showInformationMessage);
+
+    const gen = state.registeredCommands.get("vsdb.generateSelect");
+    await gen!(); // no qualifiedOrNode
+
+    // Clipboard untouched.
+    expect(writeTextSpy).not.toHaveBeenCalled();
+    // Info toast guides the user (existing copy from the no-arg branch).
+    expect(infoSpy).toHaveBeenCalledTimes(1);
+    const message = String((infoSpy.mock.calls[0] as unknown[])[0]);
+    expect(message).toMatch(/right-click/i);
+    expect(message).toMatch(/table/i);
+  });
+});
 void detectOmpState;

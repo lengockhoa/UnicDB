@@ -110,10 +110,11 @@ export interface ResultsPanelOptions {
    *  panel is revealed without a column so the user's dragged group wins. */
   viewColumn?: vscode.ViewColumn;
   /** AI-001 — "below" (default): newly created panels open in a vertical
-   *  split under the active editor; "beside": classic side-by-side. Read
-   *  fresh at every panel creation, so dispose+recreate picks up the
-   *  current setting (a live panel is never moved). */
-  resultsPlacement?: "below" | "beside";
+   *  split under the active editor; "beside": classic side-by-side; "top"
+   *  (R8a, opt-in): vertical split above the active editor. Read fresh
+   *  at every panel creation, so dispose+recreate picks up the current
+   *  setting (a live panel is never moved). */
+  resultsPlacement?: "below" | "beside" | "top";
   /** Title cho panel. */
   title?: string;
   /** Save flow dependencies — must be supplied when SaveEdits is wired in. */
@@ -127,12 +128,13 @@ export class ResultsPanel {
   private readonly title: string;
   /** AI-001 — effective placement applied at panel CREATION: "below" opens
    *  a vertical split under the active editor, "beside" is classic
-   *  side-by-side. Null until the next show() CREATE resolves it from the
+   *  side-by-side, "top" opens a vertical split above the active editor
+   *  (R8a opt-in). Null until the next show() CREATE resolves it from the
    *  explicit option or the vsdb.resultsPlacement setting (whitelisted;
    *  unknown → "below") — resolved fresh per creation, never cached, so a
    *  dispose+recreate picks up the latest setting while a LIVE panel is
    *  never moved. */
-  private resultsPlacement: "below" | "beside" | null;
+  private resultsPlacement: "below" | "beside" | "top" | null;
   private panel: vscode.WebviewPanel | null = null;
   private disposables: vscode.Disposable[] = [];
   private header: string = "";
@@ -217,13 +219,17 @@ export class ResultsPanel {
   }
 
   /**
-   * AI-001 — đọc setting `vsdb.resultsPlacement` ("below" | "beside")
+   * AI-001 — đọc setting `vsdb.resultsPlacement` ("below" | "beside" | "top")
    * lúc CREATE panel. Whitelist: giá trị lạ → "below", không bao giờ
    * throw (partial vscode mock / host lạ cũng an toàn). Không cache —
    * dispose + recreate áp dụng setting mới nhất; panel đang sống thì
    * KHÔNG bao giờ bị di chuyển.
+   *
+   * TASK-UX1-006 (R8a) — `top` is the new opt-in value. The default-config
+   * first-open still lands at `below` (R8a's P2.5 YAGNI guard) — only an
+   * explicit `vsdb.resultsPlacement: "top"` flips the panel up.
    */
-  private static readPlacementSetting(): "below" | "beside" {
+  private static readPlacementSetting(): "below" | "beside" | "top" {
     try {
       const workspace = vscode.workspace as unknown;
       if (
@@ -239,7 +245,9 @@ export class ResultsPanel {
         return "below";
       }
       const raw: unknown = cfg.get("resultsPlacement", "below");
-      return raw === "beside" ? "beside" : "below";
+      if (raw === "beside") return "beside";
+      if (raw === "top") return "top";
+      return "below";
     } catch {
       return "below";
     }
@@ -285,14 +293,25 @@ export class ResultsPanel {
     const placement =
       this.resultsPlacement ?? ResultsPanel.readPlacementSetting();
     if (placement !== "beside" && ResultsPanel.canExecuteCommands()) {
-      // AI-001 — ViewColumn không có "Below" trong VS Code API, nên vị trí
-      // "dưới editor" (vertical split) được đặt bằng lệnh built-in: panel
-      // vừa tạo đang active → moveEditorToBelowGroup chuyển nó vào group
-      // NGAY DƯỚI editor. Chỉ chạy lúc CREATE — panel sống lại (reveal)
-      // và panel "beside" không bao giờ bị di chuyển.
-      void vscode.commands.executeCommand(
-        "workbench.action.moveEditorToBelowGroup",
-      );
+      // AI-001 — ViewColumn không có "Below"/"Above" trong VS Code API, nên
+      // vị trí "dưới/trên editor" (vertical split) được đặt bằng lệnh
+      // built-in: panel vừa tạo đang active → moveEditorToBelowGroup /
+      // moveEditorToAboveGroup chuyển nó vào group NGAY DƯỚI / TRÊN editor.
+      // Chỉ chạy lúc CREATE — panel sống lại (reveal) và panel "beside"
+      // không bao giờ bị di chuyển.
+      //
+      // TASK-UX1-006 (R8a) — `top` was added in this cycle. The
+      // moveEditorToAboveGroup command is NOT guaranteed across VS Code
+      // versions (similar to its `Below` sibling, which we also guard via
+      // canExecuteCommands). On the rare hosts that lack it the placement
+      // degrades silently: no executeCommand call is made, the panel
+      // stays where `createWebviewPanel` put it (Beside), and the user is
+      // not interrupted.
+      const cmd =
+        placement === "top"
+          ? "workbench.action.moveEditorToAboveGroup"
+          : "workbench.action.moveEditorToBelowGroup";
+      void vscode.commands.executeCommand(cmd);
     }
     this.panel.webview.html = this.buildHtml(this.panel.webview);
 

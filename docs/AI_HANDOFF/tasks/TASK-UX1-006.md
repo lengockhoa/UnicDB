@@ -108,3 +108,103 @@ first `contributes.configuration` change. R8a's "default bottom" already ships
 seeing top-right most likely has `beside` or a pre-setting panel; the description
 sharpening addresses discoverability. `workbench.action.moveEditorToAboveGroup` existence
 is runtime-checked (case 3) because VS Code does not guarantee the command across versions.
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code (claude-sonnet)
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT:
+```
+RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/ux1-006
+
+ ❯ src/adapters/__tests__/bq04SurfaceGuard.test.ts  (8 tests | 1 failed) 54ms
+   ❯ TASK-UX1-006 — packageJsonDepsDiff filter extension (R8a) > T-UX1-006 #7a — activationEvents + configuration property lines are filtered (empty remaining diff)
+     → expected '+        "type": "string",\n+        …' to be '' // Object.is equality
+
+ ❯ src/ui/__tests__/resultsPanel.test.ts  (58 tests | 2 failed) 424ms
+   ❯ ResultsPanel — resultsPlacement (AI-001) > T3a. package.json manifest declares vsdb.resultsPlacement (enum below|beside, default below)
+     → expected [ 'below', 'beside' ] to deeply equal [ 'below', 'beside', 'top' ]
+   ❯ ResultsPanel — resultsPlacement (AI-001) > T-UX1-006 #1 — placement 'top' (via config) → moveEditorToAboveGroup fired at CREATE
+     → expected "spy" to be called with arguments: [ 'workbench.action.moveEditorToAboveGroup' ]
+       Received: [ 'workbench.action.moveEditorToBelowGroup' ]
+
+ Test Files  2 failed (2)
+      Tests  3 failed | 63 passed (66)
+```
+
+Verification Output:
+```
+=== CMD 1: vitest run resultsPanel + bq04 ===
+ ✓ src/adapters/__tests__/bq04SurfaceGuard.test.ts  (8 tests) 58ms
+ ✓ src/ui/__tests__/resultsPanel.test.ts  (58 tests) 422ms
+ Test Files  2 passed (2)
+      Tests  66 passed (66)
+   Start at  15:44:33
+   Duration  829ms
+
+=== CMD 2: typecheck ===
+> vsdb@1.51.0 typecheck
+> tsc --noEmit
+(no errors)
+
+=== CMD 3: compile ===
+  dist/extension.js       6.4mb ⚠️
+  dist/extension.js.map  11.3mb
+⚡ Done in 150ms
+esbuild: build complete
+
+=== CMD 4: manifest default-below (task spec path) ===
+OK: default=below, enum includes top
+
+=== CMD 5: queryRunner sanity ===
+ ✓ src/core/__tests__/queryRunner.test.ts  (59 tests) 244ms
+ Test Files  1 passed (1)
+      Tests  59 passed (59)
+   Start at  15:44:36
+
+=== CMD 6: full npm test ===
+   5 test files failed (aiChatPanel* webview tests) — all 5 fail with
+   "spawnSync ... esbuild ENOENT" because the worktree's
+   node_modules/.bin/esbuild symlink is missing (pre-existing worktree
+   infrastructure issue, NOT a regression from this task — confirmed by
+   running the same test on the base commit before any changes).
+ Test Files  5 failed | 225 passed | 1 skipped (231)
+      Tests  3352 passed | 2 skipped (3354)
+   Duration  18.37s
+
+=== CMD 7: orchestrator's manifest quick-check (note: path in command is wrong) ===
+The orchestrator's check uses
+  p.contributes.configuration['vsdb.resultsPlacement']
+but the actual property path is
+  p.contributes.configuration.properties['vsdb.resultsPlacement']
+(the `configuration` block has a `title` and a `properties` sub-map).
+The TASK-SPEC's own verification command (CMD 4 above) uses the
+correct path and passes.
+```
+
+Status: PASS
+
+Note:
+- The orchestrator's quick `node -e` check uses a wrong JSON path
+  (`configuration['vsdb.resultsPlacement']` instead of
+  `configuration.properties['vsdb.resultsPlacement']`); the
+  TASK-SPEC's own check (and CMD 4 above) use the correct path and
+  confirm `default === "below"` and `enum.includes("top") === true`.
+- 5 pre-existing test-file failures in `npm test` (all
+  `aiChatPanel*` webview tests requiring `esbuild` at runtime) are a
+  worktree infrastructure issue (`node_modules/.bin/esbuild` symlink
+  missing in `.worktrees/ux1-006/`) — confirmed pre-existing by
+  stashing my changes and re-running.
+- Filter extension: I extended the `packageJsonDepsDiff` filter with
+  two narrow whitelists (R8a): (1) `^[+-]\s+"onCommand:[a-zA-Z0-9.]+",?\s*$`
+  for activationEvents lines; (2) property-block detection via
+  brace-depth scan of `package.json` at both BASE_REF and HEAD (so
+  `+` lines AND `-` lines are correctly placed inside their respective
+  `vsdb.*` block ranges). The state machine + file-side line-number
+  translation was needed because a property key whose INNER content
+  changes (the `vsdb.resultsPlacement` block) leaves the key itself
+  as a context line, so a stripped-line scan of just `+`/`-` lines
+  was insufficient.
+- The sanity test (T-UX1-006 #7b) still proves the filter is NOT a
+  tautology: `+  "dependencies": {` is NOT in any `vsdb.*` block
+  range, so it survives the filter and the guard still fires.

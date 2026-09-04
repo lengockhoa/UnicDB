@@ -642,10 +642,11 @@
           "type": "string",
           "enum": [
             "below",
-            "beside"
+            "beside",
+            "top"
           ],
           "default": "below",
-          "description": "AI-001 — vị trí của panel VSDB Results cho các lần chạy MỚI: \"below\" mở vertical split ngay dưới editor đang active, \"beside\" mở side-by-side bên cạnh. Setting chỉ áp dụng khi panel được tạo mới; panel đang mở không bao giờ bị di chuyển (reveal giữ nguyên group người dùng đã kéo)."
+          "description": "AI-001 — vị trí của panel VSDB Results cho các lần chạy MỚI: \"below\" mở vertical split ngay dưới editor đang active, \"beside\" mở side-by-side bên cạnh, \"top\" mở vertical split ngay trên editor đang active. Setting chỉ áp dụng khi panel được tạo mới; panel đang mở không bao giờ bị di chuyển (reveal giữ nguyên group người dùng đã kéo). Default là \"below\"; \"top\" là opt-in."
         }
       }
     },

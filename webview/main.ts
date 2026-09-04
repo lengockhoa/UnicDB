@@ -64,6 +64,11 @@ import {
   type ExportFormat,
 } from "../src/ui/resultsGridModel";
 import { UndoStack } from "../src/ui/undoStack";
+import {
+  classifyPanelKind,
+  buildDdlCardText,
+  type StatementResultLike,
+} from "../src/ui/ddlStatusCard";
 import { highlightSql } from "./sqlHighlight";
 
 // AG Grid v36 modular API — register all-community so createGrid initializes.
@@ -146,6 +151,12 @@ interface StatementResult {
    *  Drives the dedicated truncation footer copy and closes the Load More
    *  gate even when rowCount is null (total unknown). */
   resultLimited?: boolean;
+  /** TASK-UX1-010 — additive `kind?` marker stamped by the host's
+   *  `runStatements` via `stampStatementKind` once it settles. Undefined
+   *  for BQ-pending shapes and never-stamped legacy paths; the panel
+   *  classifies through `classifyPanelKind` to decide between the
+   *  legacy grid and the new DDL/DML status card. */
+  kind?: "select" | "ddl" | "dml" | "other";
 }
 /** TASK-005 — structural mirror of the host's ColumnFilterModel
  *  (src/ui/queryComposer.ts), defined locally so the webview program never
@@ -1194,6 +1205,21 @@ function renderActivePanel(): void {
     return;
   }
 
+  // TASK-UX1-010 — DDL/DML/non-SELECT statement: render a status card
+  // instead of the empty grid. The classifier (src/ui/ddlStatusCard.ts)
+  // returns "card" for any `kind` other than "select"; the legacy grid
+  // path runs unchanged for SELECT and for never-stamped entries
+  // (BQ-pending, legacy). The card uses the same card-builder pattern
+  // as renderMessagesInto (:3396 region) so the visual language stays
+  // consistent with the Messages tab.
+  const activeResult = results[activeTab];
+  if (activeResult && classifyPanelKind(activeResult) === "card") {
+    teardownGridWrap();
+    panel.innerHTML = "";
+    renderDdlCardInto(panel, activeResult);
+    return;
+  }
+
   // Statement grid tab — wipe panel and re-mount the persistent grid wrap.
   // The grid wrap keeps its AG Grid child mounted on gridHost; re-attaching
   // the wrap to the panel restores the grid GUI to the live DOM.
@@ -1206,6 +1232,64 @@ function renderActivePanel(): void {
   // regression where the wrap stayed hidden on first real use).
   dom.gridWrap.style.display = "";
   renderGrid();
+}
+
+/** TASK-UX1-010 — render a single DDL/DML status card into the panel.
+ *  Pure DOM assembly; the text fields come from `buildDdlCardText`
+ *  (testable from node) so the only jsdom-coupled code here is the DOM
+ *  construction itself. Uses the `vsdb-ddl-card` / `vsdb-ddl-card-error`
+ *  / `vsdb-ddl-card-hint` classes — the `.vsdb-ddl-*` family is
+ *  append-only and disjoint from `.vsdb-chat-*` (UX1-008) /
+ *  `.vsdb-setfilter-*` (UX1-005). */
+function renderDdlCardInto(panel: HTMLDivElement, r: StatementResult): void {
+  const statementIndex = typeof r.runStmtNo === "number"
+    ? r.runStmtNo - 1
+    : r.index;
+  // Build the card text via the pure helper (returns the structured
+  // fields the DOM assembly reads below).
+  const card = buildDdlCardText({
+    r: r as StatementResultLike,
+    statementCount: results.length,
+    statementIndex,
+  });
+
+  const cardEl = document.createElement("div");
+  cardEl.className = "vsdb-ddl-card" + (card.variant === "error" ? " vsdb-ddl-card-error" : " vsdb-ddl-card-success");
+
+  const titleEl = document.createElement("div");
+  titleEl.className = "vsdb-ddl-card-title";
+  titleEl.textContent = card.title;
+  cardEl.appendChild(titleEl);
+
+  const metaEl = document.createElement("div");
+  metaEl.className = "vsdb-ddl-card-meta";
+  metaEl.textContent = card.meta;
+  cardEl.appendChild(metaEl);
+
+  // Highlighted SQL preview (uses the dependency-free tokenizer; hostile
+  // SQL stays text via textContent on the inner nodes — see sqlHighlight
+  // for the no-innerHTML guarantee).
+  const sqlEl = document.createElement("pre");
+  sqlEl.className = "vsdb-ddl-card-sql";
+  sqlEl.appendChild(highlightSql(r.sql));
+  cardEl.appendChild(sqlEl);
+
+  if (card.errorText !== undefined) {
+    const errEl = document.createElement("div");
+    errEl.className = "vsdb-ddl-card-error-text";
+    // Byte-identical verbatim preservation (no escaping, no innerHTML).
+    errEl.textContent = card.errorText;
+    cardEl.appendChild(errEl);
+  }
+
+  if (card.hint !== undefined) {
+    const hintEl = document.createElement("div");
+    hintEl.className = "vsdb-ddl-card-hint";
+    hintEl.textContent = `Hint: ${card.hint}`;
+    cardEl.appendChild(hintEl);
+  }
+
+  panel.appendChild(cardEl);
 }
 
 /** Hide the grid wrap when the user navigates away (to Messages or empty

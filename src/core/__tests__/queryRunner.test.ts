@@ -11,6 +11,8 @@ import {
   QueryRunner,
   pickResult,
   RETAINED_ROW_CAP,
+  classifyStatementKind,
+  stampStatementKind,
   type StatementResult,
 } from "../queryRunner";
 import {
@@ -1906,5 +1908,156 @@ describe("QueryRunner — BQ-04 dialect marker (TASK-BQ04-001)", () => {
     const fields: ReadonlyArray<BqSchemaField> = [{ name: "x" }];
     stmt.schemaFields = fields;
     expect(stmt.schemaFields?.[0]?.name).toBe("x");
+  });
+});
+
+// =============================================================================
+// TASK-UX1-010 — DDL/non-SELECT classification (R12). The classifier is a pure
+// helper exposed from src/core/queryRunner.ts; the stamping helper mirrors the
+// `stampBqDialect` precedent and only fires when the entry has settled (not
+// while `pending` — case 6).
+//
+// Truth table (case 5):
+//   `WITH c AS (...) SELECT`             → "select"
+//   `SELECT ... INTO new_t`              → "ddl"
+//   `INSERT/UPDATE/DELETE`               → "dml"
+//   `EXPLAIN SELECT`                     → "other"
+//   comment-padded `/* c */ CREATE TABLE` → "ddl"
+//   `  \n` (no keyword)                  → "other" (no throw)
+// =============================================================================
+describe("QueryRunner — classifyStatementKind (TASK-UX1-010)", () => {
+  // SELECT family
+  it("SELECT → select", () => {
+    expect(classifyStatementKind("SELECT 1")).toBe("select");
+    expect(classifyStatementKind("select * from t")).toBe("select");
+    expect(classifyStatementKind("WITH c AS (SELECT 1) SELECT * FROM c")).toBe("select");
+    expect(classifyStatementKind("  \n\tSELECT 1")).toBe("select");
+    expect(classifyStatementKind("-- a comment\nSELECT 1")).toBe("select");
+    expect(classifyStatementKind("/* block */ SELECT 1")).toBe("select");
+  });
+
+  // DDL family
+  it("CREATE / ALTER / DROP → ddl", () => {
+    expect(classifyStatementKind("CREATE TABLE t (id int)")).toBe("ddl");
+    expect(classifyStatementKind("create or replace function app.fn(x int) returns int as $$ begin return x; end; $$ language plpgsql")).toBe("ddl");
+    expect(classifyStatementKind("ALTER TABLE t ADD COLUMN x int")).toBe("ddl");
+    expect(classifyStatementKind("DROP TABLE t")).toBe("ddl");
+    expect(classifyStatementKind("/* c */ CREATE TABLE t (id int)")).toBe("ddl");
+    expect(classifyStatementKind("SELECT * INTO new_t FROM old_t")).toBe("ddl");
+  });
+
+  // DML family
+  it("INSERT / UPDATE / DELETE / CALL → dml", () => {
+    expect(classifyStatementKind("INSERT INTO t VALUES (1)")).toBe("dml");
+    expect(classifyStatementKind("update t set x=1")).toBe("dml");
+    expect(classifyStatementKind("DELETE FROM t WHERE id=1")).toBe("dml");
+    expect(classifyStatementKind("CALL proc()")).toBe("dml");
+  });
+
+  // Other family
+  it("EXPLAIN / SET / empty → other", () => {
+    expect(classifyStatementKind("EXPLAIN SELECT 1")).toBe("other");
+    expect(classifyStatementKind("SET search_path TO public")).toBe("other");
+    expect(classifyStatementKind("   \n  ")).toBe("other");
+    expect(classifyStatementKind("")).toBe("other");
+    // No-throw contract
+    expect(() => classifyStatementKind("   \n")).not.toThrow();
+  });
+});
+
+describe("QueryRunner — stampStatementKind (TASK-UX1-010)", () => {
+  function mkResult(partial: Partial<StatementResult>): StatementResult {
+    return {
+      index: 0,
+      sql: partial.sql ?? "SELECT 1",
+      status: partial.status ?? "done",
+      durationMs: partial.durationMs ?? 0,
+      ...partial,
+    } as StatementResult;
+  }
+
+  it("DDL success — stamps kind=ddl + command + affectedObjects + notice + durationMs carry", () => {
+    const r = mkResult({
+      sql: "CREATE OR REPLACE FUNCTION app.fn_create_plan(...) ...",
+      status: "done",
+      result: { columns: [], rows: [], rowCount: null, commandTag: "CREATE FUNCTION", durationMs: 1 },
+      durationMs: 1,
+    });
+    const out = stampStatementKind([r]);
+    expect(out[0].kind).toBe("ddl");
+    // Stamp returns same reference (matches stampBqDialect precedent).
+    expect(out[0]).toBe(r);
+  });
+
+  it("DML success — stamps kind=dml", () => {
+    const r = mkResult({
+      sql: "INSERT INTO t VALUES (1)",
+      status: "done",
+      result: { columns: [], rows: [], rowCount: 0, commandTag: "INSERT 0 1", durationMs: 1 },
+      durationMs: 1,
+    });
+    stampStatementKind([r]);
+    expect(r.kind).toBe("dml");
+  });
+
+  it("SELECT success — stamps kind=select", () => {
+    const r = mkResult({
+      sql: "SELECT 1",
+      status: "done",
+      result: { columns: ["n"], rows: [[1]], rowCount: 1, durationMs: 1 },
+      durationMs: 1,
+    });
+    stampStatementKind([r]);
+    expect(r.kind).toBe("select");
+  });
+
+  it("Pending BQ entry — kind stays undefined (case 6, regression pin)", () => {
+    // The BQ `pending: true` shape carries no settled SQL yet; the stamping
+    // helper MUST skip it. With a batched-shaped handle too, dialect-stamp
+    // coexistence is verified — stampStatementKind does not touch dialect.
+    const r = mkResult({
+      sql: "",
+      status: "running",
+      pending: true,
+      batched: { columns: ["n"], fetchBatch: (() => Promise.resolve(null)) } as unknown as StatementResult["batched"],
+    });
+    stampStatementKind([r]);
+    expect(r.kind).toBeUndefined();
+  });
+
+  it("Error entry — stamps kind from sql even on error path", () => {
+    const r = mkResult({
+      sql: "CREATE TABLE broken_t (",
+      status: "error",
+      error: "syntax error at or near \"(\"\nLINE 1: CREATE TABLE broken_t (",
+      durationMs: 1,
+    });
+    stampStatementKind([r]);
+    expect(r.kind).toBe("ddl");
+  });
+
+  it("Mixed run — stamps each entry individually", () => {
+    const slice = [
+      mkResult({ sql: "CREATE TABLE a (id int)", status: "done" }),
+      mkResult({ sql: "SELECT 1", status: "done" }),
+      mkResult({ sql: "INSERT INTO a VALUES (1)", status: "done" }),
+    ];
+    stampStatementKind(slice);
+    expect(slice[0].kind).toBe("ddl");
+    expect(slice[1].kind).toBe("select");
+    expect(slice[2].kind).toBe("dml");
+  });
+
+  it("Coexistence — stampStatementKind does not touch dialect/schemaFields", () => {
+    const r = mkResult({
+      sql: "SELECT 1",
+      status: "done",
+      dialect: "bigquery",
+      schemaFields: [{ name: "n" }],
+    });
+    stampStatementKind([r]);
+    expect(r.kind).toBe("select");
+    expect(r.dialect).toBe("bigquery");
+    expect(r.schemaFields).toEqual([{ name: "n" }]);
   });
 });

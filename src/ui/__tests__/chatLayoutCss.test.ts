@@ -511,4 +511,93 @@ describe("TASK-003 - chat layout CSS contract", () => {
       ).toBe(true);
     });
   });
+
+  // -----------------------------------------------------------------------
+  // TASK-UX1-008 — R9 streaming one-char-per-line + R10 left padding tight.
+  // Cases pinned in docs/AI_HANDOFF/tasks/TASK-UX1-008.md §Test Cases (1-6).
+  // jsdom does not apply stylesheets, so the contract is asserted against
+  // the source CSS text directly (same pattern as the rest of this file).
+  // -----------------------------------------------------------------------
+  describe("TASK-UX1-008 - streaming bubble layout (R9 + R10)", () => {
+    it("R9 case 1: .vsdb-chat-bubble declares min-height + width:fit-content and retains max-width<=95%", () => {
+      const bubble = ruleBody(".vsdb-chat-bubble");
+      expect(bubble, ".vsdb-chat-bubble rule block must exist").not.toBe("");
+      // Positive min-height so an empty/short bubble still occupies one line
+      // (prevents vertical one-char-per-line collapse during pre-first-delta).
+      expect(
+        /min-height:\s*\d/i.test(bubble),
+        ".vsdb-chat-bubble must declare a positive min-height (e.g. 1lh / 16px)",
+      ).toBe(true);
+      // fit-content so the bubble shrinks to its content width and never
+      // gets reflowed into a one-char-wide column by flex sizing.
+      expect(
+        /width:\s*fit-content/i.test(bubble),
+        ".vsdb-chat-bubble must declare width:fit-content",
+      ).toBe(true);
+      // Cap retained so long SQL still wraps inside the panel.
+      expect(
+        /max-width:\s*95%/i.test(bubble),
+        ".vsdb-chat-bubble must RETAIN max-width:95% (regression guard)",
+      ).toBe(true);
+    });
+
+    it("R9 case 2: .vsdb-chat-caret no longer uses display:inline-block (was the one-char-per-line cause)", () => {
+      const caret = ruleBody(".vsdb-chat-caret");
+      expect(caret, ".vsdb-chat-caret rule block must exist").not.toBe("");
+      expect(
+        /display:\s*inline-block/i.test(caret),
+        ".vsdb-chat-caret must NOT declare display:inline-block (forces own line box, garbles streaming text)",
+      ).toBe(false);
+      // The fix replaces it with display:inline (or equivalent). Accept any
+      // non-block value so the test stays pinned to the bug, not the syntax.
+      expect(
+        /display:\s*(?:inline(?:-flex)?|contents?)/i.test(caret),
+        ".vsdb-chat-caret must declare a non-block display value (inline/inline-flex/contents)",
+      ).toBe(true);
+    });
+
+    it("R9 case 3: .vsdb-chat-assistant.vsdb-chat-streaming RETAINs white-space:pre-wrap (regression guard)", () => {
+      // The naive "fix" for R9 would be white-space:normal — that would
+      // collapse streamed multi-line SQL onto one line. Pinned regression.
+      const streaming = ruleBody(".vsdb-chat-assistant.vsdb-chat-streaming");
+      expect(
+        streaming,
+        ".vsdb-chat-assistant.vsdb-chat-streaming rule block must exist",
+      ).not.toBe("");
+      expect(
+        /white-space:\s*pre-wrap/i.test(streaming),
+        ".vsdb-chat-assistant.vsdb-chat-streaming must RETAIN white-space:pre-wrap",
+      ).toBe(true);
+      // Same guard at the base bubble level.
+      const bubble = ruleBody(".vsdb-chat-bubble");
+      expect(
+        /white-space:\s*pre-wrap/i.test(bubble),
+        ".vsdb-chat-bubble must RETAIN white-space:pre-wrap",
+      ).toBe(true);
+    });
+
+    it("R10 case 4: assistant bubbles are NOT flush against the left border (padding-left>=12px or thread margin-left>=8px)", () => {
+      const assistant = ruleBody(".vsdb-chat-assistant");
+      const thread = ruleBody(".vsdb-chat-thread");
+      expect(assistant, ".vsdb-chat-assistant rule block must exist").not.toBe("");
+      expect(thread, ".vsdb-chat-thread rule block must exist").not.toBe("");
+      const assistantPadding =
+        /padding-left:\s*(?:1[2-9]|[2-9]\d|\d{3,})px/i.test(assistant);
+      const threadMargin =
+        /margin-left:\s*(?:[8-9]|[1-9]\d+)px/i.test(thread);
+      expect(
+        assistantPadding || threadMargin,
+        "either .vsdb-chat-assistant padding-left>=12px OR .vsdb-chat-thread margin-left>=8px must hold (R10)",
+      ).toBe(true);
+    });
+
+    it("R10 case 5: .vsdb-chat-user retains align-self:flex-end (user bubble unaffected by R10)", () => {
+      const user = ruleBody(".vsdb-chat-user");
+      expect(user, ".vsdb-chat-user rule block must exist").not.toBe("");
+      expect(
+        /align-self:\s*flex-end/i.test(user),
+        ".vsdb-chat-user must RETAIN align-self:flex-end (right-aligned user bubble)",
+      ).toBe(true);
+    });
+  });
 });

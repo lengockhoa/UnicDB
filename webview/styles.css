@@ -578,8 +578,17 @@
 }
 
 .vsdb-setfilter-selectall-row {
-  padding: 4px 8px;
+  /* TASK-UX1-005 (R5) — same flex scaffold + block padding as the entry rows
+   * below so the Select All checkbox x-position matches the item
+   * checkboxes. The inner <label> flex container had produced a different
+   * visual baseline before. */
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
   border-bottom: 1px solid var(--vscode-panel-border, #3c3c3c);
+  cursor: pointer;
+  user-select: none;
 }
 
 .vsdb-setfilter-selectall-label {
@@ -588,6 +597,8 @@
   gap: 6px;
   cursor: pointer;
   user-select: none;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .vsdb-setfilter-list {
@@ -919,6 +930,8 @@
   padding: 6px 10px;
   border-radius: 6px;
   max-width: 95%;
+  width: fit-content;
+  min-height: 1lh;
   white-space: pre-wrap;
   word-wrap: break-word;
 }
@@ -929,6 +942,7 @@
 }
 .vsdb-chat-assistant {
   align-self: flex-start;
+  padding-left: 12px;
   background: var(--vscode-editorWidgetBackground, #252526);
   color: var(--vscode-foreground, #cccccc);
 }
@@ -1488,7 +1502,7 @@ body.vsdb-chat-body {
  * ensureStreamingCaret -> <span class="vsdb-chat-caret">). The glyph is set
  * via JS (textContent = U+258D), so we only style layout + blink. */
 .vsdb-chat-caret {
-  display: inline-block;
+  display: inline;
   margin-left: 1px;
   font-family: var(--vscode-editor-font-family, monospace);
   animation: vsdb-chat-caret-blink 1s steps(2, end) infinite;
@@ -1626,4 +1640,75 @@ body.vsdb-chat-body {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+/* --- TASK-UX1-010 — DDL/DML status card (R12) ---
+ * Cards replace the (empty) grid for non-SELECT statements. The
+ * `.vsdb-ddl-*` family is APPEND-ONLY and disjoint from `.vsdb-chat-*`
+ * (UX1-008) and `.vsdb-setfilter-*` (UX1-005). Style mirrors the existing
+ *   vsdb-msg-* card family in the Messages view so the visual language
+ *   stays consistent. */
+.vsdb-ddl-card {
+  margin: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--vsdb-overlay-bg, #2a2a2a);
+  border-radius: 6px;
+  background: var(--vsdb-overlay-bg, #1a1a1a);
+  color: var(--vscode-editor-foreground, #d4d4d4);
+  font-family: var(--vscode-font-family, monospace);
+  font-size: 13px;
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.vsdb-ddl-card-success {
+  border-left: 3px solid var(--vscode-gitDecoration-addedResourceForeground, #4ec9b0);
+}
+.vsdb-ddl-card-error {
+  border-left: 3px solid var(--vsdb-error-bg, #f48771);
+  background: var(--vsdb-error-bg-soft, #2d1f1f);
+}
+.vsdb-ddl-card-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+.vsdb-ddl-card-success .vsdb-ddl-card-title {
+  color: var(--vscode-gitDecoration-addedResourceForeground, #4ec9b0);
+}
+.vsdb-ddl-card-error .vsdb-ddl-card-title {
+  color: var(--vsdb-error-fg, #f48771);
+}
+.vsdb-ddl-card-meta {
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground, #969696);
+}
+.vsdb-ddl-card-sql {
+  margin: 4px 0;
+  padding: 8px 10px;
+  background: var(--vsdb-overlay-bg, #0e0e0e);
+  border: 1px solid var(--vsdb-overlay-bg, #2a2a2a);
+  border-radius: 4px;
+  font-family: var(--vscode-editorFontFamily, monospace);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
+.vsdb-ddl-card-error-text {
+  margin-top: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--vsdb-error-bg, #f48771);
+  border-radius: 4px;
+  background: rgba(244, 135, 113, 0.08);
+  color: var(--vsdb-error-fg, #f48771);
+  font-family: var(--vscode-editorFontFamily, monospace);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.vsdb-ddl-card-hint {
+  font-size: 12px;
+  font-style: italic;
+  color: var(--vscode-descriptionForeground, #969696);
 }

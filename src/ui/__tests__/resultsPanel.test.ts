@@ -1048,10 +1048,164 @@ describe("ResultsPanel — resultsPlacement (AI-001)", () => {
       "vsdb.resultsPlacement"
     ];
     expect(prop).toBeDefined();
-    expect(prop!.enum).toEqual(["below", "beside"]);
+    // TASK-UX1-006 (R8a) — enum now includes the `top` opt-in. `below` and
+    // `beside` stay in their original positions; `top` is appended.
+    expect(prop!.enum).toEqual(["below", "beside", "top"]);
     expect(prop!.default).toBe("below");
     expect(typeof prop!.description).toBe("string");
     expect(prop!.description!.length).toBeGreaterThan(0);
+  });
+
+  it("T-UX1-006 #1 — placement 'top' (via config) → moveEditorToAboveGroup fired at CREATE", () => {
+    configState.resultsPlacement = "top";
+    const panel = new ResultsPanel({ runner: makePlacementRunner() });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT 1",
+          status: "done",
+          result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "Statement 1",
+    );
+    const mock = vi.mocked(vscode.commands.executeCommand);
+    expect(mock).toHaveBeenCalledTimes(1);
+    expect(mock).toHaveBeenCalledWith("workbench.action.moveEditorToAboveGroup");
+  });
+
+  it("T-UX1-006 #2 — default config (no resultsPlacement) → 'below' + moveEditorToBelowGroup", () => {
+    configState.resultsPlacement = undefined;
+    const panel = new ResultsPanel({ runner: makePlacementRunner() });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT 1",
+          status: "done",
+          result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "Statement 1",
+    );
+    const mock = vi.mocked(vscode.commands.executeCommand);
+    expect(mock).toHaveBeenCalledTimes(1);
+    expect(mock).toHaveBeenCalledWith("workbench.action.moveEditorToBelowGroup");
+  });
+
+  it("T-UX1-006 #3 — unavailable move-above command (canExecuteCommands false) → silent beside, no throw, panel still works", () => {
+    configState.resultsPlacement = "top";
+    // Sabotage canExecuteCommands by stripping executeCommand from the
+    // commands shape after the module has captured the reference. The
+    // show() path probes `vscode.commands.executeCommand` per-call, so
+    // we override the mock to return undefined (the function check
+    // `typeof === "function"` will fail and the placement becomes a
+    // silent beside no-op).
+    const originalExec = vscode.commands.executeCommand;
+    (vscode.commands as unknown as { executeCommand: unknown }).executeCommand = undefined as unknown as typeof originalExec;
+    try {
+      const panel = new ResultsPanel({ runner: makePlacementRunner() });
+      panel.render(
+        [
+          {
+            index: 0,
+            sql: "SELECT 1",
+            status: "done",
+            result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
+            durationMs: 0,
+          },
+        ],
+        "Statement 1",
+      );
+      // No executeCommand was callable; placement degrades to beside silently.
+      // Panel still created and visible.
+      expect(lastPanel.current).not.toBeNull();
+      expect(lastPanel.current!.visible).toBe(true);
+    } finally {
+      (vscode.commands as unknown as { executeCommand: typeof originalExec }).executeCommand = originalExec;
+    }
+  });
+
+  it("T-UX1-006 #4 — unknown/legacy value 'nonsense' → maps to 'below'", () => {
+    configState.resultsPlacement = "nonsense";
+    const panel = new ResultsPanel({ runner: makePlacementRunner() });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT 1",
+          status: "done",
+          result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "Statement 1",
+    );
+    const mock = vi.mocked(vscode.commands.executeCommand);
+    expect(mock).toHaveBeenCalledTimes(1);
+    expect(mock).toHaveBeenCalledWith("workbench.action.moveEditorToBelowGroup");
+  });
+
+  it("T-UX1-006 #5 — placement 'beside' → zero placement executeCommand calls", () => {
+    configState.resultsPlacement = "beside";
+    const panel = new ResultsPanel({ runner: makePlacementRunner() });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT 1",
+          status: "done",
+          result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "Statement 1",
+    );
+    expect(vi.mocked(vscode.commands.executeCommand)).not.toHaveBeenCalled();
+  });
+
+  it("T-UX1-006 #6 — placement is read at CREATE only; live panel never moved on config change", () => {
+    configState.resultsPlacement = "below";
+    const panel = new ResultsPanel({ runner: makePlacementRunner() });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT 1",
+          status: "done",
+          result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "Statement 1",
+    );
+    const fake = lastPanel.current!;
+    expect(vi.mocked(vscode.commands.executeCommand)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(vscode.commands.executeCommand)).toHaveBeenLastCalledWith(
+      "workbench.action.moveEditorToBelowGroup",
+    );
+
+    // User changes config to 'top' — but the live panel MUST NOT be moved.
+    configState.resultsPlacement = "top";
+    vi.mocked(vscode.commands.executeCommand).mockClear();
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT 2",
+          status: "done",
+          result: { columns: ["x"], rows: [[2]], rowCount: 1, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "Statement 1",
+    );
+    expect(lastPanel.current).toBe(fake);
+    // Live panel reveal: no move command fired.
+    expect(vi.mocked(vscode.commands.executeCommand)).not.toHaveBeenCalled();
   });
 
   it("T4. existing panel: second render reuses panel and calls reveal() with NO column arg", () => {

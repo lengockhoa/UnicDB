@@ -175,10 +175,18 @@ export class ConsolePanel {
       this.panel.reveal();
       return;
     }
+    // TASK-UX1-001 (R6+R7): with no active editor, `ViewColumn.Active`
+    // resolves to nothing and the panel is created but never made visible
+    // — the left-pane console entry points then appear to do nothing.
+    // Fall back to `ViewColumn.One` so the panel is always surfaced.
+    const targetColumn =
+      vscode.window.activeTextEditor === undefined
+        ? vscode.ViewColumn.One
+        : vscode.ViewColumn.Active;
     this.panel = vscode.window.createWebviewPanel(
       PANEL_ID,
       "VSDB Console",
-      vscode.ViewColumn.Active,
+      targetColumn,
       {
         enableScripts: true,
         // Every existing VSDB form/results panel retains context when hidden;

@@ -105,6 +105,17 @@ export interface StatementResult {
    */
   dialect?: "bigquery" | SqlDialect;
   /**
+   * TASK-UX1-010 — additive statement-kind marker. Stamped by the host's
+   * `runStatements` via `stampStatementKind` after `runner.run()`
+   * settles, classification-only (no parser, no grammar). `undefined`
+   * when no stamping helper fired (BQ-pending shapes, never-stamped
+   * legacy paths). UX1-011 consumes `kind === "ddl" | "dml"` to drive
+   * refresh classification; the webview uses `kind === "select"` to
+   * decide between grid (legacy) and status card (new). Additive —
+   * BQ-04 dialect marker and all existing fields stay untouched.
+   */
+  kind?: "select" | "ddl" | "dml" | "other";
+  /**
    * TASK-BQ04-001 — per-column BQ schema field, ordered to match
    * `result.columns`. Set ONLY when the live page source exposes a
    * typed `BigQuerySchemaField[]` (or a structural equivalent); the
@@ -853,4 +864,254 @@ export async function pickResult(runResult: RunResult): Promise<QueryResult> {
     if (r.rows.length > 0) return r;
   }
   return runResult.results[0];
+}
+
+// ---- TASK-UX1-010: classify + stamp helpers --------------------------------
+//
+// R12 — DDL/DML statements render a status card, not an empty grid.
+//
+// The classification is deliberately text-first: the first significant
+// keyword after comment/whitespace stripping drives the kind. `WITH ...
+// SELECT` counts as select; `SELECT ... INTO` as a count (destructive
+// form, host classifies as ddl). Adapter-level grammars are rejected as
+// fragile cross-driver.
+//
+// `stampStatementKind` is the host-side pure helper that mirrors the
+// `stampBqDialect` precedent: it stamps the additive `kind` field on
+// every entry of a settled run slice. Pending entries (BQ-pending shapes)
+// are SKIPPED — their `kind` stays `undefined` so the existing pending
+// renderer keeps working unchanged. The dialect marker is orthogonal —
+// the helper does not read or write `dialect` / `schemaFields`.
+
+/** Coarse statement-kind taxonomy. Stable string union — the panel
+ *  consumer keys the visual branch on this value. */
+export type StatementKind = "select" | "ddl" | "dml" | "other";
+
+/**
+ * Classify a SQL string into a coarse kind bucket.
+ *
+ * Algorithm: scan past leading whitespace, single-line (`-- …`) and
+ * block (`/* … *\/`) comments, return the first non-comment, non-
+ * whitespace, non-string-literal, non-dollar-quote keyword token
+ * (case-insensitive) and look it up against the bucket table.
+ *
+ * Truth table (per TASK-UX1-010 §Test Cases case 5):
+ *   - SELECT / WITH         → "select"
+ *   - CREATE / ALTER / DROP → "ddl" (also `SELECT … INTO`)
+ *   - INSERT / UPDATE / DELETE / CALL / MERGE → "dml"
+ *   - everything else       → "other" (EXPLAIN / SET / SHOW / etc.)
+ *
+ * Never throws — empty / whitespace-only / comment-only SQL returns
+ * `"other"` so a stale call doesn't break a panel render.
+ */
+export function classifyStatementKind(
+  sql: string,
+  _dialect?: SqlDialect,
+): StatementKind {
+  if (!sql) return "other";
+  const s = sql;
+  let i = 0;
+  const n = s.length;
+  // Walk past leading whitespace + comments + string-literal + dollar-quote
+  // tokens to find the first significant SQL keyword.
+  while (i < n) {
+    const c = s[i];
+    // whitespace
+    if (c === " " || c === "\t" || c === "\n" || c === "\r") {
+      i++;
+      continue;
+    }
+    // line comment
+    if (c === "-" && s[i + 1] === "-") {
+      const nl = s.indexOf("\n", i);
+      i = nl < 0 ? n : nl + 1;
+      continue;
+    }
+    // block comment
+    if (c === "/" && s[i + 1] === "*") {
+      const end = s.indexOf("*/", i + 2);
+      i = end < 0 ? n : end + 2;
+      continue;
+    }
+    // string literal — skip
+    if (c === "'") {
+      i++;
+      while (i < n) {
+        if (s[i] === "'" && s[i + 1] === "'") {
+          i += 2;
+          continue;
+        }
+        if (s[i] === "'") {
+          i++;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+    // dollar-quoted body — skip
+    if (c === "$") {
+      // $tag$ … $tag$ (postgres)
+      const tagEnd = s.indexOf("$", i + 1);
+      if (tagEnd > i + 1) {
+        const tag = s.substring(i, tagEnd + 1);
+        const closer = s.indexOf(tag, tagEnd + 1);
+        i = closer < 0 ? n : closer + tag.length;
+        continue;
+      }
+      // $$ … $$ fallback
+      if (s[i + 1] === "$") {
+        const closer = s.indexOf("$$", i + 2);
+        i = closer < 0 ? n : closer + 2;
+        continue;
+      }
+    }
+    // first identifier-character — read keyword
+    if (
+      (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c === "_"
+    ) {
+      let j = i;
+      while (
+        j < n &&
+        ((s[j] >= "a" && s[j] <= "z") ||
+          (s[j] >= "A" && s[j] <= "Z") ||
+          (s[j] >= "0" && s[j] <= "9") ||
+          s[j] === "_" ||
+          s[j] === "$")
+      ) {
+        j++;
+      }
+      const keyword = s.substring(i, j).toUpperCase();
+      // Peek for `SELECT ... INTO` — destructive form, classified as DDL.
+      if (keyword === "SELECT") {
+        // scan ahead for INTO/INTO TEMP (skipping over strings + comments).
+        const after = scanForInto(s, j);
+        if (after.found) return "ddl";
+        return "select";
+      }
+      // WITH … SELECT counts as select.
+      if (keyword === "WITH") return "select";
+      switch (keyword) {
+        case "CREATE":
+        case "ALTER":
+        case "DROP":
+          return "ddl";
+        case "INSERT":
+        case "UPDATE":
+        case "DELETE":
+        case "CALL":
+        case "MERGE":
+          return "dml";
+        default:
+          return "other";
+      }
+    }
+    // anything else (digit, etc.) — stop; we already have the keyword.
+    break;
+  }
+  return "other";
+}
+
+/** Scan forward from `start` for the keyword `INTO` (with optional TEMP
+ *  variant) past comments / strings / wildcards (`*`). Used by
+ *  `classifyStatementKind` to classify `SELECT ... INTO new_t` as DDL.
+ *  Stops at any non-INTO identifier (FROM / WHERE / LIMIT / …) since
+ *  INTO cannot follow those tokens in valid SQL. */
+function scanForInto(s: string, start: number): { found: boolean } {
+  let i = start;
+  const n = s.length;
+  while (i < n) {
+    const c = s[i];
+    if (c === " " || c === "\t" || c === "\n" || c === "\r") {
+      i++;
+      continue;
+    }
+    if (c === "-" && s[i + 1] === "-") {
+      const nl = s.indexOf("\n", i);
+      i = nl < 0 ? n : nl + 1;
+      continue;
+    }
+    if (c === "/" && s[i + 1] === "*") {
+      const end = s.indexOf("*/", i + 2);
+      i = end < 0 ? n : end + 2;
+      continue;
+    }
+    if (c === "'") {
+      i++;
+      while (i < n) {
+        if (s[i] === "'" && s[i + 1] === "'") {
+          i += 2;
+          continue;
+        }
+        if (s[i] === "'") {
+          i++;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+    // `*` (column wildcard) — keep walking, INTO may follow.
+    if (c === "*") {
+      i++;
+      continue;
+    }
+    if ((c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c === "_") {
+      let j = i;
+      while (
+        j < n &&
+        ((s[j] >= "a" && s[j] <= "z") ||
+          (s[j] >= "A" && s[j] <= "Z") ||
+          (s[j] >= "0" && s[j] <= "9") ||
+          s[j] === "_")
+      ) {
+        j++;
+      }
+      const word = s.substring(i, j).toUpperCase();
+      if (word === "INTO") return { found: true };
+      // any other token (FROM, WHERE, LIMIT, …) — INTO is not present.
+      return { found: false };
+    }
+    // digit / punctuation — keep walking (e.g. `1` after `SELECT 1`).
+    if (c >= "0" && c <= "9") {
+      i++;
+      while (i < n && s[i] >= "0" && s[i] <= "9") i++;
+      continue;
+    }
+    // `.` (table.column reference) — keep walking.
+    if (c === ".") {
+      i++;
+      continue;
+    }
+    // any other character — stop, INTO is not present.
+    return { found: false };
+  }
+  return { found: false };
+}
+
+/**
+ * Pure stamping helper — mirror of `stampBqDialect` for the additive
+ * `kind` marker on `StatementResult`. Sets `kind` on every settled
+ * entry of `runSlice` (skips pending entries — BQ-pending shape stays
+ * `kind === undefined` per case 6). The helper never touches
+ * `dialect` / `schemaFields` / any other field; the dialect stamp
+ * (TASK-BQ04-001) is orthogonal and fires on a separate call site.
+ *
+ * Returns the same reference as `runSlice` for caller chaining.
+ * Entries are mutated in place (matching `stampBqDialect` and the
+ * runner's own in-place mutation pattern).
+ */
+export function stampStatementKind(runSlice: StatementResult[]): StatementResult[] {
+  for (const stmt of runSlice) {
+    // Pending entries (BQ-pending shape) carry no settled SQL — skip.
+    // The `kind` field stays `undefined` so the BQ-pending renderer
+    // keeps its legacy grid/pending contract byte-identical.
+    if (stmt.pending) continue;
+    // Already-stamped (idempotent re-run) — skip the re-classification
+    // so a second stamp call from a panel rerender doesn't churn the
+    // marker. The classifier is deterministic so this only saves work.
+    if (stmt.kind) continue;
+    stmt.kind = classifyStatementKind(stmt.sql ?? "");
+  }
+  return runSlice;
 }

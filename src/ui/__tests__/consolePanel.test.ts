@@ -35,6 +35,13 @@ interface MockPanel {
 
 const state = vi.hoisted(() => ({
   panels: [] as Array<Record<string, unknown>>,
+  /**
+   // TASK-UX1-001 — editor fixtures for the "no active editor → ViewColumn.One"
+   // branch (R6+R7). Each entry is consulted through a getter on the mocked
+   // vscode.window so a describe-level reset is a single line.
+   */
+  activeTextEditor: undefined as unknown,
+  visibleTextEditors: [] as unknown[],
 }));
 
 vi.mock("vscode", () => ({
@@ -69,6 +76,12 @@ vi.mock("vscode", () => ({
     showSaveDialog: vi.fn(),
     showErrorMessage: vi.fn().mockResolvedValue(undefined),
     showInformationMessage: vi.fn().mockResolvedValue(undefined),
+    get activeTextEditor() {
+      return state.activeTextEditor;
+    },
+    get visibleTextEditors() {
+      return state.visibleTextEditors;
+    },
   },
   workspace: {
     fs: {
@@ -82,7 +95,10 @@ vi.mock("vscode", () => ({
       fsPath: [...parts].join("/"),
     })),
   },
-  ViewColumn: { Active: 1, Beside: 2 },
+  // TASK-UX1-001 — ViewColumn values mirror the real VS Code API surface
+  // (Active === -1, One === 1) so we can assert show() chooses the right one
+  // based on whether an active editor exists.
+  ViewColumn: { Active: -1, Beside: 2, One: 1, Two: 2, Three: 3 },
   EventEmitter: vi.fn(),
 }));
 
@@ -143,6 +159,8 @@ function panelHarness(): { panel: MockPanel; handler: (msg: unknown) => void } {
 
 beforeEach(() => {
   state.panels.length = 0;
+  state.activeTextEditor = undefined;
+  state.visibleTextEditors = [];
   vi.clearAllMocks();
 });
 
@@ -871,5 +889,72 @@ describe("ConsolePanel — draft recovery (ARP-08)", () => {
     // The host's clamp guarantees our own writer never emits a snapshot
     // our own parser would reject — round-trip is safe.
     expect(parseConsoleDraftSnapshot(encodeConsoleDraftSnapshot(snap!))).toEqual(snap);
+  });
+});
+
+// ============================================================================
+// TASK-UX1-001 — `show()` must use ViewColumn.One (not ViewColumn.Active
+// which silently resolves to nothing) when there is no active editor.
+// ViewColumn.Active === -1 in the real VS Code API; ViewColumn.One === 1.
+// Cases 1-4 of TASK-UX1-001 §Test Cases.
+// ============================================================================
+describe("ConsolePanel — ViewColumn choice without active editor (TASK-UX1-001)", () => {
+  // Capture the createWebviewPanel call arguments in a typed shape so each
+  // assertion only inspects the column field.
+  function createCallColumn(): number | undefined {
+    return ((vscode.window.createWebviewPanel as unknown as Mock).mock
+      .calls[0] as unknown as [string, string, number, Record<string, unknown>])[2];
+  }
+  function lastCreateCallColumn(): number | undefined {
+    const calls = (vscode.window.createWebviewPanel as unknown as Mock).mock
+      .calls as unknown as Array<[string, string, number, Record<string, unknown>]>;
+    return calls[calls.length - 1][2];
+  }
+
+  it("#1 happy: show() with no active editor and no visible editors → ViewColumn.One (1), NOT ViewColumn.Active (-1)", () => {
+    // Fixture: state.activeTextEditor is already undefined; state.visibleTextEditors is [].
+    const panel = new ConsolePanel({ extensionUri: extUri, onRun: vi.fn() });
+    panel.show();
+    expect(vscode.window.createWebviewPanel).toHaveBeenCalledTimes(1);
+    const column = createCallColumn();
+    expect(column).toBe(vscode.ViewColumn.One);
+    expect(column).toBe(1);
+    expect(column).not.toBe(vscode.ViewColumn.Active);
+    expect(column).not.toBe(-1);
+  });
+
+  it("#2 lifecycle: a second show() reveals the existing panel (no second createWebviewPanel call)", () => {
+    const panel = new ConsolePanel({ extensionUri: extUri, onRun: vi.fn() });
+    panel.show();
+    panel.show();
+    expect(vscode.window.createWebviewPanel).toHaveBeenCalledTimes(1);
+    const created = consolePanels()[0];
+    expect(created.reveal).toHaveBeenCalledTimes(1);
+  });
+
+  it("#3 editor-present regression: with an active editor → ViewColumn.Active (-1)", () => {
+    state.activeTextEditor = {
+      document: { uri: { toString: () => "file:///x.sql" } },
+    } as unknown;
+    const panel = new ConsolePanel({ extensionUri: extUri, onRun: vi.fn() });
+    panel.show();
+    expect(vscode.window.createWebviewPanel).toHaveBeenCalledTimes(1);
+    const column = createCallColumn();
+    expect(column).toBe(vscode.ViewColumn.Active);
+    expect(column).toBe(-1);
+  });
+
+  it("#4 edge C: visible editors exist but none active → ViewColumn.One (no editor focuses the panel)", () => {
+    state.activeTextEditor = undefined;
+    state.visibleTextEditors = [
+      { document: { uri: { toString: () => "file:///a.sql" } } },
+    ] as unknown[];
+    const panel = new ConsolePanel({ extensionUri: extUri, onRun: vi.fn() });
+    panel.show();
+    expect(vscode.window.createWebviewPanel).toHaveBeenCalledTimes(1);
+    const column = createCallColumn();
+    expect(column).toBe(vscode.ViewColumn.One);
+    expect(column).toBe(1);
+    expect(column).not.toBe(vscode.ViewColumn.Active);
   });
 });

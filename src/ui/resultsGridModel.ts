@@ -71,6 +71,15 @@ export interface StatementResult {
    */
   dialect?: "bigquery" | SqlDialect;
   /**
+   * TASK-UX1-010 — additive `kind?` marker, mirror of the canonical
+   * `src/core/queryRunner.ts:StatementResult.kind`. Stamped by the
+   * host's `runStatements` via `stampStatementKind` after a run
+   * settles. `undefined` on every never-stamped path so the BQ-pending
+   * shape stays untouched. The mirror site exists so reconstruction
+   * helpers (rest-spread at requery time) carry the field through.
+   */
+  kind?: "select" | "ddl" | "dml" | "other";
+  /**
    * TASK-BQ04-001 — per-column BQ schema field, ordered to match
    * `result.columns`. Mirror of the canonical field; same structural
    * shape `{name?:, type?:, mode?:}` (type/mode may be undefined when

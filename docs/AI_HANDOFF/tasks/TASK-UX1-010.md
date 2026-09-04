@@ -109,3 +109,55 @@ the truth table mis-handles, extend `classifyStatementKind` and its truth table 
 same task. The `kind` field is additive and `undefined` on BQ-pending shapes so
 TASK-BQ03/04 behaviour is untouched (case 6). Hint extraction is a regex over the pg
 error text, never a re-parse of SQL.
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  Test Files  2 failed | 1 passed (3)
+       Tests  11 failed | 111 passed (122)
+
+  Failures:
+  - src/ui/__tests__/ddlStatusCard.test.ts → failed to import "../ddlStatusCard" (module not yet created)
+  - src/core/__tests__/queryRunner.test.ts > classifyStatementKind (4 cases)
+    → TypeError: classifyStatementKind is not a function
+  - src/core/__tests__/queryRunner.test.ts > stampStatementKind (7 cases)
+    → TypeError: stampStatementKind is not a function
+Verification Output:
+  Command 1 — npx vitest run src/core/__tests__/queryRunner.test.ts
+    Tests  70 passed (70)
+  Command 2 — npx vitest run src/ui/__tests__/resultsGridModel.test.ts
+    Tests  52 passed (52)
+  Command 2b — npx vitest run src/ui/__tests__/ddlStatusCard.test.ts (extra)
+    Tests  10 passed (10)
+  Command 3 — git diff -- webview/styles.css | grep -E '^[+-]\.(vsdb-setfilter|vsdb-chat)'
+    → (no matches) "styles region OK"
+    Note: the original substring grep matched on the comment text mentioning
+    `.vsdb-chat-*`/`.vsdb-setfilter-*`; the corrected selector-only check is empty.
+  Command 4 — git diff -- src/extension.ts | head -40
+    → single-line addition at line 38 (import) + 8-line block at runStatements
+    stamping site (~line 2289) after stampBqDialect, before pickJobRefFromRun.
+    commandGenerateSelect: untouched.
+  Command 5 — npm test
+    Test Files  231 passed | 1 skipped (232)
+    Tests  3441 passed | 2 skipped (3443)
+  Command 6 — npm run typecheck
+    (no output, exit 0)
+  Command 7 — npm run compile
+    esbuild: build complete (exit 0)
+
+  Region contract spot checks:
+    - git diff 75cdb08..HEAD -- src/adapters/types.ts → 0 lines
+    - .vsdb-setfilter-* / .vsdb-chat-* selectors in styles.css → untouched
+    - .vsdb-ddl-* selectors in styles.css → 8 new selectors, append-only
+
+Status: PASS
+Note: implemented `classifyStatementKind` + `stampStatementKind` in src/core/queryRunner.ts (261 lines), new
+  pure-helper module `src/ui/ddlStatusCard.ts` exporting `classifyPanelKind` + `buildDdlCardText` +
+  `extractHint` + `StatementResultLike` (pure, testable from node), additive `kind?: "select"|"ddl"|"dml"|"other"`
+  on the canonical + mirror StatementResult (src/core/queryRunner.ts:118, src/ui/resultsGridModel.ts:80,
+  webview/main.ts:155), `renderDdlCardInto` + new renderActivePanel branch in webview/main.ts:1185 region,
+  append-only `.vsdb-ddl-card*` CSS block. BQ-pending entries keep `kind === undefined` via the
+  `if (stmt.pending) continue;` guard in stampStatementKind. `commandGenerateSelect` not touched.
+  `src/adapters/types.ts` unchanged. Version 1.51.0 unchanged.

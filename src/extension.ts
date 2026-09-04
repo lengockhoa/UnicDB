@@ -35,6 +35,7 @@ import { registerTableCommands } from "./ui/tableCommands";
 import { ConnectionForm } from "./ui/connectionForm";
 import { sqlToRun, type SqlDialect } from "./core/statementParser";
 import { stampBqDialect } from "./core/bqDialect";
+import { stampStatementKind } from "./core/queryRunner";
 import {
   createKeywordTableCache,
   qualifyKeywordTables,
@@ -2286,6 +2287,14 @@ async function applyKeywordQualify(
       // (running/pending states don't need the marker and the slice at
       // that point may be partial).
       stampBqDialect(runSlice, active);
+      // TASK-UX1-010 — additive `kind?` marker on every settled entry
+      // of this run. Pure stamping helper, mirrors `stampBqDialect`
+      // precedent; pending BQ entries are skipped (`kind` stays
+      // undefined) so TASK-BQ03/04 stays byte-identical. Stamps after
+      // `runner.run()` settles and before `panel.render(...)` so the
+      // post-settle render carries the marker; the streaming
+      // `onUpdate` path above intentionally does NOT stamp.
+      stampStatementKind(runSlice);
       const liveJobRef = pickJobRefFromRun(runSlice);
       const finalHeader = buildRunHeader(isoTime, active, liveJobRef);
       panel.render(results, finalHeader, { appendBase });
@@ -2526,10 +2535,9 @@ async function commandGenerateSelect(
   qualifiedOrNode?: unknown,
 ): Promise<void> {
   const editor = vscode.window.activeTextEditor;
-  if (!editor) {
-    void vscode.window.showInformationMessage("VSDB: no active editor.");
-    return;
-  }
+  // TASK-UX1-001 (R6+R7): left-pane generateSelect fires with no active editor
+  // — do NOT refuse outright. Resolve meta/driver/SELECT and, at the bottom,
+  // either insertSnippet (editor-present) or fall back to clipboard + toast.
   // Resolve the meta from arg, or — most reliably — the package.json view/item/context
   // menu passes the qualified name string directly. Otherwise pick from active
   // connection's tables.
@@ -2586,7 +2594,17 @@ async function commandGenerateSelect(
       ? qualified.split(".").slice(0, -1).join(".")
       : "",
   });
-  await editor.insertSnippet(new vscode.SnippetString(sql));
+  if (editor) {
+    await editor.insertSnippet(new vscode.SnippetString(sql));
+    return;
+  }
+  // TASK-UX1-001 — clipboard fallback: hand the user a runnable SELECT even
+  // when no editor is open so the left-pane "Generate SELECT" entry point
+  // never silently fails.
+  await vscode.env.clipboard.writeText(sql);
+  void vscode.window.showInformationMessage(
+    "VSDB: SELECT đã copy vào clipboard (không có editor để chèn).",
+  );
 }
 
 async function commandCopyQualifiedName(qualifiedOrNode?: unknown): Promise<void> {
