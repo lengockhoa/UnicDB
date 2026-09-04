@@ -12,8 +12,19 @@
 //   failed     → "$(error) <name> reconnect failed"
 // A later active-connection change returns the item to its normal text.
 //
-// Hàm export: `createStatusBar(mgr: ConnectionManager): vscode.StatusBarItem`.
-// Caller phải dispose item khi extension deactivate.
+// TASK-UX2-003: `createStatusBar` returns a WRAPPER
+// `{ item: vscode.StatusBarItem; setErrorBadge(reason: string | null): void;
+// dispose(): void }` instead of a bare `StatusBarItem`. This is a breaking
+// change for the production caller (`src/extension.ts:420`) and two test
+// mocks (`src/scaffold.test.ts:16`, `src/extension.test.ts:97`). The
+// migration is in the Acceptance Criteria on TASK-UX2-003.
+//
+// `setErrorBadge(reason)` flips the active connection chip to a red
+// `$(error) <name> [driver]` with tooltip `vsdb: error: <reason>`. Calling
+// it with `null` restores the normal render via the shared `render()`.
+//
+// Hàm export: `createStatusBar(mgr: ConnectionManager): StatusBarWrapper`.
+// Caller dispose wrapper khi extension deactivate.
 import * as vscode from "vscode";
 import type {
   ConnectionManager,
@@ -36,14 +47,28 @@ function recoveryText(status: ConnectionRecoveryStatus, name: string): string {
 }
 
 /**
+ * Wrapper returned by `createStatusBar` (TASK-UX2-003). Exposes:
+ *   - `item`: the underlying `vscode.StatusBarItem` for legacy dispose /
+ *     text-access call sites.
+ *   - `setErrorBadge(reason: string | null)`: flip the active chip to a
+ *     red error badge; pass `null` to restore the normal render.
+ *   - `dispose()`: clean up subscribed listeners and the underlying item.
+ */
+export interface StatusBarWrapper {
+  item: vscode.StatusBarItem;
+  setErrorBadge(reason: string | null): void;
+  dispose(): void;
+}
+
+/**
  * Tạo StatusBarItem gắn với ConnectionManager.
  * - Text = "$(database) <name> [<driver>]" nếu có active; "" nếu không.
  * - Command = "vsdb.selectConnection" — click để đổi active.
  * - Auto-update qua mgr.onDidChangeActive + mgr.onDidChangeRecoveryStatus.
  *
- * Trả về StatusBarItem. Caller dispose khi extension unload.
+ * Trả về `StatusBarWrapper`. Caller dispose wrapper khi extension unload.
  */
-export function createStatusBar(mgr: ConnectionManager): vscode.StatusBarItem {
+export function createStatusBar(mgr: ConnectionManager): StatusBarWrapper {
   const item = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Left,
     100,
@@ -79,13 +104,44 @@ export function createStatusBar(mgr: ConnectionManager): vscode.StatusBarItem {
   const subActive = mgr.onDidChangeActive(() => render());
   const subRecovery = mgr.onDidChangeRecoveryStatus((s) => renderRecovery(s));
 
-  // Dispose subs khi item dispose (caller dispose item).
-  const origDispose = item.dispose.bind(item);
-  item.dispose = (): void => {
-    subActive.dispose();
-    subRecovery.dispose();
-    origDispose();
+  // TASK-UX2-003 — flip the active chip to a red error badge. The active
+  // connection may have changed since the badge was last cleared; we
+  // resolve the chip from `mgr.getActive()` so the badge is always about
+  // the current chip. Passing `null` re-runs the normal render path.
+  // The error text intentionally mirrors the recovery-failed literal
+  // shape `$(error) <name> [driver]` so the chip is recognizable on the
+  // status bar; the tooltip carries the verbatim reason.
+  let errorBadgeActive = false;
+  const setErrorBadge = (reason: string | null): void => {
+    if (reason === null) {
+      if (!errorBadgeActive) return;
+      errorBadgeActive = false;
+      render();
+      return;
+    }
+    errorBadgeActive = true;
+    const active = mgr.getActive();
+    if (!active) {
+      // No active chip — keep the item hidden but still stamp the
+      // tooltip so a future show() reveals it. The panel/state should
+      // not call `setErrorBadge` when no connection is active; this is
+      // a defensive branch.
+      item.text = "";
+      item.tooltip = `vsdb: error: ${reason}`;
+      item.hide();
+      return;
+    }
+    item.text = `$(error) ${active.name} [${active.driver}]`;
+    item.tooltip = `vsdb: error: ${reason}`;
+    item.show();
   };
 
-  return item;
+  // Dispose subs + underlying item when wrapper disposes.
+  const dispose = (): void => {
+    subActive.dispose();
+    subRecovery.dispose();
+    item.dispose();
+  };
+
+  return { item, setErrorBadge, dispose };
 }

@@ -101,6 +101,95 @@ npm test src/ui/__tests__/statusBar.test.ts
 
 ---
 
+## Executor Report
+
+EXECUTOR_MODEL: unic-code
+EXECUTOR_TOOL: claude-code
+EXECUTOR_SUBAGENT: -
+
+### RED output — `vitest run src/core/__tests__/queryRunner.test.ts`
+
+5/75 tests failed (5 new TASK-UX2-003 cases), all RED for the expected reasons:
+
+```
+ FAIL  src/core/__tests__/queryRunner.test.ts > QueryRunner — runFailed (TASK-UX2-003) > case 1 — runFailed appends one synthetic StatementResult and fires onUpdate
+TypeError: runner.runFailed is not a function
+ ❯ src/core/__tests__/queryRunner.test.ts:2096:12
+    2096|     runner.runFailed("ECONNREFUSED");
+
+ FAIL  src/core/__tests__/queryRunner.test.ts > QueryRunner — runFailed (TASK-UX2-003) > case 2 — runFailed while a real run() is in flight throws RunnerBusy
+AssertionError: expected 'TypeError' to be 'RunnerBusy' // Object.is equality
+ ❯ src/core/__tests__/queryRunner.test.ts:2133:76
+
+ FAIL  src/core/__tests__/queryRunner.test.ts > QueryRunner — runFailed (TASK-UX2-003) > case 3 — runFailed after a cancelled run appends a new synthetic row
+AssertionError: expected [Function] to not throw an error but 'TypeError: runner.runFailed is not a …' was thrown
+
+ FAIL  src/core/__tests__/queryRunner.test.ts > QueryRunner — runFailed (TASK-UX2-003) > case 4 — calling runFailed twice accumulates two synthetic rows
+TypeError: runner.runFailed is not a function
+
+ FAIL  src/core/__tests__/queryRunner.test.ts > QueryRunner — runFailed (TASK-UX2-003) > case 5 — regression: regular run() after runFailed is unaffected
+TypeError: runner.runFailed is not a function
+
+ Test Files  1 failed (1)
+      Tests  5 failed | 70 passed (75)
+```
+
+### RED output — `vitest run src/ui/__tests__/statusBar.test.ts`
+
+2/7 tests failed (2 new TASK-UX2-003 cases):
+
+```
+ FAIL  src/ui/__tests__/statusBar.test.ts > createStatusBar > case 6 — setErrorBadge flips text to $(error) then back to plain on null
+TypeError: Cannot read properties of undefined (reading 'text')
+ ❯ src/ui/__tests__/statusBar.test.ts:326:25
+    326|     expect(wrapper.item.text).toBe("$(database) Local [postgres]");
+
+ FAIL  src/ui/__tests__/statusBar.test.ts > createStatusBar > case 7 — wrapper exposes item (underlying StatusBarItem) + dispose for existing call sites
+AssertionError: expected undefined not to be undefined
+ ❯ src/ui/__tests__/statusBar.test.ts:357:26
+    357|     expect(wrapper.item).toBeDefined();
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 5 passed (7)
+```
+
+### GREEN output (post-implementation)
+
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/UX2-003
+
+ ✓ src/ui/__tests__/statusBar.test.ts  (7 tests) 20ms
+ ✓ src/core/__tests__/queryRunner.test.ts  (75 tests) 248ms
+ ✓ src/scaffold.test.ts  (7 tests) 520ms
+ ✓ src/extension.test.ts  (151 tests) 1335ms
+
+ Test Files  4 passed (4)
+      Tests  240 passed (240)
+```
+
+### Verification
+
+- `npm run typecheck` (i.e. `tsc --noEmit`): exit 0, no output (clean).
+- `npm run compile` (esbuild): builds dist/extension.js, dist/schemaForm.js etc. The webviewConfig build (dist/webview.js) fails with `Could not resolve "./tabTitle"` — this is **pre-existing** and tied to TASK-UX2-002's `webview/main.ts` import, not to TASK-UX2-003. Out of scope here.
+- `npm test` (vitest run, full suite): 3546 tests collected. 1 pre-existing environmental failure (`agGridSmoke.test.ts` reads `dist/webview.css`, missing because the webview bundle above failed) — unrelated to TASK-UX2-003. All 7 new TASK-UX2-003 tests pass.
+
+### Files changed
+
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/UX2-003/src/core/queryRunner.ts` — exported `RunnerBusy` error class; added `lastOnUpdate` field; cached `onUpdate` on `run()` entry; added public `runFailed(reason: string): void` method that throws `RunnerBusy` while a real run is in flight, otherwise appends `{index, sql:"(connection)", status:"error", error:reason, durationMs:0}` and fires the cached onUpdate.
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/UX2-003/src/ui/statusBar.ts` — exported `StatusBarWrapper` interface; `createStatusBar` now returns `{item, setErrorBadge, dispose}` instead of a bare `vscode.StatusBarItem`; `setErrorBadge(reason)` flips the chip to red `$(error) <name> [driver]` with tooltip `vsdb: error: <reason>`, `setErrorBadge(null)` restores via shared render.
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/UX2-003/src/extension.ts` — imported `StatusBarWrapper`; updated interface field type at line 254 (`statusBar: StatusBarWrapper`); `context.subscriptions.push(statusBar)` at line 421 still works because the wrapper has `.dispose()` (Disposable-compatible).
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/UX2-003/src/core/__tests__/queryRunner.test.ts` — added `RunnerBusy` import; added `describe("QueryRunner — runFailed (TASK-UX2-003)")` block with 5 cases (cases 1-5).
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/UX2-003/src/ui/__tests__/statusBar.test.ts` — updated existing tests to access the wrapper via `.item` (5 tests use `item.item.text`/`.command`/`.hide`/`.show`); added cases 6 and 7 for `setErrorBadge` and wrapper shape.
+
+### Notes
+
+- The existing statusBar test variable name `item` was retained (it now points to the wrapper); assertions were rewritten to access `.item.text` etc. This preserves diff size vs renaming the variable.
+- `lastOnUpdate` is intentionally NOT cleared in the `run()` finally block — the host's outer catch fires AFTER `run()` settles (with the connection failure that aborted it), so `lastOnUpdate` must still be set when the host calls `runner.runFailed(reason)`. A subsequent `run()` overwrites it on entry.
+- `npm test` baseline: this worktree differs from the 3530|2 baseline cited in PLAN §5 (3546|1 here). The single failure is unrelated to this task: `agGridSmoke.test.ts` requires `dist/webview.css`, which is missing because the webview esbuild config cannot resolve `./tabTitle` (introduced by TASK-UX2-002, separate wave).
+- Did not run `git add` / `git commit` / `git push` per task instruction.
+
+---
+
 ## Discussion
 
 (no comments yet)

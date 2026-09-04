@@ -151,8 +151,8 @@ describe("createStatusBar", () => {
     );
 
     const item = createStatusBar(mgr);
-    expect(item.text).toBe("");
-    expect(item.hide).toHaveBeenCalled();
+    expect(item.item.text).toBe("");
+    expect(item.item.hide).toHaveBeenCalled();
   });
 
   it("có active → text '$(database) <name> [<driver>]', command 'vsdb.selectConnection'", async () => {
@@ -170,9 +170,9 @@ describe("createStatusBar", () => {
     await mgr.setActive("a");
 
     const item = createStatusBar(mgr);
-    expect(item.text).toBe("$(database) Local [postgres]");
-    expect(item.command).toBe("vsdb.selectConnection");
-    expect(item.show).toHaveBeenCalled();
+    expect(item.item.text).toBe("$(database) Local [postgres]");
+    expect(item.item.command).toBe("vsdb.selectConnection");
+    expect(item.item.show).toHaveBeenCalled();
   });
 
   it("setActive fires onDidChangeActive → statusBar update", async () => {
@@ -191,10 +191,10 @@ describe("createStatusBar", () => {
     await mgr.setActive("a");
 
     const item = createStatusBar(mgr);
-    expect(item.text).toContain("A");
+    expect(item.item.text).toContain("A");
 
     await mgr.setActive("b");
-    expect(item.text).toContain("B");
+    expect(item.item.text).toContain("B");
   });
 
   // RLX-03 TASK-RLX03-002 — recovery-text literal exact match.
@@ -229,14 +229,14 @@ describe("createStatusBar", () => {
     );
 
     const item = createStatusBar(mgr);
-    expect(item.text).toBe("$(database) Local [postgres]");
+    expect(item.item.text).toBe("$(database) Local [postgres]");
 
     // Record every text assignment so we can assert the EXACT pinned
     // literals in order (Test Case 6).
     const textHistory: string[] = [];
-    let currentText = item.text;
+    let currentText = item.item.text;
     textHistory.push(currentText);
-    Object.defineProperty(item, "text", {
+    Object.defineProperty(item.item, "text", {
       configurable: true,
       get: () => currentText,
       set: (v: string) => {
@@ -258,7 +258,7 @@ describe("createStatusBar", () => {
 
     // Now switch active to a different connection — text should return to normal form.
     await mgr.setActive("b");
-    expect(item.text).toBe("$(database) Other [postgres]");
+    expect(item.item.text).toBe("$(database) Other [postgres]");
 
     item.dispose();
     await mgr.dispose();
@@ -299,8 +299,71 @@ describe("createStatusBar", () => {
     await mgr.getAdapter();
     tunnels.emitExit({ key: "f", code: 1, signal: null, intentional: false });
     for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0));
-    expect(item.text).toBe("$(error) Local reconnect failed");
+    expect(item.item.text).toBe("$(error) Local reconnect failed");
     item.dispose();
     await mgr.dispose();
+  });
+
+  // TASK-UX2-003 case 6 + 7 — wrapper shape. `createStatusBar` returns a
+  // wrapper `{ item, setErrorBadge, dispose }` (breaking change from bare
+  // StatusBarItem). Existing callers use `.item` for the raw StatusBarItem
+  // (e.g. for dispose or text access) and `.setErrorBadge(reason|null)` for
+  // the red error chip. `.dispose()` is the canonical cleanup.
+  it("case 6 — setErrorBadge flips text to $(error) then back to plain on null", async () => {
+    const secret = new FakeSecretStorage();
+    const ws = new FakeMemento();
+    const g = new FakeMemento();
+    const adapter = makeAdapter();
+    const factory = vi.fn(() => adapter as unknown as DbAdapter);
+    const mgr = new ConnectionManager(
+      { secrets: secret, workspaceState: ws, globalState: g } as never,
+      factory,
+    );
+    await mgr.addConnection(makeCfg({ id: "a", name: "Local", driver: "postgres" }), "p");
+    await mgr.setActive("a");
+
+    const wrapper = createStatusBar(mgr);
+    expect(wrapper.item.text).toBe("$(database) Local [postgres]");
+
+    wrapper.setErrorBadge("ECONNREFUSED");
+    expect(wrapper.item.text).toBe("$(error) Local [postgres]");
+    expect(wrapper.item.tooltip).toBe("vsdb: error: ECONNREFUSED");
+
+    wrapper.setErrorBadge(null);
+    // Back to the normal render path.
+    expect(wrapper.item.text).toBe("$(database) Local [postgres]");
+    expect(wrapper.item.tooltip).toBe("Local — click để đổi connection");
+
+    wrapper.dispose();
+  });
+
+  it("case 7 — wrapper exposes item (underlying StatusBarItem) + dispose for existing call sites", async () => {
+    const secret = new FakeSecretStorage();
+    const ws = new FakeMemento();
+    const g = new FakeMemento();
+    const adapter = makeAdapter();
+    const factory = vi.fn(() => adapter as unknown as DbAdapter);
+    const mgr = new ConnectionManager(
+      { secrets: secret, workspaceState: ws, globalState: g } as never,
+      factory,
+    );
+    await mgr.addConnection(makeCfg({ id: "a", name: "Local", driver: "postgres" }), "p");
+    await mgr.setActive("a");
+
+    const wrapper = createStatusBar(mgr);
+
+    // `.item` is the underlying vscode.StatusBarItem — exposes the original
+    // `text` / `command` / `dispose` etc. for legacy call sites.
+    expect(wrapper.item).toBeDefined();
+    expect(typeof wrapper.item.text).toBe("string");
+    expect(wrapper.item.command).toBe("vsdb.selectConnection");
+    expect(wrapper.item.text).toBe("$(database) Local [postgres]");
+
+    // `.dispose()` is the canonical cleanup — must dispose the underlying
+    // item AND the subscribed listeners. Calling the underlying item's
+    // dispose directly is fine; the wrapper's dispose also handles it.
+    expect(typeof wrapper.dispose).toBe("function");
+    wrapper.dispose();
+    expect(mockStatusBarItem.dispose).toHaveBeenCalled();
   });
 });

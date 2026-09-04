@@ -13,6 +13,7 @@ import {
   RETAINED_ROW_CAP,
   classifyStatementKind,
   stampStatementKind,
+  RunnerBusy,
   type StatementResult,
 } from "../queryRunner";
 import {
@@ -2059,5 +2060,143 @@ describe("QueryRunner — stampStatementKind (TASK-UX1-010)", () => {
     expect(r.kind).toBe("select");
     expect(r.dialect).toBe("bigquery");
     expect(r.schemaFields).toEqual([{ name: "n" }]);
+  });
+});
+
+// =============================================================================
+// TASK-UX2-003 — QueryRunner.runFailed(reason) + RunnerBusy.
+//
+// The host's `runStatements` outer catch (TASK-UX2-004) calls
+// `runner.runFailed(reason)` instead of dropping a toast. The synthetic
+// StatementResult is appended to `this.results` and the existing onUpdate
+// contract fires — `runFailed` reuses the same path real statements use,
+// never a parallel one.
+//
+// Contract pinned by these 5 cases:
+//   1. `runFailed("ECONNREFUSED")` synchronously appends one synthetic
+//      StatementResult `{index:0, sql:"(connection)", status:"error",
+//      error:"ECONNREFUSED", durationMs:0}` and fires onUpdate.
+//   2. `runFailed` while a real `run()` is in flight throws `RunnerBusy`.
+//   3. `runFailed` after a cancelled run appends a new synthetic row.
+//   4. Calling `runFailed` twice accumulates two synthetic rows.
+//   5. Regular `run([stmt])` after `runFailed` works (does not leak the
+//      synthetic row into the new run's state).
+// =============================================================================
+describe("QueryRunner — runFailed (TASK-UX2-003)", () => {
+  it("case 1 — runFailed appends one synthetic StatementResult and fires onUpdate", async () => {
+    const adapter = makeAdapter(async () => okResult(["n"], [[1]]));
+    const runner = new QueryRunner(async () => adapter);
+    const updates: StatementResult[][] = [];
+    // Drive `run()` once so `lastOnUpdate` is set; the synthetic onUpdate
+    // must fire on `runFailed` after that.
+    await runner.run([stmt("SELECT 1", 0, 8)], (r) => updates.push(r.slice()));
+    updates.length = 0;
+    const beforeLen = runner.getResults().length;
+
+    runner.runFailed("ECONNREFUSED");
+
+    const results = runner.getResults();
+    expect(results).toHaveLength(beforeLen + 1);
+    const last = results[results.length - 1];
+    expect(last.index).toBe(beforeLen);
+    expect(last.sql).toBe("(connection)");
+    expect(last.status).toBe("error");
+    expect(last.error).toBe("ECONNREFUSED");
+    expect(last.durationMs).toBe(0);
+    // onUpdate fired once with the synthetic row visible.
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toHaveLength(beforeLen + 1);
+    expect(updates[0][updates[0].length - 1].sql).toBe("(connection)");
+  });
+
+  it("case 2 — runFailed while a real run() is in flight throws RunnerBusy", async () => {
+    let resolveRun: ((v: RunResult) => void) | null = null;
+    const adapter = makeAdapter(
+      () => new Promise<RunResult>((resolve) => { resolveRun = resolve; }),
+    );
+    const runner = new QueryRunner(async () => adapter);
+
+    const runPromise = runner.run([stmt("SELECT pg_sleep(10)", 0, 18)], () => {});
+    // Wait for runQuery to be in flight.
+    await new Promise((r) => setTimeout(r, 5));
+    expect(runner.isRunning()).toBe(true);
+
+    expect(() => runner.runFailed("DROPPED")).toThrow(RunnerBusy);
+    // Tighten the assertion: the thrown error must be a `RunnerBusy`
+    // INSTANCE, not any error. `toThrow(undefined)` accepts anything;
+    // pinning the constructor name guards against the test passing for the
+    // wrong reason (e.g. `runFailed` not yet implemented).
+    try {
+      runner.runFailed("DROPPED");
+      throw new Error("expected RunnerBusy");
+    } catch (e) {
+      expect((e as { constructor?: { name?: string } }).constructor?.name).toBe("RunnerBusy");
+    }
+    if (resolveRun) {
+      resolveRun({ results: [{ columns: ["x"], rows: [], rowCount: 0, durationMs: 0 }] });
+    }
+    const result = await runPromise;
+    expect(result[0].status).toBe("done");
+    // runFailed did NOT append anything while run was in flight.
+    expect(result).toHaveLength(1);
+    expect(result[0].sql).toBe("SELECT pg_sleep(10)");
+  });
+
+  it("case 3 — runFailed after a cancelled run appends a new synthetic row", async () => {
+    let resolveRun: ((v: RunResult) => void) | null = null;
+    const adapter = makeAdapter(
+      () => new Promise<RunResult>((resolve) => { resolveRun = resolve; }),
+    );
+    const runner = new QueryRunner(async () => adapter);
+
+    const runPromise = runner.run([stmt("SELECT pg_sleep(10)", 0, 18)], () => {});
+    await new Promise((r) => setTimeout(r, 5));
+    await runner.cancel();
+    if (resolveRun) {
+      resolveRun({ results: [{ columns: ["x"], rows: [], rowCount: 0, durationMs: 0 }] });
+    }
+    const result = await runPromise;
+    expect(result[0].status).toBe("cancelled");
+
+    // Now runFailed must NOT throw and must append a synthetic row.
+    expect(() => runner.runFailed("CANCELLED THEN FAILED")).not.toThrow();
+    const final = runner.getResults();
+    expect(final).toHaveLength(2);
+    const synth = final[final.length - 1];
+    expect(synth.sql).toBe("(connection)");
+    expect(synth.status).toBe("error");
+    expect(synth.error).toBe("CANCELLED THEN FAILED");
+  });
+
+  it("case 4 — calling runFailed twice accumulates two synthetic rows", async () => {
+    const adapter = makeAdapter(async () => okResult(["n"], [[1]]));
+    const runner = new QueryRunner(async () => adapter);
+    await runner.run([stmt("SELECT 1", 0, 8)], () => {});
+
+    runner.runFailed("ERR_A");
+    runner.runFailed("ERR_B");
+
+    const results = runner.getResults();
+    expect(results).toHaveLength(3); // 1 real + 2 synthetic
+    expect(results[1].sql).toBe("(connection)");
+    expect(results[1].error).toBe("ERR_A");
+    expect(results[2].sql).toBe("(connection)");
+    expect(results[2].error).toBe("ERR_B");
+  });
+
+  it("case 5 — regression: regular run() after runFailed is unaffected", async () => {
+    const adapter = makeAdapter(async (sql) => okResult(["value"], [[sql]]));
+    const runner = new QueryRunner(async () => adapter);
+    await runner.run([stmt("SELECT a", 0, 8)], () => {});
+    runner.runFailed("CONNECTION LOST");
+
+    // After runFailed, run([stmt]) must reset to a clean single entry —
+    // the synthetic row from runFailed must NOT leak into the new run.
+    const result = await runner.run([stmt("SELECT b", 0, 8)], () => {});
+    expect(result).toHaveLength(1);
+    expect(result[0].sql).toBe("SELECT b");
+    expect(result[0].status).toBe("done");
+    expect(result[0].result?.rows).toEqual([["SELECT b"]]);
+    expect(runner.getResults()).toHaveLength(1);
   });
 });

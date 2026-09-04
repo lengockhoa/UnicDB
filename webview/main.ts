@@ -70,6 +70,7 @@ import {
   type StatementResultLike,
 } from "../src/ui/ddlStatusCard";
 import { highlightSql } from "./sqlHighlight";
+import { tabTitle, tabBadge } from "./tabTitle";
 
 // AG Grid v36 modular API — register all-community so createGrid initializes.
 ModuleRegistry.registerModules([AllCommunityModule]);
@@ -1120,34 +1121,6 @@ function buildPersistentDom(): PersistentDom {
     requeryRunBtn,
     requeryClearBtn,
   };
-}
-
-function tabBadge(r: StatementResult): string {
-  if (r.status === "done") return "✓";
-  if (r.status === "error") return "✗";
-  if (r.status === "cancelled") return "⌀";
-  return "…";
-}
-
-/** TASK-007 — max characters of a per-table tab label before truncation. */
-const TAB_LABEL_MAX = 40;
-
-/** TASK-007 — per-statement tab title. Uses `r.label` (e.g. "public.users"
- *  set by the host when browsing table data via the schema tree) and falls
- *  back to the generic "Statement N" when the label is absent or empty.
- *  Labels longer than TAB_LABEL_MAX chars are truncated at exactly 40 chars
- *  + "..." so one long table name can't blow out the tab strip. The title
- *  is assigned via textContent (never innerHTML) so label text is always
- *  rendered as literal text — no XSS surface. */
-function tabTitle(r: StatementResult, i: number): string {
-  if (typeof r.runNo === "number" && typeof r.runStmtNo === "number") {
-    return `Run ${r.runNo} · Stmt ${r.runStmtNo}`;
-  }
-  const label = typeof r.label === "string" ? r.label : "";
-  if (label.length === 0) return `Statement ${i + 1}`;
-  return label.length > TAB_LABEL_MAX
-    ? label.slice(0, TAB_LABEL_MAX) + "..."
-    : label;
 }
 
 function rebuildTabs(tabsEl: HTMLDivElement): void {
@@ -3686,6 +3659,20 @@ window.addEventListener("message", (ev: MessageEvent) => {
     // Host returned from loadMore → clear in-flight flag.
     loadMoreInFlight = false;
     if (activeTab >= results.length) activeTab = Math.max(0, results.length - 1);
+    // TASK-UX2-002 — auto-open the Messages tab when any new error row
+    // arrives. Compare against the previous result slice (rows that
+    // already existed pre-update) so re-renders of an already-erroring
+    // set don't bounce the user back to Messages mid-investigation.
+    // The Messages tab is appended at index `results.length` by
+    // rebuildTabs() — see :rebuildTabs. Applied AFTER the loadMore clamp
+    // above so `results.length` (the Messages tab slot) survives.
+    if (msg.results && msg.results.length > prevLen) {
+      let newError = false;
+      for (let i = prevLen; i < msg.results.length; i++) {
+        if (msg.results[i]?.status === "error") { newError = true; break; }
+      }
+      if (newError) activeTab = results.length;
+    }
     // TASK-003 — statement identity changed ⇒ the DISTINCT cache is wrong
     // data for the new statement (same index, different result). Bump the
     // generation: in-flight replies for the old statement are dropped by

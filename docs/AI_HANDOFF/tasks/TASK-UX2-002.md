@@ -86,3 +86,98 @@ npm test webview/__tests__/mainTabTitle.test.ts
 ## Discussion
 
 (no comments yet)
+
+## Executor Report
+
+**STATUS: DONE**
+**EXECUTOR_MODEL: unic-code (claude-sonnet-4-5)**
+**EXECUTOR_TOOL: claude-code**
+**EXECUTOR_SUBAGENT: feature-implementer**
+
+### TDD Cycle
+
+**RED phase** (test file created, `tabTitle` module not yet implemented):
+
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/UX2-002
+
+ ❯ webview/__tests__/mainTabTitle.test.ts  (0 test)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  webview/__tests__/mainTabTitle.test.ts [ webview/__tests__/mainTabTitle.test.ts ]
+Error: Failed to load url ../tabTitle (resolved id: ../tabTitle) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/UX2-002/webview/__tests__/mainTabTitle.test.ts. Does the file exist?
+ ❯ loadAndTransform ../../node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed (1)
+      Tests  no tests
+```
+
+RED confirmed — module not yet implemented.
+
+**GREEN phase** (`webview/tabTitle.ts` implemented with the spec contract):
+
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/UX2-002
+
+ ✓ webview/__tests__/mainTabTitle.test.ts  (7 tests) 1ms
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Duration  156ms
+```
+
+All 6 spec cases + 1 `tabBadge` regression case pass.
+
+### Verification
+
+**`npm run typecheck`** → exit 0, no output.
+
+**Per-suite** (5 affected webview test files, all pass):
+
+```
+ ✓ webview/__tests__/mainTabTitle.test.ts         (7 tests)
+ ✓ src/ui/__tests__/webviewResultLimit.test.ts    (6 tests)
+ ✓ src/ui/__tests__/webviewPerTableTabs.test.ts   (6 tests)
+ ✓ src/ui/__tests__/webviewBundle.test.ts         (9 tests)
+ ✓ tests/webviewMultiRunTabs.test.ts              (6 tests)
+ Test Files  5 passed (5)
+      Tests  34 passed (34)
+```
+
+**Full suite** `npm test`:
+
+```
+ Test Files  5 failed | 228 passed | 1 skipped (234)
+      Tests  3466 passed | 2 skipped (3468)
+```
+
+The 5 failing test files are pre-existing `aiChatPanel*` tests with `spawnSync /…/node_modules/.bin/esbuild ENOENT` (worktree's `node_modules/.bin/esbuild` symlink missing — they `execFileSync` esbuild directly to bundle `webview/aiChatPanelMain.ts`). Unrelated to TASK-UX2-002; same failures present on the baseline before any of my changes.
+
+### Files Changed
+
+- `webview/tabTitle.ts` (new) — pure `tabTitle(r, i)` and `tabBadge(r)` helpers, structural `TabTitleInput` type, no host dependencies.
+- `webview/main.ts` — imported `tabTitle`/`tabBadge` from `./tabTitle`; removed the 30-line local definitions. Added Messages auto-open after the `loadMoreInFlight` clamp in the `state` handler: any new error row in `[prevLen, results.length)` sets `activeTab = results.length` (the Messages tab slot). Placed AFTER the clamp so `results.length` survives (the clamp otherwise rewrites it to `results.length - 1`).
+- `webview/__tests__/mainTabTitle.test.ts` (new) — 6 spec cases + 1 regression (tabBadge done), all under `@vitest-environment node` for pure-function testing.
+- `vitest.config.ts` — added `webview/__tests__/*.test.ts` to the `include` list.
+
+**Pre-existing test updates** (assertions updated to match the new spec — these were testing the OLD label format that the spec replaces, so they are intentional, not regressions):
+
+- `src/ui/__tests__/webviewPerTableTabs.test.ts` — assertions now check `Run N · <hint>` instead of `Statement N`; long label test (3) now expects verbatim rendering (the 40-char + "..." truncation was removed by the spec); fallback tests (2, 5) use empty-sql fixtures to reach the Stmt M fallback path.
+- `src/ui/__tests__/webviewBundle.test.ts` — test #1 and #7 add a click on tab[0] after the state dispatch because the new auto-open Messages behaviour makes the Messages tab the initially-active tab whenever any error row is present. Test #7's `.vsdb-error` selector updated to `.vsdb-ddl-card-error-text` (the TASK-UX1-010 surface that replaces the legacy error display).
+- `src/ui/__tests__/webviewResultLimit.test.ts` — test #5's `⌀` cancelled badge assertion replaced with the new spec: `tabBadge` returns `""` for non-error statuses (no `⌀`/`✗`/`⚠`); the `.vsdb-tab-cancelled` CSS class is still applied.
+- `tests/webviewMultiRunTabs.test.ts` — the "stamped entries" test asserts the new `Run N · <hint>` contract (sql/label/Stmt M paths).
+
+### Test Plan Followed
+
+`docs/AI_HANDOFF/PLAN.md` §4 TASK-UX2-002 — all 6 cases implemented in `webview/__tests__/mainTabTitle.test.ts`.
+
+### Issues
+
+None — all spec test cases green, baseline preserved (or better).
+
+### Handoff to Reviewer
+
+yes — code is ready for review. The pre-existing test updates are intentional alignment to the new spec, not accidental regressions.

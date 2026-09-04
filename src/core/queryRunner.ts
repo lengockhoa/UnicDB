@@ -38,6 +38,19 @@ import type { SqlDialect } from "./statementParser";
 export type StatementStatus = "running" | "done" | "error" | "cancelled";
 
 /**
+ * TASK-UX2-003 — thrown by `runFailed` when a real `run()` is still in flight.
+ * The synthetic error row that `runFailed` produces would otherwise race the
+ * live run's `onUpdate` emit and corrupt the panel render — so it is rejected
+ * synchronously with a clear error type instead.
+ */
+export class RunnerBusy extends Error {
+  constructor(message = "QueryRunner.runFailed: a real run() is in flight") {
+    super(message);
+    this.name = "RunnerBusy";
+  }
+}
+
+/**
  * TASK-ARP03-002 — conservative, driver-independent primary gate for rows
  * retained in a StatementResult. When a loadMore batch pushes the retained
  * rows past this cap, the prefix is kept, the cursor is closed exactly once
@@ -187,6 +200,15 @@ export class QueryRunner {
   private seamDelivered = false;
   private currentIndex = -1;
   private running: Promise<void> | null = null;
+  /**
+   * TASK-UX2-003 — last onUpdate callback passed to `run()`. Cached so
+   * `runFailed(reason)` can fire the same emit path the panel already
+   * listens to, without growing a parallel contract. Overwritten on each
+   * `run()` entry; intentionally NOT cleared in `run()` finally so the
+   * host's outer catch can still emit a synthetic error row after the
+   * run settled with a connection failure.
+   */
+  private lastOnUpdate: ((results: StatementResult[]) => void) | null = null;
   /** Per-index in-flight promise — serializes concurrent loadMore cho cùng index. */
   private loadMoreInFlight: Map<number, Promise<StatementResult[]>> = new Map();
   private runCount = 0;
@@ -254,6 +276,9 @@ export class QueryRunner {
     const append = opts.append === true;
     const base = append ? this.results.length : 0;
     const runNo = ++this.runCount;
+    // TASK-UX2-003 — cache the onUpdate callback so `runFailed(reason)`
+    // can fire the same emit path the panel listens to.
+    this.lastOnUpdate = onUpdate;
     // TASK-BQ03-003 — bump the run generation so any in-flight loadMore
     // (whose pre-await snapshot still references the previous generation)
     // is forced to discard its late-settled batch on the post-await
@@ -745,6 +770,56 @@ export class QueryRunner {
         // best-effort — seam failure không được làm hỏng cancel flow.
       }
       this.cancelPending = false;
+    }
+  }
+
+  /**
+   * TASK-UX2-003 — append ONE synthetic `StatementResult` to `this.results`
+   * so the Results panel renders the same shape for a connection-failure
+   * as for a failed statement. Fires the cached `onUpdate` callback (set
+   * by the most recent `run()`) so the panel goes through its single,
+   * existing render path — no parallel "error tab" producer.
+   *
+   * Contract:
+   *   - Synchronous append: `{index: results.length, sql: "(connection)",
+   *     status: "error", error: reason, durationMs: 0}`.
+   *   - Throws `RunnerBusy` if a real `run()` is currently in flight —
+   *     the synthetic row would race the live run's onUpdate emit.
+   *   - Defensive: if no `run()` has been called yet (or the most recent
+   *     run already settled), the row is still appended but no onUpdate
+   *     fires (the panel just won't see it — caller's job to wire a
+   *     subscriber if they want it before the first run).
+   *   - Idempotent at the row level: calling twice accumulates two rows.
+   *     A second call before the panel has rendered the first does NOT
+   *     crash — each call appends independently.
+   *
+   * Why a separate path from `run()`: first-connect failures throw out of
+   * `adapterProvider()` before any statement runs, so there is no
+   * StatementResult to surface. The host's `runStatements` outer catch
+   * (TASK-UX2-004) calls this instead of dropping a toast.
+   */
+  runFailed(reason: string): void {
+    // Synchronous guard — `this.running` is set before the first await
+    // inside `run()`, so by the time a real run is in flight, this is
+    // non-null. Throwing synchronously keeps the contract tight: the
+    // caller can `try/catch` around the host catch path.
+    if (this.running !== null) {
+      throw new RunnerBusy();
+    }
+    const row: StatementResult = {
+      index: this.results.length,
+      sql: "(connection)",
+      status: "error",
+      error: reason,
+      durationMs: 0,
+    };
+    this.results.push(row);
+    // Reuse the existing onUpdate contract (TASK-UX2-003 acceptance —
+    // no separate emit). If no run() has registered a callback yet,
+    // skip silently; the row is still in `this.results` for later
+    // observers (e.g. a panel that subscribes post-mount).
+    if (this.lastOnUpdate) {
+      this.lastOnUpdate(this.results.slice());
     }
   }
 

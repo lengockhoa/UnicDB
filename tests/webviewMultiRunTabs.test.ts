@@ -97,7 +97,7 @@ describeIfBundle("TASK-AH-003 append-only result tabs", () => {
     expect(debug().getActiveTab()).toBe(2);
   });
 
-  itIfBundle("stamped entries show Run N · Stmt M and unstamped entries keep fallback labels", async () => {
+  itIfBundle("stamped entries show Run N · <hint> (SQL/label/Stmt M)", async () => {
     const { root } = loadBundle();
     dispatch(state([
       result(0, { runNo: 2, runStmtNo: 1 }),
@@ -106,9 +106,16 @@ describeIfBundle("TASK-AH-003 append-only result tabs", () => {
     ]));
     await flush();
     const rendered = tabs(root).slice(0, 3).map((tab) => tab.textContent ?? "");
-    expect(rendered[0]).toMatch(/^Run 2 · Stmt 1/);
-    expect(rendered[1]).toMatch(/^public\.users/);
-    expect(rendered[2]).toMatch(/^Statement 3/);
+    // TASK-UX2-002 — tab title is "Run N · <hint>". Hint preference:
+    //   error → label || first 30 chars of sql || "failed"
+    //   label → r.label (this is `public.users`)
+    //   sql   → first 30 chars of r.sql
+    //   else  → "Stmt M"  (only when sql is empty AND no label)
+    expect(rendered[0]).toMatch(/^Run 2 · SELECT 0/); // sql path
+    expect(rendered[1]).toMatch(/^Run 2 · public\.users/); // label path (runNo defaults to i+1=2)
+    // index 2 has no label, but `result(2)` factory supplies `sql: "SELECT 2"`,
+    // so the sql path wins.
+    expect(rendered[2]).toMatch(/^Run 3 · SELECT 2/);
   });
 
   itIfBundle("append post preserves old DISTINCT cache while activating a new tab", async () => {

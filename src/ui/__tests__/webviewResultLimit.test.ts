@@ -232,7 +232,7 @@ describeIfBundle("webview resultLimited UX (TASK-ARP03-004)", () => {
     expect(root.textContent ?? "").not.toMatch(/truncated/i);
   });
 
-  it("5. distinct from cancel — cancelled has NO footer, keeps ⌀ tab badge + cancelled msg card", () => {
+  it("5. distinct from cancel — cancelled has NO footer, NO tab badge + cancelled msg card", () => {
     const { root } = loadBundle();
     dispatchState(
       selectState({
@@ -250,10 +250,11 @@ describeIfBundle("webview resultLimited UX (TASK-ARP03-004)", () => {
     // Truncation marker appears nowhere.
     expect(root.textContent ?? "").not.toMatch(/truncated/i);
 
-    // Cancelled has its own distinct marker: the ⌀ tab badge.
+    // TASK-UX2-002 — tabBadge returns "" for non-error statuses; cancelled
+    // has no badge but still carries the .vsdb-tab-cancelled CSS class.
     const tab = root.querySelector(".vsdb-tab.vsdb-tab-cancelled");
     expect(tab).toBeTruthy();
-    expect(tab!.textContent ?? "").toContain("⌀");
+    expect(tab!.textContent ?? "").not.toMatch(/[⌀✗⚠]/);
 
     // ...and the cancelled message card on the Messages tab.
     const tabs = root.querySelectorAll(".vsdb-tab");

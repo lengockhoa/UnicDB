@@ -157,20 +157,36 @@ describeIfBundle("webview/main.ts bundle — TASK-007 per-table tab labels", () 
     const tab = statementTab(0);
     expect(tab).toBeTruthy();
     // Tab button text matches the label (badge may trail it).
-    expect(tab.textContent!.startsWith("public.users")).toBe(true);
+    // TASK-UX2-002 — tab title now uses the "Run N · <hint>" format.
+    expect(tab.textContent!.startsWith("Run 1 · public.users")).toBe(true);
     expect(tab.textContent).toContain("public.users");
   });
 
-  itIfBundle("2. tab falls back to \"Statement N\" when no label", async () => {
+  itIfBundle("2. tab falls back to \"Run N · Stmt M\" when no label and sql is empty", async () => {
     loadBundle();
-    dispatchMsg(state([selectResult(0, undefined, "users")]));
+    // Pass a fixture with no label AND empty sql so the Stmt M fallback fires.
+    dispatchMsg(state([
+      {
+        index: 0,
+        sql: "",
+        status: "done",
+        result: {
+          columns: ["id", "name"],
+          rows: [[1, "row-1"]],
+          rowCount: 1,
+          durationMs: 1,
+        },
+        durationMs: 1,
+      },
+    ]));
     await flush();
 
     const tab = statementTab(0);
-    expect(tab.textContent!.startsWith("Statement 1")).toBe(true);
+    // TASK-UX2-002 — empty sql + no label ⇒ Run N · Stmt M fallback.
+    expect(tab.textContent!.startsWith("Run 1 · Stmt 1")).toBe(true);
   });
 
-  itIfBundle("3. long label truncated at 40 chars with ellipsis", async () => {
+  itIfBundle("3. long label is rendered verbatim (no truncation in the new spec)", async () => {
     loadBundle();
     const longLabel = "public." + "x".repeat(43); // 50 chars
     expect(longLabel.length).toBe(50);
@@ -178,11 +194,11 @@ describeIfBundle("webview/main.ts bundle — TASK-007 per-table tab labels", () 
     await flush();
 
     const tab = statementTab(0);
-    const expected = longLabel.slice(0, 40) + "..."; // 40 chars + "..."
-    expect(expected.length).toBe(43);
-    expect(tab.textContent!.startsWith(expected)).toBe(true);
-    // Full 50-char label never rendered.
-    expect(tab.textContent).not.toContain(longLabel);
+    // TASK-UX2-002 — the spec only truncates SQL to 30 chars; labels are
+    // rendered verbatim. The previous 40-char + "..." truncation was
+    // removed when the tabTitle contract changed.
+    expect(tab.textContent).toContain(longLabel);
+    expect(tab.textContent!.startsWith("Run 1 · " + longLabel)).toBe(true);
   });
 
   itIfBundle("4. multiple tables open separate tabs (+ switching works)", async () => {
@@ -201,8 +217,8 @@ describeIfBundle("webview/main.ts bundle — TASK-007 per-table tab labels", () 
 
     const t0 = statementTab(0);
     const t1 = statementTab(1);
-    expect(t0.textContent!.startsWith("public.users")).toBe(true);
-    expect(t1.textContent!.startsWith("sales.orders")).toBe(true);
+    expect(t0.textContent!.startsWith("Run 1 · public.users")).toBe(true);
+    expect(t1.textContent!.startsWith("Run 2 · sales.orders")).toBe(true);
 
     // Tab switching still works with labeled tabs: click tab 2 → it becomes
     // active, tab 1 loses the active class. NOTE: rebuildTabs() recreates the
@@ -217,17 +233,35 @@ describeIfBundle("webview/main.ts bundle — TASK-007 per-table tab labels", () 
     expect(t1After.classList.contains("vsdb-tab-active")).toBe(true);
     expect(t0After.classList.contains("vsdb-tab-active")).toBe(false);
     // Labeled text survived the switch re-render.
-    expect(t1After.textContent!.startsWith("sales.orders")).toBe(true);
-    expect(t0After.textContent!.startsWith("public.users")).toBe(true);
+    expect(t1After.textContent!.startsWith("Run 2 · sales.orders")).toBe(true);
+    expect(t0After.textContent!.startsWith("Run 1 · public.users")).toBe(true);
   });
 
-  itIfBundle("5. empty label string falls back to Statement N", async () => {
+  itIfBundle("5. empty label + empty sql falls back to Run N · Stmt M", async () => {
     loadBundle();
-    dispatchMsg(state([selectResult(0, "", "users")]));
+    // Empty label with non-empty sql falls through to the sql path; only
+    // empty label AND empty sql hit the Stmt M fallback. Use a fixture
+    // matching that condition.
+    dispatchMsg(state([
+      {
+        index: 0,
+        sql: "",
+        label: "",
+        status: "done",
+        result: {
+          columns: ["id", "name"],
+          rows: [[1, "row-1"]],
+          rowCount: 1,
+          durationMs: 1,
+        },
+        durationMs: 1,
+      },
+    ]));
     await flush();
 
     const tab = statementTab(0);
-    expect(tab.textContent!.startsWith("Statement 1")).toBe(true);
+    // TASK-UX2-002 — empty label + empty sql ⇒ Run N · Stmt M fallback.
+    expect(tab.textContent!.startsWith("Run 1 · Stmt 1")).toBe(true);
   });
 
   itIfBundle("6. label with special characters renders correctly (no XSS)", async () => {

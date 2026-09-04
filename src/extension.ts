@@ -6,7 +6,7 @@ import { createAdapter } from "./adapters/factory";
 import { hasAdapterCapability } from "./adapters/types";
 import { QueryRunner } from "./core/queryRunner";
 import { ResultsPanel, type SaveContext } from "./ui/resultsPanel";
-import { createStatusBar } from "./ui/statusBar";
+import { createStatusBar, type StatusBarWrapper } from "./ui/statusBar";
 import {
   SchemaTreeProvider,
   generateSelectForTable,
@@ -251,7 +251,7 @@ interface ExtensionState {
   panel: ResultsPanel;
   tree: SchemaTreeProvider;
   codeLens: VsdbCodeLensProvider;
-  statusBar: vscode.StatusBarItem;
+  statusBar: StatusBarWrapper;
 }
 
 // AIX-01: opt-in workspace grounding. Default OFF so the pre-AIX-01

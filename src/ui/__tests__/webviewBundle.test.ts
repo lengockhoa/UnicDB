@@ -188,6 +188,14 @@ describeIfBundle("webview/main.ts bundle (TASK-203)", () => {
     const tabs = root.querySelectorAll(".vsdb-tab");
     expect(tabs.length).toBe(4);
 
+    // TASK-UX2-002 — auto-open Messages when any error row is present.
+    // The error is at index 2, so the Messages tab (last .vsdb-tab) is
+    // auto-activated. Click tab 0 to switch back to the SELECT tab and
+    // verify the grid still renders 200 rows.
+    const messagesTab = tabs[tabs.length - 1] as HTMLElement;
+    expect(messagesTab.classList.contains("vsdb-tab-active")).toBe(true);
+    (tabs[0] as HTMLElement).click();
+
     const gridHost = root.querySelector(".vsdb-grid-host");
     expect(gridHost).toBeTruthy();
     expect(gridHost!.querySelector('[class*="ag-root"]')).toBeTruthy();
@@ -453,7 +461,7 @@ describeIfBundle("webview/main.ts bundle (TASK-203)", () => {
     expect(ok.textContent).toContain("✓ INSERT");
     expect(ok.textContent).toContain("1 row affected");
    });
-  itIfBundle("7. error tab — .vsdb-error shows message", () => {
+  itIfBundle("7. error tab — error card shows message", () => {
     const { received, root } = loadBundle();
     dispatchState(
       selectState({
@@ -470,7 +478,17 @@ describeIfBundle("webview/main.ts bundle (TASK-203)", () => {
     );
     void received;
 
-    const err = root.querySelector(".vsdb-error") as HTMLElement;
+    // TASK-UX2-002 — auto-open Messages on error. Click the first
+    // statement tab to view the error card body (TASK-UX1-010).
+    const tabs = root.querySelectorAll(".vsdb-tab");
+    expect(tabs.length).toBe(2);
+    const messagesTab = tabs[tabs.length - 1] as HTMLElement;
+    expect(messagesTab.classList.contains("vsdb-tab-active")).toBe(true);
+    (tabs[0] as HTMLElement).click();
+
+    // The error card renders the verbatim pg error text under
+    // .vsdb-ddl-card-error-text (TASK-UX1-010 surface).
+    const err = root.querySelector(".vsdb-ddl-card-error-text") as HTMLElement;
     expect(err).toBeTruthy();
     expect(err.textContent).toContain("table not found");
   });
