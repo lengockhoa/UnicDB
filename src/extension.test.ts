@@ -5020,4 +5020,334 @@ describe("TASK-UX1-001 — generateSelect clipboard fallback when no editor is o
     expect(message).toMatch(/table/i);
   });
 });
+
+// =============================================================================
+// TASK-UX1-002 — SQL Generator on View / Routine nodes (R3+R4).
+// Right-click a View or Routine node → fetch pg_get_viewdef / pg_get_functiondef
+// → seed a fresh Console tab pre-filled with the DDL. The pg gate already
+// exists (adapter.catalog.objectDdl); this task wires two commands + menu
+// entries + a thin handler that opens the Console.
+// =============================================================================
+describe("TASK-UX1-002 — SQL Generator on View / Routine nodes", () => {
+  function consoleWebviewState(): {
+    tabs: Array<{ id: string; name: string; buffer: string; active: boolean }>;
+    activeTabId: string;
+  } | null {
+    // Return the LAST `state` postMessage across all console webviews —
+    // `seedTab` calls `createTab` (postState #1: new tab active) then sets
+    // the buffer + postState #2. The first state message is the empty
+    // "Query 1" from the constructor; the latest state reflects what the
+    // webview would render right now.
+    let latest: {
+      tabs: Array<{ id: string; name: string; buffer: string; active: boolean }>;
+      activeTabId: string;
+    } | null = null;
+    for (const wp of state.createdWebviewPanels) {
+      const calls = (
+        wp.webview.postMessage as Mock
+      ).mock.calls as unknown as Array<[Record]>;
+      for (const [msg] of calls) {
+        if (msg && (msg as { type?: string }).type === "state") {
+          latest = msg as {
+            tabs: Array<{ id: string; name: string; buffer: string; active: boolean }>;
+            activeTabId: string;
+          };
+        }
+      }
+    }
+    return latest;
+  }
+
+  function makeConnectionConfig() {
+    return {
+      id: "c1",
+      name: "c",
+      driver: "postgres",
+      host: "h",
+      port: 5432,
+      user: "u",
+      database: "d",
+    };
+  }
+
+  function makeSeededCtx() {
+    const ctx = makeCtx();
+    ctx.globalState.get = vi.fn((key: string) => {
+      if (key === "vsdb.connections") return [makeConnectionConfig()];
+      if (key === "vsdb.activeConnection") return "c1";
+      return undefined;
+    }) as never;
+    return ctx;
+  }
+
+  function makeAdapterWithObjectDdl(
+    capabilities: { objectDdl: boolean } | undefined,
+    objectDdlImpl: (
+      kind: "view" | "routine",
+      name: string,
+      schema?: string,
+    ) => Promise<string>,
+  ) {
+    const adapter = {
+      capabilities,
+      catalog: {
+        objectDdl: vi.fn().mockImplementation(objectDdlImpl),
+      },
+    } as unknown as DbAdapter;
+    (
+      adapter as unknown as { runQuery: ReturnType<typeof vi.fn> }
+    ).runQuery = vi.fn().mockResolvedValue({ results: [] });
+    return adapter;
+  }
+
+  async function activateWithAdapter(adapter: DbAdapter) {
+    const connectionMgrMod = await import("./core/connectionManager");
+    vi.spyOn(
+      connectionMgrMod.ConnectionManager.prototype,
+      "getAdapter",
+    ).mockResolvedValue(adapter);
+    vi.spyOn(
+      connectionMgrMod.ConnectionManager.prototype,
+      "getActive",
+    ).mockReturnValue(makeConnectionConfig() as never);
+    const ext = await import("./extension");
+    const ctx = makeSeededCtx();
+    await ext.activate(ctx as never);
+    return ext;
+  }
+
+  function viewNode(qualified: string) {
+    const [schema, ...rest] = qualified.split(".");
+    const objectName = rest.join(".");
+    return {
+      meta: {
+        connection: makeConnectionConfig(),
+        schema,
+        objectName,
+      },
+    };
+  }
+
+  beforeEach(() => {
+    // consolePanel is a module-level singleton in extension.ts — without
+    // resetting the module cache, the second test in this block would skip
+    // ConsolePanel construction (createWebviewPanel not invoked) because
+    // the previous test's instance is still live (TASK-CONSOLE-FOR-OBJECT
+    // precedent at line 4589-4597).
+    vi.resetModules();
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+    state.createdWebviewPanels.length = 0;
+    state.createdOutputChannels.length = 0;
+  });
+
+  afterEach(async () => {
+    await deactivate();
+  });
+
+  it("Test #7 (regression) — package.json declares both commands + view/item/context entries with correct when-clauses + onCommand activations", () => {
+    const commands = pkgJson.contributes.commands as Array<{
+      command: string;
+      title: string;
+      icon: string;
+    }>;
+    const viewCmd = commands.find((c) => c.command === "vsdb.generateViewDdl");
+    const funcCmd = commands.find(
+      (c) => c.command === "vsdb.generateFunctionDdl",
+    );
+    expect(viewCmd).toBeDefined();
+    expect(viewCmd!.title).toBe("SQL Generator");
+    expect(viewCmd!.icon).toBe("$(eye)");
+    expect(funcCmd).toBeDefined();
+    expect(funcCmd!.title).toBe("SQL Generator");
+    expect(funcCmd!.icon).toBe("$(symbol-function)");
+
+    const itemContext = pkgJson.contributes.menus["view/item/context"] as Array<{
+      command: string;
+      when: string;
+      group: string;
+    }>;
+    const viewMenu = itemContext.find(
+      (m) => m.command === "vsdb.generateViewDdl",
+    );
+    const funcMenu = itemContext.find(
+      (m) => m.command === "vsdb.generateFunctionDdl",
+    );
+    expect(viewMenu).toBeDefined();
+    // CRITICAL pin: viewItem == view (NOT routine) so the entry actually
+    // renders on view nodes only. A `viewItem == routine` clause here
+    // would never fire (the tree emits contextValue: "view" for views).
+    expect(viewMenu!.when).toBe(
+      "view == vsdb.schemaTree && viewItem == view",
+    );
+    expect(viewMenu!.group).toBe("vsdb");
+    expect(funcMenu).toBeDefined();
+    // CRITICAL pin: routine, NOT function — schemaTree.ts:565 emits
+    // contextValue: "routine" for both. A `viewItem == function` clause
+    // would produce a dead menu entry (review-blocking bug).
+    expect(funcMenu!.when).toBe(
+      "view == vsdb.schemaTree && viewItem == routine",
+    );
+    expect(funcMenu!.group).toBe("vsdb");
+
+    const activations = pkgJson.activationEvents as string[];
+    expect(activations).toContain("onCommand:vsdb.generateViewDdl");
+    expect(activations).toContain("onCommand:vsdb.generateFunctionDdl");
+  });
+
+  it("Test #1 — happy: view node → seedTab called with name 'DDL public.v' and buffer = ddl + ';'", async () => {
+    const adapter = makeAdapterWithObjectDdl(
+      { objectDdl: true },
+      async (_kind, name, _schema) =>
+        `CREATE VIEW public.${name} AS SELECT 1`,
+    );
+    await activateWithAdapter(adapter);
+
+    const fn = state.registeredCommands.get("vsdb.generateViewDdl");
+    expect(fn).toBeDefined();
+    await fn!(viewNode("public.v"));
+
+    // objectDdl called with view + qualified name + schema.
+    const catalog = adapter.catalog as unknown as {
+      objectDdl: ReturnType<typeof vi.fn>;
+    };
+    expect(catalog.objectDdl).toHaveBeenCalledTimes(1);
+    expect(catalog.objectDdl.mock.calls[0]).toEqual([
+      "view",
+      "v",
+      "public",
+    ]);
+    // A console webview was created; the latest 'state' postMessage holds
+    // the seeded tab with the DDL buffer (terminated with one `;`).
+    const cs = consoleWebviewState();
+    expect(cs).not.toBeNull();
+    const seededTab = cs!.tabs.find((t) => t.active) ?? cs!.tabs[cs!.tabs.length - 1];
+    expect(seededTab.name).toBe("DDL public.v");
+    expect(seededTab.buffer).toBe("CREATE VIEW public.v AS SELECT 1;");
+  });
+
+  it("Test #2 — happy: routine node → pg_get_functiondef DDL seeded verbatim (existing `;` NOT doubled)", async () => {
+    const adapter = makeAdapterWithObjectDdl(
+      { objectDdl: true },
+      async (_kind, name, _schema) =>
+        `CREATE FUNCTION public.${name}() RETURNS void LANGUAGE plpgsql AS $$ BEGIN END $$;`,
+    );
+    await activateWithAdapter(adapter);
+
+    const fn = state.registeredCommands.get("vsdb.generateFunctionDdl");
+    expect(fn).toBeDefined();
+    await fn!(viewNode("public.do_thing"));
+
+    const catalog = adapter.catalog as unknown as {
+      objectDdl: ReturnType<typeof vi.fn>;
+    };
+    expect(catalog.objectDdl).toHaveBeenCalledWith("routine", "do_thing", "public");
+    const cs = consoleWebviewState();
+    expect(cs).not.toBeNull();
+    const seededTab = cs!.tabs.find((t) => t.active) ?? cs!.tabs[cs!.tabs.length - 1];
+    expect(seededTab.name).toBe("DDL public.do_thing");
+    // DDL already ended with `;` — ensureTrailingSemicolon is idempotent.
+    expect(seededTab.buffer).toBe(
+      "CREATE FUNCTION public.do_thing() RETURNS void LANGUAGE plpgsql AS $$ BEGIN END $$;",
+    );
+    // Buffer must NOT have a doubled `;;`.
+    expect(seededTab.buffer.endsWith(";;")).toBe(false);
+  });
+
+  it("Test #3 — edge A: objectDdl rejects ('object not found') → error toast, NO seedTab call", async () => {
+    const adapter = makeAdapterWithObjectDdl(
+      { objectDdl: true },
+      async () => {
+        throw new Error('view "x" not found');
+      },
+    );
+    await activateWithAdapter(adapter);
+
+    const fn = state.registeredCommands.get("vsdb.generateViewDdl");
+    await fn!(viewNode("public.x"));
+
+    const catalog = adapter.catalog as unknown as {
+      objectDdl: ReturnType<typeof vi.fn>;
+    };
+    expect(catalog.objectDdl).toHaveBeenCalledTimes(1);
+    // Error toast surfaced with the adapter message; no console created.
+    expect(
+      vi.mocked(vscodeMock.window.showErrorMessage).mock.calls.some((c) =>
+        String(c[0]).includes('view "x" not found'),
+      ),
+    ).toBe(true);
+    // The console panel was NOT opened for the failed DDL.
+    const cs = consoleWebviewState();
+    expect(cs).toBeNull();
+  });
+
+  it("Test #4 — edge B: capabilities.objectDdl !== true → info toast, ZERO adapter calls", async () => {
+    const adapter = makeAdapterWithObjectDdl(
+      { objectDdl: false },
+      async () => {
+        throw new Error("objectDdl should not be called");
+      },
+    );
+    await activateWithAdapter(adapter);
+
+    const fn = state.registeredCommands.get("vsdb.generateViewDdl");
+    await fn!(viewNode("public.v"));
+
+    const catalog = adapter.catalog as unknown as {
+      objectDdl: ReturnType<typeof vi.fn>;
+    };
+    expect(catalog.objectDdl).not.toHaveBeenCalled();
+    // Info toast guides the user (pg-only / capability wording).
+    expect(
+      vi.mocked(vscodeMock.window.showInformationMessage).mock.calls.some(
+        (c) => /postgres|not supported|capability|pg/i.test(String(c[0])),
+      ),
+    ).toBe(true);
+  });
+
+  it("Test #5 — edge C: command invoked with NO arg (palette) → info toast, no adapter call", async () => {
+    const adapter = makeAdapterWithObjectDdl(
+      { objectDdl: true },
+      async () => {
+        throw new Error("objectDdl should not be called");
+      },
+    );
+    await activateWithAdapter(adapter);
+
+    const fn = state.registeredCommands.get("vsdb.generateFunctionDdl");
+    await fn!(undefined);
+
+    const catalog = adapter.catalog as unknown as {
+      objectDdl: ReturnType<typeof vi.fn>;
+    };
+    expect(catalog.objectDdl).not.toHaveBeenCalled();
+    expect(
+      vi.mocked(vscodeMock.window.showInformationMessage).mock.calls.some(
+        (c) => /right-click/i.test(String(c[0])),
+      ),
+    ).toBe(true);
+  });
+
+  it("Test #6 — edge D: ensureTrailingSemicolon is idempotent for DDL that already ends with `;`", async () => {
+    // Pure helper smoke: imported from consolePanel.ts (lives next to other
+    // console string helpers). Pinning ensures future refactors don't
+    // regress on the `;;` doubling class of bug.
+    const consoleMod = await import("./ui/consolePanel");
+    expect(
+      (consoleMod as unknown as {
+        ensureTrailingSemicolon?: (s: string) => string;
+      }).ensureTrailingSemicolon,
+    ).toBeDefined();
+    const ensure = (
+      consoleMod as unknown as { ensureTrailingSemicolon: (s: string) => string }
+    ).ensureTrailingSemicolon;
+    expect(ensure("CREATE VIEW v AS SELECT 1;")).toBe(
+      "CREATE VIEW v AS SELECT 1;",
+    );
+    expect(ensure("CREATE VIEW v AS SELECT 1")).toBe(
+      "CREATE VIEW v AS SELECT 1;",
+    );
+    expect(ensure("")).toBe(";");
+  });
+});
 void detectOmpState;

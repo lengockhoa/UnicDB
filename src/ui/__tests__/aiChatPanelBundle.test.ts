@@ -27,12 +27,51 @@ interface BundleHandle {
   received: Array<Record<string, unknown>>;
 }
 
+/** @internal accumulated message listeners from each bundle eval —
+ * loadBundle() pops all previous ones so deltas / inits from a later test
+ * aren't processed by stale bundles. The bundle's IIFE registers
+ * `window.addEventListener("message", ...)` at the bottom; without this
+ * teardown, test #3's delta would be handled 3 times (once per
+ * accumulated eval), leaking prior-test DOM into the current test. */
+const bundleListeners: Array<{
+  type: string;
+  listener: EventListener;
+  options?: boolean | AddEventListenerOptions;
+}> = [];
+
+/** Wrap window.addEventListener so we can later remove every listener
+ * that a bundle eval registered. We can't use removeEventListener with
+ * an empty handler — it needs the same function reference. */
+const _origAddEventListener = window.addEventListener.bind(window);
+window.addEventListener = function (
+  type: string,
+  listener: EventListenerOrEventListenerObject,
+  options?: boolean | AddEventListenerOptions,
+): void {
+  const evtListener =
+    typeof listener === "function"
+      ? (listener as EventListener)
+      : (listener as EventListenerObject).handleEvent.bind(listener);
+  bundleListeners.push({ type, listener: evtListener, options });
+  return _origAddEventListener(type, listener, options);
+} as typeof window.addEventListener;
+
 function loadBundle(): BundleHandle {
   if (!bundleSrc) {
     throw new Error(
       "dist/aiChatPanel.js missing — run `npm run compile` before this test",
     );
   }
+  // TASK-UX1-009 (R11): tear down every prior bundle's listener before
+  // re-evaluating the bundle. The bundle registers
+  // `window.addEventListener("message", ...)` at the bottom of its IIFE;
+  // without this cleanup, test #3's delta gets appended 3 times (once per
+  // accumulated eval) — which leaks prior-test state into the current
+  // test's DOM and breaks the R11 fixture assertions.
+  for (const { type, listener, options } of bundleListeners) {
+    window.removeEventListener(type, listener, options);
+  }
+  bundleListeners.length = 0;
   document.body.innerHTML = '<div id="vsdb-root" class="vsdb-form-body"></div>';
 
   const received: Array<Record<string, unknown>> = [];
@@ -348,3 +387,250 @@ describeIfBundle("webview/aiChatPanelMain.ts bundle (slash commands)", () => {
     expect(received.filter((m) => m.type === "command")).toHaveLength(0);
   });
 });
+
+// ============================================================================
+// TASK-UX1-009 — R11 chat improvements: thinking row + streamed code blocks
+// + right-edge text truncation. Cases 1–7 (case 8 lives in chatLayoutCss.test.ts).
+// ============================================================================
+
+describeIfBundle(
+  "webview/aiChatPanelMain.ts bundle (TASK-UX1-009 R11: thinking row + code blocks + truncation)",
+  () => {
+    /** Cast helpers for the bundle DOM assertions. */
+    function rootEl(): HTMLDivElement {
+      return document.getElementById("vsdb-root") as HTMLDivElement;
+    }
+
+    /** Send a prompt through the composer and wait one microtask for the
+      * synchronous DOM mutations to flush (loadBundle runs synchronously,
+      * so `Send` click is already reflected before we resolve). */
+    function sendViaComposer(text: string): void {
+      const prompt = inputEl("prompt");
+      prompt.value = text;
+      btn("sendBtn").click();
+    }
+
+    itIfBundle(
+      "#1 send shows thinking row; first delta removes it",
+      () => {
+        loadBundle();
+        dispatch({ type: "init", hasHistory: false });
+        sendViaComposer("show me users");
+        const root = rootEl();
+        // After send: queued user bubble visible AND a separate thinking row
+        // lives BELOW it (not as an overlay on the bubble text). The row
+        // carries the assistant-side "AI is thinking…" label.
+        const thinkingRows = root.querySelectorAll<HTMLElement>(
+          ".vsdb-chat-thinking-row",
+        );
+        expect(
+          thinkingRows.length,
+          "send must append exactly one .vsdb-chat-thinking-row",
+        ).toBe(1);
+        expect(
+          (thinkingRows[0]?.textContent ?? "").trim(),
+          "thinking row must carry 'AI is thinking…' (R11 spec)",
+        ).toBe("AI is thinking…");
+        // The thinking row lives BELOW the user bubble (appendChild order).
+        const queuedUser = root.querySelector(
+          ".vsdb-chat-bubble.vsdb-chat-user.vsdb-chat-queued",
+        );
+        expect(queuedUser).not.toBeNull();
+        // Position assertion: queuedUser is BEFORE the thinking row in DOM
+        // order (so the row is below — user sees thinking as a separate row).
+        if (queuedUser) {
+          const comparison = queuedUser.compareDocumentPosition(
+            thinkingRows[0] as Node,
+          );
+          // DOCUMENT_FOLLOWING (4) means thinkingRows[0] is after queuedUser.
+          expect(
+            (comparison & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+            ".vsdb-chat-thinking-row must come AFTER the queued user bubble (separate row, not overlay)",
+          ).toBe(true);
+        }
+        // First delta of the turn removes the row.
+        dispatch({ type: "delta", text: "hi" });
+        expect(
+          root.querySelector(".vsdb-chat-thinking-row"),
+          "first delta must remove .vsdb-chat-thinking-row",
+        ).toBeNull();
+      },
+    );
+
+    itIfBundle(
+      "#2 closed fence mid-stream renders boxed code with copy button (data-raw un-escape path)",
+      () => {
+        loadBundle();
+        dispatch({ type: "init", hasHistory: false });
+        sendViaComposer("explain");
+        // Remove the thinking row so the streaming bubble is the active child.
+        dispatch({ type: "delta", text: "hi" });
+        // Stream an open fence first (still plain text), then the closing
+        // fence — the task spec says the streaming bubble gets re-rendered
+        // through the markdown pipeline once a fence closes.
+        dispatch({ type: "delta", text: "\n\n```sql\nSELECT 1 FROM users;\n```\n" });
+        const bubble = rootEl().querySelector(
+          ".vsdb-chat-bubble.vsdb-chat-assistant.vsdb-chat-streaming",
+        ) as HTMLDivElement | null;
+        expect(bubble).not.toBeNull();
+        const codePre = bubble?.querySelector("pre.vsdb-md-code");
+        expect(codePre, "closed fence must render pre.vsdb-md-code in bubble").not.toBeNull();
+        const copyBtn = bubble?.querySelector("button.vsdb-md-copy");
+        expect(copyBtn, "closed fence must render button.vsdb-md-copy").not.toBeNull();
+        // data-raw round-trip contract: clicking the button un-escapes the
+        // attribute and writes the raw code to the clipboard.
+        // jsdom doesn't ship a working clipboard; assert writeText was
+        // invoked with the correct un-escaped code.
+        let written = "";
+        const stub = (s: string): Promise<void> => {
+          written = s;
+          return Promise.resolve();
+        };
+        (navigator as unknown as { clipboard: { writeText: typeof stub } }).clipboard = {
+          writeText: stub,
+        };
+        (copyBtn as HTMLButtonElement | null)?.click();
+        expect(written).toBe("SELECT 1 FROM users;");
+      },
+    );
+
+    itIfBundle(
+      "#3 open fence mid-stream stays plain text; closing fence renders once",
+      () => {
+        loadBundle();
+        dispatch({ type: "init", hasHistory: false });
+        sendViaComposer("explain");
+        // First delta removes the thinking row.
+        dispatch({ type: "delta", text: "hi" });
+        // Open fence but NO closing fence — bubble should NOT yet contain
+        // a pre.vsdb-md-code (mid-stream re-render guard).
+        dispatch({ type: "delta", text: "```sql\nSELECT 1 FROM users" });
+        const bubbleAfterOpen = rootEl().querySelector<HTMLDivElement>(
+          ".vsdb-chat-bubble.vsdb-chat-assistant.vsdb-chat-streaming",
+        );
+        expect(
+          bubbleAfterOpen?.querySelector("pre.vsdb-md-code"),
+          "open fence (no closing) must NOT yet render pre.vsdb-md-code",
+        ).toBeNull();
+        // Now send the closing newline and backticks.
+        dispatch({ type: "delta", text: ";\n```\n" });
+        const bubbleAfterClose = rootEl().querySelector<HTMLDivElement>(
+          ".vsdb-chat-bubble.vsdb-chat-assistant.vsdb-chat-streaming",
+        );
+        expect(
+          bubbleAfterClose?.querySelector("pre.vsdb-md-code"),
+          "closing fence must render pre.vsdb-md-code exactly once",
+        ).not.toBeNull();
+        const codeCount = bubbleAfterClose?.querySelectorAll("pre.vsdb-md-code").length;
+        expect(codeCount, "exactly one pre.vsdb-md-code after close").toBe(1);
+      },
+    );
+
+    itIfBundle(
+      "#4 {type:'error'} or terminal assistant message removes the thinking row",
+      () => {
+        loadBundle();
+        dispatch({ type: "init", hasHistory: false });
+        sendViaComposer("hello");
+        // Error path.
+        let row = rootEl().querySelector(".vsdb-chat-thinking-row");
+        expect(row, "send must show the thinking row").not.toBeNull();
+        dispatch({ type: "error", message: "boom" });
+        expect(
+          rootEl().querySelector(".vsdb-chat-thinking-row"),
+          "error must remove .vsdb-chat-thinking-row (no orphaned spinner)",
+        ).toBeNull();
+        // Host's terminal lifecycle post — only `done` re-enables the
+        // composer (sendBtn.disabled === state.busy, see setBusy). Match
+        // the real wire so the second send is accepted.
+        dispatch({ type: "done" });
+        // Terminal assistant message path.
+        sendViaComposer("again");
+        row = rootEl().querySelector(".vsdb-chat-thinking-row");
+        expect(row, "second send must re-show the thinking row").not.toBeNull();
+        dispatch({ type: "assistant", text: "reply", markdown: true });
+        expect(
+          rootEl().querySelector(".vsdb-chat-thinking-row"),
+          "terminal assistant must remove .vsdb-chat-thinking-row",
+        ).toBeNull();
+      },
+    );
+
+    itIfBundle(
+      "#5 hostile streamed content never becomes live HTML (escape-first preserved through re-render)",
+      () => {
+        loadBundle();
+        dispatch({ type: "init", hasHistory: false });
+        sendViaComposer("hello");
+        dispatch({ type: "delta", text: "x" }); // remove thinking row
+        // Stream a fenced payload containing an <img onerror=...> tag.
+        dispatch({
+          type: "delta",
+          text:
+            "```\n<img src=x onerror=\"alert(1)\">\n```\n",
+        });
+        const bubble = rootEl().querySelector<HTMLDivElement>(
+          ".vsdb-chat-bubble.vsdb-chat-assistant.vsdb-chat-streaming",
+        );
+        expect(bubble).not.toBeNull();
+        // No element with tag "img" must exist anywhere in the bubble
+        // (the escape-first contract must survive the mid-stream re-render).
+        expect(
+          bubble?.querySelectorAll("img").length ?? 0,
+          "hostile streamed <img> must NEVER appear as a live element in the bubble",
+        ).toBe(0);
+        // The text content of the code element must still carry the raw
+        // hostile text (escaped in the DOM, not dropped).
+        const code = bubble?.querySelector("pre.vsdb-md-code code");
+        expect(code?.textContent ?? "").toContain("<img src=x onerror=\"alert(1)\">");
+      },
+    );
+
+    itIfBundle(
+      "#6 repeated deltas over a closed fence do not duplicate copy buttons",
+      () => {
+        loadBundle();
+        dispatch({ type: "init", hasHistory: false });
+        sendViaComposer("hello");
+        dispatch({ type: "delta", text: "x" }); // remove thinking row
+        // Send one closed fence, then 3 more deltas (plain text).
+        dispatch({ type: "delta", text: "```sql\nSELECT 1;\n```\n" });
+        dispatch({ type: "delta", text: "tail 1\n" });
+        dispatch({ type: "delta", text: "tail 2\n" });
+        dispatch({ type: "delta", text: "tail 3\n" });
+        const bubble = rootEl().querySelector<HTMLDivElement>(
+          ".vsdb-chat-bubble.vsdb-chat-assistant.vsdb-chat-streaming",
+        );
+        expect(bubble).not.toBeNull();
+        // Exactly one copy button per fenced block — even after repeated
+        // deltas. (The re-render replaces the bubble's innerHTML, not the
+        // bubble itself, so copy buttons are not duplicated.)
+        const copyBtns = bubble?.querySelectorAll("button.vsdb-md-copy").length;
+        expect(copyBtns, "exactly one .vsdb-md-copy per fenced block").toBe(1);
+      },
+    );
+
+    itIfBundle(
+      "#7 regression: queued user bubble lifecycle unchanged (resolve on first delta)",
+      () => {
+        loadBundle();
+        dispatch({ type: "init", hasHistory: false });
+        sendViaComposer("show me users");
+        // Queued marker present after send.
+        let queuedUser = rootEl().querySelector(
+          ".vsdb-chat-bubble.vsdb-chat-user.vsdb-chat-queued",
+        );
+        expect(queuedUser, "queued user bubble present after send").not.toBeNull();
+        // First delta resolves the queued marker (UX1-008 lifecycle invariant).
+        dispatch({ type: "delta", text: "hi" });
+        queuedUser = rootEl().querySelector(
+          ".vsdb-chat-bubble.vsdb-chat-user.vsdb-chat-queued",
+        );
+        expect(
+          queuedUser,
+          "first delta must clear the .vsdb-chat-queued marker on the user bubble",
+        ).toBeNull();
+      },
+    );
+  },
+);

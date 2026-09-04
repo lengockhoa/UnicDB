@@ -978,6 +978,49 @@ function appendUser(text: string): void {
   // New turn: reset the per-turn thinking block so the next `thought`
   // message re-creates it (default collapsed + empty).
   resetThinkingBlock();
+  // TASK-UX1-009 (R11): surface an "AI is thinking…" row below the user
+  // bubble so the assistant side has its own loading affordance while
+  // the turn is pending. Removed on first delta / error / terminal
+  // assistant message — lifecycle mirrors resolveQueuedUserBubble().
+  appendThinking();
+}
+
+/** TASK-UX1-009 (R11) — append a separate "AI is thinking…" row BELOW
+ * the just-sent user bubble. Pure DOM text (no innerHTML, no markdown)
+ * so a hostile host cannot inject anything through the thinking label.
+ * Idempotent — calling it twice in a row still leaves exactly one row. */
+function appendThinking(): void {
+  const thread = document.getElementById("thread");
+  if (!thread) return;
+  // Idempotency: never stack multiple thinking rows on the same turn.
+  if (thread.querySelector(".vsdb-chat-thinking-row")) return;
+  const row = document.createElement("div");
+  row.className = "vsdb-chat-thinking-row";
+  row.setAttribute("role", "status");
+  row.setAttribute("aria-live", "polite");
+  const spinner = document.createElement("span");
+  spinner.className = "vsdb-chat-thinking-spinner";
+  spinner.setAttribute("aria-hidden", "true");
+  row.appendChild(spinner);
+  const label = document.createElement("span");
+  label.className = "vsdb-chat-thinking-label";
+  label.textContent = "AI is thinking…";
+  row.appendChild(label);
+  thread.appendChild(row);
+  autoScroll(row);
+}
+
+/** TASK-UX1-009 (R11) — remove the "AI is thinking…" row. Called on
+ * first delta / error / terminal assistant message. No-op if no row
+ * exists (e.g. error before any user bubble). */
+function removeThinking(): void {
+  const thread = document.getElementById("thread");
+  if (!thread) return;
+  for (const row of Array.from(
+    thread.querySelectorAll<HTMLElement>(".vsdb-chat-thinking-row"),
+  )) {
+    row.remove();
+  }
 }
 
 /** Resolve the queued marker on the latest user bubble (the just-sent
@@ -1116,6 +1159,9 @@ function appendError(message: string): void {
   // bubble (so the placeholder never lingers past the turn's settlement)
   // and renders the error in its own bubble.
   resolveQueuedUserBubble();
+  // TASK-UX1-009 (R11): also remove the thinking row — an error settles
+  // the turn, so the spinner would otherwise linger as dishonest state.
+  removeThinking();
   const thread = document.getElementById("thread");
   if (!thread) return;
   const div = document.createElement("div");
@@ -1133,6 +1179,9 @@ function appendError(message: string): void {
 function appendDelta(text: string): void {
   // First delta of the turn resolves the queued user placeholder.
   resolveQueuedUserBubble();
+  // TASK-UX1-009 (R11): the thinking row is the assistant-side loading
+  // affordance — first delta settles it.
+  removeThinking();
   const thread = document.getElementById("thread");
   if (!thread) return;
   let bubble = thread.querySelector<HTMLDivElement>(
@@ -1148,6 +1197,21 @@ function appendDelta(text: string): void {
   // terminal assistant message. Append the escaped fragment and add the
   // streaming caret so the user sees the bubble is still receiving text.
   bubble.appendChild(document.createTextNode(text));
+  // TASK-UX1-009 (R11): once a fenced code block CLOSES mid-stream, the
+  // accumulated plain-text bubble gets re-rendered through the markdown
+  // pipeline so the user sees boxed code + copy button immediately — they
+  // don't have to wait for the terminal assistant message to format the
+  // reply. renderMarkdown escapes first, so the escape-first contract
+  // holds across the re-render (case 5). Idempotent: each subsequent
+  // delta re-renders from the full accumulated text, so copy buttons are
+  // never duplicated (case 6).
+  const accumulated = bubble.textContent ?? "";
+  if (/```[\s\S]*?```/.test(accumulated)) {
+    const caret = bubble.querySelector(".vsdb-chat-caret");
+    bubble.innerHTML = renderMarkdown(accumulated);
+    if (caret) bubble.appendChild(caret);
+    wireCopyButtons(bubble);
+  }
   ensureStreamingCaret(bubble);
   autoScroll(bubble);
 }
@@ -1777,6 +1841,9 @@ function renderHistory(msg: HistoryMsg): void {
         );
         if (streaming) streaming.remove();
       }
+      // TASK-UX1-009 (R11): terminal assistant message settles the thinking
+      // row (the turn is over). No-op if no row exists.
+      removeThinking();
       appendAssistant(msg.text, msg.markdown);
       return;
     case "error":
@@ -1792,6 +1859,10 @@ function renderHistory(msg: HistoryMsg): void {
       deStreamOpenBubble();
       // First done of the turn resolves the queued user placeholder.
       resolveQueuedUserBubble();
+      // TASK-UX1-009 (R11): also settle the assistant-side thinking row.
+      // `done` is the terminal lifecycle event for the turn, so any
+      // leftover spinner is dishonest state.
+      removeThinking();
       // Re-enable input/actions (Send, Regenerate, Resume, textarea).
       setBusy(false);
       // The thinking block stays visible after `done` — it summarizes

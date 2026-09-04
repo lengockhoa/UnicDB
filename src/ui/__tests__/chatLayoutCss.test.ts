@@ -600,4 +600,23 @@ describe("TASK-003 - chat layout CSS contract", () => {
       ).toBe(true);
     });
   });
+
+  // -----------------------------------------------------------------------
+  // TASK-UX1-009 — R11 chat improvements: case 8 (right-edge truncation).
+  // The fix is anchored on the EXISTING `.vsdb-chat-bubble` selector —
+  // the task scope is APPEND-ONLY on UX1-008's existing rule block. The
+  // bubble already has `white-space: pre-wrap` and `max-width:95%` from
+  // UX1-008; R11 just adds `overflow-wrap: anywhere` so long SQL/code
+  // lines break at the panel edge instead of overflowing horizontally.
+  // -----------------------------------------------------------------------
+  describe("TASK-UX1-009 - right-edge text truncation (R11)", () => {
+    it("case 8: .vsdb-chat-bubble declares overflow-wrap:anywhere (R11 truncation contract)", () => {
+      const body = ruleBody(".vsdb-chat-bubble");
+      expect(body, ".vsdb-chat-bubble rule block must exist").not.toBe("");
+      expect(
+        /overflow-wrap:\s*anywhere/i.test(body),
+        ".vsdb-chat-bubble must declare overflow-wrap:anywhere (R11 truncation)",
+      ).toBe(true);
+    });
+  });
 });

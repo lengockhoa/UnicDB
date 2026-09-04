@@ -74,7 +74,9 @@
     "onCommand:vsdb.openFormView",
     "onCommand:vsdb.editLargeValue",
     "onCommand:vsdb.diagnostics.show",
-    "onCommand:vsdb.diagnostics.clear"
+    "onCommand:vsdb.diagnostics.clear",
+    "onCommand:vsdb.generateViewDdl",
+    "onCommand:vsdb.generateFunctionDdl"
   ],
   "contributes": {
     "commands": [
@@ -377,6 +379,18 @@
         "title": "VSDB: Clear Diagnostics",
         "category": "VSDB",
         "icon": "$(clear-all)"
+      },
+      {
+        "command": "vsdb.generateViewDdl",
+        "title": "SQL Generator",
+        "category": "VSDB",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "vsdb.generateFunctionDdl",
+        "title": "SQL Generator",
+        "category": "VSDB",
+        "icon": "$(symbol-function)"
       }
     ],
     "keybindings": [
@@ -524,6 +538,16 @@
         {
           "command": "vsdb.exportAllStructures",
           "when": "view == vsdb.schemaTree && (viewItem == connection || viewItem == schema)",
+          "group": "vsdb"
+        },
+        {
+          "command": "vsdb.generateViewDdl",
+          "when": "view == vsdb.schemaTree && viewItem == view",
+          "group": "vsdb"
+        },
+        {
+          "command": "vsdb.generateFunctionDdl",
+          "when": "view == vsdb.schemaTree && viewItem == routine",
           "group": "vsdb"
         }
       ],

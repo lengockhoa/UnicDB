@@ -50,7 +50,7 @@ import { createProviderClient } from "./ai/provider";
 import type { AdapterFactory } from "./ai/tools/types";
 import type { AgentDeps } from "./ai/agent";
 import { AiChatPanel, type AcpPanelDeps } from "./ui/aiChatPanel";
-import { ConsolePanel } from "./ui/consolePanel";
+import { ConsolePanel, ensureTrailingSemicolon } from "./ui/consolePanel";
 import { HelpGridPanel } from "./ui/helpGridPanel";
 import { AcpProcess, type AcpProcessHandle, type OmpEngineState } from "./ai/omp/acpProcess";
 import { detectOmp, OMP_INSTALL_HINT, OMP_UPDATE_HINT } from "./ai/omp/detect";
@@ -914,7 +914,7 @@ export async function activate(
   // Wired to the right-click `view/item/context` menu on schema-tree
   // table/view nodes (see package.json contributes.menus.view/item/context).
   // The handler reuses commandOpenConsole so the singleton panel and its
-  // existing onRun / draft / autocomplete wiring stay unchanged; if the
+  // existing onRun / draft / autocomplete wiring stays unchanged; if the
   // active connection has no driver yet (none picked or add-connection
   // flow not finished), we fall back to a plain postgres-style snippet.
   disposables.push(
@@ -925,6 +925,46 @@ export async function activate(
           globalState: context.globalState,
           workspaceState: context.workspaceState,
         }),
+    ),
+  );
+  // 17c.5 — TASK-UX1-002 — SQL Generator on View / Routine nodes (R3+R4).
+  // DataGrip parity: right-click a View/Routine node → fetch
+  // pg_get_viewdef / pg_get_functiondef via `adapter.catalog.objectDdl`
+  // (postgres-only, gated by `hasAdapterCapability(adapter, "objectDdl")`)
+  // → open a fresh Console tab pre-filled with the DDL (terminated with
+  // one `;`, idempotent when already present). Mirrors the OC4O
+  // `commandOpenConsole` + `seedTab` + `show()` pattern; no auto-run.
+  // Two commands share a single resolver because view + routine nodes
+  // carry the same `{ meta: { connection, schema, objectName } }` shape
+  // (schemaTree.ts:541/565) — only `kind` differs.
+  disposables.push(
+    vscode.commands.registerCommand(
+      "vsdb.generateViewDdl",
+      (arg?: unknown) =>
+        commandGenerateObjectDdl(
+          mgr,
+          runner,
+          panel,
+          context.globalState,
+          context.workspaceState,
+          "view",
+          arg,
+        ),
+    ),
+  );
+  disposables.push(
+    vscode.commands.registerCommand(
+      "vsdb.generateFunctionDdl",
+      (arg?: unknown) =>
+        commandGenerateObjectDdl(
+          mgr,
+          runner,
+          panel,
+          context.globalState,
+          context.workspaceState,
+          "routine",
+          arg,
+        ),
     ),
   );
   // 17d. vsdb.openHelpGrid — TASK-OC4O-002: open the VSDB Help Grid webview
@@ -1978,6 +2018,116 @@ function commandOpenConsoleForObject(
   // the WRONG call here — it is the silent webview→host echo path (ARP-08
   // #30) and the snippet would never reach the visible webview.
   consolePanel.seedTab(`Query ${resolved.qualified}`, snippet);
+  consolePanel.show();
+}
+
+/**
+ * TASK-UX1-002 — SQL Generator handler (shared by view + routine commands).
+ * Resolves the node's `{ meta: { connection, schema, objectName } }` (string
+ * qualified name OR node-object, same shape as `commandOpenConsoleForObject`),
+ * gates on the active postgres adapter + declared `objectDdl` capability
+ * (fail-closed: false / missing ⇒ info toast, ZERO adapter calls — the
+ * capability predicate is the same `hasAdapterCapability` gate already used
+ * by `vsdb.openSessionsPanel` and the GRANT/REVOKE wizard), then fetches
+ * the DDL via `adapter.catalog.objectDdl(kind, name, schema)` and opens the
+ * Console singleton with a fresh tab seeded with `DDL <qualified>` + the
+ * DDL buffer (terminated with one `;` — idempotent via
+ * `ensureTrailingSemicolon`). Never auto-runs the SQL: the seeded buffer is
+ * editable, the existing `onRun` path is the only execution boundary.
+ *
+ * Failure modes:
+ *   - No arg / arg without `meta.objectName` (palette invocation): info toast.
+ *   - No active connection / non-postgres / missing `objectDdl` capability:
+ *     info toast mirroring `ADMIN_UNSUPPORTED_MESSAGE` style.
+ *   - `objectDdl` rejects ("object not found"): error toast with the
+ *     adapter message, NO seedTab call.
+ */
+async function commandGenerateObjectDdl(
+  mgr: ConnectionManager,
+  runner: QueryRunner,
+  panel: ResultsPanel,
+  globalState: vscode.Memento,
+  workspaceState: vscode.Memento,
+  kind: "view" | "routine",
+  arg?: unknown,
+): Promise<void> {
+  // Resolve the meta out of the arg shape used by view/item/context menus
+  // (qualified string OR `{ meta: { connection, schema, objectName } }` node).
+  let schema: string;
+  let objectName: string;
+  if (typeof arg === "string" && arg.length > 0) {
+    const lastDot = arg.lastIndexOf(".");
+    if (lastDot < 0) {
+      objectName = arg;
+      schema = "";
+    } else {
+      schema = arg.slice(0, lastDot);
+      objectName = arg.slice(lastDot + 1);
+    }
+  } else if (
+    arg &&
+    typeof arg === "object" &&
+    "meta" in arg
+  ) {
+    const meta = (
+      arg as { meta?: { schema?: string; objectName?: string } }
+    ).meta;
+    if (!meta?.objectName) {
+      void vscode.window.showInformationMessage(
+        "VSDB: right-click a view or routine in the schema tree to generate DDL.",
+      );
+      return;
+    }
+    schema = meta.schema ?? "";
+    objectName = meta.objectName;
+  } else {
+    void vscode.window.showInformationMessage(
+      "VSDB: right-click a view or routine in the schema tree to generate DDL.",
+    );
+    return;
+  }
+  // Driver + capability gate — fail-closed; ZERO adapter calls when the
+  // active adapter is not postgres or doesn't declare `objectDdl`.
+  const active = mgr.getActive();
+  if (!active || active.driver !== "postgres") {
+    void vscode.window.showInformationMessage(
+      "VSDB: SQL Generator (view/routine DDL) requires an active PostgreSQL connection.",
+    );
+    return;
+  }
+  let adapter: Awaited<ReturnType<typeof mgr.getAdapter>> | null = null;
+  try {
+    adapter = await mgr.getAdapter();
+  } catch {
+    adapter = null;
+  }
+  if (!hasAdapterCapability(adapter, "objectDdl")) {
+    void vscode.window.showInformationMessage(
+      "VSDB: SQL Generator (view/routine DDL) is not supported by this connection's adapter.",
+    );
+    return;
+  }
+  const qualified = schema ? `${schema}.${objectName}` : objectName;
+  let ddl: string;
+  try {
+    ddl = await adapter!.catalog!.objectDdl(kind, objectName, schema || undefined);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    void vscode.window.showErrorMessage(`VSDB: ${message}`);
+    return;
+  }
+  // Reuse the singleton seeder so the panel + onRun + draft/autocomplete
+  // wiring stays exactly the same as `vsdb.openConsole` /
+  // `vsdb.openConsoleForObject`.
+  commandOpenConsole(mgr, runner, panel, globalState, workspaceState);
+  if (!consolePanel) {
+    // commandOpenConsole is sync and sets the singleton; defensive guard.
+    return;
+  }
+  // ensureTrailingSemicolon is idempotent (no `;;` doubling when the DDL
+  // already ends with `;`) — see consolePanel.ts unit-level pin.
+  const buffer = ensureTrailingSemicolon(ddl);
+  consolePanel.seedTab(`DDL ${qualified}`, buffer);
   consolePanel.show();
 }
 

@@ -135,6 +135,17 @@ export function isExplainAnalyze(sql: string): boolean {
   return sawAnalyze;
 }
 
+/** TASK-UX1-002 — pure helper: ensure `ddl` is terminated with one `;`.
+ *  Idempotent when the input already ends in `;` (no `;;` doubling). Used
+ *  by the SQL Generator command to seed a Console tab with view/routine
+ *  DDL so the user can run or save it without manually appending a
+ *  terminator. Exported so the unit test can pin the idempotent contract
+ *  (review-blocking regression if a future refactor reintroduces `;;`). */
+export function ensureTrailingSemicolon(ddl: string): string {
+  if (ddl.length === 0) return ";";
+  return ddl.endsWith(";") ? ddl : ddl + ";";
+}
+
 export class ConsolePanel {
   private readonly extensionUri: vscode.Uri;
   private readonly onRun: (sql: string) => void | Promise<void>;

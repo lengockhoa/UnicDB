@@ -934,6 +934,12 @@
   min-height: 1lh;
   white-space: pre-wrap;
   word-wrap: break-word;
+  /* TASK-UX1-009 (R11): break long SQL/code lines at the panel edge
+   * instead of escaping the right edge of the chat column. Anchored on the
+   * existing .vsdb-chat-bubble block — APPEND-ONLY on UX1-008's contract.
+   * `overflow-wrap: anywhere` (vs `break-word`) breaks the line at ANY
+   * character if needed, so unbroken SQL identifiers still wrap. */
+  overflow-wrap: anywhere;
 }
 .vsdb-chat-user {
   align-self: flex-end;
@@ -1711,4 +1717,43 @@ body.vsdb-chat-body {
   font-size: 12px;
   font-style: italic;
   color: var(--vscode-descriptionForeground, #969696);
+}
+
+/* --- TASK-UX1-009 — R11 chat improvements: thinking row + spinner ---
+ * The "AI is thinking…" row lives BELOW the just-sent user bubble (not
+ * overlaid on it), so the user gets a separate, assistant-side loading
+ * affordance while the turn is pending. The spinner is pure CSS (no CDN
+ * / external asset — project constraint on the minimal-markdown
+ * pipeline). Selectors are disjoint from UX1-008 (chat bubble / caret /
+ * assistant), UX1-005 (set-filter family), and UX1-010 (DDL card family)
+ * — APPEND-ONLY on the chat region. */
+.vsdb-chat-thinking-row {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  margin: 0 0 0 12px;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--vscode-descriptionForeground, #8c8c8c);
+}
+.vsdb-chat-thinking-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--vscode-descriptionForeground, #8c8c8c);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: vsdb-chat-thinking-spin 0.9s linear infinite;
+}
+.vsdb-chat-thinking-label {
+  /* Resolved only as a hook for future per-row overrides. No rules
+   * needed today — keep the selector declared so a sibling rule can be
+   * added without re-scanning the cascade order. */
+  white-space: pre-wrap;
+}
+@keyframes vsdb-chat-thinking-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
