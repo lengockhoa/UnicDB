@@ -139,3 +139,134 @@ ISSUES: TASK-BQ03-005 #5 edge test was asserting the legacy toast path; updated 
 HANDOFF_TO_REVIEWER: yes — both outer-catch wiring and the integration test surface are ready for review; the change is contained to the specified files + 1 test update to a BQ test broken by the task's mandated behavior change.
 NEXT: ready for review.
 ```
+
+---
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npm run typecheck && npm run compile && npm test src/ui/__tests__/resultsPanelErrorIntegration.test.ts && npm test
+  result: typecheck exit 0; compile OK; 4/4 integration tests pass; full suite 3555 passed | 2 skipped (matches executor claim, >= baseline 3530|2)
+TEST_PLAN_COVERAGE: all-followed — 4/4 plan cases implemented with real assertions on the real exported `runStatements` (real QueryRunner + real ResultsPanel, not stubbed renderers); case 1 pins the outer catch → runFailed → onUpdate → render chain and the synthetic-row shape; case 2 pins classifyPanelKind="card"; case 3 pins set+clear; case 4 pins the grid regression. One gap: report lacks RED_OUTPUT (see important finding).
+FINDINGS:
+  critical:
+    - (none)
+  important:
+    - docs/AI_HANDOFF/tasks/TASK-UX2-004.md:96-141 — Executor Report has no RED_OUTPUT field. RULES.md:153 and executor.testFirstRequired=true require actual pre-implementation failing-test output in the report; sibling tasks UX2-001/UX2-003 both carried verified RED evidence. The tests themselves are real (reviewer re-ran them fresh and audited assertions), so this is a report-contract fix: append the RED evidence from the TDD run (failing vitest output for the 4 new cases before implementation). If test-first was not actually run, re-run the TDD cycle and paste the output.
+  minor:
+    - src/extension.ts:2649-2651 — belt-and-suspenders render double-renders in production (runFailed already fired onUpdate → panel.render with identical data). Idempotent, no user-visible dup; acceptable as-is, comment already documents why.
+    - src/extension.ts:2652 — statusBar.setErrorBadge(reason) in the outer catch is not gated by `deactivating`, unlike the panel.render just above; a disposed StatusBarItem no-ops in VS Code so this is benign, but the inconsistency invites drift.
+    - src/ui/__tests__/resultsPanelErrorIntegration.test.ts:323-363 — case 3 uses two separate FakeStatusBar instances (statusBar1/statusBar2) instead of one wrapper across failure→healthy, so the single-chip session lifecycle isn't pinned end-to-end here (wrapper flip behavior is covered by statusBar.test.ts case 6, hence minor).
+    - src/ui/__tests__/resultsPanelErrorIntegration.test.ts — file lacks a trailing newline.
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Code is correct and fully verified (all 4 verification commands re-run green by reviewer; outer catch call site, runFailed RunnerBusy interplay, badge lifecycle on both paths, and mock channels all confirmed sound). The only blocker is the missing RED_OUTPUT report field — a documentation fix, not a code fix.
+
+### RED evidence (re-captured 2026-09-04, R2 follow-up)
+
+The original executor did not paste the RED output for these 4 cases (wave 3 was committed as a single commit `a0da149`, so the pre-impl state was not preserved). To repair the report-contract gap, the orchestrator re-ran the TDD cycle on the working tree by temporarily reverting the `runStatements` outer-catch block in `src/extension.ts:2627-2652` to its pre-UX2-004 behavior (toast-only), keeping the integration test file in place, and running vitest. The captured failing output:
+
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+
+ ❯ src/ui/__tests__/resultsPanelErrorIntegration.test.ts  (4 tests | 2 failed) 8ms
+   ❯ ResultsPanel error integration — TASK-UX2-004 > case 1 — first-connect failure
+     → expected "runFailed" to be called 1 times, but got 0 times
+   ❯ ResultsPanel error integration — TASK-UX2-004 > case 3 — status bar error badge set on first error, cleared (null) on next healthy run
+     → expected last "spy" call to have been called with [ 'ECONNREFUSED 127.0.0.1:5432' ]
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/ui/__tests__/resultsPanelErrorIntegration.test.ts > ResultsPanel error integration — TASK-UX2-004 > case 1 — first-connect failure
+AssertionError: expected "runFailed" to be called 1 times, but got 0 times
+ ❯ src/ui/__tests__/resultsPanelErrorIntegration.test.ts:257:26
+    255|
+    256|     // 1. The outer catch invoked runner.runFailed(reason).
+    257|     expect(runFailedSpy).toHaveBeenCalledTimes(1);
+       |                          ^
+    258|     expect(runFailedSpy).toHaveBeenCalledWith(reason);
+
+ FAIL  src/ui/__tests__/resultsPanelErrorIntegration.test.ts > ResultsPanel error integration — TASK-UX2-004 > case 3 — status bar error badge
+AssertionError: expected last "spy" call to have been called with [ 'ECONNREFUSED 127.0.0.1:5432' ]
+- Expected: Array [ "ECONNREFUSED 127.0.0.1:5432" ]
++ Received: undefined
+ ❯ src/ui/__tests__/resultsPanelErrorIntegration.test.ts:340:38
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 2 passed (4)
+```
+
+**RED analysis — matches the TDD intent of the spec:**
+
+- **Case 1 (RED)** — outer catch did not call `runner.runFailed(reason)`. Pre-UX2-004 behavior was a single `vscode.window.showErrorMessage` toast; the test pins the new `runFailed` contract. ✅ expected failure.
+- **Case 2 (GREEN pre-impl)** — post-connect `runQuery` errors flow through `executeAll` directly (no outer-catch dependency), so the test passed even before the UX2-004 wiring. The TDD test surfaces a pre-existing capability, not a new one — case 2 is a regression guard for the `classifyPanelKind = "card"` fix from TASK-UX2-001.
+- **Case 3 (RED)** — outer catch did not call `statusBar.setErrorBadge(reason)`. Pre-UX2-004 behavior had no badge at all. ✅ expected failure.
+- **Case 4 (GREEN pre-impl)** — healthy SELECT regression; no catch path involved. ✅ expected pass.
+
+The 2 RED / 2 GREEN pre-impl pattern is exactly what the spec implies: cases 1+3 are the new UX2-004 wiring (would fail without it); cases 2+4 are regression guards for TASK-UX2-001 (would already pass once that fix landed, regardless of UX2-004).
+
+After the replay the impl was restored and full GREEN re-verified at `20:36:51` (4/4 pass, 731ms). No production code state was left disturbed.
+
+---
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic-smart (opus tier)
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npm run typecheck && npm run compile && npx vitest run src/ui/__tests__/resultsPanelErrorIntegration.test.ts && npm test
+  result: typecheck OK, compile OK, 4/4 integration pass, 3555 passed | 2 skipped (3557)
+TEST_PLAN_COVERAGE: all-followed — 4/4 spec cases implemented with real assertions; ≥2 edge-case minimum met (cases 1-3)
+FINDINGS:
+  critical:
+    - (none)
+  important:
+    - docs/AI_HANDOFF/tasks/TASK-UX2-004.md (Executor Report) — RED_OUTPUT field missing; RULES.md:153 requires actual failing-test output, and TEST_PLAN_FOLLOWED is a bare claim. Fix: demonstrate RED by running the new test file against the pre-task implementation (e.g. checkout dc83a04's src/extension.ts while keeping the test file, run `npx vitest run src/ui/__tests__/resultsPanelErrorIntegration.test.ts`), paste the real failing output into the report, then re-verify GREEN and re-append the report.
+  minor:
+    - src/ui/__tests__/resultsPanelErrorIntegration.test.ts:217 — `lastStateMessages` helper is dead code (defined, never called); remove it or use it in an assertion.
+    - src/extension.ts:2640,2652 — the toast fall-through and `statusBar.setErrorBadge(reason)` in the outer catch are not gated by `deactivating`, unlike every other panel/status write in this function (lines 2565, 2569, 2649, 2657); a first-connect failure settling during teardown can write a disposed StatusBarItem. Wrap both in `if (!deactivating)`.
+    - src/extension.ts:2649-2651 — in the RunnerBusy overlap case (ownsRun=false), the belt-and-suspenders render posts a full `state` message using the stale invocation's header/appendBase while a live run is in flight; self-heals on the live run's next onUpdate, but gating on `ownsRun` would avoid the cosmetic stale header.
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Implementation is functionally correct and fully verified — outer catch → runFailed → onUpdate → panel.render → badge set/cleared all confirmed against real source (queryRunner.ts:281,350; statusBar.ts:115-137), and the TASK-BQ03-005 #5 test update is mandated by this task and preserves sanitization assertions. The only blocker is the missing RED evidence, a handoff-package contract gap, not a code defect.
+
+---
+
+## R3 Auto-fix (2026-09-04)
+
+Applied R2 review fixes to address the minor findings:
+
+1. **Dead `lastStateMessages` helper removed** — `src/ui/__tests__/resultsPanelErrorIntegration.test.ts:217-225` was unused, deleted.
+2. **`deactivating` gate on outer-catch writes** — `src/extension.ts:2634-2653`: the entire outer-catch block (runFailed try/catch, belt-and-suspenders render, setErrorBadge) is now wrapped in `if (!deactivating)` so a first-connect failure settling during teardown cannot write to a disposed panel or StatusBarItem. Matches the gate already used on lines 2565, 2569, 2649, 2657.
+
+VERIFICATION:
+  - `npm run typecheck` exit 0
+  - `npm test src/ui/__tests__/resultsPanelErrorIntegration.test.ts` 4/4 pass
+  - `npm test` 3555 passed | 2 skipped (3557) — full suite preserved
+
+---
+
+## R3 Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart (opus tier, matches handoff.reviewer.model)
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npm run typecheck && npm test src/ui/__tests__/resultsPanelErrorIntegration.test.ts && npm test
+  result: typecheck exit 0; 4/4 integration tests pass (747ms fresh run); full suite 3555 passed | 2 skipped (3557) — >= baseline 3530|2
+R2_FINDINGS_RESOLUTION:
+  - RESOLVED — lastStateMessages dead helper: grep across src/ returns zero hits; the only remaining mentions are this task file's historical verdict/fix-log text. Test file confirmed clean.
+  - RESOLVED — extension.ts deactivating gate: the entire outer-catch block (extension.ts:2634-2652) — runFailed try/catch, RunnerBusy toast fall-through (:2641), belt-and-suspenders render (:2650), setErrorBadge(reason) (:2651) — is now wrapped in `if (!deactivating)`, consistent with the pre-existing gates at :2565, :2569, :2657. The gate correctly also covers runFailed itself (it fires the onUpdate → panel.render chain).
+  - RESOLVED (bonus) — R1 trailing-newline minor on the test file: file now ends with \n.
+TEST_PLAN_COVERAGE: all-followed — 4/4 spec cases with real assertions; R2 RED-output blocker already satisfied by the appended RED evidence section (2 RED / 2 GREEN pre-impl, analyzed and plausible).
+FINDINGS:
+  critical:
+    - (none)
+  important:
+    - (none)
+  minor:
+    - src/extension.ts:2650 — carried-over, known-accepted: in the RunnerBusy overlap case (ownsRun=false) the belt-and-suspenders render posts a full state message with the stale invocation's header/appendBase; self-heals on the live run's next onUpdate. Already documented in-code and in R1/R2 verdicts; explicitly not on the R2 fix list. No action required this cycle.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: R3 fix is minimal, correct, and verified fresh by the reviewer (typecheck + targeted 4/4 + full suite 3555|2). Both R2-requested fixes are in place with no new defects introduced; the single remaining minor is pre-existing and previously ruled acceptable. Handoff may proceed.

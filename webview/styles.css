@@ -155,9 +155,9 @@
   cursor: pointer;
   font-size: inherit;
   font-family: inherit;
-  /* TASK-007 — per-table labels ("public.users") are longer than
-   * "Statement N"; JS truncates them at 40 chars, and this is the CSS
-   * safety net so a narrow panel never lets a tab blow out the strip. */
+  /* TASK-007 — per-table labels ("public.users") and first-30-chars SQL
+   * hints (TASK-UX2-002) can be wide; this is the CSS safety net so a
+   * narrow panel never lets a tab blow out the strip. */
   max-width: 260px;
   overflow: hidden;
   text-overflow: ellipsis;

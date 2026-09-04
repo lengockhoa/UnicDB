@@ -193,3 +193,36 @@ AssertionError: expected undefined not to be undefined
 ## Discussion
 
 (no comments yet)
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npm run typecheck && npm run compile && npm test src/core/__tests__/queryRunner.test.ts && npm test src/ui/__tests__/statusBar.test.ts && npm test src/scaffold.test.ts src/extension.test.ts && npm test
+  result: typecheck exit 0; compile exit 0; queryRunner 75/75 pass; statusBar 7/7 pass; scaffold+extension 158/158 pass; full suite 3555 pass / 0 fail (1 skipped, 234 files)
+TEST_PLAN_COVERAGE: all-followed — 7/7 plan cases implemented with real assertions (5 queryRunner + 2 statusBar); RED_OUTPUT contains genuine pre-impl failures (TypeError/AssertionError with file:line); edge cases 3 (cancelled-then-failed) and 4 (double-append) present; case 2 pins RunnerBusy by constructor name, not just any throw.
+FINDINGS:
+  critical:
+    - (none)
+  important:
+    - (none)
+  minor:
+    - src/ui/statusBar.ts:147 — file ends without a trailing newline ("\ No newline at end of file"); add one to keep editors/linters quiet.
+    - Task file acceptance checkboxes left unticked although every criterion is now verifiably met — tick them or note completion in RUN.md.
+    - Plan's migration list is partly inapplicable: scaffold.test.ts:16 and extension.test.ts:97 mock `vscode.window.createStatusBarItem` (one layer below the new wrapper), so they correctly needed no change. `lastOnUpdate` surviving run() finally is correctly reasoned (host outer catch fires post-settle) — no leak risk: next run() overwrites it on entry.
+NOTES: Executor's reported compile/agGridSmoke failures were a transient worktree state (tabTitle.ts landed in the same wave-2 commit b18e681); both are green at HEAD. runFailed makes no allocation in executeAll/loadMoreImpl — only a single field assignment at run() entry, outside the loop. Wrapper's dispose() is Disposable-compatible so context.subscriptions.push(statusBar) at src/extension.ts:422 stays correct.
+NEXT_STATUS_FOR_INDEX: approved_minor
+
+### Re-pass confirmation (2026-09-04)
+
+A second independent `unic-smart` reviewer re-passed UX2-003 (agent aebc510e59ba2d2e2) and found the on-disk verdict already in place from the first pass. Re-verification independent of the executor:
+
+- Model isolation: executor `unic-code` ≠ reviewer `unic-smart` ✓
+- `npm run typecheck` exit 0; `npm run compile` exit 0 (clean at HEAD, the executor's reported `tabTitle` webview failure no longer reproduces — UX2-002 sibling landed in same range)
+- `npm test src/core/__tests__/queryRunner.test.ts src/ui/__tests__/statusBar.test.ts` — 82/82 pass
+- `npm test src/extension.test.ts src/scaffold.test.ts` — 158/158 pass
+- Diff cross-check vs all 7 spec rows: synthetic row shape exact, `RunnerBusy` pinned by constructor name in case 2, `lastOnUpdate` cached at `src/core/queryRunner.ts:281` on `run()` entry and deliberately not cleared in finally (`src/core/queryRunner.ts:326-340`) — correct because host catch at `src/extension.ts:2635` fires post-settle. Wrapper migration at `src/extension.ts:421-422` (Disposable-compatible); both mocks stub below the wrapper so no change needed. No allocation in the run loop.
+
+Re-confirmation verdict: **APPROVED-WITH-MINOR** (no new findings). INDEX row `approved_minor` stands.

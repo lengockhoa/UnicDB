@@ -211,19 +211,6 @@ function makePanel(runner: QueryRunner): ResultsPanel {
   return new ResultsPanel({ runner });
 }
 
-// ---- Helpers ---------------------------------------------------------------
-
-/** Pull the last state payload the panel posted to the webview. */
-function lastStateMessages(panel: FakeWebviewPanel): Array<{
-  type?: string;
-  results?: StatementResult[];
-  header?: string;
-}> {
-  return panel.webview.postMessage.mock.calls
-    .map((c) => c[0] as { type?: string; results?: StatementResult[]; header?: string })
-    .filter((m) => m && m.type === "state");
-}
-
 beforeEach(() => {
   lastPanel.current = null;
   vi.clearAllMocks();

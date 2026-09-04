@@ -2631,25 +2631,25 @@ export async function runStatements(
     // WHICH statement failed. Also stamp the status-bar red badge so the
     // active connection chip carries the error context.
     const reason = err instanceof Error ? err.message : String(err);
-    try {
-      runner.runFailed(reason);
-    } catch {
-      // RunnerBusy (mid-run) or other — toast fall-through only. The
-      // outer catch is the only path that calls runFailed; if the runner
-      // is genuinely busy, the toast is the right backstop.
-      void vscode.window.showErrorMessage(`VSDB: ${reason}`);
-    }
-    // Belt-and-suspenders render: `runFailed` fires `lastOnUpdate` only when
-    // the prior `runner.run()` actually executed its prologue (real adapter
-    // path). A spy/mocked runner that rejects before `lastOnUpdate` is
-    // captured leaves the synthetic row stranded in `runner.results` — we
-    // render directly here so the synthetic tab reaches the panel in both
-    // cases. `panel.render` calls `panel.show()` internally, revealing the
-    // panel (AI-001 spec: "reveal the Results panel" on the synthetic tab).
     if (!deactivating) {
+      try {
+        runner.runFailed(reason);
+      } catch {
+        // RunnerBusy (mid-run) or other — toast fall-through only. The
+        // outer catch is the only path that calls runFailed; if the runner
+        // is genuinely busy, the toast is the right backstop.
+        void vscode.window.showErrorMessage(`VSDB: ${reason}`);
+      }
+      // Belt-and-suspenders render: `runFailed` fires `lastOnUpdate` only when
+      // the prior `runner.run()` actually executed its prologue (real adapter
+      // path). A spy/mocked runner that rejects before `lastOnUpdate` is
+      // captured leaves the synthetic row stranded in `runner.results` — we
+      // render directly here so the synthetic tab reaches the panel in both
+      // cases. `panel.render` calls `panel.show()` internally, revealing the
+      // panel (AI-001 spec: "reveal the Results panel" on the synthetic tab).
       panel.render(runner.getResults(), header, { appendBase });
+      statusBar.setErrorBadge(reason);
     }
-    statusBar.setErrorBadge(reason);
   } finally {
     // TASK-ARP02-004 — gates above: a stale invocation's finally must NOT
     // clear the live run's busy state (the live run's own finally does);

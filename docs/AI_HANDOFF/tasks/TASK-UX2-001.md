@@ -171,3 +171,41 @@ The worktree's `ddlStatusCard.test.ts` itself passes 17/17 in the full run:
 ### Status
 
 DONE. Ready for review. Worktree left dirty per instructions.
+
+---
+
+## Reviewer Verdict
+
+VERDICT: approved
+REVIEWER_MODEL: unic-smart (claude-opus)
+EXECUTOR_MODEL: unic-code (claude-sonnet) — differs, isolation OK
+VERIFICATION_RERUN:
+  command: npm run typecheck && npm run compile && npm test src/ui/__tests__/ddlStatusCard.test.ts
+  result: typecheck exit 0; compile exit 0; 17 pass / 0 fail (10 UX1-010 + 7 UX2-001);
+  full suite regression net: 3555 pass / 0 fail / 2 skipped (235 files)
+TEST_PLAN_COVERAGE: all-followed — 7/7 spec cases present (test file lines 241-357);
+  RED_OUTPUT in the executor report is real failing vitest output (3 targeted failures on
+  classify/connection-error paths); each new test maps 1:1 to spec cases 1-7
+FINDINGS:
+  critical:
+    - (none)
+  important:
+    - (none)
+  minor:
+    - src/ui/ddlStatusCard.ts:158-162 — a SELECT+error card falls through kindLabel to
+      "Other" → title "Other statement" (or "<commandTag> (Other)"). Spec case 2 does not
+      require a SELECT-specific label, but the title is mildly misleading for a failed
+      SELECT; consider a "SELECT statement" label in a follow-up.
+    - src/ui/__tests__/ddlStatusCard.test.ts:272 — hint assertion is conditional
+      (`if (card.hint !== undefined)`): if extractHint ever regressed, case 2 would
+      silently skip the LINE-2 expectation instead of failing. An unconditional
+      `expect(card.hint).toContain("LINE 2")` is stricter; spec wording permits either.
+    - src/ui/ddlStatusCard.ts:143 — sentinel `sql === "(connection)"` duplicates the
+      producer literal at src/core/queryRunner.ts:811 as a stringly-typed contract; a
+      shared exported constant would prevent silent drift. Non-blocking.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Independently re-verified (replaced a prior uncommitted draft verdict block).
+  classifyPanelKind's error short-circuit preserves no-kind+non-error → "grid" (BQ-pending)
+  and select+done → "grid"; the connection-error sentinel matches runFailed's production
+  row exactly; webview/main.ts consumes card fields by name (no exhaustive switch on
+  `kind`), so the union extension breaks no consumer.

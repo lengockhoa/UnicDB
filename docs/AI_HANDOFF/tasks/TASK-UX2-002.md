@@ -181,3 +181,43 @@ None — all spec test cases green, baseline preserved (or better).
 ### Handoff to Reviewer
 
 yes — code is ready for review. The pre-existing test updates are intentional alignment to the new spec, not accidental regressions.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart (opus)
+EXECUTOR_MODEL: unic-code (claude-sonnet-4-5)
+VERIFICATION_RERUN:
+  command: npm run typecheck && npm run compile && npx vitest run webview/__tests__/mainTabTitle.test.ts && npx vitest run src/ui/__tests__/webviewBundle.test.ts src/ui/__tests__/webviewPerTableTabs.test.ts src/ui/__tests__/webviewResultLimit.test.ts tests/webviewMultiRunTabs.test.ts
+  result: typecheck exit 0; compile exit 0; mainTabTitle 7 pass / 0 fail; webview suites 27 pass / 0 fail; full `npm test` 234 files / 3555 tests pass (executor's worktree aiChatPanel esbuild failures do not reproduce in the main repo)
+TEST_PLAN_COVERAGE: all-followed — 6/6 spec cases implemented in webview/__tests__/mainTabTitle.test.ts (+1 extra tabBadge done regression); RED_OUTPUT is a real module-resolution failure, not a bare claim
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - webview/styles.css:158-162 — comment still says "JS truncates them at 40 chars"; the JS-side truncation was removed by this task. CSS `max-width: 260px; overflow: hidden; text-overflow: ellipsis` remains the effective safety net, so behavior is correct — update the comment to say labels are CSS-clamped only.
+    - webview/tabTitle.ts:38-41 — the `(r.label && ...) || (r.sql && ...) || "failed"` idiom evaluates `r.label.length` twice and reads slightly non-obviously; a plain `if/else` chain would be clearer. Pure + allocation-free as required by the acceptance criteria (single slice per call, no per-render allocations — `rebuildTabs` at webview/main.ts:1133 calls it once per tab render).
+    - webview/__tests__/mainTabTitle.test.ts:24-25 — test 1's expectation string ends with a trailing space (`"CREATE TABLE public.customers "`) because char 30 of the SQL is a space; the comment documents this, but the spec table (§Test Cases #1) shows the trailing "…" as an ellipsis metaphor. Behavior matches the spec's `slice(0,30)` contract; noting the cosmetic divergence for the record.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Auto-open wiring is correctly placed AFTER the loadMore clamp (webview/main.ts:3661-3675) so the Messages slot index survives; guarded by `results.length > prevLen` so re-renders of an already-erroring set never bounce the user back to Messages. tabTitle/tabBadge are pure structural helpers with no DOM/deps (webview/tabTitle.ts). Synthetic row (status:"error", sql:"(connection)", no kind) routes to the error card via classifyPanelKind's status-first check (src/ui/ddlStatusCard.ts:64-65). Pre-existing test updates are intentional spec alignment (old `Run N · Stmt M`/40-char-truncation assertions replaced per the new contract); the removed `⌀`/`✗` badge glyphs are covered by the updated webviewResultLimit test #5 and `.vsdb-tab-error`/`.vsdb-tab-cancelled` CSS classes remain.
+
+## Reviewer Verdict
+
+VERDICT: approved_minor
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code (claude-sonnet-4-5)
+VERIFICATION_RERUN:
+  command: npm run typecheck && npm test webview/__tests__/mainTabTitle.test.ts (plus npm run compile, 4 updated suites, full `npm test`)
+  result: typecheck exit 0; 7/7 new tests; compile ok; 4 suites 27/27; full suite 234 files / 3555 passed / 0 failed
+TEST_PLAN_COVERAGE: all-followed — 6 spec cases + 1 extra tabBadge regression implemented; RED_OUTPUT is real failing-suite output (module-not-found for not-yet-implemented ../tabTitle)
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - webview/styles.css:168-171 — comment still claims "JS truncates them at 40 chars"; TAB_LABEL_MAX truncation was removed by this task (labels render verbatim, CSS max-width/ellipsis is the only clamp). Update the comment in a cleanup pass.
+    - webview/__tests__/mainTabTitle.test.ts:37-39 — case 3 calls tabTitle(..., 2) so it asserts "Run 3 · Stmt 3", while the task table's case 3 says "Run 3 · Stmt 1" (i=0 implied). Same fallback path covered; cosmetic fixture/index divergence only.
+    - docs/AI_HANDOFF/tasks/TASK-UX2-002.md:34 — case 1's expected string shows a "…" glyph but case 4 explicitly requires no suffix; implemented as ≤30 chars with no ellipsis (correct per "≤30 chars" prose). Spec prose ambiguity, no code change needed.
+NOTES: Implementation matches PLAN.md §3's contract incl. the error-path `label || sql.slice(0,30) || "failed"` hint and the `Run N · Stmt M` fallback. Auto-open sits after the loadMoreInFlight clamp (webview/main.ts:3661-3675), fires only for new error rows in [prevLen, length), and `results.length` is a valid Messages slot (rebuildTabs appends it at that index, renderActivePanel:1173 handles it). Pre-existing test updates reviewed — all intentional spec alignment (old `Statement N`/40-char-truncation/`⌀ ✗ ✓` badge assertions tested the replaced contract). Executor's 5 worktree-only aiChatPanel esbuild failures do not reproduce in the main repo (full suite green here).
+NEXT_STATUS_FOR_INDEX: approved_minor
