@@ -1,20 +1,22 @@
 # VSDB Status
 
-- Last meaningful update: 2026-09-03
-- Updated by: Claude (BQ-04 cycle close-out)
+- Last meaningful update: 2026-09-04
+- Updated by: Claude (UX2 cycle close-out)
 - Status confidence: high
 
 ## Current state
 
-- HEAD: `194414e` (main, synced with origin; tag `v1.51.0`)
-- Latest release: **v1.51.0** (BQ-04 wire `formatBigQueryCell` into Results grid; GitHub release live at https://github.com/lengockhoa/VSDB/releases/tag/v1.51.0, vsix `vsdb-1.51.0.vsix` 2 MB published; 3/3 tasks `approved` (001) / `approved_minor` (002, 003) after R4.5 R1 doc-only fix; BQ-00 frozen surface byte-untouched; BQ-01 narrow `BigQueryClientLike` + `BatchedQuery` interface unchanged; `formatBigQueryCell` body byte-untouched)
-- Suite baseline: **3402 passed | 2 skipped** (typecheck + compile exit 0; was 3385|2 at v1.50.0; **+17 new tests** across BQ-04: 4 in queryRunner.test.ts (BQ-04 dialect marker) + 6 in resultsGridModel.test.ts (BQ-04 formatDataCellForDialect) + 4 in bq04SurfaceGuard.test.ts (new) + 3 carried through to webviewBundle + 0 deferred)
-- No pending tasks; no handoff worktrees/branches lingering in the cycle flow
+- HEAD: `8d23d19` (main, synced with origin; tag `v1.51.3`)
+- Latest release: **v1.51.3** (UX2 — surface SQL + connection errors in Results panel + fix broken `Run N · Stmt M` tab labels; GitHub release live at https://github.com/lengockhoa/VSDB/releases/tag/v1.51.3, vsix `vsdb-1.51.3.vsix` 2.01 MB / 22 files; 4/4 tasks `done` (UX2-001 `approved`, UX2-002 `approved_minor`, UX2-003 `approved_minor`, UX2-004 `approved_minor` after R4.5 R1 RED-evidence repair + dead-helper removal + `deactivating` gate); original UX2 silent-failure screenshot reproducer now shows synthetic tab with `Run N · Connection failed…` title, inline red error card, Messages auto-opened, status bar red `$(error)` badge; failed SELECT now shows the error card with `Run N · <first 30 chars of SQL>` title)
+- Suite baseline: **3555 passed | 2 skipped** (typecheck + compile exit 0; was 3530|2 at v1.51.2; **+25 new tests** across UX2: 7 in `ddlStatusCard.test.ts` (error-card path) + 7 in `webview/__tests__/mainTabTitle.test.ts` (new, tabTitle + tabBadge) + 5 in `queryRunner.test.ts` (runFailed lifecycle) + 2 in `statusBar.test.ts` (setErrorBadge wrapper) + 4 in `resultsPanelErrorIntegration.test.ts` (new, end-to-end first-connect + post-connect paths + badge lifecycle + healthy-SELECT regression))
+- No pending tasks; UX3 (closeable tabs) is queued in `docs/AI_HANDOFF/PLAN.md` §1 with the user's 4 P0 decisions locked in for the next cycle
+- No handoff worktrees/branches lingering in the cycle flow
 
 ## Recently shipped (this session's cycles)
 
 | Cycle | Release | Tasks | Approval | Notes |
 |---|---|---|---|---|
+| UX2 | v1.51.3 | 4/4 | R2 1 approved + 2 approved_minor + 1 changes_requested (RED-evidence missing) → R4.5 R1 1 doc-only fix (RED re-captured via temp impl revert + vitest replay; trailing-newline minor; dead-helper removed; `deactivating` gate added to setErrorBadge) → 4/4 approved | surface SQL + connection errors in Results panel + fix broken `Run N · Stmt M` tab labels: `ddlStatusCard.classifyPanelKind` routes SELECT+error to error card (was: empty grid); `BuildCardOutput.kind` extended with `"connection-error"`; `webview/tabTitle.ts` (new) pure `tabTitle(r, i)` + `tabBadge(r)`; `webview/main.ts` Messages auto-open after `loadMoreInFlight` clamp; `QueryRunner.runFailed(reason)` new public method that appends synthetic row `{sql:"(connection)", status:"error"}` and fires cached `lastOnUpdate`; `RunnerBusy` error class exported (case 2 pins by constructor name); `createStatusBar` returns wrapper `{item, setErrorBadge, dispose}` (breaking change, 1 prod caller + 2 test mocks migrated); `src/extension.ts:2627-2652` outer catch in `runStatements` now calls `runner.runFailed(reason)` + `statusBar.setErrorBadge(reason)` instead of dropping a toast; belt-and-suspenders `panel.render` in the catch for spy/mocked-runner case; UX1-010 DDL/DML success card path and healthy-SELECT grid path byte-identical; no BQ driver touched (BQ-00 / BQ-01 / `formatBigQueryCell` byte-untouched); +25 tests over v1.51.2; UX3 (closeable tabs) deferred to v1.51.4 with 4 P0 user decisions locked in PLAN.md §1 |
 | ARP-07 | v1.43.0 | 4/4 | round 1 | Successful-DDL cache/context invalidation |
 | ARP-08 | v1.44.0 | 4/4 | round 1 | Console draft recovery (workspaceState, debounced, exactly-once flush) |
 | ARP-09 | v1.45.0 | 5/5 | round 1 after R4.5 | Redacted diagnostics + `profile:fast`/`profile:release` |
@@ -34,15 +36,19 @@ The CL-01 cycle closed items 2, 3, 4, 5, 6 from the prior backlog. Two non-issue
 
 ## Next-cycle guidance
 
-- v1.51.0 is shipped; backlog is empty. The natural follow-ups (none scheduled) would be:
+- v1.51.3 is shipped; UX3 (closeable tabs in Results panel — × button per tab + right-click "Close" menu, active tab is closeable, auto-activate nearest tab on close, empty-state when no tabs left, no persistence) is the natural next cycle. User P0 decisions are locked in `docs/AI_HANDOFF/PLAN.md` §1.
+- The pre-existing BQ follow-ups are still valid but lower priority:
   - **`pageSize` configurability** — `getQueryResults` `maxResults` is fixed at one default; surface a per-`BatchedQuery` tunable if real-world latency warrants.
   - **`useLegacySql: true` UI toggle** — currently honored at the seam but no UI sets it; surface a "Use legacy SQL" toggle in the editor.
   - **Locale-aware temporal formatting** (new in BQ-04 deferral) — `formatBigQueryCell`'s `field` parameter is threaded end-to-end and supports locale-based formatting, but the branch is not implemented.
   - **Deleting / replacing `webview/grid.ts`** (TASK-203's separate concern) — the legacy mirror is no longer in the active render path.
-- All remaining follow-ups are non-issues; the explicit backlog is empty. Future cycles will need a fresh user request.
+- All remaining BQ follow-ups are non-issues for now; UX3 is the priority for the next user request.
 - **Lessons carried forward (updated for BQ-04):**
   - The 3c copy-back fix (use `git -C "$WORKTREE" diff --name-only $BASE` not `HEAD~`) carried from CL-01 / BQ-02 / BQ-03 worked cleanly across all 3 BQ-04 waves + the R4.5 R1 round.
   - The stray `docs/AI_HANDOFF/PLAN_AIX09.md` orphan re-appears after every `git add docs/AI_HANDOFF/` because the orchestrator's git-add glob picks it up untracked. The BQ-03 / BQ-04 cycles confirmed the lesson: scoped `git add` of the touched files (e.g. `git add docs/AI_HANDOFF/PLAN.md docs/AI_HANDOFF/INDEX.md docs/AI_HANDOFF/ACTIVE.md docs/AI_HANDOFF/RUN.md docs/AI_HANDOFF/tasks/`) skips the orphan pickup entirely.
   - **NEW (BQ-04): 3c copy-back must include worktree executor reports** — the orchestrator's `if [[ "$f" != docs/AI_HANDOFF/tasks/TASK-* ]]` filter (intended to keep plan/task file commits separate) dropped the worktree copies of the task files, including the executor's appended `## Executor Report`. The R2 reviewers all flagged "missing Executor Report" because of this — code was fully correct, only the on-disk evidence was lost. **Fix for future cycles:** either (a) include the task files in the 3c copy-back, then `git add` them in the wave commit (single-commit model), or (b) spawn a R4.5 doc-only fix round immediately after the wave commits to backfill the reports (which is what BQ-04 did). The R4.5 path is cleaner because the wave commit stays focused on source.
   - **NEW (BQ-04): frozen-surface guard must allow version bumps** — the initial `bq04SurfaceGuard.test.ts` row 3 asserted `git diff 75cdb08 -- package.json` was empty, but the R5 commit legitimately bumps `package.json` from 1.50.0 to 1.51.0 — and the guard's job is to catch ADAPTER drift, not version drift. **Fix:** row 3 now filters out the `+/- "version":` line before asserting the remaining `+/-` set is empty. Future cycles that bump deps / `@google-cloud/bigquery` version / engine pins will still fail loudly.
   - The hook-protected `package-lock.json` lesson from BQ-03 held: `npm install --package-lock-only` after `npm version` syncs the lockfile without triggering the direct-Edit hook block.
+  - **NEW (UX2): R2 RED_OUTPUT contract is enforceable retroactively via temp impl revert** — when the wave-3 single-commit model drops pre-impl evidence (because all files come in together at the wave boundary), the R2 reviewer can demand a "RED_OUTPUT field" finding even though the code is fully verified green. The fix is cheap: temporarily revert just the implementation block (not the test file), run vitest, capture the failing output, then restore the impl and re-verify GREEN. This is a *documentation fix* per the R2 spec, not a code fix, and it preserves the TDD contract without redoing the cycle. The UX2-004 task file's `### RED evidence (re-captured 2026-09-04, R2 follow-up)` block is the template future cycles can copy.
+  - **NEW (UX2): one producer, not two** — when a single error surface can be triggered by two distinct paths (first-connect failure vs post-connect `runQuery` failure), do NOT add two competing producers. UX2 used a single `runner.runFailed(reason)` method that both paths route through; the post-connect path's per-statement error row is a *different* shape (`kind: "select"`, `status: "error"`) that the render primitive (`classifyPanelKind`) catches via the `r.status === "error" → "card"` rule. The plan-review R1 finding (two-producer conflict) caught this before any code was written.
+  - **NEW (UX2): breaking change migration list belongs in the plan, not just the task** — `createStatusBar` was changed from returning `vscode.StatusBarItem` to a wrapper `{item, setErrorBadge, dispose}`. The plan's §3 Approach section called this out, the TASK-UX2-003 acceptance criteria listed every call site to migrate (1 prod + 2 test mocks), and the R2 reviewer confirmed the mocks stub below the wrapper boundary so they correctly needed no change. Carrying the migration list into the plan (not just the task) is what made the breaking change zero-surprise.
