@@ -42,6 +42,7 @@ const SCHEMA_IMPACT_KEYWORDS: Record<string, true> = {
   alter: true,
   drop: true,
   rename: true,
+  comment: true, // PostgreSQL `COMMENT ON TABLE/VIEW/...` mutates pg_description
 };
 
 /**
@@ -134,4 +135,116 @@ export function completedSchemaImpact(
     if (hasSchemaImpact(stmt, dialect)) return true;
   }
   return false;
+}
+
+// =====================================================================
+// TASK-UX1-011 (R13) — auto-refresh strategy after a successful run.
+// Three-way classification consumed by the host seam:
+//   "full" → schema + autocomplete + tree all refreshed (DDL path)
+//   "tree" → only the schema tree refreshes (DML path; cheap, no cache bust)
+//   "none" → no refresh at all (SELECT-only or empty/failed run)
+// =====================================================================
+
+/** DML keywords that DO change row count but NOT schema surface. */
+const DML_KEYWORDS: Record<string, true> = {
+  insert: true,
+  update: true,
+  delete: true,
+  merge: true,
+  truncate: true,
+};
+
+/** Reuse maskLiteralsAndComments + hasSchemaImpact; just inspect depth-0 first keyword. */
+function firstKeyword(masked: string): string | null {
+  const wordRe = /[A-Za-z_][A-Za-z0-9_]*|\(|\)/g;
+  let depth = 0;
+  let sawWith = false;
+  let m: RegExpExecArray | null;
+  while ((m = wordRe.exec(masked)) !== null) {
+    const tok = m[0];
+    if (tok === "(") { depth += 1; continue; }
+    if (tok === ")") { depth = Math.max(0, depth - 1); continue; }
+    if (depth > 0) continue;
+    const lower = tok.toLowerCase();
+    if (!sawWith) {
+      if (lower === "with") { sawWith = true; continue; }
+      return lower;
+    }
+    return lower;
+  }
+  return null;
+}
+
+/**
+ * Classify what kind of refresh the schema tree (and friends) need after
+ * a successful run. DDL in any statement → "full" (matches
+ * `completedSchemaImpact` for cache invalidation, but additionally drives
+ * the tree refresh). DML anywhere → "tree" only (row count changes
+ * aren't schema changes, but a user that just INSERTed expects the
+ * left pane to reflect the new state). SELECT/EXPLAIN/empty → "none".
+ */
+export function shouldRefreshAfter(
+  completed: readonly string[],
+  dialect?: SqlDialect,
+): "full" | "tree" | "none" {
+  if (completed.length === 0) return "none";
+  for (const stmt of completed) {
+    if (hasSchemaImpact(stmt, dialect)) return "full";
+  }
+  for (const stmt of completed) {
+    const masked = maskLiteralsAndComments(stmt, dialect);
+    const kw = firstKeyword(masked);
+    if (kw !== null && DML_KEYWORDS[kw] === true) return "tree";
+  }
+  return "none";
+}
+
+/**
+ * TASK-UX1-011 (R13) — trailing debouncer. Coalesces N rapid calls into
+ * one flush after the last call sits idle for `delayMs`. Pure: no vscode,
+ * no I/O, no global state. Caller owns the timer (`setTimeout`/`clearTimeout`)
+ * so the same module works in tests with `vi.useFakeTimers()`.
+ */
+export interface DebouncedRefresher {
+  trigger(args: "full" | "tree" | "none"): void;
+  flush(): void;
+  cancel(): void;
+  /** Most recent strategy passed to trigger() (defaults to "none"). */
+  readonly latest: "full" | "tree" | "none";
+}
+
+export function createDebouncedRefresher(
+  refresh: (strategy: "full" | "tree") => void,
+  delayMs = 200,
+): DebouncedRefresher {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let latestStrategy: "full" | "tree" | "none" = "none";
+  const fire = (): void => {
+    if (latestStrategy === "none") return;
+    const strategy = latestStrategy;
+    latestStrategy = "none";
+    refresh(strategy);
+  };
+  return {
+    trigger(args) {
+      if (args === "none") {
+        // "none" still RESETS the latest but never fires. A burst of
+        // none+none stays no-op; a burst of DDL then SELECT keeps "full"
+        // armed (DDL is sticky for the batch — matches user intent).
+        return;
+      }
+      latestStrategy = args;
+      if (timer !== null) clearTimeout(timer);
+      timer = setTimeout(() => { timer = null; fire(); }, delayMs);
+    },
+    flush() {
+      if (timer !== null) { clearTimeout(timer); timer = null; }
+      fire();
+    },
+    cancel() {
+      if (timer !== null) { clearTimeout(timer); timer = null; }
+      latestStrategy = "none";
+    },
+    get latest() { return latestStrategy; },
+  };
 }

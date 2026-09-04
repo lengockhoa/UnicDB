@@ -2,8 +2,13 @@
 // TASK-ARP07-001 — pure schema-impact classifier corpus (TDD).
 // Pure core, no vscode mock — same style as dangerousStatement.test.ts /
 // readOnlyIntent.test.ts. Corpus is pinned 1:1 to the task's §Test Cases.
-import { describe, it, expect } from "vitest";
-import { hasSchemaImpact, completedSchemaImpact } from "../schemaImpact";
+import { describe, it, expect, vi } from "vitest";
+import {
+  hasSchemaImpact,
+  completedSchemaImpact,
+  shouldRefreshAfter,
+  createDebouncedRefresher,
+} from "../schemaImpact";
 
 describe("TASK-ARP07-001 — hasSchemaImpact", () => {
   it("T1 — CREATE TABLE depth-0 → true", () => {
@@ -111,5 +116,131 @@ describe("TASK-CL-001 — schemaImpact inherits mssql bracket masking", () => {
 
   it("#8b — SELECT * FROM [create] (mssql) is NOT schema-impact", () => {
     expect(hasSchemaImpact("SELECT * FROM [create]", "mssql")).toBe(false);
+  });
+});
+
+describe("TASK-UX1-011 (R13) — shouldRefreshAfter", () => {
+  it("#1 DDL → 'full'", () => {
+    expect(shouldRefreshAfter(["CREATE TABLE t (id int)"], "postgres")).toBe(
+      "full",
+    );
+  });
+
+  it("#2 DML-only → 'tree'", () => {
+    expect(shouldRefreshAfter(["INSERT INTO t VALUES (1)"], "postgres")).toBe(
+      "tree",
+    );
+    expect(shouldRefreshAfter(["UPDATE t SET a=1"], "postgres")).toBe("tree");
+    expect(shouldRefreshAfter(["DELETE FROM t"], "postgres")).toBe("tree");
+    expect(shouldRefreshAfter(["TRUNCATE t"], "postgres")).toBe("tree");
+    expect(shouldRefreshAfter(["MERGE INTO t USING s ON 1=1"], "postgres")).toBe("tree");
+  });
+
+  it("#3 SELECT-only → 'none'", () => {
+    expect(shouldRefreshAfter(["SELECT 1"], "postgres")).toBe("none");
+    expect(shouldRefreshAfter(["EXPLAIN SELECT 1"], "postgres")).toBe("none");
+  });
+
+  it("#4 empty batch → 'none' (failures filtered out)", () => {
+    expect(shouldRefreshAfter([], "postgres")).toBe("none");
+  });
+
+  it("#5 boundary — COMMENT ON, EXPLAIN, masked DDL", () => {
+    expect(shouldRefreshAfter(["COMMENT ON TABLE t IS 'x'"], "postgres")).toBe(
+      "full",
+    );
+    expect(shouldRefreshAfter(["EXPLAIN SELECT 1"], "postgres")).toBe("none");
+    expect(shouldRefreshAfter(["/* c */ CREATE VIEW v AS SELECT 1"], "postgres")).toBe(
+      "full",
+    );
+  });
+
+  it("#5b mixed batch — DDL sticky", () => {
+    expect(
+      shouldRefreshAfter(
+        ["INSERT INTO t VALUES (1)", "CREATE TABLE x (id int)"],
+        "postgres",
+      ),
+    ).toBe("full");
+  });
+
+  it("#5c only-DML batch (no DDL anywhere) → 'tree'", () => {
+    expect(
+      shouldRefreshAfter(
+        ["INSERT INTO t VALUES (1)", "SELECT 1 FROM t"],
+        "postgres",
+      ),
+    ).toBe("tree");
+  });
+});
+
+describe("TASK-UX1-011 (R13) — createDebouncedRefresher", () => {
+  it("#6 trigger+advance → fires once with latest strategy", () => {
+    vi.useFakeTimers();
+    const calls: Array<"full" | "tree"> = [];
+    const r = createDebouncedRefresher((s) => calls.push(s), 200);
+    r.trigger("full");
+    r.trigger("tree"); // resets timer; "tree" is the latest
+    vi.advanceTimersByTime(199);
+    expect(calls).toEqual([]); // not yet
+    vi.advanceTimersByTime(1);
+    expect(calls).toEqual(["tree"]); // fires with latest
+    vi.useRealTimers();
+  });
+
+  it("#7 3 rapid triggers within window → exactly 1 fire", () => {
+    vi.useFakeTimers();
+    const calls: Array<"full" | "tree"> = [];
+    const r = createDebouncedRefresher((s) => calls.push(s), 200);
+    r.trigger("full");
+    r.trigger("full");
+    r.trigger("full");
+    vi.advanceTimersByTime(250);
+    expect(calls).toEqual(["full"]);
+    vi.useRealTimers();
+  });
+
+  it("#8 flush() forces immediate fire", () => {
+    vi.useFakeTimers();
+    const calls: Array<"full" | "tree"> = [];
+    const r = createDebouncedRefresher((s) => calls.push(s), 200);
+    r.trigger("tree");
+    r.flush();
+    expect(calls).toEqual(["tree"]);
+    vi.useRealTimers();
+  });
+
+  it("#9 cancel() clears pending", () => {
+    vi.useFakeTimers();
+    const calls: Array<"full" | "tree"> = [];
+    const r = createDebouncedRefresher((s) => calls.push(s), 200);
+    r.trigger("full");
+    r.cancel();
+    vi.advanceTimersByTime(500);
+    expect(calls).toEqual([]);
+    vi.useRealTimers();
+  });
+
+  it("#10 'none' trigger is a no-op (does not arm or fire)", () => {
+    vi.useFakeTimers();
+    const calls: Array<"full" | "tree"> = [];
+    const r = createDebouncedRefresher((s) => calls.push(s), 200);
+    r.trigger("none");
+    vi.advanceTimersByTime(500);
+    expect(calls).toEqual([]);
+    vi.useRealTimers();
+  });
+
+  it("#11 latest accessor reflects armed strategy", () => {
+    vi.useFakeTimers();
+    const r = createDebouncedRefresher(() => undefined, 200);
+    expect(r.latest).toBe("none");
+    r.trigger("tree");
+    expect(r.latest).toBe("tree");
+    r.trigger("full");
+    expect(r.latest).toBe("full");
+    r.cancel();
+    expect(r.latest).toBe("none");
+    vi.useRealTimers();
   });
 });

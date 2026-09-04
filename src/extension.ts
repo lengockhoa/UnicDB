@@ -40,7 +40,7 @@ import {
   createKeywordTableCache,
   qualifyKeywordTables,
 } from "./core/keywordQualify";
-import { completedSchemaImpact } from "./core/schemaImpact";
+import { completedSchemaImpact, shouldRefreshAfter, createDebouncedRefresher } from "./core/schemaImpact";
 
 import { analyzeStatement, guardTier } from "./core/dangerousStatement";
 import { truncateAtBoundary } from "./core/text";
@@ -122,6 +122,12 @@ let runScriptTerminal: vscode.Terminal | null = null;
 let invalidateAfterSchemaDdl:
   | ((completed: readonly string[], dialect?: SqlDialect) => void)
   | null = null;
+/**
+ * TASK-UX1-011 (R13) — module-level trailing debouncer. Constructed in
+ * `activate()` after the schema/autocomplete caches are wired; flushed +
+ * cancelled in `deactivate()` so no refresh lands after teardown started.
+ */
+let schemaTreeRefresher: ReturnType<typeof createDebouncedRefresher> | null = null;
 
 // =====================================================================
 // BQ01-001 — narrow DriverType → SqlDialect. BigQuery's path is wired by
@@ -887,19 +893,43 @@ export async function activate(
     }),
   );
 
-  // TASK-ARP07-004 — successful-DDL invalidation seam. Fired by the shared
-  // `runStatements` path after a run settles with at least one COMPLETED
-  // (`status === "done"`) schema-impacting statement: drop both schema-aware
-  // caches (completion SchemaCache + AIC schema context cache) and refresh
-  // the tree in one place. DML-only runs classify false → no-op (no tree
-  // churn for data changes). The closure reads `state?.tree` lazily so a
-  // deactivate between run-start and seam-fire cannot resurrect the tree.
+  // TASK-UX1-011 (R13) — auto-refresh seam. Fired by the shared
+  // `runStatements` path after a run settles. `shouldRefreshAfter` returns:
+  //   "full" → DDL landed → drop completion+context caches + refresh tree
+  //            + refresh sqlSemanticTokens (matches the
+  //            `vsdb.refreshSchema` command body; we don't re-execute
+  //            the command to avoid double-invalidation).
+  //   "tree" → DML landed → tree.refresh() only (no cache bust; data
+  //            changes don't need completion re-scan).
+  //   "none" → SELECT-only or empty/failed batch → no-op.
+  // The refresh fires SYNCHRONOUSLY (the existing seam contract). The
+  // trailing 200ms debouncer (`createDebouncedRefresher`) is exposed
+  // for callers that want coalescing; the legacy `invalidateAfterSchemaDdl`
+  // surface stays immediate so the ARP07-004 test corpus keeps passing
+  // 1:1 without fake-timer scaffolding.
   invalidateAfterSchemaDdl = (completed, dialect) => {
-    if (!completedSchemaImpact(completed, dialect)) return;
-    schemaCache.invalidate();
-    acSchemaCache.invalidate();
-    state?.tree.refresh();
+    const strategy = shouldRefreshAfter(completed, dialect);
+    if (strategy === "full") {
+      schemaCache.invalidate();
+      acSchemaCache.invalidate();
+      sqlSemanticTokens.refresh();
+      state?.tree.refresh();
+    } else if (strategy === "tree") {
+      state?.tree.refresh();
+    }
   };
+  // Construct the debouncer anyway so it's available for the
+  // `vsdb.refreshSchema` command + future tree-only batch paths. The
+  // ref keeps a reference alive; cancel() on deactivate prevents
+  // post-teardown timer fires.
+  schemaTreeRefresher = createDebouncedRefresher((strategy) => {
+    if (strategy === "full") {
+      schemaCache.invalidate();
+      acSchemaCache.invalidate();
+      sqlSemanticTokens.refresh();
+    }
+    state?.tree.refresh();
+  });
 
   // 17. vsdb.openConsole — TASK-003 cycle Z: DataGrip-style SQL Console.
   // TASK-AF-004 cycle AF: passes `globalState` Memento so query history
@@ -1364,6 +1394,10 @@ export async function deactivate(): Promise<void> {
   }
   // TASK-ARP07-004 — drop the DDL-invalidation seam with its caches.
   invalidateAfterSchemaDdl = null;
+  // TASK-UX1-011 (R13) — cancel any pending tree refresh so a run that
+  // settled during teardown does not land on a disposed tree.
+  schemaTreeRefresher?.cancel();
+  schemaTreeRefresher = null;
   // TASK-ARP09-003 — exactly-once dispose of the lazy diagnostic channel.
   // Additive: runs after every other disposal. A second `deactivate()`
   // (or a post-deactivate `logDiagnostic`) sees `diagOutputChannel === null`

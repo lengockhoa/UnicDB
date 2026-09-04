@@ -3609,7 +3609,7 @@ describe("TASK-ARP07-004 — successful-DDL cache invalidation seam", () => {
     expect(treeRefreshSpy).not.toHaveBeenCalled();
   });
 
-  it("#7 edge: DML-only successful run (INSERT / UPDATE+WHERE / TRUNCATE) → seam NOT called (classifier false)", async () => {
+  it("#7 edge: DML-only successful run (INSERT / UPDATE+WHERE / TRUNCATE) → tree-only refresh (TASK-UX1-011 R13: caches untouched, tree.refresh called once per batch)", async () => {
     const { ext } = await activateSeam();
     // INSERT — kind "other" → tier "none" → no confirm prompt.
     await setRunnerResults([
@@ -3618,7 +3618,8 @@ describe("TASK-ARP07-004 — successful-DDL cache invalidation seam", () => {
     await driveRunStatement(ext, "INSERT INTO t VALUES (1);");
     expect(schemaCacheSpy).not.toHaveBeenCalled();
     expect(acSchemaCacheSpy).not.toHaveBeenCalled();
-    expect(treeRefreshSpy).not.toHaveBeenCalled();
+    // R13: DML DOES refresh the tree (row counts changed).
+    expect(treeRefreshSpy).toHaveBeenCalledTimes(1);
 
     // UPDATE with WHERE — tier "none" → no confirm.
     await setRunnerResults([
@@ -3627,7 +3628,7 @@ describe("TASK-ARP07-004 — successful-DDL cache invalidation seam", () => {
     await driveRunStatement(ext, "UPDATE t SET c = 1 WHERE id = 1;");
     expect(schemaCacheSpy).not.toHaveBeenCalled();
     expect(acSchemaCacheSpy).not.toHaveBeenCalled();
-    expect(treeRefreshSpy).not.toHaveBeenCalled();
+    expect(treeRefreshSpy).toHaveBeenCalledTimes(2);
 
     // TRUNCATE — red tier; showWarningMessage must return "Vẫn chạy (nguy hiểm)".
     warnMock.mockResolvedValueOnce("Vẫn chạy (nguy hiểm)");
@@ -3637,7 +3638,7 @@ describe("TASK-ARP07-004 — successful-DDL cache invalidation seam", () => {
     await driveRunStatement(ext, "TRUNCATE TABLE t;");
     expect(schemaCacheSpy).not.toHaveBeenCalled();
     expect(acSchemaCacheSpy).not.toHaveBeenCalled();
-    expect(treeRefreshSpy).not.toHaveBeenCalled();
+    expect(treeRefreshSpy).toHaveBeenCalledTimes(3);
   });
 
   it("#8 happy: successful SELECT run → caches untouched (classifier false on non-DDL)", async () => {
