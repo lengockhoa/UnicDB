@@ -1189,6 +1189,103 @@ describe("TASK-004 — vsdb.openAiSettings wiring", () => {
 void path;
 
 // =============================================================================
+// TASK-UX1-007 — vsdb.openSettings gear on the schema-tree title bar (R8b).
+// Hub command: opens VS Code's Settings UI filtered to VSDB extension
+// (`@ext:lengockhoa.vsdb`). Distinct icon (`$(settings-gear)`) from
+// `vsdb.openAiSettings`'s `$(gear)` so the two title-bar buttons never
+// collide visually. Structural cases pin the package.json contribution
+// (command + view/title entry) so a future icon swap cannot silently
+// regress the hub into a duplicate of AI Settings.
+// =============================================================================
+describe("TASK-UX1-007 — vsdb.openSettings wiring", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+  });
+
+  // Case 1 — happy path: command opens settings filtered to the extension.
+  it("case 1: invokes vsdb.openSettings → executeCommand('workbench.action.openSettings', '@ext:lengockhoa.vsdb')", async () => {
+    const ctx = makeCtx();
+    activate(ctx as never);
+    const fn = state.registeredCommands.get("vsdb.openSettings");
+    expect(fn).toBeDefined();
+
+    const executeCommandSpy = vi.mocked(vscodeMock.commands.executeCommand);
+    executeCommandSpy.mockClear();
+    await fn!();
+
+    expect(executeCommandSpy).toHaveBeenCalled();
+    const called = executeCommandSpy.mock.calls.find(
+      (c) => c[0] === "workbench.action.openSettings",
+    );
+    expect(called).toBeDefined();
+    expect(called![1]).toBe("@ext:lengockhoa.vsdb");
+  });
+
+  // Case 2 — edge A: executeCommand rejects → caught, toast, no throw.
+  it("case 2: executeCommand rejects → caught + showErrorMessage, handler does not throw", async () => {
+    const ctx = makeCtx();
+    activate(ctx as never);
+    const fn = state.registeredCommands.get("vsdb.openSettings");
+    expect(fn).toBeDefined();
+
+    const executeCommandSpy = vi.mocked(vscodeMock.commands.executeCommand);
+    executeCommandSpy.mockClear();
+    executeCommandSpy.mockRejectedValueOnce(new Error("settings UI unavailable"));
+    const showErrorSpy = vi.mocked(vscodeMock.window.showErrorMessage);
+    showErrorSpy.mockClear();
+
+    await expect(fn!()).resolves.toBeUndefined();
+    expect(showErrorSpy).toHaveBeenCalled();
+    const errorArgs = showErrorSpy.mock.calls[0];
+    expect((errorArgs?.[0] ?? "").toLowerCase()).toMatch(/settings/);
+  });
+
+  // Case 3 — edge B: structural wiring — package.json declares command + title entry.
+  it("case 3: package.json declares vsdb.openSettings command + view/title entry on vsdb.schemaTree", () => {
+    interface CmdEntry { command: string; title?: string; icon?: string }
+    const commands = pkgJson.contributes.commands as CmdEntry[];
+    const entry = commands.find((c) => c.command === "vsdb.openSettings");
+    expect(entry).toBeDefined();
+    expect(entry!.title).toMatch(/Open Settings/i);
+    expect(entry!.icon).toBe("$(settings-gear)");
+
+    interface MenuEntry { command: string; when?: string; group?: string }
+    const viewTitle = (pkgJson.contributes.menus["view/title"] ?? []) as MenuEntry[];
+    const menu = viewTitle.find((m) => m.command === "vsdb.openSettings");
+    expect(menu).toBeDefined();
+    expect(menu!.when).toBe("view == vsdb.schemaTree");
+    expect(menu!.group).toBe("navigation");
+  });
+
+  // Case 4 — edge C: no icon collision with AI settings entry.
+  it("case 4: vsdb.openAiSettings keeps $(gear) and vsdb.openSettings uses $(settings-gear)", () => {
+    interface CmdEntry { command: string; icon?: string }
+    const commands = pkgJson.contributes.commands as CmdEntry[];
+    const ai = commands.find((c) => c.command === "vsdb.openAiSettings");
+    const hub = commands.find((c) => c.command === "vsdb.openSettings");
+    expect(ai).toBeDefined();
+    expect(hub).toBeDefined();
+    expect(ai!.icon).toBe("$(gear)");
+    expect(hub!.icon).toBe("$(settings-gear)");
+    expect(ai!.icon).not.toBe(hub!.icon);
+  });
+
+  // Case 5 — regression: command registration smoke (mirror the "register đủ command" pattern).
+  it("case 5: extension.activate registers vsdb.openSettings", () => {
+    const ctx = makeCtx();
+    activate(ctx as never);
+    expect(state.registeredCommands.has("vsdb.openSettings")).toBe(true);
+  });
+
+  // activationEvents pin — keeps the lazy activation guard in sync.
+  it("package.json activationEvents contains onCommand:vsdb.openSettings", () => {
+    const evts = pkgJson.activationEvents as string[];
+    expect(evts).toContain("onCommand:vsdb.openSettings");
+  });
+});
+
+// =============================================================================
 // TASK-004 — vsdb.aiChat command wiring + unconfigured fallback.
 // =============================================================================
 describe("TASK-004 — vsdb.aiChat wiring", () => {
@@ -4887,14 +4984,14 @@ describe("MENU — table-node context menu: New Table #1, Modify Table #2", () =
     expect(titles[0]).toBe("New Table…");
     expect(titles[1]).toBe("Modify Table…");
     // Items 2..(n-1) keep their current alphabetical relative order:
-    //   Analyze Table, Copy Create Query, Generate Sample Data…, Rename Column…,
+    //   Analyze Table, Copy Create Query, Insert Sample Data…, Rename Column…,
     //   Rename Table…, Vacuum Table, VSDB: Export Structure, VSDB: Postman Payload.
     // (VSDB: Refresh Schema + connection-only entries are correctly excluded
     // because their `when` does not include `viewItem == table`.)
     expect(titles.slice(2)).toEqual([
       "Analyze Table",
       "Copy Create Query",
-      "Generate Sample Data…",
+      "Insert Sample Data…",
       "Rename Column…",
       "Rename Table…",
       "Vacuum Table",

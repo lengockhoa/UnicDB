@@ -76,7 +76,8 @@
     "onCommand:vsdb.diagnostics.show",
     "onCommand:vsdb.diagnostics.clear",
     "onCommand:vsdb.generateViewDdl",
-    "onCommand:vsdb.generateFunctionDdl"
+    "onCommand:vsdb.generateFunctionDdl",
+    "onCommand:vsdb.openSettings"
   ],
   "contributes": {
     "commands": [
@@ -190,7 +191,7 @@
       },
       {
         "command": "vsdb.generateSampleData",
-        "title": "Generate Sample Data…",
+        "title": "Insert Sample Data…",
         "category": "VSDB",
         "icon": "$(file-text)"
       },
@@ -391,6 +392,12 @@
         "title": "SQL Generator",
         "category": "VSDB",
         "icon": "$(symbol-function)"
+      },
+      {
+        "command": "vsdb.openSettings",
+        "title": "VSDB: Open Settings",
+        "category": "VSDB",
+        "icon": "$(settings-gear)"
       }
     ],
     "keybindings": [
@@ -580,6 +587,11 @@
         {
           "command": "vsdb.clearSchemaTreeFilter",
           "when": "view == vsdb.schemaTree && vsdb.schemaTreeFilterActive",
+          "group": "navigation"
+        },
+        {
+          "command": "vsdb.openSettings",
+          "when": "view == vsdb.schemaTree",
           "group": "navigation"
         }
       ]

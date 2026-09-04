@@ -3,7 +3,12 @@
 //   vsdb.newTable          — open NewTableForm (create mode) on schema/category/table node
 //   vsdb.modifyTable       — open NewTableForm (modify mode) on table node
 //   vsdb.copyCreateDdl     — introspect table → generateCreateTable → clipboard
-//   vsdb.generateSampleData — input N → introspect → generateSampleInserts → untitled SQL doc
+//   vsdb.generateSampleData — TASK-UX1-003: open the VSDB Console with typed
+//                             INSERT templates (manual execution). The
+//                             AI-driven flow is preserved as a module
+//                             export (`aiGenerateSampleData` in
+//                             src/ui/sampleDataAi.ts) for power users;
+//                             only the menu default changed.
 //   vsdb.analyzeTable      — ANALYZE <schema>.<table>
 //   vsdb.vacuumTable       — VACUUM ANALYZE <schema>.<table>
 //
@@ -19,6 +24,8 @@
 //
 // `registerTableCommands(deps)` exported — extension.ts calls it at activate.
 // This shape keeps the commands testable in isolation (tableCommands.test.ts).
+// `buildInsertTemplate(columns, opts)` is a pure export for tests + future
+// callers (UX1-004 guide will reference it).
 
 import * as vscode from "vscode";
 import type { ConnectionConfig } from "../config/types";
@@ -31,10 +38,12 @@ import {
 import { alwaysQuote } from "../core/ddl/alterTable";
 import { rowsToSpec } from "../core/ddl/pgIntrospect";
 import type { SqlDialect } from "../core/statementParser";
-import { AiConfigStore } from "../ai/config";
-import { createProviderClient } from "../ai/provider";
+// TASK-UX1-003 — the menu default for vsdb.generateSampleData no longer
+// routes through the AI config / provider / orchestrator. The AI module
+// (sampleDataAi.ts) stays importable + unit-tested; we still use
+// `pickInsertableColumns` for the upstream identity/sequence filter so
+// generated INSERT templates skip columns the DB will fill in itself.
 import {
-  aiGenerateSampleData,
   pickInsertableColumns,
   type SampleColumn,
 } from "./sampleDataAi";
@@ -50,6 +59,13 @@ import {
   registerSchemaTreeProvider,
   type VsdbNode,
 } from "./schemaTree";
+// TASK-UX1-003 — the console-seeding seam is an optional `openConsoleWithTemplate`
+// field on RegisterDeps (injected by extension.ts at activate time). This
+// avoids a circular import (extension.ts depends on tableCommands via
+// `registerTableCommands`; the reverse direction would create a load-time
+// cycle that resolves to `undefined`). The seam calls the same singleton +
+// onRun + draft/autocomplete path that `vsdb.openConsole` /
+// `vsdb.openConsoleForObject` already use.
 interface ResolvedTableNode {
   conn: ConnectionConfig;
   schema: string;
@@ -122,6 +138,17 @@ interface RegisterDeps {
    * that omit it keep the pre-CL-002 behavior byte-identical.
    */
   onSchemaDdl?: (statements: readonly string[], dialect?: SqlDialect) => void;
+  /**
+   * TASK-UX1-003 — console-seeding seam. Optional injected helper that opens
+   * the VSDB Console singleton (or its seeded tab in an existing instance)
+   * pre-filled with `buffer`. Wired by extension.ts to call the same
+   * `commandOpenConsole` + `consolePanel.seedTab(name, buffer)` + `show()`
+   * pattern already used by `vsdb.openConsole` / `vsdb.openConsoleForObject`.
+   * Optional: callers (tests) that omit it keep the console template path
+   * silent — the menu default still produces the SQL buffer (assertable via
+   * the `buildInsertTemplate` pure export) but does not open the Console.
+   */
+  openConsoleWithTemplate?: (name: string, buffer: string) => void;
 }
 
 // TASK-CL-002 — local `DriverType → SqlDialect` narrowing mirroring
@@ -225,8 +252,157 @@ async function introspectTable(
   return { columns, constraints };
 }
 
+// TASK-UX1-003 — buildInsertTemplate: pure helper exported for tests +
+// UX1-004 guide. Renders a SQL string of `rows` INSERT statements against
+// `schema.table` using type-specific placeholder values. The user is
+// expected to edit values before running. Default 5 rows; rows > 20 are
+// capped at 20; rows <= 0 → header comment only (zero INSERT statements).
+export interface BuildInsertTemplateOpts {
+  schema: string;
+  table: string;
+  rows?: number;
+}
+
+/** Quote an identifier for safe injection into a generated SQL template. */
+function quoteIdent(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`;
+}
+
+/**
+ * Render one placeholder value for a column. NOT NULL text columns get a
+ * `'Sample <col>'` literal (never NULL — would violate the constraint).
+ * Nullable text → NULL (the user can replace with a literal). Unknown /
+ * exotic types render a commented-out NULL so the statement still parses
+ * (e.g. `/* bytea *\/ NULL`). The user must hand-edit before running.
+ */
+function placeholderFor(c: SampleColumn): string {
+  const t = c.type.trim().toLowerCase();
+  // Arrays — leading underscore in pg (e.g. `_int4`). Always commented
+  // placeholder; user supplies an array literal.
+  if (t.startsWith("_")) return `/* array */ NULL`;
+  // JSON family.
+  if (t === "jsonb" || t === "json") return `'{}'::${c.type}`;
+  // Bytea — binary, leave commented placeholder.
+  if (t === "bytea") return `/* bytea */ NULL`;
+  // USER-DEFINED (enum / domain) — user must supply a valid literal.
+  if (t === "user-defined") return `/* ${c.type} */ NULL`;
+  // Numeric family (incl. precision/scale). Bare 0 keeps any numeric valid.
+  if (
+    t === "integer" ||
+    t === "bigint" ||
+    t === "smallint" ||
+    t === "numeric" ||
+    t === "real" ||
+    t === "double precision" ||
+    /^numeric\s*\(/.test(t) ||
+    /^decimal\s*\(/.test(t)
+  ) {
+    return "0";
+  }
+  // Boolean.
+  if (t === "boolean" || t === "bool") return "true";
+  // Date / time family.
+  if (
+    t === "timestamp" ||
+    t === "timestamp without time zone" ||
+    t === "timestamptz" ||
+    t === "timestamp with time zone" ||
+    t === "date" ||
+    t === "time" ||
+    t === "time without time zone" ||
+    t === "timetz" ||
+    t === "time with time zone" ||
+    t === "interval"
+  ) {
+    return "NOW()";
+  }
+  // Text / character family. NOT NULL → literal placeholder; nullable →
+  // NULL (user can replace).
+  if (
+    t === "text" ||
+    t === "varchar" ||
+    t === "character varying" ||
+    t === "char" ||
+    t === "character" ||
+    /^varchar\s*\(/.test(t) ||
+    /^character varying\s*\(/.test(t) ||
+    /^char\s*\(/.test(t) ||
+    /^character\s*\(/.test(t)
+  ) {
+    if (!c.nullable) return `'Sample ${c.name}'`;
+    return "NULL";
+  }
+  // UUID.
+  if (t === "uuid") {
+    return c.nullable
+      ? "NULL"
+      : "'00000000-0000-0000-0000-000000000000'";
+  }
+  // Fallback: commented NULL so the statement still parses; user edits.
+  return `/* ${c.type || "unknown"} */ NULL`;
+}
+
+/** Render a single `INSERT INTO ... VALUES (...);` statement. */
+function renderInsert(
+  schema: string,
+  table: string,
+  insertable: SampleColumn[],
+): string {
+  const qSchema = quoteIdent(schema);
+  const qTable = quoteIdent(table);
+  const colList = insertable.map((c) => quoteIdent(c.name)).join(",");
+  const valList = insertable.map((c) => placeholderFor(c)).join(", ");
+  return `INSERT INTO ${qSchema}.${qTable} (${colList}) VALUES (${valList});`;
+}
+
+/**
+ * Build a SQL string of `rows` INSERT templates for `schema.table`. Pure
+ * (no vscode imports) — unit-tested in tableCommands.test.ts.
+ *
+ * Behaviour:
+ *   - `rows` defaults to 5; values > 20 cap at 20; values <= 0 yield a
+ *     header comment only (zero INSERT statements).
+ *   - Empty `columns` → header comment only.
+ *   - The header explains how to use the template (manual execution).
+ *   - Output always ends with a single trailing newline.
+ */
+export function buildInsertTemplate(
+  columns: SampleColumn[],
+  opts: BuildInsertTemplateOpts,
+): string {
+  const rawRows = opts.rows ?? 5;
+  const rows = Math.max(0, Math.min(20, Math.floor(rawRows)));
+  const qSchema = quoteIdent(opts.schema);
+  const qTable = quoteIdent(opts.table);
+  // Header is a no-op comment block; the bare `;` on its own line terminates
+  // the comment block as its own statement so the SQL splitter doesn't
+  // merge the comment with the first INSERT below. PG ignores the empty
+  // statement when the user runs the buffer (the Console parses + skips
+  // empty statements before execution).
+  const header = [
+    `-- VSDB: Insert Sample Data template for ${qSchema}.${qTable}`,
+    `-- Edit values, then run. ${rows === 0 ? "No insertable columns detected." : `${rows} placeholder INSERT statement(s); the user edits + runs manually.`}`,
+    `;`,
+    ``,
+  ].join("\n");
+  if (rows === 0 || columns.length === 0) {
+    if (columns.length === 0) {
+      return (
+        header +
+        `-- (no insertable columns after filtering identity / created_at / nextval-default)\n`
+      );
+    }
+    return header;
+  }
+  const statements: string[] = [];
+  for (let i = 0; i < rows; i += 1) {
+    statements.push(renderInsert(opts.schema, opts.table, columns));
+  }
+  return header + statements.join("\n") + "\n";
+}
+
 export function registerTableCommands(deps: RegisterDeps): void {
-  const { mgr, tree, treeView, context, onSchemaDdl } = deps;
+  const { mgr, tree, treeView, context, onSchemaDdl, openConsoleWithTemplate } = deps;
   registerSchemaTreeProvider(tree);
 
   // vsdb.newTable — schema/category (tables only)/table node.
@@ -352,7 +528,11 @@ export function registerTableCommands(deps: RegisterDeps): void {
     }),
   );
 
-  // vsdb.generateSampleData — TASK-006 AI-driven flow (work model).
+  // vsdb.generateSampleData — TASK-UX1-003: open the VSDB Console with a
+  // pre-filled buffer of typed INSERT templates (default 5 rows). The user
+  // reviews + edits + runs manually — no AI config / provider / row-count
+  // prompt on the default path. The AI-driven module (sampleDataAi.ts)
+  // remains importable for power users; only the menu default changed.
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "vsdb.generateSampleData",
@@ -364,83 +544,29 @@ export function registerTableCommands(deps: RegisterDeps): void {
         const { conn, schema, table } = guarded;
         if (table === "") return;
 
-        const input = await vscode.window.showInputBox({
-          prompt: "Number of rows",
-          value: "10",
-        });
-        if (input === undefined) return;
-        const parsed = Number.parseInt(input, 10);
-        if (Number.isNaN(parsed) || parsed <= 0) {
-          void vscode.window.showInformationMessage(
-            "Enter a positive number",
-          );
-          return;
-        }
-        const n = Math.min(100, parsed);
-
-        const cfg = await new AiConfigStore(context).loadConfig();
-        if (!cfg) {
-          void vscode.window.showInformationMessage(
-            "VSDB: AI not configured. Open settings.",
-          );
-          await vscode.commands.executeCommand("vsdb.openAiSettings");
-          return;
-        }
-
-        let columns: SampleColumn[];
+        let detail: Awaited<ReturnType<typeof introspectTable>>;
         try {
-          const detail = await introspectTable(mgr, conn, schema, table);
-          columns = detail.columns.map((r) => ({
-            name: r.column_name,
-            type: r.format_type,
-            nullable: r.is_nullable === "YES",
-            default: r.column_default,
-          }));
+          detail = await introspectTable(mgr, conn, schema, table);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           void vscode.window.showErrorMessage(
-            `Generate Sample Data failed: ${msg}`,
+            `Insert Sample Data failed: ${msg}`,
           );
           return;
         }
-
+        const columns: SampleColumn[] = detail.columns.map((r) => ({
+          name: r.column_name,
+          type: r.format_type,
+          nullable: r.is_nullable === "YES",
+          default: r.column_default,
+        }));
         const insertable = pickInsertableColumns(table, columns);
-        if (insertable.length === 0) {
-          void vscode.window.showInformationMessage(
-            `VSDB: nothing to insert into ${schema}.${table}`,
-          );
-          return;
-        }
-
-        const provider = createProviderClient({
-          baseUrl: cfg.baseUrl,
-          apiKey: cfg.apiKey,
-          method: cfg.method,
-          timeoutMs: cfg.timeoutMs,
+        const buffer = buildInsertTemplate(insertable, {
+          schema,
+          table,
         });
-
-        try {
-          await aiGenerateSampleData({
-            cfg,
-            conn,
-            schema,
-            table,
-            n,
-            columns: insertable,
-            complete: (req) => provider.complete(req),
-            getAdapterFor: () => mgr.getAdapterFor(conn),
-            showInfo: (m) => {
-              void vscode.window.showInformationMessage(m);
-            },
-            showError: (m) => {
-              void vscode.window.showErrorMessage(m);
-            },
-          });
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          void vscode.window.showErrorMessage(
-            `Generate Sample Data failed: ${msg}`,
-          );
+        if (typeof openConsoleWithTemplate === "function") {
+          openConsoleWithTemplate(`Sample ${schema}.${table}`, buffer);
         }
       },
     ),

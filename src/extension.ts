@@ -387,6 +387,22 @@ export async function activate(
     onSchemaDdl: (statements, dialect) => {
       invalidateAfterSchemaDdl?.(statements, dialect);
     },
+    // TASK-UX1-003 — vsdb.generateSampleData: open the Console with the
+    // typed INSERT template (manual execution). The closure captures `mgr`,
+    // `runner`, `panel`, and the mementos that `commandOpenConsole` needs
+    // to wire the singleton + onRun + draft/autocomplete path identically
+    // to `vsdb.openConsole` / `vsdb.openConsoleForObject`.
+    openConsoleWithTemplate: (name, buffer) => {
+      openConsoleWithTemplate(
+        mgr,
+        runner,
+        panel,
+        context.globalState,
+        context.workspaceState,
+        name,
+        buffer,
+      );
+    },
   });
 
   // TASK-AF-002 — vsdb-ddl: virtual document provider for "Open DDL" on
@@ -967,6 +983,16 @@ export async function activate(
         ),
     ),
   );
+  // 17c.6 — TASK-UX1-007: settings hub gear on the schema-tree title bar
+  // (R8b). Opens VS Code's Settings UI filtered to this extension so the
+  // user sees every `contributes.configuration` entry as a single hub.
+  // Distinct from `vsdb.openAiSettings` (which opens the AI Settings form
+  // webview) — this routes through the built-in settings editor.
+  disposables.push(
+    vscode.commands.registerCommand("vsdb.openSettings", () =>
+      commandOpenSettingsHub(),
+    ),
+  );
   // 17d. vsdb.openHelpGrid — TASK-OC4O-002: open the VSDB Help Grid webview
   // (a responsive grid of feature cards). Also wired into the webview's
   // `...` (more actions) menu via package.json contributes.menus. The
@@ -1359,6 +1385,28 @@ export async function deactivate(): Promise<void> {
  * Reveals existing panel when present; builds a fresh one bound to the
  * store + provider client otherwise.
  */
+/**
+ * TASK-UX1-007 — vsdb.openSettings (R8b settings hub gear): open VS Code's
+ * built-in Settings UI pre-filtered to this extension's contributed settings
+ * (`@ext:lengockhoa.vsdb`). Thin shim over `workbench.action.openSettings` —
+ * any rejection from the editor (e.g. a hostile/unsupported VS Code build)
+ * is surfaced as a single error toast and never thrown, so a bad open
+ * cannot break activation / deactivate.
+ */
+async function commandOpenSettingsHub(): Promise<void> {
+  try {
+    await vscode.commands.executeCommand(
+      "workbench.action.openSettings",
+      "@ext:lengockhoa.vsdb",
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    void vscode.window.showErrorMessage(
+      `VSDB: could not open Settings (${message})`,
+    );
+  }
+}
+
 function commandOpenAiSettings(aiStore: AiConfigStore): void {
   if (!aiSettingsForm) {
     aiSettingsForm = new AiSettingsForm({
@@ -2128,6 +2176,36 @@ async function commandGenerateObjectDdl(
   // already ends with `;`) — see consolePanel.ts unit-level pin.
   const buffer = ensureTrailingSemicolon(ddl);
   consolePanel.seedTab(`DDL ${qualified}`, buffer);
+  consolePanel.show();
+}
+
+/**
+ * TASK-UX1-003 — openConsoleWithTemplate: exposed console-seeding seam for
+ * tableCommands.ts (and any future caller that wants to pre-fill the
+ * Console without running the SQL). Reuses the exact singleton + onRun +
+ * draft/autocomplete wiring as `vsdb.openConsole` /
+ * `vsdb.openConsoleForObject` / `commandGenerateObjectDdl`. The seeded
+ * buffer is NEVER auto-executed — the user reviews + edits + runs
+ * manually. Exported so tableCommands can inject it through the
+ * RegisterDeps optional field, sidestepping the tableCommands ⇄ extension
+ * circular import (extension.ts already depends on tableCommands via
+ * `registerTableCommands`).
+ */
+export function openConsoleWithTemplate(
+  mgr: ConnectionManager,
+  runner: QueryRunner,
+  panel: ResultsPanel,
+  globalState: vscode.Memento,
+  workspaceState: vscode.Memento,
+  name: string,
+  buffer: string,
+): void {
+  commandOpenConsole(mgr, runner, panel, globalState, workspaceState);
+  if (!consolePanel) {
+    // commandOpenConsole is sync and sets the singleton; defensive guard.
+    return;
+  }
+  consolePanel.seedTab(name, buffer);
   consolePanel.show();
 }
 
