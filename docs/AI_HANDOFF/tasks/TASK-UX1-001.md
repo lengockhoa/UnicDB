@@ -146,3 +146,24 @@ Verification Output: |
   Regression: consoleTabs.test.ts (9/9), consolePanelBundle.test.ts (18/18), consolePanelMessages.test.ts (31/31) — all green.
 Status: PASS
 Note: Spec test#1/#4 "no editor → ViewColumn.One" implemented as the simpler rule (Test Cases table authority over Target Files prose). Pre-existing 5 esbuild ENOENT failures in npm test are worktree infrastructure, not caused by this task — verified identical failure set at baseline HEAD.
+
+## Reviewer Verdict
+VERDICT: approved
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN: PASS
+  command: npx vitest run src/ui/__tests__/consolePanel.test.ts src/extension.test.ts
+  result: 179 pass / 0 fail (34 + 145)
+  command: npm run typecheck && npm run compile
+  result: both clean (tsc exit 0; esbuild build complete)
+  extra: consoleTabs (9) + consolePanelBundle (18) + consolePanelMessages (31) = 58/58 pass; npm test full run: only unrelated load-flaky jsdom-bundle/ssh tests fail (none import extension.ts/consolePanel.ts; webviewRetry passes 6/6 in isolation; executor's own npm test was clean)
+TEST_PLAN_COVERAGE: all-followed — cases 1-6 implemented; RED_OUTPUT contains real assertion failures (expected -1 to be 1; spy not called; wrong toast text)
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - file: src/ui/consolePanel.ts:187-190 — rule implemented as `activeTextEditor === undefined -> ViewColumn.One`, simpler than Target Files prose (`&& visibleTextEditors.length === 0`); executor flagged it and Test Cases table #4 is the TDD authority — accepted, prose/case divergence already documented in Discussion.
+    - file: src/ui/__tests__/consolePanel.test.ts:98 — ViewColumn mock `Beside: 2` collides numerically with `Two: 2`; harmless (only One/Active asserted) but inconsistent with the real API where Beside === -2.
+    - file: src/extension.test.ts (TASK-UX1-001 describe) — no `vi.resetModules()` for the module-level consolePanel singleton (unlike the UX1-002 block); safe today because the no-editor path never creates a webview, but future edits to this block should keep that invariant.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Verified on stable main (6df3d41); worktree was transiently checked out at base dac6503 mid-review by pipeline activity, re-verified after it returned to main. Diff contains only UX1-001 hunks + sibling wave tasks' own hunks (each reviewed under its own task); no out-of-scope edits by this executor.

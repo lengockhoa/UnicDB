@@ -53,6 +53,7 @@
     "onCommand:vsdb.analyzeTable",
     "onCommand:vsdb.vacuumTable",
     "onCommand:vsdb.openAiSettings",
+    "onCommand:vsdb.openUserGuide",
     "onCommand:vsdb.aiChat",
     "onCommand:vsdb.ai.useWithOmp",
     "onCommand:vsdb.ai.refreshDbContext",
@@ -296,6 +297,12 @@
         "title": "VSDB: Open Console for Object",
         "category": "VSDB",
         "icon": "$(window)"
+      },
+      {
+        "command": "vsdb.openUserGuide",
+        "title": "VSDB: Open User Guide",
+        "category": "VSDB",
+        "icon": "$(notebook)"
       },
       {
         "command": "vsdb.openHelpGrid",
@@ -591,6 +598,11 @@
         },
         {
           "command": "vsdb.openSettings",
+          "when": "view == vsdb.schemaTree",
+          "group": "navigation"
+        },
+        {
+          "command": "vsdb.openUserGuide",
           "when": "view == vsdb.schemaTree",
           "group": "navigation"
         }

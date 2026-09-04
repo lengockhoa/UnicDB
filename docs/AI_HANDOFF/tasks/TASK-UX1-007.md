@@ -85,3 +85,20 @@ RED_OUTPUT: (reported confirmed in worktree — extension.test.ts UX1-007 showed
 Verification Output: extension.test.ts 145/145 after merge; +6 net tests vs baseline (3412 vs 3406 — worktree baseline); full suite 3495|2 (baseline 3484|2, +6 net from UX1-007; pre-existing webview file ENOENT failures are baseline, not regressions); typecheck + compile clean
 Status: PASS
 Note: Schema tree is a NATIVE TreeView (no webview bridge), so no webview/main.ts or styles.css edits needed. view/title entry appended at index 6 to preserve scaffold.test.ts positional pins.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/extension.test.ts src/adapters/__tests__/bq04SurfaceGuard.test.ts
+  result: 153 pass / 0 fail (extension 145/145, bq04SurfaceGuard 8/8); typecheck clean; esbuild compile clean
+TEST_PLAN_COVERAGE: all-followed — cases 1-5 implemented 1:1 + activationEvents pin (6 tests); RED corroborated on disk (/private/tmp/ux1-007-red.log: same 6 tests failing pre-impl with real assertion messages)
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - file: src/extension.ts:1416-1423 — commandOpenSettingsHub inserted between the two halves of commandOpenAiSettings's JSDoc; doc lines 1416-1420 ("Reveals existing panel...") now render attached to the wrong function. Cosmetic only.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: view/title entry correctly appended at index 6 — scaffold.test.ts positional pins (0-5) intact; icon $(settings-gear) distinct from AI's $(gear) and UX1-004's $(notebook)/$(book); @ext:lengockhoa.vsdb matches package.json publisher.name. Full-suite residual = 2 flaky webview bundle tests, pass in isolation and pre-exist in executor-era logs (different case numbers across runs) — not a UX1-007 regression.

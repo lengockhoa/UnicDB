@@ -161,3 +161,52 @@ Note: implemented `classifyStatementKind` + `stampStatementKind` in src/core/que
   append-only `.vsdb-ddl-card*` CSS block. BQ-pending entries keep `kind === undefined` via the
   `if (stmt.pending) continue;` guard in stampStatementKind. `commandGenerateSelect` not touched.
   `src/adapters/types.ts` unchanged. Version 1.51.0 unchanged.
+
+## Reviewer Verdict
+
+VERDICT: changes_requested
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/ddlStatusCard.test.ts src/core/__tests__/queryRunner.test.ts src/ui/__tests__/resultsGridModel.test.ts
+  result: 132 pass / 0 fail (ddlStatusCard 12, queryRunner 70, resultsGridModel 52)
+  command: npm run typecheck && npm run compile
+  result: exit 0 both
+  command: npm test (clean HEAD worktree 6df3d41, fresh compile)
+  result: 3508 pass / 0 fail / 2 skipped — working-tree failures traced to concurrent UX1-004 lane
+    (uncommitted +119 lines in extension.ts/extension.test.ts mid-edit during review) plus load-order
+    flakiness in TASK-003 webview-bundle suites (pass deterministically in isolation on both HEAD and
+    pre-wave commit dac6503)
+TEST_PLAN_COVERAGE: partial — cases 1-8 present as pure-helper tests with real assertions; case 1's
+  "zero grid tabs created" and case 7's "tab list" wording are NOT implemented as written (tabs are
+  kept for every statement; the panel content swaps grid→card). Matches the task Discussion section's
+  framing, so treated as doc drift, not a fake test.
+FINDINGS:
+  critical: none
+  important:
+    - src/core/queryRunner.ts:1020 (scanForInto) — stops at the FIRST non-INTO identifier, so canonical
+      multi-column/function-call select-into misclassifies: "SELECT a, b INTO new_t FROM old_t" and
+      "SELECT sum(x) INTO total FROM t" hit identifier "a"/"sum", return found=false → kind="select" →
+      legacy empty grid (the exact UX this task removes) and UX1-011 will skip the tree refresh for a
+      statement that creates a table. Only "SELECT * INTO ..." works (via the "*" special-case).
+      Fix per planner Discussion: keep scanning past comma-separated select-list items and identifiers
+      followed by balanced "(...)" until a bare FROM/WHERE/LIMIT token; extend the case-5 truth table
+      with both forms.
+    - webview/main.ts:1252 (renderDdlCardInto) — statementCount is results.length (session-absolute)
+      while statementIndex is run-relative (runStmtNo-1), so in an append-run session (TASK-AH-001
+      ordinals) a run of 2 statements appended after 3 earlier ones renders "statement 1 of 5" on the
+      failure card. Fix: compute the run-local count (same runNo slice) or thread the run's statement
+      count through the message contract.
+  minor:
+    - src/ui/ddlStatusCard.ts:163 — missing trailing newline (file ends mid-line after final "}").
+    - Task Goal says "suppress the grid tab for non-SELECT statements" but implementation keeps all
+      tabs and swaps panel content to a card; tests pin the Discussion contract. Reconcile the Goal
+      wording (or implement tab removal) so the spec matches shipped behavior.
+    - webview/main.ts:1216 — EXPLAIN SELECT (kind "other") now renders a card and its plan-row output
+      is no longer visible anywhere. Per spec truth table but worth a follow-up: surface plan rows in
+      the card.
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Core contract, stamping site (extension.ts:2559 after stampBqDialect), CSS append-only, adapters/types
+  untouched (0-line diff), BQ-pending kind===undefined, commandGenerateSelect untouched by this task — all
+  verified clean. Blocking items are the two important classifier/render findings; both are small, surgical
+  fixes with existing test seams (case-5 truth table, ddlStatusCard meta assertions).

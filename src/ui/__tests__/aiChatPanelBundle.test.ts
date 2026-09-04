@@ -632,5 +632,95 @@ describeIfBundle(
         ).toBeNull();
       },
     );
+
+    itIfBundle(
+      "#8 R4.5 fix: history replay (resume_pick) does NOT surface a thinking row",
+      () => {
+        loadBundle();
+        dispatch({ type: "init", hasHistory: true });
+        // No live turn is running — the resume picker dispatches `history`
+        // to rehydrate the thread. Replayed items must not leave an
+        // orphan "AI is thinking…" row (a real turn isn't producing it).
+        dispatch({
+          type: "history",
+          items: [
+            { kind: "user", text: "earlier question" },
+            { kind: "assistant", text: "earlier answer", markdown: true },
+          ],
+        });
+        expect(
+          rootEl().querySelector(".vsdb-chat-thinking-row"),
+          "history replay must NOT append a thinking row (no live turn)",
+        ).toBeNull();
+        // The user's next live turn must still surface the thinking row.
+        sendViaComposer("new question");
+        expect(
+          rootEl().querySelector(".vsdb-chat-thinking-row"),
+          "subsequent live send must re-show the thinking row",
+        ).not.toBeNull();
+        // And it must clear on the next terminal assistant message.
+        dispatch({ type: "assistant", text: "reply", markdown: true });
+        expect(
+          rootEl().querySelector(".vsdb-chat-thinking-row"),
+          "terminal assistant must remove the live-turn thinking row",
+        ).toBeNull();
+      },
+    );
+
+    itIfBundle(
+      "#9 R4.5 fix: multi-fence streamed reply does not corrupt source on re-render",
+      () => {
+        loadBundle();
+        dispatch({ type: "init", hasHistory: false });
+        sendViaComposer("show me two snippets");
+        dispatch({ type: "delta", text: "x" }); // remove thinking row
+        // Stream TWO fenced blocks. The first close triggers a re-render
+        // that previously read from bubble.textContent — which now
+        // includes the copy button's literal "Copy" label and consumes
+        // the first fence markers. On the SECOND close the re-render
+        // would inline that stray "Copy" text and unbox the first block.
+        // The fix tracks raw stream text in a dataset attribute.
+        dispatch({
+          type: "delta",
+          text: "```sql\nSELECT 1;\n```\n",
+        });
+        dispatch({
+          type: "delta",
+          text: "and\n\n```py\nprint(2)\n```\ntail\n",
+        });
+        const bubble = rootEl().querySelector<HTMLDivElement>(
+          ".vsdb-chat-bubble.vsdb-chat-assistant.vsdb-chat-streaming",
+        );
+        expect(bubble).not.toBeNull();
+        // Both code blocks must be rendered as boxed pre.vsdb-md-code
+        // elements — the first one must NOT be inlined as plain text
+        // just because the source was re-rendered on the second close.
+        const pres = bubble?.querySelectorAll("pre.vsdb-md-code");
+        expect(
+          pres?.length ?? 0,
+          "two streamed code blocks must both render as pre.vsdb-md-code",
+        ).toBe(2);
+        // The bubble must NOT contain a stray literal "Copy" word from
+        // the first block's copy button leaking back into the markdown
+        // pipeline. (Word-boundary check keeps "copy" inside CSS class
+        // names from false-positiving.)
+        const stray = bubble?.textContent ?? "";
+        expect(/\bCopy\b/.test(stray), "stray 'Copy' label must not appear in bubble text").toBe(
+          false,
+        );
+        // Terminal assistant message self-heals via the regular path.
+        dispatch({
+          type: "assistant",
+          text: "```sql\nSELECT 1;\n```\n\n```py\nprint(2)\n```\ntail\n",
+          markdown: true,
+        });
+        // After settlement the streaming class is gone; nothing to
+        // assert beyond a clean no-throw render.
+        expect(
+          rootEl().querySelector(".vsdb-chat-bubble.vsdb-chat-streaming"),
+          "terminal assistant must close the streaming bubble",
+        ).toBeNull();
+      },
+    );
   },
 );

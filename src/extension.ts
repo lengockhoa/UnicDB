@@ -1033,6 +1033,28 @@ export async function activate(
       commandOpenHelpGrid(disposables),
     ),
   );
+  // TASK-UX1-004 (R2) — open docs/VSDB_USER_GUIDE.md in VS Code's
+  // Markdown preview. Path is resolved against context.extensionUri
+  // (NEVER process.cwd()) so it works in both dev and packaged installs.
+  // Missing file → info toast (no throw).
+  disposables.push(
+    vscode.commands.registerCommand("vsdb.openUserGuide", async () => {
+      const guideUri = vscode.Uri.joinPath(
+        context.extensionUri,
+        "docs",
+        "VSDB_USER_GUIDE.md",
+      );
+      try {
+        await vscode.commands.executeCommand("markdown.showPreview", guideUri);
+      } catch (err) {
+        // Fallback: show info toast with file path so user can locate it.
+        void vscode.window.showInformationMessage(
+          `VSDB user guide: ${guideUri.fsPath}`,
+        );
+        console.warn("[vsdb] markdown.showPreview failed:", err);
+      }
+    }),
+  );
   // surfaces a copy-pasteable `omp` command line (Copy button puts it on
   // the clipboard). apiKey is NEVER written to disk; the YAML carries an
   // env-var hint so OMP picks it up from the user's `OPENAI_API_KEY`.

@@ -5449,3 +5449,100 @@ describe("TASK-UX1-002 — SQL Generator on View / Routine nodes", () => {
   });
 });
 void detectOmpState;
+
+// TASK-UX1-004 (R2) — vsdb.openUserGuide opens docs/VSDB_USER_GUIDE.md
+// in markdown preview. Re-creates the file lost during the W4 merge
+// (orchestrator cleanup wiped untracked files).
+describe("TASK-UX1-004 — vsdb.openUserGuide", () => {
+  let executeSpy: ReturnType<typeof vi.fn>;
+  let infoSpy: ReturnType<typeof vi.fn>;
+
+  async function activateUserGuide() {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+    executeSpy = vi.fn(async () => undefined);
+    infoSpy = vi.fn();
+    const cmd = vscodeMock.commands as unknown as Record<string, unknown>;
+    cmd.executeCommand = executeSpy;
+    const win = vscodeMock.window as unknown as Record<string, unknown>;
+    win.showInformationMessage = infoSpy;
+    vi.resetModules();
+    const ext = await import("./extension");
+    await ext.activate(makeCtx());
+    // Settle async microtask chain.
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+  }
+
+  it("#1 vsdb.openUserGuide command is registered on activate", async () => {
+    await activateUserGuide();
+    expect(state.registeredCommands.has("vsdb.openUserGuide")).toBe(true);
+  });
+
+  it("#2 invoking the command calls markdown.showPreview with extensionUri-relative path", async () => {
+    await activateUserGuide();
+    const fn = state.registeredCommands.get("vsdb.openUserGuide");
+    expect(fn).toBeDefined();
+    await fn!();
+    expect(executeSpy).toHaveBeenCalledWith(
+      "markdown.showPreview",
+      expect.objectContaining({
+        path: expect.stringMatching(/VSDB_USER_GUIDE\.md$/),
+      }),
+    );
+  });
+
+  it("#3 missing guide file → toast, no throw", async () => {
+    await activateUserGuide();
+    executeSpy.mockRejectedValueOnce(new Error("file not found"));
+    const fn = state.registeredCommands.get("vsdb.openUserGuide");
+    await expect(fn!()).resolves.toBeUndefined();
+    expect(infoSpy).toHaveBeenCalled();
+  });
+
+  it("#4 package.json declares vsdb.openUserGuide with $(notebook) icon (distinct from openHelpGrid's $(book))", () => {
+    // Pin the icon distinctness per test #6 in the spec.
+    const pkg = JSON.parse(
+      require("node:fs").readFileSync(
+        require("node:path").resolve(process.cwd(), "package.json"),
+        "utf8",
+      ),
+    );
+    const guideCmd = pkg.contributes.commands.find(
+      (c: { command: string }) => c.command === "vsdb.openUserGuide",
+    );
+    const helpCmd = pkg.contributes.commands.find(
+      (c: { command: string }) => c.command === "vsdb.openHelpGrid",
+    );
+    expect(guideCmd).toBeDefined();
+    expect(helpCmd).toBeDefined();
+    expect(guideCmd.icon).not.toBe(helpCmd.icon);
+  });
+
+  it("#5 view/title entry exists for vsdb.openUserGuide on vsdb.schemaTree", () => {
+    const pkg = JSON.parse(
+      require("node:fs").readFileSync(
+        require("node:path").resolve(process.cwd(), "package.json"),
+        "utf8",
+      ),
+    );
+    const titleEntries = pkg.contributes.menus["view/title"] as Array<{
+      command: string;
+      when: string;
+    }>;
+    const entry = titleEntries.find(
+      (e) => e.command === "vsdb.openUserGuide",
+    );
+    expect(entry).toBeDefined();
+    expect(entry!.when).toContain("vsdb.schemaTree");
+  });
+
+  it("#6 activation event for vsdb.openUserGuide is declared", () => {
+    const pkg = JSON.parse(
+      require("node:fs").readFileSync(
+        require("node:path").resolve(process.cwd(), "package.json"),
+        "utf8",
+      ),
+    );
+    expect(pkg.activationEvents).toContain("onCommand:vsdb.openUserGuide");
+  });
+});

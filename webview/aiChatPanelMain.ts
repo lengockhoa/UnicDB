@@ -728,6 +728,11 @@ function wireControls(): void {
     if (executeSlashCommand(prompt.value)) return;
     const text = prompt.value;
     if (text.trim().length === 0) return;
+    // Mark this as a live turn BEFORE appendUser so the thinking row
+    // surfaces. Replayed history items go through appendUser too but
+    // the flag is left false (default at module load) so resume_pick /
+    // history dispatch never leak a spinner.
+    liveTurnPending = true;
     appendUser(text);
     if (state.attachments.length > 0) {
       post({ type: "send", text, attachments: state.attachments.map((a) => ({
@@ -960,6 +965,13 @@ function wireControls(): void {
   });
 }
 
+// TASK-UX1-009 (R11) — turn-state flag. The "AI is thinking…" row is
+// only meant for live turns the user just sent; history replay (resume
+// picks) must NOT surface a spinner that no turn is producing. Toggled
+// true in the composer send path and false on terminal assistant /
+// error / first-delta settle.
+let liveTurnPending = false;
+
 function appendUser(text: string): void {
   const thread = document.getElementById("thread");
   if (!thread) return;
@@ -982,7 +994,10 @@ function appendUser(text: string): void {
   // bubble so the assistant side has its own loading affordance while
   // the turn is pending. Removed on first delta / error / terminal
   // assistant message — lifecycle mirrors resolveQueuedUserBubble().
-  appendThinking();
+  // History replay also routes through appendUser, so gate on the
+  // liveTurnPending flag (set by the composer send path) to avoid
+  // leaving an orphan spinner after a resume_pick history post.
+  if (liveTurnPending) appendThinking();
 }
 
 /** TASK-UX1-009 (R11) — append a separate "AI is thinking…" row BELOW
@@ -1021,6 +1036,10 @@ function removeThinking(): void {
   )) {
     row.remove();
   }
+  // The turn this row belonged to is settled — clear the live-turn flag
+  // so the next appendUser() (from history replay or the next send) is
+  // a clean slate.
+  liveTurnPending = false;
 }
 
 /** Resolve the queued marker on the latest user bubble (the just-sent
@@ -1205,7 +1224,17 @@ function appendDelta(text: string): void {
   // holds across the re-render (case 5). Idempotent: each subsequent
   // delta re-renders from the full accumulated text, so copy buttons are
   // never duplicated (case 6).
-  const accumulated = bubble.textContent ?? "";
+  //
+  // The accumulated source is a per-bubble dataset attribute, NOT
+  // `bubble.textContent`. Once a fence closes the rendered HTML contains
+  // a copy-button label and the fence markers are consumed — re-rendering
+  // from textContent on a SECOND closing fence would inline the previous
+  // code + the literal word "Copy" into the next markdown pass. Storing
+  // the raw stream in a dataset attribute keeps the source intact.
+  // (dataset converts dashed names to camelCase: "vsdbRawStream".)
+  const previous = bubble.dataset.vsdbRawStream ?? "";
+  const accumulated = previous + text;
+  bubble.dataset.vsdbRawStream = accumulated;
   if (/```[\s\S]*?```/.test(accumulated)) {
     const caret = bubble.querySelector(".vsdb-chat-caret");
     bubble.innerHTML = renderMarkdown(accumulated);
@@ -1232,6 +1261,9 @@ function deStreamOpenBubble(): void {
     bubble.classList.remove("vsdb-chat-streaming");
     const caret = bubble.querySelector(".vsdb-chat-caret");
     if (caret) caret.remove();
+    // Clear the raw-stream scratch — the streaming bubble is now closed
+    // and the terminal assistant message owns the final text.
+    delete bubble.dataset.vsdbRawStream;
   }
 }
 

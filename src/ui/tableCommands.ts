@@ -109,7 +109,7 @@ const COMMAND_TITLE: Record<string, string> = {
   renameTable: "Rename Table",
   renameColumn: "Rename Column",
   copyCreateDdl: "Copy Create Query",
-  generateSampleData: "Generate Sample Data",
+  generateSampleData: "Insert Sample Data…",
   analyzeTable: "Analyze Table",
   vacuumTable: "Vacuum Table",
   createSchema: "Create Schema",
@@ -377,11 +377,20 @@ export function buildInsertTemplate(
   // Header is a no-op comment block; the bare `;` on its own line terminates
   // the comment block as its own statement so the SQL splitter doesn't
   // merge the comment with the first INSERT below. PG ignores the empty
-  // statement when the user runs the buffer (the Console parses + skips
-  // empty statements before execution).
+  // statement when the user runs the buffer.
+  // Header message is keyed on columns.length (whether anything insertable
+  // survived the filter) AND rows (caller's explicit row count) — they
+  // describe different conditions and the user needs the right one.
+  const noInsertable = columns.length === 0;
   const header = [
     `-- VSDB: Insert Sample Data template for ${qSchema}.${qTable}`,
-    `-- Edit values, then run. ${rows === 0 ? "No insertable columns detected." : `${rows} placeholder INSERT statement(s); the user edits + runs manually.`}`,
+    `-- Edit values, then run. ${
+      noInsertable
+        ? "No insertable columns detected."
+        : rows === 0
+          ? "No placeholder rows requested."
+          : `${rows} placeholder INSERT statement(s); the user edits + runs manually.`
+    }`,
     `;`,
     ``,
   ].join("\n");

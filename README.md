@@ -75,6 +75,12 @@ code --install-extension vsdb-<version>.vsix
 
 ---
 
+## Documentation
+
+Full user guide (Vietnamese): [`docs/VSDB_USER_GUIDE.md`](docs/VSDB_USER_GUIDE.md). Covers connection setup, schema explorer, console, AI chat, settings, SQL Generator, Sample Data, and every shipped feature. You can also open it from VS Code via the 📖 (notebook) icon on the **Schema Explorer** title bar → **VSDB: Open User Guide**.
+
+---
+
 ## Key features
 
 - **3 drivers**: PostgreSQL (pg), MySQL/MariaDB (mysql2), SQL Server (tedious).

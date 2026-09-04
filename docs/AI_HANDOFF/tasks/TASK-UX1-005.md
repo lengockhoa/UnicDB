@@ -168,3 +168,24 @@ Note:
   the flex scaffold + block padding of both rows. Manual extension-host
   confirmation deferred to reviewer per task's "manual check after compile"
   acceptance step (the executor agent has no extension-host runtime).
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code (claude-sonnet-4-5)
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/webviewSetFilter.test.ts && npm run typecheck && npm run compile
+  result: 18/18 pass (incl. 11 bundle-gated — dist present, stronger than executor's 7/7); typecheck clean; compile clean.
+  npm test (wave net): load-flaky in UNRELATED webviewServerFilter.test.ts — 36 fail under load, 1 fail on re-run, 0 in isolation (7/8 isolated passes); file is byte-identical to plan base dac6503, real-timer debounce assertions overshoot under CPU contention. Not attributable to this task (CSS-only in setfilter region).
+TEST_PLAN_COVERAGE: all-followed — cases 1-3, 6 real and passing; case 5 RED is genuine (AssertionError at test:729 pre-fix, pasted in report); case 4 implemented but vacuous today (see minor).
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/ui/__tests__/webviewSetFilter.test.ts:820-830 — case 4 always early-returns (`canonical === null` because both rows pin indent via the `padding: 2px 8px` shorthand, not `padding-left`), so the divergent-indent guard is currently a no-op; strengthen it to read the canonical `padding-left: 8px` from the TASK-009 grouped rule (styles.css:1133) instead.
+    - src/ui/__tests__/webviewSetFilter.test.ts:832-840 — case 5 is `expect(true).toBe(true)` bookkeeping; the real RED evidence lives only in the Executor Report. Consider replaying the pre-state (strip the new declarations, assert case 1 fails) or dropping the no-op.
+    - src/ui/__tests__/webviewSetFilter.test.ts:842-850 — case 6 pins `className = "vsdb-setfilter-entry"` as a raw string; brittle to a classList/refactor. Acceptable for now.
+    - webview/styles.css:590-591 — `cursor: pointer; user-select: none` on the row is redundant with the flex:1 label's identical declarations; harmless consistency, keep or drop.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Diff vs plan base contains sibling wave-1/2 hunks (.vsdb-chat-*, .vsdb-ddl-*, main.ts DDL card) because all waves share commit 64547c9 — the executor's actual UX1-005 edit set is the setfilter region only (styles.css:578-601), region contract respected. No collision with .vsdb-chat-thinking*/.vsdb-ddl-* selectors (disjoint families). Fix verified structurally: both rows now share flex scaffold + 8px checkbox indent + centered baseline; divider preserved.

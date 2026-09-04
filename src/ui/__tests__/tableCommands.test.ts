@@ -1247,7 +1247,7 @@ describe("tableCommands — DBX-08 tableDdl capability gate", () => {
     const titles: Record<string, string> = {
       modifyTable: "Modify Table",
       copyCreateDdl: "Copy Create Query",
-      generateSampleData: "Generate Sample Data",
+      generateSampleData: "Insert Sample Data…",
       analyzeTable: "Analyze Table",
       vacuumTable: "Vacuum Table",
       renameTable: "Rename Table",
@@ -1820,7 +1820,7 @@ describe("tableCommands — vsdb.generateSampleData (TASK-UX1-003 console templa
     await state.registeredCommands.get("vsdb.generateSampleData")!(tableNode);
     expect(
       state.infoMessages.some((m) =>
-        m === "VSDB: Generate Sample Data is not supported by this connection's database.",
+        m === "VSDB: Insert Sample Data… is not supported by this connection's database.",
       ),
     ).toBe(true);
     expect(consoleSeam.openConsoleWithTemplate).not.toHaveBeenCalled();
@@ -1839,6 +1839,10 @@ describe("tableCommands — vsdb.generateSampleData (TASK-UX1-003 console templa
     const [, buffer] = consoleSeam.openConsoleWithTemplate.mock.calls[0]!;
     expect(buffer as string).toMatch(/-- Edit values, then run/i);
     expect((buffer as string).match(/INSERT INTO/g) ?? []).toHaveLength(0);
+    // R4.5: when zero columns survive, the header copy must say so (not
+    // "5 placeholder INSERT statement(s)" which would contradict the
+    // empty body and mislead the user).
+    expect(buffer as string).toMatch(/No insertable columns detected/);
   });
 
   it("AI branch remains importable (sampleDataAi module exports) — case #8 regression", async () => {

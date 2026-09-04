@@ -180,3 +180,19 @@ Note: Region contract honored (only .vsdb-chat-bubble, .vsdb-chat-assistant, .vs
       CSS-only fix resolved both R9 and R10). Case 7 (jsdom caret inline check) was the
       "ONLY if a DOM-level fix was needed" branch and was omitted per spec.
 
+
+## Reviewer Verdict
+VERDICT: approved_minor
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN: PASS
+  command: npx vitest run src/ui/__tests__/chatLayoutCss.test.ts src/ui/__tests__/aiChatPanelWebview.test.ts && npm run typecheck && npm run compile
+  result: 63/63 tests pass; typecheck exit 0; compile exit 0
+TEST_PLAN_COVERAGE: all-followed — cases 1-5 pinned at chatLayoutCss.test.ts:521-611 (3 edge cases: 3 pre-wrap guard, 4 boundary padding, 5 user-bubble unaffected); case 6 RED recorded with real assertion failures (expected false to be true ×3); case 7 legitimately omitted per spec ("ONLY if a DOM-level fix was needed" — CSS-only fix, aiChatPanelMain.ts untouched)
+FINDINGS:
+  critical: none
+  important: none
+  minor: src/ui/__tests__/chatLayoutCss.test.ts:522 — min-height regex /\d/ would admit 0px (a degenerate value) though actual CSS uses 1lh at styles.css:934; tighten to exclude zero if the contract is ever re-pinned
+  minor: full-suite run shows 6 test failures vs executor's 5 esbuild-ENOENT files (extension.test.ts, scaffold, sshTunnelManager, webview* bundle validators) — all pass in isolation (145/145, 7/7, 15/15, 28/28) and none touch chat/CSS code; environmental flakiness/parallelism, not a regression from this task
+NOTES: Region contract honored — UX1-008 hunks confined to .vsdb-chat-bubble (:933-934), .vsdb-chat-assistant (:951), .vsdb-chat-caret (:1511); no collision with wave-2 .vsdb-chat-thinking-row (:1730, new selector) or .vsdb-md-* (:1475).
+NEXT_STATUS_FOR_INDEX: approved_minor

@@ -208,3 +208,27 @@ Note:
 - The sanity test (T-UX1-006 #7b) still proves the filter is NOT a
   tautology: `+  "dependencies": {` is NOT in any `vsdb.*` block
   range, so it survives the filter and the guard still fires.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart (claude-opus tier)
+EXECUTOR_MODEL: unic-code (claude-sonnet)
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/resultsPanel.test.ts src/adapters/__tests__/bq04SurfaceGuard.test.ts
+  result: 66 pass / 0 fail (58 + 8)
+  command: npm run typecheck && npm run compile
+  result: PASS (tsc --noEmit clean; esbuild build complete)
+  command: node -e manifest check
+  result: OK: default=below, enum includes top
+  command: git diff 75cdb08 -- src/adapters/bigqueryTypes.ts src/adapters/bigqueryAdc.ts src/adapters/types.ts
+  result: empty (frozen surfaces untouched)
+TEST_PLAN_COVERAGE: all-followed — cases 1-8 present (3 + edge A/B/B/C placement cases; 7a-7d guard filter incl. negative controls; 8 full bq04 suite green). RED_OUTPUT carries real failing assertions (3 failed, received/expected shown).
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/adapters/__tests__/bq04SurfaceGuard.test.ts:333-399 — filterRawDiff mirror diverges from production packageJsonDepsDiff (mirror is stripped-line scan; production is hunk-header line-number translation). Documented in comments and all 4 patterns match; flagged as follow-up drift risk only.
+    - src/adapters/__tests__/bq04SurfaceGuard.test.ts:213 — readCurrentPackageJsonLines reads relative "package.json" (works only when cwd is repo root); every other fs/git access in this file uses REPO_ROOT. Harmless under vitest, inconsistent.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Full `npm test` shows 6 failures (webviewServerSort/DistinctValues/CommitRefresh, sshTunnelManager, saveStatementsParser) — none in this task's diff; they skip entirely at base (no dist/webview.js at dac6503) and the webview failures trace to sibling-task webview/main.ts changes in shared wave commit 64547c9 (flagged to UX1-010's review); the remaining are load-flakes (5s timeouts under 145s parallel env, perf threshold). Task-targeted gate is green; this task's host-side diff cannot affect the jsdom webview bundle tests.
