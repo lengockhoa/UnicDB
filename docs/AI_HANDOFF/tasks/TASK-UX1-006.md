@@ -1,0 +1,110 @@
+# TASK-UX1-006 — Results placement `top` option + surface-guard filter extension (R8a)
+
+- Status: `ready`
+- Owner: `-`
+- Reviewer: `-`
+- Parent plan: `docs/AI_HANDOFF/PLAN.md` §2 (wave 1), §3 (UX1-006)
+
+## Goal
+
+Results should appear BELOW the editor by default and offer a configurable position.
+The `vsdb.resultsPlacement` setting (enum `below|beside`, default `below`) plus the
+CREATE-time `moveEditorToBelowGroup` already deliver bottom-by-default; this task (a)
+adds a `top` enum value mapped to `workbench.action.moveEditorToAboveGroup` with silent
+degrade, (b) sharpens the setting description, and (c) extends the
+`bq04SurfaceGuard` package.json filter so `activationEvents` lines and
+`contributes.configuration` property keys are recognised as non-dependency contributes —
+required BEFORE any later UX1 task edits package.json contributes/activation surfaces.
+
+## Target Files
+
+- `package.json` — `contributes.configuration.vsdb.resultsPlacement`: add `"top"` to
+  `enum`, update `description` (CREATE-time-only semantics; default stays `below`).
+- `src/ui/resultsPanel.ts` — `readPlacementSetting()` widens return type to
+  `"below" | "beside" | "top"`; `show()` CREATE path dispatches: `below` → existing
+  `moveEditorToBelowGroup`, `top` → `workbench.action.moveEditorToAboveGroup` (guard with
+  the existing `canExecuteCommands()` pattern; if the command is unavailable, fall back to
+  beside silently), `beside` → no move.
+- `src/ui/__tests__/resultsPanel.test.ts` — placement cases appended.
+- `src/adapters/__tests__/bq04SurfaceGuard.test.ts` — extend `packageJsonDepsDiff`'s
+  filter: (i) `/^[+-]\s+"onCommand:[a-zA-Z0-9.]+",?\s*$/` line pattern; (ii) a
+  configuration-property-key pattern anchored to the `"vsdb\.[a-zA-Z0-9.]+"\s*:\s*\{`
+  shape INSIDE the contributes.configuration block only (rely on the existing
+  block-delimiter dropping for the braces); pin both with a unit test against a synthetic
+  diff string. NEVER add a bare `onCommand` catch-all beyond the anchored line shape.
+
+## Test Cases (REQUIRED — TDD)
+
+| # | Type | Test name | Expected | Pre-state / Fixture |
+|---|------|-----------|----------|---------------------|
+| 1 | happy | setting "top" attempts moveEditorToAboveGroup at CREATE | panel created with placement `top` → `executeCommand` called with `workbench.action.moveEditorToAboveGroup` | stubbed workspace config `{ resultsPlacement: "top" }` + commands stub |
+| 2 | happy | default stays below | no `resultsPlacement` key → `readPlacementSetting()` returns `"below"` and CREATE fires `moveEditorToBelowGroup` | empty config stub |
+| 3 | edge A — unavailable command degrades | moveEditorToAboveGroup missing → silent beside, no throw | `canExecuteCommands()` false (or command absent) → no executeCommand call, panel still created and functional | vscode mock without the command |
+| 4 | edge B — boundary | unknown/legacy value maps to below | config `{ resultsPlacement: "nonsense" }` → `"below"` | config stub |
+| 5 | edge B — malformed | beside panel never moved at CREATE | `beside` → zero executeCommand placement calls (existing AI-001 contract, now explicit for beside too) | config stub |
+| 6 | edge C — panel lives across config change | placement read at CREATE only | create with `below`, change config to `top`, `show()` again → no move command fired (reveal path keeps the user's dragged group) | panel pre-created; config mutated between calls |
+| 7 | regression | guard test 3 stays green with activationEvents + configuration lines | synthetic diff containing `+        "onCommand:vsdb.openUserGuide",` and `+      "vsdb.resultsPlacement": {` filters to EMPTY remaining diff; and a synthetic `+  "dependencies": {` line still FAILS the filter (guard still bites) | pure-function test over `packageJsonDepsDiff`-shaped input |
+| 8 | regression | existing 4 bq04 guard tests unchanged | full `bq04SurfaceGuard.test.ts` passes after the filter edit | repo state |
+
+## Test Files
+
+- `src/ui/__tests__/resultsPanel.test.ts` — cases 1–6 (append; reuse the file's existing
+  vscode/workspace stubs).
+- `src/adapters/__tests__/bq04SurfaceGuard.test.ts` — cases 7–8 (pure-function describe).
+
+## Verification Commands
+
+```bash
+npx vitest run src/ui/__tests__/resultsPanel.test.ts src/adapters/__tests__/bq04SurfaceGuard.test.ts
+npm run typecheck && npm run compile
+node -e "const p=require('./package.json'); const c=p.contributes.configuration.properties['vsdb.resultsPlacement']; if(c.default!=='below'||!c.enum.includes('top')) { console.error('FAIL: default must stay below and enum must gain top'); process.exit(1);} console.log('OK: default=below, enum includes top');"
+```
+
+The final `node -e` check is the P2.5 YAGNI guard: it asserts the shipped manifest keeps
+`default: "below"` while gaining `top` (case 2 asserts the same at runtime via
+`readPlacementSetting(undefined)` → `"below"`, the code-level fallback for
+unknown/missing values, resultsPanel.ts:226-239), proving `top` is strictly opt-in and
+the default-config first-open still lands below the editor — the user's original
+complaint is covered by the pre-existing default, not shifted by the new enum value.
+
+## Acceptance Criteria
+
+- [ ] Cases 1–8 pass; `vsdb.resultsPlacement` enum is exactly `["below","beside","top"]`.
+- [ ] Default-placement proof (P2.5 round-1 YAGNI guard): case 2 shows
+      `readPlacementSetting(undefined)` → `"below"` AND the `node -e` default-grep passes —
+      `top` is opt-in, first-open with default config lands below.
+- [ ] bq04SurfaceGuard 4/4 green; filter extension pinned by case 7 including the
+      negative control (dependencies line still caught).
+- [ ] `git diff -- src/adapters/bigqueryTypes.ts src/adapters/bigqueryAdc.ts
+      src/adapters/types.ts` empty; dependency manifest untouched.
+- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
+
+## Dependencies
+
+- none (but EVERY later UX1 task that edits package.json contributes/activationEvents —
+  UX1-002, UX1-003, UX1-004, UX1-007 — declares this task as a dependency).
+
+## Interfaces
+
+- Consumes: `ResultsPanel.readPlacementSetting()` + `show()` CREATE path
+  (src/ui/resultsPanel.ts:231,286); `canExecuteCommands()` defensive pattern (:301);
+  `packageJsonDepsDiff` filter (bq04SurfaceGuard.test.ts:73-110).
+- Produces: (1) `readPlacementSetting(): "below" | "beside" | "top"` — later placement
+  callers must handle all three; (2) the extended guard filter — later package.json tasks
+  rely on `onCommand:` and `vsdb.*` configuration-key lines being filtered so guard test 3
+  stays green; do not weaken the dependency-manifest assertion.
+
+---
+
+## Discussion
+
+### 2026-09-04 · planner · unic-smart
+Verified against the live guard: reconstructing the OC4O package.json diff and re-applying
+the current filter leaves only activationEvents/configuration-shaped lines unfiltered —
+today that set is empty, so the suite is green (4/4 confirmed at P2). UX1 adds BOTH shapes
+for the first time, so the filter must be extended in the SAME task that introduces the
+first `contributes.configuration` change. R8a's "default bottom" already ships
+(`vsdb.resultsPlacement` default `below` + CREATE-time moveEditorToBelowGroup) — the user
+seeing top-right most likely has `beside` or a pre-setting panel; the description
+sharpening addresses discoverability. `workbench.action.moveEditorToAboveGroup` existence
+is runtime-checked (case 3) because VS Code does not guarantee the command across versions.

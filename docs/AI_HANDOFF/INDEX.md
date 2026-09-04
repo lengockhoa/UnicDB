@@ -2,6 +2,17 @@
 
 | Task | Title | Status | Owner | Files |
 |------|-------|--------|-------|-------|
+| TASK-UX1-001 | Console opens from schema tree with no active editor (R6+R7) | ready | planner=unic-smart | src/ui/consolePanel.ts, src/extension.ts, src/ui/__tests__/consolePanel.test.ts, src/extension.test.ts |
+| TASK-UX1-002 | SQL Generator on View/Routine nodes — pg_get_viewdef/functiondef → seeded console (R3+R4) | ready | planner=unic-smart | package.json, src/extension.ts, src/extension.test.ts |
+| TASK-UX1-003 | Sample Data → console INSERT templates (R1) | ready | planner=unic-smart | package.json, src/ui/tableCommands.ts, src/extension.ts, src/ui/__tests__/tableCommands.test.ts |
+| TASK-UX1-004 | User guide icon + docs/VSDB_USER_GUIDE.md (R2) | ready | planner=unic-smart | package.json, src/extension.ts, src/extension.test.ts, docs/VSDB_USER_GUIDE.md (new), src/ui/__tests__/userGuideContent.test.ts (new) |
+| TASK-UX1-005 | Filter dropdown Select All alignment (R5) | ready | planner=unic-smart | webview/styles.css, webview/main.ts, src/ui/__tests__/webviewSetFilter.test.ts |
+| TASK-UX1-006 | Results placement `top` + bq04 guard filter extension (R8a) | ready | planner=unic-smart | package.json, src/ui/resultsPanel.ts, src/ui/__tests__/resultsPanel.test.ts, src/adapters/__tests__/bq04SurfaceGuard.test.ts |
+| TASK-UX1-007 | Settings hub gear on schema-tree title bar (R8b) | ready | planner=unic-smart | package.json, src/extension.ts, src/extension.test.ts |
+| TASK-UX1-008 | Chat pending garble + left padding (R9+R10) | ready | planner=unic-smart | webview/aiChatPanelMain.ts, webview/styles.css, src/ui/__tests__/chatLayoutCss.test.ts |
+| TASK-UX1-009 | Chat thinking row + streamed code blocks (R11) | ready | planner=unic-smart | webview/aiChatPanelMain.ts, webview/styles.css, src/ui/__tests__/aiChatPanelBundle.test.ts, src/ui/__tests__/chatLayoutCss.test.ts |
+| TASK-UX1-010 | DDL/DML status card instead of empty grid (R12) | ready | planner=unic-smart | src/core/queryRunner.ts, src/extension.ts, src/ui/resultsGridModel.ts, webview/main.ts, webview/styles.css, src/core/__tests__/queryRunner.test.ts, src/ui/__tests__/ddlStatusCard.test.ts (new) |
+| TASK-UX1-011 | Auto-refresh schema tree after any query, debounced (R13) | ready | planner=unic-smart | src/extension.ts, src/core/schemaImpact.ts, src/core/__tests__/schemaImpact.test.ts, src/extension.test.ts |
 | TASK-MENU-001 | Schema-tree table-node context menu: New Table #1, Modify Table #2, rest alphabetical | done | planner=unic-smart; executor=unic-code | package.json, src/extension.test.ts, src/adapters/__tests__/bq04SurfaceGuard.test.ts, CHANGELOG.md |
 | TASK-OC4O-001..002 | OC4O: right-click "Open Console for Object" + Help Grid panel (committed a05fa7d, v1.51.1 pending version bump) | done | executor=unic-code; reviewer=unic-smart (2× approved_minor; close-out 0fc7106) | package.json, src/extension.ts, src/ui/consolePanel.ts, src/ui/helpGrid.ts, src/ui/helpGridPanel.ts, webview/helpGridMain.ts, src/extension.test.ts, src/adapters/__tests__/bq04SurfaceGuard.test.ts |
 | TASK-BQ04-001 | Additive `dialect?` marker on `StatementResult` + BQ setter in `runStatements` | done | executor=claude-sonnet-4-5; reviewer=unic-smart (R2 changes_requested → R4.5 R1 approved) | src/core/queryRunner.ts, src/ui/resultsGridModel.ts, src/extension.ts, src/core/__tests__/queryRunner.test.ts, src/core/bqDialect.ts (new) |

@@ -1,6 +1,6 @@
-Command: handoff-fullstack (MENU cycle)
-Goal: reorder schema-tree table-node context menu — New Table #1, Modify Table #2, rest alphabetical below
-Base: main @ 0fc7106 (v1.51.0)
-Phase: done (committed b0fb1f9; tag/push deferred to maintainer)
-Cursor: TASK-MENU-001 (schema-tree table-node context menu order) implemented; declarative `"order": "1"` / `"order": "2"` added on `vsdb.newTable` / `vsdb.modifyTable` `view/item/context` entries; `bq04SurfaceGuard` `contributesKeyPattern` whitelist extended with `order` to keep the dependency-drift guard filtering contributes changes; 3 new MENU tests (happy + structural + behavioral) TDD-embedded — RED before package.json edit, GREEN after; 3420|2 green (baseline 3417 + 3 new), typecheck 0, compile clean; CHANGELOG pre-staged for v1.51.1
-Next: maintainer runs `npm version patch` (bumps package.json + package-lock.json to 1.51.1), then `git tag v1.51.1 && git push origin main v1.51.1` to publish
+Command: handoff-fullstack (UX1 cycle)
+Goal: ship consolidated UX1 batch — 13 user requests (R0–R13) covering schema-tree polish, console templates, README guide, SQL Generator, filter alignment, results placement, settings hub, chat UX, DDL result handling, auto-refresh
+Base: main @ 1e96f89 (v1.51.0; v1.51.1 pending maintainer bump)
+Phase: P2
+Cursor: P2.5 round 1 — revisions applied (3 important + 1 minor findings addressed; wave-2/4 extension.ts lane serialised 002→007→011; region contracts promoted to operative rule; UX1-006 default-placement verification added)
+Next: P2.5 round 2 — code-reviewer re-review (REVIEW_TARGET_TYPE=plan)
