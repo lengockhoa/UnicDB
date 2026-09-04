@@ -71,7 +71,7 @@ function packageJsonDepsDiff(ref: string): string {
   // devDependencies, peerDependencies, engines) uses different keys and
   // is never matched here.
   const contributesKeyPattern =
-    /^[+-]\s+"(command|title|category|icon|when|group|keybinding|mac|win|linux)":/;
+    /^[+-]\s+"(command|title|category|icon|when|group|order|keybinding|mac|win|linux)":/;
   // Menu block headers (`"webview/<id>/context":`, `"view/title":`,
   // `"editor/title":`, ...) appear on their own lines as the JSON key of
   // the contributes.menus map. Drop them too — they are part of the

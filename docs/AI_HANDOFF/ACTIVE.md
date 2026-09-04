@@ -1,8 +1,6 @@
 # Active Cycle
 
-Cycle: OC4O (Open Console for Object)
-Date: 2026-09-03
-Base: main @ 4c71e40 (v1.51.0)
-Goal: ship right-click "Open Console for Object" on schema-tree table/view nodes + Help Grid panel
-Tasks: 2 total (TASK-OC4O-001, TASK-OC4O-002)
-Status: implementation done — R2 review caught 2 issues (AI chat card pointed to non-existent `vsdb.ai.open`; bq04SurfaceGuard menu-key regex silently dropped `dependencies:`/`devDependencies:` lines). Both fixed; 3417/3417 tests pass, typecheck 0, compile clean. CHANGELOG entry pre-staged for v1.51.1. **BLOCKED on user**: `package-lock.json` is write-protected by repo hooks, so version bump to v1.51.1 must be done by user (run `npm version patch` or manually bump + `npm install`). After user bumps, commit + tag + push proceeds.
+Cycle: MENU   Date: 2026-09-04   Base: main @ 0fc7106
+Goal: reorder schema-tree table-node context menu — New Table #1, Modify Table #2, rest alphabetical below
+Tasks: 1 total
+Status: done — TDD-embedded (3 new MENU tests RED before package.json edit, GREEN after); bq04SurfaceGuard whitelist extended with `order` to keep dependency-drift guard filtering contributes changes; 3420|2 green (baseline 3417 + 3 new), typecheck 0, compile clean; commit pending (maintainer-owned per OC4O precedent: no version bump / tag / push in this cycle)

@@ -467,12 +467,14 @@
         {
           "command": "vsdb.newTable",
           "when": "view == vsdb.schemaTree && (viewItem == schema || viewItem == category || viewItem == table)",
-          "group": "vsdb"
+          "group": "vsdb",
+          "order": "1"
         },
         {
           "command": "vsdb.modifyTable",
           "when": "view == vsdb.schemaTree && viewItem == table",
-          "group": "vsdb"
+          "group": "vsdb",
+          "order": "2"
         },
         {
           "command": "vsdb.renameTable",

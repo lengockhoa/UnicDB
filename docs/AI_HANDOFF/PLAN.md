@@ -1,160 +1,148 @@
-# VSDB Cycle — Open Console for Object (right-click schema tree)
+# PLAN — Cycle MENU: schema-tree table-node context menu order
 
-> Bounded cycle. Resumes from working-tree state left by the previous session
-> (main @ 4c71e40, v1.51.0 base; 6 files modified, all green on `npm test`
-> 3407|2 + `npm run typecheck` 0). Goal: hand the diff to unic-smart for R2,
-> absorb any `changes_requested`, then commit + push + tag as v1.52.0.
+Prior cycle OC4O closed (feature commit `a05fa7d`, close-out `0fc7106`, clean tree). This is a
+fresh cycle on `main @ 0fc7106`.
 
-## 1. Intent
+## §1 Intent
 
-Ship a right-click **"VSDB: Open Console for Object"** entry on schema-tree
-table/view nodes that opens the SQL Console with a fresh tab pre-filled with a
-driver-aware SELECT * … LIMIT/TOP 100 snippet for the picked object. Success:
+The right-click context menu on a schema-tree **table** node currently renders every
+`vsdb`-group entry alphabetically by title, because no entry carries an `order` key:
 
-- User right-clicks a table or view → menu shows the new entry.
-- Picking it opens (or reveals) the Console singleton + creates a fresh tab
-  named `Query <schema>.<table>` whose buffer is the driver-aware snippet.
-- Existing Console behaviour (selection run, format, EXPLAIN, save-to-.sql,
-  ghost-text autocomplete, draft recovery, history) is unchanged.
-- No drive-by changes: BQ frozen surfaces, BQ-00/BQ-01 narrow seam,
-  `formatBigQueryCell`, `@google-cloud/bigquery@9.0.3` — all byte-untouched.
+> Analyze Table, Copy Create Query, Generate Sample Data…, Modify Table…, New Table…,
+> Rename Column…, Rename Table…, Vacuum Table, VSDB: Export Structure,
+> VSDB: Postman Payload, VSDB: Refresh Schema
 
-## 2. Scope
+Human request (Vietnamese): "Tôi muốn sắp xếp lại chỗ này: 1. New Table, 2. Modify Table".
+**Confirmed decision, verbatim: "Đưa cả hai lên đầu"** — `New Table…` becomes item #1 of the
+menu, `Modify Table…` item #2; all remaining items keep their current (relative alphabetical)
+order below.
 
-In scope (one task):
+Success = the rendered table-node context menu starts with New Table…, then Modify Table…,
+with the rest unchanged; the ordering contract is pinned by tests; the full suite (3417
+baseline), typecheck, and compile stay green.
 
-- Reuse existing `commandOpenConsole` seeder so the singleton + onRun +
-  draft/autocomplete wiring stays exactly the same as `vsdb.openConsole`.
-- Add a public method on `ConsolePanel` that creates a tab with an
-  initial buffer and pushes one `state` postMessage to the webview
-  (must NOT go through `setBuffer`, which is the silent webview→host
-  echo path — see ARP-08 #30).
-- Register `vsdb.openConsoleForObject` command + `view/item/context`
-  menu entry (`group: inline`, `when: view == vsdb.schemaTree &&
-  (viewItem == table || viewItem == view)`).
-- Tests for the resolution path (qualified string + node meta shape +
-  invalid arg fallback).
-- Widen the BQ-04 frozen-surface `package.json` dep-manifest guard so a
-  legitimate post-BQ-04 contributes change (new command + new menu entry)
-  does not trip the dependency drift guard.
+## §2 Scope
 
-Out of scope:
+**In-scope**
+- `package.json` → `contributes.menus["view/item/context"]`: add `"order": "1"` to the
+  `vsdb.newTable` entry and `"order": "2"` to the `vsdb.modifyTable` entry. No other attribute
+  of either entry changes; no other entry changes.
+- `src/adapters/__tests__/bq04SurfaceGuard.test.ts`: extend the `contributesKeyPattern`
+  whitelist with `order` (one word) so guard test 3 keeps filtering contributes changes.
+- `src/extension.test.ts`: new describe block pinning the ordering contract (happy + edges).
+- `CHANGELOG.md`: one "Changed" bullet under the existing `[1.51.1] — pending` entry
+  (user-facing menu change; repo convention: docs updated when user-facing behavior changes).
 
-- No webview rebuild required (the change is host-side only; webview
-  already renders the `state` postMessage payload that the new code path
-  produces).
-- No new keybindings, no new top-level commands.
-- No change to BQ frozen surfaces, `formatBigQueryCell`, or any
-  `@google-cloud/bigquery` dependency.
+**Out-of-scope**
+- Any reordering, grouping, or renaming of the other 13 `vsdb`-group entries.
+- Runtime code (`src/extension.ts`, `src/ui/*`) — ordering is purely declarative; no source
+  `.ts` under `src/` (outside tests) is touched.
+- Sub-menus, separators, new groups, keybindings, other menus (`view/title`, editor menus).
+- Version bump / release / tag / push (maintainer-owned, as in OC4O close-out).
 
-## 3. Approach
+**Wave constraint:** tasks in the same wave must not modify the same file. This cycle has
+exactly one task (single small concern), so the constraint is trivially satisfied.
 
-### Working-tree state (resume point)
+Scope complexity: LOW — one subsystem (VS Code menu contribution manifest), one task.
 
-The previous session already produced this diff on top of v1.51.0 base
-(main @ 4c71e40). Tests + typecheck are GREEN:
+## §3 Approach
 
-| File | +/− |
-|---|---|
-| `package.json` | +11 (1 command + 1 menu entry, group `inline`) |
-| `src/extension.ts` | +105 (command + `commandOpenConsoleForObject` + `resolveQualifiedFromArg`) |
-| `src/ui/consolePanel.ts` | +25 / −2 (new public `seedTab(name, buffer)`; `setBuffer` / `createTab` contracts preserved) |
-| `src/extension.test.ts` | +116 (5 new tests, `activateFresh` pattern for module-singleton isolation) |
-| `src/adapters/__tests__/bq04SurfaceGuard.test.ts` | +37 / −12 (filter broadened for contributes changes; dep manifest still strict) |
+VS Code sorts same-group items in `view/item/context` as: entries **with** `order`, ascending
+lexicographic by the `order` string, first; then entries **without** `order`, alphabetically by
+title. Today all 15 `vsdb`-group `view/item/context` entries lack `order`, hence the
+alphabetical render. Adding `"order": "1"` / `"order": "2"` (string form is the conventional
+shape in package.json menu contributions) moves exactly the two requested commands to the top;
+everything else keeps its alphabetical fallback.
 
-### Trade-offs
+- **String, not number:** VS Code compares `order` lexicographically; single digits "1"/"2"
+  sort correctly. Numbers 1/2 would also work, but strings are the documented convention.
+- **Lexicographic caveat:** a hypothetical future `order: "10"` would sort before "2"; the new
+  structural test pins the exact key set `{vsdb.newTable, vsdb.modifyTable}`, keeping the
+  surface at two single digits. Not a problem for this cycle.
+- **Discovered coupling (must-fix, verified):** `src/adapters/__tests__/bq04SurfaceGuard.test.ts`
+  test 3 (`package.json dependency manifest unchanged`) strips contributes lines via
+  `contributesKeyPattern` =
+  `^[+-]\s+"(command|title|category|icon|when|group|keybinding|mac|win|linux)":/` (line 74).
+  An added `+        "order": "1",` line does **not** match that whitelist and would survive the
+  filter, failing the guard. Fix = one-word whitelist extension:
+  `(command|title|category|icon|when|group|order|keybinding|mac|win|linux)`. Same spirit as the
+  v1.51.0 filter tightening (CHANGELOG "Changed"): the guard catches dependency drift; `order`
+  is a contributes key exactly like `when`/`group`.
+- **Alternatives rejected:**
+  - *Reorder declarations in package.json* — no effect: VS Code ignores declaration order and
+    sorts alphabetically within a group; this is the root cause being fixed.
+  - *New group (e.g. `group: "vsdb_top"`)* — renders a separator line and reshapes the visual
+    grouping of the whole menu; heavier than "Đưa cả hai lên đầu" asked for.
+  - *Runtime reorder in extension code* — menu contributions are declarative; there is no
+    supported runtime reorder API.
 
-- **Reuse `commandOpenConsole`** for panel creation instead of writing a
-  parallel seeder: keeps the singleton + onRun + draft/autocomplete wiring
-  identical, so any future change to `commandOpenConsole` automatically
-  benefits the new path. Cost: handler runs an extra `if (!consolePanel)
-  … show()` pair, which is cheap.
-- **New `seedTab()` instead of `createTab() + setBuffer()`**:
-  `setBuffer` is intentionally silent (ARP-08 #30 — the webview→host
-  echo path that must not loop). `seedTab` is the host-side companion
-  that creates + sets + pushes `state`. Two methods with two distinct
-  contracts are clearer than overloading one.
-- **`bq04SurfaceGuard` filter widened** to drop +/- lines whose key is
-  one of the standard contributes keys (`command`, `title`, `category`,
-  `icon`, `when`, `group`, `keybinding`, `mac`, `win`, `linux`) plus
-  the `{` / `}` block delimiters around them. The dependency manifest
-  (`dependencies`, `devDependencies`, `peerDependencies`, `engines`) is
-  never matched by this filter — adapter drift is still strictly
-  guarded.
+## §4 Test Plan
 
-### Alternatives rejected
+| Type | Test Name | Expected |
+|------|-----------|----------|
+| happy | `package.json view/item/context: vsdb.newTable có order "1" + when đúng; vsdb.modifyTable có order "2" + when đúng` | `newTable` entry: `order === "1"`, `when === "view == vsdb.schemaTree && (viewItem == schema \|\| viewItem == category \|\| viewItem == table)"`, `group === "vsdb"`; `modifyTable` entry: `order === "2"`, `when === "view == vsdb.schemaTree && viewItem == table"`, `group === "vsdb"` |
+| edge (structural) | `chỉ đúng 2 entry vsdb-group có order — 13 entry còn lại KHÔNG có order (fallback alphabet giữ nguyên)` | Set of `view/item/context` commands having an `order` key equals exactly `{ "vsdb.newTable", "vsdb.modifyTable" }`; every other vsdb-group entry has `order === undefined` (e.g. `vsdb.analyzeTable` has no order so it still renders above `vsdb.copyCreateDdl`) |
+| edge (behavioral) | `mô phỏng sort của VS Code trên group vsdb → New Table… #1, Modify Table… #2, phần còn lại giữ relative alphabet` | Applying the VS Code comparator (ordered entries ascending by `order`, then unordered alphabetically by title) to the table-node vsdb subset yields titles[0] === "New Table…" and titles[1] === "Modify Table…", and the tail keeps current alphabetical relative order (Analyze Table → Copy Create Query → Generate Sample Data… → …) |
+| regression (guard) | `bq04SurfaceGuard test 3 vẫn xanh với order keys (whitelist đã mở rộng)` | `npx vitest run src/adapters/__tests__/bq04SurfaceGuard.test.ts` — all 4 tests pass; the filter still drops contributes lines and still reports real dependency drift (sanity test intact) |
 
-- **Auto-execute the snippet after seeding**: rejected — the user's
-  standing preference is to inspect before running. Run is always
-  explicit (Cmd/Ctrl+Enter).
-- **Reuse `vsdb.generateSelect` to insert into the active console
-  buffer instead of creating a new tab**: rejected — users may already
-  have work in progress; a new tab is safer (and ARP-08 draft recovery
-  persists it across reload).
-- **Bump guard test to assert package.json file mtime instead of diff**:
-  rejected — the guard's whole purpose is to flag drift in the dep
-  manifest at the byte level; mtime doesn't catch a sneaky dep version
-  bump that lands in the same release.
+Edge kinds are genuinely different: structural (key-set exhaustiveness), behavioral (sort
+simulation), regression (guard filter). The happy + behavioral tests are RED against current
+HEAD (no `order` keys today → New Table… is not first) and GREEN after the 2-key change — a
+real TDD cycle.
 
-## 4. Test Plan
-
-### Existing tests (already GREEN)
-
-| Suite | Count | Notes |
-|---|---|---|
-| `src/extension.test.ts` | 122 | includes 5 new tests for `vsdb.openConsoleForObject` |
-| `src/ui/__tests__/consoleTabs.test.ts` | 9 | ARP-08 #30 (silent `setBuffer`) still pinned |
-| `src/adapters/__tests__/bq04SurfaceGuard.test.ts` | 4 | 3 frozen-surface rows + 1 sanity check |
-| Full suite | 3407 passed \| 2 skipped | (+5 over v1.51.0 baseline 3402) |
-| `npm run typecheck` | 0 errors | |
-
-### New test cases (added in working-tree state)
-
-| # | Type | Test name | Expected |
-|---|------|-----------|----------|
-| 1 | unit | `package.json contributes khai báo command mới + menu entry đúng when` | command id `vsdb.openConsoleForObject`, title `VSDB: Open Console for Object`, icon `$(window)`; menu entry `view == vsdb.schemaTree && (viewItem == table || viewItem == view)`, group `inline` |
-| 2 | unit | `command vsdb.openConsoleForObject được register khi activate` | `state.registeredCommands.has("vsdb.openConsoleForObject") === true` |
-| 3 | happy path | `handler với qualified string → tạo webview panel + pre-fill snippet` | Active tab name `Query public.users`, buffer `SELECT * FROM public.users LIMIT 100;` (postgres fallback) |
-| 4 | edge | `argument shape `{ meta: { schema, objectName } }` resolves qualified name` | Active tab name `Query sales.orders`, buffer `SELECT * FROM sales.orders LIMIT 100;` |
-| 5 | regression | `argument shape không hợp lệ → showInformationMessage, KHÔNG mở panel mới` | Invalid args (undefined / number / empty-meta) → `vscode.window.showInformationMessage` called, `state.createdWebviewPanels.length` unchanged |
-
-## 5. Verification
+## §5 Verification
 
 ```bash
-# Full suite — must stay green.
-npm test
-
-# Typecheck — must be clean.
-npm run typecheck
-
-# Webview rebuild — NOT required (host-side only). Run only if review flags
-# an unexpected webview change.
-npm run build:webview
-
-# Lint (project-wide style gate).
-npm run lint
-
-# Frozen-surface guard — must pass (this is the canary).
+# targeted (TDD loop — behavioral + happy + structural tests; RED before, GREEN after)
+npx vitest run src/extension.test.ts -t "MENU"
+# guard regression
 npx vitest run src/adapters/__tests__/bq04SurfaceGuard.test.ts
-
-# The new command surface — focused.
-npx vitest run src/extension.test.ts -t "openConsoleForObject"
-
-# ARP-08 #30 silent setBuffer invariant — must stay green.
-npx vitest run src/ui/__tests__/consoleTabs.test.ts
+# full suite (baseline 3417 passed / 2 skipped)
+npm test
+# typecheck + compile (project has NO lint script — typecheck is the static gate)
+npm run typecheck
+npm run compile
 ```
 
-## 6. Acceptance
+`npm run typecheck` exists and is mandatory; there is genuinely **no `lint` script** in
+package.json (`scripts`: compile, watch, test, test:integration, typecheck, package,
+verify:fast, verify:release, profile:fast, profile:release, vscode:prepublish).
 
-- [ ] `npm test` → 3407 passed | 2 skipped (no change from current).
-- [ ] `npm run typecheck` → exit 0.
-- [ ] Reviewer verdict: APPROVED or APPROVED-WITH-MINOR.
-- [ ] `package.json` diff vs `75cdb08` filtered by `packageJsonDepsDiff` is empty (proven by `bq04SurfaceGuard` row 3).
-- [ ] `git diff 75cdb08 -- src/adapters/bigqueryTypes.ts src/adapters/bigqueryAdc.ts src/adapters/types.ts src/adapters/bigqueryPages.ts` is empty (BQ frozen surfaces byte-identical).
-- [ ] CHANGELOG.md updated under the next version (v1.52.0) with an Added entry describing the right-click command + menu entry.
-- [ ] docs/STATUS.md and docs/AI_HANDOFF/INDEX.md updated when this cycle closes.
-- [ ] Cycle R5: `git commit`, bump `package.json` to v1.52.0, `npm run package` (VSIX), `git tag v1.52.0`, `git push origin main`, push tag, create GitHub release.
+## §6 Acceptance
+
+- [ ] `package.json` diff contains exactly two added lines: `"order": "1"` on the
+      `vsdb.newTable` `view/item/context` entry, `"order": "2"` on `vsdb.modifyTable`;
+      `when` and `group` of both entries byte-unchanged; no other entry touched.
+- [ ] New MENU tests in `src/extension.test.ts` all pass (happy + 2 edge kinds).
+- [ ] `bq04SurfaceGuard.test.ts` passes (whitelist covers `order`; dependency guard still live).
+- [ ] `npm test` green at 3417 baseline + new tests; `npm run typecheck` 0 errors;
+      `npm run compile` clean.
+- [ ] `CHANGELOG.md` has one "Changed" bullet under `[1.51.1] — pending`.
+- [ ] No file outside {package.json, 2 test files, CHANGELOG.md} modified.
+
+## §7 Global Constraints
+
+- No version bump, no git commit/push/tag in this cycle (maintainer-owned; package-lock.json is
+  hook-write-protected).
+- Frozen surfaces untouched: BQ-00 (`bigqueryTypes.ts`, `bigqueryAdc.ts`), BQ-01
+  (`src/adapters/types.ts`), dependency manifest (no new/removed/upgraded deps).
+- `order` values must be the strings `"1"` and `"2"` only; no other vsdb-group entry gains an
+  `order` key.
+- Both `when` strings must remain byte-identical (they gate which tree node shows the item).
+- Full-suite floor: all pre-existing 3417 tests stay green; 2 skipped stays 2 skipped.
 
 ## Planner Report
+PLANNER_MODEL: unic-smart
 
-PLANNER_MODEL: claude-sonnet-4-6 (unic-code, picked because the plan is small + the working-tree diff is already produced; unic-smart is reserved for R2 review per §3-Tier Model Routing in CLAUDE.md)
+## Planner Self-Audit
+Checklist: 12/12 pass
+Fixed during audit: promoted the bq04 guard whitelist extension from an implicit assumption to
+an explicit Target File + regression test after verifying `contributesKeyPattern` (line 74)
+does not match `"order"` — without it the suite goes red. Moved the contract test home from a
+guessed new file to `src/extension.test.ts` after reading where package.json menu tests
+actually live (module-level `pkgJson` at line 552; OC4O precedent describe at ~4605). Added
+CHANGELOG.md to targets per the repo "docs updated when user-facing" convention.
+Known gaps: the behavioral test simulates VS Code's documented same-group ordering (ordered
+ascending by `order`, then unordered alphabetical by title) rather than driving a real VS Code
+window — vitest cannot render VS Code menus; the simulation + structural tests pin the contract
+that produces the requested render.

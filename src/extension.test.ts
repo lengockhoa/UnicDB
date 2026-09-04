@@ -4804,4 +4804,103 @@ describe("vsdb.openHelpGrid — Help Grid webview wiring", () => {
     ).toBe(0);
   });
 });
+
+// =============================================================================
+// TASK-MENU-001 — schema-tree table-node context menu order contract.
+// Pinned against the module-level `pkgJson` (line ~552): the right-click menu
+// on a table node must render `New Table…` as item #1 and `Modify Table…` as
+// item #2; every other vsdb-group entry keeps its current alphabetical
+// relative order. Mechanism: declarative `"order": "1"` / `"order": "2"` on
+// the `vsdb.newTable` / `vsdb.modifyTable` `view/item/context` entries.
+// =============================================================================
+describe("MENU — table-node context menu: New Table #1, Modify Table #2", () => {
+  type ViewItemContextMenu = Array<{
+    command: string;
+    when: string;
+    group: string;
+    order?: string;
+  }>;
+
+  const ctxMenus = pkgJson.contributes.menus["view/item/context"] as
+    ViewItemContextMenu;
+
+  function vsdbGroup(): ViewItemContextMenu {
+    return ctxMenus.filter((m) => m.group === "vsdb");
+  }
+
+  // VS Code's documented same-group comparator: entries with `order` sort
+  // ascending lexicographically first, then entries without `order` fall back
+  // to alphabetical-by-title. The `zzzz` sentinel keeps unordered entries
+  // strictly behind every ordered entry without Number coercion (lexicographic
+  // "10" would precede "2" if we used Number).
+  function vsdbTableNodeTitlesSorted(): string[] {
+    const commands = pkgJson.contributes.commands as Array<{
+      command: string;
+      title: string;
+    }>;
+    const titleOf = (cmd: string): string =>
+      commands.find((c) => c.command === cmd)!.title;
+    const subset = vsdbGroup().filter((m) => m.when.includes("viewItem == table"));
+    const sorted = subset.slice().sort((a, b) => {
+      const ao = a.order ?? "zzzz";
+      const bo = b.order ?? "zzzz";
+      if (ao !== bo) return ao.localeCompare(bo);
+      return titleOf(a.command).localeCompare(titleOf(b.command));
+    });
+    return sorted.map((m) => titleOf(m.command));
+  }
+
+  it("vsdb.newTable có order \"1\" + when đúng; vsdb.modifyTable có order \"2\" + when đúng", () => {
+    const newTable = vsdbGroup().find((m) => m.command === "vsdb.newTable");
+    const modifyTable = vsdbGroup().find((m) => m.command === "vsdb.modifyTable");
+    expect(newTable).toBeDefined();
+    expect(newTable!.order).toBe("1");
+    expect(newTable!.when).toBe(
+      "view == vsdb.schemaTree && (viewItem == schema || viewItem == category || viewItem == table)",
+    );
+    expect(newTable!.group).toBe("vsdb");
+
+    expect(modifyTable).toBeDefined();
+    expect(modifyTable!.order).toBe("2");
+    expect(modifyTable!.when).toBe(
+      "view == vsdb.schemaTree && viewItem == table",
+    );
+    expect(modifyTable!.group).toBe("vsdb");
+  });
+
+  it("chỉ đúng 2 entry vsdb-group có order — 13 entry còn lại KHÔNG có order (alphabet fallback giữ nguyên)", () => {
+    const ordered = vsdbGroup().filter((m) => m.order !== undefined);
+    expect(new Set(ordered.map((m) => m.command))).toEqual(
+      new Set(["vsdb.newTable", "vsdb.modifyTable"]),
+    );
+    // Spot-check a couple of unordered entries (alphabetical fallback).
+    expect(
+      vsdbGroup().find((m) => m.command === "vsdb.analyzeTable")!.order,
+    ).toBeUndefined();
+    expect(
+      vsdbGroup().find((m) => m.command === "vsdb.copyCreateDdl")!.order,
+    ).toBeUndefined();
+  });
+
+  it("sort mô phỏng VS Code trên table-node vsdb group → New Table… #1, Modify Table… #2, phần còn lại giữ relative alphabet", () => {
+    const titles = vsdbTableNodeTitlesSorted();
+    expect(titles[0]).toBe("New Table…");
+    expect(titles[1]).toBe("Modify Table…");
+    // Items 2..(n-1) keep their current alphabetical relative order:
+    //   Analyze Table, Copy Create Query, Generate Sample Data…, Rename Column…,
+    //   Rename Table…, Vacuum Table, VSDB: Export Structure, VSDB: Postman Payload.
+    // (VSDB: Refresh Schema + connection-only entries are correctly excluded
+    // because their `when` does not include `viewItem == table`.)
+    expect(titles.slice(2)).toEqual([
+      "Analyze Table",
+      "Copy Create Query",
+      "Generate Sample Data…",
+      "Rename Column…",
+      "Rename Table…",
+      "Vacuum Table",
+      "VSDB: Export Structure",
+      "VSDB: Postman Payload",
+    ]);
+  });
+});
 void detectOmpState;
