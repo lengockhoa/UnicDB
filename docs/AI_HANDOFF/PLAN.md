@@ -40,6 +40,13 @@ successful SELECT.
 - BigQuery / multi-dialect-specific error formatting (errors are text-only here).
 - AI-suggested fixes for SQL errors.
 - Refactoring `queryRunner.ts`'s error message strings.
+- **UX3 (closeable tabs) — deferred to next cycle.** Per user P0 2026-09-04:
+  - × close button on each tab (visible on hover), right-click menu gets
+    "Close Tab" / "Close All Tabs" / "Close Other Tabs" items.
+  - Active tab IS closeable; auto-activate nearest tab on close; empty state
+    shown when no tabs left.
+  - No persistence — closed tabs are gone (no Ctrl+Shift+T history, no
+    workspace-state restore). Target release: v1.51.4.
 
 ## §2 Scope
 
