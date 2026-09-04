@@ -1,8 +1,8 @@
 # TASK-UX2-004 — End-to-end integration of error visibility
 
-- Status: `ready`
-- Owner: `-`
-- Reviewer: `-`
+- Status: `done`
+- Owner: `feature-implementer (sonnet)`
+- Reviewer: `unic-smart` (R2) → `unic-smart` (re-pass) → cycle shipped v1.51.3
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §3
 
 ## Goal
@@ -270,3 +270,21 @@ FINDINGS:
     - src/extension.ts:2650 — carried-over, known-accepted: in the RunnerBusy overlap case (ownsRun=false) the belt-and-suspenders render posts a full state message with the stale invocation's header/appendBase; self-heals on the live run's next onUpdate. Already documented in-code and in R1/R2 verdicts; explicitly not on the R2 fix list. No action required this cycle.
 NEXT_STATUS_FOR_INDEX: approved_minor
 NOTES: R3 fix is minimal, correct, and verified fresh by the reviewer (typecheck + targeted 4/4 + full suite 3555|2). Both R2-requested fixes are in place with no new defects introduced; the single remaining minor is pre-existing and previously ruled acceptable. Handoff may proceed.
+
+## Reviewer Verdict (re-pass)
+
+VERDICT: approved_minor
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN: PASS
+  - npm run typecheck — exit 0
+  - npm run compile — exit 0
+  - npm test -- --run src/ui/__tests__/resultsPanelErrorIntegration.test.ts — 4 passed (4), fresh
+  - npm test -- --run — 3555 passed | 2 skipped (3557); Test Files 234 passed | 1 skipped (235) — >= baseline 3530|2
+RE_RED_EVIDENCE: ACCEPTED — evidence is real, not reconstructed: (1) commit a0da149 confirmed in git log as the single wave-3 commit matching the "pre-impl state not preserved" explanation; (2) RED output cites test lines 257/340 while the current file has those assertions at 244/327 — the 13-line offset exactly matches the R3 removal of the 13-line lastStateMessages helper (git diff), proving the paste predates the cleanup instead of being back-written to current line numbers; (3) "RUN v1.6.1" header and both assertion messages match vitest ^1.6.0 and the real assertions verbatim; (4) 2 RED / 2 GREEN is the mechanically expected result of reverting only the outer-catch block (case 2's badge rides on the healthy-path wiring at extension.ts:2611-2616, untouched by the revert); (5) restored impl confirmed at extension.ts:2634-2652 with full wiring inside the `if (!deactivating)` gate.
+FINDINGS:
+  critical: none
+  important: none
+  minor: src/extension.ts:2650 — carried-over known-accepted: RunnerBusy overlap belt-and-suspenders render posts a stale header/appendBase; self-heals on next onUpdate; documented in-code and in R1-R3 verdicts, explicitly out of fix scope.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: R2's sole blocker (missing RED evidence) is resolved with authentic captured output; append verified non-destructive (both original CHANGES-REQUESTED verdict blocks intact at task-file lines 145-165 and 214-233). R3 deactivating gate restructure also re-audited this pass — gate correctly covers runFailed, render, and setErrorBadge. Test file trailing-newline fix confirmed (file ends 0x0a, tests still 4/4). INDEX.md left to orchestrator per instruction.
