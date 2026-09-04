@@ -90,3 +90,52 @@ npm test
 ## Discussion
 
 (no comments yet)
+
+---
+
+## Executor Report
+
+```
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+SUMMARY: Wired runStatements outer-catch to runner.runFailed(reason) + statusBar.setErrorBadge(reason) for first-connect failures; added statusBar.setErrorBadge(null) on healthy runs and on per-statement error rows (post-connect runQuery path); exported runStatements with new statusBar parameter; created 4 integration tests exercising the full outer-catch → runFailed → onUpdate → panel.render chain.
+TEST_PLAN_FOLLOWED: task §Test Cases (inline — wrote 4 cases per the spec table before implementation)
+FILES_CHANGED:
+  - src/extension.ts: exported runStatements (5th param `statusBar: StatusBarWrapper`); rewired outer catch from toast to runner.runFailed + setErrorBadge; added setErrorBadge(null) on healthy path + setErrorBadge(erroredRow.error) on per-statement error rows; threaded statusBar through runQueryFromEditor, runStatement, commandOpenConsole, commandOpenConsoleForObject, openConsoleWithTemplate, commandGenerateObjectDdl and all their call sites.
+  - src/extension.test.ts: updated TASK-BQ03-005 #5 edge test to assert runner.runFailed is called with the sanitized BQ reason instead of vscode.window.showErrorMessage (outer-catch behavior change mandated by this task).
+  - src/ui/__tests__/resultsPanelErrorIntegration.test.ts: new file with 4 integration cases (first-connect failure, post-connect runQuery error, status bar badge set+cleared across runs, healthy SELECT regression).
+TESTS_ADDED:
+  - src/ui/__tests__/resultsPanelErrorIntegration.test.ts: 4 cases ("case 1 — first-connect failure", "case 2 — post-connect runQuery error", "case 3 — status bar error badge set on first error, cleared (null) on next healthy run", "case 4 — regression: healthy SELECT still renders the grid; no error card").
+VERIFICATION:
+  command: npm run typecheck
+  result: exit 0
+  output_excerpt: |
+    > vsdb@1.51.2 typecheck
+    > tsc --noEmit
+
+  command: npm run compile
+  result: exit 0
+  output_excerpt: |
+    dist/extension.js 6.4mb
+    esbuild: build complete
+
+  command: npx vitest run src/ui/__tests__/resultsPanelErrorIntegration.test.ts
+  result: 4 passed (4)
+  output_excerpt: |
+    ✓ src/ui/__tests__/resultsPanelErrorIntegration.test.ts  (4 tests) 7ms
+    Test Files  1 passed (1)
+    Tests  4 passed (4)
+
+  command: npm test
+  result: 3555 passed | 2 skipped (3557)
+  output_excerpt: |
+    Test Files  234 passed | 1 skipped (235)
+    Tests  3555 passed | 2 skipped (3557)
+    Duration  30.02s
+
+ISSUES: TASK-BQ03-005 #5 edge test was asserting the legacy toast path; updated to assert the new TASK-UX2-004 synthetic-tab producer path (runFailed called with sanitized reason). All other baseline tests preserved.
+HANDOFF_TO_REVIEWER: yes — both outer-catch wiring and the integration test surface are ready for review; the change is contained to the specified files + 1 test update to a BQ test broken by the task's mandated behavior change.
+NEXT: ready for review.
+```

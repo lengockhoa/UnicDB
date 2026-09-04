@@ -403,6 +403,7 @@ export async function activate(
         mgr,
         runner,
         panel,
+        statusBar,
         context.globalState,
         context.workspaceState,
         name,
@@ -614,14 +615,14 @@ export async function activate(
 
   // 1. vsdb.runQuery — Cmd+Enter
   disposables.push(
-    vscode.commands.registerCommand("vsdb.runQuery", () => runQueryFromEditor(mgr, runner, panel)),
+    vscode.commands.registerCommand("vsdb.runQuery", () => runQueryFromEditor(mgr, runner, panel, statusBar)),
   );
 
   // 2. vsdb.runStatement — CodeLens click
   disposables.push(
     vscode.commands.registerCommand(
       "vsdb.runStatement",
-      (stmt: ParsedStatement) => runStatement(mgr, runner, panel, stmt),
+      (stmt: ParsedStatement) => runStatement(mgr, runner, panel, statusBar, stmt),
     ),
   );
 
@@ -942,6 +943,7 @@ export async function activate(
         mgr,
         runner,
         panel,
+        statusBar,
         context.globalState,
         context.workspaceState,
       ),
@@ -967,7 +969,7 @@ export async function activate(
     vscode.commands.registerCommand(
       "vsdb.openConsoleForObject",
       (qualifiedOrNode?: unknown) =>
-        commandOpenConsoleForObject(mgr, runner, panel, qualifiedOrNode, {
+        commandOpenConsoleForObject(mgr, runner, panel, statusBar, qualifiedOrNode, {
           globalState: context.globalState,
           workspaceState: context.workspaceState,
         }),
@@ -991,6 +993,7 @@ export async function activate(
           mgr,
           runner,
           panel,
+          statusBar,
           context.globalState,
           context.workspaceState,
           "view",
@@ -1006,6 +1009,7 @@ export async function activate(
           mgr,
           runner,
           panel,
+          statusBar,
           context.globalState,
           context.workspaceState,
           "routine",
@@ -1976,6 +1980,7 @@ function commandOpenConsole(
   mgr: ConnectionManager,
   runner: QueryRunner,
   panel: ResultsPanel,
+  statusBar: StatusBarWrapper,
   memento: vscode.Memento,
   draftMemento: vscode.Memento,
 ): void {
@@ -2017,7 +2022,7 @@ function commandOpenConsole(
           );
           return;
         }
-        await runStatements(mgr, runner, panel, statements);
+        await runStatements(mgr, runner, panel, statusBar, statements);
       },
       // Tab closed by the user → drop the singleton so reopening rebuilds.
       onDispose: () => {
@@ -2088,6 +2093,7 @@ function commandOpenConsoleForObject(
   mgr: ConnectionManager,
   runner: QueryRunner,
   panel: ResultsPanel,
+  statusBar: StatusBarWrapper,
   qualifiedOrNode: unknown,
   mem: { globalState: vscode.Memento; workspaceState: vscode.Memento },
 ): void {
@@ -2104,6 +2110,7 @@ function commandOpenConsoleForObject(
     mgr,
     runner,
     panel,
+    statusBar,
     mem.globalState,
     mem.workspaceState,
   );
@@ -2150,6 +2157,7 @@ async function commandGenerateObjectDdl(
   mgr: ConnectionManager,
   runner: QueryRunner,
   panel: ResultsPanel,
+  statusBar: StatusBarWrapper,
   globalState: vscode.Memento,
   workspaceState: vscode.Memento,
   kind: "view" | "routine",
@@ -2223,7 +2231,7 @@ async function commandGenerateObjectDdl(
   // Reuse the singleton seeder so the panel + onRun + draft/autocomplete
   // wiring stays exactly the same as `vsdb.openConsole` /
   // `vsdb.openConsoleForObject`.
-  commandOpenConsole(mgr, runner, panel, globalState, workspaceState);
+  commandOpenConsole(mgr, runner, panel, statusBar, globalState, workspaceState);
   if (!consolePanel) {
     // commandOpenConsole is sync and sets the singleton; defensive guard.
     return;
@@ -2251,12 +2259,13 @@ export function openConsoleWithTemplate(
   mgr: ConnectionManager,
   runner: QueryRunner,
   panel: ResultsPanel,
+  statusBar: StatusBarWrapper,
   globalState: vscode.Memento,
   workspaceState: vscode.Memento,
   name: string,
   buffer: string,
 ): void {
-  commandOpenConsole(mgr, runner, panel, globalState, workspaceState);
+  commandOpenConsole(mgr, runner, panel, statusBar, globalState, workspaceState);
   if (!consolePanel) {
     // commandOpenConsole is sync and sets the singleton; defensive guard.
     return;
@@ -2299,6 +2308,7 @@ async function runQueryFromEditor(
   mgr: ConnectionManager,
   runner: QueryRunner,
   panel: ResultsPanel,
+  statusBar: StatusBarWrapper,
 ): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor || editor.document.languageId !== "sql") {
@@ -2333,7 +2343,7 @@ async function runQueryFromEditor(
     void vscode.window.showInformationMessage("VSDB: không có statement để chạy.");
     return;
   }
-  await runStatements(mgr, runner, panel, statements);
+  await runStatements(mgr, runner, panel, statusBar, statements);
 }
 
 /** Run a specific statement (from CodeLens click). */
@@ -2341,13 +2351,14 @@ async function runStatement(
   mgr: ConnectionManager,
   runner: QueryRunner,
   panel: ResultsPanel,
+  statusBar: StatusBarWrapper,
   stmt: ParsedStatement,
 ): Promise<void> {
   if (!mgr.getActive()) {
     await promptToAddConnectionOrSelect();
     if (!mgr.getActive()) return;
   }
-  await runStatements(mgr, runner, panel, [stmt]);
+  await runStatements(mgr, runner, panel, statusBar, [stmt]);
 }
 
 // =====================================================================
@@ -2492,10 +2503,17 @@ async function applyKeywordQualify(
   return rewritten;
 }
 
- async function runStatements(
+ // TASK-UX2-004 — exported for the host-side integration test in
+// `src/ui/__tests__/resultsPanelErrorIntegration.test.ts`. The exported
+// function is the SAME runStatements the production code uses (just with
+// `statusBar` as an extra parameter) so the test exercises the real outer
+// catch — first-connect failure → runner.runFailed(reason) → onUpdate →
+// panel.render — end-to-end.
+export async function runStatements(
   mgr: ConnectionManager,
   runner: QueryRunner,
   panel: ResultsPanel,
+  statusBar: StatusBarWrapper,
   statements: ParsedStatement[],
 ): Promise<void> {
   const active = mgr.getActive();
@@ -2582,6 +2600,20 @@ async function applyKeywordQualify(
       const liveJobRef = pickJobRefFromRun(runSlice);
       const finalHeader = buildRunHeader(isoTime, active, liveJobRef);
       panel.render(results, finalHeader, { appendBase });
+      // TASK-UX2-004 — status-bar error badge session policy:
+      //   - If ANY statement in the runSlice errored (post-connect runQuery
+      //     failure path), stamp the badge to the first error's reason.
+      //     The synthetic-tab producer (`runFailed`) already wired the
+      //     first-connect path; this covers the per-statement path that
+      //     routes through executeAll's inner catch.
+      //   - Otherwise clear any prior badge via setErrorBadge(null) so the
+      //     chip returns to its normal "$(database) <name> [<driver>]" form.
+      const erroredRow = runSlice.find((r) => r.status === "error");
+      if (erroredRow?.error) {
+        statusBar.setErrorBadge(erroredRow.error);
+      } else {
+        statusBar.setErrorBadge(null);
+      }
       // TASK-ARP07-004 — feed ONLY the statements that actually completed
       // (`status === "done"`, original text on `.sql` per queryRunner.ts:49-52)
       // to the classifier; failed/cancelled statements must not invalidate.
@@ -2593,9 +2625,31 @@ async function applyKeywordQualify(
       invalidateAfterSchemaDdl?.(completed, toSqlDialect(active?.driver));
     }
   } catch (err) {
-    void vscode.window.showErrorMessage(
-      `VSDB: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    // TASK-UX2-004 — first-connect failure path. Surface via the runner's
+    // synthetic-tab producer (runner.runFailed → onUpdate → panel.render)
+    // instead of dropping a toast that disappears and never tells the user
+    // WHICH statement failed. Also stamp the status-bar red badge so the
+    // active connection chip carries the error context.
+    const reason = err instanceof Error ? err.message : String(err);
+    try {
+      runner.runFailed(reason);
+    } catch {
+      // RunnerBusy (mid-run) or other — toast fall-through only. The
+      // outer catch is the only path that calls runFailed; if the runner
+      // is genuinely busy, the toast is the right backstop.
+      void vscode.window.showErrorMessage(`VSDB: ${reason}`);
+    }
+    // Belt-and-suspenders render: `runFailed` fires `lastOnUpdate` only when
+    // the prior `runner.run()` actually executed its prologue (real adapter
+    // path). A spy/mocked runner that rejects before `lastOnUpdate` is
+    // captured leaves the synthetic row stranded in `runner.results` — we
+    // render directly here so the synthetic tab reaches the panel in both
+    // cases. `panel.render` calls `panel.show()` internally, revealing the
+    // panel (AI-001 spec: "reveal the Results panel" on the synthetic tab).
+    if (!deactivating) {
+      panel.render(runner.getResults(), header, { appendBase });
+    }
+    statusBar.setErrorBadge(reason);
   } finally {
     // TASK-ARP02-004 — gates above: a stale invocation's finally must NOT
     // clear the live run's busy state (the live run's own finally does);

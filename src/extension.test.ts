@@ -4533,6 +4533,12 @@ describe("TASK-BQ03-005 — BigQuery command integration (header + copy-safety)"
   // ---------------------------------------------------------------------------
   // Test #5 — edge (permission/denied): BigQueryJobError surfaces sanitized.
   // ---------------------------------------------------------------------------
+  // TASK-UX2-004: the outer catch now routes through `runner.runFailed(reason)`
+  // (synthetic-tab producer) instead of dropping a toast. The new
+  // acceptance criterion is that the synthetic StatementResult carries the
+  // sanitized envelope verbatim — not that `vscode.window.showErrorMessage`
+  // fires. The toast is now only a fall-through when `runFailed` itself
+  // throws (RunnerBusy mid-run).
   it("#5 edge (denied): BigQueryJobError-shaped reject → sanitized error path", async () => {
     await spyRender();
     await stubAdapter();
@@ -4551,20 +4557,22 @@ describe("TASK-BQ03-005 — BigQuery command integration (header + copy-safety)"
         }) as never,
       );
     vi.spyOn(runnerMod.QueryRunner.prototype, "isRunning").mockReturnValue(false);
-
-    const showErrSpy = vi.spyOn(vscodeMock.window, "showErrorMessage");
+    // Spy on runFailed directly: the host's outer catch (TASK-UX2-004)
+    // routes first-connect failures through it instead of a toast.
+    const runFailedSpy = vi.spyOn(runnerMod.QueryRunner.prototype, "runFailed");
 
     await state.registeredCommands.get("vsdb.runQuery")!();
     for (let i = 0; i < 30; i++) await Promise.resolve();
     await new Promise((r) => setTimeout(r, 5));
 
-    expect(showErrSpy).toHaveBeenCalled();
-    const msg = String(showErrSpy.mock.calls[0]?.[0] ?? "");
+    // Synthetic-tab producer must be invoked with the sanitized reason.
+    expect(runFailedSpy).toHaveBeenCalled();
+    const reason = String(runFailedSpy.mock.calls[0]?.[0] ?? "");
     // Sanitized envelope forwards: category + location visible.
-    expect(msg).toMatch(/api_denied/);
-    expect(msg).toMatch(/US/);
+    expect(reason).toMatch(/api_denied/);
+    expect(reason).toMatch(/US/);
     // No raw SQL leaks.
-    expect(msg).not.toContain("SELECT");
+    expect(reason).not.toContain("SELECT");
   });
 
   // ---------------------------------------------------------------------------
