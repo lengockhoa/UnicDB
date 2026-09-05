@@ -998,6 +998,22 @@ export class ResultsPanel {
         });
         this.postTransactionStatus();
         break;
+      // TASK-UX3-003 — message wiring for tab close affordances. The
+      // webview's × button + right-click menu post these; the host methods
+      // (TASK-UX3-002) own the state mutation + postMessage back.
+      case "closeTab":
+        this.closeTab(msg.index);
+        break;
+      case "closeAllTabs":
+        this.closeAllTabs();
+        break;
+      case "closeOthersTabs":
+        this.closeOthersTabs(msg.index);
+        break;
+      default:
+        // Unknown message types are silently ignored (TASK-UX3-003 R4 — graceful
+        // fall-through so a stale webview bundle cannot crash the host).
+        break;
     }
   }
 

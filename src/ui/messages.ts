@@ -98,7 +98,30 @@ export type WebviewMessage =
   | ReadyMessage
   | CommitTransactionMessage
   | RollbackTransactionMessage
-  | RequestDistinctValuesMessage;
+  | RequestDistinctValuesMessage
+  // TASK-UX3-003 — tab close affordances (× button + right-click menu).
+  // Webview posts these; ResultsPanel.closeTab / closeAllTabs / closeOthersTabs
+  // own the state mutation.
+  | CloseTabMessage
+  | CloseAllTabsMessage
+  | CloseOthersTabsMessage;
+
+/** TASK-UX3-003 — close a single tab by index. */
+export interface CloseTabMessage {
+  type: "closeTab";
+  index: number;
+}
+
+/** TASK-UX3-003 — close every tab (empty state follows). */
+export interface CloseAllTabsMessage {
+  type: "closeAllTabs";
+}
+
+/** TASK-UX3-003 — close every tab except the one at `index`. */
+export interface CloseOthersTabsMessage {
+  type: "closeOthersTabs";
+  index: number;
+}
 
 /** TASK-004 / TASK-003 — webview asks the host for a column's distinct values
  *  (set-filter dropdown). The reply echoes `index` + `column` and is cached
